@@ -45,7 +45,7 @@ tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
 wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
-rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
 cliclack = "0.2"
@@ -92,7 +92,7 @@ candle-onnx = "0.11"
 tokenizers = "0.22.2"
 # Official MCP SDK (modelcontextprotocol/rust-sdk). Pinned exact; Apache-2.0/MIT.
 # schemars needed directly: JsonSchema derive expands to `schemars::` paths.
-rmcp = { version = "=3.8.0", features = ["server", "macros", "schemars", "transport-io"] }
+rmcp = { version = "=3.9.0", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
 
 [target.'cfg(unix)'.dependencies]

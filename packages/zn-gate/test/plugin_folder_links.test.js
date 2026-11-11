@@ -317,3 +317,20 @@ test('the target of a link is split at \\ and / on Windows, and only at / elsewh
   assert.deepEqual(linkTargetParts('/a/./b//c', 'linux'), { root: '/', parts: ['a', 'b', 'c'] });
   assert.deepEqual(linkTargetParts('a\\b/c', 'linux'), { root: '', parts: ['a\\b', 'c'] });
 });
+
+test('Claude Code plugin with folders deeper than the walk looks is NOT protected, never reported clean', { skip: SKIP }, async (t) => {
+  const home = tempDir(t, 'zn-pfl-home-');
+  const marker = path.join(tempDir(t, 'zn-pfl-mark-'), 'ran.txt');
+  const real = path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.0.0');
+  claudePlugin(home, real, marker);
+  let r = await claudeCheck(t, home);
+  assert.equal(r.state, 'protected', r.problem);
+  // 14 folders down, a link that leaves the plugin: beyond the 12 levels the walk looks at.
+  const deep = path.join(real, ...Array.from({ length: 14 }, (_, i) => 'd' + i));
+  fs.mkdirSync(deep, { recursive: true });
+  fs.symlinkSync(tempDir(t, 'zn-pfl-out-'), path.join(deep, 'out'));
+  r = await claudeCheck(t, home);
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /could not be checked for links that leave it .*more than 12 levels deep/);
+  assert.ok(r.fix && r.fix.length > 0);
+});

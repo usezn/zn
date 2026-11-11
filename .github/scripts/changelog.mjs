@@ -55,7 +55,12 @@ export function parseFragment(text, name = 'fragment') {
       errors.push(`${name}:${i + 1}: only "### <Section>" headings and "- " bullets are allowed`);
     }
   }
-  if (!errors.length && !Object.values(out).some((b) => b.length)) errors.push(`${name}: no bullets`);
+  if (!errors.length && !Object.values(out).some((b) => b.length)) {
+    const empty = !String(text).replace(/^﻿/, '').trim();
+    errors.push(empty
+      ? `${name}: the fragment is empty; add a "### <Section>" heading and at least one "- " bullet that says what changed for users`
+      : `${name}: no bullets`);
+  }
   return { sections: out, errors };
 }
 
@@ -172,6 +177,23 @@ export function checkPullRequest(root, base, { skip = false, release = false } =
   return { errors, code, fragments };
 }
 
+/* How to fix a failed check, shown in the job log and in the job summary. It is plain text built from constants:
+ * nothing from the pull request (title, branch name, file names) goes into it. */
+export function fragmentHint() {
+  return [
+    `Add a file in ${FRAGMENT_DIR}/ named after your branch, for example ${FRAGMENT_DIR}/fix-init-guard.md:`,
+    '',
+    '```markdown',
+    '### Fixed',
+    '- `zn-gate check` gives a repair that works after a Node.js version is removed.',
+    '```',
+    '',
+    'Sections: Added, Changed, Deprecated, Removed, Fixed, Security. Use only "### <Section>" headings and "- " bullets.',
+    'If users see no change, ask a maintainer to add the "no-changelog" label instead.',
+    `More: ${FRAGMENT_DIR}/README.md. To check locally: node .github/scripts/changelog.mjs check --base <your base branch>`,
+  ].join('\n');
+}
+
 function main(argv) {
   const root = process.cwd();
   const [cmd, ...rest] = argv;
@@ -180,7 +202,16 @@ function main(argv) {
     const base = opt('--base');
     if (!base) throw new Error('check needs --base <ref>');
     const r = checkPullRequest(root, base, { skip: process.env.CHANGELOG_SKIP === '1', release: process.env.CHANGELOG_RELEASE === '1' });
-    if (r.errors.length) { for (const e of r.errors) console.error('changelog: ' + e); return 1; }
+    if (r.errors.length) {
+      for (const e of r.errors) console.error('changelog: ' + e);
+      console.error('\n' + fragmentHint());
+      // The summary needs no token and no write permission: it is a file of the job itself.
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        const list = r.errors.map((e) => '- ' + e).join('\n');
+        fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Changelog check failed\n\n${list}\n\n${fragmentHint()}\n`);
+      }
+      return 1;
+    }
     console.log(`changelog OK: ${r.fragments.length} fragment(s), ${r.code.length} shipped file(s) changed`);
     return 0;
   }

@@ -17,10 +17,15 @@ try {
  *
  *  - Tool results, tool-call arguments and tool/parameter descriptions are
  *    evaluated ONLY in-process (analyzeLocal / checkToolResult). They never
- *    leave the machine, under any configuration.
- *  - The only code path that can reach the network is analyze() — the
- *    prompt-analysis API used by the `analyze_prompt` MCP tool and the
- *    `zn-gate analyze` CLI command — and only when BOTH ZN_API_KEY and
+ *    leave the machine through this module's own entry points.
+ *  - One opt-in exception (since 1.15): the Claude Code PostToolUse hook
+ *    (lib/hooks/runner.js, cloudOutputNote) passes a capped sample of the
+ *    output of web, MCP and shell tools to analyze() with pinOrigin, only when
+ *    the person ran zn-gate connect and set hooks.cloudCheckToolOutput to true in their own user config (off by default).
+ *  - Text reaches the network only through analyze(), in two cases: prompt
+ *    analysis (the `analyze_prompt` MCP tool and the `zn-gate analyze` CLI
+ *    command) and, as described above, the tool-output sample of the Claude
+ *    Code hook. Either only when BOTH ZN_API_KEY and
  *    ZN_CLOUD=1 are set, or the user ran `zn-gate connect` (and
  *    ZN_LOCAL_ONLY is not "true"). Secrets are redacted locally with
  *    redactSecrets() before the request is built. `connect` and `disconnect`
@@ -69,6 +74,8 @@ function isCloudEnabled(options = {}) {
 
 /** A usable key from --key / ZN_API_KEY together with ZN_CLOUD=1: the person's own, explicit opt-in. */
 function explicitOptIn(options = {}) {
+  // storedOnly (tool output in the hooks): the environment and --key never count, only what `zn-gate connect` saved.
+  if (options.storedOnly) return false;
   return Boolean(usableApiKey(options.apiKey || process.env.ZN_API_KEY)) && process.env.ZN_CLOUD === '1';
 }
 
@@ -229,7 +236,8 @@ async function analyze(input, options = {}) {
   }
 
   // Only the marker turns the cloud on: use the key `connect` stored, never ZN_API_KEY or --key.
-  const markerOnly = !explicitOptIn(options);
+  // storedOnly never falls back to ZN_API_KEY or --key: if the saved key cannot be read, nothing is sent.
+  const markerOnly = Boolean(options.storedOnly) || !explicitOptIn(options);
   const found = markerOnly
     ? await cloudKey.loadStoredKey().then((s) => (s ? { key: s.key, source: s.store } : null))
     : await cloudKey.resolveApiKey(options);
@@ -241,13 +249,16 @@ async function analyze(input, options = {}) {
   const apiKey = found.key;
   const { sanitized, detections } = redactSecrets(typeof input === 'string' ? input : String(input ?? ''));
   const storedKey = found.source === 'keychain' || found.source === 'vault';
-  const tlsWhy = storedKey ? cloudKey.tlsRefusal() : null;
+  // pinOrigin (the hooks): the key and the text go only to the fixed zn origin, with the TLS check held to the same strictness as a saved key,
+  // because the environment of an agent can be set by the project it works in.
+  const pinned = storedKey || Boolean(options.pinOrigin);
+  const tlsWhy = pinned ? cloudKey.tlsRefusal() : null;
   if (tlsWhy) {
     // The saved key is never sent over a connection that is not checked against the system's authorities.
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: tlsWhy };
   }
-  const endpoint = resolveEndpoint(options, { stored: storedKey });
-  if (storedKey && endpoint.indexOf(FIXED_API_ORIGIN + '/') !== 0) {
+  const endpoint = resolveEndpoint(options, { stored: pinned });
+  if (pinned && endpoint.indexOf(FIXED_API_ORIGIN + '/') !== 0) {
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: 'the saved key is only sent to ' + FIXED_API_ORIGIN };
   }
   const urlIgnored = storedKey && Boolean(options.apiUrl || process.env.ZN_API_URL);

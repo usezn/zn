@@ -37,7 +37,7 @@ It also does these things on your machine:
 
 ## What it never does
 
-- It does not send your prompts, files, tool arguments or tool output off your machine by default. Tool arguments, tool output and tool descriptions never leave the machine, even with the optional cloud check on.
+- It does not send your prompts, files, tool arguments or tool output off your machine by default. Tool arguments and tool descriptions never leave the machine, even with the optional cloud check on. With it on, and only if you also turn that on yourself, the Claude Code hook can send a small sample of web, MCP and shell results, with secrets and email addresses, phone numbers, IBANs and card numbers removed first, to check them for hidden instructions; it is off until you add `"cloudCheckToolOutput": true` under `hooks` in your own `~/.zn/config.json`.
 - It does not need an account or an API key for the local checks.
 - It is not a sandbox. It checks what an agent's hooks can see, and it does not stop a program from touching other things.
 - It does not judge whether a shell command or a query is destructive in the tool-call check. That check is text-based.
@@ -47,6 +47,14 @@ It also does these things on your machine:
 ## The one optional online part
 
 The cloud check is off until you turn it on. It needs both `ZN_CLOUD=1` and `ZN_API_KEY`, or a run of `zn-gate connect`. It only looks at prompts, and the text has recognised secrets removed before it is sent. If the call fails, the local result stands and nothing is blocked because of it. See [Connect](connect.md).
+
+## If you see this message
+
+These are three messages a new user often meets first. Each one is explained in [Troubleshooting](troubleshooting.md).
+
+- **"zn-gate needs Node.js 18 or later, and this is Node.js v..."**: install the LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check `node --version`, then run your command again. ([Details](troubleshooting.md#1-nodejs-is-too-old))
+- **"... needs an interactive terminal. Open a terminal window yourself and run it there."**: open a terminal window yourself, not the agent's window, and run the same command there. Nothing was changed. ([Details](troubleshooting.md#4-it-needs-you-at-your-own-terminal))
+- **"Your secret vault is locked."**: run `zn unlock` in your own terminal, then run the command that failed again. ([Details](troubleshooting.md#5-your-secret-vault-is-locked))
 
 ## Where to go next
 

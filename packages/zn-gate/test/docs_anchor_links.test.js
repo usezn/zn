@@ -14,8 +14,10 @@ const docsDir = path.join(repo, 'docs');
 
 function stripFences(md) {
   const out = [];
+  // Windows checkouts use CRLF, and "." in a regex does not match "\r": normalize first.
+  md = md.replace(/\r\n?/g, '\n');
   let fence = null;
-  for (const line of md.split('\n')) {
+  for (const line of md.split(/\r?\n/)) { // a Windows checkout has CRLF line ends
     const m = line.match(/^ {0,3}(`{3,}|~{3,})/);
     if (m) {
       if (!fence) fence = m[1][0];

@@ -552,21 +552,24 @@ function linkHopLeaves(start, within) {
 }
 
 /* Every link in the plugin folder `realRoot`, looked at without following any (at most 20000 entries, 12 levels deep),
-   that leads out of it by any hop: {link, to} or null. Beyond the limit nothing more is looked at. */
+   that leads out of it by any hop: {link, to}; {incomplete} when the walk could not look at everything (more entries or
+   deeper folders than the limit, or a folder it cannot read), so nothing can be said about the rest; null when every
+   link it looked at stays in the folder and nothing was left unseen. */
 function treeLinkLeaves(realRoot) {
   let seen = 0;
   const walk = (dir, depth) => {
     let names;
-    try { names = fs.readdirSync(dir); } catch (_) { return null; }
+    try { names = fs.readdirSync(dir); } catch (_) { return { incomplete: 'a folder in it (' + dir + ') cannot be read' }; }
     for (const name of names) {
-      if (++seen > 20000) return null;
+      if (++seen > 20000) return { incomplete: 'it holds more than 20000 entries' };
       const full = path.join(dir, name);
       let st;
-      try { st = fs.lstatSync(full); } catch (_) { continue; }
+      try { st = fs.lstatSync(full); } catch (_) { return { incomplete: '"' + full + '" cannot be read' }; }
       if (st.isSymbolicLink()) {
         const out = linkHopLeaves(full, [realRoot]);
         if (out) return out;
-      } else if (st.isDirectory() && depth < 12) {
+      } else if (st.isDirectory()) {
+        if (depth >= 12) return { incomplete: 'it has folders more than 12 levels deep (' + full + ')' };
         const out = walk(full, depth + 1);
         if (out) return out;
       }
@@ -601,6 +604,7 @@ function pluginLinkProblem(root, places, files) {
     if (out) return 'the plugin file ' + path.join(root, rel) + ' is a link that leads to ' + out.to + ', outside the plugin folder, so what it holds is not what the plugin installed';
   }
   const any = treeLinkLeaves(realRoot);
+  if (any && any.incomplete) return 'the plugin folder could not be checked for links that leave it (' + any.incomplete + '), so zn-gate check does not trust it';
   if (any) return 'the plugin folder holds a link (' + any.link + ' leads to ' + any.to + ') that goes outside it, so what runs is not only what the plugin installed';
   return '';
 }
@@ -1579,7 +1583,9 @@ async function check(opts = {}) {
     fs.writeFileSync(ctx.readme, 'An ordinary file that zn lets your agent read.\n');
     for (const spec of AGENTS) {
       try {
-        results.push(await checkAgent(spec, ctx));
+        const r = await checkAgent(spec, ctx);
+        if (!(r.state === 'not-set-up' && r.found === false)) r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd });
+        results.push(r);
       } catch (err) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not check it: ' + oneLine(err && err.message, 200), notes: [] });
       }
@@ -1601,6 +1607,8 @@ function report({ results, removed, warnings }, write) {
   let setUp = 0;
   let bad = 0;
   const missing = [];
+  const { versionLine } = require('./agents/versions');
+  const ver = (r) => { if (r.version) w(`     ${versionLine(r.version)}\n`); };
   for (const r of results) {
     if (r.state === 'not-set-up' && r.found === false) {
       w(`  -  ${r.name.padEnd(12)} not found on this machine\n`);
@@ -1609,10 +1617,12 @@ function report({ results, removed, warnings }, write) {
     if (r.state === 'not-set-up') {
       missing.push(r.name);
       w(`  -  ${r.name.padEnd(12)} zn is not set up for this agent. To protect it, ${r.fix}.\n`);
+      ver(r);
       continue;
     }
     if (r.state === 'project-only') {
       w(`  -  ${r.name.padEnd(12)} zn is set up only for one project (${r.where}). This check covers the setup for your user; to protect every project, ${r.fix}.\n`);
+      ver(r);
       continue;
     }
     setUp++;
@@ -1620,11 +1630,13 @@ function report({ results, removed, warnings }, write) {
       bad++;
       w(`  X  ${r.name.padEnd(12)} NOT protected: ${r.problem}.\n`);
       w(`     To fix it, ${r.fix}.\n`);
+      ver(r);
       continue;
     }
     w(`  OK ${r.name.padEnd(12)} blocked the .env file and allowed the ordinary file. Your agent would be told:\n`);
     w(`     "${r.message}"\n`);
     for (const n of r.notes) w(`     (${n})\n`);
+    ver(r);
   }
   w('\n');
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';
@@ -1649,4 +1661,60 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { cliHooks, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, zcodePluginRootProblem, pluginLinkProblem, linkTargetParts, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+/** Exit code of `check`: 0 only when at least one agent is set up and every agent that is set up is protected. */
+function exitCodeOf(results) {
+  let setUp = 0;
+  let bad = 0;
+  for (const r of results) {
+    if (r.state === 'not-set-up') continue;
+    setUp++;
+    if (r.state === 'not-protected') bad++;
+  }
+  return setUp && !bad ? 0 : 1;
+}
+
+/**
+ * The same data as report(), as one plain object for scripts, CI and support requests (`check --json`).
+ * Built from the results, not from the text. Every string has the home folder replaced with "~". Field names are
+ * stable: see docs/check.md.
+ */
+function toJson({ results, removed, warnings }, opts = {}) {
+  const home = opts.home || os.homedir();
+  const hide = (v) => {
+    if (typeof v !== 'string') return v;
+    let out = v;
+    // Longest first: when one form contains the other (macOS /var/... is /private/var/...), replacing the shorter
+    // one first would leave a mangled path such as '/private~/...'.
+    const forms = [...new Set([home, (() => { try { return fs.realpathSync(home); } catch (_) { return home; } })()])]
+      .sort((a, b) => b.length - a.length);
+    for (const h of forms) {
+      if (h && h.length > 1) out = out.split(h).join('~');
+    }
+    return out;
+  };
+  const agents = results.map((r) => ({
+    id: r.id,
+    name: r.name,
+    state: r.state === 'not-set-up' && r.found === false ? 'not-found' : r.state,
+    protected: r.state === 'protected',
+    reason: hide(r.problem || ''),
+    fix: r.state === 'protected' ? '' : hide(r.fix || ''),
+    message: r.state === 'protected' ? hide(r.message || '') : '',
+    notes: (r.notes || []).map(hide),
+    checked: r.checked !== false,
+  }));
+  const exitCode = exitCodeOf(results) || ((opts.rulesErrors || []).length ? 1 : 0);
+  return {
+    schema: 1,
+    zn_gate_version: opts.version || null,
+    node_version: opts.nodeVersion || process.versions.node,
+    exit_code: exitCode,
+    protected: exitCode === 0,
+    agents,
+    warnings: (warnings || []).map(hide),
+    project_rules_errors: (opts.rulesErrors || []).map(hide),
+    test_folder_removed: !!removed,
+  };
+}
+
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, zcodePluginRootProblem, pluginLinkProblem, linkTargetParts, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };

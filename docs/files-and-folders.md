@@ -15,7 +15,7 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (
 | `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts`. |
 | `~/.zn/reach-last.json` | Written only by `reach --remember`. |
 
-More: [uninstall](uninstall.md#your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
+More: [uninstall](uninstall.md#4-your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
 
 ## `reach`
 
@@ -56,6 +56,20 @@ More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).
 
 More: [Remove zn-gate](uninstall.md), [`uninstall` in the CLI reference](cli.md#uninstall).
 
+## Where each command writes its files
+
+The folder each command writes in. zn-gate keeps its own files in the `.zn` folder described above; the settings and configs of your agents live where the agent keeps them.
+
+| Command | Folder it writes in | What it writes there |
+| --- | --- | --- |
+| `init` | The folders of the agent settings and configs it changes | With `--wrap-mcp`, the wrapped MCP configs and a saved copy of each, written first. The guided setup asks before each step; without a terminal, or when an AI agent runs it, it only prints the steps and changes nothing. |
+| `secret` | The `.zn` folder | The vault files: `vault/secrets.age` when you store a secret, and one `vault/<32 hex characters>.age` per project it detects values in. |
+| `evidence` | The file you name with `--export --output` | The decision log records, as `jsonl` or `csv`. The log itself, `evidence.jsonl`, stays in the `.zn` folder. |
+| `stats` | The `.zn` folder | `stats.json`, when it counts checks. |
+| `team` | The `.zn` folder | The team files: `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json`. |
+
+More: [CLI reference](cli.md).
+
 ## Who creates each one, and how to remove it
 
 Every command is run in your own terminal. "None" means no documented command removes it: delete it by hand.
@@ -72,5 +86,17 @@ Every command is run in your own terminal. "None" means no documented command re
 | Settings file backups (written before `hooks install` or `hooks uninstall` changes a file) | `zn-gate hooks install <agent>`, `zn-gate hooks uninstall <agent>` | Yes | None |
 | Saved copies of MCP configs | `zn-gate init --wrap-mcp` | Yes, but then `init --revert` can no longer put the copy back. | None. `zn-gate init --revert` puts the copy back in place of the wrapped config. |
 | Hooks in your agent's settings | `zn-gate hooks install <agent>` | Yes, see [remove by hand](editors/remove-by-hand.md). | `zn-gate hooks uninstall <agent>`, or `zn-gate uninstall` |
+| `vault/secrets.age` | zn-gate, when you store a secret | Yes, but deleting it loses every value in the vault | `zn-gate secret rm NAME` for one secret, or `zn-gate vault purge` |
+| `vault/<32 hex characters>.age`, one per project | zn-gate, when it detects values in a project | Yes | `zn-gate vault forget [dir]`, with the vault locked |
+| `vault/identity.age` | zn-gate, on a computer with no system keychain | No: the vault cannot be opened without it | `zn-gate vault purge` |
+| `vault/keychain.json` | zn-gate, when the vault is created | No | `zn-gate vault purge` |
+| `run/session.key` and `run/vault.sock` | zn-gate, while the vault is unlocked | Only while the vault is locked | `zn-gate lock` (zn-gate removes them itself) |
+| `config.json` | zn-gate, for your settings and the cloud key marker | Yes; it resets your settings and loses no secret | `zn-gate disconnect` removes the cloud key and its marker in this file, and nothing else |
+| `stats.json` | zn-gate, when it counts checks | Yes | None. `ZN_STATS=off` stops the counting. |
+| `requests.jsonl` | zn's `secrets_request` tool, when an agent asks for a secret | Yes | None |
+| `package-registry-cache.json` | zn-gate, for package lookups | Yes | None |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | zn-gate, on a computer that joined a zn Team | No: the hooks read them | `zn-gate team leave` |
+| `hooks/` | `zn-gate hooks install <agent>` | Yes, once the hooks are uninstalled | None. `hooks uninstall` leaves it in place. |
+| `ENVBAK_X<hash>D<stamp>`, an entry inside `vault/secrets.age` | `zn-gate env shadow`, as the encrypted copy of a `.env` file | No: it is not a file, and without it `env unshadow` cannot restore the `.env` file | `zn-gate secret rm NAME`. `zn-gate env unshadow FILE --backup NAME` only restores the file; it does not delete the copy. |
 
 More: [Remove zn-gate](uninstall.md), [CLI reference](cli.md).

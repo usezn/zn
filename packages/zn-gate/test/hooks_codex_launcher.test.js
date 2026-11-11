@@ -33,7 +33,7 @@ const GONE = '/nonexistent/node-gone/bin/node';
 const REINSTALL = 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install codex`, in your own terminal';
 
 function setup(t, nodePath, withSh = true) {
-  const home = tempDir(t, 'zn-b93-');
+  const home = tempDir(t, 'zn-codex-launcher-');
   const env = { HOME: home, CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   codex.install({ env, home, nodePath, runnerPath: RUNNER, mcp: false });
   const data = JSON.parse(fs.readFileSync(codex.hooksFile({ env }), 'utf8'));
@@ -42,7 +42,7 @@ function setup(t, nodePath, withSh = true) {
 }
 
 // A PATH with no node and no zn (the launcher only uses shell builtins).
-function emptyBin(t) { return tempDir(t, 'zn-b93-bin-'); }
+function emptyBin(t) { return tempDir(t, 'zn-codex-launcher-bin-'); }
 
 function runLauncher(file, event, input, pathValue) {
   return spawnSync(SH, [fwd(file), event], { input, encoding: 'utf8', env: shEnv({ PATH: pathValue, HOME: '/nonexistent' }) });
@@ -71,7 +71,7 @@ test('codex install: a user install writes the launcher and one command per even
 
 test('codex launcher: with the recorded Node.js it runs the real hook and blocks .env', { skip: needSh }, (t) => {
   const { file } = setup(t, process.execPath);
-  const dir = tempDir(t, 'zn-b93-proj-');
+  const dir = tempDir(t, 'zn-codex-launcher-proj-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk-test-EXAMPLE0000000000000000\n');
   const ev = { hook_event_name: 'PreToolUse', session_id: 's', cwd: dir, tool_name: 'Bash', tool_input: { command: 'cat .env' } };
   const r = runLauncher(file, 'PreToolUse', JSON.stringify(ev), process.env.PATH);
@@ -105,7 +105,7 @@ test('codex launcher: Node.js gone and no zn on PATH: it still blocks, with the 
 
 test('codex launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: needSh }, (t) => {
   const { file } = setup(t, GONE);
-  const bin = tempDir(t, 'zn-b93-bin-');
+  const bin = tempDir(t, 'zn-codex-launcher-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\nprintf ok > "$ZN_HOOK_ACK"\n', { mode: 0o755 });
   const r = runLauncher(file, 'PreToolUse', '{}', bin);
@@ -115,7 +115,7 @@ test('codex launcher: recorded Node.js gone but zn and node on an absolute PATH:
 
 test('codex launcher: a zn found through a relative PATH entry is not run (it blocks)', { skip: needSh }, (t) => {
   const { file } = setup(t, GONE);
-  const bin = tempDir(t, 'zn-b93-bin-');
+  const bin = tempDir(t, 'zn-codex-launcher-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho PLANTED\n', { mode: 0o755 });
   const r = spawnSync(SH, [fwd(file), 'PreToolUse'], { input: '{}', encoding: 'utf8', cwd: bin, env: shEnv({ PATH: '.', HOME: '/nonexistent' }) });
@@ -148,7 +148,7 @@ test('codex uninstall removes the launcher; a project install writes none', { sk
   assert.ok(fs.existsSync(file));
   codex.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
-  const proj = tempDir(t, 'zn-b93-proj-');
+  const proj = tempDir(t, 'zn-codex-launcher-proj-');
   codex.install({ scope: 'project', projectDir: proj, env, home, mcp: false });
   const data = JSON.parse(fs.readFileSync(path.join(proj, '.codex', 'hooks.json'), 'utf8'));
   assert.ok(launcher.isProjectGuard(data.hooks.PreToolUse[0].hooks[0].command, 'codex'));
@@ -168,7 +168,7 @@ test('codex install on Windows: a user install writes no sh launcher, each event
   const hooksPath = codex.hooksFile({ env });
   const left = fs.existsSync(hooksPath) ? JSON.parse(fs.readFileSync(hooksPath, 'utf8')).hooks || {} : {};
   for (const groups of Object.values(left)) for (const g of groups) for (const h of g.hooks || []) assert.ok(!cfg.isOurs(h.command, 'codex') && !cfg.isOurs(h.commandWindows, 'codex'));
-  const proj = tempDir(t, 'zn-b93-proj-');
+  const proj = tempDir(t, 'zn-codex-launcher-proj-');
   codex.install({ scope: 'project', projectDir: proj, env, home, mcp: false });
   const pdata = JSON.parse(fs.readFileSync(path.join(proj, '.codex', 'hooks.json'), 'utf8'));
   assert.ok(launcher.isProjectWindowsScript(windowsCommandScript(pdata.hooks.PreToolUse[0].hooks[0].commandWindows), 'codex'));
@@ -186,7 +186,7 @@ test('codex windows command: a path that needs escaping keeps the plain command'
 test('check: the Node.js recorded in the launcher is gone and nothing else can run the hook: not protected', { skip: WIN_CHECK }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
-  const r = (await check({ home, env: { ...env, PATH: emptyBin(t) }, cwd: tempDir(t, 'zn-b93-cwd-') })).results.find((x) => x.id === 'codex');
+  const r = (await check({ home, env: { ...env, PATH: emptyBin(t) }, cwd: tempDir(t, 'zn-codex-launcher-cwd-') })).results.find((x) => x.id === 'codex');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /Node\.js \(\/nonexistent\/node-gone\/bin\/node\) is no longer there, so zn now blocks the tool calls/);
   assert.equal(r.fix, REINSTALL);
@@ -195,11 +195,11 @@ test('check: the Node.js recorded in the launcher is gone and nothing else can r
 test('check: the recorded Node.js is gone and only a zn on the PATH is left: not protected (the launcher does not run it)', { skip: WIN_CHECK }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
-  const bin = tempDir(t, 'zn-b93-bin-');
+  const bin = tempDir(t, 'zn-codex-launcher-bin-');
   fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   // A stand-in `zn` that runs the real hook runner, as `zn hook codex` does.
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec "' + process.execPath + '" "' + RUNNER + '" "$2"\n', { mode: 0o755 });
-  const r = (await check({ home, env: { ...env, PATH: bin }, cwd: tempDir(t, 'zn-b93-cwd-') })).results.find((x) => x.id === 'codex');
+  const r = (await check({ home, env: { ...env, PATH: bin }, cwd: tempDir(t, 'zn-codex-launcher-cwd-') })).results.find((x) => x.id === 'codex');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /Node\.js .* is no longer there, so zn now blocks/);
 });
@@ -207,7 +207,7 @@ test('check: the recorded Node.js is gone and only a zn on the PATH is left: not
 test('check: a launcher script that was deleted is reported', { skip: WIN_CHECK }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   fs.unlinkSync(file);
-  const r = (await check({ home, env, cwd: tempDir(t, 'zn-b93-cwd-') })).results.find((x) => x.id === 'codex');
+  const r = (await check({ home, env, cwd: tempDir(t, 'zn-codex-launcher-cwd-') })).results.find((x) => x.id === 'codex');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /launcher script .* is missing or was changed/);
 });

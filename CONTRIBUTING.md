@@ -56,6 +56,34 @@ python -m pip install -e .
 python -m pytest tests/ -v
 ```
 
+## Continuous integration (CI)
+
+Each pull request into `next` runs automated checks on GitHub. Eleven checks are **required**, and a pull request cannot merge until all of them pass. These are the names you see on the pull request:
+
+- Node.js 18.x tests & benchmarks
+- Node.js 22.x tests & benchmarks
+- Node.js 24.x tests & benchmarks
+- Python 3.12 tests & benchmarks (ubuntu-latest)
+- Python package (build, twine check, install)
+- npm package (pack, inspect, install)
+- leak bench (node 22 / ubuntu-latest)
+- scrubber + vault (node 22 / ubuntu-latest)
+- Lint (eslint, ruff, mypy)
+- Public facts
+- build, test, clippy, fmt
+
+To keep pull requests fast, a pull request into `next` runs only the Node.js 22.x tests. The 18.x and 24.x checks report success at once and run for real in the merge queue. A pull request that changes only documentation skips most code checks, which also report success.
+
+Only `next` has a merge queue; `main` does not. When a maintainer adds an approved pull request to the queue, the queue builds it on top of the pull requests ahead of it, runs the required checks on that combined result, and merges up to five pull requests at a time, in order. If a required check fails there, the pull request leaves the queue. Fix the problem, push a commit, and ask a maintainer to queue it again.
+
+Nine more checks are **not required**, so they do not block a merge: Changelog, Markdown lint, Typos, Link check, Shellcheck, Workflow lint, Package lint, Pre-commit hooks and Doc snippets. They check the changelog entry, Markdown, spelling, links, shell scripts, package files and the code samples in the docs. A failure there does not block the merge, but fix it before review if you can.
+
+If a check fails, open it from the Checks tab of the pull request. The first failed step shows the problem.
+
+Checks run again each time you push a commit, and a new push cancels a run still in progress. Without write access you cannot rerun a check yourself, so push a new commit to get a fresh run, for example an empty one with `git commit --allow-empty -m "Rerun checks"`. A maintainer with write access can open the run and choose "Re-run failed jobs".
+
+For what each check covers and how to run it on your own machine, see [Run the required checks locally](#run-the-required-checks-locally).
+
 ## Run the required checks locally
 
 A pull request into `next` must pass these checks. Run the matching commands before you push. All commands start from the repository root unless a `cd` says otherwise. The check names are the ones you see on the pull request.
@@ -96,6 +124,34 @@ On Windows, run these in PowerShell on separate lines and call `..\..\.github\es
 ### Doc snippets
 
 If you edit a marked snippet, list and run them with `python .github/scripts/doc-snippets.py list` and `python .github/scripts/doc-snippets.py run`. The network-isolated mode (`--netns`) works only on Linux with `sudo`; elsewhere, CI runs it.
+
+### Documentation checks
+
+If your pull request changes a page under `docs/`, a README or `changelog.d/README.md`, run these three checks first. They are the same ones CI runs on documentation.
+
+1. Docs tests (Node.js only, no install needed):
+
+   ```bash
+   cd packages/zn-gate
+   node --test test/docs_*.test.js test/docs-env-vars.test.js test/install_docs_match.test.js
+   ```
+
+   They check anchors, relative links, headings, command names and subcommands, environment variables and that the install instructions agree across pages. `npm test` runs them too, together with the rest of the suite.
+
+2. Markdown lint, with the settings in `.markdownlint.jsonc` and `.markdownlint-cli2.jsonc`. From the repository root, install the pinned tool once, then run it:
+
+   ```bash
+   npm ci --prefix .github/markdownlint --ignore-scripts
+   .github/markdownlint/node_modules/.bin/markdownlint-cli2
+   ```
+
+3. Link check with [lychee](https://github.com/lycheeverse/lychee) (the workflow pins `lychee-v0.24.2`; install it yourself). The offline run checks relative links and anchors, and fails when one is broken:
+
+   ```bash
+   lychee --config .github/lychee.toml --offline --include-fragments --no-progress README.md docs "packages/*/README.md" plugins
+   ```
+
+   CI also checks external links, but only reports them and never fails the pull request.
 
 ## Your first pull request and draft pull requests
 
@@ -155,15 +211,17 @@ print(evaluate("Summarize the quarterly revenue report.").verdict)
 ```
 ````
 
-The `Doc snippets` workflow runs each marked `javascript`, `python` or `bash` block alone, against the package built from the commit (`npm pack` of `packages/zn-gate`, `packages/zn-gate-py` installed in a virtual environment), in an empty network namespace and with no API key. The block must exit 0. A failure names the file and line of the block. Mark a block only when it can run as written and offline, with no setup from a previous block, no account and no agent installed; the rest of the docs stay as they are. To try it locally: `python3 .github/scripts/doc-snippets.py list`, then `python3 .github/scripts/doc-snippets.py run` (add `--netns` on Linux with `sudo`).
+The doc snippets steps of the `Quick checks` workflow run each marked `javascript`, `python` or `bash` block alone, against the package built from the commit (`npm pack` of `packages/zn-gate`, `packages/zn-gate-py` installed in a virtual environment), in an empty network namespace and with no API key. The block must exit 0. A failure names the file and line of the block. Mark a block only when it can run as written and offline, with no setup from a previous block, no account and no agent installed; the rest of the docs stay as they are. To try it locally: `python3 .github/scripts/doc-snippets.py list`, then `python3 .github/scripts/doc-snippets.py run` (add `--netns` on Linux with `sudo`).
 
 ## Questions and Ideas
 
-Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/zn/discussions) rather than in issues. Open an issue for a reproducible bug or a change you are ready to propose.
+Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/zn/discussions) rather than in issues. Open an issue for a reproducible bug or a change you are ready to propose. A vulnerability is neither: see the next section.
+
+To install zn-gate, run `npx -y zn-gate init` in your own terminal ([Install](README.md#install)). To remove it, run `npx -y zn-gate uninstall` ([removal guide](docs/uninstall.md)).
 
 ## Security Vulnerability Reporting
 
-If you find a security vulnerability, please do NOT open a public issue. Follow our [Security Policy](SECURITY.md) and report it to `security@usezn.com`.
+If you find a security vulnerability, please do NOT open a public issue, a pull request or a discussion. Follow our [Security Policy](SECURITY.md) and report it privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to `security@usezn.com`.
 
 ## Changelog
 

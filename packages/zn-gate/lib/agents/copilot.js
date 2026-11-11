@@ -200,6 +200,10 @@ const SYSTEM_SHELL_DIR = /^(?:\/(?:usr\/(?:local\/)?)?s?bin\/|\/opt\/homebrew\/b
 const SHELL_FLAGS = new Set(['-c', '-l', '-i', '-lc', '--login', '-noprofile', '-command', '/d', '/s', '/c']);
 // Keys VS Code reads under a task's options; any other key is refused so a new field fails closed.
 const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
+// Stand-in values for a placeholder in a task's environment: one per way classifyEnv decides that a key is dangerous.
+const UNRESOLVED_PROBES = ['x', 'http://unresolved.invalid', '--require x', '0', '1'];
+// Fields of a task that start more tasks; zn does not follow them, so a task that sets one is refused.
+const TASK_DEPENDENCY_KEYS = ['dependsOn', 'dependsOrder'];
 
 /** The settings of a task's options as {shell, cwd, env}; null = unreadable or not accepted. shell: false = none, or {exe, args}. */
 function taskOptions(o) {
@@ -218,6 +222,10 @@ function taskOptions(o) {
       if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') return null;
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return null;
       if (classifyEnv(k, v) || /^(?:LD_|DYLD_)/i.test(k)) return null;
+      // VS Code expands ${...} in a task's environment before it starts the task, so a value that is only a placeholder
+      // (BASH_ENV=${TASK_SCRIPT}) can become anything. classifyEnv lets such a value pass; here the value is unknown, so
+      // the key is judged with values that would be dangerous, and a key that loads code or moves a configuration is refused.
+      if (typeof v === 'string' && /\$|\{env:|\{\{/.test(v) && UNRESOLVED_PROBES.some((p) => classifyEnv(k, p))) return null;
       out.env[k] = String(v);
     }
   }
@@ -293,6 +301,8 @@ function taskLines(v, workspace) {
   const isTask = hasCommand(v) || overrides.some((k) => isObj(v[k]) && hasCommand(v[k]));
   if (!isTask) return undefined;
   if (v.type !== undefined && typeof v.type !== 'string') return null;
+  // dependsOn and dependsOrder make VS Code run other tasks first, and their commands are not in this call: refuse, never skip.
+  if (TASK_DEPENDENCY_KEYS.some((k) => v[k] !== undefined) || overrides.some((k) => isObj(v[k]) && TASK_DEPENDENCY_KEYS.some((d) => v[k][d] !== undefined))) return null;
   const baseOpts = taskOptions(v.options);
   if (baseOpts === null) return null;
   const base = {};
@@ -364,6 +374,17 @@ function nestedCommand(args, workspace) {
   return undefined;
 }
 
+/**
+ * A file: address with a host other than localhost would become a network (UNC) path on Windows, so it is refused
+ * on every platform. A localhost host is dropped so the address stays a local path.
+ */
+function localFileUrl(v) {
+  const u = new URL(v);
+  if (u.hostname && u.hostname.toLowerCase() !== 'localhost') throw new Error('file: URL names a remote host');
+  u.hostname = '';
+  return u;
+}
+
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
 function pathsOf(args, opts = {}) {
   const out = [];
@@ -374,7 +395,7 @@ function pathsOf(args, opts = {}) {
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
-      try { out.push(fileURLToPath(v)); } catch (_) { bad = true; }
+      try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
       return;
     }
     if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
