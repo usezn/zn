@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-11.1
+RULES_VERSION: 2026-11-11.4
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-11.1"
+RULES_VERSION = "2026-11-11.4"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1251,6 +1251,7 @@ def _is_non_secret_default(value: str, prefix: str = '') -> bool:
 SECRET_VALUE_FILTERS = {
     "secret:env_credential": _is_non_secret_value,
     "secret:prefixed_credential": _is_non_secret_value,
+    "secret:prefixed_credential#scrub": _is_non_secret_value,
     "secret:credential_default": _is_non_secret_default,
 }
 
@@ -1583,6 +1584,9 @@ SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
 
 SCRUB_LAST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:zn_api_key", _rc(_TB + r'zn_[0-9a-f]{48}' + _TA), "[REDACTED_ZN_API_KEY]"),
+    # A personal access token under a name that ends in PAT (AZURE_DEVOPS_EXT_PAT, GH_PAT): the scrubber's
+    # name list counts the whole segment PAT as a sensitive word. Same shape as secret:prefixed_credential.
+    ("secret:prefixed_credential#scrub", _rc(r"""(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)*PAT[ \t]+|(?:[A-Z0-9]+_)*PAT["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
     # A JWT whose parts are shorter than the shared rule asks for (8 characters after eyJ, a 16-character signature).
     ("secret:jwt_token#scrub", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}' + _TA), "[REDACTED_JWT]"),
     # 40 base64 characters after the words "aws" and "secret" (the CLI's SecretAccessKey, prose, a config file).
@@ -1613,6 +1617,7 @@ PROVIDER_HINTS.update({
     "secret:github_token#scrub": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
     "secret:github_token#scrub_pat": ("github_pat_",),
     "secret:zn_api_key": ("zn_",),
+    "secret:prefixed_credential#scrub": ("PAT",),
     "secret:jwt_token#scrub": (".eyJ",),
     "secret:aws_secret_key#scrub": ("ecret", "ECRET"),
     "secret:private_key#scrub": ("-----BEGIN ",),

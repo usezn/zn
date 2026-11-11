@@ -2,10 +2,9 @@
 
 // An Azure DevOps personal access token is passed to the `az devops` tooling in
 // the AZURE_DEVOPS_EXT_PAT environment variable. The scrubber (the layer the
-// agent hooks use for tool output and prompts) should mask the value on such a
-// line. The value is made up and built from pieces. The first test records a
-// gap: the scrubber does not mask this variable today, so it is marked todo
-// and turns into a normal test when a rule covers it.
+// agent hooks use for tool output and prompts) masks the value on such a line:
+// a name made of words with the whole segment PAT counts as a secret name. The
+// value is made up and built from pieces.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -23,7 +22,7 @@ test('the fake value has the length of an Azure DevOps token', () => {
   assert.equal(VALUE.length, 52);
 });
 
-test('an AZURE_DEVOPS_EXT_PAT line is masked', { todo: 'gap: the scrubber does not mask AZURE_DEVOPS_EXT_PAT yet' }, () => {
+test('an AZURE_DEVOPS_EXT_PAT line is masked', () => {
   for (const text of [
     'AZURE_DEVOPS_EXT_PAT=' + VALUE,
     'export AZURE_DEVOPS_EXT_PAT=' + VALUE,
@@ -34,6 +33,34 @@ test('an AZURE_DEVOPS_EXT_PAT line is masked', { todo: 'gap: the scrubber does n
   }
 });
 
-test('the same value on a variable with a token name is masked, so the shape is not the cause', () => {
+test('the same value on a variable with a token name is masked too', () => {
   assert.ok(covers('AZURE_DEVOPS_EXT_TOKEN=' + VALUE, VALUE));
+});
+
+test('other lines that name a PAT are masked', () => {
+  for (const text of [
+    'GH_PAT=' + VALUE,
+    'PAT=' + VALUE,
+    'ado_pat: ' + VALUE,
+    'AZURE_DEVOPS_EXT_PAT=' + VALUE + ' az devops project list',
+    '$env:AZURE_DEVOPS_EXT_PAT = "' + VALUE + '"',
+  ]) {
+    assert.ok(covers(text, VALUE), 'not masked: ' + text.replace(VALUE, '<value>'));
+  }
+});
+
+test('names that only contain the letters PAT, and short or plain values, stay readable', () => {
+  const other = '/usr/local/bin:/usr/bin:/bin:/opt/tools/bin';
+  for (const text of [
+    'PAT=yes',
+    'AZURE_DEVOPS_EXT_PAT=short',
+    'PAT=true-and-enabled',
+    'PATH=' + other,
+    'COMPAT=' + VALUE,
+    'PATTERN=' + VALUE,
+    'SPATIAL_INDEX=' + VALUE,
+    'export PATIENT_NOTES=' + VALUE,
+  ]) {
+    assert.deepEqual(engine.scan(text), [], 'masked by mistake: ' + text.replace(VALUE, '<value>'));
+  }
 });

@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-31.1';
+const SCRUB_RULES_VERSION = '2026-11-11.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -345,7 +345,7 @@ function structuredValue(v) {
 
 /* Line tail: optional trailing comma or semicolon, optional comment. */
 const S_TAIL = '(?:[ \\t]*[,;])?(?:[ \\t]+(?:#|//)[^\\r\\n]*)?$';
-const S_PREFILTER = /(?:pass|pwd|secret|token|key|credential|auth|dsn)/i;
+const S_PREFILTER = /(?:pass|pwd|secret|token|key|credential|auth|dsn|(?<![a-z])pat(?![a-z]))/i;
 const structuredCheck = (nameGroup) => (v, text, index, m) => structuredPair(m[nameGroup], v);
 
 /* Whole-line forms, matched one line at a time and only on lines that
@@ -362,11 +362,11 @@ const S_LINES = [
   [new RegExp('^[ \\t]*\\$env:([A-Za-z_][A-Za-z0-9_]{0,127})[ \\t]*=[ \\t]*(["\']?)([^\\s"\'`;]{1,512})\\2' + S_TAIL, 'd'), 1, 3],
   /* Inline assignment before a command: `KEY=value cmd args`, after up to
    * four other `NAME=value` words and an optional `env`. */
-  [new RegExp('^[ \\t]*(?:env[ \\t]+)?(?:[A-Za-z_][A-Za-z0-9_]{0,127}=(?:"[^"\\n]{0,512}"|\'[^\'\\n]{0,512}\'|[^\\s"\']{0,512})[ \\t]+){0,4}?(?=[A-Za-z0-9_]{0,127}?(?:pass|pwd|secret|token|key|credential|auth|dsn))([A-Za-z_][A-Za-z0-9_]{0,127})=(["\']?)([^\\s"\'`;&|]{1,512})\\2(?=[ \\t]+[A-Za-z0-9_./~\\\\-])', 'di'), 1, 3],
+  [new RegExp('^[ \\t]*(?:env[ \\t]+)?(?:[A-Za-z_][A-Za-z0-9_]{0,127}=(?:"[^"\\n]{0,512}"|\'[^\'\\n]{0,512}\'|[^\\s"\']{0,512})[ \\t]+){0,4}?(?=[A-Za-z0-9_]{0,127}?(?:pass|pwd|secret|token|key|credential|auth|dsn|(?<![a-z])pat(?![a-z])))([A-Za-z_][A-Za-z0-9_]{0,127})=(["\']?)([^\\s"\'`;&|]{1,512})\\2(?=[ \\t]+[A-Za-z0-9_./~\\\\-])', 'di'), 1, 3],
   /* Dockerfile `ENV KEY value` (legacy form, one pair per line). */
   [new RegExp('^[ \\t]*ENV[ \\t]+([A-Za-z_][A-Za-z0-9_]{0,127})[ \\t]+(["\']?)([^\\s"\'`=]{1,512})\\2' + S_TAIL, 'd'), 1, 3],
 ];
-const S_LINE_HINT = /pass|pwd|secret|token|key|credential|auth|dsn/gi;
+const S_LINE_HINT = /pass|pwd|secret|token|key|credential|auth|dsn|(?<![a-z])pat(?![a-z])/gi;
 
 /* One pass of the hint regex over the text; each line that holds a hint is
  * tried once. Every line regex is anchored at the line start and its

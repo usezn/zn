@@ -37,8 +37,10 @@ const MAX_FILE_BYTES = 256 * 1024;
 /* ------------------------------------------------------------------ */
 
 /* A name segment that ends in a sensitive word: API_KEY, PGPASSWORD,
- * GITHUB_TOKEN, SENTRY_DSN, DB_PASS... */
-const SENSITIVE_NAME_RE = /(?:^|_)[A-Z0-9]*(?:KEY|SECRET|SECRETS|TOKEN|TOKENS|PASS|PASSWD|PASSWORD|PASSPHRASE|PWD|CREDENTIAL|CREDENTIALS|AUTH|DSN)(?:_|$)|(?:^|_)DATABASE_URL$/i;
+ * GITHUB_TOKEN, SENTRY_DSN, DB_PASS... A personal access token is often
+ * named PAT (AZURE_DEVOPS_EXT_PAT, GH_PAT): only the whole segment counts, so PATH,
+ * PATTERN and COMPAT do not. */
+const SENSITIVE_NAME_RE = /(?:^|_)[A-Z0-9]*(?:KEY|SECRET|SECRETS|TOKEN|TOKENS|PASS|PASSWD|PASSWORD|PASSPHRASE|PWD|CREDENTIAL|CREDENTIALS|AUTH|DSN)(?:_|$)|(?:^|_)PAT(?:_|$)|(?:^|_)DATABASE_URL$/i;
 const NON_SECRET_NAMES = new Set(['PWD', 'OLDPWD', 'SSH_AUTH_SOCK', 'GPG_AGENT_INFO', 'XAUTHORITY', 'KEYTIMEOUT', 'GNUPGHOME', 'GIT_ASKPASS', 'SSH_ASKPASS', 'SUDO_ASKPASS', 'AUTH_SOCK', 'KEYBOARD', 'KEYMAP', 'TOKENIZERS_PARALLELISM']);
 
 function isSensitiveName(name) {
