@@ -43,4 +43,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-secret-get-in-a-pipe.md](zn-secret-get-in-a-pipe.md): what `secret get` does when you try to pipe a vault value into another tool, and what to use instead.
+- [zn-vault-status-after-unlock-expiry.md](zn-vault-status-after-unlock-expiry.md): read `vault status` before and after the unlock time ran out, see what other commands say, and unlock again.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
