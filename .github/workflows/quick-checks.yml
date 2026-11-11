@@ -207,6 +207,13 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-no-simply-just.mjs
 
+      - name: Markdown lint - test the last reviewed check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-last-reviewed.test.mjs
+      - name: Markdown lint - compat and install matrix carry a valid last reviewed date
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-last-reviewed.mjs
+
       # Spellcheck
       - name: Spellcheck - typos
         if: ${{ !cancelled() && steps.scope.outputs.typos == 'true' }}
