@@ -103,7 +103,7 @@ Run `npx -y zn-gate hooks uninstall <agent>` in your own terminal: it removes
 the hooks of that agent only. When it changes the settings file, it writes a backup
 copy of that file first.
 The Uninstall column of [the table by agent](by-agent.md) has the name and the
-command for each of them, for example `claude-code`, `codex`, `cursor` or
+command for each of them, for example `claude-code`, `cursor`, `opencode` or
 `gemini`. For Claude Code installed as a plugin, remove the plugin instead:
 `claude plugin uninstall zn-gate@usezn`. Then run `npx -y zn-gate check`: the agent
 is listed as not set up, with the command to set it up again. Details are in
