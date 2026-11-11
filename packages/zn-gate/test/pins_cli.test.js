@@ -287,3 +287,19 @@ test('a key that is not a pin file name cannot reach another file', async (t) =>
   assert.match(r.stderr, /zn-gate pins: no server/);
   assert.deepStrictEqual(await pendingOf(home, WEATHER_KEY), ['weather']);
 });
+
+// Gap: lib/mcp-pins.js servers() takes the pin files in directory order (readdirSync on hash-named
+// files, no sort), so `pins list` does not sort the servers by name. Kept as a todo until it does.
+test('list sorts the pinned servers by name', { todo: 'pins list prints servers in directory order (readdirSync of hash-named files, no sort); not sorted by name yet' }, async (t) => {
+  const home = freshHome(t);
+  const ZETA_KEY = pins.serverKey('node', ['zeta-srv']);
+  const ALPHA_KEY = pins.serverKey('node', ['alpha-srv']);
+  await pinServer(home, 'node', ['zeta-srv'], [{ name: 'time', description: 'Clock.' }]);
+  await pinServer(home, 'node', ['alpha-srv'], [WEATHER]);
+  const r = await withHome(home, () => capture(() => pinsCli.run(['list'], NO_AGENT)));
+  assert.strictEqual(r.code, 0);
+  const alphaAt = r.stdout.indexOf('  ' + ALPHA_KEY + '  ');
+  const zetaAt = r.stdout.indexOf('  ' + ZETA_KEY + '  ');
+  assert.ok(alphaAt >= 0 && zetaAt >= 0, 'both servers are listed');
+  assert.ok(alphaAt < zetaAt, 'alpha-srv is listed before zeta-srv');
+});
