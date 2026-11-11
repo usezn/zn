@@ -44,6 +44,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-check-before-a-demo.md](zn-check-before-a-demo.md): a four-command checklist to run before a demo: check, check --hooks, status and vault status, with the real output to expect.
 - [zn-check-on-a-fresh-clone-of-a-repo.md](zn-check-on-a-fresh-clone-of-a-repo.md): run `zn check` in a folder you just cloned: what it tests, what it does not touch, and what a hook file or rules file in the repository changes. Then `zn scan` for the files.
 - [zn-connect-behind-a-proxy.md](zn-connect-behind-a-proxy.md): use the optional cloud check on a network with a proxy: what zn-gate supports, what Node.js and Python do, and what a failed check looks like.
+- [zn-disconnect-then-analyze-offline-behaviour.md](zn-disconnect-then-analyze-offline-behaviour.md): what `analyze` does after `disconnect`, and when the cloud check is on but cannot be reached.
 - [zn-evidence-verify-after-disk-full.md](zn-evidence-verify-after-disk-full.md): what zn-gate evidence --verify prints when the last record of the decision log was cut short by a full disk, and how to start a new log.
 - [zn-first-week-reviewing-blocks.md](zn-first-week-reviewing-blocks.md): a five-minute daily routine for the first week, with zn why, zn stats, zn report and zn evidence.
 - [zn-hooks-and-monorepo-subfolders.md](zn-hooks-and-monorepo-subfolders.md): where the hook files are written and read when you work in a subfolder of a monorepo: the user install, `--project` and `check --hooks`.
