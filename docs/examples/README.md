@@ -46,3 +46,4 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-hooks-status-in-a-ci-job.md](zn-hooks-status-in-a-ci-job.md): fail a CI job on `zn-gate check --hooks` when a hook is stale or broken, with its exit codes, real output, and why plain `check` does not catch it.
 - [zn-scan-ci-annotations-reading.md](zn-scan-ci-annotations-reading.md): read the GitHub annotations of scan --format github line by line, from the error to the notices and warnings, and silence a fixture folder.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
+- [zn-why-reading-a-wrapped-block-in-ci-logs.md](zn-why-reading-a-wrapped-block-in-ci-logs.md): find the rule of a block in a CI log whose lines are wrapped, and what zn why can and cannot add.
