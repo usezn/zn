@@ -11,7 +11,7 @@ A part in angle brackets, such as `<file>`, is a blank that zn-gate fills in. Ru
 ## 1. `.env` holds plain-text secrets
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
 ```
 
 **Why it fired:** your agent tried to read a `.env` file that still has real values written in it. zn-gate stopped the read, so those values never reached the model.

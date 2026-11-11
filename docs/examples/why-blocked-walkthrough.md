@@ -19,7 +19,7 @@ cat .env
 The zn hook checks the call before it runs and stops it. The agent is told:
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.15.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `npx -y zn-gate@1.15.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
 ```
 
 The secrets did not reach the agent: zn stopped the call before it ran. This is zn working, not an error.
