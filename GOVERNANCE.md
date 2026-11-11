@@ -20,6 +20,16 @@ The project is developed under the usezn name, which also runs the optional zn
 cloud service. The code in this repository is MIT-licensed and works without
 that service.
 
+## Roles and responsibilities
+
+| Role | Who | Responsibilities |
+| --- | --- | --- |
+| Maintainer | People listed in [MAINTAINERS.md](MAINTAINERS.md) (today: John Silver, [@tljohnsilver](https://github.com/tljohnsilver)) | Reviews and merges pull requests; decides the roadmap and what goes into each release; prepares, approves and publishes releases; handles security reports and coordinates their disclosure; administers the GitHub organization, the repository settings and the package registry entries; decides on inviting new maintainers. |
+| Contributor | Anyone | Opens pull requests against `next`, with tests and a changelog fragment for user-visible changes; reports security issues privately, never in a public issue or pull request. |
+| Security contact | [security@usezn.com](mailto:security@usezn.com) or GitHub private vulnerability reporting | Receives vulnerability reports privately and acknowledges them within 24 hours (target; see [SECURITY.md](SECURITY.md)). |
+
+The people in each role are listed in [MAINTAINERS.md](MAINTAINERS.md).
+
 ## How decisions are made
 
 - Day-to-day changes are decided in pull requests: anyone can open one, and the
