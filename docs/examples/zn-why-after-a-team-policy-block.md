@@ -34,7 +34,7 @@ zn team status --rules
 ```
 
 ```text
-Organization: Fake Org (org_2XXp1goSj5n0WCqm)
+Organization: Fake Org (org_EXAMPLE0000000000)
 Policy:       version 1, valid until 2026-11-18T00:00:00.000Z
 Rules (verified policy, version 1, signed with key 46b02b07abae42ca, valid until 2026-11-18T00:00:00.000Z):
   1. blocks use of secrets named PROD_* (all agents). Reason: No production credentials in AI agents
