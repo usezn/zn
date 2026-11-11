@@ -191,7 +191,7 @@ of the release you want in place of `vX.Y.Z`):
 
 ```bash
 claude plugin marketplace remove usezn
-claude plugin marketplace add usezn/zn@vX.Y.Z
+claude plugin marketplace add usezn/zn#vX.Y.Z
 claude plugin install zn-gate@usezn
 ```
 
@@ -208,7 +208,7 @@ npm audit signatures
 Claude Code, from a marketplace pinned to the release tag:
 
 ```bash
-claude plugin marketplace add usezn/zn@v1.15.0
+claude plugin marketplace add usezn/zn#v1.15.0
 claude plugin install zn-gate@usezn
 ```
 

@@ -29,7 +29,7 @@ const { spawnSync } = require('child_process');
 const PKG_ROOT = path.join(__dirname, '..');
 const VERSION = require('../package.json').version;
 // The plugin marketplace is added at this release's tag, so `claude plugin update` never follows the default branch.
-const MARKETPLACE_REF = 'usezn/zn@v' + VERSION;
+const MARKETPLACE_REF = 'usezn/zn#v' + VERSION;
 const isWin = process.platform === 'win32';
 
 /* zn-gate runs from a temporary copy (npx, pnpm dlx, yarn dlx, bunx) rather than an install that stays. */

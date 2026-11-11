@@ -113,6 +113,6 @@ test('an empty event from the Claude Code plugin says to update the plugin, not 
   const res = spawnSync(process.execPath, [RUNNER, 'claude-code'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '/example/plugin' } });
   assert.equal(res.status, 2);
   assert.match(res.stderr, /reinstall the zn-gate plugin at its release/);
-  assert.match(res.stderr, /claude plugin marketplace add usezn\/zn@v\d+\.\d+\.\d+/);
+  assert.match(res.stderr, /claude plugin marketplace add usezn\/zn#v\d+\.\d+\.\d+/);
   assert.ok(!/hooks install/.test(res.stderr));
 });

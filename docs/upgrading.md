@@ -73,7 +73,7 @@ Other cases:
 
   ```bash
   claude plugin marketplace remove usezn
-  claude plugin marketplace add usezn/zn@vX.Y.Z
+  claude plugin marketplace add usezn/zn#vX.Y.Z
   claude plugin install zn-gate@usezn
   ```
 

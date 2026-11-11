@@ -104,7 +104,7 @@ function pluginNodeProblem(st) {
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
-    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn@v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
+    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn#v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.claude', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
   },
@@ -344,7 +344,7 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
 
 // How to move the Claude Code plugin to this release. The marketplace is added at a release tag, so `claude plugin update`
 // keeps the plugin that tag holds: the marketplace is removed and added again at the new tag.
-const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn@v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
+const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
 const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so ' + PLUGIN_UPDATE_STEPS;
 
 /* Whether version `a` is older than `b` (numbers before any "-" are compared, so 1.15.0-rc.1 and 1.15.0 count as the same
@@ -392,7 +392,7 @@ function pluginVersionNote(root, own = require('../package.json').version) {
   const both = 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
   if (/-/.test(own)) return both;
   if (require('./init-guide')._internal.cmp(v, own) < 0) {
-    return both + ', so Claude Code\'s tool calls are protected by the rules of zn-gate ' + v + '. To match them, ' + PLUGIN_UPDATE_STEPS.replace('usezn/zn@v' + VERSION, 'usezn/zn@v' + own) + ' and start a new Claude Code session';
+    return both + ', so Claude Code\'s tool calls are protected by the rules of zn-gate ' + v + '. To match them, ' + PLUGIN_UPDATE_STEPS.replace('usezn/zn#v' + VERSION, 'usezn/zn#v' + own) + ' and start a new Claude Code session';
   }
   return both + ', so this check runs older rules than the plugin. To match them, run `npm install -g zn-gate@latest` (or `npx -y zn-gate@latest check`) in your own terminal';
 }

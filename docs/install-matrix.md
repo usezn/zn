@@ -89,7 +89,7 @@ It should say that your agent is protected.
 - The cloud check of `zn-gate analyze`. On an offline computer, leave it off: do not set `ZN_CLOUD=1` and do not run `zn-gate connect`. With the cloud check off, nothing is sent to usezn.com.
 - `zn-gate connect`, which checks an API key with usezn.com.
 - The team commands that join or sync with a zn organization.
-- `claude plugin marketplace add usezn/zn@v1.15.0`, which installs the Claude Code plugin from GitHub. Use `zn hooks install claude-code`, as in step 2, instead.
+- `claude plugin marketplace add usezn/zn#v1.15.0`, which installs the Claude Code plugin from GitHub. Use `zn hooks install claude-code`, as in step 2, instead.
 
 **Updating later.** Download the newer `.tgz` on a computer with internet, copy it over, and run `npm install -g ./zn-gate-<new-version>.tgz --offline` again.
 

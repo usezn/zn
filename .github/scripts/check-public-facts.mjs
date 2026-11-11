@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 export const PIN_PATTERNS = [
   /zn-gate@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /usezn\/zn@v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
+  /usezn\/zn#v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /--ref v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /\/(?:blob|tree)\/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)(?=[/"'\s)#]|$)/g,
   // The version in prose: "installs zn-gate 1.6.0", "zn-gate **1.6.0**", "exactly version 1.6.0", "the `v1.6.0` tag".
@@ -82,7 +83,7 @@ export function marketplaceFiles(all) {
   return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
 }
 // The short form and the URL form (with or without .git); `usezn/zn-other` is another repository.
-const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(@v\S*|#v\S*|\s+--ref\s+v\S*)?/g;
+const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(#v\S*|\s+--ref\s+v\S*)?/g;
 
 /**
  * All differences between the facts and the files, as readable lines (empty = consistent).
@@ -201,7 +202,7 @@ export function check(facts, files, read, options = {}) {
     for (const m of s.matchAll(MARKETPLACE_ADD)) {
       if (m[1]) continue;
       const line = s.slice(0, m.index).split('\n').length;
-      errors.push(`${f}:${line}: "${m[0]}" has no release tag: use usezn/zn@v<version> (Claude Code) or usezn/zn --ref v<version> (Codex)`);
+      errors.push(`${f}:${line}: "${m[0]}" has no release tag: use usezn/zn#v<version> (Claude Code) or usezn/zn --ref v<version> (Codex)`);
     }
   }
 
