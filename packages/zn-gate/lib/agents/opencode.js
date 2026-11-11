@@ -45,6 +45,7 @@ const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
+const { cliName } = require('../zn-command');
 
 const id = 'opencode';
 const PLUGIN_FILE = 'zn-gate.js';
@@ -168,7 +169,7 @@ function pluginSource(opts = {}) {
   const launch = project ? 'const NODE = "zn";\nconst RUNNER = null;' : `const NODE = ${node};\nconst RUNNER = ${runner};`;
   const argv = project ? '["hook", "opencode"]' : '[RUNNER, "opencode"]';
   // The repair step a blocked call names: check what is wrong, then install the hook again (the same scope).
-  const repair = JSON.stringify('Run zn-gate check in a terminal, then zn hooks install opencode' + (project ? ' --project' : '') + '.');
+  const repair = JSON.stringify('Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode' + (project ? ' --project' : '') + '.');
   // On Windows `zn` is zn.cmd, which spawn runs only through a shell. The
   // arguments are fixed strings, so the shell adds no input of its own; and
   // neither `zn` nor the `node` it starts may come from the folder OpenCode
