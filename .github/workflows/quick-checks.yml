@@ -84,7 +84,7 @@ jobs:
 
       # Node.js 22 for the changelog tools, the workflow header check, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.wfheader == 'true' || steps.scope.outputs.timeouts == 'true' || steps.scope.outputs.wfformat == 'true' || steps.scope.outputs.fragmentnames == 'true') }}
+        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.wfheader == 'true' || steps.scope.outputs.timeouts == 'true' || steps.scope.outputs.wfformat == 'true' || steps.scope.outputs.fragmentnames == 'true' || steps.scope.outputs.actioninputs == 'true') }}
         with:
           node-version: 22.x
           package-manager-cache: false
@@ -167,6 +167,13 @@ jobs:
       - name: Workflow format - newline at the end, no tabs, two-space indents
         if: ${{ !cancelled() && steps.scope.outputs.wfformat == 'true' }}
         run: node .github/scripts/check-workflow-format.mjs
+      # Action inputs: every input of action.yml has a description (the Marketplace page shows it).
+      - name: Action inputs - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.actioninputs == 'true' }}
+        run: node --test .github/scripts/check-action-inputs.test.mjs
+      - name: Action inputs - every input has a description
+        if: ${{ !cancelled() && steps.scope.outputs.actioninputs == 'true' }}
+        run: node .github/scripts/check-action-inputs.mjs
 
       # Markdown lint
       - name: Markdown lint - install markdownlint-cli2 (locked)

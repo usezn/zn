@@ -17,6 +17,7 @@
 # script of the repository.
 #   timeouts      pull requests and pushes to main or next: workflows, the timeout check and its test
 #   wfformat      pull requests and pushes to main or next: workflows, the format check and its test
+#   actioninputs  pull requests and pushes to main or next: action.yml, the input description check and its test
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
@@ -30,7 +31,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets doclinks fragmentnames scopetest"
+CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat actioninputs packagelint hooks snippets doclinks fragmentnames scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -89,7 +90,7 @@ while IFS= read -r f; do
   readme_root=false
   case "$f" in README*) [[ "$f" != */* ]] && readme_root=true ;; esac
   case "$f" in
-    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-docs-command-names*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*|CHANGELOG.md|.github/scripts/check-changelog-dates*|action.yml|.github/scripts/check-action-inputs*|.github/scripts/check-docs-anchors*|.github/scripts/check-docs-wording*|.github/scripts/check-docs-todo*|.github/scripts/check-docs-examples-sections*|.github/scripts/check-docs-bash-quotes*|.github/scripts/check-docs-code-trailing-space*) run[markdownlint]=true ;;
+    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-docs-command-names*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*|CHANGELOG.md|.github/scripts/check-changelog-dates*|action.yml|.github/scripts/check-action-inputs-documented*|.github/scripts/check-docs-anchors*|.github/scripts/check-docs-wording*|.github/scripts/check-docs-todo*|.github/scripts/check-docs-examples-sections*|.github/scripts/check-docs-bash-quotes*|.github/scripts/check-docs-code-trailing-space*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
   case "$f" in
@@ -113,6 +114,7 @@ while IFS= read -r f; do
   esac
   case "$f" in
     .github/workflows/*|.github/scripts/check-workflow-format*) run[wfformat]=true ;;
+    action.yml|.github/scripts/check-action-inputs.*) run[actioninputs]=true ;;
   esac
   case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;
