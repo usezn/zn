@@ -1,15 +1,16 @@
 name: zn-gate scrubber and vault
 
-# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next
-# run every Node.js version on Ubuntu and Windows, without macOS. The full matrix (Windows and macOS,
-# every Node.js version) runs on pushes to main and release branches, on the daily schedule, on pull requests into main and
-# release branches, on any pull request labelled full-ci, and on manual runs.
+# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next do not
+# run this workflow: next gets the full matrix once a night (nightly-next.yml starts a manual run on it). The full
+# matrix (Windows and macOS, every Node.js version) runs on pushes to main and release branches, on the daily
+# schedule, on pull requests into main and release branches, on any pull request labelled full-ci, and on manual
+# runs.
 on:
   push:
     # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
     # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
     # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
-    branches: [ main, next, 'release/**' ]
+    branches: [ main, 'release/**' ]
   pull_request:
     branches: [ next, main, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
@@ -26,11 +27,10 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main and manual runs always complete.
+# A new push to a pull request cancels the run still going for it. Other runs always complete.
 concurrency:
-  group: scrubber-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: scrubber-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -53,9 +53,6 @@ jobs:
         # "scrubber + vault (node 22 / ubuntu-latest)" is a required check: it always runs.
         os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[18, 20, 22, 24]' || '[22]') }}
-        # Pushes to next leave macOS out (4 jobs); every other full run keeps it.
-        # A push to next also leaves out node 22 on Ubuntu, the required leg the merge queue already ran on this commit.
-        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest"},{"os":"ubuntu-latest","node":22}]' || '[]') }}
     defaults:
       run:
         working-directory: packages/zn-gate

@@ -4,7 +4,9 @@ on:
   push:
     # release/** is here, and there is no paths filter, because tag-release.yml requires "build, test, clippy,
     # fmt" on the exact release commit, whatever that commit changed. rust-scope.sh runs every push in full.
-    branches: [main, next, 'release/**']
+    # Pushes to next do not run this workflow: next gets every job once a night (nightly-next.yml starts a
+    # manual run on it).
+    branches: [main, 'release/**']
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
@@ -30,19 +32,17 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
   CARGO_INCREMENTAL: 0
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main, scheduled runs and manual runs always complete.
+# A new push to a pull request cancels the run still going for it. Runs for main, release branches, scheduled runs
+# and manual runs always complete.
 concurrency:
-  group: rust-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next-push' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: rust-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     name: build, test, clippy, fmt
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -100,8 +100,8 @@ jobs:
     name: private file writer (${{ matrix.os }})
     # The owner-only file writer has a separate Windows implementation (protected DACL) and platform-specific
     # Unix code (file permissions), so its tests also run on Windows and macOS. Not a required check. It runs on
-    # pushes to main, next and release branches, on the schedule and on manual runs (the scope job always says yes
-    # there), in pull requests into main or a release branch and in pull requests with the full-ci label (always),
+    # pushes to main and release branches, on the schedule and on manual runs, the nightly run on next included (the
+    # scope job always says yes there), in pull requests into main or a release branch and in pull requests with the full-ci label (always),
     # and in other pull requests only when they change Rust code or Cargo files, so a pull request into next that
     # changes none does not start a Windows or macOS runner. The merge queue runs only the required checks, so it
     # skips this job. Draft pull requests skip it (through scope).
@@ -172,7 +172,7 @@ jobs:
   msrv:
     name: minimum supported Rust version (1.95)
     # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. The merge
-    # queue runs only the required checks, so the commit merged into next is checked here, on the push to next.
+    # queue runs only the required checks, so next is checked here in the nightly run (a manual run on next).
     needs: scope
     if: github.event_name != 'merge_group' && needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
@@ -220,8 +220,9 @@ jobs:
   audit:
     name: cargo audit
     # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. Unlike the
-    # other jobs that are not required, it also runs in the merge queue: a new RustSec advisory must stop a merge into
-    # next, not show up only after it.
+    # other jobs that are not required, it also runs in the merge queue, so a new RustSec advisory shows up before a
+    # merge into next and not only after it. It is not a required check, so a failure does not block the merge by
+    # itself; blocking would need cargo audit in the next ruleset. The nightly run on next checks it again.
     needs: scope
     if: needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
@@ -252,8 +253,8 @@ jobs:
 
   coverage:
     name: coverage report
-    # Report only, no threshold, and it repeats the build and tests, so it runs on every push (main, next and
-    # release branches) and on manual runs, not on pull requests or the weekly schedule.
+    # Report only, no threshold, and it repeats the build and tests, so it runs on every push (main and release
+    # branches) and on manual runs (the nightly run on next is one), not on pull requests or the weekly schedule.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
