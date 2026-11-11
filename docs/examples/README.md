@@ -50,4 +50,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-init-reading-the-plan-before-confirming.md](zn-init-reading-the-plan-before-confirming.md): read the plan that `init` prints before it asks, answer no, and see that nothing changes.
 - [zn-init-then-first-block-in-five-steps.md](zn-init-then-first-block-in-five-steps.md): five copy-paste steps from `init` to a first blocked command, and what `why` says about it.
 - [zn-init-then-uninstall-clean-slate-test.md](zn-init-then-uninstall-clean-slate-test.md): set zn-gate up in a throwaway home folder, remove it, and compare the file lists to see exactly what `uninstall` removes and what it leaves.
+- [zn-stats-before-and-after-hooks-reinstall.md](zn-stats-before-and-after-hooks-reinstall.md): what `zn stats` shows before and after you reinstall the hooks: the counts are kept, and what does change them.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
