@@ -2167,4 +2167,23 @@ mod table_parity_tests {
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
     }
+
+    #[test]
+    fn test_digitalocean_token_in_env_assignment_is_masked() {
+        // Fake DigitalOcean personal access token built at runtime from parts, so scanners do not flag the literal.
+        let token = [
+            "dop_v1_",
+            "9c41e07ab3d25f68",
+            "0e7b5a92c4f1d836",
+            "f36a0d8e14b7c295",
+            "5b2e9f0c71a8d463",
+        ]
+        .concat();
+        let input = format!("DIGITALOCEAN_TOKEN={token} doctl compute droplet list");
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(&token), "{out}");
+        assert!(out.starts_with("DIGITALOCEAN_TOKEN"), "{out}");
+        assert!(out.contains("[SECRET_REDACTED]"), "{out}");
+        assert!(out.ends_with(" doctl compute droplet list"), "{out}");
+    }
 }
