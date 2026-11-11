@@ -47,3 +47,4 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
 - [zn-vault-log-filtering-by-secret-name.md](zn-vault-log-filtering-by-secret-name.md): narrow the vault log to one secret with `grep` or `awk`, and read what each line means.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
+- [zn-why-for-a-secret-read-block.md](zn-why-for-a-secret-read-block.md): explain a blocked read of a `.env` file with `zn-gate why`, and the safe ways to go on.
