@@ -10,7 +10,7 @@
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
-#   wfheader      pull requests and pushes to main or next: workflows, the header check and its test
+#   wfheader      pull requests and pushes to main or next: workflows, the header checks and their tests
 # Workflow lint (actionlint + zizmor) is not decided here: its job in quick-checks.yml keeps its own inline
 # paths filter (workflows, actions, workflow-lint config, zizmor config, action.yml) because it runs no
 # script of the repository.
@@ -105,7 +105,7 @@ while IFS= read -r f; do
     *.sh) run[shellcheck]=true ;;
   esac
   case "$f" in
-    .github/workflows/*|.github/scripts/check-workflow-header*) run[wfheader]=true ;;
+    .github/workflows/*|.github/scripts/check-workflow-header*|.github/scripts/check-workflow-first-line*) run[wfheader]=true ;;
   esac
   case "$f" in
     .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
