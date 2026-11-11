@@ -1,6 +1,6 @@
-# Example: a team policy blocks a secret, and what `zn why` shows
+# Example: a team policy blocks a secret, and what `zn-gate why` shows
 
-On a machine that belongs to a zn Team organization, the admin's policy can block the use of a secret by name. This page shows what you and the agent see when that happens, how to find the rule, and what `zn why` can and cannot tell you about it. The names and values are made up.
+On a machine that belongs to a zn Team organization, the admin's policy can block the use of a secret by name. This page shows what you and the agent see when that happens, how to find the rule, and what `zn-gate why` can and cannot tell you about it. The names and values are made up. You type `zn-gate`; the messages the tool prints start with the short name `zn`, which is the same program.
 
 The output was printed on a test machine in a temporary home folder. A local test server stood in for the organization and signed the policy, so the join, the policy and the messages are real; only the organization is not. The policy had two rules:
 
@@ -11,10 +11,10 @@ To join an organization, see [the first day of zn Team](team-first-day.md). How 
 
 ## 1. What the agent sees
 
-The agent asks `zn run` to start a program with the secret `PROD_DB_URL`:
+The agent asks `zn-gate run` to start a program with the secret `PROD_DB_URL`:
 
 ```bash
-zn run --secrets PROD_DB_URL -- printenv PROD_DB_URL
+zn-gate run --secrets PROD_DB_URL -- printenv PROD_DB_URL
 ```
 
 zn refuses, and nothing runs. The command exits with code `77`:
@@ -30,7 +30,7 @@ The tools of the secrets MCP server refuse in the same way, with a message that 
 Run this in your own terminal. The output below leaves out two lines, about the installation and the audit upload:
 
 ```bash
-zn team status --rules
+zn-gate team status --rules
 ```
 
 ```text
@@ -43,29 +43,29 @@ Rules (verified policy, version 1, signed with key 46b02b07abae42ca, valid until
 
 The secret name matches rule 1, so that is the rule that blocked it, and the reason is the one your admin wrote. The command reads the policy saved on this machine and checks its signature again; it contacts nobody.
 
-## 3. What `zn why` shows
+## 3. What `zn-gate why` shows
 
 ```bash
-zn why
+zn-gate why
 ```
 
 ```text
 zn why: there is no evidence log yet, so no block has been recorded on this computer.
 ```
 
-This is the answer on a machine that has never blocked anything through a hook or the shield. `zn why` explains the last block in the local decision log, and the decision log holds what the hooks and the shield decided about tool calls, file reads and prompts. A secret that the organization policy refuses is decided by the vault, so it is not in that log. Two things follow:
+This is the answer on a machine that has never blocked anything through a hook or the shield. `zn-gate why` explains the last block in the local decision log, and the decision log holds what the hooks and the shield decided about tool calls, file reads and prompts. A secret that the organization policy refuses is decided by the vault, so it is not in that log. Two things follow:
 
-- `zn why` cannot explain this block. Do not look for it there.
-- On a machine where the hooks did block something earlier, `zn why` explains that earlier block, not this one. Check the time on its first line before you act on it.
+- `zn-gate why` cannot explain this block. Do not look for it there.
+- On a machine where the hooks did block something earlier, `zn-gate why` explains that earlier block, not this one. Check the time on its first line before you act on it.
 
-The vault keeps its own record. `zn secret log` lists the refused use as a `deny` line for `PROD_DB_URL`.
+The vault keeps its own record. `zn-gate secret log` lists the refused use as a `deny` line for `PROD_DB_URL`.
 
 ## A Warn rule does not block
 
 The `STAGING_*` rule only warns. The same kind of command goes ahead (after the usual first-use approval of the program), and zn says so on the error output:
 
 ```bash
-zn run --secrets STAGING_TOKEN -- printenv STAGING_TOKEN
+zn-gate run --secrets STAGING_TOKEN -- printenv STAGING_TOKEN
 ```
 
 ```text
@@ -73,21 +73,21 @@ zn: your team policy would block STAGING_TOKEN here (policy note: "Staging crede
 __ZN_STAGING_TOKEN__
 ```
 
-The program printed the marker, not the value, as usual with `run`. The use is recorded in the vault log with the decision `warn`, and `zn why` has nothing to show for it either.
+The program printed the marker, not the value, as usual with `run`. The use is recorded in the vault log with the decision `warn`, and `zn-gate why` has nothing to show for it either.
 
 ## What to do
 
 1. Do not try another way to read the value. The rule is the organization's decision.
-2. Tell your admin the secret name and the rule from `zn team status --rules`, and why the task needs it.
-3. If the admin changes the choice for that rule (Not blocked, Warn or Block, see [the three choices](../team.md#the-three-choices-not-blocked-warn-block)), pull the new policy with `zn team sync` and run `zn team status --rules` again. See [pull a new team policy](team-sync-after-policy-change.md).
+2. Tell your admin the secret name and the rule from `zn-gate team status --rules`, and why the task needs it.
+3. If the admin changes the choice for that rule (Not blocked, Warn or Block, see [the three choices](../team.md#the-three-choices-not-blocked-warn-block)), pull the new policy with `zn-gate team sync` and run `zn-gate team status --rules` again. See [pull a new team policy](team-sync-after-policy-change.md).
 
 ## Project rules are a different thing
 
-A file named `.znrules` or `zn.config.json` in a project can also hold rules that your team shares. Those are not organization policy. They apply to calls through the shield and to the guard in code, and a block by one of them is in the decision log, so `zn why` explains it. See [where custom rules apply](../../packages/zn-gate/README.md#where-custom-rules-apply).
+A file named `.znrules` or `zn.config.json` in a project can also hold rules that your team shares. Those are not organization policy. They apply to calls through the shield and to the guard in code, and a block by one of them is in the decision log, so `zn-gate why` explains it. See [where custom rules apply](../../packages/zn-gate/README.md#where-custom-rules-apply).
 
 ## See also
 
-- [Reading `zn why` after a blocked command](why-blocked-walkthrough.md): a block that is in the decision log.
+- [Reading `zn-gate why` after a blocked command](why-blocked-walkthrough.md): a block that is in the decision log.
 - [Why was this blocked?](../why-was-this-blocked.md)
 - [zn Team on a developer machine](../team.md)
 - [Command line reference](../cli.md#why)

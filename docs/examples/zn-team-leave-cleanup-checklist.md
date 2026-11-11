@@ -1,10 +1,10 @@
-# Example: what stays on disk after `zn team leave`
+# Example: what stays on disk after `zn-gate team leave`
 
-A checklist for the day after you leave a zn Team organization. It says what `zn team leave` removes, what it keeps on purpose, what the command asks you to delete by hand, and which commands show that nothing of the organization is left. All names in the examples are made up. The background is in [Leaving](../team.md#leaving) and in [Files and folders](../files-and-folders.md).
+A checklist for the day after you leave a zn Team organization. It says what `zn-gate team leave` removes, what it keeps on purpose, what the command asks you to delete by hand, and which commands show that nothing of the organization is left. All names in the examples are made up. The background is in [Leaving](../team.md#leaving) and in [Files and folders](../files-and-folders.md).
 
-Run the commands yourself, in your own terminal.
+Run the commands yourself, in your own terminal. You type `zn-gate`; the messages the tool prints start with the short name `zn`, which is the same program.
 
-## What `zn team leave` removes
+## What `zn-gate team leave` removes
 
 The command first asks the server to revoke this installation. It then removes the membership from the encrypted vault and deletes four files in your `~/.zn` folder one by one:
 
@@ -19,14 +19,14 @@ From that moment the organization's policy, detectors and uploads no longer appl
 
 ## What stays on disk
 
-These files and settings are yours and `zn team leave` does not touch them:
+These files and settings are yours and `zn-gate team leave` does not touch them:
 
 - **The vault and your secrets.** Leaving does not delete the vault. Your own secrets stay in it.
 - **The vault audit log (`audit.jsonl`).** Leaving adds a record that you left. It keeps the earlier records, including those from the time you were in the organization.
 - **The decision log (`evidence.jsonl`) and `stats.json`.** They are your local logs and counters.
 - **`config.json`.** Your own settings.
 - **The hooks in your agent's settings and the launcher scripts in `~/.zn/hooks`.** zn-gate keeps protecting your agent with its own rules. To remove them, use [`hooks uninstall`](../cli.md#hooks) or [`uninstall`](../uninstall.md).
-- **Managed settings your admin deployed with device management.** `zn team managed-config` only prints those files; zn-gate never wrote them, so it does not remove them. Ask whoever manages the machine.
+- **Managed settings your admin deployed with device management.** `zn-gate team managed-config` only prints those files; zn-gate never wrote them, so it does not remove them. Ask whoever manages the machine.
 - **`team-notice.json`, if it exists.** It remembers which team notices a hook already showed you. The leave command does not delete it. It holds no secret, and you can delete it by hand.
 
 ## The one case where you must delete files by hand
@@ -43,7 +43,7 @@ The organization name and the path are examples. Delete the file named in the me
 ## Check that nothing is left
 
 ```bash
-zn team status
+zn-gate team status
 ```
 
 When this machine is not in an organization and the server was told, the output is one line:
@@ -64,7 +64,7 @@ The list must not show `team.json`, `org-policy.json`, `team-upload.json` or `te
 
 If the server could not be asked (offline, a server error, a rate limit), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet. zn-gate then keeps a small "revocation pending" record in the encrypted vault. It holds the install token, the organization, the API address and the time. It gives the organization no control: no policy, no uploads, no detectors.
 
-`zn team status` shows it, for example:
+`zn-gate team status` shows it, for example:
 
 ```text
 Not in a zn organization. Join with: zn team join <token> (from your organization admin).
@@ -72,13 +72,13 @@ Revocation pending since 2026-11-11T09:00:00.000Z (installation inst_example, or
   The server was not told that this installation left, so its token still works there. Next step: `zn team sync` retries now (zn also retries every 15 minutes while the vault is unlocked) until 2026-12-11T09:00:00.000Z, when it stops; an admin can then remove the installation from the dashboard.
 ```
 
-The installation id, the dates and the error in this example are made up. The lines are built the way `zn team status` builds them; they were not copied from a run against a real server.
+The installation id, the dates and the error in this example are made up. The lines are built the way `zn-gate team status` builds them; they were not copied from a run against a real server.
 
 To finish the job, go online, unlock the vault and run:
 
 ```bash
-zn unlock
-zn team sync
+zn-gate unlock
+zn-gate team sync
 ```
 
 The record is removed when the server confirms, or answers that the token is no longer valid. zn-gate gives up after 30 days; from then on, ask an organization admin to remove the installation from the dashboard.
