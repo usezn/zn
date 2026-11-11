@@ -4,7 +4,7 @@ By default `zn audit` writes its report to the screen. With `--output` it writes
 
 What the report contains and what every rule looks for is in [audit](../audit.md); the options are in [cli](../cli.md#audit). All file names and values here are made up.
 
-Run every command in your own terminal, not through your agent. `audit` only reads files: it runs nothing from the repository and sends nothing anywhere.
+Run every command in your own terminal, not through your agent. Scanning only reads the project files: `audit` runs no code from the repository and makes no network request. With `--output` it also writes the report to the path you choose.
 
 ## Write the report to a file
 
@@ -14,7 +14,7 @@ From the folder you want to review (a bare `zn audit` reviews the current direct
 zn audit --format text --output zn-audit.txt
 ```
 
-The file holds the same report the screen would show. If nothing is written, the command exits with `2`: the option is wrong, the path was not found, or the output file cannot be written.
+The file holds the same report the screen would show. An existing file at that path is overwritten (the old content is replaced, not appended to), so choose a new path, or copy the old file somewhere safe, before you run the examples below. If nothing is written, the command exits with `2`: the option is wrong, the path was not found, or the output file cannot be written.
 
 ## The three formats
 
