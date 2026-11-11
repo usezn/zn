@@ -577,6 +577,15 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   return filesToScan;
 }
 
+// Findings are listed in byte order of their path (UTF-8, not the locale), then by line,
+// rule and type, so the output does not depend on the order the filesystem returns entries.
+function compareText(a, b) {
+  return Buffer.compare(Buffer.from(String(a || ''), 'utf8'), Buffer.from(String(b || ''), 'utf8'));
+}
+function compareFindings(a, b) {
+  return compareText(a.file, b.file) || (a.line - b.line) || compareText(a.rule, b.rule) || compareText(a.type, b.type);
+}
+
 async function handleScan(targetPath, options) {
   const resolved = path.resolve(targetPath || '.');
   if (!fs.existsSync(resolved)) {
@@ -736,6 +745,10 @@ Files   : ${files.length} file(s) queued for audit\n
       findings.push({ file: relPath, line: m.line, rule: mcpSecrets.RULE_ID, reason: mcpSecrets.mcpReason(m.kind), type: 'secret_leak', sample: mcpSecrets.mcpSample(m.kind, m.name), next_step: mcpSecrets.mcpNextStep(m.kind, m.name) });
     }
   }
+
+  // One sort for every format: the walk order and the key blocks found after the line pass do not decide the order.
+  // Array.prototype.sort is stable, so findings that compare equal keep the order they were found in.
+  findings.sort(compareFindings);
 
   const totalSecrets = findings.filter((f) => f.type === 'secret_leak').length;
   const totalThreats = totalFindings - totalSecrets;

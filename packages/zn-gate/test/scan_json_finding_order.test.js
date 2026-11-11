@@ -1,10 +1,7 @@
 'use strict';
-// `zn scan --format json`: findings should be listed by file path, then by line.
-// Skipped: the order is not a guarantee in the code. bin/cli.js collects findings
-// in the order the files are walked (no sort), and the multi-line key blocks are
-// pushed after the line pass, so a key that starts at line 1 is listed after a
-// finding at line 4 of the same file. The test shows the expected order; remove
-// the skip when the scan sorts its findings. Every value is invented.
+// `zn scan --format json`: findings are listed by file path, then by line, even
+// when a multi-line key block (found after the line pass) starts before a finding
+// on a later line of the same file. Every value is invented.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,7 +16,7 @@ const BEGIN = '-----BEGIN ' + 'PRIVATE KEY-----';
 const BODY = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC' + 'Z'.repeat(40);
 const SECRET_LINE = 'mytool --api-key=' + FAKE;
 
-test('scan --format json lists findings by path, then by line', { skip: 'findings are not sorted by the scan (walk order, key blocks after the line pass); see the file header' }, () => {
+test('scan --format json lists findings by path, then by line', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-order-'));
   try {
     const content = [BEGIN, BODY, 'filler text here', SECRET_LINE, ''].join('\n');
