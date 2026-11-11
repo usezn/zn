@@ -21,7 +21,7 @@ Exported 1 records to zn-audit.otlp.jsonl (OTLP/JSON Lines, sha256 25dd6508d5f09
 
 The sha256 is the hash of the exported text. The same records always give the same bytes, so the same hash.
 
-`--out FILE` writes the file with owner-only permissions (`-rw-------`). It is written to a temporary file and moved into place when complete, so an error leaves no half file. It refuses a symbolic link or a folder as the target: a link would send the audit to wherever it points.
+`--out FILE` writes the file with owner-only permissions (`-rw-------`) on macOS and Linux. On Windows zn-gate does not set an access list: the file inherits the access list of its folder, so write it into a folder only you can read. It is written to a temporary file and moved into place when complete, so an error leaves no half file. It refuses a symbolic link or a folder as the target: a link would send the audit to wherever it points.
 
 Without `--out`, the export goes to standard output, so you can pipe it:
 
