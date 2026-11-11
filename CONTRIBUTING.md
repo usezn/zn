@@ -180,6 +180,23 @@ If you add or move a page, or link to a heading, check the links on your machine
 
 - The offline link check CI runs, with lychee, covers the READMEs and `plugins` too. The command is in item 3 of the Documentation checks above.
 
+## Writing a CI check script
+
+The small checks of the [Quick checks workflow](.github/workflows/quick-checks.yml) are plain Node.js scripts in `.github/scripts/`, one `check-<name>.mjs` with a `check-<name>.test.mjs` next to it. Real ones to copy from: `check-timeouts.mjs` (every workflow job sets `timeout-minutes`), `check-workflow-header.mjs`, `check-docs-titles.mjs` and `check-docs-examples-commands.mjs`. Follow the same shape so that a failure reads the same everywhere.
+
+1. **Write the script** as `.github/scripts/check-<name>.mjs`:
+   - Start with a comment that says what makes the check fail and how to run it, with the default arguments.
+   - Use only `node:` imports; no packages are installed for these checks.
+   - Put the logic in exported functions that take text or a folder and return the problems, so a test can call them. Keep `main(argv)` small: it returns the exit code.
+   - Run `main` only when the file is run directly, as the existing scripts do (`import.meta.url` compared with `process.argv[1]`), and wrap it so that an unexpected error prints `check-<name>: <message>` and exits with `1`.
+2. **Exit codes and messages.** Exit `0` and print one line that says what was checked, for example `timeouts OK: every job in 12 workflow file(s) sets timeout-minutes`. Exit `1` when there is a problem: print one line per problem that names the file and, where it can, the line or the job (`<file>:<line>: <problem>`), then an empty line and one sentence that says how to fix it. Print problems on standard error.
+3. **Write the test** as `.github/scripts/check-<name>.test.mjs` with `node:test` and `node:assert/strict`. Cover an input that passes, one that fails with the exact message, and the edge that made you write the check. Use a temporary folder for the file-based case. Run it with `node --test .github/scripts/check-<name>.test.mjs`.
+4. **Add two steps to the job in `.github/workflows/quick-checks.yml`**, next to the other checks: one that runs the test and one that runs the check. Both use `if: ${{ !cancelled() && steps.scope.outputs.<name> == 'true' }}`, so a failing step does not hide the ones after it. If your check is the only reason Node.js is needed for a change, add the same output to the `if:` of the `setup-node` step.
+5. **Decide when it runs in `.github/scripts/quick-scope.sh`.** Add `<name>` to the `CHECKS` list and to the comment at the top, and add a `case` branch that sets `run[<name>]=true` for the paths that should trigger it (the script and its test, plus the files it reads). A change to `quick-checks.yml` or to `quick-scope.sh` itself runs every check.
+6. **Test the scope.** Add one `check pull_request next <path> "<checks that must run>"` line to `.github/scripts/test-quick-scope.sh` for each path you added, and update the existing lines that now run your check too (the line for `quick-checks.yml` lists every check). Run `bash .github/scripts/test-quick-scope.sh` from the repository root.
+
+Before you push, run the new script and its test on your own machine, then the [documentation checks](#documentation-checks) and the other checks that your change touches. The Quick checks are not among the required checks, so a maintainer decides if a new one should become required (that needs a change to the branch rules and a `merge_group` trigger, see the comment at the top of `quick-checks.yml`).
+
 ## Your first pull request and draft pull requests
 
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
