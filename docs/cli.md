@@ -505,7 +505,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the vault audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
+Shows the vault audit log of secret use. Same as `secret log`. Each line is the time, the decision, the secret, its mode, the agent, the tool, the program or host, and a short reason code. A command that `zn run` refused shows the tool `zn-run` and a code such as `command_not_allowed`, `not_in_vault`, `policy:org_deny` or `not_approved`; `zn run` prints the full explanation itself. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
 
 #### `vault log export`
 

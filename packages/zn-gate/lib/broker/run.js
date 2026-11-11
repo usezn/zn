@@ -38,6 +38,10 @@ const fs = require('fs');
 const markers = require('./markers');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 const exe = require('../exe');
+
+// Tool name in the vault audit log. The log only keeps values that match fixed formats
+// (no spaces), so "zn run" would show as [invalid]; the readable explanation goes to stderr.
+const RUN_TOOL = 'zn-run';
 const { createMasker } = require('./mask');
 const { approvalStore } = require('./approvals');
 const { znError, loadVault, findProjectRoot } = require('../deps');
@@ -222,9 +226,11 @@ async function prepare(parsed, opts) {
   const audit = async (ev) => {
     try { await vault.audit(ev); } catch (_) { /* audit must never unblock or crash a decision */ }
   };
-  const deny = async (name, mode, reason, code = 'ZN_POLICY_DENIED') => {
-    await audit({ secret: name, mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'deny', reason });
-    throw znError(code, reason);
+  // auditReason: a short code for the audit log (see lib/vault/audit.js, reason format).
+  // message: the explanation for the person or agent; it goes to stderr only.
+  const deny = async (name, mode, auditReason, message, code = 'ZN_POLICY_DENIED') => {
+    await audit({ secret: name, mode, agent, tool: RUN_TOOL, argv0: exeName, host: null, decision: 'deny', reason: auditReason });
+    throw znError(code, message);
   };
 
   // Local settings with the organization policy applied (zn Team): every
@@ -260,22 +266,22 @@ async function prepare(parsed, opts) {
   for (const name of names) {
     const m = meta.get(name);
     if (!m) {
-      await deny(name, null, 'secret ' + name + ' is not in the vault. Add it from your own terminal: zn secret set ' + name, 'ZN_NOT_FOUND');
+      await deny(name, null, 'not_in_vault', 'secret ' + name + ' is not in the vault. Add it from your own terminal: zn secret set ' + name, 'ZN_NOT_FOUND');
     }
-    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.', 'ZN_POLICY_DENIED');
+    if (m.deny) await deny(name, m.mode, 'policy:org_deny', 'secret ' + name + ' is blocked for this agent by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.', 'ZN_POLICY_DENIED');
     if (m.mode !== 'env') {
-      await deny(name, m.mode, 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
+      await deny(name, m.mode, 'mode_not_env', 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');
     }
     const entry = markers.matchAllowCommands(m.allowCommands, parsed.command);
     if (!entry) {
-      await deny(name, m.mode, '`' + exeName + '` is not allowed to use ' + name + ' yet. ' +
+      await deny(name, m.mode, 'command_not_allowed', '`' + exeName + '` is not allowed to use ' + name + ' yet. ' +
         'The user can allow it from their own terminal: zn secret allow ' + name + ' --command ' + exeName + ' ' +
         '(for HTTP APIs, the secrets_http_request tool of the zn "secrets" MCP server needs no command allowed).');
     }
-    if (planted) await deny(name, m.mode, '`' + argv0 + '` ' + planted + '; zn run will not give it ' + name);
-    if (!opened) await deny(name, m.mode, '`' + argv0 + '` could not be opened for checking; zn run will not give it ' + name);
-    if (risk && risk.deny) await deny(name, m.mode, scriptDenial(risk.deny, argv0, name));
+    if (planted) await deny(name, m.mode, found ? 'executable_untrusted' : 'command_not_found', '`' + argv0 + '` ' + planted + '; zn run will not give it ' + name);
+    if (!opened) await deny(name, m.mode, 'executable_unreadable', '`' + argv0 + '` could not be opened for checking; zn run will not give it ' + name);
+    if (risk && risk.deny) await deny(name, m.mode, 'script_rewritable', scriptDenial(risk.deny, argv0, name));
     chosen.push({ name, mode: m.mode, command: entry });
   }
 
@@ -302,14 +308,14 @@ async function prepare(parsed, opts) {
       await approvals.recordApproval(c.name, c.command, ctx);
     } catch (err) {
       const why = err && err.code === 'ZN_POLICY_DENIED' ? err.message : (err && err.message) || 'not approved';
-      await deny(c.name, c.mode, 'first use of ' + c.name + ' with `' + c.command + '` was not approved (' + why + '). Nothing was run or sent. Do not retry the same request; finish the task another way.');
+      await deny(c.name, c.mode, 'not_approved', 'first use of ' + c.name + ' with `' + c.command + '` was not approved (' + why + '). Nothing was run or sent. Do not retry the same request; finish the task another way.');
     }
   }
 
   const values = new Map();
   for (const c of chosen) {
-    const v = await vault.resolve(project, markers.markerFor(c.name), { purpose: 'run', agent, tool: 'zn run', argv: parsed.command, exe: ctx.executable });
-    if (v == null) await deny(c.name, c.mode, 'secret ' + c.name + ' has no value in the vault. Next step: save its value with zn secret set ' + c.name + ' in your own terminal, or, if you are an agent, ask the user to do it.', 'ZN_NOT_FOUND');
+    const v = await vault.resolve(project, markers.markerFor(c.name), { purpose: 'run', agent, tool: RUN_TOOL, argv: parsed.command, exe: ctx.executable });
+    if (v == null) await deny(c.name, c.mode, 'no_value', 'secret ' + c.name + ' has no value in the vault. Next step: save its value with zn secret set ' + c.name + ' in your own terminal, or, if you are an agent, ask the user to do it.', 'ZN_NOT_FOUND');
     values.set(c.name, String(v));
   }
 
@@ -345,10 +351,10 @@ async function prepare(parsed, opts) {
     // A `warn` rule of the organization policy: allowed, recorded as "warn", and said.
     const m = meta.get(c.name);
     if (m && m.warn === true) {
-      await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'warn', reason: WARN_REASON });
+      await audit({ secret: c.name, mode: c.mode, agent, tool: RUN_TOOL, argv0: exeName, host: null, decision: 'warn', reason: WARN_REASON });
       if (opts.stderr !== false) (opts.stderr || process.stderr).write(warnNotice(c.name, m.warnReason) + '\n');
     } else {
-      await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'allow', reason: 'allowCommands: ' + c.command + (ownScript ? '; script writable by the current user: ' + ownScript : '') });
+      await audit({ secret: c.name, mode: c.mode, agent, tool: RUN_TOOL, argv0: exeName, host: null, decision: 'allow', reason: ownScript ? 'allow_commands:own_script' : 'allow_commands' });
     }
   }
   return { argv, env: childEnv, secrets: chosen.map((c) => ({ ...c, value: values.get(c.name) })), project, resolved: found ? found.real : null };

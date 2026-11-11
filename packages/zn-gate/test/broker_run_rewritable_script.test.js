@@ -178,7 +178,7 @@ test('zn run refuses a group-writable script, audits it, and starts nothing', { 
   assert.equal(r.code, 77, r.err);
   assert.match(r.err, /others can rewrite/);
   assert.ok(!r.ran, 'the script was not started');
-  assert.ok(r.vault.auditLog.some((e) => e.decision === 'deny' && /group or others/.test(e.reason)));
+  assert.ok(r.vault.auditLog.some((e) => e.decision === 'deny' && e.reason === 'script_rewritable'));
 });
 
 test('zn run starts your own script (0755) with a warning and an audit note', { skip: !TIGHT || process.getuid() === 0 }, async (t) => {
@@ -186,7 +186,7 @@ test('zn run starts your own script (0755) with a warning and an audit note', { 
   assert.equal(r.code, 0, r.err);
   assert.ok(r.ran, 'the script was started');
   assert.match(r.err, /warning: `tool\.sh` is a script you can rewrite/);
-  assert.ok(r.vault.auditLog.some((e) => e.decision === 'allow' && /script writable by the current user/.test(e.reason)));
+  assert.ok(r.vault.auditLog.some((e) => e.decision === 'allow' && e.reason === 'allow_commands:own_script'));
 });
 
 test('zn run still starts a native program with a secret, without a warning', { skip: !POSIX }, async () => {
