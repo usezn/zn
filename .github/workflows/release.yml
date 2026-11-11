@@ -1,3 +1,4 @@
+# Release pipeline for version tags: verifies the tag and versions, builds and attests, then publishes to PyPI, npm and GitHub Releases.
 name: Release
 
 # Builds the npm tarball and the Python sdist and wheel once, signs them, and

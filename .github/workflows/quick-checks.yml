@@ -1,3 +1,4 @@
+# Short checks for docs, workflows and packages (changelog, Markdown, spelling, links, shell, workflow lint, package lint), scoped per change.
 name: Quick checks
 
 # The short checks that used to be a workflow each, in two jobs so a pull request queues two runners for them
