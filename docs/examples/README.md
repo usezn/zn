@@ -42,6 +42,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
+- [zn-audit-reading-a-medium-finding.md](zn-audit-reading-a-medium-finding.md): follow one medium finding of zn-gate audit from the report to a decision: pin it, accept it with --approve, or drop the server.
 - [zn-env-shadow-in-a-monorepo.md](zn-env-shadow-in-a-monorepo.md): shadow the `.env` files of several packages one folder at a time, and what happens when two files use the same key with different values.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-hooks-install-on-a-locked-down-laptop.md](zn-hooks-install-on-a-locked-down-laptop.md): install the hooks when you cannot install globally, cannot write to a settings folder or sit behind a proxy, with the real messages.
