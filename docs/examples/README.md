@@ -43,3 +43,4 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
+- [zn-why-reading-a-wrapped-block-in-ci-logs.md](zn-why-reading-a-wrapped-block-in-ci-logs.md): find the rule of a block in a CI log whose lines are wrapped, and what zn why can and cannot add.
