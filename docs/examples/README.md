@@ -45,6 +45,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-hooks-install-with-a-custom-home.md](zn-hooks-install-with-a-custom-home.md): install hooks with a custom `ZN_HOME`: where the files go, what the hooks refer to, and how to clean up.
 - [zn-pins-in-a-shared-repo.md](zn-pins-in-a-shared-repo.md): where MCP tool pins are kept, and why there is nothing to commit or ignore in a shared repository.
 - [zn-reach-with-remember-twice.md](zn-reach-with-remember-twice.md): run `reach --remember` several times on a fake project and read what changes in the output between runs.
+- [zn-secret-allow-vs-approve-decision.md](zn-secret-allow-vs-approve-decision.md): a decision list for `secret allow` and `secret approve`, with the prompts and refusals of each.
 - [zn-secret-get-in-a-pipe.md](zn-secret-get-in-a-pipe.md): what `secret get` does when you try to pipe a vault value into another tool, and what to use instead.
 - [zn-vault-status-after-unlock-expiry.md](zn-vault-status-after-unlock-expiry.md): read `vault status` before and after the unlock time ran out, see what other commands say, and unlock again.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
