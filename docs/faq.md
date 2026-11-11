@@ -8,6 +8,24 @@ Run every command in your own terminal, not through an AI agent. zn-gate refuses
 to uninstall when an agent or a script runs it, and zn's hooks refuse
 `zn hooks install` and a few other commands when an agent starts them.
 
+## Quick answers
+
+Each question links to its answer further down this page.
+
+| Question | Short answer |
+|---|---|
+| [How do I update zn-gate?](#1-how-do-i-update-zn-gate) | Run `npm install -g zn-gate`, then `zn-gate check`. |
+| [Do I have to do anything besides updating the package?](#2-do-i-have-to-do-anything-besides-updating-the-package) | Usually no. Check the release table if you skipped versions. |
+| [When do I run `zn hooks install <agent>` again?](#3-when-do-i-run-zn-hooks-install-agent-again) | When a release adds or changes a hook. Running it again is safe. |
+| [How do I update the Claude Code plugin?](#4-how-do-i-update-the-claude-code-plugin) | Through `/plugin` in Claude Code, then start a new session. |
+| [Codex asks me to trust the hooks again. Is that normal?](#5-codex-asks-me-to-trust-the-hooks-again-is-that-normal) | Yes. Approve the hooks in `/hooks` in Codex. |
+| [My agent stopped being protected after I changed my Node.js. What do I do?](#6-my-agent-stopped-being-protected-after-i-changed-my-nodejs-what-do-i-do) | Run `npx -y zn-gate check` and follow the fix it names. |
+| [How do I remove zn-gate completely?](#7-how-do-i-remove-zn-gate-completely) | Run `npx -y zn-gate uninstall`, then `npm uninstall -g zn-gate`. |
+| [Can I see what uninstall would do without changing anything?](#8-can-i-see-what-uninstall-would-do-without-changing-anything) | Yes. Add `--dry-run`. |
+| [Does uninstall delete my vault or change my `.env` files?](#9-does-uninstall-delete-my-vault-or-change-my-env-files) | No. It keeps your vault unless you say yes, and it never edits `.env` files. |
+| [Can I remove only one part?](#10-can-i-remove-only-one-part) | Yes. Remove the plugin, one agent's hooks, or the MCP wrapping. |
+| [Where is my data?](#12-where-is-my-data) | On your computer. Only the optional cloud check sends text, and only when you turn it on. |
+
 ## Update
 
 ### 1. How do I update zn-gate?
@@ -59,10 +77,13 @@ the command that fixes it. Usually that is `npm install -g zn-gate`, then
 ### 7. How do I remove zn-gate completely?
 
 Run `npx -y zn-gate uninstall` (or `zn-gate uninstall` if you installed it with
-`npm install -g zn-gate`). It lists what it found, asks before it removes
-anything, removes the plugin, the hooks and the MCP wrapping, and ends with
-`zn-gate check`. Last, run `npm uninstall -g zn-gate` to remove the program, and
-`pip uninstall zn-gate` if you also installed the Python package. See
+`npm install -g zn-gate`). It lists what it found, asks once before it removes
+anything, puts back the wrapped MCP servers, removes the hooks and the plugin, and, if you have a vault,
+asks a second, separate question about it. It then runs `zn-gate check` and prints the program removal as its last line.
+It does not remove the program, edit your `.env` files or delete the `.zn` folder (apart from the launcher scripts in `~/.zn/hooks`, and the vault files if you say yes). Last, run `npm uninstall -g zn-gate` yourself to remove the program, and
+then `pip uninstall zn-gate` if you also installed the Python package. Do not
+remove the program first: your agent's settings would still point at a command
+that is gone. See
 [One step](uninstall.md#one-step-zn-gate-uninstall).
 
 ### 8. Can I see what uninstall would do without changing anything?
@@ -75,19 +96,22 @@ It keeps your vault unless you answer yes to a second, separate question (the
 default is no). That yes cannot be undone. It never edits your `.env` files. If
 you moved their values into the vault with `env shadow`, put the real values back
 first with `npx -y zn-gate env unshadow .env --backup <name>`. See
-[Your `.env` files and the vault](uninstall.md#your-env-files-and-the-vault).
+[Your `.env` files and the vault](uninstall.md#4-your-env-files-and-the-vault).
 
 ### 10. Can I remove only one part?
 
-Yes. Remove the Claude Code plugin with `claude plugin uninstall zn-gate@usezn`,
-the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`, and MCP
-wrapping with `npx -y zn-gate init --revert`. Afterwards, run
+Yes. Go in this order, with the wrapped MCP servers first and the program last.
+Put back wrapped MCP servers with `npx -y zn-gate init --revert` (a saved copy
+put back after the hooks are removed could bring back zn's `secrets` server),
+then remove the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`,
+then the Claude Code plugin with `claude plugin uninstall zn-gate@usezn`. Remove the program (`npm uninstall -g zn-gate`,
+then `pip uninstall zn-gate`) only when everything else is gone. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
 ### 11. In which order should I remove zn-gate?
 
-Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own terminal first: it puts back the MCP servers that zn-gate wrapped, then removes the hooks and the Claude Code plugin, and asks before each change. Only after that, run `npm uninstall -g zn-gate`.
+Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own terminal first: it puts back the MCP servers that zn-gate wrapped, then removes the hooks and the Claude Code plugin. It asks once before it removes anything, and, if you have a vault, again before it deletes the vault. It does not remove the program: only after that, run `npm uninstall -g zn-gate` yourself.
 
 If you remove the program first, the hooks stay in your agent's settings. The agent can then be blocked from running commands, because part of zn-gate is missing. If that happens, run `npm install -g zn-gate` to put the program back, then run `npx -y zn-gate uninstall`. To remove only one part, see [Piece by piece](uninstall.md#piece-by-piece).
 
@@ -95,7 +119,7 @@ If you remove the program first, the hooks stay in your agent's settings. The ag
 
 ### 12. Where is my data?
 
-The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+The check runs locally on your machine unless you turn on the optional cloud check. With it on, the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. Tool output is sent only if you ran `zn-gate connect` and also set `hooks.cloudCheckToolOutput: true` in your own `~/.zn/config.json`. That setting is off by default, also for users who already connected; otherwise nothing from tool output is sent. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
 
 ## Commands that never need the network
 
@@ -127,3 +151,13 @@ For one project, go to that project's folder and run `npx -y zn-gate hooks unins
 zn-gate has no pause switch. To turn the hooks off for a while, run `npx -y zn-gate hooks uninstall <agent>`, and later run `zn-gate hooks install <agent>` to turn them back on. With the Claude Code plugin, `claude plugin disable zn-gate@usezn` turns off the plugin's hooks, and `claude plugin enable zn-gate@usezn` turns them back on.
 
 Run these commands in your own terminal: zn-gate refuses to change hooks when an agent runs them. While the hooks are off, the agent's actions are not checked by zn-gate. Run `npx -y zn-gate check` afterwards to see what is protected.
+
+## Logs and blocks
+
+### 15. Where do I see what was blocked?
+
+Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
+
+To count what zn-gate did over the last days, run `npx -y zn-gate stats`. It shows the checks, the blocks and the secrets replaced. Use `--days` to change the period. The options and exit codes are in the command line reference: [why](cli.md#why) and [stats](cli.md#stats).
+
+Every decision is also written to the decision log on your computer, `~/.zn/evidence.jsonl`. The log stays local, and `npx -y zn-gate evidence --verify` checks that its records have not been changed. See [files and folders](files-and-folders.md).

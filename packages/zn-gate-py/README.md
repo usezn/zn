@@ -30,6 +30,8 @@ python3 -m venv .venv
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
 
+New to the Python package and do not have Node.js? The [first run with the Python package](https://github.com/usezn/zn/blob/main/docs/examples/python-only-first-run.md) takes you from the install to a blocked fake secret, step by step.
+
 No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
 
 **On Windows**, use the `py` launcher, which comes with Python from python.org and the Python install manager:
@@ -362,6 +364,8 @@ Runnable examples for the Python package, in [`examples/`](https://github.com/us
 **Do I need an account?** No.
 
 **Is the Python engine the same as the Node one?** Same approach and rule families, separate implementations. Both are tested in [CI](https://github.com/usezn/zn/actions/workflows/ci.yml).
+
+**How do I remove it?** If you also set up zn's hooks or the Claude Code plugin with the npm package, remove those first: run `npx -y zn-gate uninstall` in your own terminal ([removal guide](https://github.com/usezn/zn/blob/main/docs/uninstall.md)). Then run `pip uninstall zn-gate` last, so no agent setting is left pointing at a missing command.
 
 **Will it block legitimate content?** Sometimes. Use `on_block="return"` with a fallback while you evaluate it.
 
