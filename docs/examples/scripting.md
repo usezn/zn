@@ -6,11 +6,11 @@ A short guide to using `zn-gate` from a script or a CI job: which exit code mean
 
 A script should test the exit code, not search the text. The codes differ a little by command (the tables below come from the [reference](../cli.md#exit-codes)):
 
-| Command | `0` | `1` | `2` |
-|---|---|---|---|
-| `scan` | nothing found in the files it read (exit `3` when nothing or not everything was read, see below) | something found, or the path does not exist | an unknown `--format` |
-| `audit` | nothing at or above `--fail-on` | findings at or above it | wrong usage, or a path that is not a folder |
-| `analyze` | text allowed | no text given | text blocked |
+| Command | `0` | `1` | `2` | `3` |
+|---|---|---|---|---|
+| `scan` | nothing found in the files it read | something found, or the path does not exist | an unknown `--format` | nothing was read, or not every file was read (see below) |
+| `audit` | nothing at or above `--fail-on` | findings at or above it | wrong usage, or a path that is not a folder | - |
+| `analyze` | text allowed | no text given | text blocked | - |
 
 `scan` also exits `3` when the coverage is incomplete. An empty folder is not a clean result: it exits `3` and the JSON has a `warning` field ("No files were scanned"), so a job cannot pass on a scan that read nothing. The same code means some files or folders were skipped; see [scan](../cli.md#scan).
 
