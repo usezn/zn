@@ -89,6 +89,18 @@ jobs:
           node-version: 22.x
           package-manager-cache: false
 
+      # Changed workflows: the job summary lists the workflow files this pull request changes, against its base.
+      - name: Changed workflows - write the summary
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        # The summary is information only: a failure here does not fail the run.
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/changed-workflows-summary.mjs "$BASE_SHA"
+      - name: Changed workflows - test the summary script
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/changed-workflows-summary.test.mjs
+
       # Changelog
       - name: Changelog - test the fragment tools
         if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
