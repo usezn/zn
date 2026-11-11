@@ -76,10 +76,12 @@ whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
 
 Your agent can read a `.env` only when every variable with a secret-looking name is
 empty or holds a marker, however short its value is. A secret-looking name contains
-KEY, SECRET, TOKEN, PASS, PWD, CREDENTIAL, AUTH, DSN or CONN, or ends in `_URL` or
-`_URI`. A `_URL` or `_URI` value counts only when it carries a password, such as
-`postgres://user:password@host`; a URL without one, such as `https://example.com`,
-does not count. A short value left in the file keeps the read blocked, and the message names the variables that still hold a value (never the values). Variables with ordinary names (`PORT=8080`, `DEBUG=1`) never block the read.
+KEY, SECRET, TOKEN, PASS, PWD, CREDENTIAL, AUTH, DSN, CONN or DATABASE_URL, or ends in
+`_URL` or `_URI`, in any letter case. One exception applies: under a name that ends in
+`_URL` or `_URI`, a value that starts with a scheme such as `https://` and carries no
+password, like `https://example.com`, does not count. Any other value under such a
+name counts, including `DATABASE_URL=sometoken`, and a URL under any other secret-looking
+name, such as `API_KEY=https://example.com`, counts too. A short value left in the file keeps the read blocked, and the message names the variables that still hold a value (never the values). Variables with ordinary names (`PORT=8080`, `DEBUG=1`) never block the read.
 
 `zn env shadow` leaves values under 8 characters in the file, because they cannot be
 told apart from ordinary settings. They stay in `.env` in clear text, and it says so: it names each variable it left (never its value), and gives

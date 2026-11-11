@@ -133,7 +133,7 @@ test('env shadow --dry-run says it is a preview and that no value has moved', as
   assert.match(fs.readFileSync(path.join(dir, '.env'), 'utf8'), /TEST_KEY=zz_fake/);
 });
 
-test('env shadow: the clear-text summary makes no claim about what the hook counts', async (t) => {
+test('env shadow: the clear-text summary tells the user their agent cannot read the file', async (t) => {
   const { io } = setup(t, ['API_KEY=abc']);
   assert.equal(await cli.dispatch('env', ['shadow'], io), 0);
   const out = io.stdout.text();

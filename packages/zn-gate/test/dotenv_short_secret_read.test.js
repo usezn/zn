@@ -73,3 +73,17 @@ test('a credential-less URL is skipped only under a _URL or _URI name', () => {
   assert.match(readOf('API_KEY=https://example.com\n') || '', /Still holding a value: API_KEY\./);
   assert.equal(readOf('SITE_URL=https://example.com\n'), null);
 });
+
+test('only a whole __ZN_<NAME>__ marker passes: a value that merely contains __ZN_ still blocks', () => {
+  assert.deepEqual(dotenv.plainSecretNames('API_KEY=__ZN_API_KEY__\n'), []);
+  assert.equal(readOf('API_KEY=__ZN_API_KEY__\n'), null);
+  assert.deepEqual(dotenv.plainSecretNames('DEBUG_TOKEN=x__ZN_\n'), ['DEBUG_TOKEN']);
+  assert.match(readOf('DEBUG_TOKEN=x__ZN_\n') || '', /Still holding a value: DEBUG_TOKEN\./);
+  assert.deepEqual(dotenv.plainSecretNames('API_KEY=__ZN_API_KEY__ and more\n'), ['API_KEY']);
+  assert.deepEqual(dotenv.plainSecretNames('API_KEY=pre__ZN_API_KEY__\n'), ['API_KEY']);
+  assert.match(readOf('API_KEY=__ZN_API_KEY__ and more\n') || '', /Still holding a value: API_KEY\./);
+});
+
+test('a non-URL value under a _URL name still blocks the read', () => {
+  assert.deepEqual(dotenv.plainSecretNames('DATABASE_URL=sometoken\n'), ['DATABASE_URL']);
+});

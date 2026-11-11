@@ -102,7 +102,7 @@ function plainSecretNames(text) {
   for (const e of entries) {
     if (!isSensitiveKey(e.key)) continue;
     if (e.value === '') continue; // nothing to leak
-    if (e.value.includes('__ZN_')) continue;
+    if (/^__ZN_[A-Z0-9_]+__$/.test(e.value)) continue; // the whole value must be a marker: x__ZN_ is a real value
     const pw = connectionPassword(e.value);
     if (pw && /^__ZN_[A-Z0-9_]+__$/.test(e.value.slice(pw.start, pw.end))) continue;
     // A URL without credentials is not a secret, but only under a _URL or _URI name: API_KEY=https://example.com still is one.
