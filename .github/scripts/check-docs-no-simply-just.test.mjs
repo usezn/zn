@@ -1,10 +1,15 @@
 // Tests of check-docs-no-simply-just.mjs. Run: node --test .github/scripts/check-docs-no-simply-just.test.mjs
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { checkDir, findHits } from './check-docs-no-simply-just.mjs';
+import { fileURLToPath } from 'node:url';
+import { checkDir, findHits, MESSAGE, warningLine } from './check-docs-no-simply-just.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const script = path.join(here, 'check-docs-no-simply-just.mjs');
 
 test('the word before an inline command is flagged', () => {
   assert.equal(findHits('Then just `npm test` to check it.\n').length, 1);
@@ -60,4 +65,37 @@ test('checkDir reports the file and line of each hit and counts the pages', () =
   assert.equal(r.checked, 3);
   assert.deepEqual(r.hits, [{ file: r.hits[0].file, n: 1, text: 'Simply run it.' }]);
   assert.match(r.hits[0].file, /sub\/b\.md$/);
+});
+
+test('the warning annotation names the file and the line', () => {
+  assert.equal(warningLine('docs/a.md', 3), `::warning file=docs/a.md,line=3::${MESSAGE}`);
+});
+
+test('default mode prints a GitHub warning per hit and exits 0', () => {
+  const dir = tree({ 'docs/a.md': 'Just run `zn init`.\n', 'docs/b.md': '# B\n' });
+  const r = spawnSync(process.execPath, [script, 'docs'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('::warning file=docs/a.md,line=1::'), r.stdout);
+  assert.ok(!r.stdout.includes('::warning file=docs/b.md'), r.stdout);
+});
+
+test('default mode with no hits prints OK and exits 0', () => {
+  const dir = tree({ 'docs/a.md': '# A\n' });
+  const r = spawnSync(process.execPath, [script, 'docs'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /docs simply\/just OK/);
+});
+
+test('--strict prints each hit as an error and exits 1', () => {
+  const dir = tree({ 'docs/a.md': 'Just run `zn init`.\n' });
+  const r = spawnSync(process.execPath, [script, '--strict', 'docs'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.ok(r.stderr.includes('docs/a.md:1: Just run `zn init`.'), r.stderr);
+  assert.ok(!r.stdout.includes('::warning'), r.stdout);
+});
+
+test('--strict with no hits exits 0', () => {
+  const dir = tree({ 'docs/a.md': '# A\n' });
+  const r = spawnSync(process.execPath, [script, '--strict', 'docs'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
 });
