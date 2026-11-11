@@ -49,13 +49,15 @@ It prints the same explanation as `show` and asks `Turn on sharing of these pseu
 Sharing pseudonymous daily counts is on. Counts from today on are sent when you run `zn-gate stats`.
 ```
 
-The question can only be answered in an interactive terminal. In a script, a pipe or when an AI agent runs the command, nothing is turned on, and the command exits `1`:
+The question is only asked when both standard input and standard output are terminals. In a script, a pipe or any run without a terminal, nothing is turned on, and the command exits `1`:
 
 ```text
 Sharing stays off. (It can only be turned on by you, in your own terminal.)
 ```
 
 If sharing is already on, the command says so and exits `0`.
+
+The command cannot tell a person from a program that drives a terminal, such as an AI agent working in a pseudo-terminal. If you let an agent use a terminal of yours, run `zn-gate stats share status` afterwards to check that sharing is still off.
 
 ## What is sent, and when
 
