@@ -14,6 +14,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [cloud-check-settings.md](cloud-check-settings.md): each cloud check setting with its effect, one fake command and what leaves the machine.
 - [connect-and-disconnect.md](connect-and-disconnect.md): turn the optional cloud check on, check its status and turn it off.
 - [continue-hook-setup.md](continue-hook-setup.md): set up zn-gate as an MCP server in Continue, with made-up values, and check it.
+- [doctor-before-asking-for-help.md](doctor-before-asking-for-help.md): the four commands to run and paste before you ask for help, and what each one shows.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [evidence-example.md](evidence-example.md): the local evidence log that `zn-gate evidence` shows.
