@@ -13,9 +13,11 @@ name: Quick checks
 # require neither job of this workflow (the comment of the former workflow-lint.yml that said Workflow lint was
 # required was out of date), so they do not run in the merge queue. To make one required, add a merge_group
 # trigger for it first, or the queue waits for a check that never reports.
+# A push to next does not run this workflow (pull requests ran it before the merge, and the merge queue does not
+# run it): nightly-next.yml starts a manual run on next at 02:40 UTC, which runs every step.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main ]
   # No paths filter: the scope script decides per step. A pull request into any branch runs the changelog check.
   # Label events run the checks again on the same commit (the no-changelog label changes the changelog result).
   # No job is skipped on them: a skipped run of a check would count as passing and could hide an earlier failure.
@@ -29,12 +31,12 @@ on:
 permissions:
   contents: read
 
-# A new push or label change on a pull request, or a new push to next, cancels the run still going for it (the new
+# A new push or label change on a pull request cancels the run still going for it (the new
 # run checks the same or a newer commit). Runs for main, the schedule and manual runs always complete (each has
 # its own group).
 concurrency:
-  group: quick-checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: quick-checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

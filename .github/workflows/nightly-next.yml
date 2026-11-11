@@ -1,9 +1,10 @@
 name: Nightly run of next
 
-# Pushes to next do not start the long workflows: every change reaches next through the merge queue, which runs the
-# required checks on it first. Once a night this workflow starts a manual run of each of them on next, which runs
+# Pushes to next do not start any workflow of the required checks (zn CI, Rust gateway, scrubber, leak bench,
+# Public facts) or Quick checks: every change reaches next through the merge queue, which runs the required checks on
+# the exact commit that lands. Once a night this workflow starts a manual run of each of them on next, which runs
 # its full matrix (every Node.js and Python version, Windows and macOS, the coverage reports, CodeQL, MSRV and
-# cargo audit). A schedule runs on the default branch (main), so the runs are started with --ref next and use the
+# cargo audit) and every Quick checks step. CodeQL also runs in the merge queue (see codeql.yml). A schedule runs on the default branch (main), so the runs are started with --ref next and use the
 # workflow files of next. A second scheduled run, four hours later, looks at the runs started that night and opens
 # an issue (or comments on the open one) when one of them failed, did not finish or never started.
 # Pull requests into main and release branches, and pushes to them, still run the full matrix every time.
@@ -46,7 +47,7 @@ jobs:
         run: |
           set -uo pipefail
           failed=0
-          for wf in ci.yml rust.yml scrubber.yml leak-bench.yml codeql.yml windows-paths.yml node-macos.yml; do
+          for wf in ci.yml rust.yml scrubber.yml leak-bench.yml public-facts.yml quick-checks.yml codeql.yml windows-paths.yml node-macos.yml; do
             if gh workflow run "$wf" --ref next; then
               echo "started $wf on next"
             else
@@ -83,7 +84,7 @@ jobs:
           # workflow counts, so a manual re-run that passed clears an earlier failure.
           since="$(date -u -d '5 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
           problems=""
-          for wf in ci.yml rust.yml scrubber.yml leak-bench.yml codeql.yml windows-paths.yml node-macos.yml; do
+          for wf in ci.yml rust.yml scrubber.yml leak-bench.yml public-facts.yml quick-checks.yml codeql.yml windows-paths.yml node-macos.yml; do
             line="$(gh run list --workflow "$wf" --branch next --event workflow_dispatch --created ">=$since" --limit 1 \
               --json status,conclusion,url --jq '.[0] | select(.) | "\(.url) \(.status) \(.conclusion)"')"
             if [ -z "$line" ]; then
