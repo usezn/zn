@@ -52,7 +52,7 @@ jobs:
       # Pinned release binaries; each archive is verified against its SHA-256 before it is unpacked.
       LYCHEE_VERSION: lychee-v0.24.2
       LYCHEE_SHA256: 1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
-      LINK_TARGETS: README.md docs packages/*/README.md plugins
+      LINK_TARGETS: README.md CONTRIBUTING.md docs packages/*/README.md plugins
       SHELLCHECK_VERSION: 0.11.0
       # SHA-256 of shellcheck-v<version>.linux.x86_64.tar.xz.
       SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
