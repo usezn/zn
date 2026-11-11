@@ -29,6 +29,8 @@ We take the security of zn, the MCP Gateway, and our client SDKs seriously. If y
 
 Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected versions, components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
 
+Do not paste secrets into a report. Leave out your `.env` files, the vault files in `~/.zn/vault/` (`secrets.age`, the per-project `<32 hex characters>.age` files and, on a computer with no system keychain, `identity.age`), the session key `~/.zn/run/session.key`, and credential files such as `~/.aws/credentials`, `~/.netrc` and `~/.kube/config`. The output of `zn-gate check --json` has no secret values and is safe to include. The full list of files zn-gate keeps is in [Files and folders](docs/files-and-folders.md).
+
 ### What to expect
 
 The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md)). These are targets, for both channels:
