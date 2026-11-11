@@ -306,6 +306,10 @@ function planImport(text, flags) {
   for (const e of parsed.entries) {
     if (only && !only.has(e.key)) continue;
     if (!only && !flags.all && !dotenv.isSensitiveKey(e.key)) continue;
+    if (e.escapedQuote || (!e.multiline && !dotenv.quotedValueIsWhole(parsed, e))) {
+      skipped.push({ key: e.key, why: 'stays in clear text in the file. Line ' + (e.lineIndex / 2 + 1) + ': the value has an escaped quote; zn cannot shadow it safely. Store it with `zn secret set ' + suggestSecretName(e.key) + '` and edit the line by hand.' });
+      continue;
+    }
     if (e.multiline) { skipped.push({ key: e.key, why: 'stays in clear text in the file. It is a multi-line value, which zn does not move. Store it with `zn secret set ' + suggestSecretName(e.key) + '`.' }); continue; }
     if (!e.value || e.value.includes('__ZN_')) continue;
     const pw = dotenv.connectionPassword(e.value);

@@ -8,6 +8,12 @@
  * Supported: KEY=value, export KEY=value, 'single', "double" (with \n
  * escapes left as written), unquoted values with trailing # comments.
  * Multi-line quoted values are reported as such and never rewritten.
+ *
+ * Values are returned as written, never unescaped. A backslash in a double
+ * quoted value protects the next character, so \" does not end the value
+ * (and \\ is a pair, so "ab\\" ends after the second backslash). A value
+ * that holds \" is flagged escapedQuote: dotenv implementations disagree on
+ * what it means, so zn never rewrites it (see quotedValueIsWhole).
  */
 
 const SENSITIVE_KEY_RE = /(KEY|SECRET|TOKEN|PASS|PWD|CREDENTIAL|AUTH|DSN|DATABASE_URL|_URL$|_URI$|CONN)/i;
@@ -34,9 +40,20 @@ function parseDotenv(text) {
     let start;
     let end;
     let multiline = false;
+    let escapedQuote = false;
     if (rest.startsWith('"') || rest.startsWith("'") || rest.startsWith('`')) {
       quote = rest[0];
-      const close = rest.indexOf(quote, 1);
+      let close = -1;
+      if (quote === '"') {
+        for (let k = 1; k < rest.length; k++) {
+          if (rest[k] === '\\') {
+            if (rest[k + 1] === '"') escapedQuote = true;
+            k++;
+          } else if (rest[k] === '"') { close = k; break; }
+        }
+      } else {
+        close = rest.indexOf(quote, 1);
+      }
       if (close === -1) {
         multiline = true;
         value = rest.slice(1);
@@ -54,9 +71,24 @@ function parseDotenv(text) {
       start = prefixLen;
       end = prefixLen + value.length;
     }
-    entries.push({ lineIndex: i, key: m[2], value, quote, start, end, multiline });
+    entries.push({ lineIndex: i, key: m[2], value, quote, start, end, multiline, escapedQuote });
   }
   return { lines, entries };
+}
+
+/**
+ * Fail-closed check before a value is rewritten: the range [start, end) must
+ * be the whole quoted value, up to its real closing quote, with no quote
+ * character of the same kind left inside it. Anything else (an escaped
+ * quote, an unterminated quote, a range that stops early) is refused, so a
+ * part of a secret can never stay in the file next to a marker.
+ */
+function quotedValueIsWhole(parsed, entry) {
+  if (!entry.quote) return true;
+  if (entry.multiline || entry.escapedQuote) return false;
+  const line = parsed.lines[entry.lineIndex];
+  if (line[entry.start - 1] !== entry.quote || line[entry.end] !== entry.quote) return false;
+  return !line.slice(entry.start, entry.end).includes(entry.quote);
 }
 
 function isSensitiveKey(key) {
@@ -114,6 +146,7 @@ module.exports = {
   SENSITIVE_KEY_RE,
   MIN_SECRET_LEN,
   parseDotenv,
+  quotedValueIsWhole,
   isSensitiveKey,
   connectionPassword,
   applyEdits,

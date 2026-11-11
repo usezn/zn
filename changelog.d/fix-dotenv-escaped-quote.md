@@ -1,0 +1,2 @@
+### Fixed
+- `zn env shadow` no longer leaves part of a secret in the `.env` file when a double-quoted value contains an escaped quote (`\"`). Before, it ended the value at the escaped quote, stored only the first part and rewrote the line with the rest still in plain text. Now it reads the whole quoted value, leaves such a line untouched and lists it with its line number, so you can store the value with `zn secret set` and edit the line by hand.

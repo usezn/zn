@@ -443,7 +443,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move. A double-quoted value that contains an escaped quote (`\"`) is never rewritten: the line stays as it is and is listed with its line number, so you can store the value with `zn secret set` and edit the line by hand.
 
 #### `env unshadow`
 

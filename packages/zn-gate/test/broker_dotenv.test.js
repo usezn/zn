@@ -154,3 +154,22 @@ test('connectionPassword finds the password in a quoted .env value', () => {
   const r = d.connectionPassword(e.value);
   assert.equal(e.value.slice(r.start, r.end), 'fake-pass');
 });
+
+test('a backslash protects the next character inside double quotes: the value runs to the real closing quote', () => {
+  const { entries } = d.parseDotenv('A="x\\"y" # c\nB="ab\\\\"\nC="open\\"');
+  assert.equal(entries[0].value, 'x\\"y');
+  assert.equal(entries[0].escapedQuote, true);
+  assert.equal(entries[1].value, 'ab\\\\');
+  assert.equal(entries[1].escapedQuote, false);
+  assert.equal(entries[2].multiline, true);
+  assert.equal(entries[2].escapedQuote, true);
+});
+
+test('quotedValueIsWhole refuses a range that is not the whole quoted value', () => {
+  const parsed = d.parseDotenv('A="x\\"y"\nB="plain"\nC=bare\nD=\'q\\\'');
+  assert.equal(d.quotedValueIsWhole(parsed, parsed.entries[0]), false);
+  assert.equal(d.quotedValueIsWhole(parsed, parsed.entries[1]), true);
+  assert.equal(d.quotedValueIsWhole(parsed, parsed.entries[2]), true);
+  assert.equal(d.quotedValueIsWhole(parsed, parsed.entries[3]), true);
+  assert.equal(d.quotedValueIsWhole(parsed, { ...parsed.entries[1], end: parsed.entries[1].end - 1 }), false);
+});

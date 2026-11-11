@@ -88,6 +88,9 @@ There is no option to force a short value into the vault with `zn env shadow`.
 Store it yourself with `zn secret set API_KEY` (it asks for the value at a
 hidden prompt) and replace the value in `.env` with `__ZN_API_KEY__`. Multi-line
 values, and names zn cannot use, are also left in the file and listed the same way.
+A double-quoted value that contains an escaped quote (`\"`) is left as it is too, because
+`.env` readers disagree on what it means: zn never rewrites part of such a line, and it tells
+you the line number so you can store the value with `zn secret set` and edit the line by hand.
 
 An encrypted copy of the original is kept (`zn env unshadow` restores it). To
 add a single secret, type it at a hidden prompt (never as an argument):
