@@ -197,6 +197,19 @@ The small checks of the [Quick checks workflow](.github/workflows/quick-checks.y
 
 Before you push, run the new script and its test on your own machine, then the [documentation checks](#documentation-checks) and the other checks that your change touches. The Quick checks are not among the required checks, so a maintainer decides if a new one should become required (that needs a change to the branch rules and a `merge_group` trigger, see the comment at the top of `quick-checks.yml`).
 
+## Before you open a pull request
+
+A short list for a pull request that changes only documentation: a page under `docs/`, a README or `changelog.d/README.md`. Run each command from the repository root. The three checks under [Documentation checks](#documentation-checks) explain what the docs tests, Markdown lint and link check cover.
+
+- [ ] Every command you wrote or changed ran on your machine, and every link and anchor points to something that exists.
+- [ ] The docs tests pass: `cd packages/zn-gate`, then `node --test test/docs_*.test.js test/docs-env-vars.test.js test/install_docs_match.test.js`. They need no install.
+- [ ] Markdown lint passes: `.github/markdownlint/node_modules/.bin/markdownlint-cli2`, after `npm ci --prefix .github/markdownlint --ignore-scripts` the first time.
+- [ ] No two pages under `docs/` share a first-level title: `node .github/scripts/check-docs-titles.mjs`.
+- [ ] Every command in `docs/examples/` is one that `docs/cli.md` documents: `node .github/scripts/check-docs-examples-commands.mjs`.
+- [ ] If you touched a version number, a count, the list of agents, the license or the install command, the facts still agree everywhere: `node .github/scripts/check-public-facts.mjs`.
+- [ ] A change that users notice in a package, the plugin or the Action has a fragment in `changelog.d/`. A change to pages under `docs/` or to a README needs none. To check: `node .github/scripts/changelog.mjs check --base origin/next` after `git fetch origin next`.
+- [ ] The pull request targets `next`, and its description says what was wrong or missing.
+
 ## Your first pull request and draft pull requests
 
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
