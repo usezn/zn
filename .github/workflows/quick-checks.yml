@@ -155,6 +155,12 @@ jobs:
       - name: Markdown lint - test and write the docs page counts to the job summary
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/summarize-docs-pages.test.mjs && node .github/scripts/summarize-docs-pages.mjs
+      - name: Markdown lint - test the SECURITY.md advisory link check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-security-advisory-links.test.mjs
+      - name: Markdown lint - every link in SECURITY.md to docs/advisories/ resolves
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-security-advisory-links.mjs SECURITY.md
 
       # Spellcheck
       - name: Spellcheck - typos
