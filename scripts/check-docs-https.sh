@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fails when a Markdown page under docs/ or a README file has a bare http:// link. Links to localhost and
-# 127.0.0.1 are allowed. Text inside fenced code blocks and inline code spans is not checked.
+# 127.0.0.1 are allowed. Text inside fenced code blocks and inline code spans is not checked. License notice
+# files (NOTICE.md and LICENSE*) are skipped: they quote third-party license text verbatim.
 #
 #   bash scripts/check-docs-https.sh [root]     default: the current directory (the repository root)
 #
@@ -57,9 +58,13 @@ scan_page() {
 }
 
 pages=0
+skipped=0
 status=0
 while IFS= read -r page; do
   [ -n "$page" ] || continue
+  case "$(basename "$page")" in
+    NOTICE.md|LICENSE*) skipped=$((skipped + 1)); continue ;;
+  esac
   pages=$((pages + 1))
   scan_page "$page" || status=1
 done < <(list_pages)
@@ -69,5 +74,5 @@ if [ "$status" != 0 ]; then
   echo "Use https:// for links in docs and READMEs (http://localhost and http://127.0.0.1 are allowed)." >&2
   exit 1
 fi
-echo "docs https links OK: $pages page(s) checked"
+echo "docs https links OK: $pages page(s) checked, $skipped license notice file(s) skipped"
 exit 0
