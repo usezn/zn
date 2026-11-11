@@ -4,6 +4,14 @@ The eighteen messages people most often meet when they first use zn-gate: what e
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Where to find logs
+
+- **Decision log** (what the hooks and the MCP shield allowed or blocked): `~/.zn/evidence.jsonl`. Read it with `zn-gate evidence`. Add `--verify` to check that the chain is intact, or `--export --output FILE` to save a copy.
+- **Vault audit log** (which secret was used, and each unlock, lock and expiry): `~/.zn/audit.jsonl`. Read it with `zn vault log`.
+- **Local counts** of checks: `~/.zn/stats.json`. Read them with `zn-gate stats` (`--days N`, `--json`).
+
+The full table, with the command that writes and the command that reads each file, is in [Where each log lives](audit.md#where-each-log-lives). Every file and folder zn uses is listed in [files and folders](files-and-folders.md).
+
 ## Symptoms by command
 
 Find the command you ran, then the symptom that matches.
