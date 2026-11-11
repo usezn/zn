@@ -18,10 +18,14 @@
  * removed or a sequence decoded, so a caller can rescan only around them.
  *
  * Linear time: one left-to-right pass. The number of decoded sequences is
- * capped (MAX_DECODES); past the cap the rest stays literal.
+ * capped (MAX_DECODES) and so is the number of joined quote pairs (MAX_QUOTE_JOINS); past a cap
+ * the rest stays literal and is still scanned.
  */
 
 const MAX_DECODES = 200000;
+// Quote pairs joined per view. A real secret is split by a few of them; past the cap the rest of the
+// text stays literal and is still scanned, so no text is skipped.
+const MAX_QUOTE_JOINS = 20000;
 const Q_SINGLE = 0x27;
 const Q_DOUBLE = 0x22;
 const PERCENT = 0x25;
@@ -80,15 +84,17 @@ function normalisedView(text) {
   const marks = [];
   let c = 0;
   let decodes = 0;
+  let joins = 0;
   let changed = false;
   let lit = 0; // start of the literal run not yet copied to parts
   for (let k = 0; k < first; k++) { starts[c] = k; ends[c] = k + 1; c++; }
   let i = first;
   while (i < n) {
     const ch = text.charCodeAt(i);
-    if (ch === Q_SINGLE || ch === Q_DOUBLE) {
+    if ((ch === Q_SINGLE || ch === Q_DOUBLE) && joins < MAX_QUOTE_JOINS) {
       const j = quoteRunEnd(text, n, i);
       if (j > 0) {
+        joins++;
         if (i > lit) parts.push(text.slice(lit, i));
         marks.push(c);
         lit = j; i = j; changed = true;
@@ -115,4 +121,4 @@ function normalisedView(text) {
   return { clean: parts.join(''), marks, starts: starts.subarray(0, c + 1), ends: ends.subarray(0, c + 1) };
 }
 
-module.exports = { normalisedView, MAX_DECODES };
+module.exports = { normalisedView, MAX_DECODES, MAX_QUOTE_JOINS };

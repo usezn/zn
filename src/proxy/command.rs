@@ -45,6 +45,48 @@ pub fn resolve_windows_command(
     pathext: Option<&str>,
     is_file: &dyn Fn(&str) -> bool,
 ) -> Result<String, String> {
+    resolve_windows_command_guarded(command, path_var, pathext, &[], is_file, &|p| Some(p.to_string()))
+}
+
+/// Lower-cased, backslash-separated form of a Windows path for comparing folders, without the `\\?\`
+/// prefix that canonicalization adds and without a trailing separator.
+fn compare_form(path: &str) -> String {
+    let p = path.strip_prefix(r"\\?\").unwrap_or(path).replace('/', "\\").to_ascii_lowercase();
+    p.trim_end_matches('\\').to_string()
+}
+
+/// True when `dir` is `root` or a folder inside it. Both are canonical paths.
+fn is_inside(dir: &str, root: &str) -> bool {
+    let d = compare_form(dir);
+    let r = compare_form(root);
+    d == r || d.starts_with(&format!("{r}\\"))
+}
+
+/// Like `resolve_windows_command`, but a PATH folder whose real path is inside one of
+/// `untrusted_roots` (the working folder) is never searched, however it is written: a project could
+/// plant a tool there, and a link or a different case would not change that. `canonical` gives the
+/// real path of a folder, or None when it cannot be read. A root that cannot be read fails closed;
+/// a PATH folder that cannot be read is skipped.
+pub fn resolve_windows_command_guarded(
+    command: &str,
+    path_var: Option<&str>,
+    pathext: Option<&str>,
+    untrusted_roots: &[String],
+    is_file: &dyn Fn(&str) -> bool,
+    canonical: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, String> {
+    let mut root_forms: Vec<String> = Vec::new();
+    for root in untrusted_roots {
+        match canonical(root) {
+            Some(real) => root_forms.push(real),
+            None => {
+                return Err(format!(
+                    "zn cannot read the folder '{root}' to check the PATH, so it will not start the MCP server."
+                ))
+            }
+        }
+    }
+
     let exts: Vec<String> = pathext
         .filter(|p| !p.trim().is_empty())
         .unwrap_or(DEFAULT_PATHEXT)
@@ -78,6 +120,13 @@ pub fn resolve_windows_command(
         // A relative entry (`.`, `node_modules\.bin`, `C:bin`, `\bin`) would be searched from the
         // folder the gateway runs in, which is the user's project, so a project could plant a tool.
         if dir.is_empty() || !is_absolute_windows(dir) {
+            continue;
+        }
+        let real = match canonical(dir) {
+            Some(real) => real,
+            None => continue,
+        };
+        if root_forms.iter().any(|root| is_inside(&real, root)) {
             continue;
         }
         for n in &names {
@@ -126,15 +175,24 @@ pub fn check_batch_args(program: &str, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve `command` the way Windows does, from the real PATH and PATHEXT.
+/// Resolve `command` the way Windows does, from the real PATH and PATHEXT. PATH folders inside the
+/// working folder are not searched.
 #[cfg(windows)]
 pub fn resolve_for_spawn(command: &str) -> Result<String, String> {
     use std::path::Path;
     let path_var = std::env::var("PATH").ok();
     let pathext = std::env::var("PATHEXT").ok();
-    resolve_windows_command(command, path_var.as_deref(), pathext.as_deref(), &|p| {
-        Path::new(p).is_file()
-    })
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("zn cannot read its working folder ({e}), so it cannot check the PATH."))?;
+    let roots = vec![cwd.to_string_lossy().into_owned()];
+    resolve_windows_command_guarded(
+        command,
+        path_var.as_deref(),
+        pathext.as_deref(),
+        &roots,
+        &|p| Path::new(p).is_file(),
+        &|p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()),
+    )
 }
 
 #[cfg(test)]
@@ -181,6 +239,55 @@ mod tests {
         let f = files(&["D:\\tools\\node.EXE", "C:\\bin\\D:\\tools\\node.EXE"]);
         let got = resolve_windows_command("D:\\tools\\node", Some("C:\\bin"), None, &f).unwrap();
         assert_eq!(got, "D:\\tools\\node.EXE");
+    }
+
+    #[test]
+    fn a_project_local_absolute_path_entry_is_never_searched() {
+        // An absolute bin folder inside the working folder is as untrusted as a relative one.
+        let id = |p: &str| -> Option<String> { Some(p.to_string()) };
+        let roots = vec!["C:\\proj".to_string()];
+        let f = files(&["C:\\proj\\bin\\npx.CMD"]);
+        assert!(resolve_windows_command_guarded("npx", Some("C:\\proj\\bin"), None, &roots, &f, &id).is_err());
+        // A folder whose name only starts the same way is outside the root and is still searched.
+        let g = files(&["C:\\proj2\\bin\\npx.CMD"]);
+        let got = resolve_windows_command_guarded("npx", Some("C:\\proj2\\bin"), None, &roots, &g, &id);
+        assert_eq!(got.unwrap(), "C:\\proj2\\bin\\npx.CMD");
+    }
+
+    #[test]
+    fn a_path_entry_that_resolves_into_the_project_is_refused() {
+        // "C:\tools\bin" is a link to the project's bin folder: its real path is what counts.
+        let f = files(&["C:\\tools\\bin\\npx.CMD"]);
+        let real = |p: &str| -> Option<String> {
+            Some(if p == "C:\\tools\\bin" { "C:\\proj\\bin".to_string() } else { p.to_string() })
+        };
+        let roots = vec!["C:\\proj".to_string()];
+        assert!(resolve_windows_command_guarded("npx", Some("C:\\tools\\bin"), None, &roots, &f, &real).is_err());
+    }
+
+    #[test]
+    fn project_root_matching_ignores_case_and_trailing_separators() {
+        let f = files(&["c:\\proj\\bin\\npx.CMD"]);
+        let id = |p: &str| -> Option<String> { Some(p.to_string()) };
+        let roots = vec!["C:\\Proj\\".to_string()];
+        assert!(resolve_windows_command_guarded("npx", Some("c:\\proj\\bin"), None, &roots, &f, &id).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_root_fails_closed() {
+        let f = files(&["C:\\bin\\npx.CMD"]);
+        let none = |_: &str| -> Option<String> { None };
+        let roots = vec!["C:\\proj".to_string()];
+        assert!(resolve_windows_command_guarded("npx", Some("C:\\bin"), None, &roots, &f, &none).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_path_entry_is_skipped() {
+        let f = files(&["C:\\gone\\npx.CMD", "C:\\bin\\npx.CMD"]);
+        let canon = |p: &str| -> Option<String> { if p == "C:\\gone" { None } else { Some(p.to_string()) } };
+        let roots = vec!["C:\\proj".to_string()];
+        let got = resolve_windows_command_guarded("npx", Some("C:\\gone;C:\\bin"), None, &roots, &f, &canon);
+        assert_eq!(got.unwrap(), "C:\\bin\\npx.CMD");
     }
 
     #[test]
