@@ -191,4 +191,12 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 - Pinning protects only servers that run through `zn-gate shield`. Remote (URL) servers are not covered.
 - The checks look at what goes in and out of a tool. They do not decide which tools an agent should have. After wrapping, keep only the tools your agent needs and put destructive operations behind explicit approval.
 
+## Exit codes
+
+The exit codes of `zn-gate shield`, from the table in [Exit codes](exit-codes.md#agents-and-mcp-servers):
+
+| Code | Meaning |
+| --- | --- |
+| `1` | When no command is given or the program cannot be started; otherwise the shield ends when the wrapped server ends. |
+
 More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).
