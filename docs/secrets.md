@@ -399,7 +399,8 @@ To delete the vault, follow [Remove zn-gate](uninstall.md#4-your-env-files-and-t
 | `stats.json` | Counts per day, such as checks and blocks. No values. | No command. Delete it by hand. `ZN_STATS=off` stops the counting. |
 | `requests.jsonl` | A record of each time an agent asked for a secret: the name, the agent and the reason it gave. No value. | No command. Delete it by hand; the agent can ask again. |
 | `package-registry-cache.json` | Saved answers to package lookups. | No command. Delete it by hand; the next lookup fetches the answer again. |
-| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-upload.lock` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `team-notice.json` | A record of which team notices were already shown, so that each one shows once. | No command. Deleting it only lets a notice show again. `zn-gate team leave` does not remove it. |
 | `hooks/` | The launcher scripts that your agent's hooks start. No secrets. | Run `zn-gate hooks uninstall AGENT` first. If you delete the folder while the hooks are still installed, the hooks cannot start, and `zn-gate check` reports the agent as NOT protected. |
 
 ### Files outside `~/.zn`
