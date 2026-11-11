@@ -45,4 +45,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-secret-allow-reading-output.md](zn-secret-allow-reading-output.md): read the output of `zn-gate secret allow` line by line: the confirmation line, the result line, the warnings and the refusals, and how to undo a change.
 - [zn-secret-rotate-after-leak.md](zn-secret-rotate-after-leak.md): the steps after a key leaked: revoke it at the provider, find the copies, store the new value and check that nothing still uses the old one.
 - [zn-secret-rotate-in-place.md](zn-secret-rotate-in-place.md): replace a vault secret value without changing its name: repeat the rules, and what happens to the first-use approvals.
+- [zn-secret-set-then-verify-with-list.md](zn-secret-set-then-verify-with-list.md): store a fake secret, confirm it with secret list, then use it once with run and see the last-used time.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
