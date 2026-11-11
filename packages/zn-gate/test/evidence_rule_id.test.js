@@ -152,3 +152,33 @@ test('overlapping hook calls keep their own rule id', async () => {
   assert.deepEqual(ids(homeB), Array(6).fill('secret-file:dotenv'));
   assert.equal(evidence.verifyEvidenceLedger(path.join(homeA, '.zn', 'evidence.jsonl')).valid, true);
 });
+
+test('only an id the hooks emit is stored: a token-shaped or unknown id is dropped, every real id is kept', () => {
+  const { FIXED_RULE_IDS } = require('../lib/hooks/rule-id');
+  const destructive = require('../lib/destructive');
+  const home = tmp();
+  const file = path.join(home, '.zn', 'evidence.jsonl');
+  const log = (e) => evidence.logEvidence({ agent: 'claude-code', phase: 'hook-pre_tool', tool_name: 'bash', verdict: 'block', engine: 'zn-hook', ...e }, file, { noStats: true });
+  const real = [...FIXED_RULE_IDS, ...destructive.RULES];
+  for (const id of real) log({ payload: 'p', rule_id: id });
+  // Built at runtime, so no token-shaped literal sits in the source; both would pass a loose lowercase pattern.
+  const fakeToken = 'sk-' + 'abcd1234'.repeat(5);
+  const fakeGh = 'ghp_' + 'abcdef0123'.repeat(3);
+  const bad = [fakeToken, fakeGh, 'destructive:' + fakeToken, 'destructive:not_a_rule', 'secret-file:other', 'egress-check ', 'EGRESS-CHECK', 42, {}, null];
+  for (const id of bad) log({ payload: 'p', rule_id: id });
+  const recs = records(home);
+  assert.equal(recs.length, real.length + bad.length);
+  assert.deepEqual(recs.slice(0, real.length).map((r) => r.rule_id), real);
+  for (const r of recs.slice(real.length)) assert.equal('rule_id' in r, false);
+  const raw = fs.readFileSync(file, 'utf8');
+  assert.ok(!raw.includes(fakeToken) && !raw.includes(fakeGh), 'a token-shaped value is never written to the log');
+  assert.equal(evidence.verifyEvidenceLedger(file).valid, true);
+});
+
+test('every id the hook runner and policy emit is on the list', () => {
+  const { isKnownRuleId } = require('../lib/hooks/rule-id');
+  const src = ['../lib/hooks/runner.js', '../lib/hooks/policy.js'].map((f) => fs.readFileSync(path.join(__dirname, f), 'utf8')).join('\n');
+  const found = [...src.matchAll(/(?:ruleId = |ruleId: |tagRule\()'([a-z:_-]+)'/g)].map((m) => m[1]).filter((id) => id !== 'destructive:');
+  assert.ok(found.length >= 7, 'the ids were found in the source');
+  for (const id of found) assert.ok(isKnownRuleId(id), id + ' is emitted by a hook but is not on the list');
+});

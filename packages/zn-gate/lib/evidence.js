@@ -456,8 +456,9 @@ function previewOf(payloadStr) {
 }
 
 // The specific check that fired (family:check, like destructive:rm_root_home). Optional: records written before it
-// existed have no rule_id and verify as before, because the hash covers whatever fields a record has.
-const RULE_ID_RE = /^[a-z0-9][a-z0-9:_-]{0,63}$/;
+// existed have no rule_id and verify as before, because the hash covers whatever fields a record has. Only an id the
+// hooks emit is kept (see hooks/rule-id.js); any other value is dropped, as an event with no rule_id is.
+const { isKnownRuleId } = require('./hooks/rule-id');
 
 function buildRecord(event, prevHash, plainPreview = false) {
   const timestamp = new Date().toISOString();
@@ -484,7 +485,7 @@ function buildRecord(event, prevHash, plainPreview = false) {
       : previewOf(payloadStr),
     verdict: event.verdict || 'allow',
     rule: event.rule || null,
-    ...(typeof event.rule_id === 'string' && RULE_ID_RE.test(event.rule_id) ? { rule_id: event.rule_id } : {}),
+    ...(isKnownRuleId(event.rule_id) ? { rule_id: event.rule_id } : {}),
     reason: event.reason || null,
     confidence: event.confidence || 1.0,
     latency_us: event.latency_us || 0,

@@ -26,6 +26,26 @@ function takeRuleId(message) {
   return n && typeof message === 'string' && message.includes(n.head) ? n.id : null;
 }
 
+// The ids the hooks emit, besides the destructive:* ones (those come from the destructive rule table). The evidence
+// log keeps a rule_id only if it is in this list, so a caller can never store free text (a token, a path) there.
+const FIXED_RULE_IDS = Object.freeze([
+  'secret-file:dotenv',
+  'secret-file:credential',
+  'egress-check',
+  'size:command-too-long',
+  'size:patch-too-long',
+  'size:mcp-call-too-large',
+  'vault:unavailable',
+]);
+const FIXED_SET = new Set(FIXED_RULE_IDS);
+
+function isKnownRuleId(id) {
+  if (typeof id !== 'string') return false;
+  if (FIXED_SET.has(id)) return true;
+  // Loaded only for a destructive id, so the evidence module does not pull in the rule engine for the others.
+  return id.startsWith('destructive:') && require('../destructive').RULES.includes(id);
+}
+
 function resetRuleId() { const s = store.getStore(); if (s) s.note = null; }
 
-module.exports = { tagRule, takeRuleId, resetRuleId, runWithRuleNote };
+module.exports = { tagRule, takeRuleId, resetRuleId, runWithRuleNote, isKnownRuleId, FIXED_RULE_IDS };

@@ -1,0 +1,2 @@
+### Security
+- The download-and-run check now also blocks a shell that is fed from a command or process substitution when the downloader or the shell is written another way: `/bin/sh -c "$(curl ...)"`, `bash <(\curl ...)`, `sh -c "$(env curl ...)"` (also with `wget`), and a download piped into a group or onto the next line (`curl URL | (sh)`, `curl URL |` followed by `sh` on a new line). `sh -c "$(echo hello)"`, `bash <(echo hi)`, `diff <(curl ...) <(curl ...)` and `curl URL | jq .` stay allowed.
