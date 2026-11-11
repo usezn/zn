@@ -715,3 +715,16 @@ For example: `Checked on Codex CLI 0.163.0 on Linux, 2026-10-17.` (the numbers h
 - **What you checked:** if the check was narrower than the row, say so in the same sentence (for example "hook command only, no agent started").
 - **Not tested:** write "not tested" for a version or system you did not run. Do not copy a version from another row.
 - **A new test replaces the old note:** change the version and the date; do not add a second note next to it.
+
+The table at the top of this page ("Tested in the last release") has one row per agent. Fill its cells the same way, from one run:
+
+```text
+| <agent> | <agent version, or what was run> | <YYYY-MM-DD> | <zn-gate version> |
+```
+
+For example: `| Codex CLI | 0.163.0 | 2026-10-17 | 1.15.0 |` (the numbers here are an example, not a test result).
+
+- **Agent version tested:** the version, written as in the list above. When no agent was started, write `Hook command only (no agent started)`, as the table does now. When the agent was not run in this release, write `not tested in this release`.
+- **Tested on:** the day of the run, as `YYYY-MM-DD`. Write `-` when the row was not tested.
+- **zn-gate version:** the zn-gate release you ran, for example `1.15.0`. Write `-` when the row was not tested.
+- **One run, one row:** all three cells come from the same run. Change them together; do not leave the date of an older run next to a new version.
