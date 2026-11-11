@@ -4,6 +4,22 @@ The eighteen messages people most often meet when they first use zn-gate: what e
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Reporting without secrets
+
+Before you paste zn-gate output into an issue, a discussion or a chat, go through this list. Run every command in your own terminal.
+
+1. **Start with `zn-gate check --json`.** It holds no secret values and writes your home folder as `~`. The [checklist of commands to paste](examples/doctor-before-asking-for-help.md) lists what to run and what each command prints.
+2. **Read `zn why` and `zn evidence` output before you paste it.** A record in the decision log keeps only the first 120 characters of what was checked, with secrets replaced first, and `zn why` removes secrets from that text once more. Redaction works by recognising the format of a secret: a password written in a sentence, or a value zn does not recognise, stays as it is. The full text of a command or a file is not kept, only a SHA-256 hash of it. When you export the log with `zn-gate evidence --export`, paste only the records you need.
+3. **Read `zn audit` output before you paste it.** Each `evidence:` line is cut to 160 characters, secrets in it become `[REDACTED:<TYPE>]`, and every URL is shortened to `scheme://host[:port]`. It still shows file names and lines from your own project, and a password written in prose is not redacted. See [what an audit report shows](audit.md#limitations).
+4. **Never paste these files or values:**
+   - the vault files in `~/.zn` (`vault/secrets.age`, `vault/identity.age`, `vault/keychain.json`), `run/session.key`, any `vault-backup-<date>` folder, and `config.json`;
+   - your `.env` files, and credential files such as `~/.aws/credentials`, `~/.netrc` and `~/.kube/config`;
+   - your zn API key (`zn_` followed by 48 characters), the value of `ZN_API_KEY` or `--key`, and a team join token (`znj_...`).
+
+   The [list of files and folders](files-and-folders.md#who-creates-each-one-and-how-to-remove-it) says what each file in `~/.zn` is.
+5. **Look over verbose output.** `ZN_VERBOSE=1` and `DEBUG=zn` add technical details of errors. Read them like the rest, and leave out paths or names you would not share.
+6. **If a secret went into a post, treat it as leaked.** Replace the secret first, then remove the post. You can revoke a zn API key at <https://usezn.com/api-keys>.
+
 ## Symptoms by command
 
 Find the command you ran, then the symptom that matches.
