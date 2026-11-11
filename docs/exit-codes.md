@@ -100,7 +100,7 @@ In a script, these three codes are the ones you will check most. The [full table
 | Command | Codes | Meaning |
 |---|---|---|
 | `team` and `team status` | `0`, `1`, `2` | `0` done; `1` an error; `2` wrong usage. |
-| `team sync` | `1` | `1` when the policy is rejected or the machine was removed. |
+| `team sync` | `0`, `1` | `0` only when a valid policy is applied and no upload failed. `1` when the machine is offline, the organization has no policy yet, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. |
 
 ## The Python package
 

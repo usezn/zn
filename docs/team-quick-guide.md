@@ -29,7 +29,7 @@ zn team status
 | `zn team sync` | Downloads the policy and uploads pending audit records now. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
 
-Sync also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. `zn team sync` exits with `1` when the policy is rejected or the machine was removed.
+Sync also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. `zn team sync` exits with `0` only when a valid policy is applied and no upload failed. It exits with `1` when the machine is offline, the organization has no policy yet, the policy is refused, the machine was removed, or an upload failed.
 
 ## Write a policy
 
