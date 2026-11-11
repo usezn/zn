@@ -43,9 +43,11 @@ On Windows, in Command Prompt:
 fc scan-before.json scan-after.json
 ```
 
-A line that starts with `<` is in the first file only, so the finding is gone in the second run. A line that starts with `>` is in the second file only, so it is new. Lines with no mark are the same in both runs.
+Reading `diff`: a line that starts with `<` is in the first file only, so the finding is gone in the second run. A line that starts with `>` is in the second file only, so it is new. `diff` prints nothing when the two runs are the same.
 
-A finding that moved to another line shows up as two lines in the diff: the old `"line"` value with `<`, and the new one with `>`.
+A finding that moved to another line shows up in `diff` as two lines: the old `"line"` value with `<`, and the new one with `>`.
+
+Reading `fc`: it does not mark lines with `<` or `>`. For each block that differs it prints the lines from the first file under a `***** scan-before.json` header, then the matching lines from the second file under a `***** scan-after.json` header, and closes the block with `*****`. When the two runs are the same it prints `FC: no differences encountered`.
 
 Do not commit the two files to your repository. They list where the findings are, with a redacted copy of each matching line.
 
