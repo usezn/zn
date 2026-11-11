@@ -50,7 +50,7 @@ test('links to existing files and existing anchors pass', () => {
     '[a](docs/advisories/SEC-1.md)',
     '[b](./docs/advisories/SEC-1.md#fix-1)',
     '[c](docs/advisories/SEC-1.md#sec-1-title-code--more)',
-    '[d](https://github.com/usezn/zn/blob/main/docs/advisories/SEC-1.md#fix)',
+    '[d](https://github.com/example/repo/blob/main/docs/advisories/SEC-1.md#fix)',
   ].join('\n'));
   assert.equal(r.links, 4);
   assert.deepEqual(r.problems, []);
@@ -64,7 +64,7 @@ test('a missing file and a missing anchor are reported with their line', () => {
 });
 
 test('reference definitions and blob links are checked too', () => {
-  const r = run('[ref]: docs/advisories/SEC-9.md\n[ok]: docs/advisories/SEC-1.md\n[x](https://github.com/usezn/zn/blob/main/docs/advisories/SEC-8.md)\n');
+  const r = run('[ref]: docs/advisories/SEC-9.md\n[ok]: docs/advisories/SEC-1.md\n[x](https://github.com/example/repo/blob/main/docs/advisories/SEC-8.md)\n');
   assert.equal(r.links, 3);
   assert.deepEqual(r.problems.map((p) => p.line), [1, 3]);
 });

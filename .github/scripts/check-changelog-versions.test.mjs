@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { duplicateVersions, versionHeadings } from './check-changelog-versions.mjs';
 
 test('distinct versions and Unreleased are not duplicates', () => {
@@ -25,7 +26,7 @@ test('the comparison is case-sensitive on the text in the brackets', () => {
 });
 
 test('the script passes on a changelog without repeated versions', () => {
-  const script = new URL('./check-changelog-versions.mjs', import.meta.url).pathname;
-  const out = execFileSync(process.execPath, [script, new URL('../../CHANGELOG.md', import.meta.url).pathname], { encoding: 'utf8' });
+  const script = fileURLToPath(new URL('./check-changelog-versions.mjs', import.meta.url));
+  const out = execFileSync(process.execPath, [script, fileURLToPath(new URL('../../CHANGELOG.md', import.meta.url))], { encoding: 'utf8' });
   assert.match(out, /changelog versions OK: \d+ heading/);
 });

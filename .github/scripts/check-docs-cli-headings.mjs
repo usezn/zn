@@ -8,7 +8,6 @@
 //
 // Default: docs/cli.md. Fenced code blocks are skipped, so a "###" line inside an example is not a heading.
 import fs from 'node:fs';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /* The lines of a Markdown text outside fenced code blocks. */
@@ -74,6 +73,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// realpath: a symlinked checkout path would otherwise skip main() and exit 0 without checking.
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error('check-docs-cli-headings: ' + e.message); process.exitCode = 1; }
 }

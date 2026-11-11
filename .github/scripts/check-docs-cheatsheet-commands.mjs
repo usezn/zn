@@ -9,7 +9,6 @@
 // Defaults: docs/commands-cheatsheet.md and docs/cli.md. A cheat sheet with no named command fails: an empty
 // result would pass without checking anything.
 import fs from 'node:fs';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const norm = (s) => s.trim().split(/\s+/).join(' ');
@@ -86,6 +85,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// realpath: a symlinked checkout path would otherwise skip main() and exit 0 without checking.
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error('check-docs-cheatsheet-commands: ' + e.message); process.exitCode = 1; }
 }

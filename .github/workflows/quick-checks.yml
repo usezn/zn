@@ -245,20 +245,28 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.doclinks == 'true' }}
         run: node .github/scripts/check-docs-changelog-security-links.mjs
       - name: Markdown lint - test the README entry point check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-readme-entry-points.test.mjs
       - name: Markdown lint - README.md and docs/README.md link the same entry points
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-readme-entry-points.mjs
       - name: Markdown lint - test the docs examples index order check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-examples-index.test.mjs
       - name: Markdown lint - the docs examples index is in alphabetical order
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-examples-index.mjs
       - name: Markdown lint - test the docs examples name check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-examples-names.test.mjs
       - name: Markdown lint - docs examples file names use lowercase letters, digits and hyphens, ending in .md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-examples-names.mjs
       - name: Markdown lint - test the docs examples index target check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-examples-index-targets.test.mjs
       - name: Markdown lint - every docs examples index entry points to an existing page
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-examples-index-targets.mjs
 
       - name: Markdown lint - test the simply and just check
@@ -275,40 +283,58 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-last-reviewed.mjs
       - name: Markdown lint - test the bare http link check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: bash scripts/test-check-docs-https.sh
       - name: Markdown lint - docs and READMEs use https links
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: bash scripts/check-docs-https.sh
       - name: Markdown lint - test the changelog date check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-changelog-dates.test.mjs
       - name: Markdown lint - CHANGELOG.md release headings carry ISO dates
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-changelog-dates.mjs CHANGELOG.md
       - name: Markdown lint - test the action inputs check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-action-inputs-documented.test.mjs
       - name: Markdown lint - every action input is named in docs/github-action.md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-action-inputs-documented.mjs action.yml docs/github-action.md
       - name: Markdown lint - test the docs anchor check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-anchors.test.mjs
       - name: Markdown lint - no two headings of a docs page share an anchor
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-anchors.mjs
       - name: Markdown lint - test the docs wording check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-wording.test.mjs
       - name: Markdown lint - no easy, easily or simply in docs pages
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-wording.mjs
       - name: Markdown lint - test the docs marker check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-todo.test.mjs
       - name: Markdown lint - no TODO or FIXME in the docs or the README
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-todo.mjs
       - name: Markdown lint - test the docs shell block quote check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-bash-quotes.test.mjs
       - name: Markdown lint - no curly quotes in docs shell code blocks
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-bash-quotes.mjs
       - name: Markdown lint - test the code block trailing space check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-code-trailing-space.test.mjs
       - name: Markdown lint - no trailing space inside a code block
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-code-trailing-space.mjs
       - name: Markdown lint - test the code fence check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-fences.test.mjs
       - name: Markdown lint - no docs page leaves a code fence open
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-fences.mjs
 
       # Spellcheck

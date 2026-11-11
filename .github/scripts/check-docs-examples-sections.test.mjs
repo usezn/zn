@@ -1,8 +1,10 @@
 // Tests of check-docs-examples-sections.mjs. Run: node --test .github/scripts/check-docs-examples-sections.test.mjs
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
-  ACCEPTED_HEADINGS, checkSections, examplePages, hasClosingSection, problemMessage,
+  ACCEPTED_HEADINGS, checkSections, examplePages, hasClosingSection, problemMessage, usableBase,
 } from './check-docs-examples-sections.mjs';
 
 test('a page with each accepted closing heading passes', () => {
@@ -61,4 +63,24 @@ test('the failure message names the file and every accepted heading', () => {
   const msg = problemMessage('docs/examples/a.md');
   assert.match(msg, /^docs\/examples\/a\.md: /);
   for (const h of ACCEPTED_HEADINGS) assert.ok(msg.includes(h), h);
+});
+
+test('usableBase rejects empty, missing and all-zero bases', () => {
+  assert.equal(usableBase(''), false);
+  assert.equal(usableBase(undefined), false);
+  assert.equal(usableBase('0000000000000000000000000000000000000000'), false);
+  assert.equal(usableBase('HEAD^1'), true);
+  assert.equal(usableBase('ec7be395bb86845f5ad6f403abf7d16df9d69433'), true);
+});
+
+test('an empty or all-zero base skips with exit 0; a missing --base is a usage error', () => {
+  const script = fileURLToPath(new URL('./check-docs-examples-sections.mjs', import.meta.url));
+  for (const base of ['', '0000000000000000000000000000000000000000']) {
+    const r = spawnSync(process.execPath, [script, '--base', base], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /no usable base/);
+  }
+  const r = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /usage/);
 });

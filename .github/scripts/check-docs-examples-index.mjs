@@ -9,7 +9,6 @@
 // Entries inside fenced code blocks are ignored. The check reports every entry that comes before a name that
 // sorts after it, with the line numbers, and changes nothing.
 import fs from 'node:fs';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /* The sections of a Markdown text: [{ heading, entries: [{ name, line }] }]. `heading` is null before the first one. */
@@ -65,6 +64,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// realpath: a symlinked checkout path would otherwise skip main() and exit 0 without checking.
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error('check-docs-examples-index: ' + e.message); process.exitCode = 1; }
 }

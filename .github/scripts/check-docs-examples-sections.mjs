@@ -7,8 +7,10 @@
 //   node .github/scripts/check-docs-examples-sections.mjs --base <ref>
 //
 // The checked pages are the ones `git diff --diff-filter=AM --no-renames <ref> HEAD` lists under
-// docs/examples/. The workflow passes HEAD^1 on pull requests and the previous tip on pushes, the same
-// base choice quick-scope.sh makes.
+// docs/examples/. The workflow passes HEAD^1 on pull requests and the previous tip (github.event.before) on
+// pushes. Manual runs pass an empty base and a push can carry an all-zero one: with no usable base nothing can
+// be attributed to a change, so the script prints a notice and exits 0 without checking any page. (Unlike
+// quick-scope.sh it does not widen to every page: most existing pages predate the rule and would all fail.)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -34,6 +36,12 @@ export function hasClosingSection(text) {
     if (h && ACCEPTED.has(h[1].trim().toLowerCase())) return true;
   }
   return false;
+}
+
+/* True for a base that names a commit to diff against: not empty and not the all-zero id of a new branch. */
+export function usableBase(base) {
+  const b = String(base ?? '').trim();
+  return b !== '' && !/^0+$/.test(b);
 }
 
 /* The docs/examples pages (direct children, forward slashes) in a list of changed paths, README.md exempt. */
@@ -68,8 +76,12 @@ function changedPaths(base) {
 
 function main(argv) {
   const i = argv.indexOf('--base');
-  const base = i >= 0 ? argv[i + 1] : '';
-  if (!base) throw new Error('usage: check-docs-examples-sections.mjs --base <ref>');
+  if (i < 0) throw new Error('usage: check-docs-examples-sections.mjs --base <ref>');
+  const base = argv[i + 1] ?? '';
+  if (!usableBase(base)) {
+    console.log('docs examples sections: no usable base (manual run or new branch), nothing to compare: skipped');
+    return 0;
+  }
   const pages = examplePages(changedPaths(base));
   const files = pages.map((name) => ({ name, text: fs.readFileSync(name, 'utf8') }));
   const { checked, problems } = checkSections(files);
