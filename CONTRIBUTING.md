@@ -158,6 +158,21 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
 - A draft pull request does not run the required checks, except Public facts. They stay pending until you mark the pull request as ready for review; then they start.
 
+## For package maintainers
+
+The npm package (`packages/zn-gate`) and the Python package (`packages/zn-gate-py`) are meant to give the same verdicts and the same redaction. When you change a rule, a verdict or the way a secret is redacted in one package, make the matching change in the other and run both test suites (see [Running Tests Locally](#running-tests-locally)).
+
+These Python tests compare the two packages. Most of them need the full repository checkout and a `node` binary, and are skipped with a message when either is missing (for example when testing an sdist):
+
+- `packages/zn-gate-py/tests/test_rules_parity.py` (with `packages/zn-gate/test/rules_parity.test.js`): the Python rules must equal the Node.js rules, checked on the shared samples in `packages/zn-gate/test/fixtures/rules_parity_samples.json`.
+- `packages/zn-gate-py/tests/test_tool_guard_parity.py`: the tool-call and tool-result guards must give the same verdicts as the Node.js guard on `packages/zn-gate/test/fixtures/tool_guard_parity.json`.
+- `packages/zn-gate-py/tests/test_secret_scrub_parity.py`: both engines must name the same secrets in the same places, apart from the cases listed there with a reason.
+- `packages/zn-gate-py/tests/test_redaction_parity_fuzz.py`: seeded random texts with fake keys must come out with no key visible from either engine.
+- `packages/zn-gate-py/tests/test_benign_corpus_parity.py`: the Python destructive-command check must decide each everyday command in `packages/zn-gate/test/fixtures/benign-commands.txt` as the Node.js package does.
+- `packages/zn-gate-py/tests/test_cli_node_parity.py`: the Python and Node.js command lines agree on the version and on basic exit codes.
+
+CI also runs `node .github/scripts/check-rule-versions.mjs`, which fails when the two packages disagree on `RULES_VERSION` or `COMMAND_RULES_VERSION` (see [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
+
 ## Adding New Rules
 
 When adding new detection rules:
