@@ -44,7 +44,8 @@ Running it when you are not in an organization prints `Not in an organization.`
 | The organization membership in the vault | Removed. |
 | The local copy of the organization policy and the team file | Deleted. The restrictions stop applying at once. |
 | The upload state and its lock | Deleted. Nothing more is uploaded. |
-| Your secrets in the vault and the local audit log | Not touched by the command. Audit records stay on your machine. |
+| Your secrets in the vault | Not touched by the command. |
+| The local audit log | Kept on your machine. Leaving adds its own records to it: that you left, and a note when the server could not be told. |
 | A "revocation pending" record | Kept only if the server could not be told, and only until a retry works. |
 
 If a local file cannot be deleted (for example a locked file), the command exits `1` and names the files to delete by hand, because the hooks still read them.
