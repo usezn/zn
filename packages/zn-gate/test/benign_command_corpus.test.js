@@ -53,3 +53,9 @@ test('the benign corpus is allowed at or above the measured rate', (t) => {
   assert.ok(rate >= MIN_ALLOW_RATE,
     `allow rate ${rate} is below ${MIN_ALLOW_RATE}: ${JSON.stringify(flagged, null, 1)}`);
 });
+
+test('benign-commands.expected.json matches the current Node decisions (run test/fixtures/make_benign_expected.js)', () => {
+  const { render, OUT } = require('./fixtures/make_benign_expected');
+  assert.equal(fs.readFileSync(OUT, 'utf8'), render(),
+    'benign-commands.expected.json is stale: run `node test/fixtures/make_benign_expected.js` and commit it');
+});
