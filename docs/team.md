@@ -30,6 +30,10 @@ machine that stops reporting is visible.
 - [Deploy zn-gate's hooks to every machine (managed settings)](#deploy-zn-gates-hooks-to-every-machine-managed-settings)
 - [Export the audit log to OpenTelemetry](#export-the-audit-log-to-opentelemetry)
 
+**Words used in this page**
+
+The [glossary](glossary.md) explains these words: zn Team, join token, vault, marker, vault audit log, managed configuration and hook.
+
 ## Roles in a team
 
 **Lead.** The lead is the organization admin who sets zn Team up. The lead
