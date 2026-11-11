@@ -211,16 +211,20 @@ test('scan --exclude refuses a path value with exit 2 and names it; a folder nam
   const dir = tree({ 'ok.md': 'hello\n', 'fixtures/sample.md': 'hello\n', 'src/gen/x.md': 'hello\n' });
   try {
     const cases = [
-      ['fixtures/sample.md', 'fixtures/sample.md'],
-      ['src\\gen', 'src\\gen'],
-      ['fixtures,src/gen', 'src/gen'],
-      ['.', '.'],
-      ['..', '..'],
+      ['fixtures/sample.md', 'fixtures/sample.md', 'sample.md'],
+      ['src\\gen', 'src\\gen', 'gen'],
+      ['fixtures,src/gen', 'src/gen', 'gen'],
+      ['src/', 'src/', null],
+      ['./', './', null],
+      ['.', '.', null],
+      ['..', '..', null],
     ];
-    for (const [value, item] of cases) {
+    for (const [value, item, last] of cases) {
       const r = spawnSync(process.execPath, [CLI, 'scan', dir, '--exclude', value], { encoding: 'utf8', env: ENV });
       assert.strictEqual(r.status, 2, r.stderr);
-      assert.ok(r.stderr.includes('--exclude takes a folder name, not a path: ' + item + '.'), r.stderr);
+      const head = 'zn-gate scan: --exclude takes a folder name, not a path: ' + item + '.';
+      const want = last === null ? head : head + ' --exclude ' + last + ' skips every folder named ' + last + '; to skip only this one, scan a different folder.';
+      assert.strictEqual(r.stderr, want + '\n');
       assert.strictEqual(r.stdout, '', 'nothing is scanned');
     }
     const data = scanJson(dir, ['--exclude', 'gen']);

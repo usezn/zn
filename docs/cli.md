@@ -257,7 +257,7 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
-- `--exclude`: more folders to skip, by folder name (`--exclude fixtures,legacy`). A value with a `/` or `\` (a path, such as `fixtures/sample.md`) or a value of `.` or `..` is refused with exit `2`.
+- `--exclude`: more folders to skip, by folder name (`--exclude fixtures,legacy`). A value with a `/` or `\` (a path, such as `fixtures/sample.md`) or a value of `.` or `..` is refused with exit `2`; pass the folder's name instead (`--exclude gen` skips every folder named `gen`, not only `src/gen`).
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
 - `--package <name>[@version]`: audit an npm MCP server or skill before you add it. The package is downloaded from the registry (`ZN_NPM_REGISTRY`, or npmjs.org), checked against the checksum the registry gave, unpacked to a temporary folder, and its files with a scanned extension are read (see below for what is not). No folder is skipped by name: `node_modules`, `dist` and `build` inside the package are scanned too, with source files (`.js`, `.mjs`, `.cjs`, `.ts`, `.tsx` and the other extensions of a normal scan with `--code`). The agent-config audit (see [`audit`](#audit)) runs on it too, also without skipping folders. Nothing in the package is installed or run. Text output only for now; `--include-home`, `--allow-partial`, `--exclude` and a folder argument are refused (exit `2`).
 

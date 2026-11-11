@@ -545,12 +545,11 @@ def _exclude_path_problem(exclude):
 
 def _exclude_path_message(item):
     shown = "".join(c if " " <= c <= "~" else "?" for c in item)[:80]
-    first = shown.replace("\\", "/").split("/")[0]
-    if first and first not in (".", ".."):
-        hint = "Use --exclude " + first + ", or scan a subfolder."
-    else:
-        hint = "Use --exclude with folder names, or scan a subfolder."
-    return "zn-gate scan: --exclude takes a folder name, not a path: " + shown + ". " + hint
+    head = "zn-gate scan: --exclude takes a folder name, not a path: " + shown + "."
+    last = shown.replace("\\", "/").split("/")[-1]
+    if last in ("", ".", ".."):
+        return head
+    return head + " --exclude " + last + " skips every folder named " + last + "; to skip only this one, scan a different folder."
 
 
 def cmd_scan(args: argparse.Namespace) -> int:

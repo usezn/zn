@@ -230,14 +230,17 @@ class UnreadableDirTests(unittest.TestCase):
     def test_exclude_path_value_is_a_usage_error_that_names_the_value(self):
         d = _tree({"ok.md": "hello\n", "fixtures/sample.md": "hello\n", "src/gen/x.md": "hello\n"})
         try:
-            cases = [("fixtures/sample.md", "fixtures/sample.md"), ("src\\gen", "src\\gen"),
-                     ("fixtures,src/gen", "src/gen"), (".", "."), ("..", "..")]
-            for value, item in cases:
+            cases = [("fixtures/sample.md", "fixtures/sample.md", "sample.md"), ("src\\gen", "src\\gen", "gen"),
+                     ("fixtures,src/gen", "src/gen", "gen"), ("src/", "src/", None), ("./", "./", None),
+                     (".", ".", None), ("..", "..", None)]
+            for value, item, last in cases:
                 err = io.StringIO()
                 with redirect_stderr(err), redirect_stdout(io.StringIO()) as out:
                     code = cmd_scan(argparse.Namespace(path=d, exclude=value, include=None, format="json", no_fail=False))
                 self.assertEqual(code, 2, value)
-                self.assertIn("--exclude takes a folder name, not a path: " + item + ".", err.getvalue())
+                head = "zn-gate scan: --exclude takes a folder name, not a path: " + item + "."
+                want = head if last is None else head + " --exclude " + last + " skips every folder named " + last + "; to skip only this one, scan a different folder."
+                self.assertEqual(err.getvalue(), want + "\n")
                 self.assertEqual(out.getvalue(), "")
         finally:
             shutil.rmtree(d, ignore_errors=True)

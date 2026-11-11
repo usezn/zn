@@ -589,11 +589,10 @@ function excludePathProblem(exclude) {
 
 function excludePathMessage(item) {
   const shown = item.replace(/[^\x20-\x7e]/g, '?').slice(0, 80);
-  const first = shown.replace(/\\/g, '/').split('/')[0];
-  const hint = first && first !== '.' && first !== '..'
-    ? 'Use --exclude ' + first + ', or scan a subfolder.'
-    : 'Use --exclude with folder names, or scan a subfolder.';
-  return 'zn-gate scan: --exclude takes a folder name, not a path: ' + shown + '. ' + hint;
+  const head = 'zn-gate scan: --exclude takes a folder name, not a path: ' + shown + '.';
+  const last = shown.split(/[\/\\]/).pop();
+  if (!last || last === '.' || last === '..') return head;
+  return head + ' --exclude ' + last + ' skips every folder named ' + last + '; to skip only this one, scan a different folder.';
 }
 
 async function handleScan(targetPath, options) {
