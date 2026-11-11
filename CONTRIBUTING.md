@@ -225,7 +225,7 @@ If you find a security vulnerability, please do NOT open a public issue, a pull 
 
 ## Commit messages for documentation changes
 
-No tool checks commit messages, and a pull request is reviewed as a whole. Most commits that change only `docs/` already follow this shape, so please match it:
+No tool checks commit messages, and a pull request is reviewed as a whole. Many commits that change only `docs/` use the `docs:` prefix, so we suggest this shape:
 
 - Start with `docs:`, then a short sentence in the imperative that says what the page says or does now, for example `docs: point the quick answers to the renumbered FAQ entries`.
 - Leave out the final full stop, and keep the subject to one line.
