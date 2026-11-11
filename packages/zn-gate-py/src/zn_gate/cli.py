@@ -777,7 +777,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
-        return 0
+        return 0 if res.get("valid") else 1
 
     stats = get_evidence_stats()
     print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
