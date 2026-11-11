@@ -105,7 +105,8 @@ function plainSecretNames(text) {
     if (e.value.includes('__ZN_')) continue;
     const pw = connectionPassword(e.value);
     if (pw && /^__ZN_[A-Z0-9_]+__$/.test(e.value.slice(pw.start, pw.end))) continue;
-    if (!pw && /^[a-z][a-z0-9+.-]*:\/\//i.test(e.value)) continue; // URL without credentials
+    // A URL without credentials is not a secret, but only under a _URL or _URI name: API_KEY=https://example.com still is one.
+    if (!pw && /_UR[LI]$/i.test(e.key) && /^[a-z][a-z0-9+.-]*:\/\//i.test(e.value)) continue;
     if (!names.includes(e.key)) names.push(e.key);
   }
   return names;

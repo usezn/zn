@@ -66,3 +66,10 @@ test('plainSecretNames: names only, markers and credential-less URLs are skipped
   assert.deepEqual(dotenv.plainSecretNames('A_KEY=1\nDATABASE_URL=postgres://u:__ZN_DB_PW__@db.example.com/x\nSITE_URL=https://example.com\nPORT=1\n'), ['A_KEY']);
   assert.deepEqual(dotenv.plainSecretNames('DATABASE_URL=postgres://u:pw@db.example.com/x\n'), ['DATABASE_URL']);
 });
+
+test('a credential-less URL is skipped only under a _URL or _URI name', () => {
+  assert.deepEqual(dotenv.plainSecretNames('API_KEY=https://example.com\n'), ['API_KEY']);
+  assert.deepEqual(dotenv.plainSecretNames('SITE_URL=https://example.com\nCALLBACK_URI=https://example.com/cb\n'), []);
+  assert.match(readOf('API_KEY=https://example.com\n') || '', /Still holding a value: API_KEY\./);
+  assert.equal(readOf('SITE_URL=https://example.com\n'), null);
+});
