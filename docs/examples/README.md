@@ -42,5 +42,6 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-secret-rotate-after-leak.md](zn-secret-rotate-after-leak.md): the steps after a key leaked: revoke it at the provider, find the copies, store the new value and check that nothing still uses the old one.
 - [zn-secret-rotate-in-place.md](zn-secret-rotate-in-place.md): replace a vault secret value without changing its name: repeat the rules, and what happens to the first-use approvals.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
