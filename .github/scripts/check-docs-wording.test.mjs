@@ -56,3 +56,10 @@ test('a page with the word fails and names its file; a clean tree passes', () =>
   const clean = tree({ 'a.md': 'Run the command.\n' });
   assert.deepEqual(checkDir(clean).hits, []);
 });
+
+test('licence and notice files are not checked, their wording is verbatim', () => {
+  const dir = tree({ 'NOTICE.md': 'easily\n', 'LICENSE.md': 'simply\n', 'LICENSE-MIT.md': 'easy\n', 'a.md': 'This is easily done.\n' });
+  const r = checkDir(dir);
+  assert.equal(r.checked, 1);
+  assert.deepEqual(r.hits.map((h) => h.file), ['a.md']);
+});

@@ -12,6 +12,9 @@ import { pathToFileURL } from 'node:url';
 
 const WORD = /\b(?:easy|easily|simply)\b/gi;
 
+// Licence texts and notices quote third-party wording verbatim, so they are not checked.
+const LICENCE_FILE = /^(NOTICE\.md$|LICEN[CS]E)/i;
+
 /* The prose of one Markdown line: code spans, link targets and bare URLs blanked out, link text kept. */
 export function proseOf(line) {
   return line
@@ -42,7 +45,7 @@ function listMarkdown(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...listMarkdown(p));
-    else if (e.isFile() && e.name.endsWith('.md')) out.push(p);
+    else if (e.isFile() && e.name.endsWith('.md') && !LICENCE_FILE.test(e.name)) out.push(p);
   }
   return out;
 }
