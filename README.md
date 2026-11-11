@@ -331,6 +331,10 @@ Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.confi
 
 Decision log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
 
+### Where zn-gate keeps its files
+
+zn-gate keeps its vault and its settings in a `.zn` folder in your home folder (`~/.zn`): the encrypted vault files, the vault audit log (`audit.jsonl`), the decision log (`evidence.jsonl`) and a small launcher script under `~/.zn/hooks`. The settings and configs of your agents stay where each agent keeps them; zn-gate writes a backup before it changes one. The full list, what each file is and how to remove it: [Files and folders zn-gate reads or writes](docs/files-and-folders.md).
+
 ### GitHub Action
 
 Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md). To report findings without failing the build, see [Warn without failing the build](docs/github-action.md#warn-without-failing-the-build).
