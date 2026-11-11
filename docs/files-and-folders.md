@@ -86,7 +86,8 @@ There is no zn-gate command that backs up its files. A backup is a copy you make
 | `vault-backup-<date>` | Never copy | An encrypted copy of an old vault, made by `zn-gate vault reset`. It holds old secret values. `zn-gate vault purge` removes it. |
 | `run/session.key` and `run/vault.sock` | Never copy | They exist only while the vault is unlocked, and zn-gate removes them when it locks. |
 | `hooks/` | No | Launcher scripts for your agents. `zn-gate hooks install <agent>` creates them. |
-| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | No | They belong to a computer that joined a zn Team. Remove them with `zn-gate team leave`, not by hand. |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-upload.lock` | No | They belong to a computer that joined a zn Team. Remove them with `zn-gate team leave`, not by hand. |
+| `team-notice.json` | No | A record of which team notices were already shown. `zn-gate team leave` does not remove it, and deleting it only lets a notice show again. |
 | `reach-last.json` and `package-registry-cache.json` | No | A small memory of the last `reach --remember` run, and saved package lookups. |
 | `requests.jsonl` | No | A record of each time an agent asked for a secret. The agent can ask again. |
 | Backups of settings files (`<settings file>.bak-zn-<stamp>`) and saved copies of MCP configs (`<config file>.bak.<number>`) | Keep them where they are | `zn-gate init --revert` puts the saved copy back in place of the wrapped MCP config. |
