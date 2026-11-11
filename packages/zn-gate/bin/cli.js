@@ -577,7 +577,31 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   return filesToScan;
 }
 
+// --exclude takes folder names. A value with a separator or a dot segment matches no folder name, so it was
+// ignored in silence; it is refused instead. Returns the first such item, or null.
+function excludePathProblem(exclude) {
+  for (const raw of String(exclude).split(',')) {
+    const item = raw.trim();
+    if (item && (/[\/\\]/.test(item) || item === '.' || item === '..')) return item;
+  }
+  return null;
+}
+
+function excludePathMessage(item) {
+  const shown = item.replace(/[^\x20-\x7e]/g, '?').slice(0, 80);
+  const first = shown.replace(/\\/g, '/').split('/')[0];
+  const hint = first && first !== '.' && first !== '..'
+    ? 'Use --exclude ' + first + ', or scan a subfolder.'
+    : 'Use --exclude with folder names, or scan a subfolder.';
+  return 'zn-gate scan: --exclude takes a folder name, not a path: ' + shown + '. ' + hint;
+}
+
 async function handleScan(targetPath, options) {
+  const badExclude = options.exclude ? excludePathProblem(options.exclude) : null;
+  if (badExclude !== null) {
+    process.stderr.write(excludePathMessage(badExclude) + '\n');
+    process.exit(2);
+  }
   const resolved = path.resolve(targetPath || '.');
   if (!fs.existsSync(resolved)) {
     process.stderr.write(`Error: Target path does not exist: ${resolved}\n`);

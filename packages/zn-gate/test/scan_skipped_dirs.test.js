@@ -206,3 +206,25 @@ test('scan text output escapes control characters in the path of a finding and i
     assert.ok(empty.includes('No files were scanned in ') && empty.includes('e' + bs + 'x1b[2Je'), empty);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('scan --exclude refuses a path value with exit 2 and names it; a folder name still skips the folder', () => {
+  const dir = tree({ 'ok.md': 'hello\n', 'fixtures/sample.md': 'hello\n', 'src/gen/x.md': 'hello\n' });
+  try {
+    const cases = [
+      ['fixtures/sample.md', 'fixtures/sample.md'],
+      ['src\\gen', 'src\\gen'],
+      ['fixtures,src/gen', 'src/gen'],
+      ['.', '.'],
+      ['..', '..'],
+    ];
+    for (const [value, item] of cases) {
+      const r = spawnSync(process.execPath, [CLI, 'scan', dir, '--exclude', value], { encoding: 'utf8', env: ENV });
+      assert.strictEqual(r.status, 2, r.stderr);
+      assert.ok(r.stderr.includes('--exclude takes a folder name, not a path: ' + item + '.'), r.stderr);
+      assert.strictEqual(r.stdout, '', 'nothing is scanned');
+    }
+    const data = scanJson(dir, ['--exclude', 'gen']);
+    assert.strictEqual(data.total_files, 2);
+    assert.ok(!JSON.stringify(data).includes('x.md'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

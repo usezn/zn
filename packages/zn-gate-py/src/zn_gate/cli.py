@@ -534,7 +534,31 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
     return {"silent": False, "reason": reason}
 
 
+def _exclude_path_problem(exclude):
+    """The first --exclude item that is a path (it has a separator or is . or ..), or None."""
+    for raw in exclude.split(","):
+        item = raw.strip()
+        if item and ("/" in item or "\\" in item or item in (".", "..")):
+            return item
+    return None
+
+
+def _exclude_path_message(item):
+    shown = "".join(c if " " <= c <= "~" else "?" for c in item)[:80]
+    first = shown.replace("\\", "/").split("/")[0]
+    if first and first not in (".", ".."):
+        hint = "Use --exclude " + first + ", or scan a subfolder."
+    else:
+        hint = "Use --exclude with folder names, or scan a subfolder."
+    return "zn-gate scan: --exclude takes a folder name, not a path: " + shown + ". " + hint
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
+    if getattr(args, "exclude", None):
+        bad_exclude = _exclude_path_problem(args.exclude)
+        if bad_exclude is not None:
+            sys.stderr.write(_exclude_path_message(bad_exclude) + "\n")
+            return 2
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: target path not found: {target_path}. Check the spelling and the folder you run zn-gate from, then try again.", file=sys.stderr)

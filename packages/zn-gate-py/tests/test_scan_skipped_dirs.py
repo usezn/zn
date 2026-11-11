@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 from zn_gate import cli
 from zn_gate.cli import cmd_scan
@@ -225,4 +225,28 @@ class UnreadableDirTests(unittest.TestCase):
             self.assertEqual(reasons.get("locked"), "cannot be read")
         finally:
             os.chmod(locked, 0o755)
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_exclude_path_value_is_a_usage_error_that_names_the_value(self):
+        d = _tree({"ok.md": "hello\n", "fixtures/sample.md": "hello\n", "src/gen/x.md": "hello\n"})
+        try:
+            cases = [("fixtures/sample.md", "fixtures/sample.md"), ("src\\gen", "src\\gen"),
+                     ("fixtures,src/gen", "src/gen"), (".", "."), ("..", "..")]
+            for value, item in cases:
+                err = io.StringIO()
+                with redirect_stderr(err), redirect_stdout(io.StringIO()) as out:
+                    code = cmd_scan(argparse.Namespace(path=d, exclude=value, include=None, format="json", no_fail=False))
+                self.assertEqual(code, 2, value)
+                self.assertIn("--exclude takes a folder name, not a path: " + item + ".", err.getvalue())
+                self.assertEqual(out.getvalue(), "")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_exclude_folder_name_still_skips_the_folder(self):
+        d = _tree({"ok.md": "hello\n", "fixtures/sample.md": "hello\n", "src/gen/x.md": "hello\n"})
+        try:
+            data = json.loads(_run(d, exclude="gen"))
+            self.assertEqual(data["total_files"], 2)
+            self.assertNotIn("x.md", json.dumps(data))
+        finally:
             shutil.rmtree(d, ignore_errors=True)
