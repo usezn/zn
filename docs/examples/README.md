@@ -2,6 +2,8 @@
 
 Worked examples, grouped by topic. Each group is in alphabetical order. All values in them are made up.
 
+The code examples that run with zn-gate, with the command to run each one, are indexed in [examples/README.md](../../examples/README.md).
+
 ## Setting up, upgrading and removing
 
 - [after-an-upgrade.md](after-an-upgrade.md): five commands to run after you update zn-gate, and what a good result looks like.
@@ -15,6 +17,7 @@ Worked examples, grouped by topic. Each group is in alphabetical order. All valu
 - [hooks-uninstall-then-verify.md](hooks-uninstall-then-verify.md): remove zn's hooks and confirm with `zn-gate check --hooks` that none is left.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [moving-to-a-new-computer.md](moving-to-a-new-computer.md): set up zn-gate on a new computer, or on a second one, with fictional values.
+- [python-only-first-run.md](python-only-first-run.md): from `pip install zn-gate` to a fake secret being blocked, with the Python package and no Node.js.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [switching-agents-checklist.md](switching-agents-checklist.md): a checklist for moving zn-gate protection from one coding agent to another.
 - [uninstall-one-agent.md](uninstall-one-agent.md): remove zn-gate from one agent and keep it on the others.
@@ -31,8 +34,10 @@ Worked examples, grouped by topic. Each group is in alphabetical order. All valu
 - [audit-before-opening.md](audit-before-opening.md): run `zn audit` on a repository you just cloned, before an agent opens it, and read what the report says.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [check-output-explained.md](check-output-explained.md): a sample `zn-gate check` output, explained line by line.
+- [doctor-before-asking-for-help.md](doctor-before-asking-for-help.md): the commands to run in your own terminal, and paste, before you ask for help.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [evidence-example.md](evidence-example.md): the local evidence log, and what `zn-gate evidence` prints.
+- [evidence-verify-after-restore.md](evidence-verify-after-restore.md): check that a decision log you brought to a new computer arrived whole and unchanged.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [mcp-pin-review-checklist.md](mcp-pin-review-checklist.md): what to compare in a changed MCP tool before you approve it with `pins approve`.
 - [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
