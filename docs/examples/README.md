@@ -18,6 +18,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [hooks-install-and-uninstall.md](hooks-install-and-uninstall.md): install and remove the hooks of one agent, for your user or one project, and check the result.
 - [hooks-status-after-agent-update.md](hooks-status-after-agent-update.md): re-check the hooks with `zn-gate check` and `zn-gate check --hooks` after your coding agent updated itself.
 - [hooks-uninstall-then-verify.md](hooks-uninstall-then-verify.md): remove zn's hooks and confirm with `zn-gate check --hooks` that none is left.
+- [init-agent-list.md](init-agent-list.md): which agents zn-gate init finds on this machine, why one can be missing from its list, and what it prints without a terminal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [keep-a-secret-out-of-the-agent.md](keep-a-secret-out-of-the-agent.md): store one fake secret, let one command use it, then remove it.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
