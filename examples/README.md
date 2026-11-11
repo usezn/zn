@@ -1,8 +1,8 @@
 # Examples
 
-These are the examples in this folder: 20 in all, one folder each. Every value in them is made up. The Python and Node.js examples run on your machine with no API key and no network call. The GitHub Action and Promptfoo examples are configuration files that you use in your own workflow or test setup.
+These are the examples in this folder: 20 in all, one folder each. Every value in them is made up. The Python and Node.js examples run on your machine. The example code itself makes no network call and needs no API key. The GitHub Action and Promptfoo examples are configuration files that you use in your own workflow or test setup.
 
-Run each command from the example's folder. Examples that pin zn-gate list it in their `requirements.txt` or `package.json`. The pins are exact, so an example behaves the same on your machine as it did when it was written.
+Run each command from the example's folder. Examples that pin zn-gate list it, at an exact version, in their `requirements.txt` or `package.json`.
 
 ## Python
 
@@ -21,7 +21,7 @@ Each of these guards the tools of an agent built with a framework. Most check th
 | [dspy-agent](dspy-agent/) | DSPy | Guards the tools of a `ReAct` agent: blocks a call for an SSH key and checks the output of each tool. | `pip install -r requirements.txt`, then `python agent_guard.py` |
 | [google-adk-agent](google-adk-agent/) | Google ADK | Checks what a tool returns before the model reads it. | `pip install -r requirements.txt`, then `python agent_guard.py` |
 | [haystack-agent](haystack-agent/) | Haystack | Guards the arguments and the output of a tool. | `pip install -r requirements.txt`, then `python agent_guard.py` |
-| [langchain-agent](langchain-agent/) | LangChain and LangGraph | Wraps tools so a blocked call does not run, and a callback handler stops the whole run on a block. | `python agent_guard.py` |
+| [langchain-agent](langchain-agent/) | LangChain and LangGraph | Wraps tools so a blocked call does not run, and a callback handler stops the whole run on a block. | `pip install zn-gate langchain-core`, then `python agent_guard.py` |
 | [llamaindex-agent](llamaindex-agent/) | LlamaIndex | Checks what a tool returns before the model reads it. | `pip install -r requirements.txt`, then `python agent_guard.py` |
 | [openai-agents-sdk](openai-agents-sdk/) | OpenAI Agents SDK (Python) | Checks what a tool returns before the model reads it. | `pip install -r requirements.txt`, then `python agent_guard.py` |
 | [pydantic-ai-agent](pydantic-ai-agent/) | Pydantic AI | Checks what a tool returns before the model reads it. | `pip install -r requirements.txt`, then `python agent_guard.py` |
