@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-10.1"
+COMMAND_RULES_VERSION = "2026-11-11.5"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -546,11 +546,18 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
     keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
     followed were met (the line is then refused), and the strings of env -S / --split-string."""
+    return _unwrap_dir_x(args)[:4]
+
+
+def _unwrap_dir_x(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], Optional[List[str]]]:
+    """_unwrap_dir with a fifth item: the words after the first xargs wrapper (None when there is none), so what xargs
+    runs can be read with what it is fed."""
     i = 0
     guard = 0
     chdir: List[str] = []
     splits: List[str] = []
     overflow = False
+    xargs: Optional[List[str]] = None
     while i < len(args):
         guard += 1
         # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
@@ -601,12 +608,19 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]
                     continue
                 i = _env_option(f, args, i, chdir, splits)
             continue
+        # toybox runs the applet named by its next word, like busybox.
+        if name == "toybox":
+            i += 1
+            continue
+        # xargs: the words after it are kept, so what it runs can be read with what it is fed.
+        if name == "xargs" and xargs is None:
+            xargs = args[i + 1:]
         # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
         if name in _WRAPPERS:
             i = _skip_wrapper(args, i, name)
             continue
         break
-    return args[i:], chdir, overflow, splits
+    return args[i:], chdir, overflow, splits, xargs
 
 
 _ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
@@ -974,8 +988,174 @@ def _from_cwd(cwd: Any, word: str) -> str:
     return _folder_text(cwd, ups + 4) + "/" + word
 
 
-def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
-    args, chdir, overflow, splits = _unwrap_dir(words)
+# xargs: the short options that take an argument, the flags, and the long ones (the value of some follows as a separate word).
+_XARGS_SHORT_ARG = frozenset("InPdELsaJRS")
+_XARGS_SHORT_FLAG = frozenset("0oprtxTvile")
+_XARGS_LONG_ARG = frozenset((
+    "--max-args", "--max-procs", "--delimiter", "--arg-file", "--eof", "--max-lines", "--max-chars", "--process-slot-var",
+))
+_XARGS_LONG_FLAG = frozenset((
+    "--null", "--no-run-if-empty", "--interactive", "--verbose", "--exit", "--open-tty", "--show-limits", "--version", "--help",
+    "--replace", "--eof", "--max-lines",
+))
+# What a command fed by an unknown source may be handed: the filesystem root and a disk device.
+_UNKNOWN_TARGETS = ["/", "/dev/sda"]
+# $@, $*, $1 and so on inside a shell script run with the matched files as its arguments.
+_SHELL_ARG_RE = re.compile(r"\$\{?(?:@|\*|[0-9]+)\}?", _A)
+# Most suffixes of an xargs command line tried as "the command" when its options cannot be read.
+_MAX_XARGS_GUESS = 16
+# True while the command under check is what `find -exec` runs on every file below the find path, so a plain rm or chmod
+# there covers the whole tree without -r / -R.
+_find_ctx = False
+
+
+def _xargs_parse(args: List[str]) -> Tuple[List[str], str, bool]:
+    """The command xargs runs, after its own options, the placeholder it replaces ({} unless -I / -i / --replace says
+    otherwise) and whether an option was not known, so where the command starts cannot be told."""
+    i = 0
+    ph = "{}"
+    unsure = False
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if not a.startswith("-") or a == "-":
+            break
+        i += 1
+        if a.startswith("--"):
+            eq = a.find("=")
+            name = a if eq < 0 else a[:eq]
+            if name == "--replace" and eq >= 0:
+                ph = a[eq + 1:] or "{}"
+            elif eq < 0 and name in _XARGS_LONG_ARG:
+                i += 1
+            elif name not in _XARGS_LONG_ARG and name not in _XARGS_LONG_FLAG:
+                unsure = True
+            continue
+        for j in range(1, len(a)):
+            c = a[j]
+            if c in _XARGS_SHORT_ARG:
+                attached = a[j + 1:]
+                if c == "I":
+                    ph = attached or (args[i] if i < len(args) else "{}")
+                if not attached:
+                    i += 1
+                break
+            if c in ("i", "l", "e"):
+                if c == "i":
+                    ph = a[j + 1:] or "{}"
+                break
+            if c not in _XARGS_SHORT_FLAG:
+                unsure = True
+    return args[i:], ph, unsure
+
+
+def _substitute(words: List[str], value: str, ph: str) -> Tuple[List[str], bool]:
+    """The words with the placeholder (and {}) replaced by value; the flag says whether any word held it."""
+    hit = False
+    holders = ["{}"] if ph == "{}" else [ph, "{}"]
+    out = []
+    for w in words:
+        r = w
+        for h in holders:
+            if h and h in r:
+                r = value.join(r.split(h))
+                hit = True
+        out.append(r)
+    return out, hit
+
+
+def _find_filtered(args: List[str], acts: bool) -> bool:
+    """A find with a test that picks some files. -maxdepth, -mindepth, -depth, -xdev, -prune and -mount are not tests. When an
+    action other than -delete runs (-exec, xargs), "-type d" picks the folders and the path itself, and a recursive delete
+    or chmod of them covers everything, so it is not a test either."""
+    return any(
+        _FIND_TESTS.match(w) and not (acts and w == "-type" and re.match(r"^d(?:,d)*\Z", args[i + 1] if i + 1 < len(args) else ""))
+        for i, w in enumerate(args)
+    )
+
+
+def _find_execs(args: List[str]) -> List[List[str]]:
+    """The commands find -exec / -execdir / -ok / -okdir run: one list of words per action, up to its ; or +."""
+    out: List[List[str]] = []
+    i = 0
+    while i < len(args):
+        if not re.match(r"^-(?:exec|execdir|ok|okdir)\Z", args[i]):
+            i += 1
+            continue
+        body: List[str] = []
+        j = i + 1
+        while j < len(args) and not re.match(r"^\\?;\Z", args[j]) and args[j] != "+":
+            body.append(args[j])
+            j += 1
+        out.append(body)
+        i = j + 1
+    return out
+
+
+def _stdin_targets(prev: Optional[Tuple[List[str], Optional[str]]]) -> List[str]:
+    """What the text on the left of `| xargs` can hand it: the literal words of echo / printf, or, for find, the folders it
+    lists (nothing dangerous when it picks files by a test). Anything else, or no pipe at all, is unknown."""
+    if prev is None:
+        return _UNKNOWN_TARGETS
+    a = _unwrap(prev[0])
+    name = _program_name(a[0]) if a else ""
+    if name in ("echo", "printf"):
+        out: List[str] = []
+        for w in a[1:]:
+            if w.startswith("-"):
+                continue
+            for t in re.sub(r"\\[0nrt]", " ", w).split():
+                out.append(t)
+        return out[:20]
+    if name == "find":
+        r = a[1:]
+        ps: List[str] = []
+        for w in r:
+            if w.startswith("-") or w == "(" or w == "!":
+                break
+            ps.append(w)
+        if not ps:
+            ps.append(".")
+        return [] if _find_filtered(r, True) else ps
+    return _UNKNOWN_TARGETS
+
+
+def _run_body(body: List[str], targets: List[str], depth: int, ph: str, append: bool, known: Any) -> Optional[str]:
+    """Checks the command xargs or find -exec runs once for each possible target: the target takes the place of the
+    placeholder (and of $@ / $1 inside a shell script), or, for xargs without a placeholder, is added as the last argument."""
+    for t in targets[:20]:
+        words, hit_ph = _substitute(body, t, ph)
+        if append and not hit_ph:
+            words = words + [t]
+        inner = _unwrap(words)
+        if inner and _program_name(inner[0]) in _SHELLS:
+            words = [_SHELL_ARG_RE.sub(lambda _m, t=t: t, w) for w in words]
+        hit = _check_simple(words, depth + 1, known, None)
+        if hit:
+            return hit
+    return None
+
+
+def _xargs_hit(rest: List[str], depth: int, known: Any, prev: Optional[Tuple[List[str], Optional[str]]]) -> Optional[str]:
+    """The command xargs runs (rest = the words after the xargs word) checked with whatever can reach it on its input.
+    Options that are not known leave the start of the command open: every later word is tried as its start (fail closed)."""
+    if depth >= _MAX_DEPTH:
+        return _OVERFLOW
+    cmd, ph, unsure = _xargs_parse(rest)
+    if not unsure:
+        return _run_body(cmd, _stdin_targets(prev), depth, ph, True, known) if cmd else None
+    for k in range(min(len(rest), _MAX_XARGS_GUESS)):
+        hit = _run_body(rest[k:], _UNKNOWN_TARGETS, depth, ph, True, known)
+        if hit:
+            return hit
+    return None
+
+
+def _check_simple(words: List[str], depth: int, known: Any = None, prev: Optional[Tuple[List[str], Optional[str]]] = None) -> Optional[str]:
+    global _find_ctx
+    args, chdir, overflow, splits, xargs = _unwrap_dir_x(words)
     if overflow:
         return _OVERFLOW
     if chdir:
@@ -989,6 +1169,11 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
         # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
         text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
         hit = _analyze("env " + text + " " + tail, depth + 1, known)
+        if hit:
+            return hit
+    # xargs runs its command on what arrives on its input: the command is read with each thing that could arrive.
+    if xargs is not None:
+        hit = _xargs_hit(xargs, depth, known, prev)
         if hit:
             return hit
     if not args:
@@ -1030,7 +1215,7 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
         return "rm_root_home"
 
     if head in _RM_HEADS:
-        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(_from_cwd(known, w)) for w in _operands(rest, head)):
+        if (_find_ctx or any(_recursive_flag(w, head) for w in rest)) and any(_dangerous_path(_from_cwd(known, w)) for w in _operands(rest, head)):
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
@@ -1045,11 +1230,27 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
-        filtered = any(_FIND_TESTS.match(w) for w in rest)
+        execs = _find_execs(rest)
+        filtered = _find_filtered(rest, bool(execs))
         if delete and not filtered and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
             return "rm_root_home"
+        # -exec / -execdir / -ok run their command on every file below the path: with a protected path and no test, it is read for each.
+        if not filtered and execs:
+            dp = [r for r in (_from_cwd(known, w) for w in paths) if _dangerous_path(r)]
+            if dp and depth >= _MAX_DEPTH:
+                return _OVERFLOW
+            if dp:
+                saved = _find_ctx
+                _find_ctx = True
+                try:
+                    for body in execs:
+                        hit = _run_body(body, dp, depth, "{}", False, known)
+                        if hit:
+                            return hit
+                finally:
+                    _find_ctx = saved
     if head in ("chmod", "chown", "chgrp"):
-        if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
+        if _find_ctx or any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
             mode = ops[0] if ops else ""
             targets = [d for d in (_dangerous_path(_from_cwd(known, w)) for w in ops[1:]) if d]
@@ -1160,16 +1361,25 @@ def _segment_dir(known: Any, d: Optional[List[str]]) -> Any:
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf, _spl = _unwrap_dir(_strip_redirects(words))
+        a, d, _ovf, _spl, xa = _unwrap_dir_x(_strip_redirects(words))
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
-        heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
+        heads.append((a, names[0], names, alts is None, _segment_dir(known, d), xa))
     if any(h[4] is _CWD_OVERFLOW for h in heads):
         return _OVERFLOW
     first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
-            args, head, names, overflow, _dir = heads[j]
+            args, head, names, overflow, _dir, xa = heads[j]
+            if not overflow and xa is not None:
+                # xargs sh -c with no script of its own runs what the download says (also -I{} sh -c {}).
+                xcmd, xph, _unsure = _xargs_parse(xa)
+                ia = _unwrap(xcmd)
+                if ia and _program_name(ia[0]) in _SHELLS:
+                    ir = ia[1:]
+                    k = next((n for n, w in enumerate(ir) if re.match(r"^-[A-Za-z]*c[A-Za-z]*\Z", w)), -1)
+                    if k >= 0 and (k + 1 >= len(ir) or ir[k + 1] == xph or ir[k + 1] == "{}"):
+                        return "pipe_to_shell"
             # an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
             interp = "" if overflow or any(n in _SHELLS for n in names) else next((k for k in map(_interpreter_kind, names) if k), "")
             if interp:
@@ -1237,7 +1447,7 @@ def _check_segments(
             return _OVERFLOW
         if sep == "(" and len(groups) < _MAX_SEGMENTS:
             groups.append(known)
-        hit = _check_simple(words, depth, known)
+        hit = _check_simple(words, depth, known, pipe[-1] if pipe else None)
         if hit:
             return hit
         # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder

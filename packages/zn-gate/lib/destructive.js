@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-10.1';
+const COMMAND_RULES_VERSION = '2026-11-11.5';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -150,6 +150,146 @@ function segmentsOf(cmd, posix = false) {
 }
 
 const isPipe = (sep) => sep === '|' || sep === '|&';
+
+// xargs: the short options that take an argument, the flags, and the long ones (the value of some follows as a separate word).
+const XARGS_SHORT_ARG = new Set(['I', 'n', 'P', 'd', 'E', 'L', 's', 'a', 'J', 'R', 'S']);
+const XARGS_SHORT_FLAG = new Set(['0', 'o', 'p', 'r', 't', 'x', 'T', 'v', 'i', 'l', 'e']);
+const XARGS_LONG_ARG = new Set(['--max-args', '--max-procs', '--delimiter', '--arg-file', '--eof', '--max-lines', '--max-chars', '--process-slot-var']);
+const XARGS_LONG_FLAG = new Set(['--null', '--no-run-if-empty', '--interactive', '--verbose', '--exit', '--open-tty', '--show-limits', '--version', '--help', '--replace', '--eof', '--max-lines']);
+// What a command fed by an unknown source may be handed: the filesystem root and a disk device.
+const UNKNOWN_TARGETS = ['/', '/dev/sda'];
+// $@, $*, $1 and so on inside a shell script run with the matched files as its arguments.
+const SHELL_ARG_RE = /\$\{?(?:@|\*|[0-9]+)\}?/g;
+// Most suffixes of an xargs command line tried as "the command" when its options cannot be read.
+const MAX_XARGS_GUESS = 16;
+// True while the command under check is what `find -exec` runs on every file below the find path, so a plain rm or chmod
+// there covers the whole tree without -r / -R.
+let FIND_CTX = false;
+
+/* The command xargs runs, after its own options, and the placeholder it replaces ({} unless -I / -i / --replace says otherwise).
+   unsure: an option that is not known, so where the command starts cannot be told. */
+function xargsParse(args) {
+  let i = 0;
+  let ph = '{}';
+  let unsure = false;
+  while (i < args.length) {
+    const a = args[i];
+    if (a === '--') { i++; break; }
+    if (!a.startsWith('-') || a === '-') break;
+    i++;
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = eq < 0 ? a : a.slice(0, eq);
+      if (name === '--replace' && eq >= 0) ph = a.slice(eq + 1) || '{}';
+      else if (eq < 0 && XARGS_LONG_ARG.has(name)) i++;
+      else if (!XARGS_LONG_ARG.has(name) && !XARGS_LONG_FLAG.has(name)) unsure = true;
+      continue;
+    }
+    for (let j = 1; j < a.length; j++) {
+      const c = a[j];
+      if (XARGS_SHORT_ARG.has(c)) {
+        const attached = a.slice(j + 1);
+        if (c === 'I') ph = attached || (i < args.length ? args[i] : '{}');
+        if (!attached) i++;
+        break;
+      }
+      if (c === 'i' || c === 'l' || c === 'e') { if (c === 'i') ph = a.slice(j + 1) || '{}'; break; }
+      if (!XARGS_SHORT_FLAG.has(c)) unsure = true;
+    }
+  }
+  return { cmd: args.slice(i), ph, unsure };
+}
+
+/* The words with the placeholder (and {}) replaced by `value`; hit says whether any word held it. */
+function substitute(words, value, ph) {
+  let hit = false;
+  const holders = ph === '{}' ? ['{}'] : [ph, '{}'];
+  const out = words.map((w) => {
+    let r = w;
+    for (const p of holders) if (p && r.includes(p)) { r = r.split(p).join(value); hit = true; }
+    return r;
+  });
+  return { words: out, hit };
+}
+
+/* A find with no test that picks some files: every file and folder below the path goes. -maxdepth, -mindepth, -depth, -xdev,
+   -prune and -mount are not tests. When an action other than -delete runs (-exec, xargs), "-type d" picks the folders and
+   the path itself, and a recursive delete or chmod of them covers everything, so it is not a test either. */
+function findFiltered(args, acts) {
+  return args.some((w, i) => FIND_TESTS.test(w) && !(acts && w === '-type' && /^d(?:,d)*$/.test(args[i + 1] || '')));
+}
+
+/* The commands find -exec / -execdir / -ok / -okdir run: one array of words per action, up to its ; or +. */
+function findExecs(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!/^-(?:exec|execdir|ok|okdir)$/.test(args[i])) continue;
+    const body = [];
+    let j = i + 1;
+    while (j < args.length && !/^\\?;$/.test(args[j]) && args[j] !== '+') body.push(args[j++]);
+    out.push(body);
+    i = j;
+  }
+  return out;
+}
+
+/* What the text on the left of `| xargs` can hand it: the literal words of echo / printf, or, for find, the folders it lists
+   (nothing dangerous when it picks files by a test). Anything else, or no pipe at all, is unknown. */
+function stdinTargets(prev) {
+  if (!prev) return UNKNOWN_TARGETS;
+  const a = unwrap(prev.words);
+  const name = a.length ? programName(a[0]) : '';
+  if (name === 'echo' || name === 'printf') {
+    const out = [];
+    for (const w of a.slice(1)) {
+      if (w.startsWith('-')) continue;
+      for (const t of w.replace(/\\[0nrt]/g, ' ').split(/\s+/)) if (t) out.push(t);
+    }
+    return out.slice(0, 20);
+  }
+  if (name === 'find') {
+    const r = a.slice(1);
+    const ps = [];
+    for (const w of r) { if (w.startsWith('-') || w === '(' || w === '!') break; ps.push(w); }
+    if (!ps.length) ps.push('.');
+    return findFiltered(r, true) ? [] : ps;
+  }
+  return UNKNOWN_TARGETS;
+}
+
+/* Checks the command xargs or find -exec runs once for each possible target: the target takes the place of the placeholder
+   (and of $@ / $1 inside a shell script), or, for xargs without a placeholder, is added as the last argument. */
+function runBody(body, targets, depth, ph, append, known) {
+  for (const t of targets.slice(0, 20)) {
+    const sub = substitute(body, t, ph);
+    let words = sub.words;
+    if (append && !sub.hit) words = words.concat([t]);
+    const inner = unwrap(words);
+    if (inner.length && SHELLS.has(programName(inner[0]))) words = words.map((w) => w.replace(SHELL_ARG_RE, () => t));
+    const hit = checkSimple(words, depth + 1, known, null);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function inFindCtx(fn) {
+  const saved = FIND_CTX;
+  FIND_CTX = true;
+  try { return fn(); } finally { FIND_CTX = saved; }
+}
+
+/* The command xargs runs (`rest` = the words after the xargs word) checked with whatever can reach it on its input. Options
+   that are not known leave the start of the command open: every later word is tried as its start (fail closed). */
+function xargsHit(rest, depth, known, prev) {
+  if (depth >= MAX_DEPTH) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  const x = xargsParse(rest);
+  if (!x.unsure) return x.cmd.length ? runBody(x.cmd, stdinTargets(prev), depth, x.ph, true, known) : null;
+  for (let k = 0; k < rest.length && k < MAX_XARGS_GUESS; k++) {
+    const hit = runBody(rest.slice(k), UNKNOWN_TARGETS, depth, x.ph, true, known);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 const CD_HEADS = new Set(['cd', 'chdir', 'pushd', 'set-location', 'sl', 'push-location']);
 const ANCHORED_RE = /^(?:[\\/~$%]|[A-Za-z]:)/;
@@ -316,13 +456,14 @@ function envOption(f, args, i, dirs, splits) {
 }
 
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell keywords,
-   with the words of the env -C / --chdir and sudo -D / --chdir options: { args, dir, overflow } (dir = null when none;
-   overflow = more wrappers than can be followed). */
+   with the words of the env -C / --chdir and sudo -D / --chdir options: { args, dir, splits, overflow, xargs } (dir = null when
+   none; overflow = more wrappers than can be followed; xargs = the words after the first xargs wrapper, or null). */
 function unwrapDir(args) {
   let i = 0;
   const dirs = [];
   const splits = [];
   let overflow = false;
+  let xargs = null;
   for (let guard = 0; i < args.length; guard++) {
     // Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
     // So are the words that only introduce a command: function NAME { ...; } (the body is read like any other commands,
@@ -359,6 +500,10 @@ function unwrapDir(args) {
       }
       continue;
     }
+    // toybox runs the applet named by its next word, like busybox.
+    if (name === 'toybox') { i++; continue; }
+    // xargs: the words after it are kept, so what it runs can be read with what it is fed.
+    if (name === 'xargs' && xargs === null) xargs = args.slice(i + 1);
     // Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
     const P = require('./hooks/policy');
     if (P.WRAPPER_NAMES.has(name)) {
@@ -367,7 +512,7 @@ function unwrapDir(args) {
     }
     break;
   }
-  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow };
+  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow, xargs };
 }
 
 /* The words of a command after wrappers and shell keywords. */
@@ -522,7 +667,7 @@ function readsScriptFromStdin(kind, rest) {
   return true;
 }
 
-function checkSimple(words, depth, known) {
+function checkSimple(words, depth, known, prev = null) {
   const un = unwrapDir(words);
   const args = un.args;
   if (un.overflow) return OVERFLOW;
@@ -537,6 +682,11 @@ function checkSimple(words, depth, known) {
     // The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
     const text = un.splits.map((x) => x.replace(/\\_/g, ' ').replace(/\\[tnvfr]/g, ' ')).join(' ');
     const hit = analyze('env ' + text + ' ' + tail, depth + 1, known);
+    if (hit) return hit;
+  }
+  // xargs runs its command on what arrives on its input: the command is read with each thing that could arrive.
+  if (un.xargs) {
+    const hit = xargsHit(un.xargs, depth, known, prev);
     if (hit) return hit;
   }
   if (!args.length) return null;
@@ -569,7 +719,7 @@ function checkSimple(words, depth, known) {
   if (kind && on('rm_root_home') && interpreterCode(kind, rest).some((c) => codeDeletesProtected(c))) return 'rm_root_home';
 
   if (RM_HEADS.has(head)) {
-    if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    if (((FIND_CTX || rest.some((w) => recursiveFlag(w, head))) && operands(rest, head).some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'find') {
     const paths = [];
@@ -578,11 +728,21 @@ function checkSimple(words, depth, known) {
     if (known && !paths.length) paths.push('.');
     const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
-    const filtered = rest.some((w) => FIND_TESTS.test(w));
+    const execs = findExecs(rest);
+    const filtered = findFiltered(rest, execs.length > 0);
     if ((del && !filtered && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    // -exec / -execdir / -ok run their command on every file below the path: with a protected path and no test, it is read for each.
+    if (!filtered && execs.length) {
+      const dp = paths.map((w) => fromCwd(known, w)).filter((w) => dangerousPath(w));
+      if (dp.length && depth >= MAX_DEPTH) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+      if (dp.length) {
+        const hit = inFindCtx(() => { for (const body of execs) { const h = runBody(body, dp, depth, '{}', false, known); if (h) return h; } return null; });
+        if (hit) return hit;
+      }
+    }
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
-    if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
+    if (FIND_CTX || rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
       const ops = operands(rest, head);
       const mode = ops[0] || '';
       const targets = ops.slice(1).map((w) => dangerousPath(fromCwd(known, w))).filter(Boolean);
@@ -665,7 +825,7 @@ function checkPipeline(pipe, known = null) {
     const a = un.args;
     const alts = a.length ? braceAlts(a[0]) : [''];
     const names = (alts || [String(a[0])]).map(programName);
-    return { args: a, head: names[0], names, overflow: alts === null, dir: segmentDir(known, un.dir) };
+    return { args: a, head: names[0], names, overflow: alts === null, dir: segmentDir(known, un.dir), xargs: un.xargs };
   });
   if (heads.some((h) => h.dir === CWD_OVERFLOW)) return OVERFLOW;
   const firstDl = heads.findIndex((h) => h.overflow || h.names.some((n) => DOWNLOADERS.has(n)));
@@ -673,6 +833,16 @@ function checkPipeline(pipe, known = null) {
     // a download whose output reaches a shell
     for (let j = firstDl + 1; j < pipe.length; j++) {
       const h = heads[j];
+      if (!h.overflow && h.xargs && on('pipe_to_shell')) {
+        // xargs sh -c with no script of its own runs what the download says (also -I{} sh -c {}).
+        const x = xargsParse(h.xargs);
+        const ia = unwrap(x.cmd);
+        if (ia.length && SHELLS.has(programName(ia[0]))) {
+          const ir = ia.slice(1);
+          const k = ir.findIndex((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w));
+          if (k >= 0 && (k + 1 >= ir.length || ir[k + 1] === x.ph || ir[k + 1] === '{}')) return 'pipe_to_shell';
+        }
+      }
       // an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
       const interp = h.overflow || h.names.some((n) => SHELLS.has(n)) ? '' : h.names.map(interpreterKind).find(Boolean);
       if (interp) {
@@ -733,7 +903,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     if (vars.overflow) return OVERFLOW;
     if (seg.sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
     if (words !== seg.words) seg = { ...seg, words };
-    const hit = checkSimple(seg.words, depth, known);
+    const hit = checkSimple(seg.words, depth, known, pipe.length ? pipe[pipe.length - 1] : null);
     if (hit) return hit;
     // A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder is
     // still the one the line started in, the whole-line reading in analyze() has already covered it.
