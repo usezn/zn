@@ -16,7 +16,7 @@ on:
   merge_group:
     types: [ checks_requested ]
   schedule:
-    - cron: "17 6 * * 1" # weekly advisory check
+    - cron: "17 6 * * 1" # weekly full run
   workflow_dispatch:
 
 permissions:
@@ -143,11 +143,10 @@ jobs:
 
   scope:
     name: Rust scope
-    # One cheap job decides whether the change touches Rust. The jobs that are not required (MSRV, cargo audit) need it
-    # and are skipped without taking a runner when it says no: on a pull request that changes no Rust file they used to
-    # start, check out and stop. The required "build, test, clippy, fmt" keeps its own check, so it always reports.
-    # It also runs in the merge queue, because cargo audit (a security check) still gates the merge there; MSRV and
-    # the private file writer skip the queue on their own.
+    # One cheap job decides whether the change touches Rust. The jobs that are not required (MSRV and the private file
+    # writer) need it and are skipped without taking a runner when it says no: on a pull request that changes no Rust
+    # file they used to start, check out and stop. The required "build, test, clippy, fmt" keeps its own check, so it
+    # always reports. cargo audit is in cargo-audit.yml and does not run here.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -216,40 +215,6 @@ jobs:
       - name: test
         if: steps.scope.outputs.rust == 'true'
         run: cargo test --locked
-
-  audit:
-    name: cargo audit
-    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. Unlike the
-    # other jobs that are not required, it also runs in the merge queue, so a new RustSec advisory shows up before a
-    # merge into next and not only after it. It is not a required check, so a failure does not block the merge by
-    # itself; blocking would need cargo audit in the next ruleset. The nightly run on next checks it again.
-    needs: scope
-    if: needs.scope.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Harden the runner (egress audit)
-        if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Decide what this change needs
-        id: scope
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: bash .github/scripts/rust-scope.sh
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
-        if: steps.scope.outputs.rust == 'true'
-        with:
-          tool: cargo-audit
-      - name: cargo audit
-        if: steps.scope.outputs.rust == 'true'
-        run: cargo audit
 
   coverage:
     name: coverage report

@@ -1,6 +1,6 @@
 # cargo-audit configuration for the legacy Rust gateway in src/.
 # Run locally:  cargo audit
-# CI: .github/workflows/rust.yml (audit job, also weekly).
+# CI: .github/workflows/cargo-audit.yml (every day, on Cargo.lock changes and on demand; not in the merge queue).
 #
 # Policy: every entry below is a dependency that CANNOT be updated today.
 # Each entry lists the pulling crate(s) and why an update or fix is not

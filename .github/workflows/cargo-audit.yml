@@ -1,0 +1,93 @@
+name: Cargo audit
+
+# Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database. An advisory is
+# published on a day that has nothing to do with the change in front of the merge queue, so this check does not run
+# in the merge queue and is not a required check: a new advisory used to turn every queued pull request red at
+# once. It runs every day on main and every night on next, on a push to main or next that changes Cargo.lock,
+# Cargo.toml or the audit settings, on a pull request that changes the same files, and on demand. When a run that is
+# not a pull request fails, one issue is opened (or the open one gets a comment), so an advisory is still seen the
+# same day. The advisory ignore list is .cargo/audit.toml.
+on:
+  push:
+    branches: [main, next]
+    paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
+  pull_request:
+    branches: [main, next]
+    paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
+  schedule:
+    - cron: "47 6 * * *" # daily advisory check on main
+    - cron: "52 3 * * *" # nightly advisory check on next
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cargo-audit-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The nightly schedule audits next; every other run audits the commit that started it.
+          ref: ${{ github.event.schedule == '52 3 * * *' && 'next' || '' }}
+          persist-credentials: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-audit
+      - name: cargo audit
+        run: cargo audit
+
+  # Opens one issue when a run that is not a pull request fails, or adds a comment to the open one. It uses the run's own
+  # token (issues: write on this job only) and no secrets, and it needs no checkout: gh reads the repository name
+  # from GH_REPO. A pull request shows the failure on the pull request itself.
+  alert-on-failure:
+    name: open or update the advisory issue
+    if: github.repository == 'usezn/zn' && github.event_name != 'pull_request' && failure()
+    needs: [audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_TITLE: Rust dependency advisory found by cargo audit
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RUN_REF: ${{ github.event.schedule == '52 3 * * *' && 'next' || github.ref_name }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Open or update the advisory issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Rust dependency advisory found by cargo audit") | .number' | head -n 1)"
+          cat > "$RUNNER_TEMP/body.md" <<BODY
+          cargo audit failed on ${RUN_REF}: ${RUN_URL}
+
+          Open the step "cargo audit" in that run to see the advisories. Either a dependency has a new advisory (update it, or
+          add it to .cargo/audit.toml with the reason when no update is possible), or the advisory database could not be
+          fetched (run the job again).
+
+          This check is not part of the merge queue, so pull requests are not held up by it. This issue stays open until
+          someone closes it. Each later failed run adds a comment with its link.
+          BODY
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file "$RUNNER_TEMP/body.md"
+            echo "Commented on issue #$number"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+          fi
