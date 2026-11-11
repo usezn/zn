@@ -284,9 +284,16 @@ async function run(args, io) {
       let keep = failedHooks.has(l.id);
       let why = 'a hooks file may still use it';
       if (!keep && spec) {
-        const files = [spec.file(getAdapter(l.id), { home: io.home, env: io.env }), spec.project(io.cwd)];
+        // Every AGENTS entry has file() and project(); a missing or failing one keeps the launcher (fail safe).
+        let files;
+        try {
+          files = [spec.file(getAdapter(l.id), { home: io.home, env: io.env }), spec.project(io.cwd)];
+        } catch (_) {
+          files = null;
+        }
+        if (!files) { keep = true; files = []; }
         if (l.id === 'claude-code') files.push(...claudeProfileSettings(io.home));
-        keep = files.some(names);
+        keep = keep || files.some(names);
       }
       // The Claude Code launcher is shared by every profile (every CLAUDE_CONFIG_DIR). With a profile folder set, zn
       // cannot see the other profiles, so it keeps the launcher rather than break their hooks.
