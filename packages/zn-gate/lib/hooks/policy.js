@@ -24,11 +24,11 @@ const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
-const { znCommand } = require('../zn-command');
+const { znCommand, cliName } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-08.2';
+const POLICY_RULES_VERSION = '2026-11-10.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -498,12 +498,13 @@ function expandBraces(s, limit = 64, depth = 0) {
   if (!m) return [s];
   if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
+  let seen = 0; // every alternative counts towards the limit, repeated ones too
   for (const alt of m[1].split(',')) {
     const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
-      out.push(x);
-      if (out.length > limit) return null;
+      if (++seen > limit) return null;
+      if (!out.includes(x)) out.push(x); // the outer list repeats its other alternatives for each inner one
     }
   }
   return out;
@@ -3022,8 +3023,17 @@ function wildSegmentProtected(seg) {
 function wildWordProtected(text) {
   const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
   for (const part of parts) {
+    let afterMark = false;
     for (const raw of part.split(/[\\/]/)) {
-      if (!WILD_ANY_RE.test(raw)) continue;
+      if (!WILD_ANY_RE.test(raw)) {
+        // A glob in a later segment of a word that carries an expansion still reaches the file: `$PWD/.e*`, `${DIR}/.e*`.
+        if (afterMark && /[*?[]/.test(raw)) {
+          const later = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+          if (!WILD_SAFE_END_RE.test(later) && wildPieceGlobMatches(later)) return true;
+        }
+        continue;
+      }
+      afterMark = true;
       const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
       if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
       if (wildSegmentProtected(seg)) return true;
@@ -3358,11 +3368,11 @@ function adminDenial(admin, opts = {}, cmd = '') {
       'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
   }
   if (/pins/i.test(admin)) {
-    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
+    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `' + cliName('zn-gate') + ' pins approve`. ' + run('pins approve');
   }
   if (/^init$/i.test(admin)) {
-    return 'zn blocked this: `zn-gate init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
-      'Next step: ask the user to run it in their own terminal (`npx -y zn-gate init`).';
+    return 'zn blocked this: `' + cliName('zn-gate') + ' init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
+      'Next step: ask the user to run it in their own terminal (`' + cliName('npx') + ' -y zn-gate init`).';
   }
   if (/^hooks/i.test(admin)) {
     return 'zn blocked this: `' + znCommand(admin, opts) + '` turns zn\'s protection on or off for a coding agent, which is the user\'s decision. ' + run(full);
@@ -3742,6 +3752,7 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,
   scanFirstCommand,
