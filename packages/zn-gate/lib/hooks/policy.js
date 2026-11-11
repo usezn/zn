@@ -25,11 +25,12 @@ const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
+const { tagRule } = require('./rule-id');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.1';
+const POLICY_RULES_VERSION = '2026-11-11.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -795,8 +796,8 @@ function readDenial(p, opts = {}) {
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
-      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+    return tagRule('secret-file:dotenv', 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
+      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.');
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
@@ -884,12 +885,12 @@ function credentialDenial(p, c) {
     const why = broad ? 'it is too broad for zn to check that it matches no file that holds secrets'
       : /\.env/.test(c.reason) ? 'it would also match a .env file, which holds secrets'
         : 'it would also match a file that holds secrets (' + c.reason + ')';
-    return 'zn: the pattern ' + p + ' was not read because ' + why + ', and secret values never go to the AI model. ' +
-      'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
+    return tagRule('secret-file:credential', 'zn: the pattern ' + p + ' was not read because ' + why + ', and secret values never go to the AI model. ' +
+      'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.');
   }
-  return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
+  return tagRule('secret-file:credential', 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
     'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable. ' +
-    'Agents may not read the file itself (rule: secret-file:credential).';
+    'Agents may not read the file itself (rule: secret-file:credential).');
 }
 
 function agentConfigDenial(p, c) {
@@ -2438,7 +2439,7 @@ function shellAssignments(cmd, opts) {
 }
 
 function bashDenialOf(cmd, opts = {}) {
-  if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
+  if (String(cmd || '').length > SHELL_SCAN_CAP) return tagRule('size:command-too-long', TOO_LONG_MESSAGE);
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
@@ -2463,7 +2464,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (rules.length) {
       // Loaded only now, so a hook with the check off does not pay for it.
       const destructiveDeny = require('../destructive').denial(text, rules);
-      if (destructiveDeny) return destructiveDeny;
+      if (destructiveDeny) return tagRule('destructive:' + require('../destructive').lastRule(), destructiveDeny);
     }
   }
   // The command is read three times: a backslash before a letter is a Windows

@@ -10,6 +10,8 @@ export interface EvidenceEvent {
   payload?: unknown;
   verdict?: string;
   rule?: string | null;
+  /** The specific check that fired, as family:check (for example destructive:rm_root_home). Optional. */
+  rule_id?: string;
   reason?: string | null;
   confidence?: number;
   latency_us?: number;
@@ -27,6 +29,8 @@ export interface EvidenceRecord {
   payload_preview: string;
   verdict: string;
   rule: string | null;
+  /** The specific check that fired. Absent on records written before it existed. */
+  rule_id?: string;
   reason: string | null;
   confidence: number;
   latency_us: number;

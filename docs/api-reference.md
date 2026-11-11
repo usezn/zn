@@ -184,6 +184,7 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 
 - Appends one hash-chained record to the decision log (`filePath` defaults to `~/.zn/evidence.jsonl`). `options.lockWaitMs` sets how long to wait for the write lock (default 2000).
 - Returns: the record that was written, or `null` when nothing was written (see the notes on damaged logs and the lock under `verifyEvidenceLedger`). It never throws for a log problem.
+- Optional `rule_id` (string): the specific check that fired, as `family:check`, for example `destructive:rm_root_home`, `secret-file:dotenv`, `secret-file:credential`, `egress-check` or `size:command-too-long`. It is kept only when it is one of the ids the agent hooks emit (the `destructive:*` rules, `secret-file:dotenv`, `secret-file:credential`, `egress-check`, `size:command-too-long`, `size:patch-too-long`, `size:mcp-call-too-large` and `vault:unavailable`); any other value is dropped and the record has no `rule_id`. It never holds a command or a path. The agent hooks set it on the blocks they record; `rule` keeps its generic value. A record has no `rule_id` when the check has no id, and records written before it existed verify as before.
 
 ### `verifyEvidenceLedger(filePath)`
 
