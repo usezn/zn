@@ -151,6 +151,10 @@ jobs:
       - name: Markdown lint - every command in the cheat sheet is documented in cli.md
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-cheatsheet-commands.mjs
+      # One step: the test, then the script that writes the page counts to the job summary (informational, never fails).
+      - name: Markdown lint - test and write the docs page counts to the job summary
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/summarize-docs-pages.test.mjs && node .github/scripts/summarize-docs-pages.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
