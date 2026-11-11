@@ -75,7 +75,7 @@ npx -y zn-gate secret allow PGPASSWORD --command psql
 npx -y zn-gate run --secrets PGPASSWORD -- psql -h db.example.test -U app_rw -c "select 1"
 ```
 
-The first command adds `psql` to the allowed commands of the secret; the vault asks you to confirm the change in its dialog or its terminal. The second starts `psql` with the real value in the environment of that process only. The first time, the vault asks you to confirm again, and shows the exact program that will run. The output of the command is masked, so the value cannot leak through it. More: [let a command use a secret](../secrets.md#4-let-a-command-use-a-secret).
+The first command adds `psql` to the allowed commands of the secret; the vault asks you to confirm the change in its dialog or its terminal. The second starts `psql` with the real value in the environment of that process only. The first time, the vault asks you to confirm again, and shows the exact program that will run. Its output is masked: the raw, base64, hex and URL-encoded forms of the value come back as the marker. Standard output and standard error are masked separately, so a value that a program splits between the two is not caught. More: [let a command use a secret](../secrets.md#4-let-a-command-use-a-secret).
 
 ## 5. Clean up
 
