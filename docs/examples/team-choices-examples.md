@@ -72,8 +72,12 @@ choice (the default): the use goes ahead within the rule's other limits,
 here the hosts in `allowHosts`.
 
 What the developer and the agent see: nothing is shown for a use inside the
-limits. Letting the secret go to a host no rule lists needs approval on the
-developer's machine, once per organization, secret and host. The `agents`
+limits, that is, for a host the developer's local settings already allow and
+the rule lists. A host the rule lists but the local settings do not allow is
+not usable yet: it is offered to the developer for approval on their machine,
+once per organization, secret and host, and only for the agents the rule
+names. A host the rule does not list stays blocked, and it cannot be
+approved. The `agents`
 list only decides who can be offered a new host: the `secrets` MCP server
 started from the configuration zn-gate writes for that agent
 (`zn hooks install <agent>` passes `--agent`), or any agent for `*`. Rules
