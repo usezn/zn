@@ -48,4 +48,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-secret-rotate-in-place.md](zn-secret-rotate-in-place.md): replace a vault secret value without changing its name: repeat the rules, and what happens to the first-use approvals.
 - [zn-secret-run-exit-code-passthrough-in-make.md](zn-secret-run-exit-code-passthrough-in-make.md): run a program with a vault secret from a Makefile target with `zn run`, and see that its exit code stops `make`.
 - [zn-secret-set-then-verify-with-list.md](zn-secret-set-then-verify-with-list.md): store a fake secret, confirm it with secret list, then use it once with run and see the last-used time.
+- [zn-unlock-ttl-and-long-builds.md](zn-unlock-ttl-and-long-builds.md): set the unlock time for a long build: what --ttl and --idle do, what a running command keeps when the vault locks, and how to lock again.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
