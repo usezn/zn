@@ -76,13 +76,13 @@ Claude Code (project): <project>/.claude/settings.json
 
 ## 4. A folder you cannot write to
 
-When the folder of the settings file is read-only for you, the install stops before it changes anything:
+When the folder of the settings file is read-only for you, the install stops and your settings stay as they were:
 
 ```text
 zn hooks: Your account is not allowed to read or change ~/.claude/settings.json. Check who owns it and its permissions, then try again.
 ```
 
-Nothing is half written: no launcher and no backup was created, and `npx -y zn-gate check --hooks` still says `None found`. Add `ZN_VERBOSE=1` to see the system's error code next to the message (`[EACCES]` here). If your whole home folder is read-only, the message names `~/.zn/hooks` instead, because that is the first place the install writes.
+The settings file is not created, and `npx -y zn-gate check --hooks` still says `None found`. One small file may remain: the launcher script that the hooks would have called, `~/.zn/hooks/zn-hook-claude-code.sh`. It is harmless, because no settings file points to it, and the next successful install reuses it. To remove it, delete that file with `rm ~/.zn/hooks/zn-hook-claude-code.sh`, or run `npx -y zn-gate uninstall`, which removes the launcher with the rest of zn-gate. `hooks uninstall` leaves it in place. Add `ZN_VERBOSE=1` to see the system's error code next to the message (`[EACCES]` here). If your whole home folder is read-only, the message names `~/.zn/hooks` instead, because that is the first place the install writes.
 
 On macOS or Linux, `ls -ld <path>` shows who owns the folder and who may write to it. Fix the permissions, or ask the person who manages the laptop, and run the install again. After the fix, the same command works. A settings file that is read-only but sits in a folder you can write to was replaced without complaint in the test, with a backup: do not rely on a read-only file to keep zn out. See [Messages about files and folders](../troubleshooting.md#messages-about-files-and-folders).
 

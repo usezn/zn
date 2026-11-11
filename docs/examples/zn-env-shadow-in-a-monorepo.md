@@ -131,12 +131,12 @@ npx -y zn-gate secret list
 ```
 
 ```text
-  DATABASE_URL_PASSWORD         env   
+  DATABASE_URL_PASSWORD         env
   ENVBAK_X0971731BD202611111346  backup
   ENVBAK_XE0B3FEB6D202611111346  backup
   ENVBAK_XF998B20AD202611111346  backup
-  EXAMPLE_API_KEY               env   
-  EXAMPLE_WEBHOOK_SECRET        env   
+  EXAMPLE_API_KEY               env
+  EXAMPLE_WEBHOOK_SECRET        env
 ```
 
 There is one `ENVBAK_` copy per folder you shadowed. Keep their names: they are the only way to put a file back with `zn-gate env unshadow FILE --backup NAME`. The vault asks you to confirm before it hands the plain text out. See [`env unshadow`](../cli.md#env-unshadow) and the [example that follows one file in and back out](env-file-round-trip.md).
