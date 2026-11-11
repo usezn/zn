@@ -50,6 +50,20 @@ def _num(v: Any) -> int:
     return n if n > 0 else 0
 
 
+# A day key is a calendar date written YYYY-MM-DD. Any other key in the file is skipped, never counted.
+DAY_KEY_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def is_day_key(day: Any) -> bool:
+    if not isinstance(day, str) or not DAY_KEY_RE.fullmatch(day):
+        return False
+    try:
+        datetime.date.fromisoformat(day)
+    except ValueError:
+        return False
+    return True
+
+
 def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[str] = None) -> Dict[str, Any]:
     today = now or datetime.datetime.now(datetime.timezone.utc).date()
     cutoff = (today - datetime.timedelta(days=days - 1)).isoformat()
@@ -59,7 +73,7 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
     detections: Dict[str, int] = {}
     first = None
     for day, entries in data.get("days", {}).items():
-        if day < cutoff or not isinstance(entries, dict):
+        if not is_day_key(day) or day < cutoff or not isinstance(entries, dict):
             continue
         if first is None or day < first:
             first = day

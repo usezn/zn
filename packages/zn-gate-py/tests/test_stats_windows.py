@@ -82,11 +82,6 @@ def test_very_large_counter_is_summed_and_grouped(home):
     assert "last 7 days (counting since %s):" % offset(1) in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="stats.summary compares day keys as plain strings and never checks that they are dates: "
-    "'not-a-date' and '2026-13-40' pass the window cutoff and their counters are added (13 instead of 1)",
-)
 def test_summary_ignores_a_day_key_that_is_not_a_date(home):
     write_days(home, {
         "2026-10-13": one(1),

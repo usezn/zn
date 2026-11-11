@@ -192,6 +192,14 @@ function recordEvent(name, opts = {}) {
   }
 }
 
+// A day key is a calendar date written YYYY-MM-DD (2026-02-30 is not one). Any other key is skipped, never counted.
+const DAY_KEY_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+function isDayKey(day) {
+  if (typeof day !== 'string' || !DAY_KEY_RE.test(day)) return false;
+  const t = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day;
+}
+
 /** Totals over the last `days` days (today included): overall, per layer:agent and per detection type. */
 function summary({ days = 30, now = new Date(), file } = {}) {
   const data = load(file || statsFile());
@@ -201,7 +209,7 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   const detections = {};
   let first = null;
   for (const [day, entries] of Object.entries(data.days)) {
-    if (day < cutoff || isFutureDay(day, now)) continue;
+    if (!isDayKey(day) || day < cutoff || isFutureDay(day, now)) continue;
     if (!first || day < first) first = day;
     for (const [key, c] of Object.entries(entries)) {
       const k = (byKey[key] ||= { checked: 0, blocked: 0, warned: 0, redacted: 0 });
