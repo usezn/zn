@@ -4,7 +4,7 @@
 #
 # Each check keeps the trigger and the path filter it had when it was a workflow of its own:
 #   changelog     pull requests, always
-#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check, cheat sheet command check, docs table check, README entry point check, docs examples index order check, docs examples name check, simply/just check, last reviewed check, docs anchor check, docs wording check and docs marker (TODO/FIXME) check
+#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check, cheat sheet command check, docs table check, README entry point check, docs examples index order check, docs examples name check, simply/just check, last reviewed check, docs anchor check, docs wording check, docs marker (TODO/FIXME) check, docs examples command and section checks
 #   doclinks      pull requests and pushes to main or next: docs, the READMEs the docs checks cover, CHANGELOG.md,
 #                 SECURITY.md, the changelog and security link check and its test
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
@@ -89,7 +89,7 @@ while IFS= read -r f; do
   readme_root=false
   case "$f" in README*) [[ "$f" != */* ]] && readme_root=true ;; esac
   case "$f" in
-    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*|CHANGELOG.md|.github/scripts/check-changelog-dates*|action.yml|.github/scripts/check-action-inputs*|.github/scripts/check-docs-anchors*|.github/scripts/check-docs-wording*|.github/scripts/check-docs-todo*) run[markdownlint]=true ;;
+    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*|CHANGELOG.md|.github/scripts/check-changelog-dates*|action.yml|.github/scripts/check-action-inputs*|.github/scripts/check-docs-anchors*|.github/scripts/check-docs-wording*|.github/scripts/check-docs-todo*|.github/scripts/check-docs-examples-sections*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
   case "$f" in

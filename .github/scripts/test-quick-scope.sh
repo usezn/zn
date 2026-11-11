@@ -52,6 +52,7 @@ check pull_request next changelog.d/README.md "changelog markdownlint doclinks t
 check pull_request next .github/scripts/check-changelog-fragment-names.mjs "changelog fragmentnames"
 check pull_request next .github/scripts/check-docs-examples-commands.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-examples-names.mjs "changelog markdownlint"
+check pull_request next .github/scripts/check-docs-examples-sections.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-titles.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-cli-headings.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-cheatsheet-commands.mjs "changelog markdownlint"

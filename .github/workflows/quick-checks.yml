@@ -166,6 +166,15 @@ jobs:
       - name: Markdown lint - docs examples only run commands documented in cli.md
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-examples-commands.mjs
+      - name: Markdown lint - test the docs examples section check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-sections.test.mjs
+      - name: Markdown lint - docs examples added or changed here end with a closing section
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        env:
+          # HEAD^1 is the base tip on a pull request, the previous tip on a push (as in quick-scope.sh).
+          CHANGES_BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: node .github/scripts/check-docs-examples-sections.mjs --base "$CHANGES_BASE"
       - name: Markdown lint - test the docs title check
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-titles.test.mjs
