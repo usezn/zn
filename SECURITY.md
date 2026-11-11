@@ -29,6 +29,10 @@ We take the security of zn, the MCP Gateway, and our client SDKs seriously. If y
 
 Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected versions, components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
 
+### For reporters
+
+Before you paste zn output into a report, read it once and mask what you would not post in public. zn already removes the secret values it recognises from the lines it keeps: the preview of an evidence record (`zn evidence`), the output of `zn why` and the `evidence:` line of a `zn audit` finding. It cannot recognise every secret, though: a password written in a sentence, for example, has no format zn can match ([limits of `zn audit`](docs/audit.md#limitations)). The output can also name things that are not secrets but that you may not want to share, such as the full path of a file in a block message, which holds your user name, or the names of your projects and MCP servers. Replace each such value with a placeholder such as `<token>` or `<path>`, say in the report that you masked it, and keep the rest as it is. If a real secret does appear in zn output, tell us in the report and rotate that secret.
+
 ### What to expect
 
 The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md)). These are targets, for both channels:
