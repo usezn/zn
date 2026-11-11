@@ -382,12 +382,22 @@ function approve(which) {
   return { approved };
 }
 
+/**
+ * Plain code-unit order (not locale), so the listing reads the same on every machine.
+ * The key breaks ties between servers with the same command.
+ */
+function byNameThenKey(a, b) {
+  if (a.command !== b.command) return a.command < b.command ? -1 : 1;
+  if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+  return 0;
+}
+
 function list() {
   return servers().map((key) => {
     const s = loadServer(key);
     if (!s || s.corrupt) return { key, command: '(unreadable pins file)', pinnedAt: null, tools: 0, pending: [] };
     return { key, command: s.command, pinnedAt: s.pinnedAt, firstPinnedAt: s.firstPinnedAt || null, tools: Object.keys(s.tools).length, pending: Object.keys(s.pending).map(displayName), changes: Object.keys(s.pending).slice(0, 20).map((n) => ({ tool: displayName(n), what: Array.isArray(s.pending[n].changed) ? s.pending[n].changed.filter((x) => typeof x === 'string').map(displayName).join(' and ') : 'changed' })) };
-  });
+  }).sort(byNameThenKey);
 }
 
 module.exports = { mode, check, shadows, partHashes, approve, approvedTools, list, toolHash, serverKey, label, displayName, pinsDir, pinsMoved, canonical };

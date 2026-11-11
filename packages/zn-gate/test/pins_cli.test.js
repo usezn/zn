@@ -288,9 +288,7 @@ test('a key that is not a pin file name cannot reach another file', async (t) =>
   assert.deepStrictEqual(await pendingOf(home, WEATHER_KEY), ['weather']);
 });
 
-// Gap: lib/mcp-pins.js servers() takes the pin files in directory order (readdirSync on hash-named
-// files, no sort), so `pins list` does not sort the servers by name. Kept as a todo until it does.
-test('list sorts the pinned servers by name', { todo: 'pins list prints servers in directory order (readdirSync of hash-named files, no sort); not sorted by name yet' }, async (t) => {
+test('list sorts the pinned servers by name', async (t) => {
   const home = freshHome(t);
   const ZETA_KEY = pins.serverKey('node', ['zeta-srv']);
   const ALPHA_KEY = pins.serverKey('node', ['alpha-srv']);
