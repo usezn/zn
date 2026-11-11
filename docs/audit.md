@@ -405,6 +405,23 @@ The [JSON](#json) report holds the same fields under the names `severity`, `id`,
 - **Exit code 1**: a finding met `--fail-on`. Read the evidence before you act: documentation that quotes a dangerous command is reported too.
 - **A job fails and you only want a report**: use `--fail-on none`.
 
+## Where each log lives
+
+The logs and records that zn writes, the command that writes each one and the command that reads it. `~` is your home folder. When `ZN_HOME` is set, `~/.zn` below means that folder. The full list of files and folders, including the ones zn never reads back, is in [files and folders](files-and-folders.md).
+
+| Log or record | Path | Written by | Read by |
+|---|---|---|---|
+| Vault audit log: which secret was used and how it was decided, unlock, lock, expiry, and an accepted change to the log | `~/.zn/audit.jsonl` | The vault, for each secret use it decides on and for each unlock, lock, expiry or accepted change | `zn vault log` (also `zn secret log`). `zn vault verify` checks its chain. `zn vault log export --otlp` writes it for monitoring tools |
+| Decision log: what the hooks and the MCP shield allowed or blocked | `~/.zn/evidence.jsonl` | The hooks and the MCP shield, for each decision they log | `zn-gate evidence` (also `logs`; `--verify`, `--export --output FILE`, `--ui`). `zn-gate why [id]` explains the last block or a record by its id |
+| Decision log moved aside after damage | `~/.zn/evidence.damaged.jsonl` | You, by hand, when zn tells you to move a damaged `evidence.jsonl` aside. zn does not write it | No zn command reads it |
+| Local counts of checks | `~/.zn/stats.json` | zn-gate, for each check in the hook, shield, MCP, broker and CLI layers. `ZN_STATS=off` stops the counting | `zn-gate stats` (`--days N`, `--json`) |
+| Secrets that agents asked you to add | `~/.zn/requests.jsonl` | The `secrets_request` MCP tool, when an agent asks for a secret. It never takes a value | `zn secret list`, under "Requested by agents" |
+| Counts of the last `reach --remember` run | `~/.zn/reach-last.json` | `zn-gate reach --remember` | `zn-gate reach --remember`, which shows the previous count |
+| Approved project configs | `~/.zn/baselines/<id>.json` | `zn audit --approve`. It holds entry names and hashes, never a value | `zn audit`, which reports what changed since the approval |
+| Team upload position | `~/.zn/team-upload.json` | The team upload, run by `zn team sync` or by zn's own retry. It holds where the last record sent ends | `zn team status`, which shows the records still waiting to upload |
+
+Hooks have no log file of their own: their decisions go to `evidence.jsonl` and their counts to `stats.json`.
+
 ## Limitations
 
 - Passwords written in prose ("with password ...") have no format the
