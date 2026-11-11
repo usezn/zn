@@ -56,6 +56,34 @@ python -m pip install -e .
 python -m pytest tests/ -v
 ```
 
+## Continuous integration (CI)
+
+Each pull request into `next` runs automated checks on GitHub. Eleven checks are **required**, and a pull request cannot merge until all of them pass. These are the names you see on the pull request:
+
+- Node.js 18.x tests & benchmarks
+- Node.js 22.x tests & benchmarks
+- Node.js 24.x tests & benchmarks
+- Python 3.12 tests & benchmarks (ubuntu-latest)
+- Python package (build, twine check, install)
+- npm package (pack, inspect, install)
+- leak bench (node 22 / ubuntu-latest)
+- scrubber + vault (node 22 / ubuntu-latest)
+- Lint (eslint, ruff, mypy)
+- Public facts
+- build, test, clippy, fmt
+
+To keep pull requests fast, a pull request into `next` runs only the Node.js 22.x tests. The 18.x and 24.x checks report success at once and run for real in the merge queue. A pull request that changes only documentation skips most code checks, which also report success.
+
+Only `next` has a merge queue; `main` does not. When a maintainer adds an approved pull request to the queue, the queue builds it on top of the pull requests ahead of it, runs the required checks on that combined result, and merges up to five pull requests at a time, in order. If a required check fails there, the pull request leaves the queue. Fix the problem, push a commit, and ask a maintainer to queue it again.
+
+Nine more checks are **not required**, so they do not block a merge: Changelog, Markdown lint, Typos, Link check, Shellcheck, Workflow lint, Package lint, Pre-commit hooks and Doc snippets. They check the changelog entry, Markdown, spelling, links, shell scripts, package files and the code samples in the docs. A failure there does not block the merge, but fix it before review if you can.
+
+If a check fails, open it from the Checks tab of the pull request. The first failed step shows the problem.
+
+Checks run again each time you push a commit, and a new push cancels a run still in progress. Without write access you cannot rerun a check yourself, so push a new commit to get a fresh run, for example an empty one with `git commit --allow-empty -m "Rerun checks"`. A maintainer with write access can open the run and choose "Re-run failed jobs".
+
+For what each check covers and how to run it on your own machine, see [Run the required checks locally](#run-the-required-checks-locally).
+
 ## Run the required checks locally
 
 A pull request into `next` must pass these checks. Run the matching commands before you push. All commands start from the repository root unless a `cd` says otherwise. The check names are the ones you see on the pull request.
