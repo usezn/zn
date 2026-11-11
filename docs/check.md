@@ -13,6 +13,7 @@ On this page:
 - [What it does](#what-it-does)
 - [What you will see](#what-you-will-see)
 - [What each NOT protected line means](#what-each-not-protected-line-means)
+- [Reading the Active Engine line](#reading-the-active-engine-line)
 - [If something fails](#if-something-fails)
 - [If your agent needs a value from `.env`](#if-your-agent-needs-a-value-from-env)
 - [Related](#related)
@@ -631,6 +632,43 @@ zn could not check it: <error>
 ```
 
 Something unexpected stopped the check for that agent, and the line gives the error. Nothing was changed. Run `npx -y zn-gate check` again; if it repeats, ask in [Discussions](https://github.com/usezn/zn/discussions) and include the line, without any secret.
+
+## Reading the Active Engine line
+
+`zn-gate check` tests your agents and does not print an engine line. The **Active Engine** line comes from `zn-gate status`, which tells you whether zn decides only on your machine or also uses the optional cloud check. In a clean setup it reads:
+
+```text
+[+]  zn-gate Status:
+  Package Version : 1.15.0
+  Rules Version   : 2026-11-11.1 (scrub 2026-10-31.1, audit 2026-11-06.4)
+  Active Engine   : Local rules only
+  Endpoint        : None (nothing leaves this machine)
+  API key         : Not set
+  Leaves machine  : Nothing
+```
+
+The line has two values:
+
+| You see | What it means |
+| --- | --- |
+| `Local rules only` | zn decides with its built-in rules on your machine. `Endpoint` says `None (nothing leaves this machine)` and `Leaves machine` says `Nothing`. This is the default. |
+| `Local rules + cloud for analyze_prompt (ZN_CLOUD=1)` | The optional cloud check is on, either because you set `ZN_CLOUD=1` together with an API key or because you ran `zn-gate connect`. `Endpoint` shows where the text goes, and `Leaves machine` says `analyze_prompt text only, secrets redacted locally first`. |
+
+In cloud mode the same command prints:
+
+```text
+  Active Engine   : Local rules + cloud for analyze_prompt (ZN_CLOUD=1)
+  Endpoint        : https://api.usezn.com/v30/analyze
+  API key         : Set (ZN_API_KEY)
+  Leaves machine  : analyze_prompt text only, secrets redacted locally first
+```
+
+Two cases keep the engine local even though a key exists:
+
+- A key in `ZN_API_KEY` without `ZN_CLOUD=1` stays local. `API key` then reads `Set (ZN_API_KEY) (unused: cloud requires ZN_CLOUD=1)`.
+- `ZN_LOCAL_ONLY=true` (or `--local-only`) always wins over `ZN_CLOUD=1` and over a saved connection.
+
+`zn-gate status` only reads files: nothing is run, changed or sent. See [Local checks and API data](local-checks-and-api-data.md) for what the cloud check sends, and the [`status` section of the CLI reference](cli.md#status) for the full output.
 
 ## If something fails
 
