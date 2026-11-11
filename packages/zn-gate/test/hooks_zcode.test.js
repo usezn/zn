@@ -980,3 +980,15 @@ test('failed install and failed uninstall leave no .bak-zn file behind', (t) => 
   } finally { cfg.writeJson = realWrite; }
   assert.deepEqual(baks(), []);
 });
+
+test('normalize: an MCP tool call with arguments that cannot be read is flagged unreadable, not checked as an empty call', () => {
+  for (const bad of ['{"command":', '[1,2]', '42', 'not json', ['a'], 7, true]) {
+    const e = zc.normalize(pre('mcp__srv__tool', bad));
+    assert.equal(e.tool, 'unreadable', JSON.stringify(bad));
+    assert.ok(e.unreadable && /could not read the arguments/.test(e.unreadable), JSON.stringify(bad));
+  }
+  // The same arguments as a JSON string of an object are read normally.
+  const ok = zc.normalize(pre('mcp__srv__tool', '{"q":"x"}'));
+  assert.equal(ok.tool, 'mcp');
+  assert.equal(ok.unreadable, undefined);
+});
