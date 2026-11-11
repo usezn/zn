@@ -218,6 +218,7 @@
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
+        "WRAPPER_NAMES",
         "_decodeAnsiC",
         "_globClassEnd",
         "_globClassSource",
@@ -240,17 +241,19 @@
         "readDenial",
         "scanFirstCommand",
         "scanPowerShell",
+        "skipWrapper",
         "wrapPowerShell",
         "wrapWithZnRun",
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "9855fcaa0ac3f654b4c4f0f3317b108f4578cea727f14ad6d0ca090262bb450f",
+        "lib/hooks/policy.js": "3ff7621e6f14a79a12177bad1d382d91a60144fc1c3d82ca1839dfc25fa94c6b",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
-        "lib/destructive.js": "cf04f8d193480bf0cc841afa27c0a1076ef5fb4afed3433eaa240387a73e3a7f"
+        "lib/destructive.js": "387f77bcc70f469b5e2fbc234295fa8e2de7d6025a56b3812e04cbe7f12daa39",
+        "lib/shell-vars.js": "dda7b10b16db524bf0dfce7ee7dfeac960bf7b4c192fb12b1a5c0ec533db27a1"
       }
     }
   }
