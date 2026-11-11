@@ -236,6 +236,10 @@ jobs:
         run: bash scripts/test-check-docs-https.sh
       - name: Markdown lint - docs and READMEs use https links
         run: bash scripts/check-docs-https.sh
+      - name: Markdown lint - test the changelog date check
+        run: node --test .github/scripts/check-changelog-dates.test.mjs
+      - name: Markdown lint - CHANGELOG.md release headings carry ISO dates
+        run: node .github/scripts/check-changelog-dates.mjs CHANGELOG.md
 
       # Spellcheck
       - name: Spellcheck - typos

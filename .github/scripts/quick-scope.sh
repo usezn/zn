@@ -89,7 +89,7 @@ while IFS= read -r f; do
   readme_root=false
   case "$f" in README*) [[ "$f" != */* ]] && readme_root=true ;; esac
   case "$f" in
-    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*) run[markdownlint]=true ;;
+    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*|CHANGELOG.md|.github/scripts/check-changelog-dates*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
   case "$f" in
