@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-09.2';
+const COMMAND_RULES_VERSION = '2026-11-11.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -127,6 +127,47 @@ function segmentsOf(cmd, posix = false) {
 
 const isPipe = (sep) => sep === '|' || sep === '|&';
 
+/* GNU timeout: [OPTION] DURATION COMMAND. Options stop at the first word that is not one (or at "--"). -s/--signal and
+   -k/--kill-after take a value, as a separate word or attached. Returns the index of the command word. Anything that does not
+   parse cleanly fails closed: the words that follow are checked as the command, never skipped. */
+const TIMEOUT_LONG_VALUE = ['signal', 'kill-after'];
+const TIMEOUT_LONG_FLAG = ['preserve-status', 'foreground', 'verbose', 'help', 'version'];
+const TIMEOUT_DURATION_RE = /^(?:[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?|0[xX][0-9a-fA-F.]+(?:[pP][+-]?[0-9]+)?|inf(?:inity)?|nan)[smhd]?$/i;
+
+function timeoutLongOption(name) {
+  const all = TIMEOUT_LONG_VALUE.concat(TIMEOUT_LONG_FLAG);
+  if (all.includes(name)) return name;
+  const hits = all.filter((o) => o.startsWith(name));
+  return name && hits.length === 1 ? hits[0] : '';
+}
+
+function timeoutCommandIndex(args, start) {
+  let i = start;
+  while (i < args.length) {
+    const t = args[i];
+    if (t === '--') { i++; break; }
+    if (t.length < 2 || !t.startsWith('-')) break;
+    i++;
+    if (t.startsWith('--')) {
+      const eq = t.indexOf('=');
+      const opt = timeoutLongOption(eq < 0 ? t.slice(2) : t.slice(2, eq));
+      if (!opt) continue;
+      if (TIMEOUT_LONG_VALUE.includes(opt) && eq < 0) i++;
+      continue;
+    }
+    for (let c = 1; c < t.length; c++) {
+      const f = t[c];
+      if (f === 'v') continue;
+      if (f === 's' || f === 'k') { if (c === t.length - 1) i++; break; }
+      break;
+    }
+  }
+  if (i > args.length) return args.length;
+  // A word that is not a duration is the command (timeout itself would refuse it); a word with an expansion is a duration.
+  if (i < args.length && (TIMEOUT_DURATION_RE.test(args[i]) || /[$`]/.test(args[i]))) i++;
+  return i;
+}
+
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
   let i = 0;
@@ -155,9 +196,7 @@ function unwrap(args) {
       continue;
     }
     if (name === 'timeout') {
-      i++;
-      while (i < args.length && args[i].startsWith('-')) i++;
-      i++; // the duration
+      i = timeoutCommandIndex(args, i + 1);
       continue;
     }
     break;

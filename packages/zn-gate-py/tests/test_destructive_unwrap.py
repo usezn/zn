@@ -2,7 +2,7 @@
 for bash -c and sh -c the inner command text stays as one word."""
 import pytest
 
-from zn_gate.destructive import _segments_of, _unwrap
+from zn_gate.destructive import _segments_of, _unwrap, check_command
 
 
 def test_sudo_with_flags():
@@ -62,3 +62,43 @@ def test_shell_c_nested_quotes_parsed_from_command_line(shell):
     assert not leftover
     words = segments[0][0]
     assert _unwrap(words)[2] == 'echo "a b" > /tmp/example-out'
+
+
+TIMEOUT_FORMS = [
+    "-s KILL 5", "-sKILL 5", "--signal=KILL 5", "--signal KILL 5", "-k 2 5", "-k2 5", "--kill-after=2 5", "--kill-after 2 5",
+    "--preserve-status 5", "--foreground 5", "-v 5", "--verbose 5", "-vs KILL 5", "-vk 2 5", "-vsKILL 5", "-s KILL -k 2 5",
+    "--foreground --preserve-status -k 2s -s TERM 1.5m", "--sig=KILL 5", "--kill=2 5", "-- 5", "-k 2 -- 5", "5s", "$DURATION",
+]
+
+
+@pytest.mark.parametrize("form", TIMEOUT_FORMS)
+def test_timeout_options_are_skipped_with_their_values(form):
+    assert _unwrap(("timeout " + form + " rm -rf /").split()) == ["rm", "-rf", "/"]
+    assert _unwrap(("timeout " + form + " nohup rm -rf /").split()) == ["rm", "-rf", "/"]
+
+
+@pytest.mark.parametrize("form", TIMEOUT_FORMS)
+def test_timeout_options_do_not_hide_a_destructive_command(form):
+    for command in ("timeout %s rm -rf /", "timeout %s nohup rm -rf /home/example-user", "nohup timeout %s sudo rm -rf /"):
+        assert check_command(command % form).verdict == "block", command % form
+
+
+def test_timeout_nested_wrappers_with_options():
+    for command in ("timeout -k 2 5 nohup timeout -s KILL 3 rm -rf /", "timeout -s KILL 9 timeout -k 1 5 rm -rf /home/example-user"):
+        assert check_command(command).verdict == "block", command
+
+
+@pytest.mark.parametrize("command", [
+    "timeout --bogus rm -rf /", "timeout -x 5 rm -rf /", "timeout rm -rf /", "timeout -s KILL -k 2 rm -rf /", "timeout --s=KILL 5 rm -rf /",
+])
+def test_timeout_fails_closed_when_options_do_not_parse(command):
+    assert check_command(command).verdict == "block"
+
+
+def test_timeout_missing_value_leaves_nothing_to_run():
+    assert _unwrap(["timeout", "--signal"]) == []
+
+
+def test_timeout_options_keep_harmless_commands_allowed():
+    for command in ("timeout -s KILL 5 ls /tmp/example-dir", "timeout -k 2 5 nohup echo hello", "timeout -- 5 ls"):
+        assert check_command(command).verdict == "allow", command

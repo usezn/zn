@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-09.2"
+COMMAND_RULES_VERSION = "2026-11-11.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -317,6 +317,56 @@ def _is_pipe(sep: Optional[str]) -> bool:
     return sep in ("|", "|&")
 
 
+# GNU timeout: [OPTION] DURATION COMMAND. Options stop at the first word that is not one (or at "--"). -s/--signal and
+# -k/--kill-after take a value, as a separate word or attached. Anything that does not parse cleanly fails closed:
+# the words that follow are checked as the command, never skipped.
+_TIMEOUT_LONG_VALUE = ("signal", "kill-after")
+_TIMEOUT_LONG_FLAG = ("preserve-status", "foreground", "verbose", "help", "version")
+_TIMEOUT_DURATION_RE = re.compile(
+    r"^(?:[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?|0[xX][0-9a-fA-F.]+(?:[pP][+-]?[0-9]+)?|inf(?:inity)?|nan)[smhd]?$", re.IGNORECASE)
+
+
+def _timeout_long_option(name: str) -> str:
+    every = _TIMEOUT_LONG_VALUE + _TIMEOUT_LONG_FLAG
+    if name in every:
+        return name
+    hits = [o for o in every if o.startswith(name)]
+    return hits[0] if name and len(hits) == 1 else ""
+
+
+def _timeout_command_index(args: List[str], start: int) -> int:
+    """Index of the command word after `timeout` and its options and duration."""
+    i = start
+    while i < len(args):
+        t = args[i]
+        if t == "--":
+            i += 1
+            break
+        if len(t) < 2 or not t.startswith("-"):
+            break
+        i += 1
+        if t.startswith("--"):
+            eq = t.find("=")
+            opt = _timeout_long_option(t[2:] if eq < 0 else t[2:eq])
+            if opt in _TIMEOUT_LONG_VALUE and eq < 0:
+                i += 1
+            continue
+        for c in range(1, len(t)):
+            f = t[c]
+            if f == "v":
+                continue
+            if f in ("s", "k"):
+                if c == len(t) - 1:
+                    i += 1
+            break
+    if i > len(args):
+        return len(args)
+    # A word that is not a duration is the command (timeout itself would refuse it); a word with an expansion is a duration.
+    if i < len(args) and (_TIMEOUT_DURATION_RE.match(args[i]) or re.search(r"[$`]", args[i])):
+        i += 1
+    return i
+
+
 def _unwrap(args: List[str]) -> List[str]:
     i = 0
     guard = 0
@@ -357,10 +407,7 @@ def _unwrap(args: List[str]) -> List[str]:
                     i += 1
             continue
         if name == "timeout":
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                i += 1
-            i += 1
+            i = _timeout_command_index(args, i + 1)
             continue
         break
     return args[i:]
