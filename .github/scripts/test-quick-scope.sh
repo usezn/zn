@@ -68,6 +68,7 @@ check pull_request next .github/scripts/check-docs-no-simply-just.mjs "changelog
 check pull_request next .github/scripts/check-docs-last-reviewed.mjs "changelog markdownlint"
 check pull_request next scripts/run.sh "changelog shellcheck"
 check pull_request next .github/workflows/other.yml "changelog wfheader timeouts wfformat"
+check pull_request next scripts/check-docs-https.sh "changelog markdownlint shellcheck"
 check pull_request next .github/scripts/check-workflow-header.mjs "changelog wfheader"
 check pull_request next .github/scripts/check-workflow-first-line.mjs "changelog wfheader"
 check pull_request next .github/scripts/changed-workflows-summary.mjs "changelog wfheader"

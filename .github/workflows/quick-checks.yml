@@ -232,6 +232,10 @@ jobs:
       - name: Markdown lint - compat and install matrix carry a valid last reviewed date
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-last-reviewed.mjs
+      - name: Markdown lint - test the bare http link check
+        run: bash scripts/test-check-docs-https.sh
+      - name: Markdown lint - docs and READMEs use https links
+        run: bash scripts/check-docs-https.sh
 
       # Spellcheck
       - name: Spellcheck - typos
