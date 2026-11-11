@@ -4,6 +4,20 @@ The eighteen messages people most often meet when they first use zn-gate: what e
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Which page answers which question
+
+Start here if you are not sure the message you met is in this page.
+
+| If you want to know | Read |
+|---|---|
+| What one error message means and what to do | [Symptoms by command](#symptoms-by-command) below, then [Block and warn reasons, by family](#block-and-warn-reasons-by-family) |
+| Why your agent was blocked, in plain words | [Why was this blocked?](why-was-this-blocked.md) |
+| What an exit code means, in a script or in CI | [Exit codes](exit-codes.md) |
+| Whether zn-gate works and your hooks are installed | [Check that it works](check.md) |
+| How to update or remove zn-gate | [Upgrading zn-gate](upgrading.md) and [Remove zn-gate](uninstall.md) |
+| Which files and folders zn-gate reads or writes | [Files and folders](files-and-folders.md) |
+| Which command to use for a task | [Command cheat sheet](commands-cheatsheet.md) |
+
 ## Symptoms by command
 
 Find the command you ran, then the symptom that matches.
