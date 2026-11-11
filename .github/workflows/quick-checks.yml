@@ -269,6 +269,10 @@ jobs:
         run: node --test .github/scripts/check-docs-bash-quotes.test.mjs
       - name: Markdown lint - no curly quotes in docs shell code blocks
         run: node .github/scripts/check-docs-bash-quotes.mjs
+      - name: Markdown lint - test the code block trailing space check
+        run: node --test .github/scripts/check-docs-code-trailing-space.test.mjs
+      - name: Markdown lint - no trailing space inside a code block
+        run: node .github/scripts/check-docs-code-trailing-space.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
