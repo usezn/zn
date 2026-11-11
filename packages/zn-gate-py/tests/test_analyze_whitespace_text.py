@@ -1,5 +1,5 @@
 """Python analyze and whitespace-only text: it should be refused like empty text (exit 2, usage message).
-Today the empty string is refused, but spaces or newlines only are allowed. Values are invented; the check runs
+Empty text and text made only of spaces or newlines are refused the same way. Values are invented; the check runs
 local rules only (--local-only), with no network call and no key."""
 import os
 import subprocess
@@ -28,11 +28,6 @@ def test_analyze_empty_text_is_still_a_usage_error(tmp_path):
     assert "usage:" in proc.stderr
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="analyze accepts whitespace-only text: 'zn-gate analyze \"   \"' exits 0 with verdict allow "
-           "(only the empty string is refused with exit 2). Remove this marker when it is refused.",
-)
 @pytest.mark.parametrize("text", ["   ", "\n  \t\n"])
 def test_analyze_whitespace_only_text_is_a_usage_error(text, tmp_path):
     proc = subprocess.run(

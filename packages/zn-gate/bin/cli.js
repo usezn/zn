@@ -1479,7 +1479,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     });
 
     const textToAnalyze = textArgs.join(' ');
-    if (!textToAnalyze) {
+    if (!textToAnalyze.trim()) {
       process.stderr.write('Error: Please provide text to analyze: zn-gate analyze "<text>"\n');
       process.exit(1);
     }

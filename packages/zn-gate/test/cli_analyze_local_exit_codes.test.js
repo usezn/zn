@@ -32,6 +32,15 @@ test('analyze --local-only with no text exits 1 with a message on stderr and no 
   assert.match(r.stderr, /Please provide text to analyze/);
 });
 
+test('analyze --local-only with text made only of spaces or line breaks exits 1 like empty text', () => {
+  for (const text of ['   ', '\n  \t\n']) {
+    const r = run([text]);
+    assert.strictEqual(r.status, 1, JSON.stringify(text));
+    assert.strictEqual(r.stdout, '');
+    assert.match(r.stderr, /Please provide text to analyze/);
+  }
+});
+
 test('analyze --local-only with a harmless text exits 0, prints the JSON and nothing on stderr', () => {
   const r = run(['Please summarize this README for me.']);
   assert.strictEqual(r.status, 0, r.stderr);

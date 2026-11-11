@@ -1095,7 +1095,7 @@ def main() -> int:
     if args.command == "test":
         return cmd_test(args)
     elif args.command == "analyze":
-        if not args.text:
+        if not args.text or not args.text.strip():
             parser.error("analyze needs the text to inspect: zn-gate analyze \"<text>\"")
         return cmd_analyze(args)
     elif args.command == "scan":
