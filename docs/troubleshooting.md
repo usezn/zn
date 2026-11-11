@@ -27,6 +27,7 @@ Find the command you ran, then the symptom that matches.
   - ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
   - [Your agent was blocked: ".env holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
   - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
+  - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
 - `run`
@@ -62,6 +63,7 @@ Find the command you ran, then the symptom that matches.
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
 - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
+- ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -1184,6 +1186,44 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 **What happened:** zn needs a system program to use your keychain (Windows PowerShell for the Windows Credential Manager) and could not find or start it.
 
 **What to do:** close the terminal, open a new one and try again. If it keeps failing, create the vault with a passphrase: `zn unlock --backend passphrase`.
+
+#### `zn unlock` fails on a computer with no keychain
+
+**What happened:** zn keeps the vault key in your system keychain when it can use one, and otherwise behind a passphrase. On a server, a container or a Linux computer without a Secret Service, there is no keychain, and `zn unlock` chooses the passphrase on its own. It fails in two cases.
+
+- **There is no terminal.** For example, a script, a CI job or an `ssh` call without `-t` runs it. A real run with no terminal:
+
+  ```text
+  [zn] zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.
+  ```
+
+- **A keychain was asked for that is not there.** You ran `zn unlock --backend libsecret`, or `ZN_KEYCHAIN_BACKEND` is set, but the `secret-tool` program is missing. A real run on a computer without it:
+
+  ```text
+  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.15.0 unlock --backend passphrase`.
+  ```
+
+  A second line then says that the passphrase is not the problem and points back to this page.
+
+Nothing was changed.
+
+**What to do:**
+
+1. Open a terminal of your own on that computer (over `ssh`, use `ssh -t`) and run `zn unlock`. The first time it creates the vault and asks twice for a new passphrase of at least 12 characters, at a hidden prompt:
+
+   ```text
+   New vault passphrase (min 12 chars):
+   Repeat passphrase:
+   Created a new vault (passphrase) in ~/.zn/vault
+   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.15.0 lock` to lock now.
+   ```
+
+   Later runs ask once, for `Vault passphrase:`. A wrong passphrase says `wrong passphrase, or vault file identity.age is corrupted`; see [section 5](#5-your-secret-vault-is-locked) if you forgot it.
+2. To force the passphrase, run `zn unlock --backend passphrase`, and remove `ZN_KEYCHAIN_BACKEND` if you set it.
+3. If a person cannot type at that moment, `zn unlock --passphrase-stdin` reads the passphrase from the input instead. Use it only from a shell of your own, never in a file that others can read, and never in your agent's session.
+4. On a computer that has no dialog, the vault also says that first-use approvals will be refused. To answer them, run `zn lock` and then `zn unlock --foreground` in a terminal of its own, as in [Secrets](secrets.md#if-something-fails).
+
+More on where the key is kept: [Secrets, step 1](secrets.md#1-install-and-unlock-the-vault).
 
 ### Messages from `zn-gate connect` and `zn-gate disconnect`
 
