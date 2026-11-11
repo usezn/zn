@@ -4,7 +4,7 @@
 #
 # Each check keeps the trigger and the path filter it had when it was a workflow of its own:
 #   changelog     pull requests, always
-#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check and CLI headings check
+#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check and cheat sheet command check
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
@@ -84,7 +84,7 @@ while IFS= read -r f; do
   readme_root=false
   case "$f" in README*) [[ "$f" != */* ]] && readme_root=true ;; esac
   case "$f" in
-    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*) run[markdownlint]=true ;;
+    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
   case "$f" in

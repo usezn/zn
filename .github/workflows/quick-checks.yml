@@ -145,6 +145,12 @@ jobs:
       - name: Markdown lint - every CLI command has a section and a Contents entry
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-cli-headings.mjs
+      - name: Markdown lint - test the cheat sheet command check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-cheatsheet-commands.test.mjs
+      - name: Markdown lint - every command in the cheat sheet is documented in cli.md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-cheatsheet-commands.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
