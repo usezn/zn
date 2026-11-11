@@ -41,6 +41,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
+- [zn-analyze-reading-a-block-verdict.md](zn-analyze-reading-a-block-verdict.md): read one `analyze` answer that blocks, field by field, next to an allow answer, and what to do on a block.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-secret-rm-vs-vault-forget.md](zn-secret-rm-vs-vault-forget.md): what `secret rm` and `vault forget` each remove, side by side, with real runs against a throwaway vault.
 - [zn-vault-purge-vs-reset-decision.md](zn-vault-purge-vs-reset-decision.md): a decision list for wiping a vault: when to use `vault forget`, `vault reset` or `vault purge`, with real runs against a throwaway vault.
