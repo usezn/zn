@@ -502,6 +502,12 @@ For Codex CLI, zn also reviews the model's final answer. By default it only warn
 
 **How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, do it in this order: wrapped MCP servers first (`npx -y zn-gate init --revert`, because a saved copy put back after the hooks are removed could bring back zn's `secrets` server), then the hooks, then the Claude Code plugin, then your `.env` values and the vault, and the program last (`npm uninstall -g zn-gate`, then `pip uninstall zn-gate` if you installed the Python package). Do not remove the program first: your agent's settings would still point at a command that is gone. For the steps by agent, see the [removal guide](docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 
+## Next steps
+
+- [Docs index](docs/README.md): every guide, grouped by what you want to do.
+- [Examples](docs/examples/README.md): worked examples with made-up values.
+- [Troubleshooting](docs/troubleshooting.md): the messages people meet first, and what to do for each.
+
 ## Security
 
 Report vulnerabilities privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to [security@usezn.com](mailto:security@usezn.com). Policy, scope and safe harbor: [SECURITY.md](SECURITY.md). Hall of Fame: [usezn.com/security](https://usezn.com/security/).
