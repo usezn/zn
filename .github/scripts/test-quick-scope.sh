@@ -61,6 +61,8 @@ check pull_request next .github/scripts/check-docs-tables.mjs "changelog markdow
 check pull_request next .github/scripts/check-docs-changelog-security-links.mjs "changelog doclinks"
 check pull_request next CHANGELOG.md "changelog doclinks links"
 check pull_request next .github/scripts/check-readme-entry-points.mjs "changelog markdownlint"
+check pull_request next .github/scripts/check-docs-examples-index.mjs "changelog markdownlint"
+check pull_request next .github/scripts/check-docs-examples-index.test.mjs "changelog markdownlint"
 check pull_request next scripts/run.sh "changelog shellcheck"
 check pull_request next .github/workflows/other.yml "changelog wfheader timeouts wfformat"
 check pull_request next .github/scripts/check-workflow-header.mjs "changelog wfheader"

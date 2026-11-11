@@ -191,6 +191,10 @@ jobs:
         run: node --test .github/scripts/check-readme-entry-points.test.mjs
       - name: Markdown lint - README.md and docs/README.md link the same entry points
         run: node .github/scripts/check-readme-entry-points.mjs
+      - name: Markdown lint - test the docs examples index order check
+        run: node --test .github/scripts/check-docs-examples-index.test.mjs
+      - name: Markdown lint - the docs examples index is in alphabetical order
+        run: node .github/scripts/check-docs-examples-index.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
