@@ -395,7 +395,18 @@ function guardNativeText(ev) {
 // The one exception is a `metadata` object the adapter itself took into the tool output (OpenCode's metadata, the
 // TUI's copy of the output: see lib/agents/opencode.js), which is scrubbed and handed back as output, never used as
 // a path. Any other field, OpenCode's content included, is checked.
-const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'toolResult', 'tool_result', 'output', 'result', 'response', 'last_assistant_message']);
+const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'output', 'result', 'response', 'last_assistant_message']);
+// Copilot delivers the tool output inside toolResult / tool_result ({resultType, textResultForLlm}). Only the text the
+// adapter took as the output (and the scanner scans) is left out; the rest of that field, and the whole field for an
+// agent that does not use it as the output, is checked.
+const RESULT_KEYS = new Set(['toolResult', 'tool_result']);
+const RESULT_TEXT_KEYS = ['textResultForLlm', 'text_result_for_llm'];
+function withoutOutputText(v, output) {
+  if (typeof output !== 'string' || !v || typeof v !== 'object' || Array.isArray(v)) return v;
+  const copy = { ...v };
+  for (const k of RESULT_TEXT_KEYS) if (copy[k] === output) delete copy[k];
+  return copy;
+}
 
 /** Every other field of a post-tool, prompt or stop event (working directory, transcript, workspace roots, tool input) is checked. */
 function unsafeEventKind(ev) {
@@ -405,7 +416,10 @@ function unsafeEventKind(ev) {
     // The same object under the metadata key, not an equal one: only the metadata the adapter put in the output is left out.
     const out = ev.output && typeof ev.output === 'object' ? ev.output : null;
     const inOutput = (k, v) => k === 'metadata' && !!out && !!v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(out, k) && out[k] === v;
-    for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output && !inOutput(k, v)) raw[k] = v;
+    for (const [k, v] of Object.entries(ev.raw)) {
+      if (CONTENT_KEYS.has(k) || v === ev.output || inOutput(k, v)) continue;
+      raw[k] = RESULT_KEYS.has(k) ? withoutOutputText(v, ev.output) : v;
+    }
   }
   return unsafeKind([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
 }
