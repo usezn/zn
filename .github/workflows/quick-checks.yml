@@ -117,6 +117,14 @@ jobs:
       - name: Changelog - list this pull request's fragments in the job summary
         if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
         run: node .github/scripts/changelog.mjs summary --base HEAD^1
+      - name: Changelog - warn when a docs-only pull request adds no fragment
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        env:
+          # Dependency updates by Dependabot and changes labelled no-changelog need no fragment (security updates get one by hand).
+          CHANGELOG_SKIP: ${{ (contains(github.event.pull_request.labels.*.name, 'no-changelog') || github.event.pull_request.user.login == 'dependabot[bot]') && '1' || '0' }}
+          # Release work may edit CHANGELOG.md: release, back-merge and plugin-pin branches of this repository, and pull requests into a release branch.
+          CHANGELOG_RELEASE: ${{ (startsWith(github.base_ref, 'release/') || (github.event.pull_request.head.repo.full_name == github.repository && ((startsWith(github.head_ref, 'release/') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/pin-plugin-') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/backmerge-') && github.base_ref == 'next')))) && '1' || '0' }}
+        run: node .github/scripts/changelog.mjs warn-docs --base HEAD^1
       # Fragment names: every file in changelog.d is a lowercase .md file (README.md excepted).
       - name: Changelog fragment names - test the check
         if: ${{ !cancelled() && steps.scope.outputs.fragmentnames == 'true' }}

@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint, summaryMarkdown } from './changelog.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint, summaryMarkdown, docsFragmentWarning } from './changelog.mjs';
 
 const CHANGELOG = `# Changelog
 
@@ -177,4 +178,44 @@ test('the failure hint shows a template that parses as a valid fragment', () => 
   assert.deepEqual(parseFragment(block, 'hint').errors, []);
   assert.match(text, /changelog\.d\/fix-init-guard\.md/);
   assert.match(text, /no-changelog/);
+});
+
+test('a docs-only pull request with no fragment gets a warning; the error check still passes', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'docs', 'cli.md'), '# CLI\n');
+  g('add', '-A'); g('commit', '-qm', 'docs');
+  assert.match(docsFragmentWarning(dir, 'next'), /only documentation and adds no changelog\.d\/ fragment/);
+  assert.deepEqual(checkPullRequest(dir, 'next').errors, []);
+  assert.equal(docsFragmentWarning(dir, 'next', { skip: true }), null);
+  assert.equal(docsFragmentWarning(dir, 'next', { release: true }), null);
+});
+
+test('a docs-only pull request that adds a fragment gets no warning', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'docs', 'cli.md'), '# CLI\n');
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'docs-fix.md'), '### Fixed\n- A docs fix.\n');
+  g('add', '-A'); g('commit', '-qm', 'docs with fragment');
+  assert.equal(docsFragmentWarning(dir, 'next'), null);
+});
+
+test('a pull request that changes shipped code is not docs-only: no docs warning', (t) => {
+  const { dir, g } = repo(t);
+  fs.writeFileSync(path.join(dir, 'packages', 'zn-gate', 'lib', 'a.js'), '2\n');
+  g('commit', '-qam', 'code');
+  assert.equal(docsFragmentWarning(dir, 'next'), null);
+});
+
+test('warn-docs prints a GitHub warning and exits 0 for a docs-only pull request', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'docs', 'cli.md'), '# CLI\n');
+  g('add', '-A'); g('commit', '-qm', 'docs');
+  const script = fileURLToPath(new URL('./changelog.mjs', import.meta.url));
+  const env = { ...process.env, CHANGELOG_SKIP: '0', CHANGELOG_RELEASE: '0' };
+  const r = spawnSync(process.execPath, [script, 'warn-docs', '--base', 'next'], { cwd: dir, encoding: 'utf8', env });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^::warning title=Changelog fragment::this pull request changes only documentation/m);
 });
