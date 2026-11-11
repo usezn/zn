@@ -58,7 +58,7 @@ npx -y zn-gate pins
 ```
 
 ```text
-MCP tool pins (/home/you/.zn/mcp-pins, mode: block)
+MCP tool pins (~/.zn/mcp-pins, mode: block)
 
   9f84d1c27a3b6e05  uvx mcp-server-fetch
       2 tool(s) pinned 2026-11-01T09:12:44.000Z
