@@ -136,6 +136,12 @@ jobs:
       - name: Markdown lint - no two docs pages share a first-level title
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-titles.mjs
+      - name: Markdown lint - test the CLI headings check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-cli-headings.test.mjs
+      - name: Markdown lint - every CLI command has a section and a Contents entry
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-cli-headings.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
