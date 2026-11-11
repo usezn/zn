@@ -20,7 +20,7 @@ Add `--format json` for a file a script can read. Matched values are never print
 zn-gate audit --output zn-audit.txt
 ```
 
-`--format json` is for scripts and `--format sarif` for GitHub code scanning. The report is written so it is safe to share: the `evidence:` line of a finding is the line that matched, cut to 160 characters, with secrets replaced by `[REDACTED:<TYPE>]` and URLs shortened to `scheme://host[:port]`. Every rule and what each fix says is in [audit](../audit.md).
+`--format json` is for scripts and `--format sarif` for GitHub code scanning. The report is written to keep secrets out of it: the `evidence:` line of a finding is the line that matched, cut to 160 characters, with secrets replaced by `[REDACTED:<TYPE>]` and URLs shortened to `scheme://host[:port]`. The JSON report also has a top-level `root` field with the absolute path of the audited folder, which usually contains your user name. Edit it or remove it before you send a JSON report; the text and SARIF reports do not carry it. Every rule and what each fix says is in [audit](../audit.md).
 
 ## The weekly report is safe to paste
 
