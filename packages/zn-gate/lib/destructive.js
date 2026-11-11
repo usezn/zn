@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-10.1';
+const COMMAND_RULES_VERSION = '2026-11-11.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -573,13 +573,26 @@ function checkSimple(words, depth, known) {
   }
   if (head === 'find') {
     const paths = [];
-    for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+    // GNU find takes -P, -L, -H, -O<level> and -D <options> before the starting paths; they do not end the list of paths.
+    let first = 0;
+    while (first < rest.length) {
+      if (/^-(?:[PLH]|O\d*)$/.test(rest[first])) first += 1;
+      else if (rest[first] === '-D') first += 2;
+      else break;
+    }
+    for (const w of rest.slice(first)) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
     // After a cd to a protected folder, a find with no path starts at ".".
     if (known && !paths.length) paths.push('.');
-    const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
+    // -execdir, -ok and -okdir run the program like -exec does (in the folder of each file, or after a prompt).
+    const del = rest.includes('-delete') || rest.some((w, i) => /^-(?:exec|execdir|ok|okdir)$/.test(w) && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
+    // From the filesystem root even a filtered delete is refused: a test does not make that safe.
     const filtered = rest.some((w) => FIND_TESTS.test(w));
-    if ((del && !filtered && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    const fromRoot = paths.some((w) => dangerousPath(fromCwd(known, w)) === 'root');
+    if ((del && (!filtered || fromRoot) && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    // -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
+    // over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
+    if ((del && rest.includes('-files0-from')) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-10.1"
+COMMAND_RULES_VERSION = "2026-11-11.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1034,19 +1034,36 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
-        for w in rest:
+        # GNU find takes -P, -L, -H, -O<level> and -D <options> before the starting paths; they do not end the list of paths.
+        first = 0
+        while first < len(rest):
+            if re.match(r"^-(?:[PLH]|O\d*)\Z", rest[first]):
+                first += 1
+            elif rest[first] == "-D":
+                first += 2
+            else:
+                break
+        for w in rest[first:]:
             if w.startswith("-") or w == "(" or w == "!":
                 break
             paths.append(w)
         # After a cd to a protected folder, a find with no path starts at ".".
         if known and not paths:
             paths.append(".")
+        # -execdir, -ok and -okdir run the program like -exec does (in the folder of each file, or after a prompt).
         delete = "-delete" in rest or any(
-            w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
+            re.match(r"^-(?:exec|execdir|ok|okdir)\Z", w)
+            and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
+        # From the filesystem root even a filtered delete is refused: a test does not make that safe.
         filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
+        from_root = any(_dangerous_path(_from_cwd(known, w)) == "root" for w in paths)
+        if delete and (not filtered or from_root) and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
+            return "rm_root_home"
+        # -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
+        # over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
+        if delete and "-files0-from" in rest:
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
