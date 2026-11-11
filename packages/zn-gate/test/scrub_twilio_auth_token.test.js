@@ -2,8 +2,7 @@
 
 // A Twilio account SID (AC + 32 hex) written next to its auth token (32 hex under
 // a TWILIO_AUTH_TOKEN key). The SID is an identifier, not a secret, so it must stay
-// visible. The token must be masked; that assertion is skipped until the scrubber
-// has a rule for it. Fake values only.
+// visible. The token must be masked. Fake values only.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -37,6 +36,9 @@ const SAMPLES = [
   'TWILIO_ACCOUNT_SID=' + SID + ' TWILIO_AUTH_TOKEN=' + TOKEN + '\n',
   'TWILIO_ACCOUNT_SID=' + SID + '\nTWILIO_AUTH_TOKEN=' + TOKEN + '\n',
   'account_sid: ' + SID + '\nauth_token: ' + TOKEN + '\n',
+  'export TWILIO_ACCOUNT_SID=' + SID + '\nexport TWILIO_AUTH_TOKEN=' + TOKEN + '\n',
+  'account_sid: "' + SID + '"\nauth_token: \'' + TOKEN + '\'\n',
+  '{"account_sid": "' + SID + '", "auth_token": "' + TOKEN + '"}\n',
 ];
 
 test('a Twilio account SID next to an auth token stays visible', async () => {
@@ -46,9 +48,31 @@ test('a Twilio account SID next to an auth token stays visible', async () => {
   }
 });
 
-test('a Twilio auth token next to an account SID is masked', { skip: 'gap: the scrubber has no Twilio auth token rule; a bare 32-hex value under TWILIO_AUTH_TOKEN or auth_token is not redacted (observed on origin/next ff8c25cc8). Fix in lib/scrub, then unskip.' }, async () => {
+test('a Twilio auth token next to an account SID is masked', async () => {
   for (const input of SAMPLES) {
     const out = await redact(input);
     assert.ok(!out.includes(TOKEN), 'token was not masked in: ' + JSON.stringify(input));
+  }
+});
+
+test('an unlabelled 32-hex value is not masked', async () => {
+  const hash = 'deadbeef00000000deadbeef00000000';
+  const inputs = [
+    'md5: ' + hash + '\n',
+    'request_id=' + hash + '\n',
+    'oauth_token_hash: ' + hash + '\n',
+    'etag "' + hash + '"\n',
+  ];
+  for (const input of inputs) {
+    const out = await redact(input);
+    assert.ok(out.includes(hash), 'value was masked in: ' + JSON.stringify(input));
+  }
+});
+
+test('the label and the value are read in any case', async () => {
+  for (const input of ['twilio_auth_token=' + TOKEN.toUpperCase() + '\n', 'Auth_Token: ' + TOKEN + '\n']) {
+    const out = await redact(input);
+    assert.ok(!out.toLowerCase().includes(TOKEN), 'token was not masked in: ' + JSON.stringify(input));
+    assert.match(out, /__ZN_TWILIO_AUTH_TOKEN_\d+__/);
   }
 });
