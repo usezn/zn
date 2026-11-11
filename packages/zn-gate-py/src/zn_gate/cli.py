@@ -21,6 +21,7 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_pii_preview, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
+from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
@@ -121,9 +122,9 @@ def _leak_next_step(file: str, rule: str) -> str:
         if os.sep != "/":  # Windows: npx takes forward slashes too
             rel = rel.replace(os.sep, "/")
         arg = rel if _SAFE_FILE_ARG.fullmatch(rel) and not rel.startswith("-") else "<file>"
-        return (f"Next: run npx -y zn-gate env shadow {arg} to move the values into the local vault, "
+        return (f"Next: run {npx_name()} -y zn-gate env shadow {arg} to move the values into the local vault, "
                 "and rotate any value that was ever committed or shared.")
-    return ("Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the "
+    return (f"Next: run {npx_name()} -y zn-gate secret set NAME to store the value in the local vault, use the "
             "__ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.")
 
 SHIELD = "\U0001f6e1\ufe0f"
@@ -822,6 +823,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+class _DaysGiven(argparse.Action):
+    """Store --days and remember it was typed, so the Top rules block follows it (7 days otherwise)."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.days_given = True
+
+
 # A made-up key in the shape of an AWS access key id. It is not a real credential.
 # It is built from parts so that no scanner sees a whole key in this file.
 _CHECK_FAKE_SECRET = "AKIA" + "ZNTESTFAKE" + "000000"
@@ -916,15 +925,18 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_stats(args) -> int:
     from . import stats as _stats
+    given = bool(getattr(args, "days_given", False))
     if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
         sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
         return 2
     days = args.days
     s = _stats.summary(days=days)
+    top_days = days if given else _stats.TOP_RULES_DAYS
+    top = {"days": top_days, "rules": _stats.top_rules(days=top_days)}
     if args.json:
-        print(json.dumps(s, indent=2))
+        print(json.dumps({**s, "top_rules_days": top["days"], "top_rules": top["rules"]}, indent=2))
     else:
-        sys.stdout.write(_stats.render(s))
+        sys.stdout.write(_stats.render(s, top))
     return 0
 
 
@@ -953,7 +965,7 @@ def npm_only_message(command: str) -> str:
         "LlamaIndex or plain tool calling).\n"
         "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, run this in your own "
         "terminal (it needs Node.js 18 or later):\n"
-        "  npx -y zn-gate init\n"
+        f"  {npx_name()} -y zn-gate init\n"
     )
 
 
@@ -972,9 +984,9 @@ def npm_only_simple_message(command: str) -> str:
     return (
         f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
         "Run it with Node.js 18 or later:\n"
-        f"  npx -y zn-gate {command}\n"
+        f"  {npx_name()} -y zn-gate {command}\n"
         f"or, after npm install -g zn-gate:\n"
-        f"  zn-gate {command}\n"
+        f"  {zn_gate_name()} {command}\n"
     )
 
 
@@ -987,7 +999,7 @@ def npm_help_message() -> str:
     return (
         "zn-gate help is not a command. The npm package shows its help with --help.\n"
         "Run it with Node.js 18 or later:\n"
-        "  npx -y zn-gate --help\n"
+        f"  {npx_name()} -y zn-gate --help\n"
     )
 
 
@@ -1041,7 +1053,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # stats command
     st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
-    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--days", type=int, default=30, action=_DaysGiven, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     # check command

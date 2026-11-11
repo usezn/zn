@@ -97,6 +97,39 @@ The table below gives the full description of each setting.
 
 Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
+### All environment variables
+
+Every `ZN_` variable you can set, with its default and the package that reads it. "Both" means the npm and the Python package read it the same way. Not listed: variables that zn sets for its own helper processes (for example `ZN_HOOK_ACK` and `ZN_HOOK_VAULT_WAIT_MS`), the names passed to the Windows helper scripts, and the test-only switches. You never need to set those.
+
+| Variable | Default | What it does | Package |
+|---|---|---|---|
+| `ZN_HOME` | `~/.zn` | Folder for zn's own files: stats, the evidence log, pins and hook launchers. | Both |
+| `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
+| `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
+| `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
+| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
+| `ZN_STAGE` | The production API | Which cloud API route the check is sent to: `prod`, or unset for the default route. Any other value also uses the default route. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values under `--stage`. | Both |
+| `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check. `windows` sends overlapping windows of the text; `off` sends only the start. The values `none`, `truncate`, `0`, `false` and `no` also count as `off`. Any other value counts as `windows`. | Both |
+| `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |
+| `ZN_ALLOW_TRUNCATED=1` | Off | Lets through output too large to scan in full. It is still marked as truncated. By default such output is blocked. | Both |
+| `ZN_BLOCK_TRUNCATED=1` | Off | Blocks output too large to scan in full, even when `ZN_ALLOW_TRUNCATED=1` is set. | Both |
+| `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
+| `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
+| `ZN_BLOCK_DESTRUCTIVE=1` | Two rules on (`rm_root_home`, `disk_overwrite`) | `1` turns on all six destructive-command rules. | npm |
+| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` (or in `$ZN_HOME/config.json` when `ZN_HOME` is set). | npm |
+| `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
+| `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. `1` does the same. The environment can only add offline mode: `online` is read as offline. | npm |
+| `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
+| `ZN_SHIELD_LIMITS` | The built-in limits | A JSON object that lowers the shield's size and count limits, for tests and unusual setups. Values above a built-in limit are cut to it; values that are not positive whole numbers are ignored. | npm |
+| `ZN_HOOK_DIR` | `~/.zn/hooks` (`$ZN_HOME/hooks` when `ZN_HOME` is set) | Folder for the hook launchers. It must be private to your user. | npm |
+| `ZN_AGENT` | None | Agent name for `zn run` and the MCP server when `--agent` is not given. | npm |
+| `ZN_TEAM_JOIN_TOKEN` | None | Join token for `team join` when no token is given as an argument. An argument wins. | npm |
+| `ZN_KEYCHAIN_BACKEND` | Detected | Forces the system keychain backend. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_SERVICE` | `zn-vault` | Service name used in the keychain. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_PATH` | The system default | On macOS, the keychain file to use. For tests and unusual setups. | npm |
+| `ZN_NO_COMPILE_CACHE` | Off | Any value turns off the Node.js compile cache. | npm |
+| `ZN_NPM_REGISTRY` | `https://registry.npmjs.org` | Registry that `zn-gate scan --package` downloads from. Must be an https address; plain http is accepted for localhost only. | npm |
+
 ## Set up and check
 
 ### `init`
@@ -622,8 +655,12 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
+`stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only detector ids, the generic label `Built-in detector` and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id. The npm package adds `zn why`, which explains your last block. The Python package points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/) instead, because `why` is only in the npm package. The block is left out when nothing matched in the window.
+
 With `--json`, the output is one JSON object with the same counts and these extra fields:
 
+- `top_rules`: the same five rules as a list of `{ "id", "name", "count" }`, highest count first, ties by id. It is `[]` when nothing matched. `name` is always the generic label `Built-in detector` for now; rule-specific names are not shown yet.
+- `top_rules_days`: the window of `top_rules` in days (`7` unless you passed `--days`).
 - `sharing`: `true` when sharing of pseudonymous daily counts is on.
 - `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
 - `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
@@ -764,6 +801,5 @@ When a command prints JSON, the npm and the Python package print the same fields
 | Python | `analyze` | `latency_ms` on every answer, and `latency_us` on blocked texts | It is the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. The npm package does not print timings. |
 | Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command runs its self-test instead and prints no JSON. |
 | npm | `stats --json` | `sharing`, `sent_days`, `send_failed` | Sharing pseudonymous counts is an npm-only feature (`stats share`), so only the npm output reports whether sharing is on and which days were sent. |
-
 
 `analyze --json` is accepted by both packages and changes nothing. Key order can differ between the two packages. `scan --format json` has the same keys in both.
