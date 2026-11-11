@@ -153,6 +153,19 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
 
    CI also checks external links, but only reports them and never fails the pull request.
 
+### Check docs links before you push
+
+If you add or move a page, or link to a heading, check the links on your machine first. A broken link fails the pull request.
+
+- Two Node.js tests cover the pages under `docs/`: `test/docs_relative_links.test.js` (a relative link points to a file that exists) and `test/docs_anchor_links.test.js` (a link to a `#section` names a heading that exists). They need no install:
+
+  ```bash
+  cd packages/zn-gate
+  node --test test/docs_relative_links.test.js test/docs_anchor_links.test.js
+  ```
+
+- The offline link check CI runs, with lychee, covers the READMEs and `plugins` too. The command is in item 3 of the Documentation checks above.
+
 ## Your first pull request and draft pull requests
 
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
