@@ -94,6 +94,8 @@ struct Gateway {
     /// Error frames the gateway sent back towards the agent.
     client: Receiver<Value>,
     stderr: Arc<Mutex<String>>,
+    /// Non-empty stdout lines that are not JSON-RPC frames (log or banner text).
+    stray_stdout: Arc<Mutex<Vec<String>>>,
     /// The thread draining stderr; joined before the captured text is read after an exit.
     stderr_thread: Option<thread::JoinHandle<()>>,
     dir: PathBuf,
@@ -101,6 +103,11 @@ struct Gateway {
 
 impl Gateway {
     fn start(name: &str) -> Gateway {
+        Gateway::start_with(name, |_| {}, &[])
+    }
+
+    /// Like `start`, with a change to the generated `zn.json`.
+    fn start_with(name: &str, tweak: fn(&mut Value), env: &[(&str, &str)]) -> Gateway {
         let dir = workdir(name);
         let status = zn_command(&dir)
             .arg("init")
@@ -114,7 +121,7 @@ impl Gateway {
         // free_port() releases the port before zn binds it, so a test running in parallel can take it first:
         // zn then exits with "already in use". Try again with a new port a few times.
         for attempt in 1..=PORT_ATTEMPTS {
-            let mut gateway = Gateway::launch(&dir);
+            let mut gateway = Gateway::launch(&dir, tweak, env);
             match gateway.wait_until_ready() {
                 Ok(()) => return gateway,
                 Err(e) if attempt < PORT_ATTEMPTS => {
@@ -128,7 +135,7 @@ impl Gateway {
     }
 
     /// One start of the gateway on a fresh port, with its mock upstream and relay threads.
-    fn launch(dir: &Path) -> Gateway {
+    fn launch(dir: &Path, tweak: fn(&mut Value), env: &[(&str, &str)]) -> Gateway {
         let dir = dir.to_path_buf();
         let port = free_port();
         let policies = dir.join("policies");
@@ -140,6 +147,7 @@ impl Gateway {
         config["server"]["bind_address"] = json!("127.0.0.1");
         config["security"]["rate_limit_per_minute"] = json!(6000);
         config["engine"]["policy_dir"] = json!(policies.to_string_lossy());
+        tweak(&mut config);
         std::fs::write(&path, config.to_string()).unwrap();
 
         // Mock upstream: accepts the relay's connection and hands every line to the test.
@@ -159,6 +167,7 @@ impl Gateway {
         let mut child = zn_command(&dir)
             .arg("start")
             .env("ZN_API_KEY", API_KEY)
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -182,15 +191,18 @@ impl Gateway {
         });
 
         // Relay: JSON-RPC errors go back to the client side, every other frame goes upstream.
+        let stray_stdout = Arc::new(Mutex::new(Vec::<String>::new()));
+        let stray_sink = Arc::clone(&stray_stdout);
         let (client_tx, client) = mpsc::channel::<Value>();
         let mut to_upstream = TcpStream::connect(upstream_addr).expect("connect mock upstream");
         thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 let line = line.trim().to_string();
-                if !line.starts_with('{') {
-                    continue; // banner and log lines
+                if line.is_empty() {
+                    continue;
                 }
                 let Ok(frame) = serde_json::from_str::<Value>(&line) else {
+                    stray_sink.lock().unwrap().push(line);
                     continue;
                 };
                 if frame.get("error").is_some() {
@@ -210,6 +222,7 @@ impl Gateway {
             upstream,
             client,
             stderr,
+            stray_stdout,
             stderr_thread: Some(stderr_thread),
             dir,
         }
@@ -476,4 +489,118 @@ fn an_invalid_config_exits_non_zero_with_a_plain_message() {
     assert!(text.contains("at least"), "{text}");
     assert!(!text.contains("panicked"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Fake values of every kind the gateway knows, in one call.
+const FAKE_VALUES: &[&str] = &[
+    concat!("AK", "IAIOSFODNN7EXAMPLE"),
+    concat!("gh", "p_0123456789abcdefghijABCDEFGHIJ012345"),
+    // Split so the source holds no token-shaped literal.
+    concat!("sk_", "live_EXAMPLEEXAMPLE0123456789"),
+    concat!("xo", "xb-123456789012-example0123456789"),
+    "GB82 WEST 1234 5698 7654 32",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJleGFtcGxlIn0.c2lnbmF0dXJl",
+    "jane.doe@example.com",
+    "4111 1111 1111 1111",
+];
+
+/// Every text field of every audit row, payload decrypted, as one text (empty while there is no row yet).
+fn audit_dump(dir: &Path, key: &str) -> String {
+    let path = dir.join("zn.db");
+    if !path.exists() {
+        return String::new();
+    }
+    let Ok(vault) = zn::audit::AuditVault::new(&path.to_string_lossy(), Some(key)) else {
+        return String::new();
+    };
+    let Ok(rows) = vault.get_recent(100) else {
+        return String::new();
+    };
+    rows.iter()
+        .map(|r| {
+            format!(
+                "{}|{}|{}|{}|{}|{}",
+                r.tool_name,
+                r.status,
+                r.policy_match.clone().unwrap_or_default(),
+                r.payload.clone().unwrap_or_default(),
+                r.agent_id.clone().unwrap_or_default(),
+                r.nearest_neighbor.clone().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
+#[test]
+fn logs_and_audit_rows_never_hold_secrets_and_stdout_has_no_logs() {
+    const DB_KEY: &str = "example-db-key-not-real-0002";
+    let mut gw = Gateway::start_with(
+        "logredact",
+        |c| {
+            c["audit"]["store_payloads"] = json!(true);
+        },
+        &[("ZN_DB_KEY", DB_KEY)],
+    );
+    let tool = concat!("no_such_gh", "p_0123456789abcdefghijABCDEFGHIJ012345");
+    gw.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {
+            "name": tool,
+            "arguments": {
+                "note": format!("values: {}", FAKE_VALUES.join(" ; ")),
+                "password": "hunter2-example-not-real"
+            }
+        }
+    }));
+    // Forwarding is unchanged by the log redactor: the call reaches the upstream with its
+    // arguments, and a value the forwarding scrubber does not know (the chat token) is still in it.
+    let frame = gw.next_upstream();
+    let fwd = frame.to_string();
+    assert_eq!(frame["params"]["name"], json!(tool));
+    let kept = concat!("xo", "xb-123456789012");
+    assert!(
+        fwd.contains(kept),
+        "forwarding changed, {kept} missing: {fwd}"
+    );
+
+    // Wait for the audit row, then give the logger a moment to flush.
+    let deadline = Instant::now() + STEP;
+    let dump = loop {
+        let d = audit_dump(&gw.dir, DB_KEY);
+        if !d.is_empty() {
+            break d;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no audit row: {}",
+            gw.stderr_text()
+        );
+        thread::sleep(Duration::from_millis(100));
+    };
+    thread::sleep(Duration::from_millis(500));
+    let stderr = gw.stderr_text();
+    let stray = gw.stray_stdout.lock().unwrap().join("\n");
+
+    let cores = FAKE_VALUES.iter().copied().chain([
+        "ghp_0123",
+        "GB82WEST",
+        "4111111111111111",
+        "eyJhbGci",
+        "hunter2-example-not-real",
+    ]);
+    for v in cores {
+        assert!(!stderr.contains(v), "{v} in stderr: {stderr}");
+        assert!(!dump.contains(v), "{v} in the audit database: {dump}");
+    }
+    assert!(
+        stderr.contains("Tool call detected"),
+        "the call was not logged: {stderr}"
+    );
+    assert!(stray.is_empty(), "log text on stdout: {stray}");
 }
