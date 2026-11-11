@@ -8,7 +8,7 @@ A script should test the exit code, not search the text. The codes differ a litt
 
 | Command | `0` | `1` | `2` |
 |---|---|---|---|
-| `scan` | nothing found | something found, or the path does not exist | an unknown `--format` |
+| `scan` | nothing found in the files it read (exit `3` when nothing or not everything was read, see below) | something found, or the path does not exist | an unknown `--format` |
 | `audit` | nothing at or above `--fail-on` | findings at or above it | wrong usage, or a path that is not a folder |
 | `analyze` | text allowed | no text given | text blocked |
 
