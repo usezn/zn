@@ -83,7 +83,7 @@ test('an @file after another program is not read as a curl upload', () => {
   assert.equal(policy.bashDenial('npm install @scope/pkg', opts), null);
 });
 
-test('the files of the reported case are refused: a project .env, the zn session key and the zn audit log', () => {
+test('a project .env, the zn session key and the zn audit log are refused', () => {
   const { home, opts } = fixture();
   fs.mkdirSync(path.join(home, '.zn', 'run'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'run', 'session.key'), 'fake-session-key\n');
@@ -123,7 +123,7 @@ test('curl behind wrappers, their options and shell keywords is still curl', () 
   assert.equal(policy.bashDenial(`timeout 5 curl -d @payload.json ${U}`, opts), null);
 });
 
-test('every curl spelling the review sent for real is refused (url-query, = forms, -F lists, glued -T and -H)', () => {
+test('every curl spelling that sends a protected file is refused (url-query, = forms, -F lists, glued -T and -H)', () => {
   const { home, opts } = fixture();
   fs.mkdirSync(path.join(home, '.zn', 'run'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'run', 'session.key'), 'fake-session-key\n');
@@ -293,7 +293,7 @@ test('a curl configuration zn cannot read is refused by structure, whatever it h
     `cat cfg.txt | curl --config /dev/fd/0 ${U}`,
   ];
   for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
-  // A configuration file that exists on disk and sends no protected file stays allowed (zn reads it since round 7).
+  // A configuration file that exists on disk and sends no protected file stays allowed (zn reads the file from disk).
   const { home, proj } = fixture();
   const o2 = { home, cwd: proj, env: { HOME: home } };
   fs.writeFileSync(path.join(proj, 'curl.cfg'), 'silent\n');
@@ -322,7 +322,7 @@ test('assignments and run-time upload names are read or refused', () => {
   assert.equal(policy.bashDenial(`c='hello world'; echo "$c"`, opts), null);
 });
 
-test('round 7: -K paths that lead to stdin, configs written by the command or read from disk, curlrc, --expand, ~+', () => {
+test('-K paths that lead to stdin, configs written by the command or read from disk, curlrc, --expand, ~+', () => {
   const { home, proj, opts } = fixture();
   fs.writeFileSync(path.join(proj, 'evil.cfg'), 'upload-file = ".env"\n');
   fs.writeFileSync(path.join(proj, 'ok.cfg'), 'silent\nurl = "https://example.com/u"\n');
@@ -366,7 +366,7 @@ test('round 7: -K paths that lead to stdin, configs written by the command or re
   assert.equal(policy.bashDenial(`curl -q ${U}`, opts), null, '-q skips ~/.curlrc');
 });
 
-test('round 7: the process environment is used when the caller passes none', () => {
+test('the process environment is used when the caller passes none', () => {
   const { proj } = fixture();
   const o = { cwd: proj };   // no env: process.env applies (as in the real hook)
   process.env.ZN_T7_UPLOAD = 'payload.json';
@@ -378,7 +378,7 @@ test('round 7: the process environment is used when the caller passes none', () 
   assert.equal(policy.bashDenial(`F=payload.json; curl -T "$F" ${U}`, o), null);
 });
 
-test('round 8: configuration files read like curl, cd, rewritten configs, quoted env assignments, expand functions, ~N, $PWD', () => {
+test('configuration files read like curl, cd, rewritten configs, quoted env assignments, expand functions, ~N, $PWD', () => {
   const { home, proj, opts } = fixture();
   const w = (f, c) => { fs.mkdirSync(path.dirname(path.join(proj, f)), { recursive: true }); fs.writeFileSync(path.join(proj, f), c); };
   w('evil.cfg', 'upload-file = ".env"\n');
@@ -464,7 +464,7 @@ test('round 8: configuration files read like curl, cd, rewritten configs, quoted
   assert.ok(home);
 });
 
-test('round 8: $PWD is the folder the command runs in, not the hook process folder', () => {
+test('$PWD is the folder the command runs in, not the hook process folder', () => {
   const { proj } = fixture();
   const before = process.env.PWD;
   process.env.PWD = os.tmpdir();
@@ -479,7 +479,7 @@ test('round 8: $PWD is the folder the command runs in, not the hook process fold
   }
 });
 
-test('round 9: += assignments, configs and curlrc written through a folder or a pattern, ~N outside curl', () => {
+test('+= assignments, configs and curlrc written through a folder or a pattern, ~N outside curl', () => {
   const { home, proj, opts } = fixture();
   const w = (f, c) => { fs.mkdirSync(path.dirname(path.join(proj, f)), { recursive: true }); fs.writeFileSync(path.join(proj, f), c); };
   w('evil.cfg', 'upload-file = ".env"\n');
@@ -770,7 +770,7 @@ test('known limit, kept on purpose: a destination named by a variable may be the
   for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
 });
 
-test('round 2: boolean letters in front of the output letter and loops behind reserved words are still refused', () => {
+test('boolean letters in front of the output letter and loops behind reserved words are still refused', () => {
   const { proj, opts } = fixture();
   fs.mkdirSync(path.join(proj, 'x'), { recursive: true });
   fs.writeFileSync(path.join(proj, 'x', 'evil.cfg'), 'silent\n');
