@@ -259,7 +259,7 @@ async function packageInstallCheck(command, opts, cwd) {
     let lookup;
     if (st.mode === 'online') {
       const reg = require('../package-registry');
-      const stateDir = opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
+      const stateDir = znDirOf(opts) || require('../stats').znHome();
       lookup = (items) => {
         // A name is asked of the public registry only when the user's own settings do not point at another one.
         const ctx = { cwd, home: opts.home || require('os').homedir(), env: process.env };
@@ -1345,7 +1345,7 @@ function recordConfigBaseline(ev, opts) {
 /** The file that remembers, for one session, what a hook has already seen (kept in the zn state folder, owner only). */
 function seenFile(ev, name, opts) {
   if (!ev.sessionId) return null;
-  const base = opts && opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
+  const base = znDirOf(opts) || require('../stats').znHome();
   const id = require('crypto').createHash('sha256').update(String(ev.sessionId || '')).digest('hex').slice(0, 16);
   return path.join(base, 'state', name + '-' + id + '.json');
 }
@@ -1868,14 +1868,14 @@ function countHook(agentId, ev, decision, opts = {}, latencyMs) {
     if (ev.event === 'session_start') return;
     if (ev.event === 'stop') {
       // A check of the final answer is not a tool check: it has its own counters.
-      const statsFile = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
+      const statsFile = statsFileOf(opts);
       const stats = require('../stats');
       stats.recordEvent('stop-review', statsFile ? { file: statsFile } : {});
       if (decision.decision !== 'allow') stats.recordEvent('stop-review-flagged', statsFile ? { file: statsFile } : {});
       return;
     }
     const extra = decision.stats || {};
-    const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
+    const file = statsFileOf(opts);
     require('../stats').record({
       layer: 'hook', agent: agentId, checked: 1,
       blocked: decision.decision === 'deny' && !decision.failClosed && !decision.noBlock ? 1 : 0,
@@ -1932,12 +1932,23 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
 }
 
 /*
- * The evidence ledger of one call. ZN_HOME moves zn's folder for every writer, so it wins when it is set; the
- * ~/.zn of opts.home (tests, and the live requests of zn-gate check) is used only when ZN_HOME is not set.
+ * zn's own folder for one call. ZN_HOME moves zn's folder for every writer, so it wins when it is set; the ~/.zn of
+ * opts.home (tests, and the live requests of zn-gate check) is used only when ZN_HOME is not set. undefined when
+ * neither is set: the caller then uses the default folder of its module.
  */
+function znDirOf(opts) {
+  if (process.env.ZN_HOME) return require('../stats').znHome();
+  return opts && opts.home ? path.join(opts.home, '.zn') : undefined;
+}
+/* The evidence ledger of one call (see znDirOf). */
 function evidenceFileOf(opts) {
-  if (process.env.ZN_HOME) return path.join(require('../stats').znHome(), 'evidence.jsonl');
-  return opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+  const dir = znDirOf(opts);
+  return dir ? path.join(dir, 'evidence.jsonl') : undefined;
+}
+/* The stats file of one call (see znDirOf). */
+function statsFileOf(opts) {
+  const dir = znDirOf(opts);
+  return dir ? path.join(dir, 'stats.json') : undefined;
 }
 
 /*
