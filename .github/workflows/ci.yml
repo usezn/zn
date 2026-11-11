@@ -194,7 +194,7 @@ jobs:
         env:
           # Where the frameworks were installed above, their tests must run, not skip.
           ZN_REQUIRE_FRAMEWORKS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '1' || '' }}
-        # Two pytest processes at once (see the script): the long linear-time files do not wait for the rest.
+        # Three pytest processes at once (see the script): each of the two long linear-time files has its own and the rest share the third.
         run: bash ../../.github/scripts/run-pytest-sharded.sh python
       - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
         # The same real-framework tests, in a separate virtual environment with langchain-core 1.3.3, the
