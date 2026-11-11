@@ -257,6 +257,31 @@ Show that the check runs, with the status badge of your own workflow (replace `O
 npx -y zn-gate audit .
 ```
 
+## Run the same scan locally on Windows (PowerShell)
+
+The Action runs the scan with the PyPI package and the audit with the npm package. These are the local commands that do the same thing. Run them from the root of the repository.
+
+```powershell
+python -m pip install --only-binary=:all: --no-deps zn-gate==1.15.0
+python -I -X utf8 -m zn_gate.cli scan --format github -- .
+npx.cmd -y zn-gate@1.15.0 audit . --format text --fail-on high
+```
+
+- The first two lines are the scan (`mode: scan`, the default). `--format github` prints the same annotations as the Action. `-I` and `-X utf8` match the Action's run; `--` ends the options, so the path that follows is never read as a flag.
+- The last line is the audit (`mode: audit`). The Action asks for SARIF and turns it into annotations; locally, `--format text` prints the same findings as plain text. `--fail-on high` is the Action's default.
+- Use `npx.cmd`, not `npx`. Windows PowerShell blocks `npx.ps1` by default; the [troubleshooting note](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows) explains the execution policy setting and the [`.cmd` forms](first-5-minutes.md#windows-powershell-the-cmd-forms) explain the alternative.
+- Quote any path that contains a space, for example `"C:\src\my repo"`. `.` means the current folder.
+- The scan uses the PyPI package on purpose: the npm `zn-gate scan` takes fewer flags (no `--no-fail`), so it is not the same run as the Action's.
+- To report without failing, as `fail-on-threat: 'false'` does in the Action, add `--no-fail` to the scan and use `--fail-on none` for the audit.
+- To read the exit code, check `$LASTEXITCODE` right after the command:
+
+  ```powershell
+  python -I -X utf8 -m zn_gate.cli scan --format github -- .
+  if ($LASTEXITCODE -ne 0) { "zn-gate scan exit code: $LASTEXITCODE" }
+  ```
+
+  The codes are the ones in [Reading the result](#reading-the-result): `0` clean, `1` findings, `2` error, `3` incomplete scan (the audit uses `0`, `1` and `2`).
+
 ## Related
 
 - [`zn audit`](audit.md): what it checks and every rule.
