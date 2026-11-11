@@ -43,6 +43,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-check-before-a-demo.md](zn-check-before-a-demo.md): a four-command checklist to run before a demo: check, check --hooks, status and vault status, with the real output to expect.
 - [zn-check-on-a-fresh-clone-of-a-repo.md](zn-check-on-a-fresh-clone-of-a-repo.md): run `zn check` in a folder you just cloned: what it tests, what it does not touch, and what a hook file or rules file in the repository changes. Then `zn scan` for the files.
+- [zn-hooks-and-monorepo-subfolders.md](zn-hooks-and-monorepo-subfolders.md): where the hook files are written and read when you work in a subfolder of a monorepo: the user install, `--project` and `check --hooks`.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-init-reading-the-plan-before-confirming.md](zn-init-reading-the-plan-before-confirming.md): read the plan that `init` prints before it asks, answer no, and see that nothing changes.
 - [zn-init-then-first-block-in-five-steps.md](zn-init-then-first-block-in-five-steps.md): five copy-paste steps from `init` to a first blocked command, and what `why` says about it.
