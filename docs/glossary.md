@@ -118,6 +118,10 @@ Short meanings of words used in the zn-gate docs.
 
 **Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [command list](cli.md).
 
+**Evidence tamper check** (`evidence --verify`): checks that the decision log has not been changed since zn-gate wrote it. Each record stores a SHA-256 fingerprint of its own content and of the record before it, and the check recomputes the chain from the first record. When every record matches, it prints `ALL SHA-256 HASHES VERIFIED` and exits with `0`; a missing or empty log passes with zero records. When a record does not match, it prints `TAMPER DETECTED AT RECORD <n>` with the first record that is wrong, and exits with `1`. See [`evidence`](cli.md#evidence).
+
+**Evidence export** (`evidence --export`): writes the decision log as JSON Lines (`jsonl`, the default) or CSV (`--format csv`). Without `--output` it prints to the screen; with `--output FILE` it writes that file. Example: `zn-gate evidence --export --format csv --output FILE`. See [`evidence`](cli.md#evidence).
+
 **Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`.
 
 ## Worked examples
