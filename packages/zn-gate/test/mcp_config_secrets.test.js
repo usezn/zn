@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 const { tempDir } = require('./helpers/tmp');
 const { audit } = require('../lib/audit');
 const mcp = require('../lib/mcp-secrets');
+const { cliName } = require('../lib/zn-command');
 const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
@@ -219,7 +220,8 @@ test('text and github output never show the value', (t) => {
 
 test('the next step is plain: the vault and zn run --secrets for env and arguments, an environment variable for headers', () => {
   const env = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY');
-  assert.match(env, /npx -y zn-gate secret set BRAVE_API_KEY/);
+  // On Windows the message names the .cmd shim (npx.cmd), as lib/zn-command.js documents.
+  assert.ok(env.includes(cliName('npx') + ' -y zn-gate secret set BRAVE_API_KEY'), env);
   assert.match(env, /put run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
   assert.match(env, /environment variable BRAVE_API_KEY/);
   assert.doesNotMatch(env, /put __ZN_/);

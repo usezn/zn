@@ -11,6 +11,9 @@
 // Milliseconds the loop below takes on the reference machine (measured on a Linux CI-class machine under moderate load, so the limit rarely drops below the value given).
 const REFERENCE_MS = 5;
 const MAX_SCALE = 20;
+// The long-input checks cost about 7 times more CPU on windows-latest than on Linux (measured: 2984 ms against 410 ms), which
+// the loop below does not show. A fixed factor, not a larger cap: a check that became quadratic is still hundreds of times slower.
+const PLATFORM_FACTOR = process.platform === 'win32' ? 4 : 1;
 
 function spin() {
   const t0 = process.hrtime.bigint();
@@ -28,7 +31,7 @@ function scale() {
 // The limit for this run, in milliseconds. Call it where the limit is checked, after the timed work,
 // so the measure reflects the machine at that moment.
 function budget(limitMs) {
-  return Math.round(limitMs * scale());
+  return Math.round(limitMs * scale() * PLATFORM_FACTOR);
 }
 
 // Time a check hook gets to start on a slow Windows runner (the same hook took 3-8 s on Linux and 16-27 s on windows-latest, over the 15 s default); undefined elsewhere, so the product default applies.
