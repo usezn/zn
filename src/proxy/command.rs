@@ -8,7 +8,7 @@
 const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
 
 /// Characters that `cmd.exe` reads as syntax even inside a batch file's arguments.
-const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '%', '"', '\r', '\n', '\0'];
+const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '%', '(', ')', '"', '\r', '\n', '\0'];
 
 fn has_separator(command: &str) -> bool {
     command.contains('\\') || command.contains('/') || command.contains(':')
@@ -103,7 +103,7 @@ pub fn is_batch_file(program: &str) -> bool {
     lower.ends_with(".cmd") || lower.ends_with(".bat")
 }
 
-/// A batch file's arguments pass through `cmd.exe`, which acts on `& | < > ^ %` whatever the
+/// A batch file's arguments pass through `cmd.exe`, which acts on `& | < > ^ % ( )` whatever the
 /// quoting. Quoting cannot make every value safe, so the gateway refuses these arguments instead
 /// of guessing. Spaces are fine: they are quoted. A server that needs such an argument can be
 /// started with a program that is not a batch file (for example `node` with the script path).
@@ -310,6 +310,8 @@ mod tests {
             "a>b",
             "a^b",
             "%PATH%",
+            "a(b",
+            "a)b",
             "say \"hi\"",
             "a\nb",
         ] {

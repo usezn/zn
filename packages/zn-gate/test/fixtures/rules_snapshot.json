@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-11-10.2",
+      "version": "2026-11-11.11",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,8 +47,8 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "ccaacb2c1ea7f818764a31a7ac861fecd1a8ccb87bab4efec56939f3c0aa9e03",
-        "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
+        "lib/rules.js": "7077d6f4edaaba785ae3d59835d55d1ff1523c4c9eb264a70daa0ec05aefcb43",
+        "lib/mcp-secrets.js": "5e8b328563be363beaed8fca28e8dc92e8a2fdf14e528858698f114ca421aa73"
       }
     },
     "scrub": {
@@ -214,14 +214,16 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-11-10.5",
+      "version": "2026-11-11.11",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
+        "WRAPPER_NAMES",
         "_decodeAnsiC",
         "_globClassEnd",
         "_globClassSource",
         "adminCommand",
+        "adminDenial",
         "bashDenial",
         "classifyPath",
         "classifyWord",
@@ -239,17 +241,19 @@
         "readDenial",
         "scanFirstCommand",
         "scanPowerShell",
+        "skipWrapper",
         "wrapPowerShell",
         "wrapWithZnRun",
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "020cee138b34a24507b384286d8b00fc4e0644ee4aedc0bc069128eed5bb9db9",
+        "lib/hooks/policy.js": "12ca7728e5e7c307fb8d55f464037762da33ca1386702789d7a65273c0e54405",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
-        "lib/destructive.js": "dc632b87c5f962e215c7b1fabca8817fd650d5bd43af5f50710c80d066e76367"
+        "lib/destructive.js": "cb45142f86d141ff063931a9eb3fada527269d41efcc35729c4da9cee2051f7e",
+        "lib/shell-vars.js": "dda7b10b16db524bf0dfce7ee7dfeac960bf7b4c192fb12b1a5c0ec533db27a1"
       }
     }
   }
