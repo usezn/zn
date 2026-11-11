@@ -4,7 +4,7 @@
 
 ## 1. There is no --file
 
-```bash
+```text
 npx -y zn-gate analyze --file notes.txt
 ```
 
