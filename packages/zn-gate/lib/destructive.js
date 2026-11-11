@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-10.1';
+const COMMAND_RULES_VERSION = '2026-11-11.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -348,7 +348,14 @@ function checkSimple(words, depth) {
   }
   if (head === 'find') {
     const paths = [];
-    for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+    // GNU find takes -P, -L, -H, -O<level> and -D <options> before the starting paths; they do not end the list of paths.
+    let first = 0;
+    while (first < rest.length) {
+      if (/^-(?:[PLH]|O\d*)$/.test(rest[first])) first += 1;
+      else if (rest[first] === '-D') first += 2;
+      else break;
+    }
+    for (const w of rest.slice(first)) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
     const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
     // From the filesystem root even a filtered delete is refused: a test does not make that safe.

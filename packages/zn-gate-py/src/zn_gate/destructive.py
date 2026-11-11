@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-10.1"
+COMMAND_RULES_VERSION = "2026-11-11.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -595,7 +595,16 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
-        for w in rest:
+        # GNU find takes -P, -L, -H, -O<level> and -D <options> before the starting paths; they do not end the list of paths.
+        first = 0
+        while first < len(rest):
+            if re.match(r"^-(?:[PLH]|O\d*)\Z", rest[first]):
+                first += 1
+            elif rest[first] == "-D":
+                first += 2
+            else:
+                break
+        for w in rest[first:]:
             if w.startswith("-") or w == "(" or w == "!":
                 break
             paths.append(w)

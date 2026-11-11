@@ -43,3 +43,16 @@ test('find from the root without a delete is allowed', () => {
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('find with global options before the starting path is judged like find without them', () => {
+  for (const c of ['find -P / -name x -delete', 'find -L / -name x -delete', 'find -H / -name x -delete', 'find -O3 / -name x -delete',
+    'find -D tree / -name x -delete', 'find -P -L / -type f -exec rm {} +', 'find -P / -delete']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+    assert.equal(checkCommand(c).rule, 'destructive:rm_root_home', c);
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of ['find -P ./tmp -name x -delete', 'find -L . -name x -delete', 'find -P / -name x -print']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
