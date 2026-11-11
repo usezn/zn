@@ -125,6 +125,13 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.fragmentnames == 'true' }}
         run: node .github/scripts/check-changelog-fragment-names.mjs
 
+      - name: Changelog - test the version heading check
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node --test .github/scripts/check-changelog-versions.test.mjs
+      - name: Changelog - no version has two sections in CHANGELOG.md
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node .github/scripts/check-changelog-versions.mjs CHANGELOG.md
+
       # Workflow header: every workflow has a top-level name and a top-level permissions block.
       - name: Workflow header - test the check
         if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
