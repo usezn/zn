@@ -250,18 +250,19 @@ async function run(args, io) {
       }
     }
     const { getAdapter } = require('./agents');
+    // Agents whose hooks (user or project) could not be removed: their launcher stays, a hook may still call it.
     const failedHooks = new Set();
     for (const a of p.agents) {
       const adapter = getAdapter(a.id);
       for (const scope of ['user', 'project']) {
         if (!(scope === 'user' ? a.userHooks : a.projectHooks)) continue;
         try {
-          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: true });
+          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: false });
           out(io, '  ' + a.name + ': removed zn\'s hooks (' + scope + ') in ' + rep.settings + (rep.backup ? ' (copy saved: ' + rep.backup + ')' : ''));
         } catch (err) {
           out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));
           failed++;
-          if (scope === 'user') failedHooks.add(a.id);
+          failedHooks.add(a.id);
         }
       }
       if (a.plugin) {
@@ -271,10 +272,24 @@ async function run(args, io) {
         else { out(io, '  ' + a.name + ': the plugin was not removed. Run it yourself: ' + s.manual); failed++; }
       }
     }
-    // Launcher scripts last, once the hooks that call them are gone. One whose hooks could not be removed stays.
+    // Launcher scripts last, once the hooks that call them are gone. One whose hooks could not be removed stays, and so
+    // does one that a hooks file (the user's, or this folder's) still names. zn keeps no list of the other projects of
+    // this machine; the hooks zn writes into a project call `zn` from the PATH, not this script.
     const launcher = require('./agents/launcher');
+    const { AGENTS } = require('./check');
     for (const l of p.launchers) {
-      if (failedHooks.has(l.id)) continue;
+      const spec = AGENTS.find((x) => x.id === l.id);
+      const base = path.basename(l.file);
+      const names = (f) => { try { return fs.readFileSync(f, 'utf8').includes(base); } catch (_) { return false; } };
+      let keep = failedHooks.has(l.id);
+      if (!keep && spec) {
+        const files = [spec.file(getAdapter(l.id), { home: io.home, env: io.env }), spec.project(io.cwd)];
+        keep = files.some(names);
+      }
+      if (keep) {
+        out(io, '  launcher script kept (a hooks file may still use it): ' + l.file + '. Once nothing uses it, delete that file yourself.');
+        continue;
+      }
       launcher.removeLauncher(l.id, { home: io.home, env: io.env });
       if (fs.existsSync(l.file)) { out(io, '  launcher script not removed: ' + l.file); failed++; }
       else out(io, '  launcher script removed: ' + l.file);
