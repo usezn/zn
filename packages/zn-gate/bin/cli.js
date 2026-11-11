@@ -1331,6 +1331,7 @@ ${ruleLine(process.env, 60)}\n`);
       } else {
         process.stdout.write(res.content);
       }
+      if (!res.valid) process.exitCode = 1;
       return;
     }
 

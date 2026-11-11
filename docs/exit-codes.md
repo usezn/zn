@@ -90,7 +90,7 @@ In a script, these three codes are the ones you will check most. The [full table
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `evidence --verify` | `1` | `1` when the SHA-256 chain was changed. |
+| `evidence --verify` and `evidence --export` | `1` | `1` when the SHA-256 chain was changed. `--export` still writes the file. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
 | `stats share on` | `1` | `1` when you do not confirm. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |
