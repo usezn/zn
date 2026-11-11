@@ -1120,7 +1120,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "no Heroku-specific rule in src/scrubber: HEROKU_API_KEY is caught only by the generic api_key rule; enable when a Heroku rule lands"]
+    // Covered by the generic api_key rule: there is no Heroku-specific rule in Rust.
     fn test_heroku_api_key_in_shell_script_is_redacted() {
         // Fake, obviously patterned UUID-shaped value, built at run time.
         let value = ["01234567-89ab-cdef-0123", "-456789abcdef"].concat();
