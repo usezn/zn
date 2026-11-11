@@ -2,13 +2,13 @@
 
 These are the examples in this folder: 20 in all, one folder each. Every value in them is made up. The Python and Node.js examples run on your machine. The example code itself makes no network call and needs no API key. The GitHub Action and Promptfoo examples are configuration files that you use in your own workflow or test setup.
 
-Run each command from the example's folder. Examples that pin zn-gate list it, at an exact version, in their `requirements.txt` or `package.json`.
+Run each command from the example's folder. Examples with a `requirements.txt` or `package.json` pin zn-gate in it at an exact version. The others have no such file, so their command installs zn-gate first.
 
 ## Python
 
 | Example | What it shows | Command |
 |---|---|---|
-| [python-basic](python-basic/) | Check a prompt with `evaluate`, and block a tool call with the `guard` decorator. | `python main.py` |
+| [python-basic](python-basic/) | Check a prompt with `evaluate`, and block a tool call with the `guard` decorator. | `pip install zn-gate`, then `python main.py` |
 
 ## Python agent frameworks
 
@@ -32,8 +32,8 @@ Each of these guards the tools of an agent built with a framework. Most check th
 
 | Example | What it shows | Command |
 |---|---|---|
-| [node-basic](node-basic/) | Inspects a prompt with `evaluate` and cleans a tool result with `sanitizeToolResult`, using the Node.js package. | `node index.js` |
-| [custom-rules](custom-rules/) | Loads project rules from a `.znrules` file in the project root. | `node demo.js` |
+| [node-basic](node-basic/) | Inspects a prompt with `evaluate` and cleans a tool result with `sanitizeToolResult`, using the Node.js package. | `npm install zn-gate`, then `node index.js` |
+| [custom-rules](custom-rules/) | Loads project rules from a `.znrules` file in the project root. | `npm install zn-gate`, then `node demo.js` |
 
 ## JavaScript agent frameworks
 
