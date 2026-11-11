@@ -46,6 +46,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-env-shadow-in-a-monorepo.md](zn-env-shadow-in-a-monorepo.md): shadow the `.env` files of several packages one folder at a time, and what happens when two files use the same key with different values.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-hooks-install-on-a-locked-down-laptop.md](zn-hooks-install-on-a-locked-down-laptop.md): install the hooks when you cannot install globally, cannot write to a settings folder or sit behind a proxy, with the real messages.
+- [zn-init-on-a-second-user-account.md](zn-init-on-a-second-user-account.md): a second user account on the same computer: what zn-gate finds there, what is set up per user, and how to check it.
 - [zn-shield-reviewing-tool-descriptions.md](zn-shield-reviewing-tool-descriptions.md): read the shield warnings about changed or new tools (TOOLS CHANGED, TOOL SHADOWING), see what your agent sees, and decide whether to approve.
 - [zn-team-join-with-a-wrong-code.md](zn-team-join-with-a-wrong-code.md): the messages and exit codes of `zn-gate team join` for no token, a pasted invitation link, a malformed token, an expired or used-up token and an unreachable server.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
