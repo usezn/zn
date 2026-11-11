@@ -161,6 +161,12 @@ jobs:
       - name: Markdown lint - every link in SECURITY.md to docs/advisories/ resolves
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-security-advisory-links.mjs SECURITY.md
+      - name: Markdown lint - test the docs table check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-tables.test.mjs
+      - name: Markdown lint - every table row has the cell count of its header row
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-tables.mjs
 
       # Spellcheck
       - name: Spellcheck - typos

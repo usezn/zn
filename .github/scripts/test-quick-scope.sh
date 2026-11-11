@@ -56,6 +56,7 @@ check pull_request next .github/scripts/check-docs-cheatsheet-commands.mjs "chan
 check pull_request next .github/scripts/summarize-docs-pages.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-security-advisory-links.mjs "changelog markdownlint"
 check pull_request next SECURITY.md "changelog markdownlint links"
+check pull_request next .github/scripts/check-docs-tables.mjs "changelog markdownlint"
 check pull_request next scripts/run.sh "changelog shellcheck"
 check pull_request next .github/workflows/other.yml "changelog wfheader timeouts"
 check pull_request next .github/scripts/check-workflow-header.mjs "changelog wfheader"
