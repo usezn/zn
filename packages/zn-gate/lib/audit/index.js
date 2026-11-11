@@ -22,6 +22,7 @@ const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
 const { pruneInfo } = require('../prune');
 const { BMP_CLASS } = require('../invisible');
+const { winCommandText } = require('../zn-command');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -1992,7 +1993,7 @@ function baselineFindings(root, home, out) {
     out.push({
       id: 'ZNA023', severity, agent: 'any', file, line: 1, title: BY_ID.ZNA023.title,
       detail: redact('The entry ' + key.slice(key.indexOf('#') + 1) + ' in ' + file + ' was ' + verb + ' since you approved this project.'),
-      evidence: redact(key), fix: BY_ID.ZNA023.fix, references: [], _readers: AGENTS,
+      evidence: redact(key), fix: winCommandText(BY_ID.ZNA023.fix), references: [], _readers: AGENTS,
     });
   };
   for (const k of d.changed) add(k, 'high', 'changed');
