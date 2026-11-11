@@ -43,6 +43,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-check-before-a-demo.md](zn-check-before-a-demo.md): a four-command checklist to run before a demo: check, check --hooks, status and vault status, with the real output to expect.
 - [zn-check-on-a-fresh-clone-of-a-repo.md](zn-check-on-a-fresh-clone-of-a-repo.md): run `zn check` in a folder you just cloned: what it tests, what it does not touch, and what a hook file or rules file in the repository changes. Then `zn scan` for the files.
+- [zn-first-week-reviewing-blocks.md](zn-first-week-reviewing-blocks.md): a five-minute daily routine for the first week, with zn why, zn stats, zn report and zn evidence.
 - [zn-hooks-and-monorepo-subfolders.md](zn-hooks-and-monorepo-subfolders.md): where the hook files are written and read when you work in a subfolder of a monorepo: the user install, `--project` and `check --hooks`.
 - [zn-hooks-and-shell-aliases.md](zn-hooks-and-shell-aliases.md): what an alias or a function named zn changes in your terminal, and why it does not change what the hook decides.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
