@@ -914,10 +914,6 @@ test('launcher deadline: a grandchild that holds the output open neither keeps t
     if (status === 0) assert.equal(r.stdout.trim(), 'answer', name);
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     assert.ok(pid > 0);
-    // The launcher ends the grandchild before it exits, but the system takes the process off its table a moment later on a busy
-    // machine: wait up to 5 s for that, so the check says whether it was ended, not how fast the machine is.
-    const until = Date.now() + 5000;
-    while (alive(pid) && Date.now() < until) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     assert.equal(alive(pid), false, name + ': the grandchild is gone');
   }
 });

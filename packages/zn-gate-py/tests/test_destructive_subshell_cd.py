@@ -72,3 +72,9 @@ def test_group_after_pipe_does_not_end_the_enclosing_subshell_early(cmd):
 )
 def test_groups_after_a_pipe_keep_the_normal_reading(cmd):
     assert rule(cmd) == "allow"
+
+
+def test_sudo_chdir_overflow_is_refused_not_a_crash():
+    long_dir = "/" + "abcdefgh/" * 600
+    assert rule("cat a | sudo >x -D " + long_dir + " rm -rf .") == "too_many_commands"
+    assert rule("sudo -D " + long_dir + " rm -rf .") == "too_many_commands"
