@@ -1,6 +1,6 @@
 # Example: import a `.env` file's secrets into the vault
 
-`zn secret import` copies the secret values of a `.env` file into the vault and leaves the file as it is. This page walks one import step by step, checks the result with `zn secret list`, and then removes the secrets again. It only strings together steps that [Keep secrets out of your coding agent](../secrets.md) and the [command line reference](../cli.md) describe. All names and values are made up, and nothing on this page touches a real file of yours. For the version that also rewrites the file with markers, see [a `.env` file round trip through the vault](env-file-round-trip.md).
+`zn secret import` copies the secret values of a `.env` file into the vault and leaves the file as it is. This page walks one import step by step, checks the result with `zn secret list`, and then removes the secrets again. It only strings together steps that [Keep secrets out of your coding agent](../secrets.md) and the [command line reference](../cli.md) describe. All names and values are made up. The `.env` file stays unchanged, but the vault does not: the import adds secrets to it and the last step removes them, so use a vault that holds nothing you need. For the version that also rewrites the file with markers, see [a `.env` file round trip through the vault](env-file-round-trip.md).
 
 Run every command in your own terminal, not through your agent: the commands that add, change or remove a value need an interactive terminal, and they refuse to run inside an agent.
 
@@ -22,6 +22,12 @@ PORT=3000
 
 ```bash
 npx -y zn-gate unlock
+npx -y zn-gate secret list
+```
+
+Start only if the vault is empty. The list should print `No secrets stored. Add one with: zn secret set NAME   or import a .env: zn env shadow .env`. If it shows any name, stop: an import skips a name that already holds a different value and leaves an identical value in place, and the steps below would then expose and delete a secret you already had.
+
+```bash
 npx -y zn-gate secret import .env
 ```
 
@@ -75,11 +81,16 @@ npx -y zn-gate secret allow PGPASSWORD --command psql
 npx -y zn-gate run --secrets PGPASSWORD -- psql -h db.example.test -U app_rw -c "select 1"
 ```
 
-The first command adds `psql` to the allowed commands of the secret; the vault asks you to confirm the change in its dialog or its terminal. The second starts `psql` with the real value in the environment of that process only. The first time, the vault asks you to confirm again, and shows the exact program that will run. Its output is masked: the raw, base64, hex and URL-encoded forms of the value come back as the marker. Standard output and standard error are masked separately, so a value that a program splits between the two is not caught. More: [let a command use a secret](../secrets.md#4-let-a-command-use-a-secret).
+The first command adds `psql` to the allowed commands of the secret; the vault asks you to confirm the change in its dialog or its terminal. The second starts `psql` with the real value in its environment. The first time, the vault asks you to confirm again, and shows the exact program that will run. Its output is masked: the raw, base64, hex and URL-encoded forms of the value come back as the marker. Standard output and standard error are masked separately, so a value that a program splits between the two is not caught.
+
+Two limits to keep in mind:
+
+- The allowance names the program, not its arguments or its destination. Anyone who can run `psql` with this secret can change `-h` and send `PGPASSWORD` to another host. Check the host in the command before you confirm, and allow a secret only for destinations you trust.
+- An environment variable is not private to one process: the programs that `psql` starts inherit it, and other processes of your user may be able to read it. See what an environment variable does and does not hide in [let a command use a secret](../secrets.md#4-let-a-command-use-a-secret).
 
 ## 5. Clean up
 
-One command per secret, and each asks `Remove NAME?` in your terminal:
+Remove only the secrets this walkthrough created, which are all four because you started with an empty vault. One command per secret, and each asks `Remove NAME?` in your terminal:
 
 ```bash
 npx -y zn-gate secret rm EXAMPLE_API_KEY
