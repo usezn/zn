@@ -1909,7 +1909,7 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
     const kinds = Object.keys(stats.detections || {}).concat(Array.isArray(decision.kinds) ? decision.kinds : [])
       .filter((k, i, a) => typeof k === 'string' && /^[A-Za-z0-9_ .-]{1,64}$/.test(k) && a.indexOf(k) === i).sort();
     const evidence = require('../evidence');
-    const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+    const file = evidenceFileOf(opts);
     evidence.logEvidence({
       agent: agentId,
       phase: redacted ? 'tool-result' : 'hook-' + ev.event,
@@ -1932,6 +1932,15 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
 }
 
 /*
+ * The evidence ledger of one call. ZN_HOME moves zn's folder for every writer, so it wins when it is set; the
+ * ~/.zn of opts.home (tests, and the live requests of zn-gate check) is used only when ZN_HOME is not set.
+ */
+function evidenceFileOf(opts) {
+  if (process.env.ZN_HOME) return path.join(require('../stats').znHome(), 'evidence.jsonl');
+  return opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+}
+
+/*
  * The package install check writes one record per finding, or per lookup that gave no answer. Like the others, it holds
  * no command: the rule id and a sentence that names the package (a registry name, cut down to its own characters).
  * The verdict is "allow": the check only asks, it never blocks. A problem with the ledger never changes the decision.
@@ -1939,7 +1948,7 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
 function recordPackageCheck(agentId, ev, records, opts) {
   try {
     const evidence = require('../evidence');
-    const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+    const file = evidenceFileOf(opts);
     for (const r of records.slice(0, 8)) {
       evidence.logEvidence({
         agent: agentId,
