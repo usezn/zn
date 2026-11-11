@@ -52,6 +52,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-init-reading-the-plan-before-confirming.md](zn-init-reading-the-plan-before-confirming.md): read the plan that `init` prints before it asks, answer no, and see that nothing changes.
 - [zn-init-then-first-block-in-five-steps.md](zn-init-then-first-block-in-five-steps.md): five copy-paste steps from `init` to a first blocked command, and what `why` says about it.
 - [zn-init-then-uninstall-clean-slate-test.md](zn-init-then-uninstall-clean-slate-test.md): set zn-gate up in a throwaway home folder, remove it, and compare the file lists to see exactly what `uninstall` removes and what it leaves.
+- [zn-policy-everyday-allowed-commands.md](zn-policy-everyday-allowed-commands.md): check 19 everyday git, npm and docker commands against the command check without running them.
 - [zn-stats-before-and-after-hooks-reinstall.md](zn-stats-before-and-after-hooks-reinstall.md): what `zn stats` shows before and after you reinstall the hooks: the counts are kept, and what does change them.
 - [zn-stats-reading-top-blocked-rules.md](zn-stats-reading-top-blocked-rules.md): read the `Top rules` block of `zn-gate stats` with real output, what its counts are and are not, and how to trace a rule that shows up too often with `evidence` and `why`.
 - [zn-stats-share-show-before-turning-on.md](zn-stats-share-show-before-turning-on.md): read what zn-gate stats share would send, and where, before you turn sharing on or leave it off.
