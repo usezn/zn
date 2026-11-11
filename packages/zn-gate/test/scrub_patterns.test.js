@@ -226,6 +226,20 @@ test('private key blocks are covered whole, indented or truncated', () => {
   for (const line of body.slice(0, 3)) assert.ok(truncated.slice(t[0].start, t[0].end).includes(line));
 });
 
+test('OpenSSH and RSA private keys pasted in one message are covered across all lines', () => {
+  for (const kind of ['OPENSSH PRIVATE' + ' KEY', 'RSA PRIVATE' + ' KEY']) {
+    const body = ['A'.repeat(70), 'A'.repeat(70), 'A'.repeat(70), 'A'.repeat(40)];
+    const pem = '-----BEGIN ' + kind + '-----\n' + body.join('\n') + '\n-----END ' + kind + '-----\n';
+    const paste = 'ssh-add -l\n' + pem + 'echo done\n';
+    const spans = P.findPatterns(paste, {});
+    assert.strictEqual(spans.length, 1, kind);
+    assert.strictEqual(spans[0].type, 'PRIVATE_KEY', kind);
+    const covered = paste.slice(spans[0].start, spans[0].end);
+    for (const line of body) assert.ok(covered.includes(line), kind);
+    assert.ok(covered.endsWith('-----END ' + kind + '-----'), kind);
+    assert.ok(!covered.includes('echo done'), kind);
+  }
+});
 test('generic assignments need a sensitive key and a random-looking value', () => {
   const v = pick(ALNUM, 24) + '9aZ';
   assert.ok(types('const password = "' + v + '";').includes('SECRET'));
