@@ -17,6 +17,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [hooks-uninstall-then-verify.md](hooks-uninstall-then-verify.md): remove zn's hooks and confirm with `zn-gate check --hooks` that none is left.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [moving-to-a-new-computer.md](moving-to-a-new-computer.md): set up zn-gate on a new computer, or on a second one, with fictional values.
+- [node-version-change.md](node-version-change.md): what to run after you switch, upgrade or remove Node.js with nvm, fnm or Homebrew, so the hooks point at the Node.js you keep.
 - [python-only-first-run.md](python-only-first-run.md): from `pip install zn-gate` to a fake secret being blocked, with the Python package and no Node.js.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [switching-agents-checklist.md](switching-agents-checklist.md): a checklist for moving zn-gate protection from one coding agent to another.
