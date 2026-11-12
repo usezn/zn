@@ -90,7 +90,12 @@ Earlier versions used Dilithium3 from the unmaintained PQClean bindings. A Dilit
 
 ## Dependency advisories that cannot be fixed yet
 
-`cargo audit` ignores three advisories in `zip` 8.6.0 (RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369); `.cargo/audit.toml` lists them with the reason. `zip` comes only through Candle (`candle-core`), and no Candle release accepts the fixed `zip` 9 yet: the latest, 0.11.0, needs `zip` ^8.6.0. All three are in `extract()`, which unpacks an archive to disk. Candle only opens archives to read named entries from `.npz` and PyTorch `.pth` files, and the gateway loads neither kind. When a Candle release accepts `zip` 9, Candle and `zip` are updated and the three entries are removed.
+`cargo audit` ignores two advisories; `.cargo/audit.toml` lists them with the reason. Both say that a crate is no longer maintained, and neither crate has a drop-in replacement today:
+
+- RUSTSEC-2024-0436, `paste`: a procedural macro that runs only at build time. It comes through `gemm`, which Candle (`candle-core`) uses.
+- RUSTSEC-2025-0119, `number_prefix`: it formats numbers in command line progress bars. It comes through `indicatif`, which `cliclack` and `hf-hub` use.
+
+`zip`, which Candle uses to read `.npz` and PyTorch `.pth` files, is at 9.3.0 and needs no exception.
 
 ## Management API authentication
 

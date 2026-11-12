@@ -20,10 +20,6 @@ const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
 const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
-const { cliName } = require('../lib/zn-command');
-
-// On Windows the OpenCode repair step names the .cmd shims (zn-gate.cmd, zn.cmd), as lib/zn-command.js documents.
-const repair = (project) => 'Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode' + (project ? ' --project' : '') + '.';
 
 const FAKE = generateAll(4242, { perType: 1, piiPerType: 1 });
 const fake = (type) => FAKE.secrets.find((s) => s.type === type);
@@ -1022,9 +1018,11 @@ test('OpenCode plugin: a hook that fails or times out blocks the call and the me
   assert.match(src, /action: "error", message: "timeout"/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this call was blocked\. " \+ REPAIR\)/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this message was not sent\. " \+ REPAIR\)/);
-  assert.ok(src.includes('const REPAIR = "' + repair(false) + '";'), src);
+  const { cliName } = require('../lib/zn-command');
+  const repair = (tail) => 'const REPAIR = "Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode' + tail + '.";';
+  assert.ok(src.includes(repair('')), src);
   const proj = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
-  assert.ok(proj.includes('const REPAIR = "' + repair(true) + '";'), proj);
+  assert.ok(proj.includes(repair(' --project')), proj);
 });
 
 test('OpenCode plugin: a hook that cannot start is explained in plain words with the repair step', async (t) => {
@@ -1034,8 +1032,8 @@ test('OpenCode plugin: a hook that cannot start is explained in plain words with
   const mod = await import(require('url').pathToFileURL(file).href);
   const plugin = await (mod.default || Object.values(mod)[0])({});
   await assert.rejects(() => plugin['tool.execute.before']({ tool: 'bash' }, { args: { command: 'echo hi' } }), (e) => {
-    assert.match(e.message, /^zn: the secret scrubber is not working \(the Node\.js it was installed with was not found\), so this call was blocked\. /);
-    assert.ok(e.message.endsWith('so this call was blocked. ' + repair(false)), e.message);
+    const { cliName } = require('../lib/zn-command');
+    assert.equal(e.message, 'zn: the secret scrubber is not working (the Node.js it was installed with was not found), so this call was blocked. Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode.');
     assert.doesNotMatch(e.message, /ENOENT|spawn/);
     return true;
   });

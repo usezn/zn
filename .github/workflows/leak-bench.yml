@@ -1,3 +1,4 @@
+# Leak bench of zn-gate on pushes and pull requests to main, next and release branches, across the Node.js and OS matrix.
 name: zn-gate leak bench
 
 # Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next do not

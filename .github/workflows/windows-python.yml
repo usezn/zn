@@ -1,3 +1,4 @@
+# Windows Python 3.12 tests of the zn-gate-py package on pull requests into next that change it, and on demand.
 name: Windows checks for the Python package
 
 # Python 3.12 on Windows for pull requests into next that touch the Python package, its benchmark or its test

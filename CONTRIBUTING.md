@@ -257,9 +257,9 @@ Each rule layer has a version constant. A change to any file of a layer must com
 
 1. Make the change and bump the constant of every layer you touched. The version format is `YYYY-MM-DD.N`: a date and an integer, for example `2026-10-31.1`. The new value must be greater than the value on `origin/next`. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`.
 2. Set the same value in the Python twin: `rules.py` for `RULES_VERSION`, `destructive.py` for `COMMAND_RULES_VERSION`. The Node and Python values must match.
-3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
+3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It writes one entry per layer and version under `packages/zn-gate/test/fixtures/rules_snapshot/<layer>/<version>.json` (one rule id and one file hash per line, the newest five kept) and refuses to record a change whose version did not increase.
 4. From `packages/zn-gate`, run `npm run check:rules`. It runs only the snapshot test, in well under a second, so a missing bump or a stale snapshot shows up before the full test matrix. Run `npm test` before you push.
-5. Commit the updated snapshot with the change.
+5. Commit the new snapshot entries with the change. Because every version has its own file, two pull requests that bump different versions do not conflict in the snapshot; after you merge `next` into your branch, rerun step 3 if the check asks for it.
 
 The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps `rules.py` equal to `rules.js`; `mcp_secrets.py` is kept equal to `lib/mcp-secrets.js` by the shared samples in `test/fixtures/mcp_config_secret_samples.json`, which both test suites run.
 

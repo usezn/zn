@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from zn_gate import __version__, cli
+from zn_gate.shell_names import npx_name
 
 
 def _run(monkeypatch, *argv):
@@ -16,7 +17,7 @@ def test_npm_only_command_names_the_exact_command(monkeypatch, capsys, cmd):
     assert _run(monkeypatch, cmd) == 2
     out = capsys.readouterr()
     assert out.out == ""
-    assert f"npx -y zn-gate {cmd}" in out.err
+    assert f"{npx_name()} -y zn-gate {cmd}" in out.err
     assert "npm install -g zn-gate" in out.err
     assert "Traceback" not in out.err
 
@@ -69,7 +70,7 @@ def test_help_points_to_npm_help(monkeypatch, capsys):
     assert _run(monkeypatch, "help") == 2
     out = capsys.readouterr()
     assert out.out == ""
-    assert "npx -y zn-gate --help" in out.err
+    assert f"{npx_name()} -y zn-gate --help" in out.err
     assert "Unknown command" not in out.err
     assert "Traceback" not in out.err
 
@@ -80,6 +81,6 @@ def test_stats_share_points_to_npm(monkeypatch, capsys, argv):
     out = capsys.readouterr()
     assert out.out == ""
     assert "zn-gate stats share is a command of the npm package" in out.err
-    assert "npx -y zn-gate stats share" in out.err
+    assert f"{npx_name()} -y zn-gate stats share" in out.err
     assert "unrecognized arguments" not in out.err
     assert "Traceback" not in out.err

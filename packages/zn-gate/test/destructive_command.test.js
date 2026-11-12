@@ -19,7 +19,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const corpus = require('./fixtures/destructive_commands.json');
-const { budgetLongInput, cpuNow, cpuMsSince } = require('./helpers/time_budget');
+const { budget, cpuBudget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 function preTool(tool_name, command, cwd) {
   return { session_id: 'abc123', cwd, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input: { command }, tool_use_id: 'toolu_01' };
@@ -96,7 +96,7 @@ test('hostile long input stays fast', () => {
   for (const input of inputs) {
     const t0 = cpuNow();
     checkCommand(input);
-    assert.ok(cpuMsSince(t0) < budgetLongInput(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
+    assert.ok(cpuMsSince(t0) < budget(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
   }
 });
 
@@ -227,7 +227,7 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     assert.ok(cmd.length < 200 * 1024);
     const t0 = cpuNow();
     const res = checkCommand(cmd);
-    assert.ok(cpuMsSince(t0) < budgetLongInput(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
+    assert.ok(cpuMsSince(t0) < cpuBudget(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
     assert.equal(res.verdict, want, cmd.slice(0, 40));
   }
 });
@@ -317,7 +317,7 @@ test('the cost of a cd does not depend on the length of the folder it is in', ()
   assert.ok(cmd.length < 200000);
   const res = checkCommand(cmd);
   assert.equal(res.verdict, 'allow');
-  assert.ok(cpuMsSince(t0) < budgetLongInput(1500), 'took ' + (cpuMsSince(t0)) + ' ms');
+  assert.ok(cpuMsSince(t0) < budget(1500), 'took ' + (cpuMsSince(t0)) + ' ms');
 });
 
 test('a relative target that climbs out of a known folder is judged from there', () => {

@@ -1,3 +1,4 @@
+# Public facts check, a required check: runs on pushes, pull requests and the merge queue for main, next and release branches.
 name: Public facts
 
 # The version, agents with hooks, license and install command must read the same in every manifest and

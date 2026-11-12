@@ -1,3 +1,4 @@
+# Nightly runs on next: a manual or scheduled start at 02:40 UTC starts the full runs, and a check at 06:40 UTC reads their results.
 name: Nightly run of next
 
 # Pushes to next do not start any workflow of the required checks (zn CI, Rust gateway, scrubber, leak bench,

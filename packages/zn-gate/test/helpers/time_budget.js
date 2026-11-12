@@ -11,12 +11,6 @@
 // Milliseconds the loop below takes on the reference machine (measured on a Linux CI-class machine under moderate load, so the limit rarely drops below the value given).
 const REFERENCE_MS = 5;
 const MAX_SCALE = 20;
-// The long-input checks of the command reader (destructive_command.test.js) cost about 7 times more CPU on
-// windows-latest than on Linux (measured: 2984 ms against 410 ms), which the loop below does not show. Only those checks
-// get this factor, through budgetLongInput(); every other limit stays as budget() gives it. The factor is 4, not 7, on
-// purpose: those checks use about a fifth of their limit on Linux (410 ms of 2000 ms), so 4 already leaves the measured
-// Windows time well inside the scaled limit (8000 ms). A check that became quadratic is still hundreds of times slower.
-const LONG_INPUT_WINDOWS_FACTOR = 4;
 
 function spin() {
   const t0 = process.hrtime.bigint();
@@ -37,11 +31,6 @@ function budget(limitMs) {
   return Math.round(limitMs * scale());
 }
 
-// The limit for the long-input checks of the command reader: budget() times LONG_INPUT_WINDOWS_FACTOR on Windows.
-function budgetLongInput(limitMs) {
-  return budget(process.platform === 'win32' ? limitMs * LONG_INPUT_WINDOWS_FACTOR : limitMs);
-}
-
 // Time a check hook gets to start on a slow Windows runner (the same hook took 3-8 s on Linux and 16-27 s on windows-latest, over the 15 s default); undefined elsewhere, so the product default applies.
 const hookTimeoutMs = () => (process.platform === 'win32' ? 60000 : undefined);
 
@@ -59,6 +48,15 @@ function cpuMsSince(start) {
   return (c.user + c.system) / 1000;
 }
 
+// The limit for a check of CPU time (cpuNow / cpuMsSince) on a CI runner: at least twice the given limit, and never
+// less than budget(). It does not multiply the two. Measured on the Linux reference machine, the slowest linear input
+// of the destructive-command tests (30,000 backtick commands) takes about 150 ms of CPU, 4x the input takes 4x the
+// time, and a Windows runner took 2.9 s for it (the machine-speed loop in budget() cannot see that, it only measures
+// plain arithmetic). A check that reads that input in quadratic time takes minutes, so even 4 s fails it.
+function cpuBudget(limitMs) {
+  return Math.max(budget(limitMs), process.env.CI ? limitMs * 2 : 0);
+}
+
 // A limit that is looser on Windows, where file and process work of the same check takes several times longer than on
 // the Linux reference (a 90 KB patch took 1.5 s there, 100 KB of here-document 33 ms). It still fails a check that
 // became quadratic, which takes orders of magnitude longer.
@@ -66,4 +64,4 @@ function budgetWin(limitMs, winLimitMs) {
   return budget(process.platform === 'win32' ? winLimitMs : limitMs);
 }
 
-module.exports = { budget, budgetLongInput, budgetWin, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };
+module.exports = { budget, budgetWin, cpuBudget, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };

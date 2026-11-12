@@ -1,3 +1,4 @@
+# Tests of the zn-gate scrubber and vault on Node.js and the OS matrix, on pushes and pull requests to main, next and release branches.
 name: zn-gate scrubber and vault
 
 # Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next do not

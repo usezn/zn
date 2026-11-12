@@ -1,3 +1,4 @@
+# Rust gateway checks (build, test, clippy, fmt, MSRV, cargo audit, coverage) on pushes and pull requests; steps are skipped when no Rust file changed.
 name: Rust gateway
 
 on:
@@ -23,9 +24,10 @@ permissions:
   contents: read
 
 env:
-  # Keeps each Rust build cache small, so that the five of them (Linux check, MSRV and coverage, Windows and
-  # macOS private file writer) plus the copy that is still there after a Cargo.lock change fit in the repository
-  # 10 GB cache limit. Debug info is the largest part of target/ (on Windows it is the .pdb files) and nothing
+  # Keeps each Rust build cache small, so that the two that main saves (Linux check and MSRV) plus the copy that
+  # is still there after a Cargo.lock change fit in the repository 10 GB cache limit. The other three jobs that
+  # use a Rust cache (coverage, and the Windows and macOS private file writer) only restore the one they already
+  # have and never save. Debug info is the largest part of target/ (on Windows it is the .pdb files) and nothing
   # in these jobs reads it: the tests set RUST_BACKTRACE=0 and panic messages carry the file and line without it.
   # CARGO_INCREMENTAL=0 is what rust-cache sets anyway; stated here so the cache key does not depend on it.
   CARGO_PROFILE_DEV_DEBUG: 0
@@ -142,7 +144,8 @@ jobs:
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
           lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Restores the cache of main for this job and saves nothing: each copy is over 1 GB of the 10 GB limit.
+          save-if: false
       - name: test private_file
         if: steps.scope.outputs.rust == 'true'
         run: cargo test --locked --lib private_file
@@ -248,7 +251,8 @@ jobs:
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
           lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Restores the cache of main for this job and saves nothing: the copy is over 1 GB of the 10 GB limit.
+          save-if: false
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-llvm-cov

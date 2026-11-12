@@ -1,3 +1,4 @@
+# CodeQL code scanning of the repository on pushes to main, next and release branches, weekly and on demand.
 name: CodeQL
 
 # Code scanning with CodeQL (advanced setup), replacing the repository's default setup, which ran on every pull

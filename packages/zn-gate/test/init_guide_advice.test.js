@@ -7,7 +7,6 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { _internal } = require('../lib/init-guide');
-const { cliName } = require('../lib/zn-command');
 
 const { networkFailure, timeoutAdvice, permissionAdvice, permissionFailure } = _internal;
 const MANUAL = 'npm install -g zn-gate@0.0.0-test';
@@ -56,8 +55,7 @@ test('permissionAdvice: names the folder and never suggests sudo', () => {
   const text = permissionAdvice({ prefix: '/example/prefix', env: {}, todo: [], shell: '/bin/bash' });
   assert.ok(text.includes('global folder (/example/prefix).'));
   assert.ok(!/sudo/.test(text));
-  // On Windows the message names the .cmd shim (npx.cmd), as lib/zn-command.js documents.
-  assert.ok(text.includes(cliName('npx') + ' -y zn-gate init'));
+  assert.ok(text.includes(require('../lib/zn-command').cliName('npx') + ' -y zn-gate init'));
 });
 
 test('permissionAdvice: without a folder, no parentheses', () => {
