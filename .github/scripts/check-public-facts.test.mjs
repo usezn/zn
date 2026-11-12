@@ -436,3 +436,19 @@ test('a sample for a version that has no tag yet (a release being prepared) is c
   const doc = { 'docs/a.md': sample('1.16.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
   assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(doc), readAt), []);
 });
+
+test('a clone without release tags is reported instead of comparing with the code', () => {
+  const doc = { 'docs/a.md': sample('1.15.0', '2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)') };
+  const noTags = () => { throw new Error('this clone has no release tags'); };
+  const errors = checkStatusSamples(['docs/a.md'], readFrom(doc), noTags);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /no release tags/);
+});
+
+test('a release tag where a version constant cannot be read is reported, not replaced by the code', () => {
+  const doc = { 'docs/a.md': sample('1.15.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
+  const broken = (version) => (version === '1.15.0' ? (f) => (f.endsWith('audit/rules.js') ? '// moved\n' : TAG[f]) : null);
+  const errors = checkStatusSamples(['docs/a.md'], readFrom(doc), broken);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^v1\.15\.0: .*AUDIT_RULES_VERSION not found/);
+});

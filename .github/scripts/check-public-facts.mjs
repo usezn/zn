@@ -284,7 +284,8 @@ const fmt = (v) => `${v.rules} (scrub ${v.scrub}, audit ${v.audit})`;
 /**
  * Errors for every `zn-gate status` sample line in a Markdown file whose rule versions differ from the release the
  * sample names. readAt(version) returns a read function for the files at the tag v<version>, or null when there is
- * no such tag; without it every sample is compared with the code.
+ * no such tag (a version not released yet); it throws when the clone has no tags at all, which is reported. Without
+ * readAt every sample is compared with the code.
  */
 export function checkStatusSamples(files, read, readAt = () => null) {
   const errors = [];
@@ -294,15 +295,20 @@ export function checkStatusSamples(files, read, readAt = () => null) {
   const expected = (version) => {
     if (!version) return { want: code, source: 'the code' };
     if (!atRelease.has(version)) {
-      const readTag = readAt(version);
-      if (!readTag) atRelease.set(version, null);
-      else {
-        const tagErrors = [];
-        const v = codeRuleVersions(readTag, tagErrors);
-        atRelease.set(version, tagErrors.length ? null : v);
+      let readTag = null;
+      try { readTag = readAt(version); } catch (e) { errors.push(e.message); atRelease.set(version, 'error'); }
+      if (!atRelease.has(version)) {
+        if (!readTag) atRelease.set(version, null);
+        else {
+          const tagErrors = [];
+          const v = codeRuleVersions(readTag, tagErrors);
+          for (const e of tagErrors) errors.push(`v${version}: ${e}`);
+          atRelease.set(version, tagErrors.length ? 'error' : v);
+        }
       }
     }
     const v = atRelease.get(version);
+    if (v === 'error') return null;
     return v ? { want: v, source: `zn-gate ${version}` } : { want: code, source: 'the code' };
   };
   for (const f of files) {
@@ -321,16 +327,26 @@ export function checkStatusSamples(files, read, readAt = () => null) {
         if (p) { version = p[1]; break; }
       }
       const got = `${m[1]} (scrub ${m[2]}, audit ${m[3]})`;
-      const { want, source } = expected(version);
+      const exp = expected(version);
+      if (!exp) return; // already reported
+      const { want, source } = exp;
       if (got !== fmt(want)) errors.push(`${f}:${i + 1}: the zn-gate status sample shows rules ${got}; ${source} has ${fmt(want)}`);
     });
   }
   return errors;
 }
 
-/** A read function for the files at the tag v<version>, or null when the tag is not in this clone. */
+/**
+ * A read function for the files at the tag v<version>, or null when that tag does not exist (a version not
+ * released yet). A clone without any tag cannot tell the two apart, so it throws: check out with fetch-depth: 0.
+ */
 function tagReader(root) {
+  let anyTag = null;
   return (version) => {
+    if (anyTag === null) {
+      anyTag = execFileSync('git', ['tag', '--list', 'v*'], { cwd: root, encoding: 'utf8' }).trim() !== '';
+    }
+    if (!anyTag) throw new Error(`this clone has no release tags, so the zn-gate status samples that name Package Version ${version} cannot be checked against that release; fetch the tags (actions/checkout with fetch-depth: 0)`);
     const tag = `v${version}`;
     try { execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`], { cwd: root, stdio: 'ignore' }); } catch { return null; }
     return (f) => execFileSync('git', ['show', `${tag}:${f}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
