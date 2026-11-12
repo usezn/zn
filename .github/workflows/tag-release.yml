@@ -1,3 +1,4 @@
+# Manual release tagging: checks the release commit, then creates, signs and pushes the version tag.
 name: Tag release
 
 # Creates the release tag vX.Y.Z, signed with gitsign by this workflow's own
