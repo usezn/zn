@@ -33,14 +33,16 @@ Set up zn-gate in Zed in two minutes: add it as an MCP server, and what zn-gate 
    npx -y zn-gate check
    ```
 
-   `status` shows the version and whether the optional cloud check is on. `check` prints one line for each agent it finds, then a closing sentence. A good result looks like this:
+   `status` shows the version and whether the optional cloud check is on. In a clean setup its **Active Engine** line reads `Local rules only` and **Leaves machine** reads `Nothing` (see [Reading the Active Engine line](../check.md#reading-the-active-engine-line)). `check` prints one line for each agent, then a closing sentence. A good result looks like this:
 
    ```text
    zn-gate check: does zn stop your coding agent from reading a secret?
 
-     OK Claude Code  blocked the .env file and allowed the ordinary file. ...
-     -  Codex CLI    zn is not set up for this agent. ...
+     OK Claude Code  blocked the .env file and allowed the ordinary file. Your agent would be told:
+        "zn: ..."
+     -  Codex CLI    zn is not set up for this agent. To protect it, run `zn hooks install codex` in your own terminal.
      -  Cursor       not found on this machine
+     ...
 
    Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
    ```
