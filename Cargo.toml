@@ -52,7 +52,7 @@ cliclack = "0.2"
 regex = "1.10"
 uuid = { version = "1.6", features = ["v4"] }
 futures = "0.3"
-dashmap = "5.5"
+dashmap = "6.2"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
