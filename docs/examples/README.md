@@ -82,12 +82,19 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [zn-env-shadow-in-a-monorepo.md](zn-env-shadow-in-a-monorepo.md): shadow the `.env` files of several packages one folder at a time, and what happens when two files use the same key with different values.
+- [zn-secret-allow-reading-output.md](zn-secret-allow-reading-output.md): read the output of `zn-gate secret allow` line by line: the confirmation line, the result line, the warnings and the refusals, and how to undo a change.
+- [zn-secret-import-reviewing-the-dry-output.md](zn-secret-import-reviewing-the-dry-output.md): preview what `secret import` would move with `env shadow --dry-run`, then import and check.
 - [zn-secret-rm-then-confirm-with-vault-log.md](zn-secret-rm-then-confirm-with-vault-log.md): remove a secret with `zn-gate secret rm`, then find the removal line in the vault log and check that the log is intact.
 - [zn-secret-rm-vs-vault-forget.md](zn-secret-rm-vs-vault-forget.md): what `secret rm` and `vault forget` each remove, side by side, with real runs against a throwaway vault.
+- [zn-secret-rotate-after-leak.md](zn-secret-rotate-after-leak.md): the steps after a key leaked: revoke it at the provider, find the copies, store the new value and check that nothing still uses the old one.
+- [zn-secret-rotate-in-place.md](zn-secret-rotate-in-place.md): replace a vault secret value without changing its name: repeat the rules, and what happens to the first-use approvals.
 - [zn-secret-set-for-an-aws-credential-pair.md](zn-secret-set-for-an-aws-credential-pair.md): store an access key id and its secret as two vault secrets, approve their first use, and run one program with both.
+- [zn-secret-set-then-verify-with-list.md](zn-secret-set-then-verify-with-list.md): store a fake secret, confirm it with secret list, then use it once with run and see the last-used time.
 - [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
+- [zn-unlock-ttl-and-long-builds.md](zn-unlock-ttl-and-long-builds.md): set the unlock time for a long build: what --ttl and --idle do, what a running command keeps when the vault locks, and how to lock again.
 - [zn-vault-log-filtering-by-secret-name.md](zn-vault-log-filtering-by-secret-name.md): narrow the vault log to one secret with `grep` or `awk`, and read what each line means.
 - [zn-vault-purge-vs-reset-decision.md](zn-vault-purge-vs-reset-decision.md): a decision list for wiping a vault: when to use `vault forget`, `vault reset` or `vault purge`, with real runs against a throwaway vault.
+- [zn-vault-status-in-a-prompt-script.md](zn-vault-status-in-a-prompt-script.md): show whether the vault is open or locked in your Bash or PowerShell prompt, with the real `vault status` lines, its exit codes and what it costs.
 - [zn-why-for-a-secret-read-block.md](zn-why-for-a-secret-read-block.md): explain a blocked read of a `.env` file with `zn-gate why`, and the safe ways to go on.
 
 ## Optional cloud check
@@ -120,5 +127,6 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-check-json-with-jq-in-a-shell-script.md](zn-check-json-with-jq-in-a-shell-script.md): read `zn-gate check --json` with `jq` in a shell script, and stop the script when an agent is not protected.
 - [zn-hooks-status-in-a-ci-job.md](zn-hooks-status-in-a-ci-job.md): fail a CI job on `zn-gate check --hooks` when a hook is stale or broken, with its exit codes, real output, and why plain `check` does not catch it.
 - [zn-scan-ci-annotations-reading.md](zn-scan-ci-annotations-reading.md): read the GitHub annotations of scan --format github line by line, from the error to the notices and warnings, and silence a fixture folder.
+- [zn-secret-run-exit-code-passthrough-in-make.md](zn-secret-run-exit-code-passthrough-in-make.md): run a program with a vault secret from a Makefile target with `zn run`, and see that its exit code stops `make`.
 - [zn-stats-report-for-a-weekly-standup.md](zn-stats-report-for-a-weekly-standup.md): turn `zn-gate report --json` into three lines for a weekly standup.
 - [zn-why-reading-a-wrapped-block-in-ci-logs.md](zn-why-reading-a-wrapped-block-in-ci-logs.md): find the rule of a block in a CI log whose lines are wrapped, and what zn why can and cannot add.
