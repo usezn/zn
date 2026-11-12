@@ -156,6 +156,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [node-api.md](node-api.md): a short tour of the Node.js API, with one small example per call.
 - [pre-commit-scan.md](pre-commit-scan.md): run `zn-gate scan` on the files of each commit with a git pre-commit hook.
 - [python-api.md](python-api.md): five short examples of the Python package.
+- [python-commands.md](python-commands.md): the `status`, `test`, `analyze --local-only` and `stats --days 7` commands of the Python package, one after another on a made-up project, with sample output.
 - [reach-report-file.md](reach-report-file.md): write the reach report to a file in a CI job.
 - [scripting.md](scripting.md): use zn-gate from a shell script or a CI job, and read its exit codes.
 - [zn-check-json-with-jq-in-a-shell-script.md](zn-check-json-with-jq-in-a-shell-script.md): read `zn-gate check --json` with `jq` in a shell script, and stop the script when an agent is not protected.
