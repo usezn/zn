@@ -35,6 +35,13 @@ MAX_DEPTH = 6
 MAX_FILES = 50000
 MAX_LISTED = 200
 MAX_STRINGS_PER_LINE = 200000
+# A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
+# so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
+SLICE_CHARS = 4 * 1024 * 1024
+# Each slice is scanned with this many characters of the next slice after it, so a secret that crosses a cut is seen
+# whole by the slice it starts in. See _overlap_chars() for how the size comes from the secret rules.
+OVERLAP_FLOOR = 64 * 1024
+_overlap: Optional[int] = None
 
 # Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 # database (SQLite), which this version does not read: they are reported as not scanned.
@@ -176,15 +183,17 @@ def display(home: str, absolute: str) -> str:
 
 
 def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipped: List[Dict[str, Any]],
-          agent: Dict[str, Any], home: str) -> None:
+          agent: Dict[str, Any], home: str, limit: int) -> None:
+    # Entries are visited in byte order of their names (UTF-8), the same order as the npm package. The cap
+    # below cuts the walk short, so the order decides which files are read.
     if depth > MAX_DEPTH:
         skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-deep", "limit": MAX_DEPTH})
         return
-    if len(out) >= MAX_FILES:
-        skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": MAX_FILES})
+    if len(out) >= limit:
+        skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": limit})
         return
     try:
-        entries = sorted(os.scandir(directory), key=lambda e: e.name)
+        entries = sorted(os.scandir(directory), key=lambda e: os.fsencode(e.name))
     except OSError:
         return
     for e in entries:
@@ -193,21 +202,21 @@ def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipp
             skipped.append({"agent": agent["id"], "file": display(home, absolute), "reason": "symlink"})
             continue
         if e.is_dir(follow_symlinks=False):
-            _walk(absolute, ext, depth + 1, out, skipped, agent, home)
+            _walk(absolute, ext, depth + 1, out, skipped, agent, home, limit)
             continue
         if not e.is_file(follow_symlinks=False) or not e.name.endswith(ext):
             continue
         st = _lstat(absolute)
         if st is None or not stat.S_ISREG(st.st_mode):
             continue
-        if len(out) >= MAX_FILES:
-            skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": MAX_FILES})
+        if len(out) >= limit:
+            skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": limit})
             return
         out.append({"abs": absolute, "size": st.st_size, "mtime": st.st_mtime_ns / 1e6})
 
 
 def collect(agent: Dict[str, Any], home: str, env: Dict[str, str],
-            skipped: List[Dict[str, Any]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+            skipped: List[Dict[str, Any]], limit: int) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     parts, outside = config_dir(agent, home, env)
     base: Optional[str]
     if parts:
@@ -238,7 +247,7 @@ def collect(agent: Dict[str, Any], home: str, env: Dict[str, str],
         root = real_dir_below(base, t["dir"])
         if not root:
             continue
-        _walk(root, t["ext"], 0, files, skipped, agent, home)
+        _walk(root, t["ext"], 0, files, skipped, agent, home, limit)
     return base, files
 
 
@@ -277,8 +286,69 @@ def _cut_markers(text: str, known: set) -> str:
     return " ".join(pieces)
 
 
-def scan_line(line: str, counts: Dict[str, int]) -> None:
-    """Adds the secret types found in one line to counts ({TYPE: n}). Values are dropped here."""
+class _TimeUp(Exception):
+    """Raised between slices of a long line when the deadline has passed."""
+
+
+def _now_ms() -> float:
+    return time.time() * 1000
+
+
+_REPEAT_RE = re.compile(r"(?<!\\)\{(\d+)(?:,(\d*))?\}")
+
+
+def _longest_secret_match(sources: List[str]) -> int:
+    """Longest match of a secret rule, as an upper bound: for each rule, the sum of the upper bounds of its bounded
+    repeats ({n} and {m,n}; an open {m,} counts as m) plus the length of its source (which bounds its fixed text).
+    The overlap is twice that, and at least OVERLAP_FLOOR: the part of a slice that is read twice is then at least
+    two of the longest secrets long, so a secret that crosses a cut fits in it and the two seams never meet.
+    The quoted-value scanner reads at most 4096 characters plus the key. A rule with an open repeat ({m,}, +, *)
+    can match a longer token: such a token is the one case a cut can miss."""
+    best = 0
+    for src in sources:
+        n = len(src)
+        for m in _REPEAT_RE.finditer(src):
+            n += int(m.group(2) or m.group(1))
+        best = max(best, n)
+    return best
+
+
+def _overlap_chars() -> int:
+    global _overlap
+    if _overlap is None:
+        from . import rules
+        tables = (rules.SCRUB_FIRST_PATTERNS + rules.SECRET_PATTERNS + rules.PROVIDER_SECRET_PATTERNS
+                  + rules.SCRUB_LAST_PATTERNS)
+        _overlap = max(OVERLAP_FLOOR, 2 * _longest_secret_match([p.pattern for _, p, _ in tables]))
+    return _overlap
+
+
+def _cuts(text: str) -> List[int]:
+    """Cut points of a text: [0, c1, ..., len]. A cut is moved back to a line break or a space when one is near."""
+    n = len(text)
+    out = [0]
+    pos = 0
+    while pos < n:
+        end = min(pos + SLICE_CHARS, n)
+        if end < n:
+            cut = max(text.rfind("\n", pos, end), text.rfind(" ", pos, end))
+            if cut >= pos and cut > end - 65536:
+                end = cut + 1
+        out.append(end)
+        pos = end
+    return out
+
+
+def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], bool]] = None) -> None:
+    """Adds the secret types found in one line to counts ({TYPE: n}). Values are dropped here.
+
+    A line longer than SLICE_CHARS is scanned slice by slice, with the deadline checked between slices. Slice i
+    runs from cut c(i) to cut c(i+1) and is scanned together with the next overlap characters, so a secret that
+    crosses c(i+1) is seen whole. What that extra text holds is counted again by slice i+1, so the findings of the
+    text from c(i+1) to c(i+1) + overlap, scanned alone, are taken away from slice i+1: both texts start at the same
+    cut, so what each finds there (including a piece of a secret cut at c(i+1)) is the same and cancels out. Each
+    secret is then counted once, by the slice it starts in, without needing positions (the positions the rules
+    report move as earlier rules redact)."""
     text = line
     if line.lstrip()[:1] in ("{", "["):
         try:
@@ -289,18 +359,44 @@ def scan_line(line: str, counts: Dict[str, int]) -> None:
         return
     from . import rules
     types = _types()
-    text = _cut_markers(text, set(types.values()) | {"URL_PASSWORD"})
-    _redacted, detections = rules.redact_secrets(text)
-    for d in detections:
-        t = types.get(d["rule"])
-        if t is None:
-            continue
-        counts[t] = counts.get(t, 0) + 1
+    known = set(types.values()) | {"URL_PASSWORD"}
+
+    def add(piece: str, delta: Dict[str, int], sign: int) -> None:
+        _redacted, detections = rules.redact_secrets(_cut_markers(piece, known))
+        for d in detections:
+            t = types.get(d["rule"])
+            if t is not None:
+                delta[t] = delta.get(t, 0) + sign
+
+    n = len(text)
+    if n <= SLICE_CHARS:
+        delta: Dict[str, int] = {}
+        add(text, delta, 1)
+        for k, v in delta.items():
+            counts[k] = counts.get(k, 0) + v
+        return
+    extra = _overlap_chars()
+    at = _cuts(text)
+    in_line: Dict[str, int] = {}
+    try:
+        for i in range(len(at) - 1):
+            if i > 0 and expired is not None and expired():
+                raise _TimeUp()
+            add(text[at[i]:min(n, at[i + 1] + extra)], in_line, 1)
+            if i > 0:
+                add(text[at[i]:min(n, at[i] + extra)], in_line, -1)
+    finally:
+        # A count below zero can only come from a rule that matches a cut piece but not the whole secret.
+        for k, v in in_line.items():
+            if v > 0:
+                counts[k] = counts.get(k, 0) + v
 
 
 def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
     """Stream one file. Returns {counts, bytes, complete, reason}.
-    `deadline` is a timestamp in ms: past it the file is left half read and reported so."""
+    `deadline` is a timestamp in ms: past it the file is left half read and reported so. The deadline is checked
+    after every chunk that was read (never on the final empty read, so a file read to the end is complete) and
+    between slices of a very long line."""
     counts: Dict[str, int] = {}
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
@@ -318,16 +414,16 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
         dropping = False
 
         def flush(b: bytes) -> None:
-            scan_line(b.decode("utf-8", errors="replace"), counts)
+            scan_line(b.decode("utf-8", errors="replace"), counts, lambda: _now_ms() > deadline)
 
         while True:
-            if time.time() * 1000 > deadline:
-                complete = False
-                reason = "time-limit"
-                break
             buf = os.read(fd, CHUNK)
             n = len(buf)
             if n <= 0:
+                break
+            if _now_ms() > deadline:
+                complete = False
+                reason = "time-limit"
                 break
             nbytes += n
             start = 0
@@ -361,6 +457,9 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
                     carry_len += rest
         if carry_len > 0 and reason != "time-limit":
             flush(b"".join(carry))
+    except _TimeUp:
+        complete = False
+        reason = "time-limit"
     except Exception:  # noqa: BLE001 - any read failure is reported, never raised
         complete = False
         reason = reason or "unreadable"
@@ -373,18 +472,19 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
 
 
 def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, max_seconds: Optional[int] = None,
-            _max_ms: Optional[float] = None) -> Dict[str, Any]:
+            _max_ms: Optional[float] = None, _max_files: Optional[int] = None) -> Dict[str, Any]:
     home = os.path.abspath(home or os.path.expanduser("~"))
     env = env if env is not None else dict(os.environ)
     max_s = min(MAX_SECONDS_LIMIT, max(1, int(max_seconds or DEFAULT_MAX_SECONDS)))
-    started = time.time() * 1000
+    started = _now_ms()
     deadline = started + (_max_ms if _max_ms is not None else max_s * 1000)  # _max_ms: tests only
+    limit = _max_files if _max_files is not None else MAX_FILES  # _max_files: tests only
 
     skipped: List[Dict[str, Any]] = []
     plan: List[Dict[str, Any]] = []
     agents: List[Dict[str, Any]] = []
     for a in AGENTS:
-        base, files = collect(a, home, env, skipped)
+        base, files = collect(a, home, env, skipped, limit)
         agents.append({"id": a["id"], "name": a["name"], "scanned": bool(base),
                        "reason": None if base else "not-found", "files": 0, "bytes": 0})
         # Newest first: the sessions most likely to hold a live key.
@@ -401,7 +501,7 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
     by_agent: Dict[str, Dict[str, Any]] = {entry["id"]: entry for entry in agents}
     for f in plan:
         shown = display(home, f["abs"])
-        if time_limit_hit or time.time() * 1000 > deadline:
+        if time_limit_hit or _now_ms() > deadline:
             time_limit_hit = True
             not_reached += 1
             if len(incomplete) < MAX_LISTED:

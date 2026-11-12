@@ -1,6 +1,7 @@
 'use strict';
 
 const https = require('https');
+const { deadlineLookup } = require('./dns-deadline');
 const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
@@ -162,6 +163,8 @@ function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) 
           'User-Agent': `zn-gate/${PKG_VERSION} (mcp-client)`,
         },
         timeout: timeoutMs,
+        // Name resolution ends within the same time (getaddrinfo alone can take 20 s on a silent network).
+        lookup: deadlineLookup(timeoutMs),
         // Always verify the certificate: NODE_TLS_REJECT_UNAUTHORIZED=0 must not let the key travel unverified.
         ...(isHttps ? { rejectUnauthorized: true } : {}),
       },

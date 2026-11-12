@@ -279,3 +279,112 @@ test('a 300 MB history is scanned in streaming mode', { skip: process.env.ZN_HIS
   assert.ok(r.totals.bytes_scanned >= 300 * 1024 * 1024);
   assert.ok(rssGrowthMb < 400);
 });
+
+// Deadline handling with a fake clock and a stub engine that counts one finding per call.
+function fakeNow(okCalls) {
+  let n = 0;
+  return () => (++n <= okCalls ? 0 : 1e15);
+}
+
+function stubEngine() {
+  const e = { calls: 0, scan() { e.calls++; return [{ type: 'AWS_KEY', source: 'rule' }]; } };
+  return e;
+}
+
+function scanWith(t, text, now, engine) {
+  const { _internal } = require('../lib/reach/history');
+  const { home } = machine(t);
+  const abs = put(home, 'f.jsonl', text);
+  return _internal.scanFile(engine, abs, 1, now);
+}
+
+test('a file read to the end is complete even if the deadline passes before the empty read', (t) => {
+  const engine = stubEngine();
+  const r = scanWith(t, 'first line here\nlast line here', fakeNow(1), engine);
+  assert.equal(r.complete, true);
+  assert.equal(r.reason, null);
+  assert.equal(engine.calls, 2); // the last line, which has no newline, is flushed too
+});
+
+test('a deadline in the middle of a file reports time-limit with partial results', (t) => {
+  const engine = stubEngine();
+  const line = 'x'.repeat(99) + '\n';
+  const r = scanWith(t, line.repeat(30000), fakeNow(1), engine); // about 3 MB: three chunks
+  assert.equal(r.complete, false);
+  assert.equal(r.reason, 'time-limit');
+  assert.ok(engine.calls > 0 && engine.calls < 30000);
+});
+
+test('one very long line stops within a bounded amount after the deadline', (t) => {
+  const engine = stubEngine();
+  const text = 'filler words '.repeat(500000) + '\n'; // about 6.5 MB, more than one slice
+  const r = scanWith(t, text, fakeNow(2), engine); // chunk check ok, first slice boundary ok, the next is past it
+  assert.equal(r.complete, false);
+  assert.equal(r.reason, 'time-limit');
+  assert.ok(engine.calls <= 3); // slice 1, then slice 2 and the overlap it shares with slice 1
+});
+
+// Long lines with the real engine. The filler has no space or line break, so the first cut falls exactly at
+// SLICE_CHARS, and its characters are outside the token alphabet, so they do not stick to a key.
+function longLineCase(t, pieces) {
+  const { _internal } = require('../lib/reach/history');
+  const engine = require('../lib/scrub/engine');
+  const { home } = machine(t);
+  const abs = put(home, 'long.jsonl', pieces.join('') + '\n');
+  return { r: _internal.scanFile(engine, abs, Date.now() + 600000) };
+}
+
+test('a secret across a slice cut of a long line is found exactly once', (t) => {
+  const { _internal: I } = require('../lib/reach/history');
+  const S = I.SLICE_CHARS;
+  const before = ';'.repeat(S - 17);
+  const text = before + GITHUB + ';'.repeat(200000);
+  assert.deepEqual(I.cuts(text).slice(0, 2), [0, S]); // the cut is inside the key
+  assert.ok(before.length < S && before.length + GITHUB.length > S);
+  const scrub = require('../lib/scrub/engine');
+  const plain = (s) => scrub.scan(s, { exact: false, pii: false }).filter((x) => x.type === 'GITHUB_TOKEN').length;
+  assert.equal(plain(text.slice(0, S)) + plain(text.slice(S)), 0); // without the overlap, neither slice sees it
+  const { r } = longLineCase(t, [text]);
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.counts, { GITHUB_TOKEN: 1 });
+});
+
+test('a secret inside one slice, or inside the overlap of two, is found exactly once', (t) => {
+  const { _internal: I } = require('../lib/reach/history');
+  const S = I.SLICE_CHARS;
+  const O = I.overlapChars();
+  const f = (n) => ';'.repeat(n);
+  // AWS well inside slice 1; AWS inside the text slice 1 and slice 2 both read; a GitHub key across the far end of
+  // that shared text; AWS well inside slice 2.
+  const parts = [f(1000), AWS, f(S - 1000 - AWS.length + 5000), AWS];
+  const sofar = parts.join('').length;
+  parts.push(f(S + O - 17 - sofar), GITHUB, f(100000), AWS, f(10000));
+  const text = parts.join('');
+  assert.equal(I.cuts(text)[1], S);
+  assert.ok(text.indexOf(GITHUB) < S + O && text.indexOf(GITHUB) + GITHUB.length > S + O);
+  const { r } = longLineCase(t, [text]);
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.counts, { AWS_KEY: 3, GITHUB_TOKEN: 1 });
+});
+
+test('the overlap comes from the secret rules and holds the longest of them twice', () => {
+  const { _internal: I } = require('../lib/reach/history');
+  const { PATTERNS } = require('../lib/scrub/patterns');
+  const longest = I.longestSecretMatch(PATTERNS.filter((p) => p.re instanceof RegExp).map((p) => p.re.source));
+  assert.ok(longest >= 16384); // the private key block rule reads up to 16384 characters of body
+  assert.equal(I.overlapChars(), Math.max(64 * 1024, 2 * longest));
+  assert.equal(I.overlapChars(), 64 * 1024); // the same overlap as the Python package
+  assert.equal(I.longestSecretMatch(['a{2,40}b{3}c{5,}']), 16 + 40 + 3 + 5);
+});
+
+// Same corpus and same expected files as the Python test "test_a_home_over_the_file_cap_keeps_the_same_files_as_npm".
+// Names are compared by UTF-8 bytes, so U+1F600 (after U+FF01 in code points, before it in UTF-16) is the file left out.
+test('a home over the file cap keeps the same files as the Python package', (t) => {
+  const { home, env } = machine(t);
+  const names = ['B.jsonl', 'a.jsonl', 'z.jsonl', '\u00e9.jsonl', '\uff01.jsonl', '\u{1f600}.jsonl'];
+  for (const n of names) put(home, '.claude/projects/p/' + n, jsonl([{ text: 'key ' + AWS }]));
+  const r = history({ home, env, _maxFiles: 5 });
+  const files = [...new Set(r.findings.map((f) => f.file.split('/').pop()))].sort();
+  assert.deepEqual(files, ['B.jsonl', 'a.jsonl', 'z.jsonl', '\u00e9.jsonl', '\uff01.jsonl']);
+  assert.ok(r.incomplete.some((i) => i.reason === 'too-many-files' && i.limit === 5));
+});

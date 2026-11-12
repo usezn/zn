@@ -52,7 +52,7 @@ const deps = require('../deps');
 const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand, winCommandText } = require('../zn-command');
-const { hasUnsafeText } = require('../safe-text');
+const { unsafeKind } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -382,24 +382,46 @@ const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was
  * paths the policy turns into file system calls, is checked whole.
  */
 function guardNativeText(ev) {
-  if (!(ev.event === 'pre_tool' ? hasUnsafeText(ev) : hasUnsafeEventPaths(ev))) return;
-  const err = new Error('malformed text in the event');
-  err.code = 'ZN_MALFORMED_TEXT';
+  const kind = ev.event === 'pre_tool' ? unsafeKind(ev) : unsafeEventKind(ev);
+  if (!kind) return;
+  const err = new Error(kind === 'deep' ? 'event nested too deeply' : 'malformed text in the event');
+  err.code = kind === 'deep' ? 'ZN_TOO_DEEP' : 'ZN_MALFORMED_TEXT';
   throw err;
 }
 
 // What the model wrote or read is content, never a path: a tool output, a prompt or an answer is checked by the
-// scanner and does not reach a file call, so malformed text there is not a reason to refuse the event.
+// scanner and does not reach a file call, so malformed text there is not a reason to refuse the event. `metadata`
+// is not on this list: no agent documents what it holds, so an agent could put a path there, and it is checked.
+// The one exception is a `metadata` object the adapter itself took into the tool output (OpenCode's metadata, the
+// TUI's copy of the output: see lib/agents/opencode.js), which is scrubbed and handed back as output, never used as
+// a path. Any other field, OpenCode's content included, is checked.
 const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'output', 'result', 'response', 'last_assistant_message']);
+// Copilot delivers the tool output inside toolResult / tool_result ({resultType, textResultForLlm}). Only the text the
+// adapter took as the output (and the scanner scans) is left out; the rest of that field, and the whole field for an
+// agent that does not use it as the output, is checked.
+const RESULT_KEYS = new Set(['toolResult', 'tool_result']);
+const RESULT_TEXT_KEYS = ['textResultForLlm', 'text_result_for_llm'];
+function withoutOutputText(v, output) {
+  if (typeof output !== 'string' || !v || typeof v !== 'object' || Array.isArray(v)) return v;
+  const copy = { ...v };
+  for (const k of RESULT_TEXT_KEYS) if (copy[k] === output) delete copy[k];
+  return copy;
+}
 
 /** Every other field of a post-tool, prompt or stop event (working directory, transcript, workspace roots, tool input) is checked. */
-function hasUnsafeEventPaths(ev) {
+function unsafeEventKind(ev) {
   const input = ev.input && typeof ev.input === 'object' ? { ...ev.input, prompt: undefined } : ev.input;
   const raw = {};
   if (ev.raw && typeof ev.raw === 'object') {
-    for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output) raw[k] = v;
+    // The same object under the metadata key, not an equal one: only the metadata the adapter put in the output is left out.
+    const out = ev.output && typeof ev.output === 'object' ? ev.output : null;
+    const inOutput = (k, v) => k === 'metadata' && !!out && !!v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(out, k) && out[k] === v;
+    for (const [k, v] of Object.entries(ev.raw)) {
+      if (CONTENT_KEYS.has(k) || v === ev.output || inOutput(k, v)) continue;
+      raw[k] = RESULT_KEYS.has(k) ? withoutOutputText(v, ev.output) : v;
+    }
   }
-  return hasUnsafeText([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
+  return unsafeKind([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
 }
 
 /**
@@ -1042,7 +1064,7 @@ async function decideMcp(ev, d, agentId) {
 
 // The characters lib/rules.js counts as invisible (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE). A test keeps
 // this list equal to the rules' own. lib/rules.js is not edited for this: its files carry a rules version.
-const INVISIBLE_CHARS_RE = /[\u200B-\u200F\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u115F\u1160\u3164\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+const INVISIBLE_CHARS_RE = /[\u0000-\u0008\u000E-\u001A\u001C-\u001F\u200B-\u200F\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u115F\u1160\u3164\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 // Limits on the check of one tool output. The tool has already run, so a hook that is killed by its
 // agent's timeout lets the whole output through unchecked (PostToolUse has no way to fail closed), and a
@@ -1717,6 +1739,10 @@ function failDecision(ev, err, mode, agentId) {
     return failClosed(ev, err, 'zn: this action names a file or text that is not valid Unicode text, so it was blocked. ' +
       'Ask the user to check the file names in the request.');
   }
+  if (err.code === 'ZN_TOO_DEEP') {
+    return failClosed(ev, err, 'zn: this action is nested too deeply for zn to check, so it was blocked. ' +
+      'Ask the user to check the request.');
+  }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const vaultDown = err.vaultFailed === true;
@@ -2062,7 +2088,7 @@ const OVERSIZE_POST = {
   copilot: {
     isPost: (k) => {
       const named = k.hook_event_name !== undefined ? k.hook_event_name : k.hookEventName;
-      if (named !== undefined) return named === 'PostToolUse';
+      if (named !== undefined) return typeof named === 'string' && named.charAt(0).toLowerCase() + named.slice(1) === 'postToolUse';
       return k.toolResult !== undefined || k.tool_result !== undefined;
     },
     tool: 'bash',

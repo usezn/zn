@@ -70,3 +70,59 @@ test('malformed text in a tool output or a prompt body is content, not a path, a
   const prompt = await runner.handle(adapter, { hook_event_name: 'UserPromptSubmit', prompt: 'hello ' + bad + ' there', cwd }, { home: cwd });
   assert.ok(!/not valid Unicode/.test(prompt.decision.message || ''), JSON.stringify(prompt.decision));
 });
+
+// A top-level `metadata` field is not content: no agent documents what it holds, so it could carry a path.
+test('malformed text in a top-level metadata field is still refused before any file call', async (t) => {
+  const cwd = tempDir(t, 'zn-badtext-meta-');
+  const adapter = getAdapter('claude-code');
+  for (const [name, bad] of Object.entries(BAD)) {
+    const events = {
+      post_tool: { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_response: { stdout: 'ok output text' }, metadata: { path: '/work/' + bad }, cwd },
+      user_prompt: { hook_event_name: 'UserPromptSubmit', prompt: 'hello there friend', metadata: '/work/' + bad, cwd },
+    };
+    for (const [kind, event] of Object.entries(events)) {
+      await noFsCalls(bad, async (calls) => {
+        const res = await runner.handle(adapter, event, { home: cwd });
+        const d = res.decision;
+        assert.deepEqual(calls, [], kind + ' / ' + name + ': file calls ' + calls.join(', '));
+        assert.match(d.message, /not valid Unicode/, kind + ' / ' + name);
+        if (kind === 'post_tool') assert.doesNotMatch(JSON.stringify(d.updatedOutput), /ok output/, 'the output is withheld');
+        else assert.equal(d.decision, 'deny', kind + ' / ' + name);
+      });
+    }
+  }
+});
+
+// OpenCode's metadata is the TUI's copy of the tool output (lib/agents/opencode.js): the adapter takes it into the
+// output, which is scrubbed and handed back, and no file call ever sees it.
+test('OpenCode metadata taken into the tool output is content: not refused, and no file call sees it', async (t) => {
+  const cwd = tempDir(t, 'zn-badtext-ocmeta-');
+  const adapter = getAdapter('opencode');
+  const bad = BAD['lone surrogate'];
+  const event = { hook: 'tool.execute.after', tool: 'bash', cwd, sessionID: 's1', args: {}, output: 'ok output text', metadata: { preview: 'preview ' + bad } };
+  await noFsCalls(bad, async (calls) => {
+    const res = await runner.handle(adapter, event, { home: cwd });
+    assert.deepEqual(calls, [], 'file calls ' + calls.join(', '));
+    assert.ok(!/not valid Unicode/.test(res.decision.message || ''), JSON.stringify(res.decision));
+  });
+  // The same field on an event whose adapter did not take it into the output is checked.
+  const plain = { hook: 'tool.execute.after', tool: 'bash', cwd, sessionID: 's1', args: {}, output: 'ok output text', metadata: 'preview ' + bad };
+  const res = await runner.handle(adapter, plain, { home: cwd });
+  assert.match(res.decision.message || '', /not valid Unicode/, JSON.stringify(res.decision));
+});
+
+// Only metadata is left out: an OpenCode content array, which the adapter also takes into the output, is checked.
+test('malformed text in an OpenCode content array taken into the tool output is still refused', async (t) => {
+  const cwd = tempDir(t, 'zn-badtext-occontent-');
+  const adapter = getAdapter('opencode');
+  for (const [name, bad] of Object.entries(BAD)) {
+    const event = { hook: 'tool.execute.after', tool: 'github_get_file', cwd, sessionID: 's1', args: {}, content: [{ type: 'text', text: '/work/' + bad }] };
+    const ev = adapter.normalize(event);
+    assert.equal(ev.output.content, event.content, 'the adapter takes the content into the output');
+    await noFsCalls(bad, async (calls) => {
+      const res = await runner.handle(adapter, event, { home: cwd });
+      assert.deepEqual(calls, [], name + ': file calls ' + calls.join(', '));
+      assert.match(res.decision.message || '', /not valid Unicode/, name + ': ' + JSON.stringify(res.decision));
+    });
+  }
+});

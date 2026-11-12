@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-11.2
+RULES_VERSION: 2026-11-12.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-11.2"
+RULES_VERSION = "2026-11-12.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -99,7 +99,7 @@ def _rc(pattern: str, flags: int = 0) -> "re.Pattern[str]":
     return cast("re.Pattern[str]", _LazyPattern(pattern, flags))
 
 
-ZERO_WIDTH_RE = _rc(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
+ZERO_WIDTH_RE = _rc(r'[\u0000-\u0008\u000E-\u001A\u001C-\u001F\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
 INVISIBLE_ASTRAL_RE = _rc(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
@@ -206,7 +206,7 @@ OVERRIDE_PREFILTER = r'(?=[A-Za-z\u00c0-\u024f\u212a])'
 INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:ignore_previous', _rc(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', _rc(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
-    ('pi:forget', _rc(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
+    ('pi:forget', _rc(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?<!n't )(?<!n’t )(?<!(?<![A-Za-z0-9_])not )(?<!(?<![A-Za-z0-9_])never )(?<!(?<![A-Za-z0-9_])ever )(?<!(?<![A-Za-z0-9_])dont )forget\s+(?:(?:(?:the|my|these|those|our|its|their)\s+)?(?:(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s+){1,2}(?:instructions?|guidelines?|directives?|guardrails?|directions)|(?:the\s+)?(?:instructions|guardrails|directives))(?![A-Za-z0-9_])""", re.IGNORECASE), 'Forget-context attack'),
     ('pi:identity_override', _rc(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
     ('pi:new_instructions', _rc(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
     ('pi:system_tag', _rc(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
@@ -2055,6 +2055,253 @@ def mask_token_runs(text: str) -> str:
         return "[REDACTED_TOKEN]"
 
     return _TOKEN_RUN_RE.sub(_sub, text)
+
+
+# Values that zn-gate test prints back in its preview. The personal-data checks are a port of the PII layer
+# of the Node.js scrubber (lib/scrub/patterns.js): e-mail addresses, phone numbers (E.164), IBAN, card
+# numbers, Spanish DNI/NIE and US SSN, each with the same pattern and the same validator, so the ordinary
+# numbers that fail a checksum stay as they are. tests/test_pii_parity.py and test/pii_parity.test.js read
+# the same corpus (test/fixtures/pii_parity_cases.json). Left out on purpose: IPv4 (off by default in
+# Node.js) and the keyed fields (person name, postal address, username), which Node.js finds only next to an
+# explicit header or form key with a Unicode-aware state machine.
+# The value is the whole quoted string (single or double quotes, with backslash escapes), or, unquoted, the rest of the token.
+_PREVIEW_PASSWORD_RE = _rc(r"""(?i)\b(password|passwd|pwd)(\s*[:=]\s*)("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\S+)""")
+_PII_EMAIL_DOMAIN_RE = _rc(r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])", re.ASCII)
+_PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:[ .-]\d{1,9}){2,6}|\d{0,2} \d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
+_PII_IBAN_RE = _rc(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])", re.ASCII)
+_PII_CARD_RE = _rc(r"(?<![0-9A-Za-z.,_-])(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?(?![0-9A-Za-z_]|[.,]\d)", re.ASCII)
+_PII_DNI_RE = _rc(r"(?<![A-Za-z0-9_.-])\d{8}-?[A-Z](?![A-Za-z0-9_])", re.ASCII)
+_PII_NIE_RE = _rc(r"(?<![A-Za-z0-9_.-])[XYZ]-?\d{7}-?[A-Z](?![A-Za-z0-9_])", re.ASCII)
+_PII_SSN_RE = _rc(r"(?<![0-9A-Za-z.-])\d{3}-\d{2}-\d{4}(?![0-9A-Za-z]|-\d)", re.ASCII)
+
+_PII_FILE_TLDS = frozenset(("png jpg jpeg gif svg webp ico bmp js mjs cjs ts tsx jsx css scss map json html htm md txt py rb go rs java "
+                            "lock yml yaml toml xml pdf zip gz tgz wasm node so dll").split())
+_PII_EMAIL_LOCAL_SKIP = frozenset(("git", "noreply", "no-reply"))
+_PII_PRIVATE_TLDS = frozenset(("internal", "local", "localdomain", "localhost", "lan", "intranet", "corp", "home", "invalid"))
+_PII_LOCAL_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-")
+_PII_ALNUM = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+# IBAN length per country (ISO 13616 registry, SEPA and common others).
+_IBAN_LENGTHS = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22, "BH": 22, "BR": 29,
+    "CH": 21, "CR": 22, "CY": 28, "CZ": 24, "DE": 22, "DK": 18, "DO": 28, "EE": 20, "EG": 29, "ES": 24,
+    "FI": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28, "HR": 21,
+    "HU": 28, "IE": 22, "IL": 23, "IS": 26, "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LI": 21,
+    "LT": 20, "LU": 20, "LV": 21, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MR": 27, "MT": 31, "MU": 30,
+    "NL": 18, "NO": 15, "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "SA": 24,
+    "SE": 24, "SI": 19, "SK": 24, "SM": 27, "TN": 24, "TR": 26, "UA": 29, "VG": 24, "XK": 20,
+}
+_DNI_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE"
+# National number lengths that are checked for a few large numbering plans (key: country code).
+_E164_LENGTHS = {
+    "44": (10,), "34": (9,), "33": (9,), "49": (7, 8, 9, 10, 11), "39": (9, 10), "351": (9,), "31": (9,),
+    "32": (8, 9), "41": (9,), "43": (7, 8, 9, 10, 11, 12, 13), "52": (10,), "55": (10, 11), "61": (9,),
+    "81": (9, 10), "91": (10,),
+}
+
+
+def _luhn_ok(digits: str) -> bool:
+    if any(c not in "0123456789" for c in digits):
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def _iban_ok(raw: str) -> bool:
+    iban = re.sub(r"[ \t\n\r\f\v-]+", "", raw).upper()
+    length = _IBAN_LENGTHS.get(iban[:2])
+    if not length or len(iban) != length:
+        return False
+    if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]+", iban):
+        return False
+    moved = iban[4:] + iban[:4]
+    return int("".join(str(int(c, 36)) for c in moved)) % 97 == 1
+
+
+def _dni_ok(raw: str) -> bool:
+    m = re.fullmatch(r"([0-9]{8})([A-Z])", raw.replace("-", "").upper())
+    return m is not None and _DNI_LETTERS[int(m.group(1)) % 23] == m.group(2)
+
+
+def _nie_ok(raw: str) -> bool:
+    m = re.fullmatch(r"([XYZ])([0-9]{7})([A-Z])", raw.replace("-", "").upper())
+    if not m:
+        return False
+    n = "XYZ".index(m.group(1)) * 10000000 + int(m.group(2))
+    return _DNI_LETTERS[n % 23] == m.group(3)
+
+
+def _ssn_ok(raw: str) -> bool:
+    """US SSN: area 001-899 except 666, group 01-99, serial 0001-9999."""
+    m = re.fullmatch(r"([0-9]{3})-([0-9]{2})-([0-9]{4})", raw)
+    if not m:
+        return False
+    area = int(m.group(1))
+    if area == 0 or area == 666 or area >= 900:
+        return False
+    return m.group(2) != "00" and m.group(3) != "0000"
+
+
+def _card_network_ok(d: str) -> bool:
+    n = len(d)
+    p2, p3, p4, p6 = int(d[:2]), int(d[:3]), int(d[:4]), int(d[:6])
+    if d[0] == "4":
+        return n in (13, 16, 19)
+    if 51 <= p2 <= 55 or 222100 <= p6 <= 272099:
+        return n == 16
+    if p2 in (34, 37):
+        return n == 15
+    if p4 == 6011 or p2 == 65 or 644 <= p3 <= 649:
+        return 16 <= n <= 19
+    if 3528 <= p4 <= 3589:
+        return 16 <= n <= 19
+    if p2 in (36, 38, 39) or 300 <= p3 <= 305:
+        return 14 <= n <= 19
+    if p2 == 62:
+        return 16 <= n <= 19
+    return False
+
+
+def _card_ok(raw: str) -> bool:
+    d = re.sub(r"[ \t\n\r\f\v-]", "", raw)
+    if not re.fullmatch(r"[0-9]{13,19}", d):
+        return False
+    if re.fullmatch(r"([0-9])\1+", d):
+        return False
+    return _card_network_ok(d) and _luhn_ok(d)
+
+
+def _e164_ok(raw: str) -> bool:
+    m = re.fullmatch(r"\+([0-9]{8,15})", raw)
+    if not m:
+        return False
+    digits = m.group(1)
+    if re.fullmatch(r"([0-9])\1+", digits) or re.search(r"0123456789|1234567890|9876543210", digits):
+        return False
+    if digits[0] == "0":
+        return False
+    if digits[0] == "1":
+        return re.fullmatch(r"[2-9][0-9]{2}[2-9][0-9]{6}", digits[1:]) is not None
+    for cc_len in (3, 2):
+        known = _E164_LENGTHS.get(digits[:cc_len])
+        if known:
+            return len(digits) - cc_len in known
+    return 10 <= len(digits) <= 15
+
+
+def _phone_ok(raw: str) -> bool:
+    if re.search(r"[ .-]", raw):
+        if re.search(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw):
+            return False
+        if re.fullmatch(r"\+[0-9]{1,3}(?:\.[0-9]{1,3}){3}", raw):
+            return False
+        if re.fullmatch(r"\+[0-9](?:[ .-][0-9])+", raw):
+            return False
+    cc = re.fullmatch(r"\+([0-9]{1,3}) [0-9]+", raw)
+    if cc and cc.group(1) != "1" and cc.group(1) not in _E164_LENGTHS:
+        return False
+    return _e164_ok(re.sub(r"[ .-]", "", raw))
+
+
+def _card_span_ok(v: str) -> bool:
+    return len(set(re.findall(r"[ -]", v))) <= 1 and _card_ok(v)
+
+
+def _email_ok(v: str, text: str, index: int) -> bool:
+    # user@host inside a URL (scheme://user@host) is not an e-mail address
+    if index >= 3 and text[index - 3:index] == "://":
+        return False
+    after = text[index + len(v):index + len(v) + 2]
+    if len(after) == 2 and after[0] == ":" and after[1] in "0123456789":
+        return False
+    local = v[:v.index("@")].lower()
+    tld = v[v.rindex(".") + 1:].lower()
+    if local in _PII_EMAIL_LOCAL_SKIP or tld in _PII_FILE_TLDS or tld in _PII_PRIVATE_TLDS:
+        return False
+    return ".." not in v
+
+
+def _find_emails(text: str) -> List[Tuple[int, int]]:
+    # Anchored on '@', like the Node.js scan: the local part is at most 64 characters.
+    out: List[Tuple[int, int]] = []
+    at = text.find("@")
+    while at >= 0:
+        s = at
+        while s > 0 and at - s < 64 and text[s - 1] in _PII_LOCAL_CHARS:
+            s -= 1
+        boundary_ok = s == 0 or text[s - 1] not in _PII_LOCAL_CHARS
+        if s < at and boundary_ok and text[s] in _PII_ALNUM and text[at - 1] in _PII_ALNUM:
+            m = _PII_EMAIL_DOMAIN_RE.match(text, at + 1)
+            if m:
+                v = text[s:at + 1 + len(m.group(0))]
+                if _email_ok(v, text, s):
+                    out.append((s, s + len(v)))
+        at = text.find("@", at + 1)
+    return out
+
+
+def find_pii_spans(text: str) -> List[Tuple[int, int, str]]:
+    """(start, end, type) of every personal value in the text, overlaps resolved like the Node.js scrubber:
+    spans that overlap form a cluster; one that covers it whole wins, otherwise the cluster is merged into
+    one span typed after its longest member."""
+    if not text:
+        return []
+    spans: List[Tuple[int, int, str]] = [(s, e, "EMAIL") for s, e in _find_emails(text)]
+    for regex, kind, ok in (
+        (_PII_PHONE_RE, "PHONE", _phone_ok),
+        (_PII_IBAN_RE, "IBAN", _iban_ok),
+        (_PII_CARD_RE, "CARD", _card_span_ok),
+        (_PII_DNI_RE, "DNI", _dni_ok),
+        (_PII_NIE_RE, "NIE", _nie_ok),
+        (_PII_SSN_RE, "SSN", _ssn_ok),
+    ):
+        for m in regex.finditer(text):
+            if ok(m.group(0)):
+                spans.append((m.start(), m.end(), kind))
+    spans.sort(key=lambda s: (s[0], -s[1]))
+    out: List[Tuple[int, int, str]] = []
+    cluster: List[Tuple[int, int, str]] = []
+    cluster_end = -1
+
+    def flush() -> None:
+        if not cluster:
+            return
+        start = cluster[0][0]
+        covering = [m for m in cluster if m[0] == start and m[1] == cluster_end]
+        pool = covering or cluster
+        best = pool[0]
+        for m in pool:
+            if m[1] - m[0] > best[1] - best[0]:
+                best = m
+        out.append(best if covering else (start, cluster_end, best[2]))
+
+    for s in spans:
+        if cluster and s[0] < cluster_end:
+            cluster_end = max(cluster_end, s[1])
+            cluster.append(s)
+        else:
+            flush()
+            cluster = [s]
+            cluster_end = s[1]
+    flush()
+    return out
+
+
+def mask_pii_preview(text: str) -> str:
+    """Masks password values and the personal values of find_pii_spans (e-mail, phone, IBAN, card, DNI,
+    NIE, SSN) in a text that zn-gate test prints back. Used after redact_secrets and mask_token_runs."""
+    if not text:
+        return text
+    text = _PREVIEW_PASSWORD_RE.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED_PASSWORD]", text)
+    for start, end, kind in reversed(find_pii_spans(text)):
+        text = text[:start] + "[REDACTED_" + kind + "]" + text[end:]
+    return text
+
 
 # Tool output can be large (file reads, search results). Instead of the
 # head + tail view used by evaluate(), it is scanned in windows of

@@ -329,3 +329,125 @@ def test_json_equals_the_npm_package(machine):
     pt = zn(env, "reach", "--history").stdout
     nt = subprocess.run(["node", _NODE_CLI, "reach", "--history"], capture_output=True, text=True, env=node_env, timeout=120).stdout
     assert pt == nt
+
+
+def _clock(ok_calls):
+    """A fake clock: the first ok_calls reads say 'before the deadline', every later one 'long past it'."""
+    state = {"n": 0}
+
+    def now():
+        state["n"] += 1
+        return 0 if state["n"] <= ok_calls else 10 ** 15
+    return now, state
+
+
+def _write(tmp_path, text):
+    p = tmp_path / "f.jsonl"
+    p.write_text(text, encoding="utf-8", newline="")
+    return str(p)
+
+
+def test_a_file_read_to_the_end_is_complete_even_if_the_deadline_passes_before_the_empty_read(tmp_path, monkeypatch):
+    path = _write(tmp_path, "first line\nmy key " + AWS)  # no final newline: the last line is flushed at EOF
+    now, _ = _clock(1)  # the deadline passes right after the only chunk was read
+    monkeypatch.setattr(reach_history, "_now_ms", now)
+    r = reach_history.scan_file(path, deadline=1)
+    assert r["complete"] is True and r["reason"] is None
+    assert sum(r["counts"].values()) == 1
+
+
+def test_a_deadline_in_the_middle_of_a_file_reports_time_limit_with_partial_results(tmp_path, monkeypatch):
+    line = "key " + AWS + "\n"
+    path = _write(tmp_path, line * 40)
+    monkeypatch.setattr(reach_history, "CHUNK", len(line) * 5)
+    now, _ = _clock(2)  # two chunks are scanned, the third read finds the deadline passed
+    monkeypatch.setattr(reach_history, "_now_ms", now)
+    r = reach_history.scan_file(path, deadline=1)
+    assert r["complete"] is False and r["reason"] == "time-limit"
+    assert sum(r["counts"].values()) == 10  # the two scanned chunks hold 5 lines each; the rest is not read
+
+
+def test_one_very_long_line_stops_within_a_bounded_amount_after_the_deadline(tmp_path, monkeypatch):
+    from zn_gate import rules
+    path = _write(tmp_path, ("filler words " * 40 + AWS + " ") * 200 + "\n")
+    monkeypatch.setattr(reach_history, "SLICE_CHARS", 1000)
+    calls = {"n": 0}
+    real = rules.redact_secrets
+
+    def counting(text):
+        calls["n"] += 1
+        return real(text)
+    monkeypatch.setattr(rules, "redact_secrets", counting)
+    now, _ = _clock(2)  # chunk check, then the first slice boundary; the second boundary is past the deadline
+    monkeypatch.setattr(reach_history, "_now_ms", now)
+    r = reach_history.scan_file(path, deadline=1)
+    assert r["complete"] is False and r["reason"] == "time-limit"
+    assert calls["n"] <= 3  # of about 100 slices: slice 1, then slice 2 and the overlap it shares with slice 1
+
+
+def test_slicing_a_long_line_gives_the_same_counts_as_scanning_it_whole(tmp_path, monkeypatch):
+    text = ("filler words " * 40 + AWS + " " + GITHUB + " ") * 50 + "\n"
+    path = _write(tmp_path, text)
+    whole = reach_history.scan_file(path, deadline=10 ** 18)
+    monkeypatch.setattr(reach_history, "SLICE_CHARS", 2000)
+    sliced = reach_history.scan_file(path, deadline=10 ** 18)
+    assert whole["complete"] and sliced["complete"]
+    assert whole["counts"] == sliced["counts"] and sum(whole["counts"].values()) == 100
+
+
+# Long lines at the real slice size. The filler has no space or line break, so the first cut falls exactly at
+# SLICE_CHARS, and its characters are outside the token alphabet, so they do not stick to a key. Same cases as the
+# npm tests of the same names.
+def _github_count(text):
+    from zn_gate import rules
+    types = reach_history._types()
+    return sum(1 for d in rules.redact_secrets(text)[1] if types.get(d["rule"]) == "GITHUB_TOKEN")
+
+
+def test_a_secret_across_a_slice_cut_of_a_long_line_is_found_exactly_once(tmp_path):
+    s = reach_history.SLICE_CHARS
+    before = ";" * (s - 17)
+    text = before + GITHUB + ";" * 200000
+    assert reach_history._cuts(text)[:2] == [0, s]  # the cut is inside the key
+    assert len(before) < s < len(before) + len(GITHUB)
+    assert _github_count(text[:s]) + _github_count(text[s:]) == 0  # without the overlap, neither slice sees it
+    r = reach_history.scan_file(_write(tmp_path, text + "\n"), deadline=10 ** 18)
+    assert r["complete"] is True
+    assert r["counts"] == {"GITHUB_TOKEN": 1}
+
+
+def test_a_secret_inside_one_slice_or_inside_the_overlap_of_two_is_found_exactly_once(tmp_path):
+    s = reach_history.SLICE_CHARS
+    o = reach_history._overlap_chars()
+    parts = [";" * 1000, AWS, ";" * (s - 1000 - len(AWS) + 5000), AWS]
+    sofar = len("".join(parts))
+    parts += [";" * (s + o - 17 - sofar), GITHUB, ";" * 100000, AWS, ";" * 10000]
+    text = "".join(parts)
+    assert reach_history._cuts(text)[1] == s
+    assert text.index(GITHUB) < s + o < text.index(GITHUB) + len(GITHUB)
+    r = reach_history.scan_file(_write(tmp_path, text + "\n"), deadline=10 ** 18)
+    assert r["complete"] is True
+    assert r["counts"] == {"AWS_KEY": 3, "GITHUB_TOKEN": 1}
+
+
+def test_the_overlap_comes_from_the_secret_rules_and_holds_the_longest_of_them_twice():
+    from zn_gate import rules
+    tables = rules.SCRUB_FIRST_PATTERNS + rules.SECRET_PATTERNS + rules.PROVIDER_SECRET_PATTERNS + rules.SCRUB_LAST_PATTERNS
+    longest = reach_history._longest_secret_match([p.pattern for _, p, _ in tables])
+    assert longest >= 4096
+    assert reach_history._overlap_chars() == max(64 * 1024, 2 * longest)
+    assert reach_history._overlap_chars() == 64 * 1024  # the same overlap as the npm package
+    assert reach_history._longest_secret_match(["a{2,40}b{3}c{5,}"]) == 16 + 40 + 3 + 5
+
+
+def test_a_home_over_the_file_cap_keeps_the_same_files_as_npm(machine):
+    # Same corpus and same expected files as the npm test of the same name. Names are compared by UTF-8 bytes:
+    # U+1F600 is after U+FF01 in code points, so it is the file left out at a cap of 5.
+    home, env = machine
+    names = ["B.jsonl", "a.jsonl", "z.jsonl", "\u00e9.jsonl", "\uff01.jsonl", "\U0001f600.jsonl"]
+    for n in names:
+        put(home, ".claude/projects/p/" + n, jsonl([{"text": "key " + AWS}]))
+    r = history(home=home, env=env, _max_files=5)
+    files = sorted({f["file"].split("/")[-1] for f in r["findings"]})
+    assert files == sorted(["B.jsonl", "a.jsonl", "z.jsonl", "\u00e9.jsonl", "\uff01.jsonl"])
+    assert any(i["reason"] == "too-many-files" and i["limit"] == 5 for i in r["incomplete"])
