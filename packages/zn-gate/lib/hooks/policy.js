@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.9';
+const POLICY_RULES_VERSION = '2026-11-11.10';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2575,7 +2575,7 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of withEqualsReadings(psListWords(words, opts))) {
+  for (const w of withEqualsReadings(psListWords(words, opts, cmd))) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
@@ -2686,8 +2686,59 @@ function psPathOperand(h) {
   const head = String(h || '').toLowerCase();
   return PS_DOTNET_FILE_READ_RE.test(head) || PS_PATH_HELPERS.has(head);
 }
-/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
-function psListWords(words, opts) {
+/*
+ * Join-Path splits a path across its operands (Join-Path ~\.aws credentials, Join-Path -Path ~ -ChildPath .kube -AdditionalChildPath config),
+ * so no single operand names the protected file. The joined path is judged as a word of its own, with a backslash and with a slash.
+ * Operands are the words after the cmdlet in the same simple command; named ones (-Path, -ChildPath, -AdditionalChildPath, also
+ * abbreviated or attached with a colon) take their own place, the others fill the free places in order. The operands in the order
+ * they are written are joined too.
+ */
+function psJoinedPaths(words) {
+  const out = [];
+  const seen = new Set();
+  const add = (w, parts) => {
+    const clean = parts.filter((x) => typeof x === 'string' && x !== '');
+    if (clean.length < 2) return;
+    const joined = clean.join('\\');
+    if (joined.length > 4096 || seen.has(joined)) return;
+    seen.add(joined);
+    out.push({ ...w, text: joined, head: 'join-path', redirectTarget: false }, { ...w, text: slash(joined), head: 'join-path', redirectTarget: false });
+  };
+  const slotOf = (name) => {
+    const n = name.toLowerCase();
+    if (n.length && 'path'.startsWith(n)) return 'path';
+    if (n.length && 'childpath'.startsWith(n)) return 'child';
+    if (n.length && 'additionalchildpath'.startsWith(n)) return 'extra';
+    return null;
+  };
+  for (let i = 0; i < words.length && out.length < 64; i++) {
+    const w = words[i];
+    if (typeof w.text !== 'string' || w.text.toLowerCase() !== 'join-path') continue;
+    const named = {};
+    const positional = [];
+    const written = [];
+    let pending = null;
+    for (let j = i + 1; j < words.length && words[j].seq === w.seq; j++) {
+      const t = words[j].text;
+      if (typeof t !== 'string') continue;
+      const flag = /^-([A-Za-z]+)(?::(.*))?$/.exec(t);
+      if (flag) {
+        const slot = slotOf(flag[1]);
+        if (flag[2] !== undefined && flag[2] !== '') { if (slot) named[slot] = flag[2]; written.push(flag[2]); pending = null; } else pending = slot;
+        continue;
+      }
+      written.push(t);
+      if (pending) { named[pending] = t; pending = null; } else positional.push(t);
+    }
+    const slots = { path: named.path, child: named.child, extra: named.extra };
+    for (const k of ['path', 'child', 'extra']) if (slots[k] === undefined && positional.length) slots[k] = positional.shift();
+    add(w, [slots.path, slots.child, ...String(slots.extra || '').split(',').map((x) => x.trim())]);
+    add(w, written.flatMap((x) => x.split(',')).map((x) => x.trim()));
+  }
+  return out;
+}
+/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. cmd is the whole command of this call. */
+function psListWords(words, opts, cmd) {
   const out = [];
   let prev = null;
   const readerOf = (h) => {
@@ -2704,10 +2755,11 @@ function psListWords(words, opts) {
   const push = (x, head) => {
     const backslash = typeof x.text === 'string' && x.text.indexOf('\\') >= 0;
     const reads = readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord);
-    const prints = backslash && !reads && !x.redirectTarget && PS_PRINT_ONLY.has(String(bareHead(head)).toLowerCase());
+    // Only the PowerShell tool: echo and write are other programs in a Bash command, and a Bash command keeps the verdict it had.
+    const prints = opts.powershell === true && backslash && !reads && !x.redirectTarget && PS_PRINT_ONLY.has(String(bareHead(head)).toLowerCase());
     // A print command that is the whole statement and names a plain literal path only prints text: it is left out of the read check on
     // every platform. In a pipeline or chain the text may be bound to a reader (echo .\.env | gi | gc), so it keeps the full read check.
-    const lone = prints && !PS_EXPANDS_RE.test(x.text) && typeof opts.cmdText === 'string' && !PS_COMPOUND_RE.test(opts.cmdText);
+    const lone = prints && !PS_EXPANDS_RE.test(x.text) && typeof cmd === 'string' && !PS_COMPOUND_RE.test(cmd);
     out.push(lone ? { ...x, printsText: true } : x);
     // A word that expands ("$PWD\.env") or follows a print command inside a compound statement is judged with the slash reading too.
     if (backslash && x.text.length <= 4096 && (reads || PS_EXPANDS_RE.test(x.text) || (prints && !lone))) out.push({ ...x, text: slash(x.text) });
@@ -2730,6 +2782,7 @@ function psListWords(words, opts) {
     if (parts.length < 2 && !open) continue;
     for (const part of parts) push({ ...w, text: part }, w.head);
   }
+  for (const j of psJoinedPaths(words)) out.push(j);
   return out;
 }
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
