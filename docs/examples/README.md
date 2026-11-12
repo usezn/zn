@@ -51,6 +51,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [doctor-before-asking-for-help.md](doctor-before-asking-for-help.md): the commands to run in your own terminal, and paste, before you ask for help.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [evidence-example.md](evidence-example.md): the local evidence log, and what `zn-gate evidence` prints.
+- [evidence-log.md](evidence-log.md): the local evidence log in practice: list the last records, check the chain with `--verify`, and export the records to a file.
 - [evidence-verify-after-restore.md](evidence-verify-after-restore.md): check that a decision log you brought to a new computer arrived whole and unchanged.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [mcp-pin-review-checklist.md](mcp-pin-review-checklist.md): what to compare in a changed MCP tool before you approve it with `pins approve`.
