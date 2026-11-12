@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-03.1';
+const SCRUB_RULES_VERSION = '2026-11-11.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -547,6 +547,12 @@ const PATTERNS = [
    * upper; mixed case is not a SID). Same shape as gitleaks twilio-api-key. */
   { type: 'TWILIO_KEY', hints: ['SK', 'AC'], re: re('(?<![A-Za-z0-9])SK(?:[0-9a-f]{32}|[0-9A-F]{32})(?![A-Za-z0-9])'),
     check: (v) => /\d/.test(v.slice(2)) && /[a-fA-F]/.test(v.slice(2)) },
+  /* Twilio auth token: 32 hex digits under a TWILIO_AUTH_TOKEN or auth_token label (env, YAML or JSON, quoted or
+   * not; any case). The token has no prefix of its own, so an unlabelled 32-hex value (a hash, an id) is left
+   * alone. The account SID (`AC` + 32 hex) next to it is an identifier and stays visible. */
+  { type: 'TWILIO_AUTH_TOKEN', hints: null, prefilter: /auth_token/i,
+    re: re('(?<![A-Za-z0-9])(?:twilio_)?auth_token["\']?[ \t]*[=:][ \t]*["\']?([0-9a-f]{32})(?![A-Za-z0-9])', 'i'),
+    group: 1, check: (v) => /\d/.test(v) && /[a-f]/i.test(v) && !/^(.)\1+$/.test(v) },
   { type: 'MAILGUN_KEY', hints: ['key-'], re: re(NB + 'key-[0-9a-f]{32}' + NA),
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
   { type: 'SHOPIFY_TOKEN', hints: ['shpat_', 'shpca_', 'shppa_', 'shpss_'], re: re(NB + 'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + NA) },
