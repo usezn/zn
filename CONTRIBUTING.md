@@ -167,6 +167,22 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
 
    CI also checks external links, but only reports them and never fails the pull request.
 
+### Check every command you add to the docs
+
+Every command in a docs page must be one that zn-gate has and that [docs/cli.md](docs/cli.md) documents. Before you open a pull request that adds or changes a command in a page:
+
+1. **Run it.** Run the command yourself, in a throwaway folder and with a throwaway home folder (set `HOME` to an empty folder, so your own `~/.zn` is not touched), and copy the output you really got. Do not write an output you did not see.
+2. **Compare it with `docs/cli.md`.** Find the command in the reference. Check that its name, each option you use and each value are written there as you wrote them. If the reference is wrong or lacks the option, fix the reference in the same pull request.
+3. **Run the command check.** The check `check-docs-examples-commands.mjs` reads every shell block in `docs/examples/*.md` and fails when a block runs a `zn`, `zn-gate` or `npx -y zn-gate` command whose name has no heading in `docs/cli.md`. From the repository root:
+
+   ```bash
+   node .github/scripts/check-docs-examples-commands.mjs
+   ```
+
+   It prints `docs examples OK` and the number of commands it checked, or it names the file and line that must be fixed. CI runs the same script in the Markdown lint steps of the Quick checks workflow. Its own test is `node --test .github/scripts/check-docs-examples-commands.test.mjs`.
+
+The script checks command names only, in the example pages only. It does not check options, and it does not read the other pages under `docs/`. So step 2 is your job for every page, and for every option.
+
 ### Check docs links before you push
 
 If you add or move a page, or link to a heading, check the links on your machine first. A broken link fails the pull request.

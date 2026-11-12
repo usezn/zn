@@ -162,6 +162,7 @@ Approval is your decision, not your agent's, so it is refused:
 - when the agent's hooks see the command in a tool call.
 
 If what you typed does not match, nothing changes and you can run the command again.
+A worked example of this decision, with one new tool denied in block mode and the error the agent sees, is in [deny one MCP tool with the shield](examples/shield-deny-rule-example.md).
 
 ### What happens when a tool changes
 
