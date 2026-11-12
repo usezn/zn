@@ -44,7 +44,7 @@ test('maskInfo answering nothing useful is still a plain answer; a vault unavail
 
 test('the deny message for a vault failure points to the vault (unlock), not to reinstalling hooks', async () => {
   const r = await run(pre, { maskInfo: async () => { throw new Error('connection closed'); } });
-  assert.ok(/zn unlock/.test(r.decision.message), r.decision.message);
+  assert.ok(/zn(?:\.cmd)? unlock/.test(r.decision.message), r.decision.message);
   assert.ok(!/reinstall|hooks install|something went wrong inside/i.test(r.decision.message), r.decision.message);
 });
 
@@ -93,6 +93,6 @@ test('the deny message for a vault failure has one "zn:" and says zn unlock once
     const m = String(r.decision.message);
     assert.strictEqual(r.decision.decision, 'deny', name);
     assert.ok(m.startsWith('zn: ') && !m.startsWith('zn: zn '), name + ': ' + m);
-    assert.strictEqual((m.match(/zn unlock/g) || []).length, 1, name + ': ' + m);
+    assert.strictEqual((m.match(/zn(?:\.cmd)? unlock/g) || []).length, 1, name + ': ' + m);
   }
 });
