@@ -441,7 +441,9 @@ def _serialize(record: Dict[str, Any], ascii_only: bool = False, js_numbers: boo
         at = keys.index("confidence")
         before = {k: rest[k] for k in keys[:at]}
         after = {k: rest[k] for k in keys[at + 1:]}
-        dump = lambda d: json.dumps(d, separators=(",", ":"), ensure_ascii=ascii_only)
+        def dump(d: Dict[str, Any]) -> str:
+            return json.dumps(d, separators=(",", ":"), ensure_ascii=ascii_only)
+
         parts = [dump(before)[1:-1], '"confidence":' + _js_number(conf), dump(after)[1:-1]]
         text = "{" + ",".join(x for x in parts if x) + "}"
     else:
