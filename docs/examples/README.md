@@ -86,9 +86,9 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [zn-env-shadow-in-a-monorepo.md](zn-env-shadow-in-a-monorepo.md): shadow the `.env` files of several packages one folder at a time, and what happens when two files use the same key with different values.
+- [zn-secret-allow-reading-output.md](zn-secret-allow-reading-output.md): read the output of `zn-gate secret allow` line by line: the confirmation line, the result line, the warnings and the refusals, and how to undo a change.
 - [zn-secret-allow-vs-approve-decision.md](zn-secret-allow-vs-approve-decision.md): a decision list for `secret allow` and `secret approve`, with the prompts and refusals of each.
 - [zn-secret-get-in-a-pipe.md](zn-secret-get-in-a-pipe.md): what `secret get` does when you try to pipe a vault value into another tool, and what to use instead.
-- [zn-secret-allow-reading-output.md](zn-secret-allow-reading-output.md): read the output of `zn-gate secret allow` line by line: the confirmation line, the result line, the warnings and the refusals, and how to undo a change.
 - [zn-secret-import-reviewing-the-dry-output.md](zn-secret-import-reviewing-the-dry-output.md): preview what `secret import` would move with `env shadow --dry-run`, then import and check.
 - [zn-secret-rm-then-confirm-with-vault-log.md](zn-secret-rm-then-confirm-with-vault-log.md): remove a secret with `zn-gate secret rm`, then find the removal line in the vault log and check that the log is intact.
 - [zn-secret-rotate-after-leak.md](zn-secret-rotate-after-leak.md): the steps after a key leaked: revoke it at the provider, find the copies, store the new value and check that nothing still uses the old one.
