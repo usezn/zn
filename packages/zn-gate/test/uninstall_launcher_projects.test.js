@@ -117,3 +117,76 @@ test('uninstall with CLAUDE_CONFIG_DIR set keeps the shared launcher: other prof
   assert.ok(fs.existsSync(file), 'the launcher stays');
   assert.match(c.out(), /launcher script kept \(other Claude Code profiles may still use it\)/);
 });
+
+// Fail closed: a profile or a folder zn cannot read is "cannot tell", never "does not use the launcher".
+test('uninstall: a profile settings file that cannot be read keeps the launcher', async (t) => {
+  if (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) return t.skip('needs an unreadable file (a root user reads any file)');
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  const other = path.join(m.home, '.claude-work');
+  fs.mkdirSync(other, { recursive: true });
+  const settings = path.join(other, 'settings.json');
+  fs.writeFileSync(settings, JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: file + ' PreToolUse' }] }] } }));
+  fs.chmodSync(settings, 0o000);
+  const c = io(m);
+  try { assert.equal(await dispatch('uninstall', [], c.o), 0, c.out()); } finally { fs.chmodSync(settings, 0o600); }
+  assert.ok(fs.existsSync(file), 'the launcher stays when a profile cannot be checked');
+  assert.match(c.out(), /launcher script kept \(a hooks file could not be read\)/);
+});
+
+test('uninstall: a profile settings file that is a folder (read error other than missing) keeps the launcher', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  fs.mkdirSync(path.join(m.home, '.claude-odd', 'settings.json'), { recursive: true });
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.ok(fs.existsSync(file), 'EISDIR is "cannot tell", not "does not name it"');
+  assert.match(c.out(), /launcher script kept \(a hooks file could not be read\)/);
+});
+
+test('uninstall: a home folder that cannot be listed keeps the launcher (read error injected)', async (t) => {
+  // Injected: the read error is simulated on the home folder only, so the test holds for any user, root included.
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  const real = fs.readdirSync;
+  let injected = 0;
+  fs.readdirSync = function (p, ...rest) {
+    if (path.resolve(String(p)) === path.resolve(m.home)) { injected++; const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+    return real.call(this, p, ...rest);
+  };
+  const c = io(m);
+  let rc;
+  try { rc = await dispatch('uninstall', [], c.o); } finally { fs.readdirSync = real; }
+  assert.ok(injected > 0, 'the home folder listing was hit');
+  assert.equal(rc, 0, c.out());
+  assert.ok(fs.existsSync(file), 'the launcher stays when the profiles cannot be listed');
+  assert.match(c.out(), /launcher script kept \(a Claude Code profile could not be checked\)/);
+});
+
+test('uninstall: a settings file that cannot be read keeps the launcher (read error injected)', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  const other = path.join(m.home, '.claude-work');
+  fs.mkdirSync(other, { recursive: true });
+  const target = path.join(other, 'settings.json');
+  fs.writeFileSync(target, '{}');
+  const real = fs.readFileSync;
+  fs.readFileSync = function (p, ...rest) {
+    if (path.resolve(String(p)) === path.resolve(target)) { const e = new Error('EIO: i/o error'); e.code = 'EIO'; throw e; }
+    return real.call(this, p, ...rest);
+  };
+  const c = io(m);
+  let rc;
+  try { rc = await dispatch('uninstall', [], c.o); } finally { fs.readFileSync = real; }
+  assert.equal(rc, 0, c.out());
+  assert.ok(fs.existsSync(file), 'the launcher stays');
+  assert.match(c.out(), /launcher script kept \(a hooks file could not be read\)/);
+});

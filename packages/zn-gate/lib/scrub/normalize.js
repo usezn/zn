@@ -60,17 +60,22 @@ function percentByte(text, n, i) {
   return b > 0x20 && b < 0x7f ? b : -1;
 }
 
+// Where a decodable %XX or a doubled quote can start: the only positions the view has to look at.
+const CANDIDATE_RE = /%[0-9A-Fa-f]{2}|''|""/g;
+
 function normalisedView(text) {
   const n = text.length;
   // Fast path: most inputs (source code with empty strings or a stray %) have
   // no joining quote pair and no decodable %XX; return before allocating.
+  // The native regex jumps to the only places that can matter (%XX, '' and ""); each candidate is then checked exactly.
   let first = -1;
-  for (let i = 0; i < n; i++) {
+  CANDIDATE_RE.lastIndex = 0;
+  let cand;
+  while ((cand = CANDIDATE_RE.exec(text)) !== null) {
+    const i = cand.index;
     const ch = text.charCodeAt(i);
-    if (ch === PERCENT ? percentByte(text, n, i) >= 0 : ((ch === Q_SINGLE || ch === Q_DOUBLE) && quoteRunEnd(text, n, i) > 0)) {
-      first = i;
-      break;
-    }
+    if (ch === PERCENT ? percentByte(text, n, i) >= 0 : quoteRunEnd(text, n, i) > 0) { first = i; break; }
+    CANDIDATE_RE.lastIndex = i + 1;
   }
   if (first < 0) return null;
 

@@ -280,7 +280,11 @@ async function run(args, io) {
     for (const l of p.launchers) {
       const spec = AGENTS.find((x) => x.id === l.id);
       const base = path.basename(l.file);
-      const names = (f) => { try { return fs.readFileSync(f, 'utf8').includes(base); } catch (_) { return false; } };
+      // Three answers: true (names the launcher), false (does not: the file is absent or has no mention) and null (cannot
+      // tell: any other read error). Only a clear false lets the launcher go; null keeps it (fail closed).
+      const names = (f) => {
+        try { return fs.readFileSync(f, 'utf8').includes(base); } catch (e) { return e && e.code === 'ENOENT' ? false : null; }
+      };
       let keep = failedHooks.has(l.id);
       let why = 'a hooks file may still use it';
       if (!keep && spec) {
@@ -292,8 +296,16 @@ async function run(args, io) {
           files = null;
         }
         if (!files) { keep = true; files = []; }
-        if (l.id === 'claude-code') files.push(...claudeProfileSettings(io.home));
-        keep = keep || files.some(names);
+        if (l.id === 'claude-code') {
+          const profiles = claudeProfileSettings(io.home);
+          files.push(...profiles.files);
+          if (profiles.unknown) { keep = true; why = 'a Claude Code profile could not be checked'; }
+        }
+        if (!keep) {
+          const answers = files.map(names);
+          if (answers.includes(null)) { keep = true; why = 'a hooks file could not be read'; }
+          else keep = answers.includes(true);
+        }
       }
       // The Claude Code launcher is shared by every profile (every CLAUDE_CONFIG_DIR). With a profile folder set, zn
       // cannot see the other profiles, so it keeps the launcher rather than break their hooks.
@@ -337,17 +349,17 @@ async function run(args, io) {
 
 
 /* The settings files of the Claude Code profiles in the home folder: ~/.claude and every ~/.claude* folder (for
-   example one per CLAUDE_CONFIG_DIR). A folder that cannot be read lists nothing. */
+   example one per CLAUDE_CONFIG_DIR). `unknown` is true when the home folder cannot be listed: then the profiles are
+   not known and the caller must not assume there are none. */
 function claudeProfileSettings(home) {
-  const out = [];
-  let names = [];
-  try { names = fs.readdirSync(home); } catch (_) { return out; }
+  const files = [];
+  let names;
+  try { names = fs.readdirSync(home); } catch (_) { return { files, unknown: true }; }
   for (const n of names) {
     if (!/^\.claude/.test(n)) continue;
-    const f = path.join(home, n, 'settings.json');
-    out.push(f);
+    files.push(path.join(home, n, 'settings.json'));
   }
-  return out;
+  return { files, unknown: false };
 }
 
 module.exports = { run, plan, printPlan, USAGE };
