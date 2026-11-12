@@ -1,3 +1,4 @@
+# Main test workflow: Node.js, Python, lint, package and build checks on pushes and pull requests to main, next and release branches.
 name: zn CI
 
 # Pull requests into next run, all on Ubuntu, only the light checks of this workflow that the rulesets require: the

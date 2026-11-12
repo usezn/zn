@@ -32,6 +32,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
 - [audit-before-opening.md](audit-before-opening.md): run `zn audit` on a repository you just cloned, before an agent opens it, and read what the report says.
+- [audit-report-to-file.md](audit-report-to-file.md): save the audit report to a file in text, JSON or SARIF, and compare two runs.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [check-output-explained.md](check-output-explained.md): a sample `zn-gate check` output, explained line by line.
 - [doctor-before-asking-for-help.md](doctor-before-asking-for-help.md): the commands to run in your own terminal, and paste, before you ask for help.
@@ -54,6 +55,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [stats-share-controls.md](stats-share-controls.md): check, turn on and turn off the optional sharing of daily counts.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
+- [zn-hooks-status-before-opening-a-pr.md](zn-hooks-status-before-opening-a-pr.md): a short checklist to run before you open a pull request: check, check --hooks and check --json, and what each result means.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
 
 ## Secrets
@@ -72,10 +74,12 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [connect-and-disconnect.md](connect-and-disconnect.md): connect, check the status and disconnect the cloud check.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check, and when the result carries a warning.
+- [team-choices-examples.md](team-choices-examples.md): three worked team choices (block, warn, allow within limits) and what the developer, the agent and the audit record see.
 - [team-first-day.md](team-first-day.md): the first day of zn Team for a lead and one developer, from the invitation to `zn team leave`.
 - [team-managed-config.md](team-managed-config.md): print the managed settings an admin deploys so the hooks run on every machine.
 - [team-onboarding-checklist.md](team-onboarding-checklist.md): a one-line-per-step checklist for a new zn Team member, with the expected result and what to do when a step fails.
 - [team-sync-after-policy-change.md](team-sync-after-policy-change.md): pull a new team policy version with `zn team sync`, then read what changed in `zn team status`.
+- [team-sync-offline.md](team-sync-offline.md): what `zn team sync` does without a network, what keeps working from the saved policy, and its exit codes.
 
 ## Scripts, CI and APIs
 
@@ -86,3 +90,6 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [python-api.md](python-api.md): five short examples of the Python package.
 - [reach-report-file.md](reach-report-file.md): write the reach report to a file in a CI job.
 - [scripting.md](scripting.md): use zn-gate from a shell script or a CI job, and read its exit codes.
+- [zn-hooks-status-in-a-ci-job.md](zn-hooks-status-in-a-ci-job.md): fail a CI job on `zn-gate check --hooks` when a hook is stale or broken, with its exit codes, real output, and why plain `check` does not catch it.
+- [zn-scan-ci-annotations-reading.md](zn-scan-ci-annotations-reading.md): read the GitHub annotations of scan --format github line by line, from the error to the notices and warnings, and silence a fixture folder.
+- [zn-why-reading-a-wrapped-block-in-ci-logs.md](zn-why-reading-a-wrapped-block-in-ci-logs.md): find the rule of a block in a CI log whose lines are wrapped, and what zn why can and cannot add.

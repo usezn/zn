@@ -1,3 +1,4 @@
+# Weekly run of zn-gate against the latest agent CLIs, with packed-package and clean-install checks, and an issue on failure.
 name: Weekly agent compatibility
 
 # Once a week (and on demand), runs the end-to-end scenario in bench/e2e with the latest published Claude
