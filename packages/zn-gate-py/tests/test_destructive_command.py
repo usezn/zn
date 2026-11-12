@@ -95,11 +95,15 @@ class DestructiveCommandShape(unittest.TestCase):
             ("curl x | " + "(" * 90000 + "sh", False),
             ("sh " * 60000 + '-c "$(curl x)"', False),
         ]
+        # The budget catches a read that grows faster than the input. The slowest case, 30,000 backtick commands,
+        # grows linearly and uses up to about 2 s of CPU time on a CI runner, so a 2 s budget failed it by chance.
+        # 4 s leaves room for a slow runner; a quadratic read of that case would need 16 times the time of its
+        # 7,500-command version, far past 4 s.
         for cmd, allowed in cases:
             self.assertLess(len(cmd), 200 * 1024)
             t0 = time.process_time()
             res = check_command(cmd)
-            self.assertLess(time.process_time() - t0, 2.0, cmd[:40])
+            self.assertLess(time.process_time() - t0, 4.0, cmd[:40])
             self.assertEqual(res.allowed, allowed, cmd[:40])
 
     def test_shell_fed_from_a_substitution_or_a_piped_group(self):

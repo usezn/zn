@@ -1,3 +1,4 @@
+# OpenSSF Scorecard analysis of the repository, weekly and on pushes to main.
 name: Scorecard
 
 # OpenSSF Scorecard: checks this repository's supply-chain practices (pinned actions, token permissions,
