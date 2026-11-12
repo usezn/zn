@@ -131,9 +131,9 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [team-sync-after-policy-change.md](team-sync-after-policy-change.md): pull a new team policy version with `zn team sync`, then read what changed in `zn team status`.
 - [team-sync-offline.md](team-sync-offline.md): what `zn team sync` does without a network, what keeps working from the saved policy, and its exit codes.
 - [zn-analyze-long-text-from-a-file-and-limits.md](zn-analyze-long-text-from-a-file-and-limits.md): check the text of a file with `analyze` (it has no `--file` option), the size limits, and `scan` for whole files.
+- [zn-analyze-reading-a-block-verdict.md](zn-analyze-reading-a-block-verdict.md): read one `analyze` answer that blocks, field by field, next to an allow answer, and what to do on a block.
 - [zn-connect-behind-a-proxy.md](zn-connect-behind-a-proxy.md): use the optional cloud check on a network with a proxy: what zn-gate supports, what Node.js and Python do, and what a failed check looks like.
 - [zn-disconnect-then-analyze-offline-behaviour.md](zn-disconnect-then-analyze-offline-behaviour.md): what `analyze` does after `disconnect`, and when the cloud check is on but cannot be reached.
-- [zn-analyze-reading-a-block-verdict.md](zn-analyze-reading-a-block-verdict.md): read one `analyze` answer that blocks, field by field, next to an allow answer, and what to do on a block.
 - [zn-team-join-with-a-wrong-code.md](zn-team-join-with-a-wrong-code.md): the messages and exit codes of `zn-gate team join` for no token, a pasted invitation link, a malformed token, an expired or used-up token and an unreachable server.
 - [zn-team-leave-cleanup-checklist.md](zn-team-leave-cleanup-checklist.md): what `zn team leave` removes, what stays on disk, and the one case where you delete files by hand.
 - [zn-why-after-a-team-policy-block.md](zn-why-after-a-team-policy-block.md): a secret blocked by the organization policy of zn Team: what the agent sees, how to find the rule, and what `zn-gate why` does and does not show.
