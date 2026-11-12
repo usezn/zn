@@ -60,10 +60,10 @@ You can see zn-gate catch a secret without risking anything. The steps below use
 
    If you see an error such as "File exists", stop here: a folder with that name already exists and is not yours to delete. Pick another name (for example `zn-first-run-2`) and use it for every step below.
 
-   In Windows PowerShell, use this instead, which does nothing if the folder exists:
+   In Windows PowerShell, use this instead. It stops with a message if the folder cannot be created, and goes into the folder only after it was created:
 
    ```powershell
-   if (Test-Path zn-first-run) { Write-Host "Folder exists - stop here" } else { mkdir zn-first-run; cd zn-first-run }
+   try { New-Item -ItemType Directory -Path zn-first-run -ErrorAction Stop | Out-Null; Set-Location zn-first-run } catch { Write-Host "Could not create the folder - stop here: $($_.Exception.Message)" }
    ```
 
 2. Create a file named `.env` (the dot is part of the name) with this one line:
@@ -116,7 +116,7 @@ Status       : Move the secrets out of these files (see "Next" for each one)
 
 The scan only reports. It does not stop your agent. The part that stops an agent from reading a `.env` file is the hook that zn-gate installs for it. [Check that it works](check.md) tests exactly that, and [What the check output means](examples/check-output-explained.md) explains each line of that output.
 
-When you are done, go back up and delete only the test folder you created in step 1 (`cd ..` and then `rm -r zn-first-run`, or `Remove-Item -Recurse zn-first-run` in PowerShell). If you had to pick another name, use that name here.
+When you are done, and only if step 1 created the folder without an error, go back up and delete only the test folder you created in step 1 (`cd ..` and then `rm -r zn-first-run`, or `Remove-Item -Recurse zn-first-run` in PowerShell). If you had to pick another name, use that name here.
 
 If you installed zn-gate with `pip` instead of `npx`, run `zn-gate scan .` in place of the command above. The Python package prints a different layout: its report starts with `zn-gate Security Scanner`, has no `Target`, `Scope` or `Files` lines, and lists each finding as `file:line Secret found [rule]` followed by a `Snippet:` line. The rule name and the `Next:` advice are the same, and the Python version has no `--code` option.
 
