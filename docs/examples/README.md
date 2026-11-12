@@ -70,12 +70,12 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-first-week-reviewing-blocks.md](zn-first-week-reviewing-blocks.md): a five-minute daily routine for the first week, with zn why, zn stats, zn report and zn evidence.
 - [zn-hooks-status-before-opening-a-pr.md](zn-hooks-status-before-opening-a-pr.md): a short checklist to run before you open a pull request: check, check --hooks and check --json, and what each result means.
 - [zn-pins-approve-after-reviewing-a-diff.md](zn-pins-approve-after-reviewing-a-diff.md): compare a changed MCP tool with its old version, then approve it with `pins approve`.
+- [zn-pins-reviewing-a-new-server.md](zn-pins-reviewing-a-new-server.md): what to check before an MCP server is pinned for the first time, what `pins` shows afterwards, and how a later new tool is approved.
 - [zn-policy-everyday-allowed-commands.md](zn-policy-everyday-allowed-commands.md): check 19 everyday git, npm and docker commands against the command check without running them.
 - [zn-policy-reading-a-wrapped-command-block.md](zn-policy-reading-a-wrapped-command-block.md): how a command is judged inside a wrapper such as bash -c, sudo or env, with the real verdicts, the denial text and what is not seen.
 - [zn-reach-reading-severity-levels.md](zn-reach-reading-severity-levels.md): what the `HIGH`, `MEDIUM`, `LOW` and `INFO` levels of `zn-gate reach` mean, with real output on a fake project.
 - [zn-report-sharing-safely-in-an-issue.md](zn-report-sharing-safely-in-an-issue.md): what `report` prints, what zn-gate already hides from it, and what to check before you paste it in an issue.
 - [zn-run-with-timeout-and-exit-codes.md](zn-run-with-timeout-and-exit-codes.md): how zn-gate run passes the exit code of the program through, which codes zn-gate returns itself, what a signal gives, and how to add a time limit.
-- [zn-pins-reviewing-a-new-server.md](zn-pins-reviewing-a-new-server.md): what to check before an MCP server is pinned for the first time, what `pins` shows afterwards, and how a later new tool is approved.
 - [zn-scan-package-lockfile-noise.md](zn-scan-package-lockfile-noise.md): what `zn-gate scan` does with lockfiles, the two kinds of result, and the options that really reduce them.
 - [zn-scan-reading-a-false-positive.md](zn-scan-reading-a-false-positive.md): judge a scan finding that is not a real secret, and the ways to skip it that the scan really supports.
 - [zn-stats-before-and-after-hooks-reinstall.md](zn-stats-before-and-after-hooks-reinstall.md): what `zn stats` shows before and after you reinstall the hooks: the counts are kept, and what does change them.
