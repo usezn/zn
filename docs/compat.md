@@ -1,5 +1,7 @@
 # Agent compatibility
 
+Last reviewed: 2026-11-11
+
 ## Tested in the last release
 
 The table lists each agent zn-gate supports and what was checked for it in the latest release, 1.15.0 (published 2026-11-06): for example "Hook command only (no agent started)", or "not tested in this release". An agent version appears only when a run with the real agent is recorded. Gemini CLI is experimental.

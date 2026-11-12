@@ -2,6 +2,8 @@
 
 For a short guide to calling the HTTP API from curl, Python or Node.js, see the [API quickstart](api-quickstart.md).
 
+A live check of the API and any published incident notes are on the [status page](https://usezn.com/status/); the public `https://api.usezn.com/health` endpoint answers HTTP 200 when the API is up.
+
 ## Table of contents
 
 - [Node.js (`zn-gate`)](#nodejs-zn-gate)

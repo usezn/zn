@@ -1,3 +1,4 @@
+# Publishes server.json to the MCP Registry for a release tag; started by hand only.
 name: MCP Registry
 
 # Publishes packages/zn-gate/server.json from a release tag to the official MCP

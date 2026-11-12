@@ -1,3 +1,4 @@
+# Hook latency budget of zn-gate on Linux and Windows, on pushes to main and pull requests that touch the package.
 name: Hook latency
 
 # How long an agent waits for zn's hook on each tool call, by agent, event and output size
