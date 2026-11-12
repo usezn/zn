@@ -98,7 +98,7 @@ test('check: no setup at all is a failure, with the command for each agent found
   assert.equal(code, 1);
   assert.match(s, winCmdRe(/Codex CLI\s+zn is not set up for this agent\. To protect it, run `zn hooks install codex` in your own terminal/));
   assert.match(s, /claude plugin install zn-gate@usezn/);
-  assert.match(s, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn`/);
+  assert.match(s, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn#v\d+\.\d+\.\d+`/);
   assert.match(s, /Cursor\s+not found on this machine\n/);
   assert.match(s, winCmdRe(/To set it up, run `npx -y zn-gate init` in your own terminal/));
 });
@@ -626,7 +626,9 @@ test('check: a Claude Code plugin whose hooks.json starts a hook with a program 
     const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
     assert.equal(r.state, 'not-protected', cmd);
     assert.match(r.problem, new RegExp('starts its PreToolUse hook with `' + prog + '` by name'), cmd);
-    assert.match(r.fix, /claude plugin update zn-gate@usezn/, cmd);
+    // A marketplace at a release tag is moved by removing it and adding it at the new tag; `claude plugin update` keeps the old one.
+    assert.match(r.fix, /claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn\/zn#v\d+\.\d+\.\d+/, cmd);
+    assert.doesNotMatch(r.fix, /claude plugin update/, cmd);
   }
   // The shell by its full path, with the plugin root in quotes: no program by name. Without "shell": "bash" it is still
   // not the hook the plugin ships; with it (and the plugin's real zn-node.sh), the plugin is protected.
@@ -1077,7 +1079,7 @@ test('check: a Claude Code plugin of another version than zn-gate gets a note wi
   const own = require('../package.json').version;
   // [plugin.json body, expected note: null for none, else a regex the note must match]
   const cases = [
-    [{ version: '1.0.0' }, /claude plugin update zn-gate@usezn/],
+    [{ version: '1.0.0' }, /claude plugin marketplace remove usezn/],
     [{ version: '999.0.0' }, /npm install -g zn-gate@latest/],
     [{ version: own }, null],
     [null, null],
@@ -1135,7 +1137,7 @@ test('check: with a pre-release zn-gate command, a plugin of another version get
   fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.14.1' }));
   assert.equal(pluginVersionNote(root, '1.15.0-rc.1'), 'the zn-gate plugin is version 1.14.1 and the zn-gate command is 1.15.0-rc.1');
-  assert.match(pluginVersionNote(root, '1.15.0'), /claude plugin update/);
+  assert.match(pluginVersionNote(root, '1.15.0'), /claude plugin marketplace add usezn[/]zn#v1[.]15[.]0/);
   assert.match(pluginVersionNote(root, '1.14.0'), /npm install -g zn-gate@latest/);
   assert.equal(pluginVersionNote(root, '1.14.1'), '');
 });

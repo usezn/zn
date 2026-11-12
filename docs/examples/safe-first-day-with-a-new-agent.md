@@ -79,7 +79,7 @@ zn-gate check
 Here `check` does not test the folder's hooks. It tests the setup for your user, and for a project-only install it says so:
 
 ```text
-  -  Claude Code  zn is set up only for one project (~/try-zn/.claude/settings.json). This check covers the setup for your user; to protect every project, install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn`.
+  -  Claude Code  zn is set up only for one project (~/try-zn/.claude/settings.json). This check covers the setup for your user; to protect every project, install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn#v1.15.0`, then `claude plugin install zn-gate@usezn`.
 ```
 
 That is the expected line here: a project install is separate from your user setup. To see the project's hooks, use `zn-gate check --hooks` from step 2. See [check](../check.md).
