@@ -47,9 +47,11 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [reading-a-scan-finding.md](reading-a-scan-finding.md): what each field of a scan finding means in `--format json` and `--format github`.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project and read what each exit code means.
+- [sharing-findings-with-a-teammate.md](sharing-findings-with-a-teammate.md): save scan and audit output to a file and check it holds no real secret before you send it.
 - [shield-first-run.md](shield-first-run.md): wrap one MCP server with the shield in shadow mode, see what it prints, then enforce or undo it.
 - [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
+- [stats-share-controls.md](stats-share-controls.md): check, turn on and turn off the optional sharing of daily counts.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
@@ -61,6 +63,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
 - [secret-import-and-adopt.md](secret-import-and-adopt.md): import a `.env` file into the vault, then adopt a key the scrubber found.
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
+- [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 
 ## Optional cloud check
