@@ -1,2 +1,3 @@
 ### Security
 - The private-registry check for package installs now also reads the project settings above the working folder (up to the git root), the global npm settings, pnpm settings and the system pip and uv configs, so an internal package name is not sent to the public registry. It understands uv index tables (`[[index]]` in uv.toml, `[[tool.uv.index]]` and `[tool.uv]` in pyproject.toml) and the Windows uv.toml locations (`%APPDATA%\uv` and `%ProgramData%\uv`).
+- The same check now also fails closed for uv index tables, Poetry and PDM sources in `pyproject.toml`, the Windows npm global prefix, project trees nested deeper than the search bound, and settings files larger than 64 KiB.

@@ -226,12 +226,17 @@ async function lookupMany(items, opts = {}) {
 
 /* ------------------- another registry in the user's settings ------------------- */
 
+const READ_LIMIT = 65536;
+// A settings file larger than the read limit cannot be read whole: it counts as pointing at another registry (fail closed).
+const OVERSIZED_MARK = '\nregistry=https://oversized-settings.invalid\nindex-url=https://oversized-settings.invalid\n';
+
 function readSmall(file) {
   try {
     const fd = fs.openSync(file, 'r');
     try {
-      const buf = Buffer.alloc(65536);
+      const buf = Buffer.alloc(READ_LIMIT + 1);
       const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      if (n > READ_LIMIT) return buf.toString('utf8', 0, READ_LIMIT) + OVERSIZED_MARK;
       return buf.toString('utf8', 0, n);
     } finally { fs.closeSync(fd); }
   } catch (e) { return ''; }
@@ -241,21 +246,24 @@ const NPM_HOST_OK = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:]|$)
 
 /**
  * The folders whose settings apply to a command run in cwd: cwd itself and each parent up to the git root (the
- * folder holding .git) or the home folder, whichever comes first. Bounded depth.
+ * folder holding .git) or the home folder, whichever comes first. Bounded depth: if the bound is hit before a
+ * boundary, the list is marked incomplete and the caller treats the registry as private (fail closed).
  */
+const MAX_WALK = 64;
 function projectDirs(cwd, home) {
   if (!cwd) return [];
   const out = [];
   let dir = path.resolve(cwd);
   const stop = home ? path.resolve(home) : null;
-  for (let i = 0; i < 24; i++) {
+  out.incomplete = true;
+  for (let i = 0; i < MAX_WALK; i++) {
     out.push(dir);
-    if (stop && dir === stop) break;
+    if (stop && dir === stop) { out.incomplete = false; break; }
     let isRoot = false;
     try { isRoot = fs.existsSync(path.join(dir, '.git')); } catch (e) { /* unreadable: keep walking */ }
-    if (isRoot) break;
+    if (isRoot) { out.incomplete = false; break; }
     const up = path.dirname(dir);
-    if (up === dir) break;
+    if (up === dir) { out.incomplete = false; break; }
     dir = up;
   }
   return out;
@@ -269,6 +277,9 @@ function npmGlobalConfigs(env) {
   const prefix = env.NPM_CONFIG_PREFIX || env.npm_config_prefix || env.PREFIX
     || (process.platform === 'win32' ? path.dirname(process.execPath) : path.dirname(path.dirname(process.execPath)));
   files.push(path.join(prefix, 'etc', 'npmrc'));
+  // npm's default global prefix on Windows is %APPDATA%\npm; the Node folder is kept as well.
+  if (env.APPDATA) files.push(path.join(env.APPDATA, 'npm', 'etc', 'npmrc'));
+  if (process.platform === 'win32') files.push(path.join(path.dirname(process.execPath), 'etc', 'npmrc'));
   if (process.platform !== 'win32') files.push('/etc/npmrc');
   return files;
 }
@@ -283,12 +294,13 @@ function pnpmUserConfigs(env, home) {
 }
 
 /**
- * uv settings (uv.toml, or the [tool.uv] part of pyproject.toml): true when they name an index other than public PyPI.
+ * uv settings (uv.toml, or the uv, poetry and pdm index tables of pyproject.toml): true when they name an index other than public PyPI.
  * A small strict line reader, no TOML dependency. It understands table headers ([[index]], [[tool.uv.index]], [tool.uv])
  * and key = value lines. Fails closed: an index table whose url is not the public PyPI host is private, and so is an
  * index-url / extra-index-url / default-index / find-links key or an inline index list. isPyproject restricts the keys
  * to the tool.uv tables.
  */
+const PYPROJECT_INDEX_TABLES = new Set(['tool.uv.index', 'tool.poetry.source', 'tool.pdm.source']);
 const PYPI_INDEX_OK = /^https?:\/\/(?:pypi\.org|files\.pythonhosted\.org)(?:[/:?#]|$)/i;
 function uvConfigPrivate(text, isPyproject) {
   let section = isPyproject ? null : '';
@@ -305,7 +317,7 @@ function uvConfigPrivate(text, isPyproject) {
     if (!kv) continue;
     const key = kv[1];
     const value = kv[2];
-    const inIndexTable = isPyproject ? section === 'tool.uv.index' : section === 'index';
+    const inIndexTable = isPyproject ? PYPROJECT_INDEX_TABLES.has(section) : section === 'index';
     const inUv = isPyproject ? (section === 'tool.uv' || section === 'tool.uv.pip') : section === '' || section === 'pip';
     if (inIndexTable) {
       if (key === 'url') {
@@ -333,7 +345,9 @@ function privateRegistry(eco, opts = {}) {
   if (eco === 'npm') {
     if (env.NPM_CONFIG_REGISTRY || env.npm_config_registry || env.YARN_NPM_REGISTRY_SERVER || env.BUN_CONFIG_REGISTRY || env.YARN_REGISTRY) return true;
     const extra = npmGlobalConfigs(env).concat(pnpmUserConfigs(env, home)).map((f) => readSmall(f)).join('\n');
-    for (const dir of projectDirs(cwd, home).concat(home ? [home] : [])) {
+    const npmDirs = projectDirs(cwd, home);
+    if (npmDirs.incomplete) return true;
+    for (const dir of npmDirs.concat(home ? [home] : [])) {
       const text = extra + '\n' + readSmall(path.join(dir, '.pnpmrc')) + '\n' + readSmall(path.join(dir, 'pnpm-workspace.yaml')) + '\n' + readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml')) + '\n' + readSmall(path.join(dir, '.yarnrc')) + '\n'
         + readSmall(path.join(dir, 'bunfig.toml')) + '\n' + readSmall(path.join(dir, '.bunfig.toml')) + '\n'
         + (env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig ? readSmall(env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig) : '');
@@ -361,6 +375,7 @@ function privateRegistry(eco, opts = {}) {
   for (const v of ['PIP_CONFIG_FILE', 'UV_CONFIG_FILE']) if (env[v]) files.push(env[v]);
   if (env.VIRTUAL_ENV) files.push(path.join(env.VIRTUAL_ENV, 'pip.ini'));
   const projectDirList = projectDirs(cwd, home);
+  if (projectDirList.incomplete) return true;
   for (const dir of projectDirList) files.push(path.join(dir, 'uv.toml'), path.join(dir, 'pip.conf'));
   files.push('/etc/pip.conf', '/etc/xdg/pip/pip.conf', '/etc/uv/uv.toml');
   for (const d of String(env.XDG_CONFIG_DIRS || '').split(':')) if (d) files.push(path.join(d, 'pip', 'pip.conf'));
@@ -372,7 +387,9 @@ function privateRegistry(eco, opts = {}) {
     if ((path.basename(f).toLowerCase() === 'uv.toml' || f === env.UV_CONFIG_FILE) && uvConfigPrivate(text, false)) return true;
   }
   for (const dir of projectDirList) {
-    if (uvConfigPrivate(readSmall(path.join(dir, 'pyproject.toml')), true)) return true;
+    const pyproject = readSmall(path.join(dir, 'pyproject.toml'));
+    // Union of the table reader (uv, poetry and pdm sources) and the bare keys anywhere in the file: fail closed.
+    if (uvConfigPrivate(pyproject, true) || /^\s*(?:index-url|extra-index-url|find-links)\s*=/m.test(pyproject)) return true;
   }
   return false;
 }
