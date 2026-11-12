@@ -90,9 +90,10 @@ request). zn's servers do not implement it yet. Tested on 2026-10-23 by sending 
 A `tools/list` request without a prior `initialize`, with or without the version in `_meta`, also lists the tools,
 but the servers do not read that version. A client that accepts the `2025-11-25` answer connects. A client that
 requires `2026-07-28` and gives up when the server answers with another version does not.
-Last checked against real clients on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and
-with the official TypeScript MCP SDK client whose newest version was then `2025-11-25` (both servers connect and
-list their tools). Not yet re-checked with Claude Code 2.1.309 or the latest SDK.
+Last checked against real clients on 2026-11-12, on Linux with Node.js 22.20: Claude Code 2.1.322 (`claude mcp list`:
+both connected) and the official TypeScript MCP SDK client 1.32.2, whose newest protocol version is `2025-11-25`
+(both servers connect and list their tools: `analyze_prompt`, `check_tool_call`, `check_tool_result` and
+`zn_status`; `secrets_list`, `secrets_http_request`, `secrets_render_file` and `secrets_request`).
 
 In every agent, a shell command longer than 100 KB (counted in characters; this
 includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
