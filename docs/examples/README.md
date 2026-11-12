@@ -85,6 +85,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check, and when the result carries a warning.
 - [team-choices-examples.md](team-choices-examples.md): three worked team choices (block, warn, allow within limits) and what the developer, the agent and the audit record see.
 - [team-first-day.md](team-first-day.md): the first day of zn Team for a lead and one developer, from the invitation to `zn team leave`.
+- [team-leave-and-rejoin.md](team-leave-and-rejoin.md): leave an organization, what is removed and kept, what the lead sees, and joining again.
 - [team-managed-config.md](team-managed-config.md): print the managed settings an admin deploys so the hooks run on every machine.
 - [team-onboarding-checklist.md](team-onboarding-checklist.md): a one-line-per-step checklist for a new zn Team member, with the expected result and what to do when a step fails.
 - [team-sync-after-policy-change.md](team-sync-after-policy-change.md): pull a new team policy version with `zn team sync`, then read what changed in `zn team status`.
