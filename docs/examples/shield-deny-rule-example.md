@@ -57,6 +57,8 @@ The tools that did not change (`fetch` and `render`) keep working. The change is
 npx -y zn-gate pins
 ```
 
+The command prints the full path of the pins folder; it is shortened to `~/.zn/mcp-pins` here.
+
 ```text
 MCP tool pins (~/.zn/mcp-pins, mode: block)
 
