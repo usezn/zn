@@ -330,3 +330,85 @@ def test_json_equals_the_npm_package(machine):
     pt = zn(env, "reach", "--history").stdout
     nt = subprocess.run(["node", _NODE_CLI, "reach", "--history"], capture_output=True, text=True, env=node_env, timeout=120).stdout
     assert pt == nt
+
+
+# Types that only the scrub tables know, and the types the generic rules give. All values are fake, built at run time.
+TWILIO = "TWILIO_AUTH_" + "TOKEN=" + "0123456789abcdef" * 2
+ZN_KEY = "zn" + "_" + "0123456789abcdef" * 3
+PAT = "github" + "_pat_" + "A1b2C3d4E5f6G7h8I9j0K1" + "_" + "L2m3N4o5P6q7R8s9T0u1V2w3X4y5Z6a7B8c9D0e1F2g3H4i5J6k7L8m9N0o"
+GENERIC_LINES = [
+    "export DATABASE_" + "PASSWORD=Zq8Lk3Xv9Rt2Wm",
+    "MYAPP_SECRET_" + "KEY=Zq8Lk3Xv9Rt2WmPq7Ab",
+    "API_" + "TOKEN=Zq8Lk3Xv9Rt2WmPq7AbCd4Ef",
+]
+
+
+def _types_of(env, home):
+    out = json.loads(zn(env, "reach", "--history", "--json").stdout)
+    seen = {}
+    for f in out["findings"]:
+        seen[f["type"]] = seen.get(f["type"], 0) + f["count"]
+    return seen
+
+
+def test_scrub_table_types_are_counted(machine):
+    home, env = machine
+    put(home, ".claude/projects/-proj-t/s.jsonl", jsonl([
+        {"type": "user", "message": {"content": "my " + TWILIO + " is set"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "key " + ZN_KEY + " here"}]}},
+        {"type": "user", "message": {"content": "pat " + PAT + " ok"}},
+    ]))
+    seen = _types_of(env, home)
+    assert seen.get("TWILIO_AUTH_TOKEN") == 1
+    assert seen.get("ZN_API_KEY") == 1
+    assert seen.get("GITHUB_PAT") == 1
+    assert "GITHUB_TOKEN" not in seen
+    out = zn(env, "reach", "--history").stdout
+    assert "No secret found" not in out
+    assert "0123456789abcdef0123456789abcdef" not in out
+
+
+def test_an_unknown_rule_id_is_counted_as_a_generic_secret(monkeypatch):
+    from zn_gate import rules
+    monkeypatch.setattr(rules, "redact_secrets", lambda text: (text, [{"rule": "secret:future_rule", "start": 0, "end": 4}]))
+    counts = {}
+    reach_history.scan_line("a line with eight or more characters", counts)
+    assert counts == {"SECRET": 1}
+
+
+def test_every_scrub_rule_has_a_type():
+    from zn_gate import rules
+    types = reach_history._types()
+    for table in (rules.SCRUB_FIRST_PATTERNS, rules.SCRUB_LAST_PATTERNS):
+        for rule_id, _pattern, replacement in table:
+            assert rule_id.partition("#")[0] in types
+
+
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+def test_types_and_counts_equal_the_npm_package_for_scrub_and_generic_forms(machine):
+    home, env = machine
+    lines = [TWILIO, ZN_KEY, PAT, GITHUB, AWS] + GENERIC_LINES
+    put(home, ".claude/projects/-proj-p/s.jsonl", jsonl([{"text": x} for x in lines]))
+    py = json.loads(zn(env, "reach", "--history", "--json").stdout)
+    node_env = {k: v for k, v in env.items() if k != "PYTHONPATH"}
+    for k in ("SYSTEMROOT", "SystemRoot", "TEMP", "TMP"):
+        if k in os.environ:
+            node_env[k] = os.environ[k]
+    node = subprocess.run(["node", _NODE_CLI, "reach", "--history", "--json"], capture_output=True, text=True, env=node_env, timeout=120)
+    assert node.returncode == 0, node.stderr
+    js = json.loads(node.stdout)
+    py.pop("elapsed_ms")
+    js.pop("elapsed_ms")
+    assert py == js
+    types = {f["type"]: f["count"] for f in py["findings"]}
+    assert {"TWILIO_AUTH_TOKEN", "ZN_API_KEY", "GITHUB_PAT", "GITHUB_TOKEN", "AWS_KEY", "SECRET"} <= set(types)
+
+
+def test_the_scan_report_escapes_terminal_controls_in_reason_and_snippet(capsys):
+    esc = chr(27)
+    violation = {"file": "a.txt", "line": 1, "rule": "secret:x", "type": "secret_leak",
+                 "reason": "bad " + esc + "[31mred", "content": "snippet " + esc + "[2Jclear"}
+    cli._print_report("text", 1, [], [violation])
+    out = capsys.readouterr().out
+    assert esc not in out
+    assert (chr(92) + "x1b[31mred") in out and (chr(92) + "x1b[2Jclear") in out

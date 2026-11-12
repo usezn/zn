@@ -85,10 +85,14 @@ FAIL_ON = ("high", "medium", "low", "none")
 _TYPE_RE = re.compile(r"^[A-Z0-9_]{1,48}$")
 _MARKER_RE = re.compile(r"\[REDACTED_([A-Z0-9_]+)\]")
 _TOKEN_RE = re.compile(r"__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__")
-_UNSAFE_RE = re.compile("[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]")
-_LINE_BREAK_RE = re.compile("[\r\n\t  ]+")
+_UNSAFE_RE = re.compile(r"[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+_LINE_BREAK_RE = re.compile(r"[\r\n\t\u2028\u2029]+")
 
 _rule_types: Optional[Dict[str, str]] = None
+
+# The rule id a detection reports drops what follows "#", so the fine-grained GitHub token (id secret:github_token#scrub_pat,
+# type GITHUB_PAT in the npm package) is told apart by its own pattern.
+_PAT_RULE = "secret:github_token#scrub_pat"
 
 
 def action_for(type_: str) -> str:
@@ -104,11 +108,13 @@ def _types() -> Dict[str, str]:
     if _rule_types is None:
         from . import rules
         out: Dict[str, str] = {rules.QUOTED_CREDENTIAL_RULE: "SECRET"}
-        for table in (rules.SECRET_PATTERNS, rules.PROVIDER_SECRET_PATTERNS):
+        for table in (rules.SECRET_PATTERNS, rules.PROVIDER_SECRET_PATTERNS,
+                      rules.SCRUB_FIRST_PATTERNS, rules.SCRUB_LAST_PATTERNS):
             for rule_id, _pattern, replacement in table:
+                key = rule_id.partition("#")[0]
                 m = _MARKER_RE.search(replacement)
-                if m:
-                    out[rule_id] = m.group(1)
+                if m and key not in out:
+                    out[key] = m.group(1)
         _rule_types = out
     return _rule_types
 
@@ -291,10 +297,13 @@ def scan_line(line: str, counts: Dict[str, int]) -> None:
     types = _types()
     text = _cut_markers(text, set(types.values()) | {"URL_PASSWORD"})
     _redacted, detections = rules.redact_secrets(text)
+    pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(text))
     for d in detections:
-        t = types.get(d["rule"])
-        if t is None:
-            continue
+        # An id the table does not know is still a secret: count it as the generic type, never drop it.
+        t = types.get(d["rule"]) or "SECRET"
+        if t == "GITHUB_TOKEN" and pats > 0:
+            pats -= 1
+            t = "GITHUB_PAT"
         counts[t] = counts.get(t, 0) + 1
 
 
