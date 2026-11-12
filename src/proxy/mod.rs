@@ -1063,10 +1063,7 @@ Content-Length: 0
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("npx.cmd"),
-            "@echo off
-set /p line=
-echo {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"shim\":true}}
-",
+            "@echo off\r\nset /p line=\r\necho {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"shim\":true}}\r\n",
         )
         .unwrap();
         let old_path = std::env::var("PATH").unwrap_or_default();
