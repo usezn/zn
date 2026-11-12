@@ -12,7 +12,7 @@
 // form (1.14.0rc1), and the pins in the docs and the {minor} of the text facts follow docsVersion, the
 // last final release, because the docs keep telling people to install that one. The examples pin what
 // is already published (examplesVersion): they move only after a release is on npm and PyPI.
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -276,4 +276,4 @@ function main() {
   console.log(`public facts OK: version ${facts.version.value}${extra}, ${(facts.text || []).length + (facts.fields || []).length} other facts`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();
