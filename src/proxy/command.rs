@@ -12,6 +12,32 @@ const CMD_METACHARACTERS: &[char] = &[
     '&', '|', '<', '>', '^', '%', '(', ')', '"', '\r', '\n', '\0',
 ];
 
+/// True for an ending that is safe to add to a command name: a dot and 1 to 8 letters or digits.
+/// An entry with a separator, `..`, a space or any other character could make the candidate leave
+/// its PATH folder, so it is never used.
+fn is_simple_extension(ext: &str) -> bool {
+    let b = ext.as_bytes();
+    (2..=9).contains(&b.len()) && b[0] == b'.' && b[1..].iter().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// The endings to try from a PATHEXT value (`;`-separated). Entries that are not a simple ending
+/// are ignored. When PATHEXT is unset, blank or has no valid entry, the default list is used.
+pub fn parse_pathext(pathext: Option<&str>) -> Vec<String> {
+    let valid = |list: &str| -> Vec<String> {
+        list.split(';')
+            .map(|e| e.trim())
+            .filter(|e| is_simple_extension(e))
+            .map(|e| e.to_string())
+            .collect()
+    };
+    let exts = valid(pathext.unwrap_or(""));
+    if exts.is_empty() {
+        valid(DEFAULT_PATHEXT)
+    } else {
+        exts
+    }
+}
+
 fn has_separator(command: &str) -> bool {
     command.contains('\\') || command.contains('/') || command.contains(':')
 }
@@ -95,13 +121,7 @@ pub fn resolve_windows_command_guarded(
         }
     }
 
-    let exts: Vec<String> = pathext
-        .filter(|p| !p.trim().is_empty())
-        .unwrap_or(DEFAULT_PATHEXT)
-        .split(';')
-        .map(|e| e.trim().to_string())
-        .filter(|e| !e.is_empty())
-        .collect();
+    let exts = parse_pathext(pathext);
 
     let lower = command.to_lowercase();
     let has_known_ext = exts.iter().any(|e| lower.ends_with(&e.to_lowercase()));
@@ -139,9 +159,23 @@ pub fn resolve_windows_command_guarded(
         }
         for n in &names {
             let candidate = join(dir, n);
-            if is_file(&candidate) {
-                return Ok(candidate);
+            if !is_file(&candidate) {
+                continue;
             }
+            // Fail closed: the file that would run must really sit in this PATH folder and not in
+            // the project, whatever a link or a junction inside the folder points to.
+            let real_candidate = match canonical(&candidate) {
+                Some(real_candidate) => real_candidate,
+                None => continue,
+            };
+            if !is_inside(&real_candidate, &real)
+                || root_forms
+                    .iter()
+                    .any(|root| is_inside(&real_candidate, root))
+            {
+                continue;
+            }
+            return Ok(candidate);
         }
     }
     Err(not_found(command, &exts))
@@ -258,6 +292,96 @@ mod tests {
 
     fn files<'a>(list: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
         move |p| list.contains(&p)
+    }
+
+    #[test]
+    fn pathext_keeps_only_simple_endings() {
+        assert_eq!(
+            parse_pathext(Some(".CMD;.exe;.Py3")),
+            vec![".CMD", ".exe", ".Py3"]
+        );
+        for bad in [
+            "..\\evil.cmd",
+            "/x.cmd",
+            ".c/d",
+            ".c\\d",
+            "",
+            ".",
+            "cmd",
+            ".toolongextension",
+            ".a b",
+            ".c:d",
+            "..",
+        ] {
+            let got = parse_pathext(Some(&format!(".EXE;{bad};.CMD")));
+            assert_eq!(got, vec![".EXE", ".CMD"], "entry {bad:?} must be ignored");
+        }
+    }
+
+    #[test]
+    fn pathext_falls_back_to_the_default_list() {
+        let default = vec![".COM", ".EXE", ".BAT", ".CMD"];
+        assert_eq!(parse_pathext(None), default);
+        assert_eq!(parse_pathext(Some("  ")), default);
+        assert_eq!(parse_pathext(Some("..\\evil.cmd;/x.cmd;.c/d")), default);
+    }
+
+    #[test]
+    fn a_hostile_pathext_entry_cannot_reach_a_project_file() {
+        let f = files(&["C:\\tools\\..\\proj\\npx.cmd", "C:\\tools\\npx.CMD"]);
+        let got =
+            resolve_windows_command("npx", Some("C:\\tools"), Some("..\\proj\\npx.cmd;.CMD"), &f);
+        assert_eq!(got.unwrap(), "C:\\tools\\npx.CMD");
+    }
+
+    #[test]
+    fn a_candidate_that_resolves_outside_its_path_folder_is_rejected() {
+        let both = files(&["C:\\tools\\npx.CMD", "C:\\tools\\npx.EXE"]);
+        // The .CMD is a link into the project; the .EXE is a real file in the folder.
+        let canonical = |p: &str| {
+            Some(match p {
+                "C:\\tools\\npx.CMD" => "C:\\proj\\npx.cmd".to_string(),
+                other => other.to_string(),
+            })
+        };
+        let roots = ["C:\\proj".to_string()];
+        let got = resolve_windows_command_guarded(
+            "npx",
+            Some("C:\\tools"),
+            Some(".CMD;.EXE"),
+            &roots,
+            &both,
+            &canonical,
+        );
+        assert_eq!(got.unwrap(), "C:\\tools\\npx.EXE");
+        // With no other candidate, nothing is found.
+        let only_cmd = files(&["C:\\tools\\npx.CMD"]);
+        let got = resolve_windows_command_guarded(
+            "npx",
+            Some("C:\\tools"),
+            Some(".CMD"),
+            &roots,
+            &only_cmd,
+            &canonical,
+        );
+        assert!(got.is_err());
+        // A candidate whose real path cannot be read is rejected too.
+        let unreadable = |p: &str| {
+            if p == "C:\\tools" || p == "C:\\proj" {
+                Some(p.to_string())
+            } else {
+                None
+            }
+        };
+        let got = resolve_windows_command_guarded(
+            "npx",
+            Some("C:\\tools"),
+            Some(".CMD"),
+            &roots,
+            &only_cmd,
+            &unreadable,
+        );
+        assert!(got.is_err());
     }
 
     #[test]
