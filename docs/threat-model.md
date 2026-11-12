@@ -76,6 +76,14 @@ built at run time) is not seen, and an agent that cannot ask (see
 [compat.md](compat.md#agent-memory-and-instruction-files)) gets a block with the
 reason instead of a question. You can turn it off with `hooks.agentInstructionWrites`.
 
+- **Commands whose arguments are built when they run.** zn reads the command as it is written. An argument that a
+  program only gets when the command runs (the output of `$(...)` or backticks, `xargs`, `eval`, `bash -c` with built
+  text, shell functions, `read` or `printf -v` into a variable, arrays, `IFS` changes, `${var/x/y}` substitutions) is
+  not known to zn, for curl as for any other command. For curl, zn refuses the forms it cannot read (options read from
+  standard input or a pipe, a file to upload or to send with `@file` whose name is built at run time), but other programs and other ways to build arguments
+  can still name a protected file. Keep secrets out of plain-text files (`zn-gate env shadow .env`) so that there is
+  nothing to send.
+
 ## Google Antigravity
 
 Antigravity is a supported agent. Its hooks have limits the other agents do not have, listed below.
@@ -454,9 +462,13 @@ stop malware running as the same user (see above).
   deny, because after a tool has run a deny alone does not withhold the output
   in Claude Code, Copilot or OpenCode. An output that is mostly invisible characters has
   the invisible characters removed and the rest redacted, and is reported as
-  denied. Known limit: Claude Code ignores a replacement whose shape differs
-  from the output of a built-in tool, so a built-in tool result over 32 MiB
-  cannot be withheld (MCP output is not validated, so it is). ZCode cannot withhold an event over 32 MiB either: it gets a notice and the output passes (exit 0).
+  denied. Claude Code ignores a replacement whose shape differs from the
+  output of a built-in tool, so for a Bash result over 32 MiB (and any tool
+  that is not an MCP one) the notice is sent in the shape of a Bash result
+  (`stdout`, `stderr`, `interrupted`), the one the post-tool check already
+  uses for ordinary Bash output; MCP output is not validated. Known limit:
+  a result over 32 MiB from another built-in tool with its own result shape
+  (for example a file read) is not withheld. ZCode cannot withhold an event over 32 MiB either: it gets a notice and the output passes (exit 0).
 - **Text hidden behind blank lines:** a skill, rules file or tool output can put a long run of empty or whitespace-only lines before its real text, which pushes that text out of a reviewer's view and out of the window a classifier reads. The local rules read every run of blank lines as one blank line, and `zn audit` reports a run of 40 or more blank lines with text after it (ZNA021), giving the line where the text starts.
 - **Scrubber error:** fails closed. The tool call is denied, the output
   withheld or the prompt blocked. A missing engine also fails closed, and the

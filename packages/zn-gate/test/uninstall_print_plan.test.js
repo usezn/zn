@@ -13,7 +13,7 @@ function fakeIo() {
   return { io: { stdout: { write: (s) => { chunks.push(String(s)); return true; } } }, text: () => chunks.join(''), lines: () => chunks.join('').split('\n') };
 }
 function emptyPlan() {
-  return { agents: [], wrapped: [], shadowed: [], vault: { exists: false, home: '/example/.zn', lines: [] } };
+  return { agents: [], wrapped: [], launchers: [], shadowed: [], vault: { exists: false, home: '/example/.zn', lines: [] } };
 }
 const HEADER = ['', 'zn-gate uninstall: what zn-gate set up on this computer', ''];
 

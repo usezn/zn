@@ -58,7 +58,9 @@ function assertWithheld(agent, r) {
   assert.match(r.out, NOTICE);
   if (agent === 'claude-code') {
     assert.equal(a.hookSpecificOutput.hookEventName, 'PostToolUse');
-    assert.match(String(a.hookSpecificOutput.updatedToolOutput), NOTICE);
+    const u = a.hookSpecificOutput.updatedToolOutput;
+    // A Bash result keeps the shape of a Bash result; only MCP output is a plain string.
+    assert.match(typeof u === 'string' ? u : u.stdout, NOTICE);
   } else if (agent === 'codex') {
     assert.equal(a.decision, 'block');
     assert.match(a.reason, NOTICE);

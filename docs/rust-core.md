@@ -180,6 +180,10 @@ The first time a new version opens a file written by an earlier one, it upgrades
 
 A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. Failures are logged as a warning at most once every ten minutes, and at debug level in between.
 
+## MCP servers on Windows
+
+A server started with `npx` or `uvx` runs through a `.cmd` file on Windows. The gateway finds it on your `PATH` (using `PATHEXT`), so a bare `npx` works. It does not look in the current folder or in a relative `PATH` entry (such as `.` or `C:bin`), only in absolute ones. If the program is not found, the error names it. Because a `.cmd` file runs through `cmd.exe`, the gateway refuses to start it with an argument that has `&`, `|`, `<`, `>`, `^`, `%`, `(`, `)`, a double quote (`"`), a line break (CR or LF) or a NUL character, and says which one. Spaces are fine.
+
 ## Build it yourself
 
 1. Install the prerequisites:

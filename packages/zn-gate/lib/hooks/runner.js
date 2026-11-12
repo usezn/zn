@@ -1244,14 +1244,20 @@ async function decidePrompt(ev, d, agentId) {
 // plus private keys, and a size cap so the check fits in the hook's time.
 const EXPANSION_CAP = 1000000;
 const PRIVATE_KEY_HEADER_RE = /-----BEGIN (?:[A-Z0-9]+ ){0,4}PRIVATE KEY(?: BLOCK)?-----/g;
-const PRIVATE_KEY_BODY_RE = /^\s*(?:[ \t]*[A-Za-z0-9+\/=]{8,}[ \t]*\r?\n){2}|^\s*[A-Za-z0-9+\/=]{64,}/;
+// The leading space of the first line is the `\s*`; the second line has its own `[ \t]*` after the
+// newline. No class can split a run of spaces two ways, so the test is linear in the window.
+const PRIVATE_KEY_BODY_RE = /^\s*[A-Za-z0-9+\/=]{8,}[ \t]*\r?\n[ \t]*[A-Za-z0-9+\/=]{8,}[ \t]*\r?\n|^\s*[A-Za-z0-9+\/=]{64,}/;
+// A text with this many key headers is treated as carrying a key: bounded work, fail closed.
+const PRIVATE_KEY_MAX_HEADERS = 256;
 
 // A key, not a line that names one: the header must be followed by a base64 body.
 function hasPrivateKey(text) {
   if (/PuTTY-User-Key-File-/.test(text)) return true;
   PRIVATE_KEY_HEADER_RE.lastIndex = 0;
   let m;
+  let seen = 0;
   while ((m = PRIVATE_KEY_HEADER_RE.exec(text)) !== null) {
+    if (++seen > PRIVATE_KEY_MAX_HEADERS) return true;
     if (PRIVATE_KEY_BODY_RE.test(text.slice(m.index + m[0].length, m.index + m[0].length + 4096))) return true;
   }
   return false;
@@ -2054,7 +2060,13 @@ function topLevelKeys(text) {
 // no such key is not told apart from a pre-tool event, so it is refused (exit 2, or Cursor's deny) like any event
 // zn cannot read: letting it pass would let a blocking event through.
 const OVERSIZE_POST = {
-  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
+  // Claude Code ignores a replacement whose shape differs from the result of a built-in tool, so Bash (and any
+  // tool not known to be an MCP one) gets the shape of its own result; MCP output is not validated.
+  'claude-code': {
+    isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined),
+    tool: 'bash',
+    shape: (t, k) => (typeof k.tool_name === 'string' && k.tool_name.startsWith('mcp__') ? t : { stdout: t, stderr: '', interrupted: false }),
+  },
   codex: { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
   // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
   // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
@@ -2090,7 +2102,7 @@ function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too 
   // adapter's own notice (stats.withheld), never the withheld one.
   const note = why === SUPERVISOR_REASON && agentId === 'zcode' ? POST_TIMEOUT_NOTE : POST_CAP_NOTE;
   const stats = agentId === 'zcode' && why !== SUPERVISOR_REASON ? { withheld: true } : undefined;
-  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: note, event, stats });
+  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD, keys), message: note, event, stats });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
 }
 
@@ -2475,7 +2487,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, VAULT_CLIENT_FILES };
+module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
