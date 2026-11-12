@@ -2,10 +2,11 @@
 import sys
 
 from zn_gate import cli
+from zn_gate.shell_names import npx_name
 
 
 def test_message_names_the_npm_help_command():
-    assert "npx -y zn-gate --help" in cli.npm_help_message()
+    assert npx_name() + " -y zn-gate --help" in cli.npm_help_message()
 
 
 def test_message_mentions_node_18():

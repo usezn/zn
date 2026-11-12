@@ -21,6 +21,9 @@ const { tempDir } = require('./helpers/tmp');
 const corpus = require('./fixtures/destructive_commands.json');
 const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
+// A linear read of these inputs uses up to about 2 s of CPU on a busy CI runner; a quadratic one takes far longer than twice that.
+const budgetCi = (limitMs) => budget(process.env.CI ? limitMs * 2 : limitMs);
+
 function preTool(tool_name, command, cwd) {
   return { session_id: 'abc123', cwd, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input: { command }, tool_use_id: 'toolu_01' };
 }
@@ -96,7 +99,7 @@ test('hostile long input stays fast', () => {
   for (const input of inputs) {
     const t0 = cpuNow();
     checkCommand(input);
-    assert.ok(cpuMsSince(t0) < budget(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
+    assert.ok(cpuMsSince(t0) < budgetCi(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
   }
 });
 
@@ -227,7 +230,7 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     assert.ok(cmd.length < 200 * 1024);
     const t0 = cpuNow();
     const res = checkCommand(cmd);
-    assert.ok(cpuMsSince(t0) < budget(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
+    assert.ok(cpuMsSince(t0) < budgetCi(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
     assert.equal(res.verdict, want, cmd.slice(0, 40));
   }
 });
