@@ -25,7 +25,7 @@
 //     prints the same two lines as "plan". Fails closed on a missing, unreadable or mismatched plan.
 //
 // <dist-tags.json> is the output of `npm view zn-gate dist-tags --json`.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -174,6 +174,6 @@ function main(argv) {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

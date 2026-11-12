@@ -1,3 +1,4 @@
+# zn-gate Node.js 22 test suite on macOS, on pull requests and on pushes that touch the package code.
 name: zn-gate Node.js on macOS
 
 # Runs the whole zn-gate Node.js test suite on macOS with Node.js 22, including the vault tests against

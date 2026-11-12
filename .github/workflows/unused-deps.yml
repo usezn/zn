@@ -1,3 +1,4 @@
+# Informational unused-dependency checks (knip for zn-gate, cargo-machete for Rust): on pushes to main, nightly on next, and when it changes.
 name: Unused dependencies
 
 on:
