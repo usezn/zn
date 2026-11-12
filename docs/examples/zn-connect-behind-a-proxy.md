@@ -48,7 +48,7 @@ Some company proxies open the encrypted connection and sign it with the company'
 - Your local checks keep working while this is the case.
 - Do not turn off certificate checks to make the message go away.
 
-What does work is a key you give yourself. Create an analysis-only key on <https://usezn.com/connect> in your browser, then set it in your shell. A key set this way is your own choice and is not held back, and Node.js trusts `NODE_EXTRA_CA_CERTS` for it ([Troubleshooting](../troubleshooting.md) says the same, under the certificate section):
+What does work is a key you give yourself. The proxy can read that key too, so give it only an analysis-only key, never another one. Create an analysis-only key on <https://usezn.com/connect> in your browser, then set it in your shell. A key set this way is your own choice and is not held back, and Node.js trusts `NODE_EXTRA_CA_CERTS` for it ([Troubleshooting](../troubleshooting.md) says the same, under the certificate section):
 
 ```bash
 export ZN_CLOUD=1
