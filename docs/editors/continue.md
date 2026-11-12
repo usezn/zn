@@ -112,3 +112,9 @@ All messages: [Troubleshooting](../troubleshooting.md).
 ## Continue documentation
 
 - MCP in Continue: <https://docs.continue.dev/customize/deep-dives/mcp>
+
+## Where next
+
+- [By agent](../by-agent.md): what zn-gate covers in each agent, to compare Continue with the others.
+- [Check that it works](../check.md): what `zn-gate check` tests, and what it does not test for Continue.
+- [Remove zn-gate](../uninstall.md): how to uninstall.

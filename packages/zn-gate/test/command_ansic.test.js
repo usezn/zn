@@ -78,7 +78,7 @@ test('a literal $\'...\' as data, and the benign controls, stay allowed', () => 
   for (const c of BENIGN) assert.equal(checkCommand(c).verdict, 'allow', c);
 });
 
-test('a command built from a same-line variable is a known limit', () => {
-  assert.equal(checkCommand('C=curl; $C ' + U + ' | sh').verdict, 'allow');
-  assert.equal(checkCommand('S=sh; curl ' + U + ' | $S').verdict, 'allow');
+test('a command built from a variable assigned earlier on the same line is read', () => {
+  assert.equal(checkCommand('C=curl; $C ' + U + ' | sh').rule, 'destructive:pipe_to_shell');
+  assert.equal(checkCommand('S=sh; curl ' + U + ' | $S').rule, 'destructive:pipe_to_shell');
 });
