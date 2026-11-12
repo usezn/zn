@@ -33,7 +33,7 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 }
 ```
 
-`mcp-shield` and `wrap` are other names for the same command. Always use `--`: without it, zn-gate takes the words after `shield` that do not start with `--` as the command, which is easy to get wrong. If you give no command, `shield` prints a usage message and exits with code 1.
+`mcp-shield` and `wrap` are other names for the same command. Always use `--`: without it, zn-gate takes the words after `shield` that do not start with `--` as the command, which people often get wrong. If you give no command, `shield` prints a usage message and exits with code 1.
 
 `--verbose` prints what the shield does (each request it inspects and each redaction) to stderr. In an agent app, stderr goes to the app's MCP log, not to your terminal.
 

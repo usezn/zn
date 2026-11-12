@@ -1,3 +1,4 @@
+# Scheduled deletion of Actions caches of closed pull requests and deleted branches, every six hours; a manual run is a dry run by default.
 name: Cache cleanup
 
 # Deletes the Actions caches of pull requests that are closed (merged or not). A pull request run
