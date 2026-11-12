@@ -56,7 +56,7 @@ The first time a program uses a secret, the vault asks you to confirm in its own
 
 The value goes only into that program's environment. What the program prints is masked: the value comes back as the marker, so the agent sees `__ZN_EXAMPLE_API_KEY__` and never the value.
 
-The exit code of `run` is the exit code of your program (here `0`).
+The exit code of `run` is the exit code of your program (here `0`). In a Makefile, that is what makes `make` stop when the program fails: [Example: a failing `zn run` stops make](zn-secret-run-exit-code-passthrough-in-make.md).
 
 ## What an agent gets when it is not allowed
 
