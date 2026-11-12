@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.13';
+const POLICY_RULES_VERSION = '2026-11-12.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1040,12 +1040,12 @@ const INSTRUCTION_WRAPPERS = new Map([
   ['doas', new Set(['-u', '-C'])],
   ['env', new Set(['-u', '-C', '-S'])],
   ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
-  ['nice', new Set(['-n'])],
-  ['time', new Set(['-f', '-o'])],
+  ['nice', new Set(['-n', '--adjustment'])],
+  ['time', new Set(['-f', '-o', '--format', '--output'])],
   ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()],
   ['timeout', new Set(['-k', '-s', '--kill-after', '--signal'])],
   ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
-  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'])],
+  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata', '--pid', '--pgid', '--uid'])],
   ['then', new Set()], ['do', new Set()], ['else', new Set()], ['if', new Set()], ['while', new Set()], ['until', new Set()],
   ['!', new Set()], ['{', new Set()],
 ]);
@@ -3196,36 +3196,61 @@ function isGit(head) {
 const GIT_WRAPPERS = {
   sudo: 'ugphCDrtUTR', doas: 'uC', env: 'uCS', command: '', nohup: '', time: 'fo', builtin: '', exec: 'a', nice: 'n', timeout: 'sk',
   xargs: 'IinLPdEsa', setsid: '', ionice: 'cnpPu', stdbuf: 'ioe', busybox: '',
-  chrt: '', taskset: 'c', chroot: 'ug', runuser: 'ugGsT', unbuffer: '', strace: 'eopsuEaOSbPIX', ltrace: 'eopsunal', nsenter: 'tSG', flock: 'wE',
+  chrt: 'TPD', taskset: 'c', chroot: 'ug', runuser: 'ugGsTw', unbuffer: '', strace: 'eopsuEaOSbPIX', ltrace: 'eopsunal', nsenter: 'tSG', flock: 'wE',
 };
 // Wrappers that take positional arguments before the command: chrt <priority>, taskset <mask> (not with -c), chroot <newroot>, flock <lock>.
 const WRAPPER_POSITIONAL = { chrt: 1, taskset: 1, chroot: 1, flock: 1 };
+// Long options of these wrappers that take the next word as their value (--opt=value is one word either way).
 const WRAPPER_LONG_VALUE = new Set(['--user', '--group', '--chdir', '--unset', '--max-args', '--max-procs', '--replace', '--delimiter',
-  '--arg-file', '--eof', '--signal', '--kill-after', '--split-string', '--cpu-list', '--host', '--prompt', '--close-from', '--role', '--type']);
+  '--arg-file', '--eof', '--signal', '--kill-after', '--split-string', '--cpu-list', '--host', '--prompt', '--close-from', '--role', '--type',
+  '--other-user', '--chroot', '--command-timeout', '--argv0',
+  '--adjustment', '--class', '--classdata', '--pid', '--pgid', '--uid', '--input', '--output', '--error', '--format',
+  '--wait', '--timeout', '--conflict-exit-code', '--userspec', '--groups', '--target', '--setuid', '--setgid',
+  '--supp-group', '--shell', '--whitelist-environment', '--sched-runtime', '--sched-period', '--sched-deadline']);
+// A word in command position that reads like an option value, not a program: a number or duration (10, +5, 1e3),
+// a one-letter mode (stdbuf L), a user:group, a list or a format (%e).
+const VALUE_LIKE_RE = /^[+-]?[0-9.]|^[A-Z]$|[:,%]/;
 
 function wordIsGit(text) {
   return isGit(String(text).replace(/^\(+/, '').split(/[\\/]/).pop().toLowerCase());
 }
 
-/* The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration. */
-function skipWrapper(words, k, name) {
+/*
+ * The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration.
+ * With `info`, info.unsure is set when the chain may not end on the program: an option was read as a flag (it may take a
+ * value zn does not know of, or be an abbreviation such as --adj, which GNU tools accept), or the word reached reads like an
+ * option value. Callers then also read the later words as possible commands, so an unknown option cannot hide one.
+ */
+function skipWrapper(words, k, name, info) {
   const valueOpts = GIT_WRAPPERS[name];
   let sawC = false;
+  let unsure = false;
+  const textAt = (j) => (typeof words[j] === 'string' ? words[j] : words[j].text);
   k++;
   while (k < words.length) {
-    const t = typeof words[k] === 'string' ? words[k] : words[k].text;
+    const t = textAt(k);
     if (t === '--') { k++; break; }
-    if (t.startsWith('--') && t.length > 2) { k += !t.includes('=') && WRAPPER_LONG_VALUE.has(t) ? 2 : 1; continue; }
+    if (t.startsWith('--') && t.length > 2) {
+      const valued = !t.includes('=') && WRAPPER_LONG_VALUE.has(t);
+      if (!valued && !t.includes('=')) unsure = true;
+      k += valued ? 2 : 1;
+      continue;
+    }
     if (t.startsWith('-') && t.length > 1) {
       if (t === '-c') sawC = true;
       // -n, -E, -En: flags; a cluster ending in an option that takes a value (sudo -u root) takes the next word.
-      k += /^-[A-Za-z]+$/.test(t) && valueOpts.includes(t[t.length - 1]) ? 2 : 1;
+      const valued = /^-[A-Za-z]+$/.test(t) && valueOpts.includes(t[t.length - 1]);
+      if (!valued) unsure = true;
+      k += valued ? 2 : 1;
       continue;
     }
-    if (ASSIGNMENT_RE.test(t) || (name === 'timeout' && /^[0-9.]+[smhd]?$/.test(t))) { k++; continue; }
+    if (name !== 'timeout' && ASSIGNMENT_RE.test(t)) { k++; continue; }
     break;
   }
+  // timeout's first operand is the duration, whatever its spelling (5, 1.5m, inf, 1e3, +5, 0x10): GNU reads it with strtod.
+  if (name === 'timeout' && k < words.length) k++;
   if (WRAPPER_POSITIONAL[name] && k < words.length && !(name === 'taskset' && sawC)) k += WRAPPER_POSITIONAL[name];
+  if (info && (unsure || (k < words.length && VALUE_LIKE_RE.test(textAt(k))))) info.unsure = true;
   return k;
 }
 
@@ -3703,7 +3728,9 @@ function egressCollectText(raw, text, opts, depth, found) {
     if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
     let k = -1;
     let prog = '';
-    for (let i = 0; i < words.length;) {
+    const chain = {};
+    let i = 0;
+    while (i < words.length) {
       const t = words[i].text;
       let name = programName(t);
       // {curl,-H,x,URL} is the words curl -H x URL.
@@ -3717,8 +3744,16 @@ function egressCollectText(raw, text, opts, depth, found) {
       prog = egressProgramOf(name);
       if (prog) { k = i; break; }
       if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
-      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { i = skipWrapper(words, i, name); continue; }
+      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { i = skipWrapper(words, i, name, chain); continue; }
       break;
+    }
+    // The wrappers did not end on a plausible program (an option zn does not know may have taken the next word): the
+    // first later word that is a network program counts, so the request is not hidden behind the option.
+    if (k < 0 && chain.unsure) {
+      for (let j = i; j < words.length; j++) {
+        prog = egressProgramOf(programName(words[j].text));
+        if (prog) { k = j; break; }
+      }
     }
     if (k >= 0) {
       if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);

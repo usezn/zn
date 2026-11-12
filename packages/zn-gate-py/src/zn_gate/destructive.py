@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-10.1"
+COMMAND_RULES_VERSION = "2026-11-12.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -60,7 +60,10 @@ _FIND_TESTS = re.compile(
     r"^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$",
     _A,
 )
-_SUDO_ARG_FLAGS = {"-u", "-g", "-h", "-p", "-C", "-T", "-r", "-t", "-U", "-D", "-R"}
+_SUDO_ARG_FLAGS = {"-u", "-g", "-h", "-p", "-C", "-T", "-r", "-t", "-U", "-D", "-R", "--user", "--group", "--host", "--prompt",
+                   "--close-from", "--other-user", "--role", "--type", "--command-timeout", "--chroot"}
+# More words than this that could each be the command behind an unsure wrapper chain: the line is refused, not guessed at.
+_LATER_HEADS_MAX = 64
 
 _SYSTEM_DIRS = {
     "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64", "/opt", "/proc", "/root",
@@ -448,21 +451,33 @@ class _Vars:
 _WRAPPERS = {
     "sudo": "ugphCDrtUTR", "doas": "uC", "env": "uCS", "command": "", "nohup": "", "time": "fo", "builtin": "", "exec": "a",
     "nice": "n", "timeout": "sk", "xargs": "IinLPdEsa", "setsid": "", "ionice": "cnpPu", "stdbuf": "ioe", "busybox": "",
-    "chrt": "", "taskset": "c", "chroot": "ug", "runuser": "ugGsT", "unbuffer": "", "strace": "eopsuEaOSbPIX",
+    "chrt": "TPD", "taskset": "c", "chroot": "ug", "runuser": "ugGsTw", "unbuffer": "", "strace": "eopsuEaOSbPIX",
     "ltrace": "eopsunal", "nsenter": "tSG", "flock": "wE",
 }
 # Wrappers that take positional arguments before the command: chrt <priority>, taskset <mask> (not with -c), chroot <newroot>, flock <lock>.
 _WRAPPER_POSITIONAL = {"chrt": 1, "taskset": 1, "chroot": 1, "flock": 1}
+# Long options of these wrappers that take the next word as their value (--opt=value is one word either way).
 _WRAPPER_LONG_VALUE = frozenset((
     "--user", "--group", "--chdir", "--unset", "--max-args", "--max-procs", "--replace", "--delimiter", "--arg-file", "--eof",
     "--signal", "--kill-after", "--split-string", "--cpu-list", "--host", "--prompt", "--close-from", "--role", "--type",
+    "--other-user", "--chroot", "--command-timeout", "--argv0",
+    "--adjustment", "--class", "--classdata", "--pid", "--pgid", "--uid", "--input", "--output", "--error", "--format",
+    "--wait", "--timeout", "--conflict-exit-code", "--userspec", "--groups", "--target", "--setuid", "--setgid",
+    "--supp-group", "--shell", "--whitelist-environment", "--sched-runtime", "--sched-period", "--sched-deadline",
 ))
+# A word in command position that reads like an option value, not a program: a number or duration (10, +5, 1e3),
+# a one-letter mode (stdbuf L), a user:group, a list or a format (%e).
+_VALUE_LIKE_RE = re.compile(r"^[+-]?[0-9.]|^[A-Z]\Z|[:,%]")
 
 
-def _skip_wrapper(words: List[str], k: int, name: str) -> int:
-    """The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration."""
+def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, bool]] = None) -> int:
+    """The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration.
+    With info, info["unsure"] is set when the chain may not end on the program: an option was read as a flag (it may take a
+    value zn does not know of, or be an abbreviation such as --adj, which GNU tools accept), or the word reached reads like an
+    option value. Callers then also read the later words as possible commands, so an unknown option cannot hide one."""
     value_opts = _WRAPPERS[name]
     saw_c = False
+    unsure = False
     k += 1
     while k < len(words):
         t = words[k]
@@ -470,19 +485,30 @@ def _skip_wrapper(words: List[str], k: int, name: str) -> int:
             k += 1
             break
         if t.startswith("--") and len(t) > 2:
-            k += 2 if "=" not in t and t in _WRAPPER_LONG_VALUE else 1
+            valued = "=" not in t and t in _WRAPPER_LONG_VALUE
+            if not valued and "=" not in t:
+                unsure = True
+            k += 2 if valued else 1
             continue
         if t.startswith("-") and len(t) > 1:
             if t == "-c":
                 saw_c = True
-            k += 2 if re.match(r"^-[A-Za-z]+\Z", t) and t[-1] in value_opts else 1
+            valued = bool(re.match(r"^-[A-Za-z]+\Z", t)) and t[-1] in value_opts
+            if not valued:
+                unsure = True
+            k += 2 if valued else 1
             continue
-        if _ASSIGN_RE.match(t) or (name == "timeout" and re.match(r"^[0-9.]+[smhd]?\Z", t)):
+        if name != "timeout" and _ASSIGN_RE.match(t):
             k += 1
             continue
         break
+    # timeout's first operand is the duration, whatever its spelling (5, 1.5m, inf, 1e3, +5, 0x10): GNU reads it with strtod.
+    if name == "timeout" and k < len(words):
+        k += 1
     if name in _WRAPPER_POSITIONAL and k < len(words) and not (name == "taskset" and saw_c):
         k += _WRAPPER_POSITIONAL[name]
+    if info is not None and (unsure or (k < len(words) and _VALUE_LIKE_RE.search(words[k]))):
+        info["unsure"] = True
     return k
 
 
@@ -542,15 +568,17 @@ def _add_dir(dirs: List[str], w: Optional[str]) -> None:
 _WRAPPER_CAP_NAMES = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
 
 
-def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]:
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool]:
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
     keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
-    followed were met (the line is then refused), and the strings of env -S / --split-string."""
+    followed were met (the line is then refused), the strings of env -S / --split-string, and whether the chain may not
+    end on the program (see _skip_wrapper: the caller then also reads the later words)."""
     i = 0
     guard = 0
     chdir: List[str] = []
     splits: List[str] = []
     overflow = False
+    chain = {"unsure": False}
     while i < len(args):
         guard += 1
         # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
@@ -591,6 +619,10 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]
                     continue
                 if f in _SUDO_ARG_FLAGS:
                     i += 1
+                    continue
+                # A flag zn does not know may take a value (a cluster such as -Eu root, a newer option).
+                if not re.match(r"^--[^=]+=", f):
+                    chain["unsure"] = True
             continue
         if name == "env":
             i += 1
@@ -603,10 +635,10 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]
             continue
         # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
         if name in _WRAPPERS:
-            i = _skip_wrapper(args, i, name)
+            i = _skip_wrapper(args, i, name, chain)
             continue
         break
-    return args[i:], chdir, overflow, splits
+    return args[i:], chdir, overflow, splits, chain["unsure"]
 
 
 _ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
@@ -975,7 +1007,7 @@ def _from_cwd(cwd: Any, word: str) -> str:
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
-    args, chdir, overflow, splits = _unwrap_dir(words)
+    args, chdir, overflow, splits, unsure = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
     if chdir:
@@ -993,6 +1025,37 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             return hit
     if not args:
         return None
+    hit = _check_head(args, depth, known)
+    if hit or not unsure:
+        return hit
+    return _check_later_heads(args, depth, known)
+
+
+def _head_is_read(name: str) -> bool:
+    """Whether the rules of _check_head read a command with this program name as its head."""
+    return (name in _RM_HEADS or bool(_DISK_TOOLS.match(name)) or name in _SHELLS or name in _POWERSHELLS
+            or name in ("su", "eval", "cmd", "find", "chmod", "chown", "chgrp", "dd") or bool(_interpreter_kind(name)))
+
+
+def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]:
+    """A wrapper chain that may not end on the program (an option zn does not know may have taken the next word as its
+    value): each later word that names a program these rules read is checked as the head too, so the option cannot hide
+    the command."""
+    n = 0
+    for j in range(1, len(args)):
+        if not _head_is_read(_program_name(args[j])):
+            continue
+        n += 1
+        if n > _LATER_HEADS_MAX:
+            return _OVERFLOW
+        hit = _check_head(args[j:], depth, known)
+        if hit:
+            return hit
+    return None
+
+
+def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
+    """The rules for one simple command whose head is args[0]."""
     head = _program_name(args[0])
     rest = args[1:]
 
@@ -1157,10 +1220,27 @@ def _segment_dir(known: Any, d: Optional[List[str]]) -> Any:
     return _in_dir(known, d) if d else known
 
 
+def _pipe_args(a: List[str], unsure: bool) -> List[str]:
+    """The words of a pipeline segment from its program on. When the wrapper chain may not end on the program (unsure) and
+    its head is not a downloader, shell or interpreter, the first later word that is one starts it (curl URL | nice --adj 5 sh)."""
+    if not unsure or len(a) < 2:
+        return a
+
+    def is_prog(w: str) -> bool:
+        n = _program_name(w)
+        return n in _DOWNLOADERS or n in _SHELLS or bool(_interpreter_kind(n))
+
+    if is_prog(a[0]):
+        return a
+    j = next((i for i in range(1, len(a)) if is_prog(a[i])), -1)
+    return a[j:] if j > 0 else a
+
+
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf, _spl = _unwrap_dir(_strip_redirects(words))
+        a, d, _ovf, _spl, unsure = _unwrap_dir(_strip_redirects(words))
+        a = _pipe_args(a, unsure)
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
         heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))

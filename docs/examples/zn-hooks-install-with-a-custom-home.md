@@ -83,6 +83,8 @@ ls "$HOME/.zn" "$ZN_HOME"
 
 Both runs exit with 0. After the first, `stats.json` and a small `cache` folder were in `~/.zn`, the folder that is used when `ZN_HOME` is not set. After the second, the same two were in `~/custom-zn`. So if you want zn's files, such as the decision log and the statistics, in the custom folder, set `ZN_HOME` where your agent starts, not only in the terminal where you installed.
 
+Hook settings that turn a check off, relax it or turn on a network lookup (for example `egressCheck: "off"` or `packageInstallCheck: "online"`) are read only from `~/.zn/config.json` in your operating-system account's home folder. A `config.json` in the folder `ZN_HOME` names can only add protection, because a project can set `ZN_HOME` for the agent.
+
 ## 6. Clean up
 
 ```bash

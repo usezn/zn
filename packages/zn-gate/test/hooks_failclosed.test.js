@@ -13,6 +13,8 @@ const { spawnSync } = require('child_process');
 const { winRe } = require('./helpers/wincmd');
 
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
+// The hook settings that relax a check are read from the account's home only: the preload makes it the test's home.
+const PRELOAD = path.resolve(__dirname, 'helpers', 'account_home_preload.js');
 
 // Every directory a test makes is removed when the tests of this file are done.
 const created = [];
@@ -31,10 +33,10 @@ function tmpHome(config) {
 }
 
 function hook(agent, input, home) {
-  return spawnSync(process.execPath, [RUNNER, agent], {
+  return spawnSync(process.execPath, ['-r', PRELOAD, RUNNER, agent], {
     input,
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOOK_FAIL_MODE: '' },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ZN_TEST_ACCOUNT_HOME: home, ZN_HOOK_FAIL_MODE: '' },
   });
 }
 
