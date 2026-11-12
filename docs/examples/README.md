@@ -63,6 +63,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [keep-a-secret-out-of-the-agent.md](keep-a-secret-out-of-the-agent.md): store one fake secret, let one command use it, then remove it.
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
+- [secret-allow-for-one-command.md](secret-allow-for-one-command.md): allow one command to read one secret with `zn secret allow`, approve the first use, then verify with `secret list` and `secret log`.
 - [secret-import-and-adopt.md](secret-import-and-adopt.md): import a `.env` file into the vault, then adopt a key the scrubber found.
 - [secret-run-with-multiple-secrets.md](secret-run-with-multiple-secrets.md): give one command two vault secrets with a single `zn run --secrets`, and check what is stored and used.
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
