@@ -283,13 +283,13 @@ function shortWhy(n, key) {
   const name = suggestSecretName(key);
   return 'stays in clear text in the file. The value is only ' + n + ' character(s), and zn moves values of '
     + dotenv.MIN_SECRET_LEN + ' or more because shorter ones cannot be told apart from ordinary settings. '
-    + 'To keep it out of the file, run `zn secret set ' + name + '` and put ' + markers.markerFor(name) + ' in its place.';
+    + 'Your agent cannot read the file while it does. To keep it out of the file, run `zn secret set ' + name + '` and put ' + markers.markerFor(name) + ' in its place.';
 }
 
 function clearTextSummary(plan, file, dryRun) {
   if (!plan.skipped.length) return '';
   const names = plan.skipped.map((x) => x.key).join(', ');
-  const tail = 'Until each one is stored with `zn secret set`, treat it as readable by an agent.';
+  const tail = 'Until each one is stored with `zn secret set`, your agent cannot read this file.';
   if (dryRun) {
     return 'Preview only: no value has moved. If you run this without --dry-run, ' + plan.skipped.length
       + ' value(s) would stay in clear text in ' + path.basename(file) + ': ' + names + '. ' + tail;
