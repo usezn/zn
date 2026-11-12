@@ -414,3 +414,25 @@ test('a missing version constant is reported instead of passing', () => {
   assert.equal(errors.length, 1);
   assert.match(errors[0], /AUDIT_RULES_VERSION not found/);
 });
+
+const TAG = {
+  'packages/zn-gate/lib/rules.js': "const RULES_VERSION = '2026-10-28.1';\n",
+  'packages/zn-gate/lib/scrub/patterns.js': "const SCRUB_RULES_VERSION = '2026-10-24.1';\n",
+  'packages/zn-gate/lib/audit/rules.js': "const AUDIT_RULES_VERSION = '2026-10-23.8';\n",
+};
+const readAt = (version) => (version === '1.15.0' ? (f) => TAG[f] : null);
+const sample = (pkg, rules) => `\`\`\`text\n[+]  zn-gate Status:\n  Package Version : ${pkg}\n  Rules Version   : ${rules}\n\`\`\`\n`;
+
+test('a sample that names a released version is compared with that release, not with the code', () => {
+  const ok = { 'docs/a.md': sample('1.15.0', '2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)') };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(ok), readAt), []);
+  const head = { 'docs/a.md': sample('1.15.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(head), readAt), [
+    'docs/a.md:4: the zn-gate status sample shows rules 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4); zn-gate 1.15.0 has 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)',
+  ]);
+});
+
+test('a sample for a version that has no tag yet (a release being prepared) is compared with the code', () => {
+  const doc = { 'docs/a.md': sample('1.16.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(doc), readAt), []);
+});
