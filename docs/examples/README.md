@@ -31,12 +31,12 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-hooks-and-monorepo-subfolders.md](zn-hooks-and-monorepo-subfolders.md): where the hook files are written and read when you work in a subfolder of a monorepo: the user install, `--project` and `check --hooks`.
 - [zn-hooks-and-shell-aliases.md](zn-hooks-and-shell-aliases.md): what an alias or a function named zn changes in your terminal, and why it does not change what the hook decides.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-hooks-install-on-a-locked-down-laptop.md](zn-hooks-install-on-a-locked-down-laptop.md): install the hooks when you cannot install globally, cannot write to a settings folder or sit behind a proxy, with the real messages.
 - [zn-hooks-status-when-config-is-json-with-comments.md](zn-hooks-status-when-config-is-json-with-comments.md): what `check --hooks` and `hooks install` do when an agent's settings file has comments, and how to get the hooks in.
+- [zn-init-on-a-second-user-account.md](zn-init-on-a-second-user-account.md): a second user account on the same computer: what zn-gate finds there, what is set up per user, and how to check it.
 - [zn-init-reading-the-plan-before-confirming.md](zn-init-reading-the-plan-before-confirming.md): read the plan that `init` prints before it asks, answer no, and see that nothing changes.
 - [zn-init-then-first-block-in-five-steps.md](zn-init-then-first-block-in-five-steps.md): five copy-paste steps from `init` to a first blocked command, and what `why` says about it.
 - [zn-init-then-uninstall-clean-slate-test.md](zn-init-then-uninstall-clean-slate-test.md): set zn-gate up in a throwaway home folder, remove it, and compare the file lists to see exactly what `uninstall` removes and what it leaves.
-- [zn-hooks-install-on-a-locked-down-laptop.md](zn-hooks-install-on-a-locked-down-laptop.md): install the hooks when you cannot install globally, cannot write to a settings folder or sit behind a proxy, with the real messages.
-- [zn-init-on-a-second-user-account.md](zn-init-on-a-second-user-account.md): a second user account on the same computer: what zn-gate finds there, what is set up per user, and how to check it.
 
 ## Checks, scans and reports
 
@@ -82,10 +82,10 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-run-with-timeout-and-exit-codes.md](zn-run-with-timeout-and-exit-codes.md): how zn-gate run passes the exit code of the program through, which codes zn-gate returns itself, what a signal gives, and how to add a time limit.
 - [zn-scan-package-lockfile-noise.md](zn-scan-package-lockfile-noise.md): what `zn-gate scan` does with lockfiles, the two kinds of result, and the options that really reduce them.
 - [zn-scan-reading-a-false-positive.md](zn-scan-reading-a-false-positive.md): judge a scan finding that is not a real secret, and the ways to skip it that the scan really supports.
+- [zn-shield-reviewing-tool-descriptions.md](zn-shield-reviewing-tool-descriptions.md): read the shield warnings about changed or new tools (TOOLS CHANGED, TOOL SHADOWING), see what your agent sees, and decide whether to approve.
 - [zn-stats-before-and-after-hooks-reinstall.md](zn-stats-before-and-after-hooks-reinstall.md): what `zn stats` shows before and after you reinstall the hooks: the counts are kept, and what does change them.
 - [zn-stats-reading-top-blocked-rules.md](zn-stats-reading-top-blocked-rules.md): read the `Top rules` block of `zn-gate stats` with real output, what its counts are and are not, and how to trace a rule that shows up too often with `evidence` and `why`.
 - [zn-stats-share-show-before-turning-on.md](zn-stats-share-show-before-turning-on.md): read what zn-gate stats share would send, and where, before you turn sharing on or leave it off.
-- [zn-shield-reviewing-tool-descriptions.md](zn-shield-reviewing-tool-descriptions.md): read the shield warnings about changed or new tools (TOOLS CHANGED, TOOL SHADOWING), see what your agent sees, and decide whether to approve.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
 
 ## Secrets
