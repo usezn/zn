@@ -11,7 +11,7 @@ name: Cargo audit
 on:
   push:
     branches: [main, next]
-    paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
+    paths: ["Cargo.lock", "Cargo.toml", "**/Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
   pull_request:
     branches: [main, next, 'release/**']
   merge_group:
