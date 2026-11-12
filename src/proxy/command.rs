@@ -8,7 +8,9 @@
 const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
 
 /// Characters that `cmd.exe` reads as syntax even inside a batch file's arguments.
-const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '%', '(', ')', '"', '\r', '\n', '\0'];
+const CMD_METACHARACTERS: &[char] = &[
+    '&', '|', '<', '>', '^', '%', '(', ')', '"', '\r', '\n', '\0',
+];
 
 fn has_separator(command: &str) -> bool {
     command.contains('\\') || command.contains('/') || command.contains(':')
@@ -45,13 +47,19 @@ pub fn resolve_windows_command(
     pathext: Option<&str>,
     is_file: &dyn Fn(&str) -> bool,
 ) -> Result<String, String> {
-    resolve_windows_command_guarded(command, path_var, pathext, &[], is_file, &|p| Some(p.to_string()))
+    resolve_windows_command_guarded(command, path_var, pathext, &[], is_file, &|p| {
+        Some(p.to_string())
+    })
 }
 
 /// Lower-cased, backslash-separated form of a Windows path for comparing folders, without the `\\?\`
 /// prefix that canonicalization adds and without a trailing separator.
 fn compare_form(path: &str) -> String {
-    let p = path.strip_prefix(r"\\?\").unwrap_or(path).replace('/', "\\").to_ascii_lowercase();
+    let p = path
+        .strip_prefix(r"\\?\")
+        .unwrap_or(path)
+        .replace('/', "\\")
+        .to_ascii_lowercase();
     p.trim_end_matches('\\').to_string()
 }
 
@@ -175,23 +183,72 @@ pub fn check_batch_args(program: &str, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The folders whose contents a project controls, for a gateway started in `cwd`: the working
+/// folder and the project root, which is the nearest folder above it (or `cwd` itself) that holds a
+/// `.git` folder or file, plus the repositories around that one (up to 8 levels more). A gateway
+/// started in `C:\repo\src` would otherwise treat `C:\repo\bin` as a trusted PATH folder. The home
+/// folder and the folders above it are never the project: a home that is a git work tree (dotfiles)
+/// must not make every tool installed there untrusted. When the check cannot be made (a folder is
+/// unreadable), the working folder and every folder above it are treated as untrusted, never
+/// fewer. `exists` tells whether a path exists, or an error when that cannot be known.
+pub fn untrusted_project_roots(
+    cwd: &std::path::Path,
+    home: Option<&std::path::Path>,
+    exists: &dyn Fn(&std::path::Path) -> std::io::Result<bool>,
+) -> Vec<std::path::PathBuf> {
+    let mut roots = vec![cwd.to_path_buf()];
+    let mut found = false;
+    let mut extra = 0;
+    for dir in cwd.ancestors() {
+        match exists(&dir.join(".git")) {
+            Ok(true) => {
+                found = true;
+                let is_home_or_above = home.is_some_and(|h| h.starts_with(dir));
+                if !is_home_or_above && !roots.iter().any(|r| r == dir) {
+                    roots.push(dir.to_path_buf());
+                }
+            }
+            Ok(false) => {}
+            Err(_) => return cwd.ancestors().map(|a| a.to_path_buf()).collect(),
+        }
+        if found {
+            extra += 1;
+            if extra > 8 {
+                break;
+            }
+        }
+    }
+    roots
+}
+
 /// Resolve `command` the way Windows does, from the real PATH and PATHEXT. PATH folders inside the
-/// working folder are not searched.
+/// working folder or the project root are not searched.
 #[cfg(windows)]
 pub fn resolve_for_spawn(command: &str) -> Result<String, String> {
     use std::path::Path;
     let path_var = std::env::var("PATH").ok();
     let pathext = std::env::var("PATHEXT").ok();
-    let cwd = std::env::current_dir()
-        .map_err(|e| format!("zn cannot read its working folder ({e}), so it cannot check the PATH."))?;
-    let roots = vec![cwd.to_string_lossy().into_owned()];
+    let cwd = std::env::current_dir().map_err(|e| {
+        format!("zn cannot read its working folder ({e}), so it cannot check the PATH.")
+    })?;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from);
+    let roots: Vec<String> = untrusted_project_roots(&cwd, home.as_deref(), &|p| p.try_exists())
+        .iter()
+        .map(|r| r.to_string_lossy().into_owned())
+        .collect();
     resolve_windows_command_guarded(
         command,
         path_var.as_deref(),
         pathext.as_deref(),
         &roots,
         &|p| Path::new(p).is_file(),
-        &|p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()),
+        &|p| {
+            std::fs::canonicalize(p)
+                .ok()
+                .map(|c| c.to_string_lossy().into_owned())
+        },
     )
 }
 
@@ -247,10 +304,19 @@ mod tests {
         let id = |p: &str| -> Option<String> { Some(p.to_string()) };
         let roots = vec!["C:\\proj".to_string()];
         let f = files(&["C:\\proj\\bin\\npx.CMD"]);
-        assert!(resolve_windows_command_guarded("npx", Some("C:\\proj\\bin"), None, &roots, &f, &id).is_err());
+        assert!(resolve_windows_command_guarded(
+            "npx",
+            Some("C:\\proj\\bin"),
+            None,
+            &roots,
+            &f,
+            &id
+        )
+        .is_err());
         // A folder whose name only starts the same way is outside the root and is still searched.
         let g = files(&["C:\\proj2\\bin\\npx.CMD"]);
-        let got = resolve_windows_command_guarded("npx", Some("C:\\proj2\\bin"), None, &roots, &g, &id);
+        let got =
+            resolve_windows_command_guarded("npx", Some("C:\\proj2\\bin"), None, &roots, &g, &id);
         assert_eq!(got.unwrap(), "C:\\proj2\\bin\\npx.CMD");
     }
 
@@ -259,10 +325,22 @@ mod tests {
         // "C:\tools\bin" is a link to the project's bin folder: its real path is what counts.
         let f = files(&["C:\\tools\\bin\\npx.CMD"]);
         let real = |p: &str| -> Option<String> {
-            Some(if p == "C:\\tools\\bin" { "C:\\proj\\bin".to_string() } else { p.to_string() })
+            Some(if p == "C:\\tools\\bin" {
+                "C:\\proj\\bin".to_string()
+            } else {
+                p.to_string()
+            })
         };
         let roots = vec!["C:\\proj".to_string()];
-        assert!(resolve_windows_command_guarded("npx", Some("C:\\tools\\bin"), None, &roots, &f, &real).is_err());
+        assert!(resolve_windows_command_guarded(
+            "npx",
+            Some("C:\\tools\\bin"),
+            None,
+            &roots,
+            &f,
+            &real
+        )
+        .is_err());
     }
 
     #[test]
@@ -270,7 +348,121 @@ mod tests {
         let f = files(&["c:\\proj\\bin\\npx.CMD"]);
         let id = |p: &str| -> Option<String> { Some(p.to_string()) };
         let roots = vec!["C:\\Proj\\".to_string()];
-        assert!(resolve_windows_command_guarded("npx", Some("c:\\proj\\bin"), None, &roots, &f, &id).is_err());
+        assert!(resolve_windows_command_guarded(
+            "npx",
+            Some("c:\\proj\\bin"),
+            None,
+            &roots,
+            &f,
+            &id
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn the_project_root_above_the_working_folder_is_untrusted() {
+        let base = std::env::temp_dir().join(format!("zn-root-{}-a", std::process::id()));
+        let nested = base.join("repo").join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        // A `.git` file (worktree or submodule) marks the root as well as a folder does.
+        std::fs::write(base.join("repo").join(".git"), "gitdir: elsewhere").unwrap();
+        let roots = untrusted_project_roots(&nested, None, &|p| p.try_exists());
+        assert_eq!(roots, vec![nested.clone(), base.join("repo")]);
+        // Not above the root: an outside folder is not listed.
+        assert!(!roots.contains(&base));
+
+        // The same roots drive the PATH filter: `<root>\bin` is refused, a folder outside is not.
+        // On Linux the temp folder is written as a drive path so the Windows rules apply.
+        let as_str = |p: &std::path::Path| {
+            let s = p.to_string_lossy().replace('/', "\\");
+            if is_absolute_windows(&s) {
+                s
+            } else {
+                format!("C:{s}")
+            }
+        };
+        let root_strs: Vec<String> = roots.iter().map(|r| as_str(r)).collect();
+        let inside = format!("{}\\bin", as_str(&base.join("repo")));
+        let outside = format!("{}\\tools", as_str(&base));
+        let shim_inside = format!("{inside}\\npx.CMD");
+        let shim_outside = format!("{outside}\\npx.CMD");
+        let list = [shim_inside.as_str(), shim_outside.as_str()];
+        let f = files(&list);
+        let id = |p: &str| -> Option<String> { Some(p.to_string()) };
+        let only_inside =
+            resolve_windows_command_guarded("npx", Some(&inside), None, &root_strs, &f, &id);
+        assert!(only_inside.is_err());
+        let both = format!("{inside};{outside}");
+        let got = resolve_windows_command_guarded("npx", Some(&both), None, &root_strs, &f, &id);
+        assert_eq!(got.unwrap(), shim_outside);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn without_a_git_folder_only_the_working_folder_is_untrusted() {
+        let base = std::env::temp_dir().join(format!("zn-root-{}-b", std::process::id()));
+        let nested = base.join("plain").join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        let exists = |p: &std::path::Path| -> std::io::Result<bool> {
+            // Only look below the temp folder, so a `.git` above it cannot change the result.
+            if p.starts_with(&base) {
+                p.try_exists()
+            } else {
+                Ok(false)
+            }
+        };
+        assert_eq!(
+            untrusted_project_roots(&nested, None, &exists),
+            vec![nested.clone()]
+        );
+        // The working folder is its own root when it holds the `.git` folder.
+        std::fs::create_dir_all(nested.join(".git")).unwrap();
+        assert_eq!(
+            untrusted_project_roots(&nested, None, &exists),
+            vec![nested.clone()]
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_home_that_is_a_work_tree_is_not_the_project_and_outer_repositories_count() {
+        let base = std::env::temp_dir().join(format!("zn-root-{}-c", std::process::id()));
+        let outer = base.join("outer");
+        let inner = outer.join("inner");
+        let nested = inner.join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(outer.join(".git")).unwrap();
+        std::fs::create_dir_all(inner.join(".git")).unwrap();
+        let exists = |p: &std::path::Path| -> std::io::Result<bool> {
+            if p.starts_with(&base) {
+                p.try_exists()
+            } else {
+                Ok(false)
+            }
+        };
+        // A repository inside another one: both are the project.
+        let roots = untrusted_project_roots(&nested, None, &exists);
+        assert_eq!(roots, vec![nested.clone(), inner.clone(), outer.clone()]);
+        // The outer one is the home folder (dotfiles): it is not a project root.
+        let roots = untrusted_project_roots(&nested, Some(outer.as_path()), &exists);
+        assert_eq!(roots, vec![nested.clone(), inner.clone()]);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_folder_makes_every_folder_above_untrusted() {
+        let cwd = std::path::Path::new("/a/b/c");
+        let fail = |_: &std::path::Path| -> std::io::Result<bool> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied",
+            ))
+        };
+        let roots = untrusted_project_roots(cwd, None, &fail);
+        let want: Vec<std::path::PathBuf> = cwd.ancestors().map(|a| a.to_path_buf()).collect();
+        assert_eq!(roots, want);
+        assert!(roots.contains(&std::path::PathBuf::from("/a")));
+        assert!(roots.contains(&std::path::PathBuf::from("/")));
     }
 
     #[test]
@@ -278,15 +470,31 @@ mod tests {
         let f = files(&["C:\\bin\\npx.CMD"]);
         let none = |_: &str| -> Option<String> { None };
         let roots = vec!["C:\\proj".to_string()];
-        assert!(resolve_windows_command_guarded("npx", Some("C:\\bin"), None, &roots, &f, &none).is_err());
+        assert!(
+            resolve_windows_command_guarded("npx", Some("C:\\bin"), None, &roots, &f, &none)
+                .is_err()
+        );
     }
 
     #[test]
     fn an_unreadable_path_entry_is_skipped() {
         let f = files(&["C:\\gone\\npx.CMD", "C:\\bin\\npx.CMD"]);
-        let canon = |p: &str| -> Option<String> { if p == "C:\\gone" { None } else { Some(p.to_string()) } };
+        let canon = |p: &str| -> Option<String> {
+            if p == "C:\\gone" {
+                None
+            } else {
+                Some(p.to_string())
+            }
+        };
         let roots = vec!["C:\\proj".to_string()];
-        let got = resolve_windows_command_guarded("npx", Some("C:\\gone;C:\\bin"), None, &roots, &f, &canon);
+        let got = resolve_windows_command_guarded(
+            "npx",
+            Some("C:\\gone;C:\\bin"),
+            None,
+            &roots,
+            &f,
+            &canon,
+        );
         assert_eq!(got.unwrap(), "C:\\bin\\npx.CMD");
     }
 

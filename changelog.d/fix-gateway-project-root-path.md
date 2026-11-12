@@ -1,0 +1,2 @@
+### Security
+- On Windows, the gateway no longer starts a `npx` or `uvx` shim found in a project folder when it is started from a subfolder of the project. Besides the folder it runs in, it now treats the project root (the nearest folder above it with a `.git` folder or file, and the repositories around that one) as untrusted when it looks through the PATH; if it cannot check, it treats the working folder and every folder above it as untrusted.
