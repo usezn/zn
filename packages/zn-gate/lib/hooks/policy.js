@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.11';
+const POLICY_RULES_VERSION = '2026-11-11.12';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2575,7 +2575,10 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of withEqualsReadings(psListWords(words, opts, cmd))) {
+  const listed = psListWords(words, opts, cmd);
+  // More Join-Path calls than zn judges, or a joined path too long to judge: refused, not checked in part.
+  if (listed.over) return TOO_SLOW_MESSAGE;
+  for (const w of withEqualsReadings(listed)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
@@ -2692,11 +2695,14 @@ function psPathOperand(h) {
 function psJoinedPaths(words) {
   const out = [];
   const seen = new Set();
+  // Set when a joined path is not judged (too many joins, or one too long): the caller then refuses the command.
+  out.over = false;
   const add = (w, parts) => {
     const clean = parts.filter((x) => typeof x === 'string' && x !== '');
     if (clean.length < 2) return;
     const joined = clean.join('\\');
-    if (joined.length > 4096 || seen.has(joined)) return;
+    if (seen.has(joined)) return;
+    if (joined.length > 4096 || out.length >= 64) { out.over = true; return; }
     seen.add(joined);
     out.push({ ...w, text: joined, head: 'join-path', redirectTarget: false }, { ...w, text: slash(joined), head: 'join-path', redirectTarget: false });
   };
@@ -2707,7 +2713,7 @@ function psJoinedPaths(words) {
     if (n.length && 'additionalchildpath'.startsWith(n)) return 'extra';
     return null;
   };
-  for (let i = 0; i < words.length && out.length < 64; i++) {
+  for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (typeof w.text !== 'string' || w.text.toLowerCase() !== 'join-path') continue;
     const named = {};
@@ -2775,7 +2781,9 @@ function psListWords(words, opts, cmd) {
     if (parts.length < 2 && !open) continue;
     for (const part of parts) push({ ...w, text: part }, w.head);
   }
-  for (const j of psJoinedPaths(words)) out.push(j);
+  const joined = psJoinedPaths(words);
+  for (const j of joined) out.push(j);
+  if (joined.over) out.over = true;
   return out;
 }
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };

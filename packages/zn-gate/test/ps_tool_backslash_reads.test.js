@@ -5,7 +5,6 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const adapter = require('../lib/agents/claude-code');
 const runner = require('../lib/hooks/runner');
@@ -14,10 +13,11 @@ const fakeEngine = require('./helpers/fake_engine');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { tempDir } = require('./helpers/tmp');
 
+const TOO_MANY_PATHS = 'zn: this command has too many paths for zn to check in time, so it was blocked. Next step: run it as several shorter commands, or tell the user.';
+
 function project(t) {
-  const base = path.join(os.homedir(), 'tmpwork');
-  fs.mkdirSync(base, { recursive: true });
-  const dir = tempDir(t, 'zn-psbs-', base);
+  // A directory of its own under the system temp folder, removed when the test ends: nothing is written to the real home.
+  const dir = tempDir(t, 'zn-psbs-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_TOKEN=fake-not-a-real-secret-value-0000\n');
   fs.writeFileSync(path.join(dir, 'README.md'), '# readme\n');
   return dir;
@@ -126,6 +126,31 @@ for (const forced of [false, true]) {
     for (const ps of [true, false]) {
       for (const cmd of JOIN_DENY) assert.ok(policy.bashDenial(cmd, { cwd, powershell: ps }), 'must deny: ' + cmd + ' (powershell ' + ps + ')');
       for (const cmd of JOIN_ALLOW) assert.equal(policy.bashDenial(cmd, { cwd, powershell: ps }), null, 'must allow: ' + cmd + ' (powershell ' + ps + ')');
+    }
+  });
+}
+
+// More Join-Path calls than zn judges, or a joined path too long to judge, is refused as a whole: a protected join after the
+// harmless ones must never go unjudged.
+const harmlessJoins = (n) => Array.from({ length: n }, (_, i) => 'Join-Path a' + (i + 1) + ' b;').join(' ');
+for (const forced of [false, true]) {
+  test('the Join-Path limits fail closed ' + (forced ? 'with the platform forced to win32' : 'on this host'), (t) => {
+    const cwd = project(t);
+    if (forced) asWindows(t);
+    for (const ps of [true, false]) {
+      const opts = { cwd, powershell: ps };
+      for (const n of [31, 32, 33, 40, 100]) {
+        assert.ok(policy.bashDenial(harmlessJoins(n) + ' gc (Join-Path ~\\.kube config)', opts), n + ' joins then a protected one must be denied (powershell ' + ps + ')');
+      }
+      // Without a protected join, a command over the limit is refused like any other command that has too many paths.
+      for (const n of [33, 40, 100]) {
+        assert.equal(policy.bashDenial(harmlessJoins(n), opts), TOO_MANY_PATHS, n + ' harmless joins are refused (powershell ' + ps + ')');
+      }
+      assert.equal(policy.bashDenial(harmlessJoins(5) + ' gc (Join-Path . README.md)', opts), null);
+      // A joined path longer than 4096 characters is refused, not skipped.
+      const long = 'x'.repeat(4100);
+      assert.equal(policy.bashDenial('Join-Path ' + long + ' b', opts), TOO_MANY_PATHS, 'a joined path over 4096 characters is refused');
+      assert.equal(policy.bashDenial('gc (Join-Path -Path . -ChildPath ' + long + ')', opts), TOO_MANY_PATHS);
     }
   });
 }
