@@ -25,7 +25,9 @@ How maintainers work and how new ones are added: [GOVERNANCE.md](GOVERNANCE.md).
 
 ## Docs examples index
 
-Every new page in `docs/examples/` must be listed in [docs/examples/README.md](docs/examples/README.md) in the same pull request. Add one line for the page, in alphabetical order.
+Every new page in `docs/examples/` must be listed in [docs/examples/README.md](docs/examples/README.md) in the same pull request. Add one line for the page, in alphabetical order, in the group it belongs to. Keep each entry on one line.
+
+`.gitattributes` merges this file with the union strategy: when two pull requests add a line to the same group, git keeps both lines instead of reporting a conflict. A union merge does not sort, so after such a merge check that the group is still in alphabetical order and that no line is there twice.
 
 No CI check enforces this today. The examples checks in CI test the commands on the pages, not the index, so the index is kept by hand. Check it in review.
 
