@@ -717,6 +717,12 @@ zn-gate report [--since 7d] [--json] [--no-team-line]
 
 A short summary of the last days (`--since 1d` to `90d`, default 7): blocked actions, secrets hidden, new protected MCP servers and tool changes waiting for approval. It is built from local files and nothing is sent. [What it shows](report.md). Exit codes: `0` done, `2` wrong usage.
 
+### Related commands
+
+- [`why`](#why): [Reading `zn why` after a blocked command](examples/why-blocked-walkthrough.md), [Allow a blocked action after `zn why`](examples/zn-why-allow-command.md) and [Why was this blocked?](why-was-this-blocked.md). It reads the log that [`evidence`](#evidence) shows.
+- [`stats`](#stats): [Examples of stats and report](examples/stats-and-report.md), in particular [Top rules in stats](examples/stats-and-report.md#top-rules-in-stats). The optional sharing of daily counts is [`stats share`](#stats-share).
+- [`report`](#report): [See what zn-gate did this week](report.md) and [the weekly report example](examples/stats-and-report.md#weekly-report). For the counts alone, use [`stats`](#stats).
+
 ## Cloud check
 
 `zn-gate connect` turns the optional cloud check on and `zn-gate disconnect` turns it off: see [`connect`](#connect) and [`disconnect`](#disconnect) above, and [How it works](connect.md).
