@@ -640,7 +640,7 @@ Something unexpected stopped the check for that agent, and the line gives the er
 ```text
 [+]  zn-gate Status:
   Package Version : 1.15.0
-  Rules Version   : 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)
+  Rules Version   : 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)
   Active Engine   : Local rules only
   Endpoint        : None (nothing leaves this machine)
   API key         : Not set
