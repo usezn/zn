@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+from zn_gate.shell_names import npx_name
 from zn_gate import cli, reach_history
 from zn_gate.reach_history import history, report
 
@@ -296,7 +297,7 @@ def test_usage_errors_exit_2_and_a_report_exits_0(machine):
 def test_reach_without_history_still_points_to_npm(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["zn-gate", "reach"])
     assert cli.main() == 2
-    assert "npx -y zn-gate reach" in capsys.readouterr().err
+    assert npx_name() + " -y zn-gate reach" in capsys.readouterr().err
 
 
 def test_help_lists_reach_history(machine):
