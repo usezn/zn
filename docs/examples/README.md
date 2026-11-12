@@ -52,6 +52,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project and read what each exit code means.
 - [sharing-findings-with-a-teammate.md](sharing-findings-with-a-teammate.md): save scan and audit output to a file and check it holds no real secret before you send it.
+- [shield-deny-rule-example.md](shield-deny-rule-example.md): deny one new MCP tool with pinning in block mode, and what the agent sees when it calls the tool anyway.
 - [shield-first-run.md](shield-first-run.md): wrap one MCP server with the shield in shadow mode, see what it prints, then enforce or undo it.
 - [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
@@ -61,6 +62,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-evidence-export-to-csv-for-a-spreadsheet.md](zn-evidence-export-to-csv-for-a-spreadsheet.md): open the decision log in a spreadsheet: export it as CSV, read the 11 columns, and decide who may see it.
 - [zn-hooks-status-before-opening-a-pr.md](zn-hooks-status-before-opening-a-pr.md): a short checklist to run before you open a pull request: check, check --hooks and check --json, and what each result means.
 - [zn-pins-in-a-shared-repo.md](zn-pins-in-a-shared-repo.md): where MCP tool pins are kept, and why there is nothing to commit or ignore in a shared repository.
+- [zn-pins-reviewing-a-new-server.md](zn-pins-reviewing-a-new-server.md): what to check before an MCP server is pinned for the first time, what `pins` shows afterwards, and how a later new tool is approved.
 - [zn-reach-with-remember-twice.md](zn-reach-with-remember-twice.md): run `reach --remember` several times on a fake project and read what changes in the output between runs.
 - [zn-scan-package-lockfile-noise.md](zn-scan-package-lockfile-noise.md): what `zn-gate scan` does with lockfiles, the two kinds of result, and the options that really reduce them.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
@@ -72,6 +74,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
 - [secret-allow-for-one-command.md](secret-allow-for-one-command.md): allow one command to read one secret with `zn secret allow`, approve the first use, then verify with `secret list` and `secret log`.
 - [secret-import-and-adopt.md](secret-import-and-adopt.md): import a `.env` file into the vault, then adopt a key the scrubber found.
+- [secret-import-dotenv-safely.md](secret-import-dotenv-safely.md): import a fake `.env` into the vault with `secret import`, verify with `secret list`, then remove the secrets.
 - [secret-run-with-multiple-secrets.md](secret-run-with-multiple-secrets.md): give one command two vault secrets with a single `zn run --secrets`, and check what is stored and used.
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
 - [vault-log-export.md](vault-log-export.md): export the vault audit log as OpenTelemetry logs.
@@ -80,6 +83,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-secret-allow-vs-approve-decision.md](zn-secret-allow-vs-approve-decision.md): a decision list for `secret allow` and `secret approve`, with the prompts and refusals of each.
 - [zn-secret-get-in-a-pipe.md](zn-secret-get-in-a-pipe.md): what `secret get` does when you try to pipe a vault value into another tool, and what to use instead.
 - [zn-secret-rm-then-confirm-with-vault-log.md](zn-secret-rm-then-confirm-with-vault-log.md): remove a secret with `zn-gate secret rm`, then find the removal line in the vault log and check that the log is intact.
+- [zn-secret-set-for-an-aws-credential-pair.md](zn-secret-set-for-an-aws-credential-pair.md): store an access key id and its secret as two vault secrets, approve their first use, and run one program with both.
 - [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
 - [zn-vault-log-filtering-by-secret-name.md](zn-vault-log-filtering-by-secret-name.md): narrow the vault log to one secret with `grep` or `awk`, and read what each line means.
 - [zn-vault-status-after-unlock-expiry.md](zn-vault-status-after-unlock-expiry.md): read `vault status` before and after the unlock time ran out, see what other commands say, and unlock again.
@@ -98,6 +102,8 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [team-onboarding-checklist.md](team-onboarding-checklist.md): a one-line-per-step checklist for a new zn Team member, with the expected result and what to do when a step fails.
 - [team-sync-after-policy-change.md](team-sync-after-policy-change.md): pull a new team policy version with `zn team sync`, then read what changed in `zn team status`.
 - [team-sync-offline.md](team-sync-offline.md): what `zn team sync` does without a network, what keeps working from the saved policy, and its exit codes.
+- [zn-team-leave-cleanup-checklist.md](zn-team-leave-cleanup-checklist.md): what `zn team leave` removes, what stays on disk, and the one case where you delete files by hand.
+- [zn-why-after-a-team-policy-block.md](zn-why-after-a-team-policy-block.md): a secret blocked by the organization policy of zn Team: what the agent sees, how to find the rule, and what `zn-gate why` does and does not show.
 
 ## Scripts, CI and APIs
 

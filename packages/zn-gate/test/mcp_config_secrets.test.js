@@ -218,13 +218,13 @@ test('text and github output never show the value', (t) => {
 });
 
 test('the next step is plain: the vault and zn run --secrets for env and arguments, an environment variable for headers', () => {
-  const env = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY');
+  const env = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', { platform: 'linux' });
   assert.match(env, /npx -y zn-gate secret set BRAVE_API_KEY/);
   assert.match(env, /put run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
   assert.match(env, /environment variable BRAVE_API_KEY/);
   assert.doesNotMatch(env, /put __ZN_/);
   assert.match(env, /rotate/);
-  const arg = mcp.mcpNextStep('argument', 'api-key');
+  const arg = mcp.mcpNextStep('argument', 'api-key', { platform: 'linux' });
   assert.match(arg, /put run, --secrets, MCP_API_KEY, -- and the old command first in args/);
   assert.match(arg, /a __ZN_MCP_API_KEY__ marker written in args is not filled in, because arguments are visible to other processes/);
   assert.match(arg, /rotate/);

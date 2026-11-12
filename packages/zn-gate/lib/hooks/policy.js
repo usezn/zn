@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.7';
+const POLICY_RULES_VERSION = '2026-11-11.13';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2575,7 +2575,11 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of withEqualsReadings(psListWords(words, opts))) {
+  const listed = psListWords(words, opts, cmd);
+  // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
+  // or a joined path too long to judge: refused, not checked in part.
+  if (listed.over) return TOO_SLOW_MESSAGE;
+  for (const w of withEqualsReadings(listed)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
@@ -2667,11 +2671,78 @@ const PS_COLON_PARAM_RE = /^-[A-Za-z][A-Za-z0-9]{0,63}:(.+)$/s;
 /* PowerShell reads every path of a comma list (cat a,b  gc 'a','b'  type @('a','b')); in bash, a,b is one file name.
    Readers that take such lists, and the ones that exist only in PowerShell (read as PowerShell in any tool). */
 const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'more', 'get-item',
-  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
+  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'cpi', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
 const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
-  'gci', 'copy-item', 'import-clixml']);
-/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
-function psListWords(words, opts) {
+  'gci', 'copy-item', 'cpi', 'import-clixml']);
+// The operand of a .NET file read written as a PowerShell expression ([IO.File]::ReadAllText('.\.env')), or of a cmdlet that turns a
+// name into a path (Resolve-Path .\.env, as in gc (Resolve-Path .\.env)), is read as a PowerShell path too.
+const PS_DOTNET_FILE_READ_RE = /\]::(?:read|open|copy|append|get)\w*$/i;
+// A word with ${ }, $( ), @( ), a variable or a backtick can read a file or run a command, so it is judged with the slash reading too.
+const PS_EXPANDS_RE = /[${}()@`&;|<>]/;
+// A statement with a pipeline, chain, redirect, new line or expansion can bind a printed path to a reader (echo .\.env | gi | gc).
+const PS_COMPOUND_RE = /[$(){}@`&;|<>\r\n]/;
+const PS_PATH_HELPERS = new Set(['resolve-path', 'rvpa', 'convert-path', 'cvpa', 'join-path']);
+function psPathOperand(h) {
+  const head = String(h || '').toLowerCase();
+  return PS_DOTNET_FILE_READ_RE.test(head) || PS_PATH_HELPERS.has(head);
+}
+/*
+ * Join-Path splits a path across its operands (Join-Path ~\.aws credentials, Join-Path -Path ~ -ChildPath .kube -AdditionalChildPath config),
+ * so no single operand names the protected file. The joined path is judged as a word of its own, with a backslash and with a slash.
+ * Operands are the words after the cmdlet in the same simple command; named ones (-Path, -ChildPath, -AdditionalChildPath, also
+ * abbreviated or attached with a colon) take their own place, the others fill the free places in order. The operands in the order
+ * they are written are joined too.
+ */
+function psJoinedPaths(words) {
+  const out = [];
+  const seen = new Set();
+  // Set when a joined path is not judged (too many joins, or one too long): the caller then refuses the command.
+  out.over = false;
+  const add = (w, parts) => {
+    const clean = parts.filter((x) => typeof x === 'string' && x !== '');
+    if (clean.length < 2) return;
+    const joined = clean.join('\\');
+    if (seen.has(joined)) return;
+    // Each distinct joined path adds two entries (backslash and slash forms), so the 64-entry cap is 32 distinct joined paths.
+    if (joined.length > 4096 || out.length >= 64) { out.over = true; return; }
+    seen.add(joined);
+    out.push({ ...w, text: joined, head: 'join-path', redirectTarget: false }, { ...w, text: slash(joined), head: 'join-path', redirectTarget: false });
+  };
+  const slotOf = (name) => {
+    const n = name.toLowerCase();
+    if (n.length && 'path'.startsWith(n)) return 'path';
+    if (n.length && 'childpath'.startsWith(n)) return 'child';
+    if (n.length && 'additionalchildpath'.startsWith(n)) return 'extra';
+    return null;
+  };
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (typeof w.text !== 'string' || w.text.toLowerCase() !== 'join-path') continue;
+    const named = {};
+    const positional = [];
+    const written = [];
+    let pending = null;
+    for (let j = i + 1; j < words.length && words[j].seq === w.seq; j++) {
+      const t = words[j].text;
+      if (typeof t !== 'string') continue;
+      const flag = /^-([A-Za-z]+)(?::(.*))?$/.exec(t);
+      if (flag) {
+        const slot = slotOf(flag[1]);
+        if (flag[2] !== undefined && flag[2] !== '') { if (slot) named[slot] = flag[2]; written.push(flag[2]); pending = null; } else pending = slot;
+        continue;
+      }
+      written.push(t);
+      if (pending) { named[pending] = t; pending = null; } else positional.push(t);
+    }
+    const slots = { path: named.path, child: named.child, extra: named.extra };
+    for (const k of ['path', 'child', 'extra']) if (slots[k] === undefined && positional.length) slots[k] = positional.shift();
+    add(w, [slots.path, slots.child, ...String(slots.extra || '').split(',').map((x) => x.trim())]);
+    add(w, written.flatMap((x) => x.split(',')).map((x) => x.trim()));
+  }
+  return out;
+}
+/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. cmd is the whole command of this call. */
+function psListWords(words, opts, cmd) {
   const out = [];
   let prev = null;
   const readerOf = (h) => {
@@ -2680,12 +2751,23 @@ function psListWords(words, opts) {
   };
   // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
   // and the read would be let through; the same word with "/" is judged too.
+  // The commands (by sequence number) that name a reader somewhere, so the operand of `$x = gc .\.env` or of `gc (Resolve-Path .\.env)`
+  // is a path too.
+  const readerSeqs = new Set();
+  for (const w of words) if (typeof w.text === 'string' && readerOf(w.text)) readerSeqs.add(w.seq);
+  let lastWord = '';
   const push = (x, head) => {
+    const backslash = typeof x.text === 'string' && x.text.indexOf('\\') >= 0;
+    const reads = readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord);
     out.push(x);
-    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && readerOf(head)) out.push({ ...x, text: slash(x.text) });
+    const compound = opts.powershell === true && typeof cmd === 'string' && PS_COMPOUND_RE.test(cmd);
+    // A word that expands ("$PWD\.env"), or any word of a compound PowerShell statement, is judged with the slash reading too.
+    // A lone statement (Write-Output .\.env) has no such reading: it names the file only where a backslash is a separator.
+    if (backslash && x.text.length <= 4096 && (reads || compound || PS_EXPANDS_RE.test(x.text))) out.push({ ...x, text: slash(x.text) });
   };
   for (const w of words) {
     push(w, w.head);
+    lastWord = w.text;
     // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
     const lead = prev && prev.text === '@' ? prev : w;
     const before = prev;
@@ -2701,6 +2783,9 @@ function psListWords(words, opts) {
     if (parts.length < 2 && !open) continue;
     for (const part of parts) push({ ...w, text: part }, w.head);
   }
+  const joined = psJoinedPaths(words);
+  for (const j of joined) out.push(j);
+  if (joined.over) out.over = true;
   return out;
 }
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };

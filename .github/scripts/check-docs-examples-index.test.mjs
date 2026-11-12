@@ -1,7 +1,7 @@
 // Tests of check-docs-examples-index.mjs. Run: node --test .github/scripts/check-docs-examples-index.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { outOfOrder, sections } from './check-docs-examples-index.mjs';
+import { duplicates, outOfOrder, sections } from './check-docs-examples-index.mjs';
 
 const entry = (name) => `- [${name}](${name}): text.\n`;
 
@@ -46,4 +46,19 @@ test('entries inside a code fence and lines that are not entries are ignored', (
 test('CRLF line endings give the same result', () => {
   const text = ('# Examples\n\n' + entry('b.md') + entry('a.md')).replace(/\n/g, '\r\n');
   assert.equal(outOfOrder(text).length, 1);
+});
+
+test('a page listed once in each of two sections is reported as listed twice', () => {
+  const text = '## First\n\n' + entry('a.md') + entry('b.md') + '\n## Second\n\n' + entry('a.md');
+  assert.deepEqual(duplicates(text), [{ name: 'a.md', lines: [3, 8] }]);
+});
+
+test('two lines of one page next to each other, as a union merge leaves them, are reported', () => {
+  const text = entry('a.md') + '- [b.md](b.md): old text.\n' + '- [b.md](b.md): new text.\n';
+  assert.deepEqual(outOfOrder(text), []);
+  assert.deepEqual(duplicates(text), [{ name: 'b.md', lines: [2, 3] }]);
+});
+
+test('an index that lists each page once has no duplicates', () => {
+  assert.deepEqual(duplicates(entry('a.md') + entry('b.md') + '```md\n' + entry('a.md') + '```\n'), []);
 });
