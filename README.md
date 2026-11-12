@@ -196,6 +196,7 @@ It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.
 - [By agent](docs/by-agent.md)
 - [Examples](docs/examples/README.md)
 - [CLI reference](docs/cli.md)
+- [Glossary: words you do not know](docs/glossary.md)
 - [API quickstart](docs/api-quickstart.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Uninstall](docs/uninstall.md)
