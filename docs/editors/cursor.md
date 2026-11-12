@@ -69,7 +69,7 @@ These limits are stated on this page and in [compat.md](../compat.md):
 - `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
 - MCP arguments over 1 MB are denied, because zn cannot check them.
 - The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.
-- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end, and the install steps are not verified on Windows.
+- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end. On Windows, the hooks were verified on Windows Server 2022 (PowerShell 5.1) to block reads of `.env` files; the Cursor app itself has not been tested there.
 
 ## Technical reference
 
