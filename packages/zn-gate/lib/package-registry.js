@@ -283,6 +283,44 @@ function pnpmUserConfigs(env, home) {
 }
 
 /**
+ * uv settings (uv.toml, or the [tool.uv] part of pyproject.toml): true when they name an index other than public PyPI.
+ * A small strict line reader, no TOML dependency. It understands table headers ([[index]], [[tool.uv.index]], [tool.uv])
+ * and key = value lines. Fails closed: an index table whose url is not the public PyPI host is private, and so is an
+ * index-url / extra-index-url / default-index / find-links key or an inline index list. isPyproject restricts the keys
+ * to the tool.uv tables.
+ */
+const PYPI_INDEX_OK = /^https?:\/\/(?:pypi\.org|files\.pythonhosted\.org)(?:[/:?#]|$)/i;
+function uvConfigPrivate(text, isPyproject) {
+  let section = isPyproject ? null : '';
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.replace(/^\s+/, '');
+    if (!line || line[0] === '#') continue;
+    const head = /^\[\[?\s*([^\]]*?)\s*\]\]?/.exec(line);
+    if (head) {
+      section = head[1].replace(/\s*\.\s*/g, '.').replace(/["']/g, '');
+      continue;
+    }
+    if (section === null) continue;
+    const kv = /^["']?([A-Za-z0-9_-]+)["']?\s*=\s*(.*)$/.exec(line);
+    if (!kv) continue;
+    const key = kv[1];
+    const value = kv[2];
+    const inIndexTable = isPyproject ? section === 'tool.uv.index' : section === 'index';
+    const inUv = isPyproject ? (section === 'tool.uv' || section === 'tool.uv.pip') : section === '' || section === 'pip';
+    if (inIndexTable) {
+      if (key === 'url') {
+        const u = /["']([^"']*)["']/.exec(value);
+        if (!u || !PYPI_INDEX_OK.test(u[1])) return true;
+      }
+    } else if (inUv && /^(?:index-url|extra-index-url|find-links|default-index|index)$/.test(key)) {
+      const u = /^["']([^"']*)["']\s*(?:#.*)?$/.exec(value.trim());
+      if (!(key === 'index-url' && u && PYPI_INDEX_OK.test(u[1]))) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * True when the user's own settings point the ecosystem at a registry other than the public one (an .npmrc or
  * pip.conf with another index, an environment variable, a uv or pyproject index). The public registry is then not
  * asked about that ecosystem's names: a private package name must never be sent to it. Reads settings files only
@@ -313,11 +351,12 @@ function privateRegistry(eco, opts = {}) {
   for (const v of ['PIP_INDEX_URL', 'PIP_EXTRA_INDEX_URL', 'PIP_FIND_LINKS', 'UV_INDEX_URL', 'UV_EXTRA_INDEX_URL', 'UV_INDEX', 'UV_DEFAULT_INDEX', 'UV_FIND_LINKS']) {
     if (env[v]) return true;
   }
+  for (const k of Object.keys(env)) if (/^UV_INDEX_[A-Z0-9_]+$/.test(k) && env[k]) return true;
   const files = [];
   if (home) files.push(path.join(home, '.config', 'pip', 'pip.conf'), path.join(home, '.pip', 'pip.conf'), path.join(home, 'pip', 'pip.ini'), path.join(home, '.config', 'uv', 'uv.toml'),
     path.join(home, 'Library', 'Application Support', 'pip', 'pip.conf'), path.join(home, 'AppData', 'Roaming', 'pip', 'pip.ini'));
   if (env.XDG_CONFIG_HOME) files.push(path.join(env.XDG_CONFIG_HOME, 'pip', 'pip.conf'), path.join(env.XDG_CONFIG_HOME, 'uv', 'uv.toml'));
-  if (env.APPDATA) files.push(path.join(env.APPDATA, 'pip', 'pip.ini'));
+  if (env.APPDATA) files.push(path.join(env.APPDATA, 'pip', 'pip.ini'), path.join(env.APPDATA, 'uv', 'uv.toml'));
   if (env.VIRTUAL_ENV) files.push(path.join(env.VIRTUAL_ENV, 'pip.conf'));
   for (const v of ['PIP_CONFIG_FILE', 'UV_CONFIG_FILE']) if (env[v]) files.push(env[v]);
   if (env.VIRTUAL_ENV) files.push(path.join(env.VIRTUAL_ENV, 'pip.ini'));
@@ -326,10 +365,14 @@ function privateRegistry(eco, opts = {}) {
   files.push('/etc/pip.conf', '/etc/xdg/pip/pip.conf', '/etc/uv/uv.toml');
   for (const d of String(env.XDG_CONFIG_DIRS || '').split(':')) if (d) files.push(path.join(d, 'pip', 'pip.conf'));
   const programData = env.ProgramData || env.PROGRAMDATA;
-  if (programData) files.push(path.join(programData, 'pip', 'pip.ini'));
-  for (const f of files) if (/^\s*(?:index-url|extra-index-url|find-links|default-index|index)\b/im.test(readSmall(f))) return true;
+  if (programData) files.push(path.join(programData, 'pip', 'pip.ini'), path.join(programData, 'uv', 'uv.toml'));
+  for (const f of files) {
+    const text = readSmall(f);
+    if (/^\s*(?:index-url|extra-index-url|find-links|default-index|index)\b/im.test(text)) return true;
+    if ((path.basename(f).toLowerCase() === 'uv.toml' || f === env.UV_CONFIG_FILE) && uvConfigPrivate(text, false)) return true;
+  }
   for (const dir of projectDirList) {
-    if (/\[\[tool\.uv\.index\]\]|^\s*(?:index-url|extra-index-url|find-links)\s*=/m.test(readSmall(path.join(dir, 'pyproject.toml')))) return true;
+    if (uvConfigPrivate(readSmall(path.join(dir, 'pyproject.toml')), true)) return true;
   }
   return false;
 }
