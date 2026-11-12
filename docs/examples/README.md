@@ -32,6 +32,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
 - [audit-before-opening.md](audit-before-opening.md): run `zn audit` on a repository you just cloned, before an agent opens it, and read what the report says.
+- [audit-report-to-file.md](audit-report-to-file.md): save the audit report to a file in text, JSON or SARIF, and compare two runs.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [check-output-explained.md](check-output-explained.md): a sample `zn-gate check` output, explained line by line.
 - [doctor-before-asking-for-help.md](doctor-before-asking-for-help.md): the commands to run in your own terminal, and paste, before you ask for help.
