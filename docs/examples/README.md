@@ -56,6 +56,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [stats-share-controls.md](stats-share-controls.md): check, turn on and turn off the optional sharing of daily counts.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
+- [zn-evidence-export-to-csv-for-a-spreadsheet.md](zn-evidence-export-to-csv-for-a-spreadsheet.md): open the decision log in a spreadsheet: export it as CSV, read the 11 columns, and decide who may see it.
 - [zn-hooks-status-before-opening-a-pr.md](zn-hooks-status-before-opening-a-pr.md): a short checklist to run before you open a pull request: check, check --hooks and check --json, and what each result means.
 - [zn-scan-package-lockfile-noise.md](zn-scan-package-lockfile-noise.md): what `zn-gate scan` does with lockfiles, the two kinds of result, and the options that really reduce them.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
@@ -71,6 +72,10 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
 - [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
+- [zn-secret-rm-then-confirm-with-vault-log.md](zn-secret-rm-then-confirm-with-vault-log.md): remove a secret with `zn-gate secret rm`, then find the removal line in the vault log and check that the log is intact.
+- [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
+- [zn-vault-log-filtering-by-secret-name.md](zn-vault-log-filtering-by-secret-name.md): narrow the vault log to one secret with `grep` or `awk`, and read what each line means.
+- [zn-why-for-a-secret-read-block.md](zn-why-for-a-secret-read-block.md): explain a blocked read of a `.env` file with `zn-gate why`, and the safe ways to go on.
 
 ## Optional cloud check
 
