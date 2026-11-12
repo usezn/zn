@@ -1,3 +1,4 @@
+# Dependency and license review on pushes and pull requests that change a manifest, a lockfile or a license list; some checks are informational.
 name: Dependency and license review
 
 # Informational for now: every job except the cargo deny bans and sources step

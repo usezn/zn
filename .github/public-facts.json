@@ -105,6 +105,11 @@
         "file": "docs/team.md",
         "pin": "zn-gate 1.8.0",
         "why": "first zn-gate version with the Team Warn choice; matches the version once 1.8.0 is released"
+      },
+      {
+        "file": "docs/examples/vault-status-reading.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "sample status of a vault started by an older release, which zn reports as outdated (not a pin)"
       }
     ]
   },

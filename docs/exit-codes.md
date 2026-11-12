@@ -30,6 +30,22 @@ In a script, these three codes are the ones you will check most. The [full table
 | `1` | Stop and look: the command ran and found a problem. |
 | `2` | Fix the call: the command was used wrongly, or `analyze` blocked the text. |
 
+## For CI authors
+
+In a pipeline, branch on the exit code and not on the text a command prints. The codes are listed on this page; the wording of a message is not a promise. For the Action itself, see [GitHub Action](github-action.md).
+
+| What you want to know | Exit code | Where |
+|---|---|---|
+| The action or the text was blocked | `2` | `hook` and `analyze` |
+| zn refused on purpose, or the action was not allowed or not approved | `77` | `run`, `secret`, `env`, `hooks`, `vault log` (`secret get` always exits `77`) |
+| The command was used wrongly | `2`, or `64` for `run`, `secret`, `env`, `hooks` and `vault log` | most commands |
+| The command needs a person at a terminal | `77` for `uninstall`, `hooks install` and `hooks uninstall`, `2` for `pins` | a pipeline has no interactive terminal, so do not run these there |
+| A scan was not complete | `3` | `scan` |
+| The program that `run` should start was not found | `127` | `run` |
+| `run` was stopped by a signal | `130` after `SIGINT`, `143` after any other signal | `run` |
+
+When the program that `zn run` started ends normally, `zn run` exits with that program's own code, so a `1`, `2`, `64` or `77` from `run` can come from your program and not from zn-gate. When the program ends because of a signal, `zn run` has no code to pass on and returns `130` or `143` as in the table.
+
 ## Common codes
 
 | Code | Meaning |
