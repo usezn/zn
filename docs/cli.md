@@ -175,7 +175,7 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. The only program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 

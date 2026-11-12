@@ -266,7 +266,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, zn-gate sends nothing over the network;
-                      the only program it starts is <agent> --version for each agent it finds
+                      it runs the installed zn hooks; the only agent program it starts is <agent> --version
   check --json        Same check as one JSON object for scripts, CI and support requests
   check --hooks       List every installed zn hook and say if it is OK, stale or broken
                       (reads files only; nothing is run or changed)
