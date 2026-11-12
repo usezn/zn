@@ -7,7 +7,7 @@ name: Cargo audit
 # passes it at once, so an advisory published on an unrelated day does not hold up the queue. The job runs on every
 # pull request and merge queue group, with no paths filter, because a required check skipped by a filter would stay
 # pending. It also runs every day on main and every night on next, on a push to main or next that changes those
-# files, and on demand. When a run outside pull requests and the merge queue fails, one issue is opened (or the open
+# files, on every push to a release branch (cargo-audit-release.yml calls this workflow), and on demand. When a run outside pull requests and the merge queue fails, one issue is opened (or the open
 # one gets a comment), so a new advisory is still seen the same day. The advisory ignore list is .cargo/audit.toml.
 on:
   push:
@@ -20,6 +20,7 @@ on:
     - cron: "47 6 * * *" # daily advisory check on main
     - cron: "52 3 * * *" # nightly advisory check on next
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

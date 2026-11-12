@@ -1,0 +1,22 @@
+name: Cargo audit (release branches)
+
+# Audits the Rust dependencies on every push to a release branch, whatever the push changed, so the commit that a
+# release is tagged from has been audited on its own branch. It runs the jobs of cargo-audit.yml (a reusable workflow),
+# so the audit steps and the failure issue are the same as on main and next. Not a required check.
+on:
+  push:
+    branches: ['release/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cargo-audit-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    uses: ./.github/workflows/cargo-audit.yml
+    permissions:
+      contents: read
+      issues: write
