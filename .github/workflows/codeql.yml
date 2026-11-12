@@ -5,13 +5,17 @@ name: CodeQL
 #   - on pushes to main and release branches, weekly on main, and every night on next (nightly-next.yml starts a
 #     manual run there): the alerts of the Security tab come from these runs, and a release commit is analysed on
 #     its release branch before the tag;
-#   - not on pull requests: an upload needs security-events: write, which a pull request job must not have. A finding
-#     shows up after the merge, in the nightly run on next.
-# Not a required check. The default setup must be turned off in the repository settings (Code security) before this
+#   - on pull requests into main, next and release branches, so a finding in new code shows on the pull request before
+#     the merge. The analysis reads the code (build-mode none) and never builds or runs it, so the job's
+#     security-events: write token is not exposed to code from the pull request. A pull request from a fork gets a
+#     read-only token from GitHub and its upload fails; the maintainers' runs on next still cover that code.
+# Not a required check. Each run completes: a newer push does not cancel it. The default setup must be turned off in the repository settings (Code security) before this
 # workflow takes over; until then GitHub refuses advanced uploads for the same languages.
 on:
   push:
     branches: [ main, 'release/**' ]
+  pull_request:
+    branches: [ main, next, 'release/**' ]
   schedule:
     - cron: '37 4 * * 1'
   workflow_dispatch:

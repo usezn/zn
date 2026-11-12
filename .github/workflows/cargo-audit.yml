@@ -1,20 +1,20 @@
 name: Cargo audit
 
-# Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database. An advisory is
-# published on a day that has nothing to do with the change in front of the merge queue, so this check does not run
-# in the merge queue and is not a required check: a new advisory used to turn every queued pull request red at
-# once. It runs every day on main and every night on next, on a push to main or next that changes Cargo.lock,
-# Cargo.toml or the audit settings, on a pull request that changes those files or a Rust source file (the result is
-# shown on the pull request and is not required), and on demand. When a run that is
-# not a pull request fails, one issue is opened (or the open one gets a comment), so an advisory is still seen the
-# same day. The advisory ignore list is .cargo/audit.toml.
+# Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database.
+# "cargo audit" is a required check of pull requests into next, and the merge queue runs it too. It audits only a
+# change to the Rust dependencies (Cargo.lock, Cargo.toml, .cargo/audit.toml or this workflow): any other pull request
+# passes it at once, so an advisory published on an unrelated day does not hold up the queue. The job runs on every
+# pull request and merge queue group, with no paths filter, because a required check skipped by a filter would stay
+# pending. It also runs every day on main and every night on next, on a push to main or next that changes those
+# files, and on demand. When a run outside pull requests and the merge queue fails, one issue is opened (or the open
+# one gets a comment), so a new advisory is still seen the same day. The advisory ignore list is .cargo/audit.toml.
 on:
   push:
     branches: [main, next]
     paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
   pull_request:
     branches: [main, next]
-    paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml", "src/**/*.rs"]
+  merge_group:
   schedule:
     - cron: "47 6 * * *" # daily advisory check on main
     - cron: "52 3 * * *" # nightly advisory check on next
@@ -42,18 +42,37 @@ jobs:
           # The nightly schedule audits next; every other run audits the commit that started it.
           ref: ${{ github.event.schedule == '52 3 * * *' && 'next' || '' }}
           persist-credentials: false
+      - name: Decide whether the Rust dependencies changed
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        # Outside pull requests and the merge queue, and whenever the changed files cannot be listed, the audit runs.
+        run: |
+          set -uo pipefail
+          out() { echo "audit=$1"; echo "audit=$1" >> "$GITHUB_OUTPUT"; exit 0; }
+          case "$EVENT_NAME" in pull_request|merge_group) ;; *) out true ;; esac
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || out true
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || out true
+          files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD 2>/dev/null)" || out true
+          if grep -qxE 'Cargo\.lock|Cargo\.toml|\.cargo/audit\.toml|\.github/workflows/cargo-audit\.yml' <<< "$files"; then out true; fi
+          echo "No Rust dependency file changed: nothing to audit for this change."
+          out false
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        if: steps.scope.outputs.audit == 'true'
         with:
           tool: cargo-audit
       - name: cargo audit
+        if: steps.scope.outputs.audit == 'true'
         run: cargo audit
 
-  # Opens one issue when a run that is not a pull request fails, or adds a comment to the open one. It uses the run's own
+  # Opens one issue when a run outside pull requests and the merge queue fails, or adds a comment to the open one. It uses the run's own
   # token (issues: write on this job only) and no secrets, and it needs no checkout: gh reads the repository name
   # from GH_REPO. A pull request shows the failure on the pull request itself.
   alert-on-failure:
     name: open or update the advisory issue
-    if: github.repository == 'usezn/zn' && github.event_name != 'pull_request' && failure()
+    if: github.repository == 'usezn/zn' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && failure()
     needs: [audit]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -83,7 +102,7 @@ jobs:
           add it to .cargo/audit.toml with the reason when no update is possible), or the advisory database could not be
           fetched (run the job again).
 
-          This check is not part of the merge queue, so pull requests are not held up by it. This issue stays open until
+          Pull requests that do not change the Rust dependencies are not held up by it. This issue stays open until
           someone closes it. Each later failed run adds a comment with its link.
           BODY
           if [ -n "$number" ]; then
