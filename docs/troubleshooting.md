@@ -97,6 +97,29 @@ Find the command you ran, then the symptom that matches.
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
+## Which command first?
+
+Find the words you see, run the first command or step listed next to them in your own terminal, then read the numbered section for the rest.
+
+- "zn-gate needs Node.js 18 or later": install the LTS version of Node.js, then check with `node --version`. See [1](#1-nodejs-is-too-old).
+- `npx: command not found`: install the LTS version of Node.js, open a new terminal, then check with `npx --version`. See [2](#2-npx-command-not-found).
+- "running scripts is disabled on this system": use the `.cmd` version, for example `npx.cmd -y zn-gate init`. See [3](#3-running-scripts-is-disabled-on-this-system-windows).
+- "needs an interactive terminal" or "must be run by you in your own terminal": open a terminal window yourself and run the same command there. See [4](#4-it-needs-you-at-your-own-terminal).
+- "Your secret vault is locked": `zn unlock`. See [5](#5-your-secret-vault-is-locked).
+- ".env holds plain-text secrets": `zn env shadow .env`. See [6](#6-your-agent-was-blocked-env-holds-plain-text-secrets).
+- "That does not look like a zn API key" or "usezn.com did not accept this key": create a new analysis-only key, then run `zn-gate connect`. See [7](#7-zn-gate-connect-does-not-accept-your-key).
+- "will not send the saved key": remove the setting the message names, for example `unset NODE_TLS_REJECT_UNAUTHORIZED` on macOS or Linux. See [8](#8-will-not-send-the-saved-key-tls-settings).
+- "turns off all hooks (disableAllHooks)": `npx -y zn-gate check`. See [9](#9-your-agent-ignores-zns-hooks-on-a-managed-computer).
+- "the evidence log ... is damaged": `npx -y zn-gate evidence --verify`. See [10](#10-the-evidence-log--is-damaged).
+- "Failed to connect: CONNECTION_CLOSED" or "the zn-gate plugin needs Node.js 20.19 or later": `node --version`. See [11](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect).
+- "npm could not reach the registry": check your connection, then `npm install -g zn-gate@<version>`. See [12](#12-init-cannot-install-zn-gate-no-internet-connection).
+- "the install took longer than 180 seconds": `npm ls -g zn-gate`. See [13](#13-init-stops-the-npm-install-after-3-minutes).
+- "'zn' is not recognized as an internal or external command": `npm config get prefix`. See [14](#14-zn-is-not-recognized-as-an-internal-or-external-command).
+- "Not scanned": no command first; read the reason next to each file. See [15](#15-scan-lists-files-under-not-scanned).
+- "INCOMPLETE - SOME FILES WERE NOT READ" or "NOTHING SCANNED": read the "Not scanned" lists and check that you scanned the right folder. See [16](#16-the-scan-ends-with-exit-code-3).
+- "use --code to scan source": `zn-gate scan . --code`. See [17](#17-scan-reads-no-source-code).
+- "zn-gate is not installed any more": `node --version`, then `npm install -g zn-gate`. See [18](#18-your-agent-says-zn-gate-is-not-installed-any-more).
+
 ## 1. Node.js is too old
 
 ```text
