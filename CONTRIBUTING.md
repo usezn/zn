@@ -72,7 +72,7 @@ python -m pytest tests/ -v
 
 ## Continuous integration (CI)
 
-Each pull request into `next` runs automated checks on GitHub. Twelve checks are **required**, and a pull request cannot merge until all of them pass. These are the names you see on the pull request:
+Each pull request into `next` runs automated checks on GitHub. Eleven checks are **required**, and a pull request cannot merge until all of them pass. These are the names you see on the pull request:
 
 - Node.js 18.x tests & benchmarks
 - Node.js 22.x tests & benchmarks
@@ -85,9 +85,8 @@ Each pull request into `next` runs automated checks on GitHub. Twelve checks are
 - Lint (eslint, ruff, mypy)
 - Public facts
 - build, test, clippy, fmt
-- cargo audit
 
-To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js, Python and Rust test checks report success at once without running. Add the label `full-ci` to your pull request to run them there; run the tests locally before you push. `cargo audit` checks the Rust dependencies only when the pull request changes `Cargo.lock`, `Cargo.toml`, `.cargo/audit.toml` or its own workflow file, and passes at once otherwise. A pull request that changes only documentation skips most code checks, which also report success.
+To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js, Python and Rust test checks report success at once without running. Add the label `full-ci` to your pull request to run them there; run the tests locally before you push. `cargo audit` also runs on every pull request: it checks the Rust dependencies only when the pull request changes `Cargo.lock`, `Cargo.toml`, `.cargo/audit.toml` or its own workflow file, and passes at once otherwise. A pull request that changes only documentation skips most code checks, which also report success.
 
 Only `next` has a merge queue; `main` does not. When a maintainer adds an approved pull request to the queue, the queue builds it on top of the pull requests ahead of it, runs the required checks on that combined result, and merges up to five pull requests at a time, in order. If a required check fails there, the pull request leaves the queue. Fix the problem, push a commit, and ask a maintainer to queue it again.
 

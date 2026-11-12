@@ -1,7 +1,8 @@
 name: Cargo audit
 
 # Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database.
-# "cargo audit" is a required check of pull requests into next, and the merge queue runs it too. It audits only a
+# "cargo audit" is meant to be a required check of pull requests into next; it is added to the branch rules right
+# after this workflow lands, and the merge queue runs it too. It audits only a
 # change to the Rust dependencies (Cargo.lock, any Cargo.toml, .cargo/audit.toml or this workflow): any other pull request
 # passes it at once, so an advisory published on an unrelated day does not hold up the queue. The job runs on every
 # pull request and merge queue group, with no paths filter, because a required check skipped by a filter would stay
