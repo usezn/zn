@@ -15,3 +15,5 @@ expresss = "expresss"
 ignora = "ignora"
 # It is the German word for "your" and appears inside a quoted German example phrase.
 deine = "deine"
+# Intentional misspelling used as the example of a secret name with a typo in docs/secrets.md (the "not in the vault" error).
+EXMPLE = "EXMPLE"
