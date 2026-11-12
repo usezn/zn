@@ -8,6 +8,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const shellVars = require('../shell-vars');
 
 module.exports = function curlFiles(deps) {
   const { ASSIGNMENT_RE, CD_CMDS, DIR_STACK_RE, GIT_WRAPPERS, REDIRECT_OP_WORD_RE, bareHead, expandHome, programName, skipWrapper, slash } = deps;
@@ -1021,7 +1022,212 @@ function atFileWords(words, env = {}) {
   return tooMany ? null : extra;
 }
 
+
+/* ---- curl and wget reached through an indirection, and wget configuration ---- */
+
+const WGET_CONFIG_MESSAGE = 'zn: this wget command reads settings zn cannot check (--config, an -e/--execute command that is not a plain download setting, or WGETRC), and wget settings can write any file or send any file, so it was blocked. Next step: give wget its plain options on the command line and run it in its own command.';
+
+// wgetrc commands (-e / --execute) that only tune how a download runs. Any other command (output_document, post_file,
+// body_file, load_cookies, dir_prefix, input, http_proxy ...) can name a file or a place, and is refused.
+const WGET_SAFE_EXECUTE = new Set(['robots', 'wait', 'waitretry', 'random_wait', 'timeout', 'dns_timeout', 'connect_timeout', 'read_timeout',
+  'tries', 'retry_connrefused', 'verbose', 'quiet', 'progress', 'show_progress', 'user_agent', 'inet4_only', 'inet6_only', 'content_disposition', 'trust_server_names']);
+
+// wget short options that take a value; e is the one that carries a wgetrc command.
+const WGET_SHORT_VALUED = 'OPoaiBtTwQlARDIXeU';
+
+/* The wgetrc commands (the text after -e or --execute) and whether a --config is named, in the arguments of a wget command. */
+function wgetSettingsIn(args) {
+  const executes = [];
+  let config = false;
+  for (let i = 0; i < args.length; i++) {
+    const x = String(args[i]);
+    if (x === '--config' || x.startsWith('--config=')) { config = true; continue; }
+    if (x === '--execute') { executes.push(i + 1 < args.length ? String(args[i + 1]) : ''); i++; continue; }
+    if (x.startsWith('--execute=')) { executes.push(x.slice(10)); continue; }
+    if (/^-[A-Za-z0-9]/.test(x)) {
+      for (let k = 1; k < x.length; k++) {
+        if (x[k] === 'e') {
+          const attached = x.slice(k + 1);
+          if (attached) executes.push(attached);
+          else { executes.push(i + 1 < args.length ? String(args[i + 1]) : ''); i++; }
+          break;
+        }
+        if (WGET_SHORT_VALUED.includes(x[k])) break;
+      }
+    }
+  }
+  return { executes, config };
+}
+
+/* A wget command (also behind sudo, env, busybox and the other wrappers) that takes settings from a configuration file or
+   runs wgetrc commands zn cannot judge: --config, an -e / --execute other than a plain download setting, and WGETRC set
+   on the line. Returns the deny message or null. */
+function wgetDenial(readings, cmdText) {
+  const wgetrcSet = /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?WGETRC\+?=/.test(String(cmdText));
+  for (const r of readings) {
+    let i = 0;
+    while (i < r.length) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const group = r.slice(i, j);
+      i = j;
+      const prog = programOfGroup(group);
+      if (!prog || prog.name !== 'wget') continue;
+      if (wgetrcSet) return WGET_CONFIG_MESSAGE;
+      const args = group.slice(prog.at + 1).map((w) => String(w.text));
+      const s = wgetSettingsIn(args);
+      if (s.config) return WGET_CONFIG_MESSAGE;
+      for (const e of s.executes) {
+        const name = e.replace(/^["'\s]+/, '').split(/[=\s]/, 1)[0].toLowerCase().replace(/-/g, '_');
+        if (!WGET_SAFE_EXECUTE.has(name)) return WGET_CONFIG_MESSAGE;
+      }
+    }
+  }
+  return null;
+}
+
+// Start-Process (and its aliases start and saps) runs the program named by -FilePath or its first positional word, with the
+// arguments of -ArgumentList or the second positional word. Parameters that take a value (they may be shortened): the
+// working folder, the verb, the window style, the credential and the three redirections.
+const PS_START_RE = /^(?:start-process|start|saps)$/;
+const PS_START_VALUED_RE = /^-(?:wo|ve|wi|cr|red)[a-z]*$/i;
+
+/* The program and argument words of a Start-Process command (the words after the command word). Null when it names none. */
+function startProcessParts(rest) {
+  let file = null;
+  let argText = null;
+  const positional = [];
+  for (let i = 0; i < rest.length; i++) {
+    const x = String(rest[i]);
+    let m = /^-([a-z]+)(?::(.*))?$/i.exec(x);
+    if (m && 'filepath'.startsWith(m[1].toLowerCase())) { file = m[2] !== undefined ? m[2] : (rest[++i] === undefined ? null : String(rest[i])); continue; }
+    if (m && m[1].length >= 2 && 'argumentlist'.startsWith(m[1].toLowerCase())) { argText = m[2] !== undefined ? m[2] : (rest[++i] === undefined ? '' : String(rest[i])); continue; }
+    if (m && m[1].toLowerCase() === 'args') { argText = m[2] !== undefined ? m[2] : (rest[++i] === undefined ? '' : String(rest[i])); continue; }
+    if (PS_START_VALUED_RE.test(x)) { i++; continue; }
+    if (/^-[a-z]+(?::.*)?$/i.test(x)) continue;
+    positional.push(x);
+  }
+  if (file === null) file = positional.shift();
+  if (file === undefined || file === null) return null;
+  if (argText === null && positional.length) argText = positional.join(' ');
+  const args = argText === null ? [] : String(argText).split(/[\s,]+/).filter(Boolean);
+  return { file, args };
+}
+
+/* True when the words after a command word zn cannot resolve name a file the way curl and wget do: -K / --config,
+   -T / --upload-file, -O / --output / --output-document, and -d / -F / --data / --form / --json with an @file or <file
+   value. */
+function looksLikeNetFileArgs(args) {
+  const list = [];
+  for (const a of args) for (const t of String(a).split(/\s+/)) if (t) list.push(t);
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i];
+    if (/^-(?:[A-Za-z]{0,6}[KTO](?![A-Za-z0-9_])|[KT]\S)/.test(t) || /^--(?:config|upload-file|output|output-document)(?![A-Za-z-])/.test(t)) return true;
+    if (/^(?:-[A-Za-z]{0,6}[dF]|--(?:data[a-z-]*|json|form[a-z-]*))(?![A-Za-z-])/.test(t)) {
+      const v = /^--/.test(t) ? (t.includes('=') ? t.slice(t.indexOf('=') + 1) : list[i + 1]) : (t.replace(/^-[A-Za-z]{0,6}[dF]/, '') || list[i + 1]);
+      if (v !== undefined && /[@<]/.test(String(v))) return true;
+    }
+  }
+  return false;
+}
+
+// A command word that is not a plain program name: a variable or substitution ($x, ${x}, $(..), `..`), an expression in
+// parentheses, or a pattern (cu?l). The brackets [ and [[ are the test command.
+function commandWordUnresolved(w) {
+  if (w === '[' || w === '[[' || w === ']]') return false;
+  return /[$`*?[]/.test(w) || (w.startsWith('(') && !/^\(*[A-Za-z0-9_.\/\\:~+-]+$/.test(w));
+}
+
+const INDIRECT_VARIABLE_ASSIGN_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
+const INDIRECT_READINGS_MAX = 12;
+
+/* The extra readings that show which program a command really runs when it is reached through an indirection:
+   - a variable assigned earlier on the line (c=curl; $c ... and PowerShell $c='curl.exe'; & $c ...) is filled in, also
+     in the middle of a word ($a$b);
+   - the call operator & and the caret escapes of cmd (c^url) are dropped from the command word;
+   - Start-Process <program> -ArgumentList '<args>' is read as the command <program> <args>;
+   - a command word zn cannot resolve ($x, ${x}, $(..), `..`, & ("cu"+"rl.exe")) whose arguments look like curl or wget
+     file options is read once as curl and once as wget (fail closed).
+   Returns {readings, overflow}: the readings to check besides the original ones. */
+function indirectReadings(readings) {
+  const extra = [];
+  let overflow = false;
+  for (const r of readings) {
+    if (extra.length >= INDIRECT_READINGS_MAX) break;
+    const scope = shellVars.newScope();
+    const groups = [];
+    let changed = false;
+    let unresolved = false;
+    let i = 0;
+    while (i < r.length) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const ws = r.slice(i, j);
+      i = j;
+      const texts = ws.map((w) => String(w.text));
+      const ps = texts.length === 1 ? INDIRECT_VARIABLE_ASSIGN_RE.exec(texts[0]) : null;
+      if (ps) {
+        if (ps[2].length <= shellVars.MAX_VALUE) scope.vars.set(ps[1], ps[2]); else scope.vars.delete(ps[1]);
+        groups.push({ ws, t: texts, k: -1, unresolved: false });
+        continue;
+      }
+      let t = shellVars.applyWords(scope, texts, ';').slice();
+      if (scope.overflow) { overflow = true; break; }
+      let words = ws;
+      let k = 0;
+      while (k < t.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(t[k]) || t[k] === '&')) k++;
+      const g = { ws: words, t, k, unresolved: false };
+      if (k === 0 && t.length && t[0].startsWith('-') && looksLikeNetFileArgs(t)) {
+        // The options stand alone: the tokenizer ended the command at a closing parenthesis, as in & ("cu"+"rl.exe") -K cfg.
+        // The program is the expression before them, which zn cannot name.
+        g.t = ['?'].concat(t);
+        g.ws = [ws[0]].concat(ws);
+        g.unresolved = true;
+        unresolved = true;
+        groups.push(g);
+        continue;
+      }
+      if (k < t.length) {
+        let w0 = t[k].replace(/\^/g, '');
+        t[k] = w0;
+        if (PS_START_RE.test(programName(w0))) {
+          const parts = startProcessParts(t.slice(k + 1));
+          if (parts) {
+            const proto = ws[Math.min(k, ws.length - 1)];
+            t = t.slice(0, k).concat([parts.file.replace(/\^/g, '')], parts.args);
+            words = ws.slice(0, k).concat(t.slice(k).map(() => proto));
+            w0 = t[k];
+          }
+        }
+        g.ws = words;
+        g.t = t;
+        if (commandWordUnresolved(w0) && looksLikeNetFileArgs(t.slice(k + 1))) { g.unresolved = true; unresolved = true; }
+      }
+      if (g.t.length !== texts.length || g.t.some((x, n) => x !== texts[n])) changed = true;
+      groups.push(g);
+    }
+    if (overflow) break;
+    const build = (alt) => {
+      const out = [];
+      for (const g of groups) {
+        for (let n = 0; n < g.t.length; n++) {
+          // The call operator before the command word is dropped; the other words keep their flags (redirection targets).
+          if (g.k > 0 && n < g.k && g.t[n] === '&') continue;
+          const prog = g.k >= 0 && n === g.k && g.unresolved && alt ? alt : null;
+          out.push({ ...g.ws[Math.min(n, g.ws.length - 1)], text: prog || g.t[n], head: n >= g.k && g.k >= 0 ? programName(prog || g.t[g.k]) : g.ws[Math.min(n, g.ws.length - 1)].head });
+        }
+      }
+      return out;
+    };
+    if (changed) extra.push(build(null));
+    if (unresolved) { extra.push(build('curl')); extra.push(build('wget')); }
+  }
+  return { readings: extra, overflow };
+}
+
   return {
+    indirectReadings,
+    wgetDenial,
     markCurlWords,
     atFileWords,
     curlFileOf,

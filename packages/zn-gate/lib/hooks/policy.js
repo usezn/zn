@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.18';
+const POLICY_RULES_VERSION = '2026-11-11.19';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1056,7 +1056,7 @@ const INSTRUCTION_WRAPPERS = new Map([
   ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
   ['nice', new Set(['-n'])],
   ['time', new Set(['-f', '-o'])],
-  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()],
+  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()], ['busybox', new Set()],
   ['timeout', new Set(['-k', '-s', '--kill-after', '--signal'])],
   ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
   ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'])],
@@ -1458,10 +1458,20 @@ function curlFilesOf() {
   }
   return curlFilesApi;
 }
-const CURL_WORD_RE = /curl/i;
+const CURL_WORD_RE = /curl|wget/i;
+// An option word that names a file the way curl and wget do (-K, -T, -O, -d, -F, --config, --upload-file, --output,
+// --execute, --data, --form, --json), and the Start-Process words: with a variable, substitution, call operator or
+// caret in the command, a program zn cannot name may still be curl or wget (indirectReadings in curl-files.js).
+const NET_FILE_OPT_WORD_RE = /^-(?:[A-Za-z]{0,6}[KTOdF]|-(?:config|upload-file|output|execute|data|form|json))|^(?:start-process|start|saps)$/i;
+const INDIRECTION_CHARS_RE = /[$`(&^*?[]/;
 const CURL_GROUP_WORDS = 64;
 function mayRunCurl(words) {
   return words.length >= CURL_GROUP_WORDS || words.some((w) => CURL_WORD_RE.test(String(w.text)));
+}
+// A command that may reach curl or wget through an indirection: it has an expansion, call operator or caret and an
+// option word of the kind above.
+function mayRunNetIndirectly(words, text) {
+  return INDIRECTION_CHARS_RE.test(text) && words.some((w) => NET_FILE_OPT_WORD_RE.test(String(w.text)));
 }
 // An upload option, an @file or < value, a variable or assignment, a {a,b} list, a space, a backslash escape: what
 // atFileWords reads a file name out of. A word with none of them, and none of curl's marks, adds nothing.
@@ -2582,6 +2592,8 @@ function bashDenialOf(cmd, opts = {}) {
   const words = readings.flat();
   const codes = new Set();
   for (const r of readings) shellCodesOf(r, codes);
+  // The body of a $( ) or backtick substitution runs as commands, also inside an argument (echo `curl -K cfg`).
+  if (/\$\(|`/.test(text)) for (const body of egressSubstitutions(text)) if (body.trim()) codes.add(body);
   if (codes.size) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
     for (const code of codes) {
@@ -2608,8 +2620,16 @@ function bashDenialOf(cmd, opts = {}) {
   opts.cdBases = cdBasesOf(readings, opts);
   opts.elsewhere = new Map();
   markLinkWords(readings);
+  // curl or wget behind a variable, a call operator, a caret or Start-Process: read as the program it really is.
+  if (mayRunCurl(words) || mayRunNetIndirectly(words, text)) {
+    const net = curlFilesOf().indirectReadings(readings);
+    if (net.overflow) return TOO_MANY_MESSAGE;
+    for (const r of net.readings) { readings.push(r); words.push(...r); }
+  }
   if (mayRunCurl(words)) {
     const curlFiles = curlFilesOf();
+    const wget = curlFiles.wgetDenial(readings, text);
+    if (wget) return wget;
     curlFiles.markCurlWords(readings, opts, text);
     if (words.some((x) => x.curlConfigUnreadable)) return curlFiles.CURL_CONFIG_UNREADABLE_MESSAGE;
     if (words.some((x) => x.curlConfigExpansionWrite)) return curlFiles.CURL_CONFIG_EXPANSION_WRITE_MESSAGE;
