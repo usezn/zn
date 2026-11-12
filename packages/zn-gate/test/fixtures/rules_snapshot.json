@@ -53,7 +53,7 @@
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-31.2",
+      "version": "2026-11-11.2",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -131,6 +131,7 @@
         "TEAMS_WEBHOOK",
         "TELEGRAM_BOT_TOKEN",
         "TERRAFORM_CLOUD_TOKEN",
+        "TWILIO_AUTH_TOKEN",
         "TWILIO_KEY",
         "URL_PASSWORD",
         "USERNAME",
@@ -150,7 +151,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "f165a372419a3de17a35377f2b446c547f3e23c64e39d101ae4f7c290db5ee9d",
+        "lib/scrub/patterns.js": "541554afe69ee151747ba66337c7099b03245fd874ec19f8656868f1b80d74fd",
         "lib/scrub/exact.js": "cc4344ace825676514a2edac385a013b29fb14faed5bc1cd3c779d0f8587eddd"
       }
     },
@@ -214,7 +215,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-11-11.1",
+      "version": "2026-11-11.7",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -247,10 +248,10 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "5d78c66fc1c1e2e7107570a458681dacca26ac35a8504b41c478e270e857d49e",
+        "lib/hooks/policy.js": "688581825d0c1ea77ffd9eeb7bebc9928040fab5739db8a730d1a9071bd5ebae",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
-        "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
+        "lib/broker/dotenv.js": "e6ae0b84799952f72a342f697dc357b128b5d5e2a0b1a82d500515fdc6395ebf",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
         "lib/destructive.js": "fa77c17be4f60dc2cdb50a4c2a8ef31ebb6dcb17c06b706328deed8d90ac30ee",
         "lib/shell-vars.js": "dda7b10b16db524bf0dfce7ee7dfeac960bf7b4c192fb12b1a5c0ec533db27a1"
