@@ -53,6 +53,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [offline-and-local-only.md](offline-and-local-only.md): running zn-gate with no network and the cloud check off.
 - [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
+- [reading-a-sarif-rule-id.md](reading-a-sarif-rule-id.md): follow one rule ID of a SARIF file written by `zn-gate audit` to its file, its line and its fix.
 - [reading-a-scan-finding.md](reading-a-scan-finding.md): what each field of a scan finding means in `--format json` and `--format github`.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project and read what each exit code means.
@@ -63,6 +64,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [stats-share-controls.md](stats-share-controls.md): check, turn on and turn off the optional sharing of daily counts.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
+- [zn-evidence-export-to-csv-for-a-spreadsheet.md](zn-evidence-export-to-csv-for-a-spreadsheet.md): open the decision log in a spreadsheet: export it as CSV, read the 11 columns, and decide who may see it.
 - [zn-evidence-verify-after-disk-full.md](zn-evidence-verify-after-disk-full.md): what zn-gate evidence --verify prints when the last record of the decision log was cut short by a full disk, and how to start a new log.
 - [zn-first-week-reviewing-blocks.md](zn-first-week-reviewing-blocks.md): a five-minute daily routine for the first week, with zn why, zn stats, zn report and zn evidence.
 - [zn-hooks-status-before-opening-a-pr.md](zn-hooks-status-before-opening-a-pr.md): a short checklist to run before you open a pull request: check, check --hooks and check --json, and what each result means.
@@ -72,6 +74,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-reach-reading-severity-levels.md](zn-reach-reading-severity-levels.md): what the `HIGH`, `MEDIUM`, `LOW` and `INFO` levels of `zn-gate reach` mean, with real output on a fake project.
 - [zn-report-sharing-safely-in-an-issue.md](zn-report-sharing-safely-in-an-issue.md): what `report` prints, what zn-gate already hides from it, and what to check before you paste it in an issue.
 - [zn-run-with-timeout-and-exit-codes.md](zn-run-with-timeout-and-exit-codes.md): how zn-gate run passes the exit code of the program through, which codes zn-gate returns itself, what a signal gives, and how to add a time limit.
+- [zn-scan-package-lockfile-noise.md](zn-scan-package-lockfile-noise.md): what `zn-gate scan` does with lockfiles, the two kinds of result, and the options that really reduce them.
 - [zn-scan-reading-a-false-positive.md](zn-scan-reading-a-false-positive.md): judge a scan finding that is not a real secret, and the ways to skip it that the scan really supports.
 - [zn-stats-before-and-after-hooks-reinstall.md](zn-stats-before-and-after-hooks-reinstall.md): what `zn stats` shows before and after you reinstall the hooks: the counts are kept, and what does change them.
 - [zn-stats-reading-top-blocked-rules.md](zn-stats-reading-top-blocked-rules.md): read the `Top rules` block of `zn-gate stats` with real output, what its counts are and are not, and how to trace a rule that shows up too often with `evidence` and `why`.
@@ -83,10 +86,17 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [keep-a-secret-out-of-the-agent.md](keep-a-secret-out-of-the-agent.md): store one fake secret, let one command use it, then remove it.
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
+- [secret-allow-for-one-command.md](secret-allow-for-one-command.md): allow one command to read one secret with `zn secret allow`, approve the first use, then verify with `secret list` and `secret log`.
 - [secret-import-and-adopt.md](secret-import-and-adopt.md): import a `.env` file into the vault, then adopt a key the scrubber found.
+- [secret-run-with-multiple-secrets.md](secret-run-with-multiple-secrets.md): give one command two vault secrets with a single `zn run --secrets`, and check what is stored and used.
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
+- [vault-log-export.md](vault-log-export.md): export the vault audit log as OpenTelemetry logs.
 - [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
+- [zn-secret-rm-then-confirm-with-vault-log.md](zn-secret-rm-then-confirm-with-vault-log.md): remove a secret with `zn-gate secret rm`, then find the removal line in the vault log and check that the log is intact.
+- [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
+- [zn-vault-log-filtering-by-secret-name.md](zn-vault-log-filtering-by-secret-name.md): narrow the vault log to one secret with `grep` or `awk`, and read what each line means.
+- [zn-why-for-a-secret-read-block.md](zn-why-for-a-secret-read-block.md): explain a blocked read of a `.env` file with `zn-gate why`, and the safe ways to go on.
 
 ## Optional cloud check
 
@@ -96,6 +106,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check, and when the result carries a warning.
 - [team-choices-examples.md](team-choices-examples.md): three worked team choices (block, warn, allow within limits) and what the developer, the agent and the audit record see.
 - [team-first-day.md](team-first-day.md): the first day of zn Team for a lead and one developer, from the invitation to `zn team leave`.
+- [team-leave-and-rejoin.md](team-leave-and-rejoin.md): leave an organization, what is removed and kept, what the lead sees, and joining again.
 - [team-managed-config.md](team-managed-config.md): print the managed settings an admin deploys so the hooks run on every machine.
 - [team-onboarding-checklist.md](team-onboarding-checklist.md): a one-line-per-step checklist for a new zn Team member, with the expected result and what to do when a step fails.
 - [team-sync-after-policy-change.md](team-sync-after-policy-change.md): pull a new team policy version with `zn team sync`, then read what changed in `zn team status`.
@@ -103,6 +114,8 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-analyze-long-text-from-a-file-and-limits.md](zn-analyze-long-text-from-a-file-and-limits.md): check the text of a file with `analyze` (it has no `--file` option), the size limits, and `scan` for whole files.
 - [zn-connect-behind-a-proxy.md](zn-connect-behind-a-proxy.md): use the optional cloud check on a network with a proxy: what zn-gate supports, what Node.js and Python do, and what a failed check looks like.
 - [zn-disconnect-then-analyze-offline-behaviour.md](zn-disconnect-then-analyze-offline-behaviour.md): what `analyze` does after `disconnect`, and when the cloud check is on but cannot be reached.
+- [zn-team-leave-cleanup-checklist.md](zn-team-leave-cleanup-checklist.md): what `zn team leave` removes, what stays on disk, and the one case where you delete files by hand.
+- [zn-why-after-a-team-policy-block.md](zn-why-after-a-team-policy-block.md): a secret blocked by the organization policy of zn Team: what the agent sees, how to find the rule, and what `zn-gate why` does and does not show.
 
 ## Scripts, CI and APIs
 
@@ -113,6 +126,8 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [python-api.md](python-api.md): five short examples of the Python package.
 - [reach-report-file.md](reach-report-file.md): write the reach report to a file in a CI job.
 - [scripting.md](scripting.md): use zn-gate from a shell script or a CI job, and read its exit codes.
+- [zn-check-json-with-jq-in-a-shell-script.md](zn-check-json-with-jq-in-a-shell-script.md): read `zn-gate check --json` with `jq` in a shell script, and stop the script when an agent is not protected.
 - [zn-hooks-status-in-a-ci-job.md](zn-hooks-status-in-a-ci-job.md): fail a CI job on `zn-gate check --hooks` when a hook is stale or broken, with its exit codes, real output, and why plain `check` does not catch it.
 - [zn-scan-ci-annotations-reading.md](zn-scan-ci-annotations-reading.md): read the GitHub annotations of scan --format github line by line, from the error to the notices and warnings, and silence a fixture folder.
+- [zn-stats-report-for-a-weekly-standup.md](zn-stats-report-for-a-weekly-standup.md): turn `zn-gate report --json` into three lines for a weekly standup.
 - [zn-why-reading-a-wrapped-block-in-ci-logs.md](zn-why-reading-a-wrapped-block-in-ci-logs.md): find the rule of a block in a CI log whose lines are wrapped, and what zn why can and cannot add.
