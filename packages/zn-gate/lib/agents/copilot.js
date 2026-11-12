@@ -196,7 +196,19 @@ const { classifyEnv } = require('../audit/patterns');
 // (a program that is not a shell, or an argument that can carry code) is refused, because VS Code launches a custom
 // shell as `executable args... commandLine`, so the code could sit in the shell settings.
 const KNOWN_SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish', 'pwsh', 'powershell', 'cmd', 'nu']);
-const SHELL_FLAGS = new Set(['-c', '-l', '-i', '-lc', '--login', '-noprofile', '-command', '/d', '/s', '/c']);
+// Flags per shell, lower case. A flag of another shell is refused (bash with /c would run a path as a script, not the judged command).
+const POSIX_FLAGS = new Set(['-c', '-l', '-i', '-lc', '--login']);
+const SHELL_FLAGS = {
+  bash: POSIX_FLAGS,
+  sh: POSIX_FLAGS,
+  zsh: POSIX_FLAGS,
+  dash: POSIX_FLAGS,
+  fish: new Set(['-c', '-l', '-i']),
+  nu: new Set(['-c', '-l', '-i']),
+  pwsh: new Set(['-c', '-command', '-noprofile', '-noninteractive']),
+  powershell: new Set(['-c', '-command', '-noprofile', '-noninteractive']),
+  cmd: new Set(['/c', '/d', '/s', '/q']),
+};
 // Keys VS Code reads under a task's options; any other key is refused so a new field fails closed.
 const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
 
@@ -226,12 +238,15 @@ function taskOptions(o) {
   if (sh.executable !== undefined && typeof sh.executable !== 'string') return null;
   if (sh.args !== undefined && (!Array.isArray(sh.args) || sh.args.some((a) => typeof a !== 'string'))) return null;
   const exe = sh.executable;
+  const args = sh.args || [];
   if (exe !== undefined) {
     const name = exe.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
     if (!KNOWN_SHELLS.has(name)) return null;
+    const flags = SHELL_FLAGS[name];
+    if (!flags || args.some((a) => !flags.has(a.toLowerCase()))) return null;
+  } else if (args.length) {
+    return null; // flags without a named shell cannot be tied to one
   }
-  const args = sh.args || [];
-  if (args.some((a) => !SHELL_FLAGS.has(a.toLowerCase()))) return null;
   out.shell = { exe, args };
   return out;
 }
@@ -284,6 +299,14 @@ function variantLines(task, opts, workspace) {
  * shape, a type that is not a string, a command or argument it cannot read).
  */
 function taskLines(v, workspace) {
+  try {
+    return taskLinesUnsafe(v, workspace);
+  } catch (_) {
+    return null; // fail closed: an error while reading a task blocks it
+  }
+}
+
+function taskLinesUnsafe(v, workspace) {
   workspace = workspace || process.cwd();
   const overrides = TASK_PLATFORMS.filter((k) => v[k] !== undefined);
   const hasCommand = (o) => COMMAND_KEYS.some((k) => o[k] !== undefined);
