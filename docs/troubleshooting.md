@@ -49,6 +49,7 @@ Find the command you ran, then the symptom that matches.
   - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
   - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
   - ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook)
+  - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
 - `scan` and `audit`
   - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
   - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
@@ -56,6 +57,7 @@ Find the command you ran, then the symptom that matches.
   - ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
   - [Your agent was blocked: ".env holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
   - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
+  - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
 - `run`
@@ -90,6 +92,8 @@ Find the command you ran, then the symptom that matches.
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
+- [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
+- ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -1214,6 +1218,44 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 
 **What to do:** close the terminal, open a new one and try again. If it keeps failing, create the vault with a passphrase: `zn unlock --backend passphrase`.
 
+#### `zn unlock` fails on a computer with no keychain
+
+**What happened:** zn keeps the vault key in your system keychain when it can use one, and otherwise behind a passphrase. On a server, a container or a Linux computer without a Secret Service, there is no keychain, and `zn unlock` chooses the passphrase on its own. It fails in two cases.
+
+- **There is no terminal.** For example, a script, a CI job or an `ssh` call without `-t` runs it. A real run with no terminal:
+
+  ```text
+  [zn] zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.
+  ```
+
+- **A keychain was asked for that is not there.** You ran `zn unlock --backend libsecret`, or `ZN_KEYCHAIN_BACKEND` is set, but the `secret-tool` program is missing. A real run on a computer without it:
+
+  ```text
+  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.15.0 unlock --backend passphrase`.
+  ```
+
+  A second line then says that the passphrase is not the problem and points back to this page.
+
+Nothing was changed.
+
+**What to do:**
+
+1. Open a terminal of your own on that computer (over `ssh`, use `ssh -t`) and run `zn unlock`. The first time it creates the vault and asks twice for a new passphrase of at least 12 characters, at a hidden prompt:
+
+   ```text
+   New vault passphrase (min 12 chars):
+   Repeat passphrase:
+   Created a new vault (passphrase) in ~/.zn/vault
+   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.15.0 lock` to lock now.
+   ```
+
+   Later runs ask once, for `Vault passphrase:`. A wrong passphrase says `wrong passphrase, or vault file identity.age is corrupted`; see [section 5](#5-your-secret-vault-is-locked) if you forgot it.
+2. To force the passphrase, run `zn unlock --backend passphrase`, and remove `ZN_KEYCHAIN_BACKEND` if you set it.
+3. If a person cannot type at that moment, `zn unlock --passphrase-stdin` reads the passphrase from the input instead. Use it only from a shell of your own, never in a file that others can read, and never in your agent's session.
+4. On a computer that has no dialog, the vault also says that first-use approvals will be refused. To answer them, run `zn lock` and then `zn unlock --foreground` in a terminal of its own, as in [Secrets](secrets.md#if-something-fails).
+
+More on where the key is kept: [Secrets, step 1](secrets.md#1-install-and-unlock-the-vault).
+
 ### Messages from `zn-gate connect` and `zn-gate disconnect`
 
 The problems with the key you paste are in [section 7](#7-zn-gate-connect-does-not-accept-your-key). These are the others. `disconnect` removes the key from this computer and can also revoke it, so it stops working everywhere.
@@ -1343,6 +1385,37 @@ From time to time browsers and runtimes stop trusting a certificate authority. I
 3. Run your command again.
 
 The Node.js package always refuses a connection whose certificate does not check out, even when `NODE_TLS_REJECT_UNAUTHORIZED=0` is set. If `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set in your terminal, it will not send the key saved by `zn-gate connect` (see [8. `will not send the saved key`](#8-will-not-send-the-saved-key-tls-settings)). A key you pass in `ZN_API_KEY` (or with `--key`) is sent anyway, and Node.js then trusts `NODE_EXTRA_CA_CERTS`. The Python package follows your system's TLS settings, `SSL_CERT_FILE` and `SSL_CERT_DIR` included. In every case, updating the list as above is the better fix.
+
+### Hooks are installed but your agent shows no zn-gate activity
+
+You ran `zn hooks install <agent>` (or the plugin is installed), but your agent never shows a zn message, and a secret file such as `.env` is still readable. Three checks find the cause, in this order. Run them in your own terminal.
+
+1. **Ask zn whether the hooks can run.** Run `zn-gate check --hooks` (see [List every installed hook](check.md#list-every-installed-hook)). A hook that is `BROKEN` or `STALE` is followed by the reason and a `Fix:` line: run that command, then run `zn-gate check --hooks` again. A real run where the launcher file had been removed (all six Claude Code hooks were broken in the same way; only the first is shown):
+
+   ```text
+   Claude Code (user): ~/.claude/settings.json
+     BROKEN PreToolUse [^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*]  '~/.zn/hooks/zn-hook-claude-code.sh' PreToolUse
+     BROKEN: its hook cannot start: its launcher script (~/.zn/hooks/zn-hook-claude-code.sh) is missing or was changed.
+       Fix: run `zn hooks install claude-code` in your own terminal.
+
+   0 OK, 0 stale, 6 broken.
+   ```
+
+   If every hook says `OK`, run `zn-gate check` as well. It also tests whether the agent's own settings stop the hooks. For example, when Claude Code has `disableAllHooks` set, `zn-gate check` says so and what to change (the list is in [What each NOT protected line means](check.md#what-each-not-protected-line-means)).
+
+2. **Restart the agent.** An agent reads its hook settings when a session starts, and a session that is already running keeps the hooks it started with. Close it and start a new session. Codex needs one more step: open Codex and approve the hooks in `/hooks`, because until you do Codex does not run them (see [Codex asks you to trust the hooks again](editors/codex.md#codex-asks-you-to-trust-the-hooks-again)).
+
+3. **Check that you installed them for the folder you work in.** A user install covers every project. An install with `--project` covers only the project folder where you ran it, and `check --hooks` lists project hooks only for the folder you run it from. Run it from the project that your agent opened. Run from another folder, it finds nothing:
+
+   ```text
+   zn hooks installed on this machine (nothing was run or changed):
+
+     None found. To set zn up, run `npx -y zn-gate init` in your own terminal.
+   ```
+
+   If it says that from your project folder too, install the hooks again: `zn hooks install <agent>` for your user, or the same command with `--project` from the project folder. The settings file of each agent is in [Install and uninstall the hooks of one agent](examples/hooks-install-and-uninstall.md#2-or-install-them-for-one-project-only).
+
+The steps for each agent are in [Install, verify and uninstall by agent](by-agent.md).
 
 ### Hooks block everything: "zn-gate changed since the hooks were installed"
 
