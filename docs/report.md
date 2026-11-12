@@ -93,3 +93,8 @@ Sharing counts with zn is a separate choice that is off unless you turn it on (`
 - [CLI reference](cli.md): see every command and option, including the ones that read the same counts.
 - [Stats and report example](examples/stats-and-report.md): follow a full run and see what the output means.
 - [Recipes](recipes.md): copy short answers for common tasks.
+
+## See also
+
+- [Stats and report example](examples/stats-and-report.md): a full weekly report run, with a longer period, JSON output and the case where there is nothing to show.
+- [`report` in the CLI reference](cli.md#report): the command syntax, its options and its exit codes (`0` done, `2` wrong usage).
