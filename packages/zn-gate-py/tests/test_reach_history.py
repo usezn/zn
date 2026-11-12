@@ -422,7 +422,7 @@ def test_every_scrub_rule_has_a_type():
     from zn_gate import rules
     types = reach_history._types()
     for table in (rules.SCRUB_FIRST_PATTERNS, rules.SCRUB_LAST_PATTERNS):
-        for rule_id, _pattern, replacement in table:
+        for rule_id, _pattern, _replacement in table:
             assert rule_id.partition("#")[0] in types
 
 

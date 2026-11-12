@@ -4,6 +4,7 @@ import re
 import pytest
 
 from zn_gate.cli import NPM_ONLY_COMMANDS, build_parser, known_commands
+from zn_gate.shell_names import npx_name
 
 _NAMES = sorted(known_commands(build_parser()))
 
@@ -38,7 +39,7 @@ def test_help_mentions_no_npm_only_command(texts):
         if name == "check":
             # The one command that points to the npm package on purpose: it covers
             # the Python guard only and names the npm check for agent hooks.
-            assert "npx -y zn-gate check" in " ".join(text.split())
+            assert npx_name() + " -y zn-gate check" in " ".join(text.split())
             continue
         assert "npx" not in text and "npm" not in text, name
         for cmd in sorted(NPM_ONLY_COMMANDS):
