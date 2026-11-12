@@ -1,5 +1,20 @@
 # Google Antigravity
 
+On this page:
+
+- [Install (no coding needed)](#install-no-coding-needed)
+- [Install the hooks](#install-the-hooks)
+  - [Project or user install](#project-or-user-install)
+- [What zn-gate protects in Antigravity, and what it does not](#what-zn-gate-protects-in-antigravity-and-what-it-does-not)
+  - [The MCP server on its own](#the-mcp-server-on-its-own)
+- [Technical reference](#technical-reference)
+  - [Where the configuration lives](#where-the-configuration-lives)
+  - [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers)
+- [Verify](#verify)
+- [Uninstall](#uninstall)
+- [Troubleshooting](#troubleshooting)
+- [Antigravity documentation](#antigravity-documentation)
+
 Set up zn-gate in Google Antigravity: install its hooks and add it as an MCP server, and what zn-gate does and does not cover there.
 
 ## Install (no coding needed)
