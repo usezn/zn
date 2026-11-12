@@ -47,6 +47,8 @@ No internet on this computer? See [Install on a machine without internet](docs/i
 
 > **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
+**Windows and macOS:** the [install matrix](docs/install-matrix.md#operating-system) says what each system needs and how to verify it. For problems, see [troubleshooting](docs/troubleshooting.md) and the [Windows checklist](docs/examples/windows-checklist.md); on macOS, the keychain prompt is in [troubleshooting section 5](docs/troubleshooting.md#5-your-secret-vault-is-locked).
+
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
 1. `npx -y zn-gate reach` shows what your coding agents can reach on this machine: secrets in your `.env` files (by name only), credential files and MCP servers. It is read only and sends nothing. Details in [docs/reach.md](docs/reach.md).
@@ -333,6 +335,10 @@ Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.confi
 
 Decision log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
 
+### Where zn-gate keeps its files
+
+By default, zn-gate keeps its vault and its settings in a `.zn` folder in your home folder (`~/.zn`; the `ZN_HOME` environment variable points it at another folder): the encrypted vault files, the vault audit log (`audit.jsonl`), the decision log (`evidence.jsonl`) and a small launcher script under `~/.zn/hooks`. The settings and configs of your agents stay where each agent keeps them; zn-gate writes a backup before it changes one. The full list, what each file is and how to remove it: [Files and folders zn-gate reads or writes](docs/files-and-folders.md).
+
 ### GitHub Action
 
 Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md). To report findings without failing the build, see [Warn without failing the build](docs/github-action.md#warn-without-failing-the-build).
@@ -515,6 +521,7 @@ Releases published by the release workflow, starting with the first one after 1.
 ## Community and support
 
 - **[Discussions](https://github.com/usezn/zn/discussions)**: questions about setup and use, ideas, and show and tell. Start here if you are not sure where your question belongs.
+- **Before you open an issue**, read [Troubleshooting](docs/troubleshooting.md), [Before you ask for help](docs/examples/doctor-before-asking-for-help.md) (the commands to run and paste) and the [FAQ](#faq).
 - **[Issues](https://github.com/usezn/zn/issues)**: reproducible bugs and concrete feature requests.
 - **Security vulnerabilities**: do not post them in Discussions or Issues. Report them privately as described in [SECURITY.md](SECURITY.md).
 
