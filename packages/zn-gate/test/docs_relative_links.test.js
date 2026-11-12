@@ -108,3 +108,34 @@ test('only docs/*.md and docs/editors/*.md are checked', () => {
   const d = tmpDocs({ 'deeper/x.md': '[x](missing.md)', 'notes.txt': '[x](missing.md)' });
   assert.deepStrictEqual(brokenLinks(d), []);
 });
+
+test('a title or angle brackets around the target do not change the check', () => {
+  const d = tmpDocs({
+    'a.md': '[x](b.md "Title") [y](<b.md>) [z](missing.md "Title") [w](<gone.md>)',
+    'b.md': '',
+  });
+  assert.deepStrictEqual(brokenLinks(d).sort(), ['a.md -> gone.md', 'a.md -> missing.md']);
+});
+
+test('percent-encoded names are decoded and a query string is dropped', () => {
+  const d = tmpDocs({
+    'a.md': '[x](my%20page.md) [y](b.md?plain=1) [z](no%20such.md)',
+    'my page.md': '',
+    'b.md': '',
+  });
+  assert.deepStrictEqual(brokenLinks(d), ['a.md -> no%20such.md']);
+});
+
+test('image links and links to other file types or folders are checked too', () => {
+  const d = tmpDocs({
+    'a.md': '![d](diagrams/flow.svg) [f](editors/) [g](diagrams/none.svg)',
+    'diagrams/flow.svg': '<svg/>',
+    'editors/e.md': '',
+  });
+  assert.deepStrictEqual(brokenLinks(d), ['a.md -> diagrams/none.svg']);
+});
+
+test('root-absolute links are ignored', () => {
+  const d = tmpDocs({ 'a.md': '[x](/docs/missing.md)' });
+  assert.deepStrictEqual(brokenLinks(d), []);
+});
