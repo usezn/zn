@@ -49,11 +49,16 @@ test('the hook passes the PowerShell flag, so a PowerShell event is judged like 
   }
 });
 
-test('a backslash word is judged as a path only where something reads it', (t) => {
+// A lone print of a backslash path names the file only on a host that reads a backslash as a separator: on Windows .\.env is the
+// protected file (refused, an accepted false positive), on Linux it is just an odd file name (allowed).
+test('a lone print of a backslash path is judged by what the path is on this host', (t) => {
   const cwd = project(t);
-  for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env']) {
-    assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
+  const onWindows = process.platform === 'win32';
+  for (const cmd of ['Write-Output .\\.env', "Write-Output '.\\.env'", 'echo .\\.env', 'Write-Host .\\.env']) {
+    const v = policy.bashDenial(cmd, { cwd, powershell: true });
+    if (onWindows) assert.ok(v, 'must deny on Windows: ' + cmd); else assert.equal(v, null, 'must allow on this host: ' + cmd);
   }
+  assert.equal(policy.bashDenial('Write-Output .\\README.md', { cwd, powershell: true }), null);
 });
 
 // A host that reads a backslash as a separator (Windows) resolves .\.env to the file, one that does not (Linux) does not; the verdict
@@ -79,18 +84,19 @@ for (const forced of [false, true]) {
     t.after(() => { if (pwd === undefined) delete process.env.PWD; else process.env.PWD = pwd; });
     for (const cmd of DENY) assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
     for (const cmd of ALLOW) assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
-    for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env', 'write-output .\\.env', 'Write-Output "a" .\\.env']) {
-      assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
+    // Forced win32: .\.env is the protected file, so even a lone print is refused (as before this change). On this host it is only an
+    // odd file name, so it is allowed (also as before). A harmless path is allowed in both runs.
+    for (const cmd of ['Write-Output .\\.env', "Write-Output '.\\.env'", 'echo .\\.env', 'Write-Host .\\.env', 'write-output .\\.env', 'Write-Output "a" .\\.env']) {
+      const v = policy.bashDenial(cmd, { cwd, powershell: true });
+      if (forced || process.platform === 'win32') assert.ok(v, 'must deny: ' + cmd); else assert.equal(v, null, 'must allow: ' + cmd);
     }
-    for (const cmd of ["Write-Output '.\\.env'", 'Write-Output .\\README.md']) {
-      assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
-    }
-    // A braced variable, a subexpression or a variable in the word can read the file: only a plain literal word is text.
+    assert.equal(policy.bashDenial('Write-Output .\\README.md', { cwd, powershell: true }), null);
+    // A braced variable, a subexpression or a variable in the word can read the file.
     for (const cmd of ['Write-Output ${.\\.env}', 'Write-Host "${.\\.env}"', 'Write-Output $(gc .\\.env)', 'echo @(gc .\\.env)',
       'Write-Output "$PWD\\.env"', 'Write-Output ${' + cwd + '\\.env}', 'Write-Output (gc .\\.env)']) {
       assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
     }
-    // Printing is not reading, but nothing that reads may slip through behind a print command.
+    // Nothing that reads may slip through behind a print command, on any platform.
     for (const cmd of [
       'Write-Output .\\.env | Copy-Item -Destination x', 'echo .\\.env | Get-Item | Get-Content', 'echo .\\.env | gi | gc',
       'echo .\\.env | % { gc $_ }', 'Write-Output .\\.env | cpi -Destination x', 'Write-Output .\\.env && gc .\\.env', 'Write-Output .\\.env & gc .\\.env',
@@ -124,55 +130,30 @@ for (const forced of [false, true]) {
   });
 }
 
-// The lone-print exemption belongs to the PowerShell tool: in a Bash command echo is another program, and a Bash command keeps the
-// verdict it had (on Windows .\.env resolves to the file, so it stays refused there; on Linux it stays allowed).
-test('a lone print of a backslash path is exempt only for the PowerShell tool', (t) => {
+// The Bash tool and the PowerShell tool agree on a lone print: it is judged only by what the path is on the host.
+test('a lone print of a backslash path gets the same verdict in the Bash and the PowerShell tool', (t) => {
   const cwd = project(t);
   asWindows(t);
   for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env']) {
-    assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'PowerShell tool must allow: ' + cmd);
-    assert.ok(policy.bashDenial(cmd, { cwd, powershell: false }), 'Bash tool must deny: ' + cmd);
-    assert.ok(policy.bashDenial(cmd, { cwd }), 'no flag must deny: ' + cmd);
+    assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'PowerShell tool must deny on win32: ' + cmd);
+    assert.ok(policy.bashDenial(cmd, { cwd, powershell: false }), 'Bash tool must deny on win32: ' + cmd);
   }
 });
 
-test('a lone print of a backslash path stays allowed for the Bash tool on a host that reads a backslash as an escape', (t) => {
+// The verdict differs with the flag, so this proves the flag reaches the policy through the adapter: a PowerShell event reads
+// cat .\.env as a PowerShell path (refused), the same text in a Bash event is a bash word that names no protected file on Linux.
+test('the hook gives the PowerShell flag to the policy: a PowerShell-only reading is judged per tool', async (t) => {
   const cwd = project(t);
-  for (const cmd of ['echo .\\.env', 'Write-Output .\\.env']) assert.equal(policy.bashDenial(cmd, { cwd, powershell: false }), null, cmd);
-});
-
-// The exemption is judged on the whole command of the call: a command text handed in by the caller (a fragment of it, or a stale one)
-// changes nothing, and a missing one does not make anything pass.
-test('the lone-print exemption reads the whole command, not opts.cmdText', (t) => {
-  const cwd = project(t);
-  asWindows(t);
-  const frag = 'Write-Output .\\.env';
-  for (const cmd of ['Write-Output .\\.env | gc', 'Write-Output .\\.env; gc .\\.env', 'Write-Output .\\.env && cat .\\.env', 'pwsh -c "Write-Output .\\.env | gc"']) {
-    assert.ok(policy.bashDenial(cmd, { cwd, powershell: true, cmdText: frag }), 'must deny with a fragment as cmdText: ' + cmd);
-    assert.ok(policy.bashDenial(cmd, { cwd, powershell: true, cmdText: undefined }), 'must deny without cmdText: ' + cmd);
-    assert.ok(policy.bashDenial(cmd, { cwd, powershell: true, cmdText: 5 }), 'must deny with a bad cmdText: ' + cmd);
-  }
-  assert.equal(policy.bashDenial(frag, { cwd, powershell: true, cmdText: 'gc .\\.env | x' }), null);
-});
-
-// The verdict differs with the flag, so this proves the flag reaches the policy through the adapter: a PowerShell event
-// is judged like PowerShell, the same text in a Bash event is not.
-test('the hook gives the PowerShell flag to the policy: the same lone print is judged differently per tool', async (t) => {
-  const cwd = project(t);
-  asWindows(t);
-  const pwd = process.env.PWD;
-  process.env.PWD = cwd;
-  t.after(() => { if (pwd === undefined) delete process.env.PWD; else process.env.PWD = pwd; });
   const ev = (tool_name, command) => ({ session_id: 's', cwd, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input: { command }, tool_use_id: 'toolu_x' });
   const decide = async (tool_name, cmd) => {
     const r = await runner.handle(adapter, ev(tool_name, cmd), { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home: cwd });
     return r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.permissionDecision;
   };
-  for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env']) {
-    assert.notEqual(await decide('PowerShell', cmd), 'deny', 'PowerShell event must allow: ' + cmd);
-    assert.equal(await decide('Bash', cmd), 'deny', 'Bash event must deny: ' + cmd);
+  for (const cmd of ['cat .\\.env', 'cp .\\.env x', 'type .\\.env']) {
+    assert.equal(await decide('PowerShell', cmd), 'deny', 'PowerShell event must deny: ' + cmd);
+    // A Windows host reads the backslash as a separator in either tool, so the difference only exists elsewhere.
+    if (process.platform !== 'win32') assert.notEqual(await decide('Bash', cmd), 'deny', 'Bash event must allow: ' + cmd);
   }
-  // The tool name is mapped to the lower-case tool by the adapter, so a PowerShell event with a pipeline keeps the read check.
   assert.equal(await decide('PowerShell', 'Write-Output .\\.env | gc'), 'deny');
   assert.equal(await decide('PowerShell', 'Join-Path ~\\.aws credentials'), 'deny');
   assert.notEqual(await decide('PowerShell', 'Join-Path . README.md'), 'deny');

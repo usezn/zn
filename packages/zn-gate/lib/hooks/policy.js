@@ -2636,7 +2636,6 @@ function bashDenialOf(cmd, opts = {}) {
       continue; // reading the settings is allowed
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
-    if (w.printsText) continue; // Write-Output .\\.env prints the name; it does not read the file
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }
@@ -2674,12 +2673,9 @@ const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'i
 // The operand of a .NET file read written as a PowerShell expression ([IO.File]::ReadAllText('.\.env')), or of a cmdlet that turns a
 // name into a path (Resolve-Path .\.env, as in gc (Resolve-Path .\.env)), is read as a PowerShell path too.
 const PS_DOTNET_FILE_READ_RE = /\]::(?:read|open|copy|append|get)\w*$/i;
-// Commands that only print their arguments: a path-shaped word after them is text, not a file that is opened.
-const PS_PRINT_ONLY = new Set(['write-output', 'write-host', 'write-verbose', 'write-warning', 'write-information', 'echo', 'write']);
-// Trade-off: a lone print of a literal backslash path (Write-Output .\.env) is allowed, because it only prints text. A word with ${ }, $( ),
-// @( ), a variable or a backtick can read a file or run a command, and in a pipeline or chain (|, ;, &, a redirect, a new line) the printed
-// text can be bound to a reader, so those keep the read check.
+// A word with ${ }, $( ), @( ), a variable or a backtick can read a file or run a command, so it is judged with the slash reading too.
 const PS_EXPANDS_RE = /[${}()@`&;|<>]/;
+// A statement with a pipeline, chain, redirect, new line or expansion can bind a printed path to a reader (echo .\.env | gi | gc).
 const PS_COMPOUND_RE = /[$(){}@`&;|<>\r\n]/;
 const PS_PATH_HELPERS = new Set(['resolve-path', 'rvpa', 'convert-path', 'cvpa', 'join-path']);
 function psPathOperand(h) {
@@ -2748,21 +2744,18 @@ function psListWords(words, opts, cmd) {
   // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
   // and the read would be let through; the same word with "/" is judged too.
   // The commands (by sequence number) that name a reader somewhere, so the operand of `$x = gc .\.env` or of `gc (Resolve-Path .\.env)`
-  // is a path too, while `Write-Output .\.env` only prints a string.
+  // is a path too.
   const readerSeqs = new Set();
   for (const w of words) if (typeof w.text === 'string' && readerOf(w.text)) readerSeqs.add(w.seq);
   let lastWord = '';
   const push = (x, head) => {
     const backslash = typeof x.text === 'string' && x.text.indexOf('\\') >= 0;
     const reads = readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord);
-    // Only the PowerShell tool: echo and write are other programs in a Bash command, and a Bash command keeps the verdict it had.
-    const prints = opts.powershell === true && backslash && !reads && !x.redirectTarget && PS_PRINT_ONLY.has(String(bareHead(head)).toLowerCase());
-    // A print command that is the whole statement and names a plain literal path only prints text: it is left out of the read check on
-    // every platform. In a pipeline or chain the text may be bound to a reader (echo .\.env | gi | gc), so it keeps the full read check.
-    const lone = prints && !PS_EXPANDS_RE.test(x.text) && typeof cmd === 'string' && !PS_COMPOUND_RE.test(cmd);
-    out.push(lone ? { ...x, printsText: true } : x);
-    // A word that expands ("$PWD\.env") or follows a print command inside a compound statement is judged with the slash reading too.
-    if (backslash && x.text.length <= 4096 && (reads || PS_EXPANDS_RE.test(x.text) || (prints && !lone))) out.push({ ...x, text: slash(x.text) });
+    out.push(x);
+    const compound = opts.powershell === true && typeof cmd === 'string' && PS_COMPOUND_RE.test(cmd);
+    // A word that expands ("$PWD\.env"), or any word of a compound PowerShell statement, is judged with the slash reading too.
+    // A lone statement (Write-Output .\.env) has no such reading: it names the file only where a backslash is a separator.
+    if (backslash && x.text.length <= 4096 && (reads || compound || PS_EXPANDS_RE.test(x.text))) out.push({ ...x, text: slash(x.text) });
   };
   for (const w of words) {
     push(w, w.head);
