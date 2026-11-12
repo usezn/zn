@@ -27,9 +27,9 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [windows-checklist.md](windows-checklist.md): install and check zn-gate on Windows, step by step.
 - [zed-and-jetbrains.md](zed-and-jetbrains.md): connect, check and remove zn-gate in Zed and JetBrains.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-hooks-install-on-a-locked-down-laptop.md](zn-hooks-install-on-a-locked-down-laptop.md): install the hooks when you cannot install globally, cannot write to a settings folder or sit behind a proxy, with the real messages.
 - [zn-hooks-install-with-a-custom-home.md](zn-hooks-install-with-a-custom-home.md): install hooks with a custom `ZN_HOME`: where the files go, what the hooks refer to, and how to clean up.
 - [zn-hooks-status-for-a-teammate-handoff.md](zn-hooks-status-for-a-teammate-handoff.md): a checklist before a computer with zn-gate goes to a teammate: what to check, what not to hand over, what to remove.
-- [zn-hooks-install-on-a-locked-down-laptop.md](zn-hooks-install-on-a-locked-down-laptop.md): install the hooks when you cannot install globally, cannot write to a settings folder or sit behind a proxy, with the real messages.
 - [zn-init-on-a-second-user-account.md](zn-init-on-a-second-user-account.md): a second user account on the same computer: what zn-gate finds there, what is set up per user, and how to check it.
 
 ## Checks, scans and reports
@@ -85,9 +85,9 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [vault-log-export.md](vault-log-export.md): export the vault audit log as OpenTelemetry logs.
 - [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
+- [zn-env-shadow-in-a-monorepo.md](zn-env-shadow-in-a-monorepo.md): shadow the `.env` files of several packages one folder at a time, and what happens when two files use the same key with different values.
 - [zn-secret-allow-vs-approve-decision.md](zn-secret-allow-vs-approve-decision.md): a decision list for `secret allow` and `secret approve`, with the prompts and refusals of each.
 - [zn-secret-get-in-a-pipe.md](zn-secret-get-in-a-pipe.md): what `secret get` does when you try to pipe a vault value into another tool, and what to use instead.
-- [zn-env-shadow-in-a-monorepo.md](zn-env-shadow-in-a-monorepo.md): shadow the `.env` files of several packages one folder at a time, and what happens when two files use the same key with different values.
 - [zn-secret-rm-then-confirm-with-vault-log.md](zn-secret-rm-then-confirm-with-vault-log.md): remove a secret with `zn-gate secret rm`, then find the removal line in the vault log and check that the log is intact.
 - [zn-secret-set-for-an-aws-credential-pair.md](zn-secret-set-for-an-aws-credential-pair.md): store an access key id and its secret as two vault secrets, approve their first use, and run one program with both.
 - [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
