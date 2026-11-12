@@ -346,6 +346,17 @@ lookup, and zn logs the refused host and port (never the body or headers).
   lookups made by the program itself, or a command that unsets the variables.
   It is a guard for well-behaved tools, not a sandbox.
 
+## Common mistakes
+
+The mistakes below come up most with the vault and with `zn env shadow`. Run each fix in your own terminal.
+
+1. **The vault is locked.** `zn secret list`, `zn run` and the other vault commands stop with "Your secret vault is locked." While it is locked, the hooks still redact what they can recognise, but with markers that cannot be restored. Fix: `zn unlock`, then run the command again.
+2. **A secret name with a typo.** `zn run --secrets EXMPLE_API_KEY -- ...` stops with `zn run: Not found: secret EXMPLE_API_KEY is not in the vault` and exits `127`. Fix: `zn secret list` shows the exact names. A program that reads a fixed variable needs the secret under that name (`PGPASSWORD` for `psql`, see [section 4](#4-let-a-command-use-a-secret)).
+3. **A program that is not allowed yet.** `zn run` exits `77` with "`env` is not allowed to use EXAMPLE_API_KEY yet" for a program the secret does not allow. Fix: `zn secret allow EXAMPLE_API_KEY --command <program>`, with the program you mean (see [section 4](#4-let-a-command-use-a-secret) for the warning about interpreters).
+4. **A short value left in `.env`.** `zn env shadow` does not move a value shorter than 8 characters. It stays in clear text, and the command names it. Fix: `zn secret set API_KEY`, then put `__ZN_API_KEY__` in its place in the file (see [section 2](#2-move-your-env-values-into-the-vault)).
+5. **Shadowing a file that was already committed.** `zn env shadow` changes the file, not the git history, so the old values stay in the history. Fix: rotate each value at its provider, and store the new one with `zn secret set NAME --force`. The `--force` option replaces the value, and you repeat the options the secret had (`--command`, `--host`), because they are not kept.
+6. **Deleting the `~/.zn` folder by hand.** The vault is in it, and a deleted vault cannot be recovered. If you ran `env shadow`, the `.env` file then holds markers with no values behind them. Fix, before you delete: `zn env unshadow .env --backup <name>` puts the values back (the name is printed when you run `env shadow`). To remove the vault, use `zn vault purge` (see [Remove zn-gate](uninstall.md#4-your-env-files-and-the-vault)).
+
 ## Useful commands
 
 | Command | What it does |
@@ -396,7 +407,8 @@ To delete the vault, follow [Remove zn-gate](uninstall.md#4-your-env-files-and-t
 | `stats.json` | Counts per day, such as checks and blocks. No values. | No command. Delete it by hand. `ZN_STATS=off` stops the counting. |
 | `requests.jsonl` | A record of each time an agent asked for a secret: the name, the agent and the reason it gave. No value. | No command. Delete it by hand; the agent can ask again. |
 | `package-registry-cache.json` | Saved answers to package lookups. | No command. Delete it by hand; the next lookup fetches the answer again. |
-| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-upload.lock` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `team-notice.json` | A record of which team notices were already shown, so that each one shows once. | No command. Deleting it only lets a notice show again. `zn-gate team leave` does not remove it. |
 | `hooks/` | The launcher scripts that your agent's hooks start. No secrets. | Run `zn-gate hooks uninstall AGENT` first. If you delete the folder while the hooks are still installed, the hooks cannot start, and `zn-gate check` reports the agent as NOT protected. |
 
 ### Files outside `~/.zn`
