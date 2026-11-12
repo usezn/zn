@@ -409,8 +409,10 @@ _IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
 # re.IGNORECASE also folds dotless i (U+0131) and dotted capital I (U+0130) to "i",
 # which simple case folding does not. The two letters are swapped for a private-use
 # character of the same length (so the {0,N} windows are unchanged) before matching,
-# which gives the same result as Node on raw text; the normalised text, where both
-# letters already read as "i", is still checked by the caller.
+# which gives the same result as Node on raw text. The normalised text, where both
+# letters read as "i", is also checked by evaluate() (it matches the rules on the
+# normalised, stripped and raw views), so texts that use them are still flagged;
+# test_rules_identity_request.py pins this end to end.
 _NO_I_FOLD = str.maketrans({'\u0131': '\ue000', '\u0130': '\ue000'})
 
 

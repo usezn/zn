@@ -255,5 +255,26 @@ class TestIdentityRequestFoldedCharacters(unittest.TestCase):
                 self.assertEqual(R.RULE_TESTERS[rule_id](c["text"]), full, c["name"])
 
 
+class TestIdentityRequestDotlessEndToEnd(unittest.TestCase):
+    """The raw-text rule does not fold the dotless i or the dotted capital I (as in Node.js), but the
+    normalised text reads them as i, so evaluate() still flags each text."""
+
+    FILE = CASES_FILE.with_name("identity_request_dotless_e2e_cases.json")
+
+    def test_evaluate_flags_every_text(self):
+        if not self.FILE.is_file():
+            raise unittest.SkipTest("packages/zn-gate is not next to this package: skipping the dotless-i cases")
+        cases = json.loads(self.FILE.read_text(encoding="utf-8"))["cases"]
+        self.assertGreaterEqual(len(cases), 4)
+        for c in cases:
+            adv = R.evaluate(c["text"], strict=False)
+            self.assertEqual(adv.verdict, "allow", c["name"])
+            self.assertIsNotNone(adv.advisory, c["name"])
+            self.assertIn(adv.advisory["rule"], FAMILY, c["name"])
+            blocked = R.evaluate(c["text"], strict=True)
+            self.assertEqual(blocked.verdict, "block", c["name"])
+            self.assertIn(blocked.rule, FAMILY, c["name"])
+
+
 if __name__ == "__main__":
     unittest.main()

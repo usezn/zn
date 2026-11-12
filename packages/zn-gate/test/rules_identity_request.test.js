@@ -211,3 +211,20 @@ test('the identity patterns and prefilters use the u flag', () => {
     for (const re of ID_RULES[id].prefilters) assert.ok(re.flags.includes('u'), id);
   }
 });
+
+// End to end: the rule on the raw text does not fold the dotless i or the dotted
+// capital I, but the normalised text reads them as i, so evaluate() still flags
+// each text (advisory by default, block in strict mode). Same fixture in Python.
+const DOTLESS_E2E = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'identity_request_dotless_e2e_cases.json'), 'utf8')).cases;
+
+test('dotless i and dotted capital I texts are still flagged by evaluate()', () => {
+  assert.ok(DOTLESS_E2E.length >= 4);
+  for (const c of DOTLESS_E2E) {
+    const adv = rules.evaluate(c.text, { strict: false });
+    assert.equal(adv.verdict, 'allow', c.name);
+    assert.ok(adv.advisory && FAMILY.includes(adv.advisory.rule), c.name);
+    const blocked = rules.evaluate(c.text, { strict: true });
+    assert.equal(blocked.verdict, 'block', c.name);
+    assert.ok(FAMILY.includes(blocked.rule), c.name);
+  }
+});
