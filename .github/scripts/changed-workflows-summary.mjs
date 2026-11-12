@@ -21,7 +21,8 @@ export function workflowFiles(paths) {
 export function summaryMarkdown(files) {
   const lines = ['### Workflows changed by this pull request', ''];
   if (files.length === 0) lines.push('No workflow file changed.');
-  else for (const f of files) lines.push(`- \`${f}\``);
+  // A file name comes from the pull request: a backtick or a line break would end the code span early.
+  else for (const f of files) lines.push('- `' + f.replace(/[`\r\n\t]/g, '?') + '`');
   return lines.join('\n') + '\n';
 }
 

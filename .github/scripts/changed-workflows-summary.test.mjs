@@ -30,6 +30,11 @@ test('the summary is a heading with one line per file, or says that none changed
   assert.equal(summaryMarkdown(['.github/workflows/ci.yml']), `${HEADING}\n\n- \`.github/workflows/ci.yml\`\n`);
 });
 
+test('a backtick or a line break in a file name cannot end the code span', () => {
+  assert.equal(summaryMarkdown(['.github/workflows/a`b.yml']), `${HEADING}\n\n- \`.github/workflows/a?b.yml\`\n`);
+  assert.equal(summaryMarkdown(['.github/workflows/a\nb.yml']), `${HEADING}\n\n- \`.github/workflows/a?b.yml\`\n`);
+});
+
 test('the script lists the workflow files that differ from the base and writes them to the job summary', () => {
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'wfsummary-'));
   const git = (...args) => execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', ...args], { cwd: dir, encoding: 'utf8' });

@@ -50,7 +50,7 @@ function main(argv) {
   const { checked, hits } = checkPaths(paths);
   if (hits.length) {
     for (const h of hits) console.error(`${h.file}:${h.line}: ${h.word}: ${h.text}`);
-    console.error(`\n${hits.length} TODO/FIXME marker(s). Finish the text or move the open item to the board.`);
+    console.error(`\n${hits.length} TODO/FIXME marker(s). Finish the text or track the open item in an issue.`);
     return 1;
   }
   console.log(`docs markers OK: ${checked} file(s) checked, no TODO or FIXME`);
