@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-11-11.12",
+      "version": "2026-11-11.13",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,13 +47,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "09d28e0be0b89080ddf718beaf325cfd25f374d33bfcd8b02a7075ae415feaa6",
+        "lib/rules.js": "89dfe15c35300e9a2dd610a57efef3164509687aa7a7f88ba75eed44bfbafa12",
         "lib/mcp-secrets.js": "5e8b328563be363beaed8fca28e8dc92e8a2fdf14e528858698f114ca421aa73"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-31.2",
+      "version": "2026-11-11.2",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -131,6 +131,7 @@
         "TEAMS_WEBHOOK",
         "TELEGRAM_BOT_TOKEN",
         "TERRAFORM_CLOUD_TOKEN",
+        "TWILIO_AUTH_TOKEN",
         "TWILIO_KEY",
         "URL_PASSWORD",
         "USERNAME",
@@ -150,7 +151,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "f165a372419a3de17a35377f2b446c547f3e23c64e39d101ae4f7c290db5ee9d",
+        "lib/scrub/patterns.js": "541554afe69ee151747ba66337c7099b03245fd874ec19f8656868f1b80d74fd",
         "lib/scrub/exact.js": "cc4344ace825676514a2edac385a013b29fb14faed5bc1cd3c779d0f8587eddd"
       }
     },
