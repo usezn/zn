@@ -114,8 +114,14 @@ From now on, every file read, command output and pasted prompt goes through the
 scrubber before it reaches the model. Known values, more than 60 secret formats
 (cloud keys, tokens, private keys, connection strings) and checksummed PII are
 replaced with tokens. Reads of `.env` files with real values, credential files
-(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
-blocked.
+(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.gnupg`, `~/.npmrc`…) and zn's own `~/.zn` are
+blocked. For GnuPG, the files in `~/.gnupg` (`%APPDATA%\gnupg` on Windows) and the folder itself are
+blocked: a command that names the folder, such as `tar`, `cp -r`, `grep -r` or `ls`, is refused,
+while the `gpg` programs (`gpg`, `gpg2`, `gpgconf`, `gpg-agent`, `gpg-connect-agent`, `gpgsm`,
+`gpgv`) can still use their own keyring. Exporting a secret key is refused with any keyring:
+`gpg --export-secret-keys` and `--export-secret-subkeys` (also abbreviated), the
+`--export-secret-key-*` options of `gpgsm` and the agent's `EXPORT_KEY`. `gpg --export`, which
+exports a public key, is not affected.
 
 Template files named `.env.example`, `.env.sample` or `.env.template` (also with a
 middle part, such as `.env.local.example`) can be read, because they are meant to

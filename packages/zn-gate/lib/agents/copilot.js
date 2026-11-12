@@ -169,24 +169,217 @@ function taskPiece(x) {
  * task has no shell, so each argument is quoted. undefined = no command here; null = a command or argument zn
  * cannot read (never dropped).
  */
-function nestedCommand(args) {
+function taskLineOf(v, hasShell) {
+  const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
+  if (key === undefined) return undefined;
+  const c = taskPiece(v[key]);
+  if (!c || (typeof v[key] === 'string' && !v[key])) return null;
+  let extra = [];
+  if (v.args !== undefined) {
+    if (!Array.isArray(v.args)) return null;
+    extra = v.args.map(taskPiece);
+    if (extra.some((p) => p === null)) return null;
+  }
+  const join = (f) => [c, ...extra].map(f).join(' ');
+  if (!hasShell && typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
+  const bare = typeof v[key] === 'string' && extra.length === 0;
+  const lines = [bare ? c.raw : join((p) => p.vs), bare ? c.raw : join((p) => p.vse), bare ? c.raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q)];
+  return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
+}
+
+// Per-platform overrides VS Code reads on a task: the block for the running system replaces fields of the base task.
+const TASK_PLATFORMS = ['linux', 'osx', 'windows'];
+
+const { classifyEnv } = require('../audit/patterns');
+
+// The shells a task may launch, and the only arguments zn accepts for them: each shell's own flags. Anything else
+// (a program that is not a shell, or an argument that can carry code) is refused, because VS Code launches a custom
+// shell as `executable args... commandLine`, so the code could sit in the shell settings.
+const KNOWN_SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish', 'pwsh', 'powershell', 'cmd', 'nu']);
+// Flags per shell, lower case. A flag of another shell is refused (bash with /c would run a path as a script, not the judged command).
+const POSIX_FLAGS = new Set(['-c', '-l', '-i', '-lc', '--login']);
+const SHELL_FLAGS = {
+  bash: POSIX_FLAGS,
+  sh: POSIX_FLAGS,
+  zsh: POSIX_FLAGS,
+  dash: POSIX_FLAGS,
+  fish: new Set(['-c', '-l', '-i']),
+  nu: new Set(['-c', '-l', '-i']),
+  pwsh: new Set(['-c', '-command', '-noprofile', '-noninteractive']),
+  powershell: new Set(['-c', '-command', '-noprofile', '-noninteractive']),
+  cmd: new Set(['/c', '/d', '/s', '/q']),
+};
+// Keys VS Code reads under a task's options; any other key is refused so a new field fails closed.
+const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
+
+/** The settings of a task's options as {shell, cwd, env}; null = unreadable or not accepted. shell: false = none, or {exe, args}. */
+function taskOptions(o) {
+  if (o === undefined) return { shell: false };
+  if (!isObj(o)) return null;
+  if (Object.keys(o).some((k) => !TASK_OPTION_KEYS.has(k))) return null;
+  const out = { shell: false };
+  if (o.cwd !== undefined) {
+    if (typeof o.cwd !== 'string' || !o.cwd) return null;
+    out.cwd = o.cwd;
+  }
+  if (o.env !== undefined) {
+    if (!isObj(o.env)) return null;
+    out.env = {};
+    for (const [k, v] of Object.entries(o.env)) {
+      if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') return null;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return null;
+      if (classifyEnv(k, v) || /^(?:LD_|DYLD_)/i.test(k)) return null;
+      out.env[k] = String(v);
+    }
+  }
+  const sh = o.shell;
+  if (sh === undefined) return out;
+  if (!isObj(sh)) return null;
+  if (sh.executable !== undefined && typeof sh.executable !== 'string') return null;
+  if (sh.args !== undefined && (!Array.isArray(sh.args) || sh.args.some((a) => typeof a !== 'string'))) return null;
+  const exe = sh.executable;
+  const args = sh.args || [];
+  if (exe !== undefined) {
+    const name = exe.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+    if (!KNOWN_SHELLS.has(name)) return null;
+    const flags = SHELL_FLAGS[name];
+    if (!flags || args.some((a) => !flags.has(a.toLowerCase()))) return null;
+  } else if (args.length) {
+    return null; // flags without a named shell cannot be tied to one
+  }
+  out.shell = { exe, args };
+  return out;
+}
+
+/** options.cwd as a folder: ${workspaceFolder}, ${userHome} and ${env:HOME} are replaced, any other ${...} is refused. */
+function taskCwd(c, workspace) {
+  const home = process.env.HOME || os.homedir();
+  const t = c.replace(/\$\{(workspaceFolder|userHome|env:HOME)\}/g, (m, k) => (k === 'workspaceFolder' ? workspace : home));
+  if (t.includes('${')) return null;
+  return path.resolve(workspace, t);
+}
+
+/** Whether a folder is the workspace or inside it, links followed. A task folder outside it is refused: its relative names cannot be judged. */
+function insideFolder(dir, workspace) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+  const rel = path.relative(real(workspace), real(dir));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/** Every line of a task variant: the built lines, run in the task's folder (cd) and, for a custom shell, as launched. */
+function variantLines(task, opts, workspace) {
+  const r = taskLineOf(task, opts.shell !== false);
+  if (r === null || r === undefined) return r;
+  let lines = r.split('\n');
+  if (opts.shell && opts.shell.exe !== undefined) {
+    const head = [opts.shell.exe, ...opts.shell.args].map(shQuote).join(' ');
+    lines = lines.concat(lines.map((l) => head + ' ' + l));
+  }
+  if (opts.cwd !== undefined) {
+    const dir = taskCwd(opts.cwd, workspace);
+    if (dir === null || !insideFolder(dir, workspace)) return null;
+    if (dir !== path.resolve(workspace)) lines = lines.map((l) => 'cd ' + shQuote(dir) + ' && ' + l);
+  }
+  // The task environment is exported before the line, so a value that names a file (F=<home>/.aws/credentials; cat $F)
+  // is judged as the same bash line is.
+  if (opts.env) {
+    const exp = Object.keys(opts.env).map((k) => 'export ' + k + '=' + shQuote(opts.env[k]) + '; ').join('');
+    if (exp) lines = lines.map((l) => exp + l);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * A task object as the line(s) it runs, across the base task and every platform override (linux, osx, windows): each
+ * override is merged over the base the way VS Code applies it, every merged task is judged, and the stricter answer
+ * wins. A custom options.shell (in the base or in an override) makes the task a shell task, whatever its type says; the
+ * line is judged as launched (shell, its flags, then the command), and a shell that is not a known one, or a shell
+ * argument that is not a flag, is refused. options.cwd (merged over the base) is where the line is judged, and a folder outside the workspace is refused, options.env (base keys, then the override's) is checked against the dangerous-environment list, exported before every judged line, and an unknown key under options is refused.
+ * undefined = not a task; null = a shape zn cannot read (an override that is not an object, options of the wrong
+ * shape, a type that is not a string, a command or argument it cannot read).
+ */
+function taskLines(v, workspace) {
+  try {
+    return taskLinesUnsafe(v, workspace);
+  } catch (_) {
+    return null; // fail closed: an error while reading a task blocks it
+  }
+}
+
+function taskLinesUnsafe(v, workspace) {
+  workspace = workspace || process.cwd();
+  const overrides = TASK_PLATFORMS.filter((k) => v[k] !== undefined);
+  const hasCommand = (o) => COMMAND_KEYS.some((k) => o[k] !== undefined);
+  const isTask = hasCommand(v) || overrides.some((k) => isObj(v[k]) && hasCommand(v[k]));
+  if (!isTask) return undefined;
+  if (v.type !== undefined && typeof v.type !== 'string') return null;
+  const baseOpts = taskOptions(v.options);
+  if (baseOpts === null) return null;
+  const base = {};
+  for (const k of Object.keys(v)) if (!TASK_PLATFORMS.includes(k)) base[k] = v[k];
+  const variants = [{ task: base, opts: baseOpts }];
+  for (const k of overrides) {
+    const ov = v[k];
+    if (!isObj(ov)) return null;
+    if (ov.type !== undefined && typeof ov.type !== 'string') return null;
+    const ovOpts = taskOptions(ov.options);
+    if (ovOpts === null) return null;
+    const merged = { shell: ovOpts.shell || baseOpts.shell };
+    const cwd = ovOpts.cwd !== undefined ? ovOpts.cwd : baseOpts.cwd;
+    if (cwd !== undefined) merged.cwd = cwd;
+    if (baseOpts.env || ovOpts.env) merged.env = Object.assign({}, baseOpts.env, ovOpts.env);
+    variants.push({ task: Object.assign({}, base, ov), opts: merged });
+  }
+  const out = [];
+  for (const { task, opts } of variants) {
+    const r = variantLines(task, opts, workspace);
+    if (r === null) return null;
+    if (r !== undefined) out.push(r);
+  }
+  return out.length ? out.join('\n') : undefined;
+}
+
+
+// Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
+const MAX_NEST_DEPTH = 6;
+const MAX_NEST_NODES = 500;
+
+/**
+ * Every command in the arguments of an unknown tool, at any level up to MAX_NEST_DEPTH (create_and_run_task sends
+ * {task: {command, args}}), each built with taskLines, the way VS Code builds a task line, so every reading of the line
+ * is judged. A command or argument zn cannot read (a number, a list, an object without a string value) is `bad` and the
+ * call is refused, never dropped. `truncated` = the arguments are deeper or larger than the bounds.
+ */
+function commandScan(args, workspace) {
+  const commands = [];
+  let bad = false;
+  let truncated = false;
+  let nodes = 0;
+  const walk = (obj, depth) => {
+    if (++nodes > MAX_NEST_NODES || depth > MAX_NEST_DEPTH) { truncated = true; return; }
+    let skip = null;
+    if (!Array.isArray(obj)) {
+      const r = taskLines(obj, workspace);
+      if (r === null) bad = true;
+      else if (r !== undefined) commands.push(r);
+      if (r !== undefined) skip = new Set([...COMMAND_KEYS, 'args', ...TASK_PLATFORMS]);
+    }
+    const entries = Array.isArray(obj) ? obj.map((v) => [null, v]) : Object.entries(obj);
+    for (const [k, v] of entries) {
+      if (skip && skip.has(k)) continue;
+      if (isObj(v) || Array.isArray(v)) walk(v, depth + 1);
+    }
+  };
+  walk(args, 0);
+  return { command: commands.length ? commands.join('\n') : undefined, bad, truncated };
+}
+
+/** The first command one level down (see taskLines), as the line(s) it runs; undefined = none, null = unreadable. */
+function nestedCommand(args, workspace) {
   for (const v of Object.values(args)) {
     if (!isObj(v)) continue;
-    const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
-    if (key === undefined) continue;
-    const c = taskPiece(v[key]);
-    if (!c || (typeof v[key] === 'string' && !v[key])) return null;
-    let extra = [];
-    if (v.args !== undefined) {
-      if (!Array.isArray(v.args)) return null;
-      extra = v.args.map(taskPiece);
-      if (extra.some((p) => p === null)) return null;
-    }
-    const join = (f) => [c, ...extra].map(f).join(' ');
-    if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
-    const bare = typeof v[key] === 'string' && extra.length === 0;
-    const lines = [bare ? c.raw : join((p) => p.vs), bare ? c.raw : join((p) => p.vse), bare ? c.raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q)];
-    return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
+    const r = taskLines(v, workspace);
+    if (r !== undefined) return r;
   }
   return undefined;
 }
@@ -203,9 +396,12 @@ function localFileUrl(v) {
 }
 
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
-function pathsOf(args) {
+function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
+  // loose (a tool zn does not know): a string that looks like a path counts under any key, deeper than the named keys.
+  const loose = opts.loose === true;
+  const pathLike = (v) => /^[~.]|[\\/]/.test(v);
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
@@ -217,12 +413,18 @@ function pathsOf(args) {
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
+  const maxDepth = loose ? MAX_NEST_DEPTH : 3;
+  let nodes = 0;
   const walk = (obj, depth) => {
+    if (loose && ++nodes > MAX_NEST_NODES) return;
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
+      } else if (loose) {
+        if (typeof v === 'string' && pathLike(v)) add(k, v);
+        else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === 'string' && pathLike(x)) add(k, x); });
       }
-      if (depth < 3) {
+      if (depth < maxDepth) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
       }
@@ -280,21 +482,26 @@ function normalize(raw) {
 
   const known = KNOWN_TOOLS.has(toolName);
   if (args === null) {
-    return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, ...(known ? { unreadable: unreadable('arguments') } : {}) };
+    // Arguments that are not an object (or a JSON string of one) cannot be checked, whatever the tool is.
+    return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, unreadable: unreadable('arguments') };
   }
   if (!known) {
     const patch = patchTextOf(toolName, args);
     if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
   }
-  let cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
-  const nestedBad = cmd === null;
-  if (nestedBad) cmd = undefined;
-  if (SHELL_TOOLS.has(toolName) || nestedBad || (!known && cmd !== undefined)) {
+  // A known tool: its top-level command string. A tool zn does not know: every command at any level within
+  // bounds, built the way VS Code builds the line; unreadable or too deep = refused.
+  const scan = known ? null : commandScan(args, cwd);
+  if (scan && (scan.bad || scan.truncated)) {
+    return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable(scan.bad ? 'command' : 'arguments (too deeply nested)') };
+  }
+  const cmd = known ? firstString(args, COMMAND_KEYS) : scan.command;
+  if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
     if (cmd === undefined) e.unreadable = unreadable('command');
     return e;
   }
-  const { paths, bad } = pathsOf(args);
+  const { paths, bad } = pathsOf(args, { loose: !known });
   const input = { path: paths[0], paths, texts: [] };
   const kind = toolName === 'view' ? 'read' : toolName === 'grep' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
@@ -452,4 +659,7 @@ module.exports = {
   patchTextOf,
   patchInput,
   nestedCommand,
+  commandScan,
+  MAX_NEST_DEPTH,
+  MAX_NEST_NODES,
 };

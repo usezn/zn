@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.13';
+const POLICY_RULES_VERSION = '2026-11-11.17';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -38,12 +38,15 @@ const POLICY_RULES_VERSION = '2026-11-11.13';
 // are classified like their literal paths.
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
+// The Windows roaming application data folder, where GnuPG keeps its home folder.
+const APPDATA_VAR_RE = /^(?:\$\{?APPDATA\}?|\$env:APPDATA|%APPDATA%)(?=$|[\\/])/i;
 
 function expandHome(p, home) {
   if (p === '~') return home;
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
+  if (APPDATA_VAR_RE.test(p)) return path.join(home, 'AppData', 'Roaming', p.replace(APPDATA_VAR_RE, '').replace(/^[\\/]+/, ''));
   return p;
 }
 
@@ -74,7 +77,27 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/, 'Google Cloud credentials'],
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
   [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
+  [/(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/.+$/i, 'GnuPG keyring'],
 ];
+// The GnuPG home folder itself: archiving, copying or searching it as a whole reads every key in it. Only the gpg
+// programs, which use their own home folder, may name it.
+const GNUPG_DIR_RE = /(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/?$/i;
+const GNUPG_DIR_REASON = 'GnuPG keyring folder';
+const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connect-agent', 'gpgsm', 'gpgv']);
+// Exporting a secret key prints or writes the private key, whatever folder gpg uses: --export-secret-keys,
+// --export-secret-subkeys and gpgsm's --export-secret-key-p12/-p8/-raw, also abbreviated (gpg takes any unique
+// prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
+const GPG_SECRET_EXPORT_RE = /^--export-se/i;
+const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
+function gpgSecretExportDenial(words) {
+  for (const w of words) {
+    const prog = programName(w.head || '');
+    if (!GPG_PROGRAMS.has(prog)) continue;
+    if (GPG_SECRET_EXPORT_RE.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+    if (prog === 'gpg-connect-agent' && /(^|[^A-Za-z_])export_key([^A-Za-z_]|$)/i.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+  }
+  return null;
+}
 
 // Credential-file variables. A path given through one of them, or equal to
 // its value, is a credential path. Directory variables cover everything below.
@@ -406,6 +429,7 @@ function classifyResolved(abs, ctx) {
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
   for (const [re, reason] of CREDENTIAL_RES) if (ci(re).test(s)) return { kind: 'credential', reason };
+  if (ci(GNUPG_DIR_RE).test(s)) return { kind: 'credential', reason: GNUPG_DIR_REASON };
   if (s === h + '/.npmrc' || s === h + '/.pypirc') return { kind: 'credential', reason: 'package registry token' };
   // With "\" a separator too, so a Windows spelling names the same file on every platform.
   const base = path.basename(s);
@@ -2552,6 +2576,10 @@ function bashDenialOf(cmd, opts = {}) {
     const findDeny = findDeleteDenial(readings[0], opts);
     if (findDeny) return findDeny;
   }
+  {
+    const gpgDeny = gpgSecretExportDenial(words);
+    if (gpgDeny) return gpgDeny;
+  }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
@@ -2640,6 +2668,8 @@ function bashDenialOf(cmd, opts = {}) {
       continue; // reading the settings is allowed
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
+    // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
+    if (c.reason === GNUPG_DIR_REASON && GPG_PROGRAMS.has(programName(w.head))) continue;
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }

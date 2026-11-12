@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-11.2
+ * RULES_VERSION: 2026-11-11.13
  */
 
-const RULES_VERSION = '2026-11-11.2';
+const RULES_VERSION = '2026-11-11.13';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -111,7 +111,7 @@ const OVERRIDE_DE_SOURCE = String.raw`(?<![A-Za-z0-9_])(?:ignorier(?:e)|ignorier
 const INJECTION_RULES = [
   { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Override prior instructions' },
   { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Disregard instructions' },
-  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))/i, description: 'Forget-context attack' },
+  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?<!n't )(?<!n’t )(?<!(?<![A-Za-z0-9_])not )(?<!(?<![A-Za-z0-9_])never )(?<!(?<![A-Za-z0-9_])ever )(?<!(?<![A-Za-z0-9_])dont )forget\s+(?:(?:(?:the|my|these|those|our|its|their)\s+)?(?:(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s+){1,2}(?:instructions?|guidelines?|directives?|guardrails?|directions)|(?:the\s+)?(?:instructions|guardrails|directives))(?![A-Za-z0-9_])/i,description: 'Forget-context attack' },
   { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
   { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
