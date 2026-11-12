@@ -109,7 +109,7 @@ while IFS= read -r f; do
     .github/workflows/*|.github/scripts/check-workflow-header*|.github/scripts/check-workflow-first-line*|.github/scripts/changed-workflows-summary*) run[wfheader]=true ;;
   esac
   case "$f" in
-    .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
+    .github/workflows/*|.github/scripts/check-timeouts*|.github/scripts/check-heavy-jobs-gating*) run[timeouts]=true ;;
   esac
   case "$f" in
     .github/workflows/*|.github/scripts/check-workflow-format*) run[wfformat]=true ;;

@@ -90,6 +90,7 @@ check pull_request next .github/scripts/check-workflow-format.mjs "changelog wff
 check pull_request next action.yml "changelog markdownlint actioninputs"
 check pull_request next .github/scripts/check-action-inputs-documented.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-action-inputs.mjs "changelog actioninputs"
+check pull_request next .github/scripts/check-heavy-jobs-gating.mjs "changelog timeouts"
 check pull_request next .github/package-lint-requirements.txt "changelog packagelint"
 check pull_request next .pre-commit-hooks.yaml "changelog hooks"
 check pull_request next .typos.toml "changelog typos"
