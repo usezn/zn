@@ -1020,9 +1020,11 @@ test('OpenCode plugin: a hook that fails or times out blocks the call and the me
   assert.match(src, /action: "error", message: "timeout"/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this call was blocked\. " \+ REPAIR\)/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this message was not sent\. " \+ REPAIR\)/);
-  assert.match(src, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode\.";/);
+  const { cliName } = require('../lib/zn-command');
+  const repair = (tail) => 'const REPAIR = "Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode' + tail + '.";';
+  assert.ok(src.includes(repair('')), src);
   const proj = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
-  assert.match(proj, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode --project\.";/);
+  assert.ok(proj.includes(repair(' --project')), proj);
 });
 
 test('OpenCode plugin: a hook that cannot start is explained in plain words with the repair step', async (t) => {
@@ -1032,7 +1034,8 @@ test('OpenCode plugin: a hook that cannot start is explained in plain words with
   const mod = await import(require('url').pathToFileURL(file).href);
   const plugin = await (mod.default || Object.values(mod)[0])({});
   await assert.rejects(() => plugin['tool.execute.before']({ tool: 'bash' }, { args: { command: 'echo hi' } }), (e) => {
-    assert.match(e.message, /^zn: the secret scrubber is not working \(the Node\.js it was installed with was not found\), so this call was blocked\. Run zn-gate check in a terminal, then zn hooks install opencode\.$/);
+    const { cliName } = require('../lib/zn-command');
+    assert.equal(e.message, 'zn: the secret scrubber is not working (the Node.js it was installed with was not found), so this call was blocked. Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode.');
     assert.doesNotMatch(e.message, /ENOENT|spawn/);
     return true;
   });
