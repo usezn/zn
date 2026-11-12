@@ -1,16 +1,21 @@
-# CodeQL code scanning of the repository on pushes to main, next and release branches, weekly and on demand.
+# CodeQL code scanning of the repository on pull requests, on pushes to main and release branches, nightly, weekly and on demand.
 name: CodeQL
 
 # Code scanning with CodeQL (advanced setup), replacing the repository's default setup, which ran on every pull
 # request and push (about 12 runs a day) whatever changed. Here it runs:
-#   - on pushes to main, next and release branches, and weekly on main: the alerts of the Security tab come from
-#     these runs, and a release commit is analysed on its release branch before the tag;
-#   - not on pull requests: an upload needs security-events: write, which a pull request job must not have. A finding
-#     shows up after the merge, on the push to next.
-# Not a required check. The default setup must be turned off in the repository settings (Code security) before this
+#   - on pushes to main and release branches, weekly on main, and every night on next (nightly-next.yml starts a
+#     manual run there): the alerts of the Security tab come from these runs, and a release commit is analysed on
+#     its release branch before the tag;
+#   - on pull requests into main, next and release branches, so a finding in new code shows on the pull request before
+#     the merge. The analysis reads the code (build-mode none) and never builds or runs it, so the job's
+#     security-events: write token is not exposed to code from the pull request. A pull request from a fork gets a
+#     read-only token from GitHub and its upload fails; the maintainers' runs on next still cover that code.
+# Not a required check. Each run completes: a newer push does not cancel it. The default setup must be turned off in the repository settings (Code security) before this
 # workflow takes over; until then GitHub refuses advanced uploads for the same languages.
 on:
   push:
+    branches: [ main, 'release/**' ]
+  pull_request:
     branches: [ main, next, 'release/**' ]
   schedule:
     - cron: '37 4 * * 1'
@@ -18,11 +23,10 @@ on:
 
 permissions: {}
 
-# A new push to next cancels the run still going for it. Runs for main, release branches and the schedule always
-# complete (each has its own group).
+# Every run completes (each has its own group).
 concurrency:
-  group: codeql-${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/next' }}
+  group: codeql-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   analyze:

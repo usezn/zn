@@ -6,7 +6,7 @@ The Rust gateway in the root `src/` directory is an older, experimental program 
 
 The root `src/` directory contains the original Rust gateway (`zn`) from the 1.0.0 line: an HTTP management API and MCP proxy on `localhost:9090`, a rules engine, an optional local ONNX classifier (Candle), a SQLite audit log, WASM policies and a terminal UI.
 
-It is **experimental** and **not distributed**: nothing you install with `npx zn-gate`, `npm install zn-gate`, `pip install zn-gate` or the agent plugin contains or starts it. It is kept for reference and for future work on a local classifier. It is not published on crates.io, has no published container image and is not part of the npm or PyPI packages. CI builds it, runs its tests, clippy and rustfmt, and checks its dependencies with `cargo audit` (`.github/workflows/rust.yml`). `zn mcp` exposes two MCP tools: `analyze_prompt` and `version`.
+It is **experimental** and **not distributed**: nothing you install with `npx zn-gate`, `npm install zn-gate`, `pip install zn-gate` or the agent plugin contains or starts it. It is kept for reference and for future work on a local classifier. It is not published on crates.io, has no published container image and is not part of the npm or PyPI packages. CI builds it, runs its tests, clippy and rustfmt, and checks its dependencies with `cargo audit` (`.github/workflows/cargo-audit.yml`). `zn mcp` exposes two MCP tools: `analyze_prompt` and `version`.
 
 The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It never contacts `api.usezn.com`.
 

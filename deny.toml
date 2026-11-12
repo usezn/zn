@@ -1,5 +1,5 @@
 # cargo-deny configuration: licenses, bans and sources only.
-# Known vulnerabilities are already checked by `cargo audit` in rust.yml,
+# Known vulnerabilities are already checked by `cargo audit` in cargo-audit.yml,
 # so the advisories section is left out on purpose.
 #
 # The allowed licenses are the permissive ones the project accepts. They are
