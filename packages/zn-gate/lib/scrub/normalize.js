@@ -120,4 +120,4 @@ function normalisedView(text) {
   return { clean: parts.join(''), marks, starts: starts.subarray(0, c + 1), ends: ends.subarray(0, c + 1) };
 }
 
-module.exports = { normalisedView, MAX_DECODES };
+module.exports = { normalisedView, MAX_DECODES, CANDIDATE_RE };
