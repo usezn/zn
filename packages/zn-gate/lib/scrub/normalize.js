@@ -26,6 +26,9 @@ const MAX_DECODES = 200000;
 // Quote pairs joined per view. A real secret is split by a few of them; past the cap the rest of the
 // text stays literal and is still scanned, so no text is skipped.
 const MAX_QUOTE_JOINS = 20000;
+// What can need a decoded view: a %XX or a doubled quote. A text with neither has no view (normalisedView returns
+// null for it), so scrub/engine.js skips this module for it, using a copy of this expression.
+const CANDIDATE_RE = /%[0-9A-Fa-f]{2}|''|""/g;
 const Q_SINGLE = 0x27;
 const Q_DOUBLE = 0x22;
 const PERCENT = 0x25;
@@ -121,4 +124,4 @@ function normalisedView(text) {
   return { clean: parts.join(''), marks, starts: starts.subarray(0, c + 1), ends: ends.subarray(0, c + 1) };
 }
 
-module.exports = { normalisedView, MAX_DECODES, MAX_QUOTE_JOINS };
+module.exports = { normalisedView, MAX_DECODES, MAX_QUOTE_JOINS, CANDIDATE_RE };
