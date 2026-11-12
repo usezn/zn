@@ -101,7 +101,7 @@ while IFS= read -r f; do
     .github/workflows/*|.github/scripts/check-workflow-header*) run[wfheader]=true ;;
   esac
   case "$f" in
-    .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
+    .github/workflows/*|.github/scripts/check-timeouts*|.github/scripts/check-heavy-jobs-gating*) run[timeouts]=true ;;
   esac
   case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;

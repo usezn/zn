@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-11.11
+RULES_VERSION: 2026-11-11.12
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-11.11"
+RULES_VERSION = "2026-11-11.12"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1487,6 +1487,7 @@ PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
 
 # Value filters (group 2, prefix group 1); True means the value is not a secret.
 PROVIDER_VALUE_FILTERS: Dict[str, Any] = {
+    "secret:twilio_auth_token": lambda v, prefix: not (_DIGIT_RE.search(v) and re.search(r'[a-fA-F]', v)) or re.fullmatch(r'(.)\1+', v) is not None,
     "secret:url_password": _pv_url_password_not_secret,
     "secret:bearer_token": _pv_bearer_not_secret,
 }
@@ -1582,6 +1583,10 @@ _AWS_WORDS_RE = _rc(r'aws|secret[_ -]?access[_ -]?key|SecretAccessKey', re.IGNOR
 _SECRET_WORD_RE = _rc(r'secret', re.IGNORECASE | re.ASCII)
 
 SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
+    # Twilio auth token: 32 hex digits under a TWILIO_AUTH_TOKEN or auth_token label (any case). The label is
+    # the prefix (group 1); the account SID next to it is not a secret. It runs first, so the shared
+    # credential rules do not take the value under a generic name.
+    ("secret:twilio_auth_token", _rc(r'((?<![A-Za-z0-9])(?:twilio_)?auth_token["\']?[ \t]*[=:][ \t]*["\']?)([0-9a-f]{32})' + _ALNUM_A, re.IGNORECASE | re.ASCII), r'\1[REDACTED_TWILIO_AUTH_TOKEN]'),
     # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Same
     # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
     # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
