@@ -240,6 +240,49 @@ function readSmall(file) {
 const NPM_HOST_OK = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:]|$)/i;
 
 /**
+ * The folders whose settings apply to a command run in cwd: cwd itself and each parent up to the git root (the
+ * folder holding .git) or the home folder, whichever comes first. Bounded depth.
+ */
+function projectDirs(cwd, home) {
+  if (!cwd) return [];
+  const out = [];
+  let dir = path.resolve(cwd);
+  const stop = home ? path.resolve(home) : null;
+  for (let i = 0; i < 24; i++) {
+    out.push(dir);
+    if (stop && dir === stop) break;
+    let isRoot = false;
+    try { isRoot = fs.existsSync(path.join(dir, '.git')); } catch (e) { /* unreadable: keep walking */ }
+    if (isRoot) break;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return out;
+}
+
+/* Where npm reads its global settings, computed without starting npm. */
+function npmGlobalConfigs(env) {
+  const files = [];
+  const explicit = env.NPM_CONFIG_GLOBALCONFIG || env.npm_config_globalconfig;
+  if (explicit) files.push(explicit);
+  const prefix = env.NPM_CONFIG_PREFIX || env.npm_config_prefix || env.PREFIX
+    || (process.platform === 'win32' ? path.dirname(process.execPath) : path.dirname(path.dirname(process.execPath)));
+  files.push(path.join(prefix, 'etc', 'npmrc'));
+  if (process.platform !== 'win32') files.push('/etc/npmrc');
+  return files;
+}
+
+/* pnpm's own user settings. */
+function pnpmUserConfigs(env, home) {
+  const files = [];
+  if (env.XDG_CONFIG_HOME) files.push(path.join(env.XDG_CONFIG_HOME, 'pnpm', 'rc'));
+  if (home) files.push(path.join(home, '.config', 'pnpm', 'rc'), path.join(home, 'Library', 'Preferences', 'pnpm', 'rc'));
+  if (env.LOCALAPPDATA) files.push(path.join(env.LOCALAPPDATA, 'pnpm', 'config', 'rc'));
+  return files;
+}
+
+/**
  * True when the user's own settings point the ecosystem at a registry other than the public one (an .npmrc or
  * pip.conf with another index, an environment variable, a uv or pyproject index). The public registry is then not
  * asked about that ecosystem's names: a private package name must never be sent to it. Reads settings files only
@@ -251,14 +294,17 @@ function privateRegistry(eco, opts = {}) {
   const home = opts.home;
   if (eco === 'npm') {
     if (env.NPM_CONFIG_REGISTRY || env.npm_config_registry || env.YARN_NPM_REGISTRY_SERVER || env.BUN_CONFIG_REGISTRY || env.YARN_REGISTRY) return true;
-    for (const dir of [cwd, home]) {
-      if (!dir) continue;
-      const text = readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml')) + '\n' + readSmall(path.join(dir, '.yarnrc')) + '\n'
+    const extra = npmGlobalConfigs(env).concat(pnpmUserConfigs(env, home)).map((f) => readSmall(f)).join('\n');
+    for (const dir of projectDirs(cwd, home).concat(home ? [home] : [])) {
+      const text = extra + '\n' + readSmall(path.join(dir, '.pnpmrc')) + '\n' + readSmall(path.join(dir, 'pnpm-workspace.yaml')) + '\n' + readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml')) + '\n' + readSmall(path.join(dir, '.yarnrc')) + '\n'
         + readSmall(path.join(dir, 'bunfig.toml')) + '\n' + readSmall(path.join(dir, '.bunfig.toml')) + '\n'
         + (env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig ? readSmall(env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig) : '');
       for (const m of text.matchAll(/^\s*(?:@[\w.-]+:)?registry\s*=\s*["']?([^\s"']+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
       // yarn v1: registry "https://..."
       for (const m of text.matchAll(/^\s*"?(?:@[\w.-]+:)?registry"?\s+"?(https?:[^\s"]+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
+      // pnpm-workspace.yaml: registry: https://... or a registries: map
+      for (const m of text.matchAll(/^\s*["']?(?:@[\w.-]+:)?registry["']?\s*:\s*["']?(https?:[^\s"']+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
+      if (/^\s*registries\s*:/m.test(text)) return true;
       for (const m of text.matchAll(/^\s*npmRegistryServer\s*:\s*(\S+)/gim)) if (!NPM_HOST_OK.test(m[1].replace(/['"]/g, ''))) return true;
       if (/^\s*(?:npmScopes|npmRegistries)\s*:/m.test(text)) return true;
     }
@@ -274,10 +320,17 @@ function privateRegistry(eco, opts = {}) {
   if (env.APPDATA) files.push(path.join(env.APPDATA, 'pip', 'pip.ini'));
   if (env.VIRTUAL_ENV) files.push(path.join(env.VIRTUAL_ENV, 'pip.conf'));
   for (const v of ['PIP_CONFIG_FILE', 'UV_CONFIG_FILE']) if (env[v]) files.push(env[v]);
-  if (cwd) files.push(path.join(cwd, 'uv.toml'), path.join(cwd, 'pip.conf'));
-  files.push('/etc/pip.conf');
+  if (env.VIRTUAL_ENV) files.push(path.join(env.VIRTUAL_ENV, 'pip.ini'));
+  const projectDirList = projectDirs(cwd, home);
+  for (const dir of projectDirList) files.push(path.join(dir, 'uv.toml'), path.join(dir, 'pip.conf'));
+  files.push('/etc/pip.conf', '/etc/xdg/pip/pip.conf', '/etc/uv/uv.toml');
+  for (const d of String(env.XDG_CONFIG_DIRS || '').split(':')) if (d) files.push(path.join(d, 'pip', 'pip.conf'));
+  const programData = env.ProgramData || env.PROGRAMDATA;
+  if (programData) files.push(path.join(programData, 'pip', 'pip.ini'));
   for (const f of files) if (/^\s*(?:index-url|extra-index-url|find-links|default-index|index)\b/im.test(readSmall(f))) return true;
-  if (cwd && /\[\[tool\.uv\.index\]\]|^\s*(?:index-url|extra-index-url|find-links)\s*=/m.test(readSmall(path.join(cwd, 'pyproject.toml')))) return true;
+  for (const dir of projectDirList) {
+    if (/\[\[tool\.uv\.index\]\]|^\s*(?:index-url|extra-index-url|find-links)\s*=/m.test(readSmall(path.join(dir, 'pyproject.toml')))) return true;
+  }
   return false;
 }
 
