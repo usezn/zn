@@ -1,0 +1,2 @@
+### Changed
+- The removal guides now give the order that `zn-gate uninstall` uses: put back wrapped MCP servers first (`init --revert`), then remove zn's hooks, then the Claude Code plugin, and the program last (`npm uninstall -g zn-gate`, then `pip uninstall zn-gate`), so no agent is left pointing at a missing command. The README files, the first-5-minutes guide, the FAQ, the command reference and the removal guide give the same order.

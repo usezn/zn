@@ -71,13 +71,13 @@ If the project holds zn-gate's Claude Code hooks (`zn hooks install claude-code 
 ## Questions people ask
 
 **What does zn-gate protect in VS Code?**
-It gives the agent checks for a prompt, a tool call or a tool result, and it can check your other MCP servers if you wrap them. See [What zn-gate protects in VS Code](#what-zn-gate-protects-in-vs-code-and-what-it-does-not) and [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers).
+With the hooks, it blocks reads and writes of `.env` and credential files and shell commands that handle secrets, and removes secret values from the results of read-type and shell tools. With the MCP server, it gives the agent checks for a prompt, a tool call or a tool result, and it can check your other MCP servers if you wrap them. See [What zn-gate protects in VS Code](#what-zn-gate-protects-in-vs-code-and-what-it-does-not) and [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers).
 
 **What does it not protect?**
-It does not block reads of `.env` and credential files, does not remove secrets from shell output or file contents, and does not block a secret pasted into the chat. See [the table above](#what-zn-gate-protects-in-vs-code-and-what-it-does-not).
+It does not block a secret pasted into the chat, and it does not check the MCP tools of other servers unless you wrap them. See [the table above](#what-zn-gate-protects-in-vs-code-and-what-it-does-not).
 
 **How do I undo it?**
-Delete the `zn-gate` entry from the settings file you edited, put back the original command of any server you wrapped, and restart VS Code. See [Uninstall](#uninstall).
+Run `zn hooks uninstall copilot` for the hooks. For the MCP server, delete the `zn-gate` entry from the settings file you edited, put back the original command of any server you wrapped, and restart VS Code. See [Uninstall](#uninstall).
 
 ## Technical reference
 
@@ -129,6 +129,11 @@ Run `zn hooks uninstall copilot` (add `--project` if you installed it in a proje
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
 
 All messages: [Troubleshooting](../troubleshooting.md).
+
+## Related pages
+
+- [Install, verify and uninstall by agent](../by-agent.md): the short steps for each agent.
+- [Troubleshooting](../troubleshooting.md): all messages and how to fix them.
 
 ## VS Code documentation
 

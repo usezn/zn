@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-04.35
+RULES_VERSION: 2026-11-11.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-04.35"
+RULES_VERSION = "2026-11-11.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -190,6 +190,19 @@ def _test_multi_zh(text: str) -> bool:
         or _near_match(text, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE)
 
 
+# Spanish, Portuguese, French and German override rules: an override verb AND
+# a named target (see OVERRIDE_*_SOURCE in rules.js; the sources are identical).
+OVERRIDE_ES_SOURCE = r"""(?<![A-Za-z0-9_])(?:ignor(?:a|e|ad)|olvid(?:a|e|ad)|descart(?:a|e|ad)|omit(?:e|a)|desestim(?:a|e|ad)|haz\s{1,32}caso\s{1,32}omiso\s{1,32}de|no\s{1,32}tengas\s{1,32}en\s{1,32}cuenta)\s{1,32}(?:todas|todos|toda|todo|cualquier|cualesquiera|tus|tu|mis|sus|estas|estos|esas|esos)\s{1,32}(?:(?:el|la|los|las|de|del)\s{1,32}){0,2}(?:instrucci[oó]n|instrucciones|reglas|normas|directrices|directivas|pautas|indicaciones|[oó]rdenes|restricciones|limitaciones|prompts?|mensajes?\s{1,32}del\s{1,32}sistema)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignor(?:a|e|ad)|olvid(?:a|e|ad)|descart(?:a|e|ad)|omit(?:e|a)|desestim(?:a|e|ad)|haz\s{1,32}caso\s{1,32}omiso\s{1,32}de|no\s{1,32}tengas\s{1,32}en\s{1,32}cuenta)\s{1,32}(?:(?:el|la|los|las|de|del)\s{1,32}){0,2}(?:instrucci[oó]n|instrucciones|reglas|normas|directrices|directivas|pautas|indicaciones|[oó]rdenes|restricciones|limitaciones|prompts?|mensajes?\s{1,32}del\s{1,32}sistema)\s{1,32}(?:anteriores|previas|previos|anterior|previa|previo|originales|iniciales|de\s{1,32}arriba|de\s{1,32}antes|del\s{1,32}sistema|de\s{1,32}sistema|de\s{1,32}seguridad|de\s{1,32}desarrolladores?)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignor(?:a|e|ad)|olvid(?:a|e|ad)|descart(?:a|e|ad)|omit(?:e|a)|desestim(?:a|e|ad)|haz\s{1,32}caso\s{1,32}omiso\s{1,32}de|no\s{1,32}tengas\s{1,32}en\s{1,32}cuenta)\s{1,32}(?:(?:el|la|los|las|de|del)\s{1,32}){0,2}(?:instrucciones|directrices|directivas|prompts?\s{1,32}del\s{1,32}sistema)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignor(?:a|e|ad)|olvid(?:a|e|ad)|descart(?:a|e|ad)|omit(?:e|a)|desestim(?:a|e|ad)|haz\s{1,32}caso\s{1,32}omiso\s{1,32}de|no\s{1,32}tengas\s{1,32}en\s{1,32}cuenta)\s{1,32}(?:todo|todas)\s{1,32}(?:lo\s{1,32}(?:anterior|de\s{1,32}arriba|dicho\s{1,32}antes)|las\s{1,32}(?:anteriores|previas))(?![A-Za-z0-9_])"""
+OVERRIDE_PT_SOURCE = r"""(?<![A-Za-z0-9_])(?:esque[cç](?:a|e|am|er)|desconsider(?:e|a|em|ar)|descart(?:e|a|em|ar))\s{1,32}(?:todas|todos|toda|todo|qualquer|quaisquer|suas|seus|sua|seu|minhas|meus|estas|estes|essas|esses|tuas|teus)\s{1,32}(?:(?:as|os|a|o|de|das|dos)\s{1,32}){0,2}(?:instru[cç][aã]o|instru[cç][oõ]es|regras|normas|diretrizes|diretivas|orienta[cç][oõ]es|ordens|restri[cç][oõ]es|limita[cç][oõ]es|prompts?|mensagens?\s{1,32}do\s{1,32}sistema)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:esque[cç](?:a|e|am|er)|desconsider(?:e|a|em|ar)|descart(?:e|a|em|ar))\s{1,32}(?:(?:as|os|a|o|de|das|dos)\s{1,32}){0,2}(?:instru[cç][aã]o|instru[cç][oõ]es|regras|normas|diretrizes|diretivas|orienta[cç][oõ]es|ordens|restri[cç][oõ]es|limita[cç][oõ]es|prompts?|mensagens?\s{1,32}do\s{1,32}sistema)\s{1,32}(?:anteriores|pr[eé]vias|anterior|pr[eé]via|acima|originais|iniciais|do\s{1,32}sistema|de\s{1,32}sistema|de\s{1,32}seguran[cç]a|j[aá]\s{1,32}dadas)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:esque[cç](?:a|e|am|er)|desconsider(?:e|a|em|ar)|descart(?:e|a|em|ar))\s{1,32}(?:(?:as|os|a|o|de|das|dos)\s{1,32}){0,2}(?:instru[cç][oõ]es|diretrizes|diretivas|prompts?\s{1,32}do\s{1,32}sistema)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:esque[cç](?:a|e|am|er)|desconsider(?:e|a|em|ar)|descart(?:e|a|em|ar))\s{1,32}tudo\s{1,32}(?:o\s{1,32})?(?:acima|anterior|que\s{1,32}(?:foi\s{1,32}dito|te\s{1,32}disseram|eu\s{1,32}disse)\s{1,32}(?:antes|acima))(?![A-Za-z0-9_])"""
+OVERRIDE_FR_SOURCE = r"""(?<![A-Za-z0-9_])(?:ignore[rsz]?|oublie[rsz]?|n[ée]glige[rsz]?|(?:fais|faites)\s{1,32}abstraction\s{1,32}(?:de|des|du)|ne\s{1,32}(?:tiens|tenez)\s{1,32}pas\s{1,32}compte\s{1,32}(?:de|des|du)|(?:passe|passez)\s{1,32}outre)\s{1,32}(?:toutes|tous|toute|tout|tes|vos|ses|mes|ces|aucune)\s{1,32}(?:(?:les|des|de|du|la|le|aux)\s{1,32}|[ld]['’]){0,2}(?:instructions?|consignes?|r[èe]gles|directives?|restrictions?|ordres|commandes|limitations|prompts?|garde-fous|invites?\s{1,32}syst[èe]me|messages?\s{1,32}syst[èe]me)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignore[rsz]?|oublie[rsz]?|n[ée]glige[rsz]?|(?:fais|faites)\s{1,32}abstraction\s{1,32}(?:de|des|du)|ne\s{1,32}(?:tiens|tenez)\s{1,32}pas\s{1,32}compte\s{1,32}(?:de|des|du)|(?:passe|passez)\s{1,32}outre)\s{1,32}(?:(?:les|des|de|du|la|le|aux)\s{1,32}|[ld]['’]){0,2}(?:instructions?|consignes?|r[èe]gles|directives?|restrictions?|ordres|commandes|limitations|prompts?|garde-fous|invites?\s{1,32}syst[èe]me|messages?\s{1,32}syst[èe]me)\s{1,32}(?:pr[ée]c[ée]dentes?|ant[ée]rieures?|initiales?|originales?|ci-dessus|du\s{1,32}syst[èe]me|syst[èe]me|de\s{1,32}s[ée]curit[ée]|d[ée]j[àa]\s{1,32}donn[ée]es?)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignore[rsz]?|oublie[rsz]?|n[ée]glige[rsz]?|(?:fais|faites)\s{1,32}abstraction\s{1,32}(?:de|des|du)|ne\s{1,32}(?:tiens|tenez)\s{1,32}pas\s{1,32}compte\s{1,32}(?:de|des|du)|(?:passe|passez)\s{1,32}outre)\s{1,32}(?:(?:les|des|de|du|la|le|aux)\s{1,32}|[ld]['’]){0,2}(?:instructions|consignes|directives|prompts?\s{1,32}syst[èe]me)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignore[rsz]?|oublie[rsz]?|n[ée]glige[rsz]?|(?:fais|faites)\s{1,32}abstraction\s{1,32}(?:de|des|du)|ne\s{1,32}(?:tiens|tenez)\s{1,32}pas\s{1,32}compte\s{1,32}(?:de|des|du)|(?:passe|passez)\s{1,32}outre)\s{1,32}(?:tout|toutes)\s{1,32}(?:ce\s{1,32}qui\s{1,32}pr[ée]c[èe]de|ce\s{1,32}qui\s{1,32}est\s{1,32}ci-dessus|ce\s{1,32}qui\s{1,32}a\s{1,32}[ée]t[ée]\s{1,32}dit\s{1,32}avant)(?![A-Za-z0-9_])"""
+OVERRIDE_DE_SOURCE = r"""(?<![A-Za-z0-9_])(?:ignorier(?:e)|ignorieren\s{1,8}sie|vergiss|vergesst|vergessen\s{1,8}sie|missachte|missachten\s{1,8}sie|verwirf|verwerft|verwerfen\s{1,8}sie|[uü]bergehe|[uü]bergehen\s{1,8}sie)\s{1,32}(?:alle|alles|jegliche|jegliches|s[aä]mtliche|deine|eure|ihre|meine|diese|jede|jeden)\s{1,32}(?:(?:die|der|den|das|diese|deine)\s{1,32})?(?:(?:vorherig|vorhergehend|vorig|fr[uü]her|bisherig|obig|urspr[uü]nglich|anf[aä]nglich|oben\s{1,32}(?:genannt|stehend))(?:e|en|er|es|em)?\s{1,32}){0,2}(?:(?:system-?)?(?:anweisungen|instruktionen|regeln|richtlinien|vorgaben|befehle|anordnungen|einschr[aä]nkungen|beschr[aä]nkungen)|(?:system-?)?prompts?|system-?nachrichten?)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignorier(?:e)|ignorieren\s{1,8}sie|vergiss|vergesst|vergessen\s{1,8}sie|missachte|missachten\s{1,8}sie|verwirf|verwerft|verwerfen\s{1,8}sie|[uü]bergehe|[uü]bergehen\s{1,8}sie)\s{1,32}(?:(?:die|der|den|das|diese|deine)\s{1,32})?(?:(?:vorherig|vorhergehend|vorig|fr[uü]her|bisherig|obig|urspr[uü]nglich|anf[aä]nglich|oben\s{1,32}(?:genannt|stehend))(?:e|en|er|es|em)?\s{1,32}){1,2}(?:(?:system-?)?(?:anweisungen|instruktionen|regeln|richtlinien|vorgaben|befehle|anordnungen|einschr[aä]nkungen|beschr[aä]nkungen)|(?:system-?)?prompts?|system-?nachrichten?)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignorier(?:e)|ignorieren\s{1,8}sie|vergiss|vergesst|vergessen\s{1,8}sie|missachte|missachten\s{1,8}sie|verwirf|verwerft|verwerfen\s{1,8}sie|[uü]bergehe|[uü]bergehen\s{1,8}sie)\s{1,32}(?:(?:die|der|den|das|diese|deine)\s{1,32})?(?:(?:system-?)?(?:anweisungen|instruktionen)|system-?prompts?)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ignorier(?:e)|ignorieren\s{1,8}sie|vergiss|vergesst|vergessen\s{1,8}sie|missachte|missachten\s{1,8}sie|verwirf|verwerft|verwerfen\s{1,8}sie|[uü]bergehe|[uü]bergehen\s{1,8}sie)\s{1,32}alles\s{1,32}(?:davor|zuvor|obige|oben(?:\s{1,32}(?:gesagte|genannte|stehende))?)(?![A-Za-z0-9_])"""
+
+
+# Every override match starts with an ASCII letter (or a Latin letter that case-folds to one).
+# This cheap lookahead lets the scan skip other scripts at once; it does not change any match.
+OVERRIDE_PREFILTER = r'(?=[A-Za-z\u00c0-\u024f\u212a])'
+
+
 INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:ignore_previous', _rc(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', _rc(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
@@ -205,10 +218,10 @@ INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:bypass', _rc(r'bypass\s+(your|the|all)', re.IGNORECASE), 'Guardrail bypass attempt'),
     ('pi:override', _rc(r'(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
     ('pi:template_boundary', _rc(r'\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>', re.IGNORECASE), 'Chat template boundary injection'),
-    ('pi:multi_es', _rc(r'ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres', re.IGNORECASE), 'Multilingual prompt injection (Spanish)'),
-    ('pi:multi_pt', _rc(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
-    ('pi:multi_fr', _rc(r'ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant', re.IGNORECASE), 'Multilingual prompt injection (French)'),
-    ('pi:multi_de', _rc(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
+    ('pi:multi_es', _rc(r'ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres|' + OVERRIDE_PREFILTER + '(?:' + OVERRIDE_ES_SOURCE + ')', re.IGNORECASE), 'Multilingual prompt injection (Spanish)'),
+    ('pi:multi_pt', _rc(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])|' + OVERRIDE_PREFILTER + '(?:' + OVERRIDE_PT_SOURCE + ')', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
+    ('pi:multi_fr', _rc(r'ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant|' + OVERRIDE_PREFILTER + '(?:' + OVERRIDE_FR_SOURCE + ')', re.IGNORECASE), 'Multilingual prompt injection (French)'),
+    ('pi:multi_de', _rc(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als|' + OVERRIDE_PREFILTER + '(?:' + OVERRIDE_DE_SOURCE + ')', re.IGNORECASE), 'Multilingual prompt injection (German)'),
     ('pi:multi_ru', _rc(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
     ('pi:multi_zh', _rc(r'忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词'), 'Multilingual prompt injection (Chinese)'),
     ('pi:identity_request', _rc(r"""(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:run|execute|invoke|call)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:output|result|value)\s{1,4}of\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])|[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))[\x60\x27\x22]{0,2}\s{1,4}(?:output|result))(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|next\s{1,4}(?:http\s{1,4})?(?:request|call)\s{1,4}(?:body|payload)|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|next\s{1,4}(?:http\s{1,4})?(?:request|call)\s{1,4}(?:body|payload)|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you(?:\s{1,4}are|\s{0,4}[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request"),
@@ -495,10 +508,82 @@ def sensitive_path_view(text: str) -> str:
 SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 
-def _test_sensitive_path(text: str) -> bool:
+# cmd.exe reads a command in steps: %VAR% is expanded first, then a ^ outside double quotes escapes the next character, so
+# `type .e^nv`, `type ^.env` and `type %CD%\.e^nv` all open .env. These readings apply only where a cmd reader or cmd itself
+# is named: in a POSIX shell `^` is an ordinary character, and `grep ^.env notes.md` must stay allowed (same as rules.js).
+CMD_READER_RE = _rc(r"""(?:^|[\s;&|("'`])(?:cmd(?:\.exe)?|type|more|findstr|copy)(?=[\s"']|$)""", re.IGNORECASE)
+CMD_PERCENT_UNIT_RE = _rc(r'%[^%!:\r\n]+(?::[^%!\r\n]*)?%')
+CMD_SET_RE = _rc(r"""(?:^|[\s&|(])set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^&|"\r\n]*)"?""", re.IGNORECASE)
+CMD_NAMED_PERCENT_RE = _rc(r'%([A-Za-z_][A-Za-z0-9_]*)%')
+CMD_C_QUOTED_RE = _rc(r'(\/[ck]\s+)"([\s\S]*)"(\s*)$', re.IGNORECASE)
+CMD_KNOWN_UNIT_RE = _rc(r'^%(?:userprofile|homepath|homedrive|home|cd)%$', re.IGNORECASE)
+
+
+def _drop_cmd_carets(text: str) -> str:
+    out: List[str] = []
+    in_quote = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            in_quote = not in_quote
+            out.append(c)
+            i += 1
+            continue
+        if c == '^' and not in_quote:
+            nx = text[i + 1] if i + 1 < n else None
+            if nx is None:
+                break
+            if nx == '\r' and text[i + 2:i + 3] == '\n':
+                i += 3
+                continue
+            if nx == '\n':
+                i += 2
+                continue
+            out.append(nx)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
+def _expand_cmd_percent(text: str) -> str:
+    """%NAME% of a variable the same text sets (set X=.env) becomes its value; every other % unit is taken out."""
+    variables: Dict[str, str] = {}
+    for m in CMD_SET_RE.finditer(text):
+        variables[m.group(1).lower()] = re.sub(r'\s+$', '', m.group(2))
+    known = text
+    if variables:
+        known = CMD_NAMED_PERCENT_RE.sub(lambda m: variables.get(m.group(1).lower(), m.group(0)), text)
+    return CMD_PERCENT_UNIT_RE.sub(lambda m: m.group(0) if CMD_KNOWN_UNIT_RE.search(m.group(0)) else '', known)
+
+
+def _cmd_readings(text: str) -> List[str]:
+    out: List[str] = []
+    if ('^' not in text and '%' not in text) or CMD_READER_RE.search(text) is None:
+        return out
+    unwrapped = CMD_C_QUOTED_RE.sub(lambda m: m.group(1) + m.group(2) + m.group(3), text)
+    views = [unwrapped]
+    if '%' in text:
+        views.append(_expand_cmd_percent(unwrapped))
+    for v in views:
+        if v != text:
+            out.append(v)
+        if '^' in v:
+            out.append(_drop_cmd_carets(v))
+    return out
+
+
+def _test_sensitive_path_as(text: str) -> bool:
     return (SENSITIVE_PATH_TEXT_RE.search(text) is not None
             or SENSITIVE_PATH_RE.search(text) is not None
             or SENSITIVE_PATH_RE.search(sensitive_path_view(text)) is not None)
+
+
+def _test_sensitive_path(text: str) -> bool:
+    return _test_sensitive_path_as(text) or any(_test_sensitive_path_as(v) for v in _cmd_readings(text))
 
 
 RULE_TESTERS['path:sensitive_file'] = _test_sensitive_path

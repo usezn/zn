@@ -76,9 +76,17 @@ test('applyEdits rewrites several ranges on one line and leaves others', () => {
   assert.equal(out, '# top\nA=XaaYY\nB=bbbb\n');
 });
 
-test('isShadowed: empty, short and non-sensitive values count as shadowed', () => {
+test('isShadowed: empty files, non-sensitive names and empty values count as shadowed', () => {
   assert.equal(d.isShadowed(''), true);
-  assert.equal(d.isShadowed('NAME=plain-value-here\nAPI_KEY=short'), true);
+  assert.equal(d.isShadowed('NAME=plain-value-here\nPORT=8080\nDEBUG=1'), true);
+  assert.equal(d.isShadowed('API_KEY=\nSECRET_TOKEN=""'), true);
+});
+
+test('isShadowed: a short value under a secret name is not shadowed', () => {
+  assert.equal(d.isShadowed('API_KEY=short'), false);
+  assert.equal(d.isShadowed('API_KEY=abc'), false);
+  assert.equal(d.isShadowed('DB_PASSWORD=x'), false);
+  assert.equal(d.isShadowed('API_KEY=__ZN_API_KEY__\nDEBUG_TOKEN=1'), false);
 });
 
 test('isShadowed: a real-looking secret is not shadowed, a marker is', () => {

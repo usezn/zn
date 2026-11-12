@@ -6,7 +6,7 @@ on:
     # fmt" on the exact release commit, whatever that commit changed. rust-scope.sh runs every push in full.
     branches: [main, next, 'release/**']
   pull_request:
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
     # paths filter leaves it pending. rust-scope.sh skips the steps when no Rust file changed instead.
   # The merge queue on next runs the required checks again on the queued commit; rust-scope.sh compares
@@ -39,10 +39,14 @@ concurrency:
 jobs:
   check:
     name: build, test, clippy, fmt
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    # A required check with a literal name: a job skipped by its if reports under this exact name, as skipped,
+    # and a skipped job counts as passed for a required check.
+    # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge) and
+    # on draft pull requests (marking the pull request ready for review runs it). A push to next is the commit the
+    # merge queue already checked, so it is skipped there too. It runs in the merge queue, on pull requests into
+    # main and release branches, on pushes to main and release branches, on the weekly schedule, on manual runs and
+    # on pull requests labelled full-ci.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -99,11 +103,14 @@ jobs:
   private-file:
     name: private file writer (${{ matrix.os }})
     # The owner-only file writer has a separate Windows implementation (protected DACL) and platform-specific
-    # Unix code, so its tests also run on Windows and macOS. Not a required check. Pull requests into next leave it
-    # out (the shared runner pool is the bottleneck: those pull requests run the required checks and one Windows job,
-    # "Windows (Node.js 22)"); the merge queue, pushes to main, next and release branches, the schedule, pull
-    # requests into main or release branches and the full-ci label run both systems. Draft pull requests skip it.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'pull_request' && github.base_ref == 'next' && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # Unix code (file permissions), so its tests also run on Windows and macOS. Not a required check. It runs on
+    # pushes to main, next and release branches, on the schedule and on manual runs (the scope job always says yes
+    # there), in pull requests into main or a release branch and in pull requests with the full-ci label (always),
+    # and in other pull requests only when they change Rust code or Cargo files, so a pull request into next that
+    # changes none does not start a Windows or macOS runner. The merge queue runs only the required checks, so it
+    # skips this job. Draft pull requests skip it (through scope).
+    needs: scope
+    if: github.event_name != 'merge_group' && (needs.scope.outputs.rust == 'true' || (github.event_name == 'pull_request' && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     strategy:
       fail-fast: false
       matrix:
@@ -143,6 +150,8 @@ jobs:
     # One cheap job decides whether the change touches Rust. The jobs that are not required (MSRV, cargo audit) need it
     # and are skipped without taking a runner when it says no: on a pull request that changes no Rust file they used to
     # start, check out and stop. The required "build, test, clippy, fmt" keeps its own check, so it always reports.
+    # It also runs in the merge queue, because cargo audit (a security check) still gates the merge there; MSRV and
+    # the private file writer skip the queue on their own.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -166,10 +175,10 @@ jobs:
 
   msrv:
     name: minimum supported Rust version (1.95)
-    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. A push to
-    # next is the commit the merge queue already checked, so it is skipped there as well.
+    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. The merge
+    # queue runs only the required checks, so the commit merged into next is checked here, on the push to next.
     needs: scope
-    if: needs.scope.outputs.rust == 'true' && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'merge_group' && needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -214,10 +223,11 @@ jobs:
 
   audit:
     name: cargo audit
-    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. A push to
-    # next is the commit the merge queue already checked, so it is skipped there as well.
+    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. Unlike the
+    # other jobs that are not required, it also runs in the merge queue: a new RustSec advisory must stop a merge into
+    # next, not show up only after it.
     needs: scope
-    if: needs.scope.outputs.rust == 'true' && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

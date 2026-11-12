@@ -115,7 +115,7 @@ async function plan(opts = {}) {
   const home = opts.home;
   const nodeVersion = opts.nodeVersion || process.versions.node;
   const nodeSt = pluginNodeStatus({ env, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode });
-  const res = await check({ home, env, cwd: opts.cwd, nodeVersion, pluginNode: nodeSt });
+  const res = await check({ home, env, cwd: opts.cwd, nodeVersion, pluginNode: nodeSt, hookTimeoutMs: opts.hookTimeoutMs });
   let temporary = opts.temporary !== undefined ? opts.temporary : fromTemporaryCopy();
   const glob = opts.global || globalInstall(env);
   if (opts.temporary === undefined && !temporary && glob.pkgDir && !samePath(PKG_ROOT, glob.pkgDir)) temporary = true;
@@ -284,7 +284,7 @@ function permissionAdvice({ prefix, env, todo, shell }) {
     '  Fix it without administrator rights, in your own terminal:',
     '    mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global',
     '    echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ' + profile,
-    '  Then open a new terminal and run: npx -y zn-gate init',
+    '  Then open a new terminal and run: ' + require('./zn-command').cliName('npx') + ' -y zn-gate init',
     '  Or install Node.js with a version manager such as nvm (https://github.com/nvm-sh/nvm), which needs no special permissions.',
     '  More: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally',
     ''

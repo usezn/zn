@@ -1336,7 +1336,7 @@ function readBounded(abs, max, follow) {
 
 /* ------------------------------ walk -------------------------------- */
 
-function walk(root, deadline, maxEntries) {
+function walk(root, deadline, maxEntries, noPrune) {
   const files = [];
   const extDirs = [];
   const unchecked = [];
@@ -1391,7 +1391,7 @@ function walk(root, deadline, maxEntries) {
       }
       if (d.isDirectory()) {
         if (d.name === '.git') continue;
-        if (!agentHere && SKIP_DIRS.has(d.name)) {
+        if (!noPrune && !agentHere && SKIP_DIRS.has(d.name)) {
           const pruned = pruneInfo(d.name, dir);
           if (pruned) {
             if (!pruned.silent) skippedDirs.push({ dir: r, reason: pruned.reason });
@@ -1982,6 +1982,25 @@ function inventory(extDirs, out) {
   }
 }
 
+function baselineFindings(root, home, out) {
+  const bl = require('./baseline');
+  const base = bl.loadBaseline(home, root);
+  if (!base) return;
+  const d = bl.diffSurface(base, bl.extractSurface(root));
+  const add = (key, severity, verb) => {
+    const file = key.slice(0, key.indexOf('#'));
+    out.push({
+      id: 'ZNA023', severity, agent: 'any', file, line: 1, title: BY_ID.ZNA023.title,
+      detail: redact('The entry ' + key.slice(key.indexOf('#') + 1) + ' in ' + file + ' was ' + verb + ' since you approved this project.'),
+      evidence: redact(key), fix: BY_ID.ZNA023.fix, references: [], _readers: AGENTS,
+    });
+  };
+  for (const k of d.changed) add(k, 'high', 'changed');
+  for (const k of d.added) add(k, 'high', 'added');
+  // A removed hook, permission or setting weakens the project; a removed server, script or task only takes something away.
+  for (const k of d.removed) add(k, /#(?:hook:|permissions|setting:)/.test(k) ? 'medium' : 'low', 'removed');
+}
+
 function normalizeAgents(list) {
   if (!list || list.length === 0 || list.includes('all')) return new Set(AGENTS);
   return new Set(list);
@@ -1995,7 +2014,7 @@ function audit(opts) {
   const deadline = Date.now() + (o.timeBudgetMs || TIME_BUDGET_MS);
   const out = [];
   const maxEntries = o.maxEntries || MAX_ENTRIES;
-  const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
+  const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries, o.noPrune);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
@@ -2026,6 +2045,7 @@ function audit(opts) {
   }
   checkShadowing(root, out);
   inventory(extDirs, out);
+  if (o.baselineHome) { try { baselineFindings(root, o.baselineHome, out); } catch (_) { /* a damaged baseline never stops the audit */ } }
   try {
     const cfg = rules().loadCustomConfig();
     if (cfg.errors.length > 0) {
