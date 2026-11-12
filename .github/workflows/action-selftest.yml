@@ -4,7 +4,7 @@ name: Action self-test
 on:
   pull_request:
     branches: [ main, next, 'release/**' ]
-    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     paths:
       - 'action.yml'
       - '.github/workflows/action-selftest.yml'
