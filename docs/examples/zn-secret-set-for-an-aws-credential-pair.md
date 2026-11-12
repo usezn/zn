@@ -9,7 +9,7 @@ You do this in your own terminal. The agent cannot store a secret or answer the 
 | Vault secret | Value used here |
 |---|---|
 | `AWS_ACCESS_KEY_ID` | `AKIAEXAMPLEEXAMPLE00` |
-| `AWS_SECRET_ACCESS_KEY` | `EXAMPLEexampleEXAMPLEexampleEXAMPLE00000` |
+| `AWS_SECRET_ACCESS_KEY` | `EXAMPLE0example0EXAMPLE0example0EXAMPLE0` |
 
 The names are the environment variables that the AWS tools read, so a program that uses them needs nothing else. Use your real values only in your own terminal, never in a file the agent can read.
 
