@@ -45,6 +45,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [offline-and-local-only.md](offline-and-local-only.md): running zn-gate with no network and the cloud check off.
 - [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
+- [reading-a-sarif-rule-id.md](reading-a-sarif-rule-id.md): follow one rule ID of a SARIF file written by `zn-gate audit` to its file, its line and its fix.
 - [reading-a-scan-finding.md](reading-a-scan-finding.md): what each field of a scan finding means in `--format json` and `--format github`.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project and read what each exit code means.
