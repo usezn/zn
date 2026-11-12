@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.15';
+const POLICY_RULES_VERSION = '2026-11-11.16';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -818,9 +818,14 @@ function readDenial(p, opts = {}) {
     // Not a regular file (a FIFO), or too big to check whole: refused rather than read.
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
-    if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
-      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+    const plain = text === null ? [] : dotenv.plainSecretNames(text);
+    if (text !== null && plain.length === 0) return null;
+    const left = plain.length
+      ? ' Still holding a value: ' + plain.slice(0, 10).join(', ') + (plain.length > 10 ? ' and ' + (plain.length - 10) + ' more' : '') + '.'
+      : '';
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv).' + left + ' Ask the user to run `' +
+      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.' +
+      (plain.length ? ' A value that is too short for that stays in the file: store it with `' + znCommand('secret set <NAME>') + '` and write __ZN_<NAME>__ in its place.' : '');
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
