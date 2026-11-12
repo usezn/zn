@@ -87,7 +87,7 @@ and what leaves the machine. Captured with zn-gate 1.15.0 and no API key set:
 ```text
 [+]  zn-gate Status:
   Package Version : 1.15.0
-  Rules Version   : 2026-11-07.1 (scrub 2026-10-31.1, audit 2026-11-06.3)
+  Rules Version   : 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)
   Active Engine   : Local rules only
   Endpoint        : None (nothing leaves this machine)
   API key         : Not set
