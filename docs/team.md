@@ -1,5 +1,12 @@
 # zn Team on a developer machine
 
+**Quick answers**
+
+- **Join:** run `zn-gate team join -` and give it the join token (`znj_...`) from your admin on one line of standard input. Unlock the vault first with `zn-gate unlock`. See [Commands](#commands).
+- **Status:** run `zn-gate team status` (add `--rules` to see the rules in force). See [Commands](#commands).
+- **Sync:** run `zn-gate team sync` to download the policy and upload the audit log now. See [Commands](#commands).
+- **Leave:** run `zn-gate team leave`. The machine leaves at once, even if the server cannot be reached. See [Leaving](#leaving).
+
 | Command | Summary |
 |---|---|
 | `zn-gate team join` | Connects this machine to your organization with the join token your admin gave you. |
@@ -29,6 +36,10 @@ machine that stops reporting is visible.
 - [What is sent](#what-is-sent)
 - [Deploy zn-gate's hooks to every machine (managed settings)](#deploy-zn-gates-hooks-to-every-machine-managed-settings)
 - [Export the audit log to OpenTelemetry](#export-the-audit-log-to-opentelemetry)
+
+**Words used in this page**
+
+The [glossary](glossary.md) explains these words: zn Team, join token, vault, marker, vault audit log, managed configuration and hook.
 
 ## Roles in a team
 

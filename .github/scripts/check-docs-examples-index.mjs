@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Fails when docs/examples/README.md does not list its pages in alphabetical order within each section.
+// Fails when docs/examples/README.md does not list its pages in alphabetical order within each section, or
+// lists a page more than once (anywhere in the file).
 // A section is the run of list entries under one heading (or before the first heading). An entry is a line
 // that starts with `- [name.md](`; entries are compared by that file name, in plain character order, which
 // is also the order in which the files sort in a directory listing.
@@ -7,7 +8,9 @@
 //   node .github/scripts/check-docs-examples-index.mjs [index.md]     default: docs/examples/README.md
 //
 // Entries inside fenced code blocks are ignored. The check reports every entry that comes before a name that
-// sorts after it, with the line numbers, and changes nothing.
+// sorts after it, and every page listed more than once, with the line numbers, and changes nothing. The index
+// is merged with git's union strategy (.gitattributes), which keeps the lines of both sides and can list a
+// page twice when both sides touched its line: this check catches that.
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
@@ -47,20 +50,36 @@ export function outOfOrder(text) {
   return found;
 }
 
+/* The pages listed more than once: [{ name, lines: [n, ...] }], in the order of their first entry. */
+export function duplicates(text) {
+  const seen = new Map();
+  for (const s of sections(text)) {
+    for (const e of s.entries) {
+      if (!seen.has(e.name)) seen.set(e.name, []);
+      seen.get(e.name).push(e.line);
+    }
+  }
+  return [...seen].filter(([, lines]) => lines.length > 1).map(([name, lines]) => ({ name, lines }));
+}
+
 function main(argv) {
   const file = argv[0] || 'docs/examples/README.md';
   const text = fs.readFileSync(file, 'utf8');
   const bad = outOfOrder(text);
+  const twice = duplicates(text);
   const total = sections(text).reduce((n, s) => n + s.entries.length, 0);
-  if (bad.length) {
+  if (bad.length || twice.length) {
     for (const b of bad) {
       const where = b.heading ? ` (section "${b.heading}")` : '';
       console.error(`${file}:${b.line}: "${b.name}" is listed after "${b.after}" (line ${b.afterLine})${where}; it sorts before it.`);
     }
-    console.error('\nList the pages of each section in alphabetical order.');
+    for (const d of twice) {
+      console.error(`${file}:${d.lines[1]}: "${d.name}" is listed more than once (lines ${d.lines.join(', ')}).`);
+    }
+    console.error('\nList each page once, in alphabetical order within its section.');
     return 1;
   }
-  console.log(`docs examples index OK: ${total} entries in ${file}, alphabetical within each section`);
+  console.log(`docs examples index OK: ${total} entries in ${file}, alphabetical within each section, each page once`);
   return 0;
 }
 
