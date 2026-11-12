@@ -73,13 +73,28 @@ for (const forced of [false, true]) {
   test('the backslash verdicts are the same ' + (forced ? 'with the platform forced to win32' : 'on this host'), (t) => {
     const cwd = project(t);
     if (forced) asWindows(t);
+    // The shell of a session works in the project, so $PWD names it.
+    const pwd = process.env.PWD;
+    process.env.PWD = cwd;
+    t.after(() => { if (pwd === undefined) delete process.env.PWD; else process.env.PWD = pwd; });
     for (const cmd of DENY) assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
     for (const cmd of ALLOW) assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
     for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env', 'write-output .\\.env', 'Write-Output "a" .\\.env']) {
       assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
     }
+    for (const cmd of ["Write-Output '.\\.env'", 'Write-Output .\\README.md']) {
+      assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
+    }
+    // A braced variable, a subexpression or a variable in the word can read the file: only a plain literal word is text.
+    for (const cmd of ['Write-Output ${.\\.env}', 'Write-Host "${.\\.env}"', 'Write-Output $(gc .\\.env)', 'echo @(gc .\\.env)',
+      'Write-Output "$PWD\\.env"', 'Write-Output ${' + cwd + '\\.env}', 'Write-Output (gc .\\.env)']) {
+      assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
+    }
     // Printing is not reading, but nothing that reads may slip through behind a print command.
-    for (const cmd of ['Write-Output .\\.env | Get-Content .\\.env', 'Write-Output (gc .\\.env)', 'Write-Output $(gc .\\.env)', 'Write-Output gc .\\.env',
+    for (const cmd of [
+      'Write-Output .\\.env | Copy-Item -Destination x', 'echo .\\.env | Get-Item | Get-Content', 'echo .\\.env | gi | gc',
+      'echo .\\.env | % { gc $_ }', 'Write-Output .\\.env | cpi -Destination x', 'Write-Output .\\.env && gc .\\.env', 'Write-Output .\\.env & gc .\\.env',
+      'Write-Output .\\.env\ngc .\\.env', 'Write-Output .\\.env > x', 'Write-Output .\\.env | Out-Null','Write-Output .\\.env | Get-Content .\\.env', 'Write-Output (gc .\\.env)', 'Write-Output $(gc .\\.env)', 'Write-Output gc .\\.env',
       'Write-Output .\\.env; cat .\\.env', 'Write-Output .\\.env | cpi .\\.env x']) {
       assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
     }

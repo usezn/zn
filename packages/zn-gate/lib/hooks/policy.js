@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.8';
+const POLICY_RULES_VERSION = '2026-11-11.9';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2676,6 +2676,11 @@ const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'i
 const PS_DOTNET_FILE_READ_RE = /\]::(?:read|open|copy|append|get)\w*$/i;
 // Commands that only print their arguments: a path-shaped word after them is text, not a file that is opened.
 const PS_PRINT_ONLY = new Set(['write-output', 'write-host', 'write-verbose', 'write-warning', 'write-information', 'echo', 'write']);
+// Trade-off: a lone print of a literal backslash path (Write-Output .\.env) is allowed, because it only prints text. A word with ${ }, $( ),
+// @( ), a variable or a backtick can read a file or run a command, and in a pipeline or chain (|, ;, &, a redirect, a new line) the printed
+// text can be bound to a reader, so those keep the read check.
+const PS_EXPANDS_RE = /[${}()@`&;|<>]/;
+const PS_COMPOUND_RE = /[$(){}@`&;|<>\r\n]/;
 const PS_PATH_HELPERS = new Set(['resolve-path', 'rvpa', 'convert-path', 'cvpa', 'join-path']);
 function psPathOperand(h) {
   const head = String(h || '').toLowerCase();
@@ -2699,10 +2704,13 @@ function psListWords(words, opts) {
   const push = (x, head) => {
     const backslash = typeof x.text === 'string' && x.text.indexOf('\\') >= 0;
     const reads = readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord);
-    // On Windows the word .\.env of `Write-Output .\.env` resolves to the file, on another host it does not. It is only printed, so
-    // it is marked, and the read check leaves it out on every platform (the checks for zn's own folders still see it).
-    out.push(backslash && !reads && !x.redirectTarget && PS_PRINT_ONLY.has(String(bareHead(head)).toLowerCase()) ? { ...x, printsText: true } : x);
-    if (backslash && x.text.length <= 4096 && reads) out.push({ ...x, text: slash(x.text) });
+    const prints = backslash && !reads && !x.redirectTarget && PS_PRINT_ONLY.has(String(bareHead(head)).toLowerCase());
+    // A print command that is the whole statement and names a plain literal path only prints text: it is left out of the read check on
+    // every platform. In a pipeline or chain the text may be bound to a reader (echo .\.env | gi | gc), so it keeps the full read check.
+    const lone = prints && !PS_EXPANDS_RE.test(x.text) && typeof opts.cmdText === 'string' && !PS_COMPOUND_RE.test(opts.cmdText);
+    out.push(lone ? { ...x, printsText: true } : x);
+    // A word that expands ("$PWD\.env") or follows a print command inside a compound statement is judged with the slash reading too.
+    if (backslash && x.text.length <= 4096 && (reads || PS_EXPANDS_RE.test(x.text) || (prints && !lone))) out.push({ ...x, text: slash(x.text) });
   };
   for (const w of words) {
     push(w, w.head);
