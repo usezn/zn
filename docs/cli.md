@@ -175,7 +175,7 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
@@ -275,7 +275,7 @@ A scan never reports a clean result for something it could not read. A folder it
 ### `audit`
 
 ```bash
-zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home]
+zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home] [--approve]
 ```
 
 Reviews the agent configs of a folder before you open it: hooks, MCP servers, endpoint overrides, permissions, instructions and planted programs. It runs nothing. [What it finds](audit.md).
@@ -285,6 +285,7 @@ Reviews the agent configs of a folder before you open it: hooks, MCP servers, en
 - `--fail-on`: `low`, `medium`, `high` (default), `critical` or `none`.
 - `--agents`: a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all` (default).
 - `--include-home`: also review your own agent configs in your home folder.
+- `--approve`: record the executable configuration of the project (MCP servers, hooks, permissions, helper commands and similar) as approved, then exit. Later audits report an entry that changed, was added or was removed since. It runs only at a terminal, not when an agent started it. Only entry names and hashes are stored, never a value. [Details](audit.md).
 
 Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2` wrong usage or a path that is not a folder.
 
@@ -456,10 +457,12 @@ Puts the original values back into the file from the encrypted copy that `env sh
 ### `run`
 
 ```text
-zn-gate run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]
+zn-gate run [--secrets NAME[,NAME...]] [--agent ID] [--egress-allow HOST[:PORT],...] -- <command> [args...]
 ```
 
 Runs a command with markers replaced by real values, only for commands you allowed, and masks the values in its output. Everything after `--` belongs to your command. `-s` is short for `--secrets`.
+
+- `--egress-allow HOST[:PORT],...`: off by default. The command can reach only those hosts over HTTP(S), through a local proxy that zn starts for the command. Other requests are refused and the refused host is logged, never the body. An entry without a port allows every port of that host. [Details and limits](secrets.md#egress-allowlist-for-zn-run).
 
 Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not allowed or not approved), `127` the program was not found, `1` another error.
 
