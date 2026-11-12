@@ -163,7 +163,8 @@ zn: .env holds plain-text secrets, and secret values never go to the model (rule
 
 1. If the agent needs a value from that file, run `zn env shadow .env` yourself in your own terminal. The values move to the vault and the file keeps markers such as `__ZN_API_KEY__` that the agent can use.
 2. If you did not expect the read, ask your agent why it wanted that file, and do not look for a way around the block.
-3. To put your old `.env` back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`.
+3. If the message says `Still holding a value: NAME`, that variable has a secret-looking name and still holds a value. If you have not run `zn env shadow .env` yet, run it first: it moves values of 8 characters or more into the vault. Any names still listed after that hold short values that it does not move. Store each one with `zn secret set NAME` and write `__ZN_NAME__` in its place in the file, or leave it empty. Variables with ordinary names, such as `PORT=8080`, never block.
+4. To put your old `.env` back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`.
 
 More in [secrets](secrets.md) and [what the check means](check.md).
 
