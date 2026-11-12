@@ -2,7 +2,7 @@ name: Cargo audit
 
 # Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database.
 # "cargo audit" is a required check of pull requests into next, and the merge queue runs it too. It audits only a
-# change to the Rust dependencies (Cargo.lock, Cargo.toml, .cargo/audit.toml or this workflow): any other pull request
+# change to the Rust dependencies (Cargo.lock, any Cargo.toml, .cargo/audit.toml or this workflow): any other pull request
 # passes it at once, so an advisory published on an unrelated day does not hold up the queue. The job runs on every
 # pull request and merge queue group, with no paths filter, because a required check skipped by a filter would stay
 # pending. It also runs every day on main and every night on next, on a push to main or next that changes those
@@ -56,7 +56,7 @@ jobs:
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || out true
           git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || out true
           files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD 2>/dev/null)" || out true
-          if grep -qxE 'Cargo\.lock|Cargo\.toml|\.cargo/audit\.toml|\.github/workflows/cargo-audit\.yml' <<< "$files"; then out true; fi
+          if grep -qxE 'Cargo\.lock|(.*/)?Cargo\.toml|\.cargo/audit\.toml|\.github/workflows/cargo-audit\.yml' <<< "$files"; then out true; fi
           echo "No Rust dependency file changed: nothing to audit for this change."
           out false
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
