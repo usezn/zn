@@ -39,6 +39,11 @@ function clipboardUnreadable(tried) {
     'Copy the value again, or run the command without --clipboard to type it at the hidden prompt.';
 }
 
+function clipboardTimedOut(tried, timeoutMs) {
+  return 'could not read the clipboard: ' + tried.join(', ') + ' did not answer within ' + timeoutMs / 1000 + ' seconds and was stopped. ' +
+    'Copy the value again, or run the command without --clipboard to type it at the hidden prompt.';
+}
+
 /* ------------------------------ the vault ------------------------------ */
 
 function invalidDuration(value) {
@@ -73,6 +78,10 @@ const PASSPHRASE_NEEDS_TERMINAL = 'zn needs a terminal to ask for the passphrase
 
 function passphraseCancelled() {
   return 'Cancelled: no passphrase was entered. Run `' + zn('unlock') + '` again when you are ready.';
+}
+
+function passphraseStdinEmpty() {
+  return 'No passphrase was read from standard input. Pipe it in, for example: printf \'%s\' "$PASS" | ' + zn('unlock --passphrase-stdin');
 }
 
 function passphraseMismatch() {
@@ -282,6 +291,7 @@ const TEAM_INVALID_REQUEST = 'invalid request: the name, kind or value is not va
 
 const TEAM_NOTHING_TO_APPROVE = 'nothing to approve: this machine has no organization policy waiting for your answer. Run `zn team status` to check.';
 
+const TEAM_POLICY_UNVERIFIED = 'the stored copy of your organization policy could not be verified, so this machine is in strict mode until a valid policy arrives. Next step: run `zn team sync` with the vault unlocked.';
 const TEAM_NOT_ASKED = 'the organization policy does not ask for this, so nothing was approved.';
 
 const TEAM_INVALID_ORG_KEY = 'the server sent an invalid organization key, so this machine was not connected. Ask your administrator.';
@@ -347,15 +357,15 @@ function teamJoinFailed(why) {
 }
 
 module.exports = {
-  agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable,
+  agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable, clipboardTimedOut,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
-  PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, forgetLockFirst, vaultAlreadyUnlocked,
+  PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,
   keychainProblem, secretToolMissing, powershellMissing, keychainHelperFailed, keychainLostKey,
   verboseDetail, vaultStartTimeout, vaultStartExited, vaultNotAnswering, auditFailed, vaultLockedBecause,
   CONNECT_KEY_ON_COMMAND_LINE, CONNECT_CANCELLED, CONNECT_NOT_A_KEY, CONNECT_REJECTED,
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
-  TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
+  TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_POLICY_UNVERIFIED, TEAM_INVALID_ORG_KEY,
   teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
   TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,

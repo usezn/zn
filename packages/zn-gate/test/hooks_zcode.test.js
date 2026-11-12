@@ -581,6 +581,33 @@ test('configWarnings: a missing or unreadable file says nothing wrong', (t) => {
   assert.equal(zc.configWarnings({ home }).notes.length, 1);
 });
 
+test('configWarnings: JSONC, a BOM and broken JSON in the ZCode config (plain message, file left as it is)', (t) => {
+  const cases = [
+    { name: 'comments', text: '{\n  // turned on by hand\n  "hooks": { "enabled": true }\n}\n', note: /^cannot parse .*: the file has comments \(JSONC\)/ },
+    { name: 'broken', text: '{\n  "hooks": { "enabled": true },\n}\n', note: /^cannot parse .*: the file is not valid JSON at line 3\. / },
+  ];
+  for (const c of cases) {
+    const home = tempDir(t, 'zn-zc-cw-' + c.name + '-');
+    write(home, c.text);
+    const before = fs.readFileSync(cliFile(home));
+    const w = zc.configWarnings({ home });
+    assert.deepEqual(w.problems, [], c.name);
+    assert.equal(w.notes.length, 1, c.name);
+    assert.match(w.notes[0], c.note, c.name);
+    assert.match(w.notes[0], /\(left unchanged\)$/, c.name);
+    assert.ok(fs.readFileSync(cliFile(home)).equals(before), c.name + ': the file was changed');
+  }
+
+  // A BOM is accepted, as config-file.js accepts it: the file is read, and nothing is reported about it.
+  const home = tempDir(t, 'zn-zc-cw-bom-');
+  write(home, '﻿' + JSON.stringify({ hooks: { enabled: false } }, null, 2) + '\n');
+  const before = fs.readFileSync(cliFile(home));
+  const w = zc.configWarnings({ home });
+  assert.match(w.problems[0], /"hooks\.enabled" is false/);
+  assert.deepEqual(w.notes, []);
+  assert.ok(fs.readFileSync(cliFile(home)).equals(before), 'bom: the file was changed');
+});
+
 test('detect: the zcode program on PATH or a ~/.zcode folder', (t) => {
   const home = tempDir(t, 'zn-zc-det-');
   const bin = tempDir(t, 'zn-zc-det-bin-');
