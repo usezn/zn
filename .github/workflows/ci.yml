@@ -1,3 +1,4 @@
+# Main test workflow: Node.js, Python, lint, package and build checks on pushes and pull requests to main, next and release branches.
 name: zn CI
 
 # Pull requests into next run, all on Ubuntu, only the light checks of this workflow that the rulesets require: the
@@ -215,7 +216,8 @@ jobs:
         env:
           # Where the frameworks were installed above, their tests must run, not skip.
           ZN_REQUIRE_FRAMEWORKS: "1"
-        run: python -m pytest tests/ -v
+        # Three pytest processes at once (see the script): each of the two long linear-time files has its own and the rest share the third.
+        run: bash ../../.github/scripts/run-pytest-sharded.sh python
       - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
         # The same real-framework tests, in a separate virtual environment with langchain-core 1.3.3, the
         # oldest version the integration supports. The frameworks are installed: the tests must run, not skip.
@@ -292,7 +294,8 @@ jobs:
       - name: Run pytest (unit + integration)
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
-        run: python -m pytest tests/ -v
+        # Three pytest processes at once (see the script): each of the two long linear-time files has its own and the rest share the third.
+        run: bash ../../.github/scripts/run-pytest-sharded.sh python
       - name: Run benchmark verification
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
