@@ -4,6 +4,22 @@ Set up zn-gate in Cursor in two minutes, then the technical details: the MCP ser
 
 There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks install cursor` below. The plugin's hooks started `node` by name, so an absolute `PATH` entry that points into the project (its `node_modules/.bin`, a folder added by direnv) could run a `node` of the project's own in place of the real one, and Cursor has no hook setting that names the program by its full path on macOS and Linux and still works on Windows. If you added the zn-gate plugin in Cursor, remove it there (Customize) and run `zn hooks install cursor`: Cursor's documentation does not say what happens to an installed plugin that is no longer in its repository.
 
+## At a glance
+
+With the hooks from `zn hooks install cursor`:
+
+| What Cursor's agent does | Result |
+| --- | --- |
+| Reads a `.env` file that holds real values, with a file read or with `cat .env` | Blocked |
+| Reads `~/.aws/credentials` or `~/.ssh/id_ed25519` | Blocked |
+| Sends a chat message with a secret zn-gate recognizes pasted in it | Blocked before it is sent |
+| Gets an MCP tool result with a secret zn-gate recognizes in it | The secret is removed |
+| Calls an MCP tool with a secret value in its arguments | Blocked (from 1.7.0) |
+| Runs a shell command that prints a secret, or reads a file that is not blocked | **Not covered:** Cursor does not let hooks change shell output or file contents |
+| Runs in the Cursor CLI (`cursor-agent`) | **Not covered:** its hook support is not documented |
+
+The full table is in [What zn-gate protects in Cursor, and what it does not](#what-zn-gate-protects-in-cursor-and-what-it-does-not), and every limit is listed in [Known limits](#known-limits).
+
 ## Install (no coding needed)
 
 1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
