@@ -1,3 +1,4 @@
+# cargo audit of the Rust dependencies on pull requests that change them, daily and on demand; a failed automated run opens an issue.
 name: Cargo audit
 
 # Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database.
@@ -97,7 +98,7 @@ jobs:
           set -euo pipefail
           number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Rust dependency advisory found by cargo audit") | .number' | head -n 1)"
           cat > "$RUNNER_TEMP/body.md" <<BODY
-          cargo audit failed in a scheduled check: ${RUN_URL}
+          cargo audit failed in an automated check: ${RUN_URL}
 
           Open the step "cargo audit" in that run to see the advisories. Either a dependency has a new advisory (update it, or
           add it to .cargo/audit.toml with the reason when no update is possible), or the advisory database could not be

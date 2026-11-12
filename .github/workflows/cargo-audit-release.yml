@@ -1,3 +1,4 @@
+# cargo audit of every push to a release branch, through the Cargo audit workflow.
 name: Cargo audit (release branches)
 
 # Audits the Rust dependencies on every push to a release branch, whatever the push changed, so the commit that a
