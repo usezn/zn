@@ -181,7 +181,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--json`) exits with `2`, names it and lists the option that `check` takes (`--hooks`).
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
 
 ```bash
 zn-gate check --hooks
