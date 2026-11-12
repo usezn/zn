@@ -91,7 +91,7 @@ zn run: first use of DEMO_TOKEN with `printenv`: confirm it in the zn vault prom
 If you answer `n`, the first use is refused. `secret approve` then exits with 77 and the message `declined by the user`. A `run` prints this, runs nothing and exits with 77:
 
 ```text
-zn run: Not allowed: first use of OTHER_TOKEN with `printenv` was not approved (declined by the user. Next step: nothing was changed. Do not retry the same request; finish the task another way.). Nothing was run or sent. Do not retry the same request; finish the task another way.
+zn run: Not allowed: first use of DEMO_TOKEN with `printenv` was not approved (declined by the user. Next step: nothing was changed. Do not retry the same request; finish the task another way.). Nothing was run or sent. Do not retry the same request; finish the task another way.
 ```
 
 ## Both need a person
