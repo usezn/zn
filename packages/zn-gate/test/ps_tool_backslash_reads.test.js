@@ -155,6 +155,22 @@ for (const forced of [false, true]) {
   });
 }
 
+// Named parameters out of slot order give two distinct joins per call (the slot order and the order as written), so 16 such calls
+// fill the 32-path limit and a later protected join is refused; 15 such calls leave room for one more join.
+const reorderedJoins = (n) => Array.from({ length: n }, (_, i) => 'Join-Path -ChildPath b' + (i + 1) + ' -Path a' + (i + 1)).join('; ');
+for (const forced of [false, true]) {
+  test('reordered named Join-Path parameters count toward the limit ' + (forced ? 'with the platform forced to win32' : 'on this host'), (t) => {
+    const cwd = project(t);
+    if (forced) asWindows(t);
+    for (const ps of [true, false]) {
+      const opts = { cwd, powershell: ps };
+      assert.ok(policy.bashDenial(reorderedJoins(16) + '; gc (Join-Path -ChildPath config -Path ~\.kube)', opts), '16 reordered calls then a protected one must be denied (powershell ' + ps + ')');
+      assert.equal(policy.bashDenial(reorderedJoins(15), opts), null, '15 reordered calls alone must be allowed (powershell ' + ps + ')');
+      assert.equal(policy.bashDenial(reorderedJoins(15) + '; gc (Join-Path -ChildPath README.md -Path .)', opts), null, '15 reordered calls then a harmless one must be allowed (powershell ' + ps + ')');
+    }
+  });
+}
+
 // The Bash tool and the PowerShell tool agree on a lone print: it is judged only by what the path is on the host.
 test('a lone print of a backslash path gets the same verdict in the Bash and the PowerShell tool', (t) => {
   const cwd = project(t);

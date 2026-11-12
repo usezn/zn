@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.12';
+const POLICY_RULES_VERSION = '2026-11-11.13';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2576,7 +2576,8 @@ function bashDenialOf(cmd, opts = {}) {
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
   const listed = psListWords(words, opts, cmd);
-  // More Join-Path calls than zn judges, or a joined path too long to judge: refused, not checked in part.
+  // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
+  // or a joined path too long to judge: refused, not checked in part.
   if (listed.over) return TOO_SLOW_MESSAGE;
   for (const w of withEqualsReadings(listed)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
@@ -2702,6 +2703,7 @@ function psJoinedPaths(words) {
     if (clean.length < 2) return;
     const joined = clean.join('\\');
     if (seen.has(joined)) return;
+    // Each distinct joined path adds two entries (backslash and slash forms), so the 64-entry cap is 32 distinct joined paths.
     if (joined.length > 4096 || out.length >= 64) { out.over = true; return; }
     seen.add(joined);
     out.push({ ...w, text: joined, head: 'join-path', redirectTarget: false }, { ...w, text: slash(joined), head: 'join-path', redirectTarget: false });
