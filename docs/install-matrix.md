@@ -1,5 +1,7 @@
 # Install matrix
 
+Last reviewed: 2026-11-11
+
 Install methods by operating system, with the command that verifies each one. Everything here is
 taken from [compat.md](compat.md) and [first-5-minutes.md](first-5-minutes.md); read those pages for the full
 details. Run every command in your own terminal, not through your agent.

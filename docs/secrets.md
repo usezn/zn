@@ -426,6 +426,55 @@ When you have finished, `npx -y zn-gate check` shows what is still set up. The [
 - **You want your old `.env` back**: run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`, in your own terminal.
 - **Not sure what is protected**: run `npx -y zn-gate check`.
 
+## Common questions about the vault
+
+**Where does the vault live?**
+In `~/.zn/vault/` on your computer (or in the `vault` folder inside the folder
+that the `ZN_HOME` variable names). Your named secrets are in `secrets.age`, an
+encrypted file. The same folder holds one more encrypted `.age` file for each
+project (the values zn detected there) and `keychain.json` (settings, no
+values), or `identity.age` when there is no keychain. zn writes no secret value
+in clear in that folder. The key that opens the vault is in your OS keychain, or
+behind your passphrase when there is no keychain. See
+[step 1](#1-install-and-unlock-the-vault) and [Files and folders](files-and-folders.md).
+
+**Does the agent ever see a secret value?**
+It is not meant to. The agent works with markers. `zn secret get` and
+`zn secret reveal` do not print a value: they refuse and point you to `zn run`.
+The `secrets` MCP server has four tools (`secrets_list`, `secrets_http_request`,
+`secrets_render_file` and `secrets_request`), and none of them returns a value.
+A value goes only to the program, the host or the file you allowed, and zn masks
+the output and the response. `secrets_render_file` does write real values into
+the file you allowed, and masking is a safety net, not a boundary: read
+[the limits](threat-model.md). See [step 4](#4-let-a-command-use-a-secret) and
+[step 5](#5-let-the-agent-call-an-api).
+
+**Can the agent change what a secret is allowed to do?**
+Not on its own. `zn secret set`, `rm`, `allow` and `approve` refuse to run
+inside an agent's shell and need your own terminal. `allow`, `approve` and the
+first use of a secret by a command are also confirmed in the vault's own
+prompt, which is a system dialog or the `zn unlock --foreground` terminal.
+`zn secret rm` asks you to confirm in the terminal where you ran it.
+
+**How do I remove one secret?**
+Run `zn secret rm NAME` in your own terminal and confirm. To see the names
+first, run `zn secret list` (it never prints values). To delete everything, see
+`zn vault purge` in [Useful commands](#useful-commands).
+
+**I forgot my passphrase. Can I get my secrets back?**
+No. Nobody can recover them. `zn vault reset` sets the old vault aside as an
+encrypted backup, and the next `zn unlock` starts a new, empty one. It refuses
+on a computer that belongs to a zn Team organization. The steps are in
+[If something fails](#if-something-fails).
+
+**How do I move to another computer?**
+No command exports or syncs the secret values in the vault: `zn export` and
+`zn vault log export` write logs, and `zn team sync` downloads your
+organization's policy and uploads the audit log. So the vault does not travel.
+On the new computer, install zn-gate, run `zn unlock`, and store your values
+again with `zn secret set NAME` or `zn env shadow .env`. Keep the originals in
+your own password manager so you can do this.
+
 Words you do not know? See the [glossary](glossary.md).
 
 ## Related pages

@@ -1,3 +1,4 @@
+# Smoke test of the examples and packages (Python, Node.js, MCP in a container) on pushes to main and pull requests that touch them, and nightly.
 name: Package smoke
 
 # Python examples: installs each one from its requirements.txt, then runs its agent_guard.py offline (network

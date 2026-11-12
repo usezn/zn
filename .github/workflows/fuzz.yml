@@ -1,3 +1,4 @@
+# Fuzzing of the Rust targets and the Node.js hook input, weekly, on pull requests that touch the parser or hook code, and on demand.
 name: Fuzz
 
 # Weekly fuzzing of the parsers that read untrusted input, plus a short smoke run when the fuzz setup itself
