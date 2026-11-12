@@ -7,7 +7,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 | Editor or agent | Setup | Blocks reads of `.env` and credential files | Removes secrets from shell output and files | Removes secrets from MCP results | Blocks a secret pasted into the chat | Tested by us |
 | - | - | - | - | - | - | - |
 | Claude Code | `zn hooks install claude-code` | Yes | Yes | Yes | Yes | Yes, end to end |
-| Codex CLI | `zn hooks install codex`, then trust it in `/hooks` | Yes | Yes (replaces the result) | Yes | Yes | Yes, end to end |
+| [Codex CLI](codex.md) | `zn hooks install codex`, then trust it in `/hooks` | Yes | Yes (replaces the result) | Yes | Yes | Yes, end to end |
 | OpenCode | `zn hooks install opencode` | Yes | Yes | Yes | Yes | Yes, end to end |
 | [Cursor](cursor.md) | `zn hooks install cursor` | Yes | **No** (Cursor does not allow it) | Yes | Yes | Formats checked; no end-to-end run |
 | [GitHub Copilot (VS Code, CLI)](vscode.md) | `zn hooks install copilot` | Yes | Yes (read-type and shell tools) | Only servers you wrap | No | Documented for VS Code, not tested in the app; run end to end with Copilot CLI 1.0.98 |
