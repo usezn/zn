@@ -99,8 +99,8 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [zn-unlock-in-a-tmux-session.md](zn-unlock-in-a-tmux-session.md): how long an unlock lasts and where it applies across tmux panes and terminals, and when to lock.
 - [zn-unlock-ttl-and-long-builds.md](zn-unlock-ttl-and-long-builds.md): set the unlock time for a long build: what --ttl and --idle do, what a running command keeps when the vault locks, and how to lock again.
 - [zn-vault-log-filtering-by-secret-name.md](zn-vault-log-filtering-by-secret-name.md): narrow the vault log to one secret with `grep` or `awk`, and read what each line means.
-- [zn-vault-status-after-unlock-expiry.md](zn-vault-status-after-unlock-expiry.md): read `vault status` before and after the unlock time ran out, see what other commands say, and unlock again.
 - [zn-vault-purge-vs-reset-decision.md](zn-vault-purge-vs-reset-decision.md): a decision list for wiping a vault: when to use `vault forget`, `vault reset` or `vault purge`, with real runs against a throwaway vault.
+- [zn-vault-status-after-unlock-expiry.md](zn-vault-status-after-unlock-expiry.md): read `vault status` before and after the unlock time ran out, see what other commands say, and unlock again.
 - [zn-vault-status-in-a-prompt-script.md](zn-vault-status-in-a-prompt-script.md): show whether the vault is open or locked in your Bash or PowerShell prompt, with the real `vault status` lines, its exit codes and what it costs.
 - [zn-why-for-a-secret-read-block.md](zn-why-for-a-secret-read-block.md): explain a blocked read of a `.env` file with `zn-gate why`, and the safe ways to go on.
 
