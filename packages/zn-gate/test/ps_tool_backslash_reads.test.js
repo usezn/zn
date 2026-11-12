@@ -164,7 +164,7 @@ for (const forced of [false, true]) {
     if (forced) asWindows(t);
     for (const ps of [true, false]) {
       const opts = { cwd, powershell: ps };
-      assert.ok(policy.bashDenial(reorderedJoins(16) + '; gc (Join-Path -ChildPath config -Path ~\.kube)', opts), '16 reordered calls then a protected one must be denied (powershell ' + ps + ')');
+      assert.ok(policy.bashDenial(reorderedJoins(16) + '; gc (Join-Path -ChildPath config -Path ~\\.kube)', opts), '16 reordered calls then a protected one must be denied (powershell ' + ps + ')');
       assert.equal(policy.bashDenial(reorderedJoins(15), opts), null, '15 reordered calls alone must be allowed (powershell ' + ps + ')');
       assert.equal(policy.bashDenial(reorderedJoins(15) + '; gc (Join-Path -ChildPath README.md -Path .)', opts), null, '15 reordered calls then a harmless one must be allowed (powershell ' + ps + ')');
     }
