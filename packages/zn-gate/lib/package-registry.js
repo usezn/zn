@@ -37,7 +37,7 @@ const PYPI_OK = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 /** The registry URL for a validated name, or null. A scoped npm name keeps its @ and has the slash encoded. */
 function urlFor(eco, name) {
   if (typeof name !== 'string' || name.length > 214) return null;
-  if (eco === 'npm') return NPM_OK.test(name) ? 'https://registry.npmjs.org/' + name.replace('/', '%2F') : null;
+  if (eco === 'npm') return NPM_OK.test(name) ? 'https://registry.npmjs.org/' + name.replace(/\//g, '%2F') : null;
   if (eco === 'pypi') return PYPI_OK.test(name) && name.length <= 100 ? 'https://pypi.org/pypi/' + name + '/json' : null;
   return null;
 }

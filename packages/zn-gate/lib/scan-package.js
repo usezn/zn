@@ -324,7 +324,7 @@ function unsafeOnWindows(parts) {
 async function fetchPackageForScan(spec, opts = {}) {
   const { name, version } = parsePackageSpec(spec);
   const base = opts.registry || registryBase(process.env);
-  const encoded = name.replace('/', '%2F');
+  const encoded = name.replace(/\//g, '%2F');
   const label = name + '@' + version;
 
   const origin = new URL(base).origin;
