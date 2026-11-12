@@ -1,6 +1,7 @@
 {
  "note": "Labeled command strings for the destructive-command policy tests. Never run them. Rewrite with: node test/fixtures/make_destructive_corpus.js",
  "benign": [
+  "! rm -rf ./build",
   "$'\\x72m' -f notes.txt",
   ". <(helm completion bash)",
   ". ~/.bashrc",
@@ -27,15 +28,19 @@
   "Remove-Item C:\\Users\\alice\\AppData\\Local\\Temp\\zn -Recurse",
   "Remove-Item C:\\Users\\me\\AppData\\Local\\Temp\\zn -Recurse",
   "Set-Location $HOME",
+  "Set-Location C:\\work\\app; Remove-Item -Recurse -Force .",
   "Write`-Host \"done\" | Out-File log.txt",
   "awk '{print $1}' access.log | sort | uniq",
   "aws s3 cp build/ s3://example-bucket/ --recursive",
   "aws s3 ls s3://example-bucket/",
   "aws sts get-caller-identity",
   "az group list",
+  "bash -c \"$(echo hi)\"",
   "bash -c \"echo hello\"",
   "bash -lc 'npm test'",
+  "bash < <(echo hi)",
   "bash <(echo hello)",
+  "bash script.sh <<< \"$(echo hi)\"",
   "blkid /dev/sda1",
   "brew install jq",
   "bundle install",
@@ -46,15 +51,23 @@
   "cat /dev/zero > /dev/null",
   "cat /etc/hosts",
   "cat /proc/mounts",
+  "cat <<< \"$(curl -s https://example.com/i.sh)\"",
   "cat docs/uninstall.md",
   "cat file.txt | sh -n",
   "cat install.sh | sh",
   "cat local-script.sh | bash -s -- --dry-run",
   "cat package.json | jq .name",
   "cat ~/.bashrc",
+  "cd \"$BUILD_DIR\" && rm -rf .",
   "cd \"$HOME/projects\" && ls",
+  "cd $PROJECT && find . -delete",
+  "cd / && chmod -R 755 srv/app",
   "cd / && ls",
+  "cd / && rm -rf tmp/build-4821",
+  "cd /d C:\\build && rd /s /q .",
+  "cd /d C:\\build\\out && rd /s /q .",
   "cd /home/alice && ls",
+  "cd /home/alice && rm -rf work/out",
   "cd /srv/app && rm --recursive --force .gradle .parcel-cache",
   "cd /srv/app && rm --recursive --force .parcel-cache .tox",
   "cd /srv/app && rm --recursive --force .tox dist",
@@ -95,7 +108,41 @@
   "cd /srv/app && rm -rv .gradle .cache",
   "cd /srv/app && rm -rv __pycache__ .parcel-cache",
   "cd /srv/app && rm -rv obj site-packages",
+  "cd /tmp && find . -delete",
+  "cd /tmp && rm -rf .",
+  "cd /var/tmp && rm -rf *",
+  "cd C:/Users/alice/work/ && rm -rf .",
+  "cd C:\\Users\\alice\\projects && rd /s /q ..\\build",
+  "cd C:\\build\\ && rd /s /q .",
+  "cd build && rm -rf .",
+  "cd dist && rm -rf *",
+  "cd ~ & rm -rf .",
+  "cd ~ && cd projects && rm -rf .",
+  "cd ~ && cd projects/app && find . -delete",
+  "cd ~ && chmod -R u+rwX .cache",
+  "cd ~ && echo '`rm -rf .`'",
+  "cd ~ && echo . | xargs ls",
+  "cd ~ && find . -name \"*.pyc\" -delete",
+  "cd ~ && find .cache -delete",
+  "cd ~ && ls . && rm -rf build",
   "cd ~ && pwd",
+  "cd ~ && rm -rf ./build",
+  "cd ~ && rm -rf .cache",
+  "cd ~ && rm -rf projects/old-app/build",
+  "cd ~ | rm -rf .",
+  "cd ~/projects && env -C ../other rm -rf .",
+  "cd ~/projects && env -C app rm -rf .",
+  "cd ~/projects && rm -rf ../projects/old",
+  "cd ~/projects && sh -c \"cd .. && ls .\"",
+  "cd ~/projects && sh -c \"cd app && rm -rf .\"",
+  "cd ~/projects && sh -c \"rm -rf build\"",
+  "cd ~/projects/app && cd .. && rm -rf old-build",
+  "cd ~/projects/app && echo `rm -rf .`",
+  "cd ~/projects/app && find . -delete",
+  "cd ~/projects/app && find ../build -delete",
+  "cd ~/projects/app && rm -rf .",
+  "cd ~/projects/app && rm -rf ../build",
+  "cd ~/projects/app && sh -c \"cd ../lib && rm -rf .\"",
   "chgrp -R staff ./shared",
   "chmod +x script.sh",
   "chmod -R 755 ./dist",
@@ -119,6 +166,9 @@
   "cmd /c dir",
   "code ~/.zshrc",
   "composer install",
+  "coproc NAME { ls; }",
+  "coproc ls",
+  "coproc { sleep 1; }",
   "cp -r src/ dist/",
   "cp /etc/hosts ~/hosts.bak",
   "cp dotfiles/.zshrc ~/.zshrc",
@@ -353,7 +403,9 @@
   "dotnet build -c Release",
   "dotnet test",
   "du -sh ~/*",
+  "echo \"$(c\\url -s https://example.com/x)\"",
   "echo \":(){ :|:& };: is a fork bomb\" | wc -w",
+  "echo \"`pwd`\"",
   "echo \"alias ll='ls -la'\" >> ~/.zshrc",
   "echo \"dd of=/dev/sda is dangerous\" | wc -c",
   "echo \"never run rm -rf ~ in a script\"",
@@ -366,15 +418,39 @@
   "echo $'\\x72m' -rf ~",
   "echo $'a\\tb'",
   "echo $HOME",
+  "echo '`rm -rf ~`'",
   "echo 'export PATH=\"$HOME/bin:$PATH\"' >> ~/.bashrc",
+  "echo \\`rm -rf ~\\`",
+  "echo `cd build && rm -rf .`",
+  "echo `date`",
   "echo `date` | sh -n",
+  "echo `echo hi`; rm -rf ./build",
+  "echo `rm -rf ./build`",
   "echo cu\\rl",
+  "echo do rm -rf ~",
   "echo hi > /dev/null",
   "echo hi > /dev/stderr",
   "echo s\\h",
   "echo test > /dev/tty",
   "echo use `iwr` | cat",
   "echo ~",
+  "env --chdir=build rm -rf .",
+  "env --split-s 'ls -la'",
+  "env --split-string=\"ls -la\"",
+  "env -0S 'ls -la'",
+  "env -C / ls .",
+  "env -C / true && rm -rf ./build",
+  "env -C ~ ls -la",
+  "env -C ~ rm -rf .cache",
+  "env -C ~ sh -c \"rm -rf .cache\"",
+  "env -C ~/projects rm -rf ../build",
+  "env -C ~/projects/app find . -delete",
+  "env -C ~/projects/app rm -rf .",
+  "env -C ~/projects/app sh -c \"rm -rf .\"",
+  "env -S \"ls -la\"",
+  "env -S \"rm -rf ./build\"",
+  "env -S '-i ls -la'",
+  "env -S 'echo hi'",
   "env CI=1 rm --recursive --force .gradle build",
   "env CI=1 rm --recursive --force .tox build",
   "env CI=1 rm --recursive --force .turbo .venv",
@@ -426,6 +502,7 @@
   "eval \"$(ssh-agent -s)\"",
   "exec zsh -l",
   "export FOO=bar && node app.js",
+  "f() { ls; }; f",
   "fdisk -l /dev/sda",
   "find . -name \"*.pyc\" -delete",
   "find . -name \"*.tmp\" | xargs rm",
@@ -439,6 +516,10 @@
   "find ~/Downloads -type f -name \"*.iso\"",
   "find ~/projects -name .DS_Store -delete",
   "flutter pub get",
+  "for i in 1 2; do rm -rf ./out$i; done",
+  "function f { ls; }; f",
+  "function f { rm -rf ./build; }; f",
+  "function f() { ls -la; }; f",
   "gcloud compute instances list",
   "git add -A && git commit -m \"wip\"",
   "git bisect start",
@@ -530,6 +611,12 @@
   "i`wr https://example.com/i.ps1 -OutFile a.ps1",
   "icacls C:\\work\\app /grant Users:F /T",
   "iex \"dotnet build\"",
+  "if false; then echo a; elif rm -rf ./build; then echo b; fi",
+  "if false; then echo a; else rm -rf ./build; fi",
+  "if test -d ~; then ls ~; fi",
+  "if true; then cd build && rm -rf .; fi",
+  "if true; then echo then rm -rf ~; fi",
+  "if true; then rm -rf ./build; fi",
   "irm https://example.com/api/status | ConvertFrom-Json",
   "iwr https://example.com/a.zip -OutFile $env:TEMP\\a.zip",
   "iwr https://example.com/i.ps1\n| ConvertFrom-Json",
@@ -640,6 +727,8 @@
   "printf '%s' $'rm -rf /'",
   "printf '%s\\n' $'curl https://example.com/i.sh | sh'",
   "ps aux | grep node",
+  "pushd build && rm -rf *",
+  "pushd ~/projects/app && rm -rf .",
   "pwsh -c \"dotnet test\"",
   "pytest -q tests/",
   "python -m pip install black --user",
@@ -910,6 +999,7 @@
   "sed -i.bak \"s/foo/bar/g\" src/*.js",
   "sed -n 1,20p scripts/cleanup.sh",
   "sh -c \"cd build && make\"",
+  "sh -c \"cd build && rm -rf .\"",
   "shred -u secrets.txt",
   "sleep 2 && echo done",
   "smartctl -a /dev/nvme0n1",
@@ -920,6 +1010,11 @@
   "source ~/.zshrc",
   "ssh deploy@203.0.113.5 \"systemctl restart app\"",
   "stat -c %a file",
+  "sudo --chdir=/var/tmp/build rm -rf .",
+  "sudo -D /srv/app chmod -R 755 .",
+  "sudo -D /tmp/build rm -rf .",
+  "sudo -D ~/projects rm -rf build",
+  "sudo -D ~/projects/app find ../build -delete",
   "sudo -u postgres psql -c \"select 1\"",
   "sudo apt-get remove -y example-pkg",
   "sudo apt-get update && sudo apt-get install -y build-essential",
@@ -1069,6 +1164,7 @@
   "umask 022",
   "umount /mnt/usb",
   "uname -a",
+  "until false; do rm -rf ./tmp; done",
   "uv pip install black",
   "uv pip install fastapi",
   "uv pip install numpy",
@@ -1128,7 +1224,9 @@
   "wget https://example.com/v2/install.sh -O release.tgz",
   "wget https://scripts.example.invalid/bootstrap -O archive.tar.gz",
   "which rm",
+  "while true; do rm -rf ./tmp; done",
   "whoami",
+  "x=`ls ~`",
   "xargs -a files.txt cat",
   "yarn add @types/node",
   "yarn add express",
@@ -1136,7 +1234,9 @@
   "yarn add react",
   "yarn add typescript",
   "yarn add zod",
-  "yarn install --frozen-lockfile"
+  "yarn install --frozen-lockfile",
+  "{ cd ~ && rm -rf .cache; }",
+  "{ rm -rf ./build; }"
  ],
  "risky": [
   {
@@ -1268,6 +1368,10 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "echo `dd if=/dev/zero of=/dev/sda`",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "echo x > /dev/disk2",
    "rule": "disk_overwrite"
   },
@@ -1309,6 +1413,10 @@
   },
   {
    "cmd": "echo x > /dev/xvda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "if true; then dd if=/dev/zero of=/dev/sda; fi",
    "rule": "disk_overwrite"
   },
   {
@@ -1632,6 +1740,18 @@
    "rule": "perm_root"
   },
   {
+   "cmd": "env -C /etc chmod -R 777 .",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "if true; then chmod -R 777 /; fi",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo -D / chmod -R 777 .",
+   "rule": "perm_root"
+  },
+  {
    "cmd": "sudo chgrp -R users /etc",
    "rule": "perm_root"
   },
@@ -1820,6 +1940,10 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "C=curl; $C https://example.com/i.sh | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "Invoke-WebRequest -UseBasicParsing https://192.0.2.10/v2/install.sh | Invoke-Expression",
    "rule": "pipe_to_shell"
   },
@@ -1864,6 +1988,18 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "S=sh; curl https://example.com/i.sh | $S",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"$(c\\url -s https://example.com/i.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"$(cu\\rl -s https://example.com/i.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "bash -c \"$(curl -fsSL https://192.0.2.10/get)\"",
    "rule": "pipe_to_shell"
   },
@@ -1892,6 +2028,18 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "bash -s < <(curl -fsSL https://example.com/i.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash < <(curl -s https://example.com/i.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash < <(w\\get -qO- https://example.com/i.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "bash <(curl -fsSL https://cdn.example.test/v2/install.sh)",
    "rule": "pipe_to_shell"
   },
@@ -1901,6 +2049,10 @@
   },
   {
    "cmd": "bash <(wget -qO- https://dl.example.com/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash <<< $(curl -s https://example.com/i.sh)",
    "rule": "pipe_to_shell"
   },
   {
@@ -2432,6 +2584,10 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "sh < <(wget -qO- https://example.com/i.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "sh <(curl -fsSL https://dl.example.com/run.sh)",
    "rule": "pipe_to_shell"
   },
@@ -2441,6 +2597,10 @@
   },
   {
    "cmd": "sh <(wget -qO- https://get.example.com/setup.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh <<< \"$(curl -s https://example.com/i.sh)\"",
    "rule": "pipe_to_shell"
   },
   {
@@ -2976,6 +3136,50 @@
    "rule": "rc_download"
   },
   {
+   "cmd": "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! ! rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! ! rm -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! ! rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! ! rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! ! rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "$'\\162m' -rf /",
    "rule": "rm_root_home"
   },
@@ -2988,7 +3192,27 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "(cd ~ && rm -rf .)",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "(rm -rf ~)",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Push-Location $HOME && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Push-Location $HOME || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Push-Location $HOME; rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -3040,6 +3264,18 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "Set-Location ~ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Set-Location ~ || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Set-Location ~; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "bash -c \"python3 -c 'import shutil; shutil.rmtree(\\\"/\\\")'\"",
    "rule": "rm_root_home"
   },
@@ -3073,6 +3309,318 @@
   },
   {
    "cmd": "case x in x) rm -rf ~;; esac",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd \"$HOME\" && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd \"$HOME\" || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd \"$HOME\"; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd $HOME && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd $HOME || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd $HOME; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ${HOME} && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ${HOME} || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ${HOME}; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && find . -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && ls && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && rm -rf .*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && rm -rf ./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && rm -rf ./*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd && sudo rm -rf --no-preserve-root .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd -- ~ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd -- ~ || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd -- ~; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd -P / && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd -P / || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd -P /; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && Remove-Item -Recurse -Force .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && find . -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && ls && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf .*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf ./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf ./*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && rm -rf usr/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / && sudo rm -rf --no-preserve-root .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd / || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /D C:\\Users\\alice && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /Users/bob && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /Users/bob || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /Users/bob; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /d C:\\ && rd /s /q Windows",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /d C:\\Users\\alice && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && find . -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && ls && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && rm -rf .*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && rm -rf ./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && rm -rf ./*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc && sudo rm -rf --no-preserve-root .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /etc; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home && rm -rf alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && find . -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && ls && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && rm -rf .*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && rm -rf ..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && rm -rf ./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && rm -rf ./*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice && sudo rm -rf --no-preserve-root .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice/work && sh -c \"cd ../.. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /home/alice; rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -3144,11 +3692,751 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd /usr/ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/ || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local && bash -lc \"cd ../.. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local && sudo -D ../.. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local/.. && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local/.. || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local/..; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /var && rm -rf lib/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:/ && rm -rf Windows",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:/Users/alice && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:/Users/alice || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:/Users/alice/ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:/Users/alice; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:\\Users\\alice; Remove-Item -Recurse -Force *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:\\Users\\alice\\projects && rd /s /q ..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:\\Windows\\ && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && cd ../.. && cd home/bob && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && echo \"`rm -rf .`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && echo `rm -rf .`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && find . -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && ls && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && rm -rf .*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && rm -rf ..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && rm -rf ./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && rm -rf ./*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && sudo rm -rf --no-preserve-root .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/../.. && cd Users/bob && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/../.. && cd home/bob && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && bash -c \"sh -c \\\"cd .. && rm -rf .\\\"\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && cd .. && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && cd .. || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && cd ..; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && echo `rm -rf ../*`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && env -C .. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && env -C .. sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && eval \"cd .. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && find .. -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && rm -rf ../*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && sh -c \"cd .. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects/.. && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects/.. || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects/..; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects/app && rm -rf ../..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~; rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "chdir /d C:\\Windows && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cmd /c \"rd /s /q %USERPROFILE%\"",
    "rule": "rm_root_home"
   },
   {
+   "cmd": "coproc NAME { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "del /s /q C:\\*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo \"`rm -rf $HOME`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo \"`rm -rf /`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo \"`rm -rf /etc`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo \"`rm -rf /home/alice`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo \"`rm -rf ~`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `cd ~; rm -rf .`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `echo \\`rm -rf ~\\``",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `ls` `rm -rf $HOME`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `ls` `rm -rf /`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `ls` `rm -rf /etc`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `ls` `rm -rf /home/alice`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `ls` `rm -rf ~`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `rm -rf $HOME`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `rm -rf /`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `rm -rf /etc`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `rm -rf /home/alice`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "echo `rm -rf ~`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf /\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf /etc\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf /home/alice\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice/work/../.. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~/../.. env -C home/bob rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~/projects rm -rf ../*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~/projects/.. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf /\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf /etc\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf /home/alice\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf ~'",
    "rule": "rm_root_home"
   },
   {
@@ -3196,7 +4484,71 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "env FOO=1 -C $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "env python3 -c \"import shutil; shutil.rmtree('/var')\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf $HOME; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf /; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf /etc; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf /home/alice; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf ~; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf $HOME; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf /; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf /etc; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf /home/alice; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf ~; echo end; }; f",
    "rule": "rm_root_home"
   },
   {
@@ -3252,6 +4604,190 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "for i in 1 2; do rm -rf $HOME; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for i in 1 2; do rm -rf /; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for i in 1 2; do rm -rf /etc; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for i in 1 2; do rm -rf /home/alice; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for i in 1 2; do rm -rf ~; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf $HOME; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /etc; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /home/alice; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf ~; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf $HOME; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf /; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf /etc; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf /home/alice; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf ~; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; elif rm -rf $HOME; then echo b; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; elif rm -rf /; then echo b; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; elif rm -rf /etc; then echo b; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; elif rm -rf /home/alice; then echo b; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; elif rm -rf ~; then echo b; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; else rm -rf $HOME; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; else rm -rf /; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; else rm -rf /etc; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; else rm -rf /home/alice; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then echo a; else rm -rf ~; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf $HOME; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf /; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf /etc; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf /home/alice; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf ~; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then\n  rm -rf $HOME\nfi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then\n  rm -rf /\nfi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then\n  rm -rf /etc\nfi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then\n  rm -rf /home/alice\nfi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then\n  rm -rf ~\nfi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then cd / && find . -delete; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf $HOME; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf /; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf /etc; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf /home/alice; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf ~; fi",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "node --eval \"const os=require('os'); require('fs').rmSync(os.homedir(), {recursive:true})\"",
    "rule": "rm_root_home"
   },
@@ -3281,6 +4817,94 @@
   },
   {
    "cmd": "powershell -c \"Remove-Item -Recurse -Force $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && find . -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && ls && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && rm -rf .*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && rm -rf ./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && rm -rf ./*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME && sudo rm -rf --no-preserve-root .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd $HOME; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd / && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd / || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd /; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd /var && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd /var || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd /var; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd ~ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd ~ || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pushd ~; rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -3620,6 +5244,30 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "sh -c \"cd && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"cd / && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"cd /etc && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"cd /home/alice && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"cd ~ && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"pushd $HOME && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "sh -c \"rm -rf $HOME\"",
    "rule": "rm_root_home"
   },
@@ -3644,7 +5292,227 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "sudo ! rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo ! rm -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo ! rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo ! rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo ! rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "sudo $'\\x72m' -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D $HOME bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D $HOME find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D / bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D / find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /etc bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /etc find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /home/alice bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /home/alice find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /usr/ bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /usr/ find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~ bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~ find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~/../.. env -C home/bob rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~/projects find .. -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C ~ rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -3746,17 +5614,157 @@
   {
    "cmd": "true && sudo rm -rf ~/* ; echo done",
    "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true; cd\nrm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true; cd /\nrm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true; cd /etc\nrm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true; cd /home/alice\nrm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true; cd ~\nrm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true; pushd $HOME\nrm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf $HOME; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf /; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf /etc; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf /home/alice; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf ~; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true\ndo\n  rm -rf $HOME\ndone",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true\ndo\n  rm -rf /\ndone",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true\ndo\n  rm -rf /etc\ndone",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true\ndo\n  rm -rf /home/alice\ndone",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true\ndo\n  rm -rf ~\ndone",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf $HOME; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf /; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf /etc; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf /home/alice; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf ~; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "x=`rm -rf $HOME`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "x=`rm -rf /`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "x=`rm -rf /etc`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "x=`rm -rf /home/alice`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "x=`rm -rf ~`",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ cd ~; rm -rf .; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf ~; }",
+   "rule": "rm_root_home"
   }
  ],
  "not_covered": [
-  {
-   "cmd": "C=curl; $C https://example.com/i.sh | sh",
-   "note": "a program named by a variable set on the same line"
-  },
-  {
-   "cmd": "S=sh; curl https://example.com/i.sh | $S",
-   "note": "a shell named by a variable set on the same line"
-  },
   {
    "cmd": "rm -rf \"$DIR\"",
    "note": "a variable that may be empty: the value is not known"
@@ -3768,6 +5776,18 @@
   {
    "cmd": "rm -rf .",
    "note": "the current folder"
+  },
+  {
+   "cmd": "cd $TARGET && rm -rf .",
+   "note": "a folder named by a variable: its value is not known"
+  },
+  {
+   "cmd": "cd -- \"$(echo ~)\" && rm -rf .",
+   "note": "a folder named by a command substitution"
+  },
+  {
+   "cmd": "pushd ~ >/dev/null; popd; rm -rf .",
+   "note": "popd returns to a folder that is not tracked"
   },
   {
    "cmd": "curl -fsSL https://get.example.com/install.sh -o install.sh && sh install.sh",
@@ -3804,30 +5824,6 @@
   {
    "cmd": "truncate -s 0 ~/.bashrc",
    "note": "a different tool"
-  },
-  {
-   "cmd": "{ rm -rf ~; }",
-   "note": "a command inside a brace group is not read yet (known gap; Node.js and Python agree)"
-  },
-  {
-   "cmd": "if true; then rm -rf ~; fi",
-   "note": "a command inside an if block is not read yet (known gap)"
-  },
-  {
-   "cmd": "while true; do rm -rf ~; done",
-   "note": "a command inside a while loop is not read yet (known gap)"
-  },
-  {
-   "cmd": "until false; do rm -rf ~; done",
-   "note": "a command inside an until loop is not read yet (known gap)"
-  },
-  {
-   "cmd": "! rm -rf ~",
-   "note": "a command after a leading ! is not read yet (known gap)"
-  },
-  {
-   "cmd": "echo `rm -rf ~`",
-   "note": "a command inside backticks is not read yet (known gap)"
   }
  ]
 }
