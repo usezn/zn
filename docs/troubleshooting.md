@@ -96,7 +96,7 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 - Use the `.cmd` versions: `npx.cmd -y zn-gate init`, or `npm.cmd install -g zn-gate`.
 - Run the same commands in Command Prompt instead of PowerShell.
-- Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+- Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it.
 
 More in the [README](../README.md#install).
 
@@ -140,7 +140,7 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If `zn vault verify` says the vault audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
-For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
+For the other messages of `zn unlock`, `zn lock` and `zn vault forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-vault-forget).
 
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
@@ -1136,7 +1136,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What to do:** run `zn team status` to see what, if anything, is waiting. If something should be waiting, ask your administrator.
 
-### Messages from the vault commands (`zn unlock`, `zn lock`, `zn forget`)
+### Messages from the vault commands (`zn unlock`, `zn lock`, `zn vault forget`)
 
 The vault being locked, damaged or refusing a keychain are in [section 5](#5-your-secret-vault-is-locked). These are the other messages of the vault commands.
 
@@ -1166,9 +1166,9 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 
 #### "Lock the vault first"
 
-**What happened:** `zn forget` removes what zn stored for a project, and the unlocked vault may hold that project in memory.
+**What happened:** `zn vault forget` removes what zn stored for a project, and the unlocked vault may hold that project in memory.
 
-**What to do:** run `zn lock`, then `zn forget` again.
+**What to do:** run `zn lock`, then `zn vault forget` again.
 
 #### "The vault is already unlocked"
 

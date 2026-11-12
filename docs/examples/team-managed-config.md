@@ -59,7 +59,7 @@ Format read from https://code.claude.com/docs/en/managed-settings on 2026-10-19
 - To allow zn's MCP server under an existing allowedMcpServers list, add { "serverCommand": ["zn", "secrets-mcp", "--agent", "claude-code"] }. managedMcpServers cannot carry it: it accepts only https http/sse entries with no command.
 ```
 
-The hooks are the same ones `zn hooks install --scope project` writes. If `zn` or Node.js is missing on a machine, the hook blocks the action and tells the developer how to install zn-gate.
+The hooks are the same ones `zn hooks install --project` writes. If `zn` or Node.js is missing on a machine, the hook blocks the action and tells the developer how to install zn-gate.
 
 ## The two opt-in flags
 
