@@ -297,7 +297,11 @@ def scan_line(line: str, counts: Dict[str, int]) -> None:
     types = _types()
     text = _cut_markers(text, set(types.values()) | {"URL_PASSWORD"})
     _redacted, detections = rules.redact_secrets(text)
-    pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(text))
+    # redact_secrets also reads the text without invisible characters, so the fine-grained tokens are counted on that
+    # same text: an invisible character inside a token cannot change its type.
+    view = rules.invisible_view(text)
+    seen = view[0] if view is not None else text
+    pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(seen))
     for d in detections:
         # An id the table does not know is still a secret: count it as the generic type, never drop it.
         t = types.get(d["rule"]) or "SECRET"

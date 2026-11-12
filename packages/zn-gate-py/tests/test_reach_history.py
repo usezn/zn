@@ -368,6 +368,48 @@ def test_scrub_table_types_are_counted(machine):
     assert "0123456789abcdef0123456789abcdef" not in out
 
 
+CLASSIC = "gh" + "p_" + "FAKE0123456789abcdefFAKE0123456789ab"
+PAT_ZW = PAT[:20] + "​" + PAT[20:]
+
+
+def _pat_variants():
+    return [PAT[:20] + c + PAT[20:] for c in ("​", "‌", "⁠", "﻿")]
+
+
+def test_an_invisible_character_inside_a_fine_grained_token_does_not_change_its_type():
+    for v in _pat_variants():
+        counts = {}
+        reach_history.scan_line("pat " + v + " ok", counts)
+        assert counts == {"GITHUB_PAT": 1}, (repr(v[20]), counts)
+
+
+def test_a_line_with_a_fine_grained_and_a_classic_token_counts_one_of_each():
+    for v in [PAT, PAT_ZW]:
+        counts = {}
+        reach_history.scan_line("pat " + v + " and classic " + CLASSIC, counts)
+        assert counts == {"GITHUB_PAT": 1, "GITHUB_TOKEN": 1}, counts
+
+
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+def test_invisible_characters_in_a_fine_grained_token_equal_the_npm_package(machine):
+    home, env = machine
+    lines = ["pat " + v + " ok" for v in _pat_variants()] + ["pat " + PAT + " and classic " + CLASSIC, "pat " + PAT_ZW + " and classic " + CLASSIC]
+    put(home, ".claude/projects/-proj-z/s.jsonl", jsonl([{"text": x} for x in lines]))
+    py = json.loads(zn(env, "reach", "--history", "--json").stdout)
+    node_env = {k: v for k, v in env.items() if k != "PYTHONPATH"}
+    for k in ("SYSTEMROOT", "SystemRoot", "TEMP", "TMP"):
+        if k in os.environ:
+            node_env[k] = os.environ[k]
+    node = subprocess.run(["node", _NODE_CLI, "reach", "--history", "--json"], capture_output=True, text=True, env=node_env, timeout=120)
+    assert node.returncode == 0, node.stderr
+    js = json.loads(node.stdout)
+    py.pop("elapsed_ms")
+    js.pop("elapsed_ms")
+    assert py == js
+    types = {f["type"]: f["count"] for f in py["findings"]}
+    assert types == {"GITHUB_PAT": 6, "GITHUB_TOKEN": 2}, types
+
+
 def test_an_unknown_rule_id_is_counted_as_a_generic_secret(monkeypatch):
     from zn_gate import rules
     monkeypatch.setattr(rules, "redact_secrets", lambda text: (text, [{"rule": "secret:future_rule", "start": 0, "end": 4}]))
