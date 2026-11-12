@@ -8,6 +8,11 @@
 //
 // A release changes the version in public-facts.json in the same pull request as the manifests.
 //
+// It also checks the `zn-gate status` samples in the Markdown files: a line such as
+// `Rules Version   : 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)` must show the rule versions the code
+// has today (RULES_VERSION, SCRUB_RULES_VERSION and AUDIT_RULES_VERSION in packages/zn-gate/lib). A pull request
+// that raises one of them updates the samples too.
+//
 // While version.value is a pre-release (1.14.0-rc.1): the Python files ("python": true) carry the PyPI
 // form (1.14.0rc1), and the pins in the docs and the {minor} of the text facts follow docsVersion, the
 // last final release, because the docs keep telling people to install that one. The examples pin what
@@ -251,6 +256,48 @@ export function check(facts, files, read, options = {}) {
   return errors;
 }
 
+// The three rule versions that `zn-gate status` prints, and where the code keeps each one.
+export const RULE_VERSION_SOURCES = [
+  { name: 'rules', file: 'packages/zn-gate/lib/rules.js', constant: 'RULES_VERSION' },
+  { name: 'scrub', file: 'packages/zn-gate/lib/scrub/patterns.js', constant: 'SCRUB_RULES_VERSION' },
+  { name: 'audit', file: 'packages/zn-gate/lib/audit/rules.js', constant: 'AUDIT_RULES_VERSION' },
+];
+const STATUS_SAMPLE = /Rules Version\s*:\s*(\S+) \(scrub (\S+), audit (\S+)\)/;
+
+/** The rule versions in the code: { rules, scrub, audit }. A missing constant is reported in errors. */
+export function codeRuleVersions(read, errors) {
+  const out = {};
+  for (const s of RULE_VERSION_SOURCES) {
+    let text = null;
+    try { text = read(s.file); } catch { /* reported below */ }
+    const m = text && text.match(new RegExp(`\\b${s.constant}\\s*=\\s*['"]([^'"]+)['"]`));
+    if (m) out[s.name] = m[1];
+    else errors.push(`${s.file}: ${s.constant} not found (the status samples in the docs are compared with it)`);
+  }
+  return out;
+}
+
+/** Errors for every `zn-gate status` sample line in a Markdown file whose rule versions differ from the code. */
+export function checkStatusSamples(files, read) {
+  const errors = [];
+  const code = codeRuleVersions(read, errors);
+  if (errors.length) return errors;
+  const want = `${code.rules} (scrub ${code.scrub}, audit ${code.audit})`;
+  for (const f of files) {
+    if (!f.endsWith('.md')) continue;
+    let text;
+    try { text = read(f); } catch { continue; }
+    if (!text.includes('Rules Version')) continue;
+    text.split(/\r?\n/).forEach((line, i) => {
+      const m = line.match(STATUS_SAMPLE);
+      if (!m) return;
+      const got = `${m[1]} (scrub ${m[2]}, audit ${m[3]})`;
+      if (got !== want) errors.push(`${f}:${i + 1}: the zn-gate status sample shows rules ${got}; the code has ${want}`);
+    });
+  }
+  return errors;
+}
+
 function main() {
   const root = resolve(process.argv[2] || '.');
   const read = (f) => readFileSync(join(root, f), 'utf8');
@@ -260,6 +307,7 @@ function main() {
   const pluginWarnings = process.env.PLUGIN_PIN_PENDING === 'true' ? [] : undefined;
   const warnings = [];
   const errors = check(facts, files, read, { pluginWarnings, warnings });
+  errors.push(...checkStatusSamples(files, read));
   for (const w of warnings) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   for (const w of pluginWarnings || []) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   if (pluginWarnings && pluginWarnings.length) console.log(`\n${pluginWarnings.length} plugin pin difference(s), allowed on a release pull request: pin the plugin after npm publishes the release.`);
