@@ -48,7 +48,7 @@ wasmtime = { version = "48", default-features = false, features = ["anyhow", "as
 rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
-cliclack = "0.2"
+cliclack = "0.5"
 regex = "1.10"
 uuid = { version = "1.6", features = ["v4"] }
 futures = "0.3"
@@ -109,6 +109,10 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,
 # so the crate must be a direct dependency even though no source line names it.
 ignored = ["schemars"]
+
+# gemm (via candle) still uses the unmaintained paste crate (RUSTSEC-2024-0436); route it to pastey.
+[patch.crates-io]
+paste = { path = "tools/paste-shim" }
 
 [profile.release]
 strip = true
