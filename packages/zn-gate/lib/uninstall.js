@@ -282,8 +282,17 @@ async function run(args, io) {
       const base = path.basename(l.file);
       // Three answers: true (names the launcher), false (does not: the file is absent or has no mention) and null (cannot
       // tell: any other read error). Only a clear false lets the launcher go; null keeps it (fail closed).
+      // ENOTDIR (a folder on the path is really a file) means "does not exist" only when the parent is confirmed not to be
+      // a folder; if that cannot be confirmed either, it stays "cannot tell".
+      const notAFolder = (f) => {
+        try { return !fs.statSync(path.dirname(f)).isDirectory(); } catch (_) { return false; }
+      };
       const names = (f) => {
-        try { return fs.readFileSync(f, 'utf8').includes(base); } catch (e) { return e && e.code === 'ENOENT' ? false : null; }
+        try { return fs.readFileSync(f, 'utf8').includes(base); } catch (e) {
+          if (e && e.code === 'ENOENT') return false;
+          if (e && e.code === 'ENOTDIR' && notAFolder(f)) return false;
+          return null;
+        }
       };
       let keep = failedHooks.has(l.id);
       let why = 'a hooks file may still use it';
@@ -349,17 +358,26 @@ async function run(args, io) {
 
 
 /* The settings files of the Claude Code profiles in the home folder: ~/.claude and every ~/.claude* folder (for
-   example one per CLAUDE_CONFIG_DIR). `unknown` is true when the home folder cannot be listed: then the profiles are
-   not known and the caller must not assume there are none. */
+   example one per CLAUDE_CONFIG_DIR). Only folders are profiles: ~/.claude.json and its backups are plain files that
+   Claude Code keeps next to them. A link to a folder is a profile; a link that cannot be followed is not known to be
+   anything, so (like a home folder that cannot be listed) it makes `unknown` true: the caller must not assume there are
+   no other profiles. */
 function claudeProfileSettings(home) {
   const files = [];
-  let names;
-  try { names = fs.readdirSync(home); } catch (_) { return { files, unknown: true }; }
-  for (const n of names) {
+  let entries;
+  try { entries = fs.readdirSync(home, { withFileTypes: true }); } catch (_) { return { files, unknown: true }; }
+  let unknown = false;
+  for (const e of entries) {
+    const n = e.name;
     if (!/^\.claude/.test(n)) continue;
-    files.push(path.join(home, n, 'settings.json'));
+    let isDir = e.isDirectory();
+    if (!isDir && !e.isFile()) {
+      // A link (or an entry whose type the listing did not give): follow it to see what it is.
+      try { isDir = fs.statSync(path.join(home, n)).isDirectory(); } catch (_) { unknown = true; continue; }
+    }
+    if (isDir) files.push(path.join(home, n, 'settings.json'));
   }
-  return { files, unknown: false };
+  return { files, unknown };
 }
 
 module.exports = { run, plan, printPlan, USAGE };

@@ -190,3 +190,57 @@ test('uninstall: a settings file that cannot be read keeps the launcher (read er
   assert.ok(fs.existsSync(file), 'the launcher stays');
   assert.match(c.out(), /launcher script kept \(a hooks file could not be read\)/);
 });
+
+// Only folders are Claude Code profiles: ~/.claude.json (a file Claude Code writes on almost every machine) and its
+// backups must not make the launcher stay for good.
+test('uninstall: ~/.claude.json and its backup (files) are not profiles; the launcher is removed', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  fs.writeFileSync(path.join(m.home, '.claude.json'), '{}');
+  fs.writeFileSync(path.join(m.home, '.claude.json.backup'), '{}');
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.equal(fs.existsSync(file), false, 'the launcher is removed: ' + c.out());
+  assert.doesNotMatch(c.out(), /launcher script kept/);
+});
+
+test('uninstall: a link to a profile folder that names the launcher keeps it', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  const real = tempDir(t, 'zn-ulp-alt-');
+  fs.writeFileSync(path.join(real, 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: file + ' PreToolUse' }] }] } }));
+  try { fs.symlinkSync(real, path.join(m.home, '.claude-alt'), 'dir'); } catch (e) { return t.skip('no symbolic links here: ' + e.code); }
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.ok(fs.existsSync(file), 'the launcher stays while a linked profile names it');
+  assert.match(c.out(), /launcher script kept/);
+});
+
+test('uninstall: a link to a profile folder that does not name the launcher lets it go', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  const real = tempDir(t, 'zn-ulp-alt2-');
+  fs.writeFileSync(path.join(real, 'settings.json'), '{}');
+  try { fs.symlinkSync(real, path.join(m.home, '.claude-alt'), 'dir'); } catch (e) { return t.skip('no symbolic links here: ' + e.code); }
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.equal(fs.existsSync(file), false, c.out());
+});
+
+test('uninstall: a link that cannot be followed keeps the launcher (cannot tell)', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  try { fs.symlinkSync(path.join(m.home, 'does-not-exist'), path.join(m.home, '.claude-gone')); } catch (e) { return t.skip('no symbolic links here: ' + e.code); }
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.ok(fs.existsSync(file), 'the launcher stays');
+  assert.match(c.out(), /launcher script kept \(a Claude Code profile could not be checked\)/);
+});
