@@ -8,7 +8,7 @@ from zn_gate.cli import (
     npm_only_message,
     npm_only_simple_message,
 )
-from zn_gate.shell_names import npx_name
+from zn_gate.shell_names import npx_name, zn_gate_name
 
 NAME = re.compile(r"^[a-z]+(-[a-z]+)*$")
 
@@ -30,7 +30,7 @@ class TestNpmOnlySimpleMessage(unittest.TestCase):
             lines = msg.splitlines()
             self.assertIn(cmd, lines[0])
             self.assertIn(f"{npx_name()} -y zn-gate {cmd}", msg)
-            self.assertIn(f"  zn-gate {cmd}", lines)
+            self.assertIn(f"  {zn_gate_name()} {cmd}", lines)
             self.assertTrue(msg.endswith("\n"), repr(msg))
 
 
