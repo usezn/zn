@@ -55,3 +55,33 @@ test('a backslash word is judged as a path only where something reads it', (t) =
     assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
   }
 });
+
+// A host that reads a backslash as a separator (Windows) resolves .\.env to the file, one that does not (Linux) does not; the verdict
+// must be the same on both. The path functions are made to read a backslash as a separator, and the platform is forced to win32.
+function asWindows(t) {
+  const real = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  t.after(() => Object.defineProperty(process, 'platform', { value: real, configurable: true }));
+  const fix = (a) => (typeof a === 'string' ? a.replace(/\\/g, '/') : a);
+  for (const fn of ['resolve', 'normalize', 'join', 'basename', 'dirname', 'relative']) {
+    const orig = path[fn];
+    t.mock.method(path, fn, (...args) => orig.apply(path, args.map(fix)));
+  }
+}
+
+for (const forced of [false, true]) {
+  test('the backslash verdicts are the same ' + (forced ? 'with the platform forced to win32' : 'on this host'), (t) => {
+    const cwd = project(t);
+    if (forced) asWindows(t);
+    for (const cmd of DENY) assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
+    for (const cmd of ALLOW) assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
+    for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env', 'write-output .\\.env', 'Write-Output "a" .\\.env']) {
+      assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
+    }
+    // Printing is not reading, but nothing that reads may slip through behind a print command.
+    for (const cmd of ['Write-Output .\\.env | Get-Content .\\.env', 'Write-Output (gc .\\.env)', 'Write-Output $(gc .\\.env)', 'Write-Output gc .\\.env',
+      'Write-Output .\\.env; cat .\\.env', 'Write-Output .\\.env | cpi .\\.env x']) {
+      assert.ok(policy.bashDenial(cmd, { cwd, powershell: true }), 'must deny: ' + cmd);
+    }
+  });
+}

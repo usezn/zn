@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.4';
+const POLICY_RULES_VERSION = '2026-11-11.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -794,9 +794,14 @@ function readDenial(p, opts = {}) {
     // Not a regular file (a FIFO), or too big to check whole: refused rather than read.
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
-    if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
-      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+    const plain = text === null ? [] : dotenv.plainSecretNames(text);
+    if (text !== null && plain.length === 0) return null;
+    const left = plain.length
+      ? ' Still holding a value: ' + plain.slice(0, 10).join(', ') + (plain.length > 10 ? ' and ' + (plain.length - 10) + ' more' : '') + '.'
+      : '';
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv).' + left + ' Ask the user to run `' +
+      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.' +
+      (plain.length ? ' A value that is too short for that stays in the file: store it with `' + znCommand('secret set <NAME>') + '` and write __ZN_<NAME>__ in its place.' : '');
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
@@ -2631,6 +2636,7 @@ function bashDenialOf(cmd, opts = {}) {
       continue; // reading the settings is allowed
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
+    if (w.printsText) continue; // Write-Output .\\.env prints the name; it does not read the file
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }
@@ -2668,6 +2674,8 @@ const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'i
 // The operand of a .NET file read written as a PowerShell expression ([IO.File]::ReadAllText('.\.env')), or of a cmdlet that turns a
 // name into a path (Resolve-Path .\.env, as in gc (Resolve-Path .\.env)), is read as a PowerShell path too.
 const PS_DOTNET_FILE_READ_RE = /\]::(?:read|open|copy|append|get)\w*$/i;
+// Commands that only print their arguments: a path-shaped word after them is text, not a file that is opened.
+const PS_PRINT_ONLY = new Set(['write-output', 'write-host', 'write-verbose', 'write-warning', 'write-information', 'echo', 'write']);
 const PS_PATH_HELPERS = new Set(['resolve-path', 'rvpa', 'convert-path', 'cvpa', 'join-path']);
 function psPathOperand(h) {
   const head = String(h || '').toLowerCase();
@@ -2689,8 +2697,12 @@ function psListWords(words, opts) {
   for (const w of words) if (typeof w.text === 'string' && readerOf(w.text)) readerSeqs.add(w.seq);
   let lastWord = '';
   const push = (x, head) => {
-    out.push(x);
-    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && (readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord))) out.push({ ...x, text: slash(x.text) });
+    const backslash = typeof x.text === 'string' && x.text.indexOf('\\') >= 0;
+    const reads = readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord);
+    // On Windows the word .\.env of `Write-Output .\.env` resolves to the file, on another host it does not. It is only printed, so
+    // it is marked, and the read check leaves it out on every platform (the checks for zn's own folders still see it).
+    out.push(backslash && !reads && !x.redirectTarget && PS_PRINT_ONLY.has(String(bareHead(head)).toLowerCase()) ? { ...x, printsText: true } : x);
+    if (backslash && x.text.length <= 4096 && reads) out.push({ ...x, text: slash(x.text) });
   };
   for (const w of words) {
     push(w, w.head);
