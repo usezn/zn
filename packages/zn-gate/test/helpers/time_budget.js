@@ -11,12 +11,12 @@
 // Milliseconds the loop below takes on the reference machine (measured on a Linux CI-class machine under moderate load, so the limit rarely drops below the value given).
 const REFERENCE_MS = 5;
 const MAX_SCALE = 20;
-// The long-input checks cost about 7 times more CPU on windows-latest than on Linux (measured: 2984 ms against 410 ms),
-// which the loop below does not show. The factor is 4, not 7, on purpose: those checks use about a fifth of their limit on
-// Linux (410 ms of 2000 ms), so a factor of 4 already leaves the measured Windows time (2984 ms) well inside the scaled
-// limit (8000 ms) without making the limit looser than it needs to be. It is a fixed factor, not a larger cap: a check
-// that became quadratic is still hundreds of times slower.
-const PLATFORM_FACTOR = process.platform === 'win32' ? 4 : 1;
+// The long-input checks of the command reader (destructive_command.test.js) cost about 7 times more CPU on
+// windows-latest than on Linux (measured: 2984 ms against 410 ms), which the loop below does not show. Only those checks
+// get this factor, through budgetLongInput(); every other limit stays as budget() gives it. The factor is 4, not 7, on
+// purpose: those checks use about a fifth of their limit on Linux (410 ms of 2000 ms), so 4 already leaves the measured
+// Windows time well inside the scaled limit (8000 ms). A check that became quadratic is still hundreds of times slower.
+const LONG_INPUT_WINDOWS_FACTOR = 4;
 
 function spin() {
   const t0 = process.hrtime.bigint();
@@ -34,7 +34,12 @@ function scale() {
 // The limit for this run, in milliseconds. Call it where the limit is checked, after the timed work,
 // so the measure reflects the machine at that moment.
 function budget(limitMs) {
-  return Math.round(limitMs * scale() * PLATFORM_FACTOR);
+  return Math.round(limitMs * scale());
+}
+
+// The limit for the long-input checks of the command reader: budget() times LONG_INPUT_WINDOWS_FACTOR on Windows.
+function budgetLongInput(limitMs) {
+  return budget(process.platform === 'win32' ? limitMs * LONG_INPUT_WINDOWS_FACTOR : limitMs);
 }
 
 // Time a check hook gets to start on a slow Windows runner (the same hook took 3-8 s on Linux and 16-27 s on windows-latest, over the 15 s default); undefined elsewhere, so the product default applies.
@@ -61,4 +66,4 @@ function budgetWin(limitMs, winLimitMs) {
   return budget(process.platform === 'win32' ? winLimitMs : limitMs);
 }
 
-module.exports = { budget, budgetWin, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };
+module.exports = { budget, budgetLongInput, budgetWin, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };
