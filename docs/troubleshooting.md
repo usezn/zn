@@ -1360,7 +1360,7 @@ The Node.js package always refuses a connection whose certificate does not check
 
 You ran `zn hooks install <agent>` (or the plugin is installed), but your agent never shows a zn message, and a secret file such as `.env` is still readable. Three checks find the cause, in this order. Run them in your own terminal.
 
-1. **Ask zn whether the hooks can run.** Run `zn-gate check --hooks` (see [List every installed hook](check.md#list-every-installed-hook)). A hook that is `BROKEN` or `STALE` is followed by the reason and a `Fix:` line: run that command, then run `zn-gate check --hooks` again. A real run where the launcher file had been removed:
+1. **Ask zn whether the hooks can run.** Run `zn-gate check --hooks` (see [List every installed hook](check.md#list-every-installed-hook)). A hook that is `BROKEN` or `STALE` is followed by the reason and a `Fix:` line: run that command, then run `zn-gate check --hooks` again. A real run where the launcher file had been removed (all six Claude Code hooks were broken in the same way; only the first is shown):
 
    ```text
    Claude Code (user): ~/.claude/settings.json
