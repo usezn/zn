@@ -39,7 +39,7 @@ In a pipeline, branch on the exit code and not on the text a command prints. The
 | The action or the text was blocked | `2` | `hook` and `analyze` |
 | zn refused on purpose, or the action was not allowed or not approved | `77` | `run`, `secret`, `env`, `hooks`, `vault log` (`secret get` always exits `77`) |
 | The command was used wrongly | `2`, or `64` for `run`, `secret`, `env`, `hooks` and `vault log` | most commands |
-| The command needs a person at a terminal | `77` for `uninstall`, `2` for `pins` | a pipeline has no interactive terminal, so do not run these there |
+| The command needs a person at a terminal | `77` for `uninstall`, `hooks install` and `hooks uninstall`, `2` for `pins` | a pipeline has no interactive terminal, so do not run these there |
 | A scan was not complete | `3` | `scan` |
 | The program that `run` should start was not found | `127` | `run` |
 | `run` was stopped by a signal | `130` after `SIGINT`, `143` after any other signal | `run` |
