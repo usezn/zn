@@ -50,6 +50,7 @@ const mcpSecrets = require('../lib/mcp-secrets');
 const { fsErrorText, humanError } = require('../lib/errors');
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 const { safeText } = require('../lib/audit/report');
+const { cliName } = require('../lib/zn-command');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -111,9 +112,9 @@ function secretNextStep(file, rule) {
     // On Windows the relative path uses backslashes; npx takes forward slashes there too.
     const shown = process.platform === 'win32' ? file.split(path.sep).join('/') : file;
     const arg = SAFE_FILE_ARG.test(shown) && !shown.startsWith('-') ? shown : '<file>';
-    return `Next: run npx -y zn-gate env shadow ${arg} to move the values into the local vault, and rotate any value that was ever committed or shared.`;
+    return `Next: run ${cliName('npx')} -y zn-gate env shadow ${arg} to move the values into the local vault, and rotate any value that was ever committed or shared.`;
   }
-  return 'Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the __ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.';
+  return `Next: run ${cliName('npx')} -y zn-gate secret set NAME to store the value in the local vault, use the __ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.`;
 }
 
 // The line shown with a scan finding: secrets found by the rules and by the
