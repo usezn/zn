@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The seventeen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The eighteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -59,6 +59,7 @@ Find the command you ran, then the symptom that matches.
 - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
+- [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -85,7 +86,7 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 ## 3. `running scripts is disabled on this system` (Windows)
 
-**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate.
+**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate. PowerShell prints the message as `npx.ps1 cannot be loaded because running scripts is disabled on this system.` (the file is `npm.ps1`, `npx.ps1` or `zn.ps1`, depending on the command). Microsoft explains the setting in [about_Execution_Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies).
 
 **What to do, any one of these:**
 
@@ -162,7 +163,8 @@ zn: .env holds plain-text secrets, and secret values never go to the model (rule
 
 1. If the agent needs a value from that file, run `zn env shadow .env` yourself in your own terminal. The values move to the vault and the file keeps markers such as `__ZN_API_KEY__` that the agent can use.
 2. If you did not expect the read, ask your agent why it wanted that file, and do not look for a way around the block.
-3. To put your old `.env` back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`.
+3. If the message says `Still holding a value: NAME`, that variable has a secret-looking name and still holds a value. If you have not run `zn env shadow .env` yet, run it first: it moves values of 8 characters or more into the vault. Any names still listed after that hold short values that it does not move. Store each one with `zn secret set NAME` and write `__ZN_NAME__` in its place in the file, or leave it empty. Variables with ordinary names, such as `PORT=8080`, never block.
+4. To put your old `.env` back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`.
 
 More in [secrets](secrets.md) and [what the check means](check.md).
 
@@ -398,9 +400,25 @@ Scope   : Prompt templates, docs, configs (use --code to scan source)
 2. For another extension, name it with `--include`, for example `zn-gate scan . --include .rst,.xml`.
 3. Name a single file to scan it whatever its extension: `zn-gate scan path/to/file.js`.
 
+## 18. Your agent says "zn-gate is not installed any more"
+
+You may see this in your agent after you removed the program with `npm uninstall -g zn-gate` (or an update of Node.js left it behind) while zn's hooks were still set up:
+
+```text
+zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for codex still point at it, so this was blocked. Ask the user to install Node.js again from nodejs.org if it is gone (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in their terminal, or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`.
+```
+
+**What it means:** the hooks are still in your agent's settings, but the program they run is gone. zn checks nothing in this state, so it stops the calls that the agent lets a hook stop, instead of letting them run unchecked. For the calls a hook cannot stop, such as a result that was already produced, you get a warning that zn is not protecting the session.
+
+**What to do:** run one of these in your own terminal, with the agent name from the message (`claude-code`, `codex`, `cursor`, `gemini`, `zcode`):
+
+0. If Node.js itself is gone (`node --version` fails), install it again from [nodejs.org](https://nodejs.org) first. Both commands below need it.
+1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
+2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs Node.js but no installed zn-gate. See [Remove zn-gate](uninstall.md).
+
 ## Block and warn reasons, by family
 
-Past the seventeen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the eighteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
@@ -868,7 +886,7 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 | `pi:system_tag`, `pi:system_bracket`, `pi:template_boundary` | Text that pretends to be a system message, or copies the hidden markers a chat model uses to separate system and user messages. |
 | `pi:jailbreak`, `pi:bypass`, `pi:override` | Text that tries to switch off the agent's safety rules. |
 | `pi:identity_request`, `pi:identity_request_multi` | Text that tells the agent to look up who you are (your user name or git email) and put it somewhere. |
-| `pi:multi_es`, `pi:multi_pt`, `pi:multi_fr`, `pi:multi_de`, `pi:multi_ru`, `pi:multi_zh` | The same kind of "ignore your instructions" order, written in Spanish, Portuguese, French, German, Russian or Chinese. |
+| `pi:multi_es`, `pi:multi_pt`, `pi:multi_fr`, `pi:multi_de`, `pi:multi_ru`, `pi:multi_zh` | The same kind of "ignore your instructions" order, written in Spanish, Portuguese, French, German, Russian or Chinese. In Spanish, Portuguese, French and German the verb (ignore, forget, disregard, discard) counts when it names its target, such as the previous instructions, the rules or the system prompt. A few fixed phrases also match with no target: "olvida todo", "ignora todo" or "ignora cualquier", "ignore tudo", "oublie tout", "vergiss alles", and forms that point back at earlier text, such as "ignora tudo acima". |
 | `indirect:html_comment`, `indirect:hidden_tag` | Instructions hidden in a web page comment or an invisible element. |
 | `evasion:bidi_override` | Invisible text-direction characters that can make text look different from what a program reads (the "Trojan Source" trick). |
 | `evasion:base64_smuggling` | A command that decodes hidden Base64 text and runs it. |
@@ -906,6 +924,12 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **What happened:** zn-gate did not understand what you typed, such as a typo, a missing folder or a missing text.
 
 **What to do:** run `zn-gate --help` to see the commands. Examples: `zn-gate scan .`, `zn-gate scan . --format json`, `zn-gate analyze "some text"`.
+
+#### "Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows"
+
+**What happened:** on Windows, Claude Code runs the hooks of the zn-gate plugin with Git Bash (`bash.exe`). `zn-gate check` found no Git Bash, so the plugin's hook cannot start. The full message is `Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start`.
+
+**What to do:** install Git for Windows, or set `CLAUDE_CODE_GIT_BASH_PATH` to the full path of its `bash.exe`, then run `zn-gate check` again. If you do not want Git Bash, use zn's own hooks instead, in your own terminal: `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`. The same steps are in [Check that it works](check.md).
 
 #### Any other message that ends a command with an error
 
@@ -988,7 +1012,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 #### "The folder path `<path>` is too long" / "The links in the path `<path>` lead in a circle"
 
-**What happened:** the path is too long for your system (on Windows the limit is about 260 characters, and the message says so), or it goes through links that point back to each other.
+**What happened:** the path is too long for your system, or it goes through links that point back to each other. On Windows the message reads `The folder path <path> is too long (Windows stops at about 260 characters). Move the folder to a shorter path, then try again.` Windows can also answer a path of 260 characters or more with "not found" or "invalid argument"; zn reports those cases with the same message.
 
 **What to do:** move the folder to a shorter path, or choose another path without circular links, then run the command again.
 
@@ -1272,6 +1296,7 @@ Then zn checked the text with the local rules only, on your machine, and the res
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
 - Not sure what is protected: `npx -y zn-gate check`, explained in [check](check.md).
+- Before you ask: run the commands in [Before you ask for help](examples/doctor-before-asking-for-help.md) and paste their output with your question.
 - Still stuck: ask in [Discussions](https://github.com/usezn/zn/discussions). Say your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
 
 ### TLS certificates and trust stores
