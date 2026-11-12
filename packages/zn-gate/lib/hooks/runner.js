@@ -753,7 +753,7 @@ async function decidePre(ev, d, agentId, opts) {
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);
     const instructionNotice = instructionMode === 'off' ? undefined : {};
-    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice });
+    const deny = policy.bashDenial(original, { ...pathOpts, powershell: tool === 'powershell', destructiveRules: destructiveRulesOf(opts), instructionNotice });
     if (deny) return { decision: 'deny', message: deny };
     if (input.scanAsk) {
       return { decision: 'ask', message: input.scanAsk === 'long'
@@ -1733,7 +1733,7 @@ function failDecision(ev, err, mode, agentId) {
   const vaultDown = err.vaultFailed === true;
   // The vault errors of the engine may already say how to fix it (zn unlock): say it once.
   // The unlock command is named exactly once: by the engine's own error text when it names it (it is in the detail), by us otherwise.
-  const namesUnlock = String(err.message || '').includes(znCommand('unlock')) || /\bzn unlock\b/.test(String(err.message || ''));
+  const namesUnlock = String(err.message || '').includes(znCommand('unlock')) || /\bzn(?:\.cmd)? unlock\b/.test(String(err.message || ''));
   const unlockStep = namesUnlock
     ? ' An agent cannot unlock it.'
     : ' Check that the vault is running and unlocked. Ask the user to run `' + znCommand('unlock') + '` in their own terminal; an agent cannot unlock it.';

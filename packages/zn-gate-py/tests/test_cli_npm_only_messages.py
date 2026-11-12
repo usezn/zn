@@ -8,6 +8,7 @@ from zn_gate.cli import (
     npm_only_message,
     npm_only_simple_message,
 )
+from zn_gate.shell_names import npx_name
 
 NAME = re.compile(r"^[a-z]+(-[a-z]+)*$")
 
@@ -18,7 +19,7 @@ class TestNpmOnlyMessage(unittest.TestCase):
             msg = npm_only_message(cmd)
             self.assertTrue(msg.startswith(f"zn-gate {cmd}"), msg)
             self.assertIn("is in the npm package", msg)
-            self.assertIn("npx -y zn-gate init", msg)
+            self.assertIn(npx_name() + " -y zn-gate init", msg)
             self.assertTrue(msg.endswith("\n"), repr(msg))
 
 
@@ -28,7 +29,7 @@ class TestNpmOnlySimpleMessage(unittest.TestCase):
             msg = npm_only_simple_message(cmd)
             lines = msg.splitlines()
             self.assertIn(cmd, lines[0])
-            self.assertIn(f"npx -y zn-gate {cmd}", msg)
+            self.assertIn(f"{npx_name()} -y zn-gate {cmd}", msg)
             self.assertIn(f"  zn-gate {cmd}", lines)
             self.assertTrue(msg.endswith("\n"), repr(msg))
 
