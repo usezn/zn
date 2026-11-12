@@ -1,9 +1,10 @@
 'use strict';
 /*
- * Which files a curl command sends (@file values, -T, -K configuration files, ~/.curlrc) and which a word may name
- * through an @file reference. Split out of policy.js and loaded on the first command that can matter (a word naming
- * curl, an @file or an upload option), so a hook that checks any other command does not load or compile it.
- * Same code as it was in policy.js; the helpers it shares with policy.js are passed in.
+ * The curl checks of the pre-tool hook: which files a curl command sends (@file values, -T uploads, -K configuration
+ * files, ~/.curlrc) and which files or folders a word may name through an @file reference or a curl option. policy.js
+ * loads this module lazily, on the first command that can need these checks (a word naming curl, an @file or an upload
+ * option), so a command that cannot need them does not load or compile it. The helpers it shares with policy.js are
+ * passed in by policy.js when the module is loaded.
  */
 const fs = require('fs');
 const os = require('os');
