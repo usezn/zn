@@ -82,3 +82,5 @@ It lists each use (time, decision, secret name, mode, agent, program) without an
 
 - An environment variable is not in `ps` or in shell history, but other processes of your user can still read it. See [what an environment variable does and does not hide](../secrets.md#4-let-a-command-use-a-secret).
 - Allow a specific program. Allowing `node`, `python` or `make` lets every script they run read the secret, and zn warns you.
+
+To store two values that a program needs together, such as an access key id and its secret, see [store an access key id and its secret as two vault secrets](zn-secret-set-for-an-aws-credential-pair.md).
