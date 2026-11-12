@@ -1143,8 +1143,8 @@ test('Bash, PowerShell and Monitor commands over 100 KB are blocked before they 
   const cap = policy.SHELL_SCAN_CAP;
   const long = 'echo ' + 'a'.repeat(cap + 1 - 5);
   for (const tool of ['Bash', 'PowerShell', 'Monitor']) {
-    // CPU time, not wall time: a busy shared runner can pause this process for 100 ms or more in the middle of a
-    // correct run (154 ms was seen in the merge queue), and a check that scanned the text would still burn the CPU.
+    // CPU time, not wall time: a busy shared runner can pause this process in the middle of a correct run, and a
+    // check that scanned the text would still burn the CPU.
     const start = cpuNow();
     const r = await run(preTool(tool, { command: long, description: 'x' }, dir), { nodePath: '/usr/bin/node' });
     const ms = cpuMsSince(start);

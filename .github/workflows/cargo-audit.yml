@@ -86,7 +86,6 @@ jobs:
       GH_REPO: ${{ github.repository }}
       ISSUE_TITLE: Rust dependency advisory found by cargo audit
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      RUN_REF: ${{ github.event.schedule == '52 3 * * *' && 'next' || github.ref_name }}
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -98,7 +97,7 @@ jobs:
           set -euo pipefail
           number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Rust dependency advisory found by cargo audit") | .number' | head -n 1)"
           cat > "$RUNNER_TEMP/body.md" <<BODY
-          cargo audit failed on ${RUN_REF}: ${RUN_URL}
+          cargo audit failed in a scheduled check: ${RUN_URL}
 
           Open the step "cargo audit" in that run to see the advisories. Either a dependency has a new advisory (update it, or
           add it to .cargo/audit.toml with the reason when no update is possible), or the advisory database could not be

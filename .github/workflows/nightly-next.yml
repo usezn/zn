@@ -72,7 +72,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      ISSUE_TITLE: Nightly run of next failed
+      ISSUE_TITLE: Nightly scheduled check failed
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Harden the runner (egress audit)
@@ -92,7 +92,7 @@ jobs:
               --json status,conclusion,url --jq '.[0] | select(.) | "\(.url) \(.status) \(.conclusion)"')"
             if [ -z "$line" ]; then
               echo "$wf: no run"
-              problems+="- $wf: no run was started on next"$'\n'
+              problems+="- $wf: no run was started"$'\n'
               continue
             fi
             read -r url status conclusion <<< "$line"
@@ -107,9 +107,9 @@ jobs:
             echo "every run on next passed"
             exit 0
           fi
-          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Nightly run of next failed") | .number' | head -n 1)"
+          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Nightly scheduled check failed") | .number' | head -n 1)"
           {
-            echo "The nightly run of next found a problem (checked by ${RUN_URL}):"
+            echo "The nightly scheduled check found a problem (checked by ${RUN_URL}):"
             echo
             printf '%s' "$problems"
             echo
