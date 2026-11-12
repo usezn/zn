@@ -80,11 +80,11 @@ You can see zn-gate catch a secret without risking anything. The steps below use
    npx -y zn-gate scan .
    ```
 
-The output below is what the zn-gate CLI prints for this folder (checked against the repository code), with one change: the `Target` line shows a placeholder folder instead of the full path.
+The output below is what the zn-gate CLI prints for this folder (checked against the repository code), with one change: the `Target` line shows `<your folder>` where your run prints the full path of the test folder.
 
 ```text
 [+]  zn-gate Static Security Audit
-Target  : /home/you/zn-first-run
+Target  : <your folder>
 Scope   : Prompt templates, docs, configs (use --code to scan source)
 Files   : 1 file(s) queued for audit
 
