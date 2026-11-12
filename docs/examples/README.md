@@ -61,6 +61,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
 - [secret-import-and-adopt.md](secret-import-and-adopt.md): import a `.env` file into the vault, then adopt a key the scrubber found.
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
+- [vault-status-reading.md](vault-status-reading.md): what each line of `zn vault status` prints in every vault state, with a fake sample for each.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 
 ## Optional cloud check
