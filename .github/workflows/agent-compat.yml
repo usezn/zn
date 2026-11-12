@@ -274,12 +274,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $proj | Out-Null
           Set-Location $proj
           git init -q
-          # Same as the npm job: no coding agent on a clean runner, so zn-gate doctor must exit 1 and say so.
+          # The Python package has no doctor command: it refuses npm-only commands with exit 2 and names the npm package.
           $doctorOut = (& $zn doctor) | Out-String
           $doctorCode = $LASTEXITCODE
           Write-Host $doctorOut
-          if ($doctorCode -ne 1) { Fail "zn-gate doctor exited with $doctorCode, expected 1 when no coding agent is installed" }
-          if ($doctorOut -notmatch 'No supported coding agent was found on this machine') { Fail 'zn-gate doctor did not report that no coding agent was found' }
+          if ($doctorCode -ne 2) { Fail "zn-gate doctor exited with $doctorCode, expected 2 (npm-only command in the Python package)" }
+          if ($doctorOut -notmatch 'is in the npm package') { Fail 'zn-gate doctor did not point to the npm package' }
 
   clean-install-macos:
     name: clean install (macOS, npm and Python)
@@ -357,13 +357,13 @@ jobs:
           mkdir -p "$proj"
           cd "$proj"
           git init -q || fail "git init failed in the clean project"
-          # Same as the npm job: no coding agent on a clean runner, so zn-gate doctor must exit 1 and say so.
+          # The Python package has no doctor command: it refuses npm-only commands with exit 2 and names the npm package.
           doctor_out="$("$zn_py" doctor 2>&1)" && doctor_rc=0 || doctor_rc=$?
           printf '%s\n' "$doctor_out"
-          [ "$doctor_rc" -eq 1 ] || fail "zn-gate doctor exited with $doctor_rc, expected 1 when no coding agent is installed"
+          [ "$doctor_rc" -eq 2 ] || fail "zn-gate doctor exited with $doctor_rc, expected 2 (npm-only command in the Python package)"
           case "$doctor_out" in
-            *"No supported coding agent was found on this machine"*) ;;
-            *) fail "zn-gate doctor did not report that no coding agent was found" ;;
+            *"is in the npm package"*) ;;
+            *) fail "zn-gate doctor did not point to the npm package" ;;
           esac
 
   # Opens one issue when a scheduled run fails, or adds a comment to the open one. It runs only on a scheduled run
