@@ -1,3 +1,4 @@
+# Rust gateway checks (build, test, clippy, fmt, MSRV, cargo audit, coverage) on pushes and pull requests; steps are skipped when no Rust file changed.
 name: Rust gateway
 
 on:
