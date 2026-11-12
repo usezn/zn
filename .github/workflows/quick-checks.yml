@@ -120,6 +120,14 @@ jobs:
       - name: Workflow timeouts - every job sets timeout-minutes
         if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
         run: node .github/scripts/check-timeouts.mjs
+      # Heavy test jobs: they are skipped on a pull request into next without the full-ci label, run in the merge
+      # queue, and every required check keeps its name.
+      - name: Heavy test jobs - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node --test .github/scripts/check-heavy-jobs-gating.test.mjs
+      - name: Heavy test jobs - gated by the full-ci label
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node .github/scripts/check-heavy-jobs-gating.mjs
 
       # Markdown lint
       - name: Markdown lint - install markdownlint-cli2 (locked)

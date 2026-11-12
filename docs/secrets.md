@@ -74,14 +74,22 @@ For a connection string with a long password, only the password moves, as
 whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
 `DATABASE_URL=__ZN_DATABASE_URL__`.
 
-Values shorter than 8 characters are not moved, because they cannot be told
-apart from ordinary settings. They stay in `.env` in clear text, and `zn env
-shadow` says so: it names each variable it left (never its value), and gives
+Your agent can read a `.env` only when every variable with a secret-looking name is
+empty or holds a marker, however short its value is. A secret-looking name contains
+KEY, SECRET, TOKEN, PASS, PWD, CREDENTIAL, AUTH, DSN, CONN or DATABASE_URL, or ends in
+`_URL` or `_URI`, in any letter case. One exception applies: under a name that ends in
+`_URL` or `_URI`, a value that starts with a scheme such as `https://` and carries no
+password, like `https://example.com`, does not count. Any other value under such a
+name counts, including `DATABASE_URL=sometoken`, and a URL under any other secret-looking
+name, such as `API_KEY=https://example.com`, counts too. A short value left in the file keeps the read blocked, and the message names the variables that still hold a value (never the values). Variables with ordinary names (`PORT=8080`, `DEBUG=1`) never block the read.
+
+`zn env shadow` leaves values under 8 characters in the file, because they cannot be
+told apart from ordinary settings. They stay in `.env` in clear text, and it says so: it names each variable it left (never its value), and gives
 the command to keep it out of the file. For example, for `API_KEY=abc`:
 
 ```text
-  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
-1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, treat it as readable by an agent.
+  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. Your agent cannot read the file while it does. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
+1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, your agent cannot read this file.
 ```
 
 There is no option to force a short value into the vault with `zn env shadow`.

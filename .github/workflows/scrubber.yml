@@ -13,7 +13,7 @@ on:
     branches: [ main, 'release/**' ]
   pull_request:
     branches: [ next, main, 'release/**' ]
-    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
   # The merge queue: the same sample as a pull request into next, the full matrix for main and release/*.

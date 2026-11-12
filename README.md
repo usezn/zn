@@ -47,6 +47,8 @@ No internet on this computer? See [Install on a machine without internet](docs/i
 
 > **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
+**Windows and macOS:** the [install matrix](docs/install-matrix.md#operating-system) says what each system needs and how to verify it. For problems, see [troubleshooting](docs/troubleshooting.md) and the [Windows checklist](docs/examples/windows-checklist.md); on macOS, the keychain prompt is in [troubleshooting section 5](docs/troubleshooting.md#5-your-secret-vault-is-locked).
+
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
 1. `npx -y zn-gate reach` shows what your coding agents can reach on this machine: secrets in your `.env` files (by name only), credential files and MCP servers. It is read only and sends nothing. Details in [docs/reach.md](docs/reach.md).
@@ -226,6 +228,10 @@ npx -y zn-gate check
 
 For each agent set up for your user, zn-gate asks its hook to let the agent read a `.env` file with a fake key and an ordinary file, in a temporary folder. It shows what your agent would be told, and a line that says **NOT protected** says how to fix it. Nothing is sent over the network and no setting changes. [What the output means](docs/check.md).
 
+What a block looks like: when an agent tries to read a `.env` file that holds real values, zn-gate answers with a message like this one (shortened here; the full text is in [Troubleshooting](docs/troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets)) and the agent carries on. On Windows the message names the `.cmd` form, `zn.cmd env shadow .env`, or `npx.cmd -y zn-gate@<version> env shadow .env` when `zn` is not installed.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/block-message-animated-dark.svg"><img alt="The agent tries to read .env. zn-gate blocks the read before it happens and answers with a message like this (shortened): zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_&lt;NAME&gt;__ markers you can read and use. The agent reads the message and carries on. On Windows the message names the .cmd form: `zn.cmd env shadow .env`." src="docs/diagrams/block-message-animated-light.svg" width="800"></picture>
+
 <!-- snippet-test -->
 ```bash
 npx -y zn-gate test
@@ -328,6 +334,10 @@ zn Team: `zn team join <token>` connects a machine to your organization's signed
 Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.config.json` at your project root ([example](packages/zn-gate/README.md#custom-rules-znrules-or-znconfigjson)).
 
 Decision log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
+
+### Where zn-gate keeps its files
+
+By default, zn-gate keeps its vault and its settings in a `.zn` folder in your home folder (`~/.zn`; the `ZN_HOME` environment variable points it at another folder): the encrypted vault files, the vault audit log (`audit.jsonl`), the decision log (`evidence.jsonl`) and a small launcher script under `~/.zn/hooks`. The settings and configs of your agents stay where each agent keeps them; zn-gate writes a backup before it changes one. The full list, what each file is and how to remove it: [Files and folders zn-gate reads or writes](docs/files-and-folders.md).
 
 ### GitHub Action
 
@@ -511,6 +521,7 @@ Releases published by the release workflow, starting with the first one after 1.
 ## Community and support
 
 - **[Discussions](https://github.com/usezn/zn/discussions)**: questions about setup and use, ideas, and show and tell. Start here if you are not sure where your question belongs.
+- **Before you open an issue**, read [Troubleshooting](docs/troubleshooting.md), [Before you ask for help](docs/examples/doctor-before-asking-for-help.md) (the commands to run and paste) and the [FAQ](#faq).
 - **[Issues](https://github.com/usezn/zn/issues)**: reproducible bugs and concrete feature requests.
 - **Security vulnerabilities**: do not post them in Discussions or Issues. Report them privately as described in [SECURITY.md](SECURITY.md).
 

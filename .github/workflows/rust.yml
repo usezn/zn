@@ -8,7 +8,7 @@ on:
     # manual run on it).
     branches: [main, 'release/**']
   pull_request:
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
     # paths filter leaves it pending. rust-scope.sh skips the steps when no Rust file changed instead.
   # The merge queue on next runs the required checks again on the queued commit; rust-scope.sh compares
@@ -41,8 +41,14 @@ concurrency:
 jobs:
   check:
     name: build, test, clippy, fmt
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A required check with a literal name: a job skipped by its if reports under this exact name, as skipped,
+    # and a skipped job counts as passed for a required check.
+    # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge) and
+    # on draft pull requests (marking the pull request ready for review runs it). Pushes to next do not start this
+    # workflow (the nightly run covers next). It runs in the merge queue, on pull requests into
+    # main and release branches, on pushes to main and release branches, on the weekly schedule, on manual runs and
+    # on pull requests labelled full-ci.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
