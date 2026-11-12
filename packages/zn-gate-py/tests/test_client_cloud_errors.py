@@ -104,7 +104,8 @@ class TestCloudErrors(unittest.TestCase):
         self._assert_fallback(self._run(self._raising(ConnectionRefusedError(111, "Connection refused"))), "refused")
 
     def test_failed_cloud_call_never_shows_the_api_key(self):
-        os.environ["ZN_VERBOSE"] = "1"
+        # Patched for this test only, so verbose mode cannot reach another test.
+        self.enterContext(mock.patch.dict(os.environ, {"ZN_VERBOSE": "1"}))
         failures = {
             "http_500": _http_error(500, "Server Error"),
             "connection_refused": urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
