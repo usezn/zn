@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-13.3';
+const POLICY_RULES_VERSION = '2026-11-13.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1656,7 +1656,8 @@ function hasNetworkSignals(cmd) {
   if (NETWORK_RE.test(s)) return true;
   // Same heuristic as the engine's restore policy (network commands, URLs,
   // sockets and HTTP libraries in inline code).
-  try { return require('../scrub/engine').isNetworkCommand(s); } catch (_) { return false; }
+  // If that check cannot run, the command counts as one that can reach the network: placeholders stay unfilled.
+  try { return require('../scrub/engine').isNetworkCommand(s); } catch (_) { return true; }
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
