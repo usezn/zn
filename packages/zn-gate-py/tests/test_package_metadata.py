@@ -20,8 +20,10 @@ class PackageMetadataTest(unittest.TestCase):
     def test_name(self):
         self.assertEqual(_META["Name"], "zn-gate")
 
-    def test_version_is_plain_semver(self):
-        self.assertRegex(_META["Version"], r"^\d+\.\d+\.\d+$")
+    def test_version_is_a_release_or_prerelease(self):
+        # X.Y.Z for a release; the release flow also publishes pre-releases in the PEP 440 form (1.16.0rc1, 1.16.0a1,
+        # 1.16.0b1). Nothing else: no local versions, dev or post releases.
+        self.assertRegex(_META["Version"], r"^\d+\.\d+\.\d+(?:(?:a|b|rc)[1-9]\d*)?$")
 
     def test_version_matches_module(self):
         self.assertEqual(_META["Version"], __version__)
