@@ -15,7 +15,7 @@ Codex runs a hook only after you trust it: `zn hooks install codex` writes the h
    zn hooks install codex
    ```
 
-   On a Mac, if you see `EACCES`, follow the npm guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). The hooks need zn-gate 1.5 or later.
+   On a Mac, if you see `EACCES`, follow the npm guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). The hooks need zn-gate 1.5 or later.
 
 3. **Trust the hooks in Codex.** Open Codex and approve the hooks in `/hooks`. Until you do, Codex does not run them, so zn-gate is not checking anything yet.
 

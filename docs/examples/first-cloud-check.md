@@ -10,7 +10,7 @@ npx -y zn-gate connect
 
 (or `zn-gate connect` if you installed it with `npm i -g zn-gate`).
 
-The command tells you what will change and asks you to confirm, then opens <https://usezn.com/connect> in your browser. Create an account (or log in) and create an analysis-only API key there. Back in the terminal, paste the key the connect page gives you at the hidden prompt. Nothing you type is shown. When the key is saved, the command prints its last four characters so you can recognise it.
+The command tells you what will change and asks you to confirm, then opens <https://usezn.com/connect/> in your browser. Create an account (or log in) and create an analysis-only API key there. Back in the terminal, paste the key the connect page gives you at the hidden prompt. Nothing you type is shown. When the key is saved, the command prints its last four characters so you can recognise it.
 
 ## 2. Check that you are connected
 
@@ -55,5 +55,7 @@ This removes the saved key from this computer. It then asks whether to also revo
 - **`connect` or `disconnect` refuses to run**: it only runs in a terminal you are typing in, never from an AI agent or a script.
 - **The key is refused**: create an analysis-only key on the connect page, then run `zn-gate connect` again. Nothing was saved.
 - **`fallback: true` in a result**: the cloud call failed and the local rules checked the prompt. Check your connection, and see [What is sent](../connect.md#what-is-sent) for what that means.
+
+## More
 
 More in [Troubleshooting](../troubleshooting.md#7-zn-gate-connect-does-not-accept-your-key) and on the [connect page](../connect.md).

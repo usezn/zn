@@ -54,7 +54,7 @@ With the hooks (`zn hooks install copilot`), zn-gate checks every tool call befo
 
 All read 2026-10-30; VS Code's hooks are in Preview and may change.
 
-- Page: <https://code.visualstudio.com/docs/copilot/customization/hooks>.
+- Page: <https://code.visualstudio.com/docs/agent-customization/hooks>.
 - "VS Code, the GitHub Copilot app, and GitHub Copilot CLI share this harness and its hook format" (section on the Copilot harness; select **Copilot** in the **Session Target** control).
 - Where it loads hooks from: "User hook files in `~/.copilot/hooks/`, or `$COPILOT_HOME/hooks/` when `COPILOT_HOME` is set" and "`.github/hooks/*.json` at the repository root" (section "Choose a hook source").
 - The file: `"version": 1`, a `"hooks"` object, entries with `"type": "command"`, `bash` / `powershell` commands and `timeoutSec` (section "Configure commands and event data"). Events `preToolUse` and `postToolUse` receive `toolName` and `toolArgs`; a `preToolUse` answer of `permissionDecision: "deny"` blocks the call.
@@ -137,6 +137,6 @@ All messages: [Troubleshooting](../troubleshooting.md).
 
 ## VS Code documentation
 
-- MCP servers in VS Code: <https://code.visualstudio.com/docs/copilot/customization/mcp-servers>
-- Agent hooks (preview): <https://code.visualstudio.com/docs/copilot/customization/hooks>
+- MCP servers in VS Code: <https://code.visualstudio.com/docs/agent-customization/mcp-servers>
+- Agent hooks (preview): <https://code.visualstudio.com/docs/agent-customization/hooks>
 - GitHub's hooks reference (events, exit codes, timeouts): <https://docs.github.com/en/copilot/reference/hooks-reference>

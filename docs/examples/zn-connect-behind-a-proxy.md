@@ -13,7 +13,7 @@ Everything here is optional. zn-gate works fully on your computer without the cl
 
 ## What the cloud check needs from the network
 
-The cloud check talks to one host: `api.usezn.com`, over HTTPS on port 443. `connect` also opens <https://usezn.com/connect> in your browser, and your browser uses its own proxy settings for that. Ask your network team to allow `api.usezn.com` on port 443 through the proxy. Nothing else is needed.
+The cloud check talks to one host: `api.usezn.com`, over HTTPS on port 443. `connect` also opens <https://usezn.com/connect/> in your browser, and your browser uses its own proxy settings for that. Ask your network team to allow `api.usezn.com` on port 443 through the proxy. Nothing else is needed.
 
 ## Node.js: turn on Node's own proxy support
 
@@ -48,7 +48,7 @@ Some company proxies open the encrypted connection and sign it with the company'
 - Your local checks keep working while this is the case.
 - Do not turn off certificate checks to make the message go away.
 
-What does work is a key you give yourself. The proxy can read that key too, so give it only an analysis-only key, never another one. Create an analysis-only key on <https://usezn.com/connect> in your browser, then set it in your shell. A key set this way is your own choice and is not held back, and Node.js trusts `NODE_EXTRA_CA_CERTS` for it ([Troubleshooting](../troubleshooting.md) says the same, under the certificate section):
+What does work is a key you give yourself. The proxy can read that key too, so give it only an analysis-only key, never another one. Create an analysis-only key on <https://usezn.com/connect/> in your browser, then set it in your shell. A key set this way is your own choice and is not held back, and Node.js trusts `NODE_EXTRA_CA_CERTS` for it ([Troubleshooting](../troubleshooting.md) says the same, under the certificate section):
 
 ```bash
 export ZN_CLOUD=1
@@ -117,5 +117,7 @@ It removes the saved key from this computer and then asks whether to also revoke
 - **`connect` says it could not reach usezn.com**: the request did not get out. For the npm package, check that `NODE_USE_ENV_PROXY=1` is set together with `HTTPS_PROXY`, and that the proxy allows `api.usezn.com` on port 443.
 - **`fallback: true` in a result**: the cloud call failed and the local rules answered. Read `cloud_error` for the cause.
 - **Your Node.js ignores `NODE_USE_ENV_PROXY`**: it is too old for the switch. Update Node.js, or use the Python package for the cloud check.
+
+## More
 
 More in [Troubleshooting](../troubleshooting.md) and on the [connect page](../connect.md).

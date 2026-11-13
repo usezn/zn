@@ -120,7 +120,7 @@ The default is local. To keep it that way:
 3. **Check the state** with `npx -y zn-gate status`. It shows the active detection engine and whether the optional cloud check is on.
 4. **Keep usage statistics sharing off.** Check it with `npx -y zn-gate stats share status`.
 5. **Do not join a zn Team organization** unless your organization asks you to.
-6. **If you were connected before**, run `npx -y zn-gate disconnect`. It removes the saved key from your computer and turns the cloud check off. Revoke the key on [usezn.com](https://usezn.com/api-keys) if you do not need it.
+6. **If you were connected before**, run `npx -y zn-gate disconnect`. It removes the saved key from your computer and turns the cloud check off. Revoke the key on [usezn.com](https://usezn.com/api-keys/) if you do not need it.
 
 ## What is stored on your computer
 

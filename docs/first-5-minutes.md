@@ -56,7 +56,7 @@ each agent's zn hook whether the agent may read them. This is what happened:
 
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 If your agent needs a value from .env, keep it in zn's vault instead: `zn env shadow .env`.
-More: https://usezn.com/docs/check
+More: https://usezn.com/docs/check/
 
 The test folder was deleted.
 
@@ -157,7 +157,7 @@ node --version
 
 zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
 
-- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
+- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://learn.chatgpt.com/docs/codex/cli).
 - Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
 
 If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.

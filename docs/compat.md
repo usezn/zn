@@ -334,7 +334,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 - **GitHub Copilot: VS Code and Copilot CLI** (`zn hooks install copilot [--project]`;
   `zn-gate check` and `zn-gate init` list it as "GitHub Copilot (VS Code, CLI)").
   What the official documentation says, read 2026-10-30: VS Code's page on
-  hooks (<https://code.visualstudio.com/docs/copilot/customization/hooks>, in
+  hooks (<https://code.visualstudio.com/docs/agent-customization/hooks>, in
   Preview there) says "VS Code, the GitHub Copilot app, and GitHub Copilot CLI
   share this harness and its hook format", that it loads "User hook files in
   `~/.copilot/hooks/`, or `$COPILOT_HOME/hooks/`" and "`.github/hooks/*.json`
