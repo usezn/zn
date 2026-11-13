@@ -9,6 +9,7 @@ sandbox.**
 - [What zn protects against](#what-zn-protects-against)
 - [What zn does not protect against](#what-zn-does-not-protect-against)
 - [Google Antigravity](#google-antigravity)
+- [GitHub Copilot (VS Code and Copilot CLI)](#github-copilot-vs-code-and-copilot-cli)
 - [Experimental adapters](#experimental-adapters)
 - [What the vault daemon protects, and what it does not](#what-the-vault-daemon-protects-and-what-it-does-not)
 - [Memory, swap and crash dumps](#memory-swap-and-crash-dumps)
@@ -137,18 +138,10 @@ project). It adds a hook that runs before each tool call.
   The directories `~/.gemini` and `~/.gemini/antigravity-cli` are not
   protected either, only the files named above.
 
-## Experimental adapters
+## GitHub Copilot (VS Code and Copilot CLI)
 
-Some agents are supported through an adapter that is still experimental. It
-is built from the agent's public documentation and has not had the same
-end-to-end testing as the agents above, so read this section before relying on
-it. Each adapter lists its limits when you install it.
-
-### GitHub Copilot (VS Code and Copilot CLI)
-
-This adapter is supported and documented; it is listed here because its limits
-are written out with the adapters. Evidence: documented for VS Code, not tested
-in the VS Code app. Install it with `zn hooks install copilot` (add `--project` for one project).
+Evidence: documented for VS Code, tested end to end with Copilot CLI, not tested in
+the VS Code app. Install it with `zn hooks install copilot` (add `--project` for one project).
 It adds hooks that run before and after each tool call. zn writes its own
 `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
 a custom Copilot folder) and, with `--project`, in `.github/hooks/`. It has
@@ -172,6 +165,13 @@ provider: 0 secret values sent.
   log (`events.jsonl`) keeps the original tool output on your machine.
   `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
   turns the hooks off; `zn-gate check` reports it.
+
+## Experimental adapters
+
+Some agents are supported through an adapter that is still experimental. It
+is built from the agent's public documentation and has not had the same
+end-to-end testing as the agents above, so read this section before relying on
+it. Each adapter lists its limits when you install it.
 
 ### Gemini CLI
 
