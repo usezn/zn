@@ -1819,8 +1819,9 @@ function failClosed(ev, err, msg) {
         : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shape(x)])) : v);
     return { decision: 'allow', updatedOutput: shape(ev.output), message: msg };
   }
-  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg };
-  return { decision: 'deny', failClosed: true, message: msg, userMessage: msg };
+  const failCode = err && /^[A-Z0-9_]{1,40}$/.test(String(err.code || '')) ? err.code : 'error';
+  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, failCode, message: msg };
+  return { decision: 'deny', failClosed: true, failCode, message: msg, userMessage: msg };
 }
 
 /*
@@ -1977,9 +1978,12 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
     if (!ev || !ev.event || !decision || ev.permissionRequest) return;
     if (Array.isArray(decision.packageCheck) && decision.packageCheck.length) recordPackageCheck(agentId, ev, decision.packageCheck, opts);
     const denied = decision.decision === 'deny' && !decision.failClosed;
+    // A block because zn could not check the action is recorded too, under its own rule, so `zn why` and the log
+    // show it; the stats still do not count it as a block (countHook).
+    const failed = decision.decision === 'deny' && decision.failClosed === true;
     const stats = decision.stats || {};
     const redacted = ev.event === 'post_tool' && decision.decision === 'allow' && stats.redacted > 0;
-    if (!denied && !redacted) return;
+    if (!denied && !redacted && !failed) return;
     const kinds = Object.keys(stats.detections || {}).concat(Array.isArray(decision.kinds) ? decision.kinds : [])
       .filter((k, i, a) => typeof k === 'string' && /^[A-Za-z0-9_ .-]{1,64}$/.test(k) && a.indexOf(k) === i).sort();
     const evidence = require('../evidence');
@@ -1991,8 +1995,8 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
       // Only the shape of the event is hashed and previewed, never its content.
       payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, kinds }),
       verdict: redacted ? 'allow' : 'block',
-      rule: redacted ? 'hook-redacted-output' : (decision.noBlock ? 'hook-' + ev.event + '-notice' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy')),
-      reason: redacted
+      rule: failed ? 'hook-fail-closed' : redacted ? 'hook-redacted-output' : (decision.noBlock ? 'hook-' + ev.event + '-notice' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy')),
+      reason: failed ? 'zn could not check this action (' + (decision.failCode || 'error') + '), so it was blocked' : redacted
         ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
         : (decision.noBlock ? 'an instruction file holds text that tries to instruct the agent (recorded only: Claude Code cannot be told to hold it back)'
           : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy')),
