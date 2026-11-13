@@ -316,7 +316,8 @@ def _mcp_violations(shown: str, found: List[_mcp.McpSpan]) -> List[Dict[str, Any
     return out
 
 
-def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False) -> List[Dict[str, Any]]:
+def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False) -> Optional[List[Dict[str, Any]]]:
+    """Findings in one file, or None when the file could not be read (the caller reports it as not read)."""
     violations: List[Dict[str, Any]] = []
     shown = str(file_path) if shown is None else shown
     try:
@@ -324,7 +325,8 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
             return []
         raw = file_path.read_bytes()
     except Exception:
-        return []
+        # It passed the readability check but the read failed (it changed, or an I/O error): not a clean file.
+        return None
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = _decode_scan_text(raw)
@@ -616,8 +618,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if reason:
             skipped.append({"file": shown, "reason": reason})
             continue
+        found = _scan_file(fp, shown, str(fp) in mcp_only_files)
+        if found is None:
+            skipped.append({"file": shown, "reason": "cannot be read"})
+            continue
         scanned += 1
-        all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
+        all_violations.extend(found)
 
     allow_partial = bool(getattr(args, "allow_partial", False))
     unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
