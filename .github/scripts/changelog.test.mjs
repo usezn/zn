@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment } from './changelog.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint, summaryMarkdown, docsFragmentWarning } from './changelog.mjs';
 
 const CHANGELOG = `# Changelog
 
@@ -40,6 +41,22 @@ test('a fragment holds only section headings and bullets', () => {
   assert.match(parseFragment('- x\n').errors[0], /before any/);
   assert.match(parseFragment('### Added\nplain text\n').errors[0], /only/);
   assert.match(parseFragment('### Added\n').errors[0], /no bullets/);
+});
+
+test('an empty or whitespace-only fragment fails with a message that says it is empty', () => {
+  for (const body of ['', '\n', '  \n\t\n', '﻿\n']) {
+    const errors = parseFragment(body, 'changelog.d/x.md').errors;
+    assert.equal(errors.length, 1, JSON.stringify(body));
+    assert.match(errors[0], /^changelog\.d\/x\.md: the fragment is empty; add a "### <Section>" heading and at least one "- " bullet/);
+  }
+});
+
+test('a pull request that adds an empty fragment fails the check', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'empty.md'), '  \n\n');
+  g('add', '-A'); g('commit', '-qm', 'empty fragment');
+  assert.match(checkPullRequest(dir, 'next').errors.join(), /changelog\.d\/empty\.md: the fragment is empty/);
 });
 
 test('the release section merges [Unreleased] and the fragments in a fixed section order', () => {
@@ -115,4 +132,90 @@ test('a fragment with a byte order mark, a non-ASCII name, or in a subfolder', (
   fs.writeFileSync(path.join(dir, 'changelog.d', 'sub', 'x.md'), '### Fixed\n- Lost.\n');
   g('add', '-A'); g('commit', '-qm', 'sub');
   assert.match(checkPullRequest(dir, 'next').errors.join(), /directly in changelog\.d/);
+});
+
+test('the job summary lists the fragments a pull request adds, and skips the README', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'fix-a.md'), '### Fixed\n- A fix.\n### Added\n- Something new.\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'README.md'), '# Fragments\n');
+  g('add', '-A'); g('commit', '-qm', 'fragments');
+  assert.equal(summaryMarkdown(dir, 'next'),
+    '### Changelog fragments in this pull request\n\n- `changelog.d/fix-a.md`: added, sections: Added, Fixed\n');
+});
+
+test('a changed fragment is listed as changed, a deleted one is not', (t) => {
+  const { dir, g } = repo(t);
+  g('checkout', '-q', 'next');
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'keep.md'), '### Fixed\n- Old wording.\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'gone.md'), '### Fixed\n- Removed later.\n');
+  g('add', '-A'); g('commit', '-qm', 'base fragments');
+  g('checkout', '-q', 'feature'); g('merge', '-q', '--ff-only', 'next');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'keep.md'), '### Changed\n- New wording.\n');
+  fs.unlinkSync(path.join(dir, 'changelog.d', 'gone.md'));
+  g('add', '-A'); g('commit', '-qm', 'edit and delete');
+  assert.equal(summaryMarkdown(dir, 'next'),
+    '### Changelog fragments in this pull request\n\n- `changelog.d/keep.md`: changed, sections: Changed\n');
+});
+
+test('the job summary says so when no fragment changed, and shows unusual names in a code span', (t) => {
+  const { dir, g } = repo(t);
+  assert.equal(summaryMarkdown(dir, 'next'),
+    '### Changelog fragments in this pull request\n\nNo changelog fragment is added or changed.\n');
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'café fix.md'), '### Fixed\n- A fix.\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'a`b.md'), 'text\n');
+  g('add', '-A'); g('commit', '-qm', 'odd names');
+  const md = summaryMarkdown(dir, 'next');
+  assert.match(md, /^- `changelog\.d\/café fix\.md`: added, sections: Fixed$/m);
+  assert.match(md, /^- `changelog\.d\/a\?b\.md`: added, sections: no sections$/m);
+});
+
+test('the failure hint shows a template that parses as a valid fragment', () => {
+  const text = fragmentHint();
+  const block = text.split('```markdown\n')[1].split('```')[0];
+  assert.deepEqual(parseFragment(block, 'hint').errors, []);
+  assert.match(text, /changelog\.d\/fix-init-guard\.md/);
+  assert.match(text, /no-changelog/);
+});
+
+test('a docs-only pull request with no fragment gets a warning; the error check still passes', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'docs', 'cli.md'), '# CLI\n');
+  g('add', '-A'); g('commit', '-qm', 'docs');
+  assert.match(docsFragmentWarning(dir, 'next'), /only documentation and adds no changelog\.d\/ fragment/);
+  assert.deepEqual(checkPullRequest(dir, 'next').errors, []);
+  assert.equal(docsFragmentWarning(dir, 'next', { skip: true }), null);
+  assert.equal(docsFragmentWarning(dir, 'next', { release: true }), null);
+});
+
+test('a docs-only pull request that adds a fragment gets no warning', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'docs', 'cli.md'), '# CLI\n');
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'docs-fix.md'), '### Fixed\n- A docs fix.\n');
+  g('add', '-A'); g('commit', '-qm', 'docs with fragment');
+  assert.equal(docsFragmentWarning(dir, 'next'), null);
+});
+
+test('a pull request that changes shipped code is not docs-only: no docs warning', (t) => {
+  const { dir, g } = repo(t);
+  fs.writeFileSync(path.join(dir, 'packages', 'zn-gate', 'lib', 'a.js'), '2\n');
+  g('commit', '-qam', 'code');
+  assert.equal(docsFragmentWarning(dir, 'next'), null);
+});
+
+test('warn-docs prints a GitHub warning and exits 0 for a docs-only pull request', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'docs', 'cli.md'), '# CLI\n');
+  g('add', '-A'); g('commit', '-qm', 'docs');
+  const script = fileURLToPath(new URL('./changelog.mjs', import.meta.url));
+  const env = { ...process.env, CHANGELOG_SKIP: '0', CHANGELOG_RELEASE: '0' };
+  const r = spawnSync(process.execPath, [script, 'warn-docs', '--base', 'next'], { cwd: dir, encoding: 'utf8', env });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^::warning title=Changelog fragment::this pull request changes only documentation/m);
 });

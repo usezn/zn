@@ -14,6 +14,7 @@ const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { budget } = require('./helpers/time_budget');
 
 const SERVER = `
 const readline = require('readline');
@@ -188,7 +189,7 @@ test('image data is not text: a large image stays fast and the result unchanged'
   assert.equal(res.isError, undefined);
   assert.equal(res.content.length, 3);
   assert.equal(res.content[1].type, 'image');
-  assert.ok(lines.ms < 15000, 'took ' + lines.ms + ' ms');
+  assert.ok(lines.ms < budget(15000), 'took ' + lines.ms + ' ms');
 });
 
 test('a harmless multi-item result passes unchanged', async () => {

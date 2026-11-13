@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import errno
 import json
 import os
 import stat
@@ -20,8 +21,27 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
-from .client import analyze, is_cloud_enabled, resolve_endpoint
+from .shell_names import npx_name, zn_gate_name
+from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+
+
+# The cloud client loads urllib, http.client and ssl. These wrappers import it
+# on first use, so the local commands never pay for it. The names stay in this
+# module, so callers and tests that patch zn_gate.cli.analyze keep working.
+def analyze(*args: Any, **kwargs: Any) -> Any:
+    from .client import analyze as _analyze
+    return _analyze(*args, **kwargs)
+
+
+def is_cloud_enabled(*args: Any, **kwargs: Any) -> Any:
+    from .client import is_cloud_enabled as _is_cloud_enabled
+    return _is_cloud_enabled(*args, **kwargs)
+
+
+def resolve_endpoint(*args: Any, **kwargs: Any) -> Any:
+    from .client import resolve_endpoint as _resolve_endpoint
+    return _resolve_endpoint(*args, **kwargs)
 
 # Secrets that span several lines (a PEM private key block). The line-by-line
 # scan never sees BEGIN and END together, so these run on the whole file.
@@ -91,6 +111,9 @@ def _leak_next_step(file: str, rule: str) -> str:
     if rule == "secret:private_key":
         return ("Next: move the key out of this file (for example to ~/.ssh or a secret manager) "
                 "and replace it if the file was ever committed or shared.")
+    if not node_available():
+        return ("Next: take the value out of this file and set it as an environment variable in your own shell or a secret manager "
+                "(the Python package has no local vault; the vault commands need Node.js), and rotate it if it was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
             rel = _relative_to_cwd(file)
@@ -99,9 +122,9 @@ def _leak_next_step(file: str, rule: str) -> str:
         if os.sep != "/":  # Windows: npx takes forward slashes too
             rel = rel.replace(os.sep, "/")
         arg = rel if _SAFE_FILE_ARG.fullmatch(rel) and not rel.startswith("-") else "<file>"
-        return (f"Next: run npx -y zn-gate env shadow {arg} to move the values into the local vault, "
+        return (f"Next: run {npx_name()} -y zn-gate env shadow {arg} to move the values into the local vault, "
                 "and rotate any value that was ever committed or shared.")
-    return ("Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the "
+    return (f"Next: run {npx_name()} -y zn-gate secret set NAME to store the value in the local vault, use the "
             "__ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.")
 
 SHIELD = "\U0001f6e1\ufe0f"
@@ -109,8 +132,10 @@ ALERT = "\U0001f6a8"
 CHECK = "\u2705"
 LOCK = "\U0001f512"
 
-# Plain markers used when the console cannot encode the symbols above, for
-# example a Windows console with a legacy code page such as cp1252.
+# Plain markers used wherever the symbols above are off: a pipe or file, plain-text
+# requests (NO_COLOR, TERM=dumb), CI runs, and consoles that cannot encode them
+# (for example a Windows console with a legacy code page such as cp1252).
+# Same markers as the Node package (lib/term.js).
 _ASCII_MARKERS = {SHIELD: "[+]", ALERT: "[!]", CHECK: "[ok]", LOCK: "[ok]"}
 
 
@@ -133,16 +158,29 @@ def _configure_output_streams() -> None:
 
 def _plain_text() -> bool:
     """True when the environment asks for plain text: NO_COLOR set to any non-empty
-    value (no-color.org) or TERM=dumb. Symbols are then left out; the words next to
-    them carry the same meaning."""
+    value (no-color.org) or TERM=dumb."""
     return bool(os.environ.get("NO_COLOR")) or os.environ.get("TERM") == "dumb"
 
 
+def _is_terminal(stream: Any) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return bool(isatty and isatty())
+    except (OSError, ValueError):
+        return False
+
+
 def _icon(symbol: str, stream: Any = None) -> str:
-    """Return `symbol` if the stream can encode it, else a plain ASCII marker ('' in plain text)."""
-    if _plain_text():
-        return ""
+    """Return `symbol` where symbols are on, else its plain ASCII marker ('' if it has none).
+
+    Symbols are on only on a terminal that is not asked for plain text, not in CI
+    (CI set to any non-empty value), and only when the stream can encode them.
+    `stream` is the stream the line is written to: pass sys.stderr for stderr
+    lines. It defaults to sys.stdout.
+    """
     stream = stream if stream is not None else sys.stdout
+    if _plain_text() or os.environ.get("CI") or not _is_terminal(stream):
+        return _ASCII_MARKERS.get(symbol, "")
     encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
         symbol.encode(encoding)
@@ -157,8 +195,19 @@ def _lead(symbol: str, stream: Any = None) -> str:
     return f"{icon} " if icon else ""
 
 
+def _is_existing_path(text: str) -> bool:
+    """True when the text names a file or folder that exists. zn-gate test never reads it."""
+    try:
+        return bool(text) and "\n" not in text and os.path.exists(text)
+    except (OSError, ValueError):
+        return False
+
+
 def cmd_test(args: argparse.Namespace) -> int:
     text = args.text
+    if _is_existing_path(text):
+        print(f"Note: zn-gate test checks the text you typed, not the file at {text}. "
+              f"To check a file, run: zn-gate scan {text}", file=sys.stderr)
     t0 = time.perf_counter()
     assessment = evaluate(text)
     clean_text, findings = _dlp_redact(text)
@@ -177,7 +226,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         # DLP filter is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
         status_icon = f"{_lead(SHIELD)}ALLOW" if assessment.allowed else f"{_lead(ALERT)}BLOCK"
-        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
+        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f} us)")
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
@@ -210,10 +259,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elapsed_ms = (time.perf_counter() - t0) * 1000
     res["latency_ms"] = round(elapsed_ms, 2)
 
-    if getattr(args, "json", True):
-        print(json.dumps(res, indent=2))
-    else:
-        print(f"Verdict: {res.get('verdict')} | Engine: {res.get('engine')} | Latency: {elapsed_ms:.2f}ms")
+    if res.get("degraded"):
+        print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.",
+              file=sys.stderr)
+    print(json.dumps(res, indent=2))
 
     return 2 if res.get("verdict") == "block" else 0
 
@@ -489,7 +538,7 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
-        print(f"Error: target path not found: {target_path}", file=sys.stderr)
+        print(f"Error: target path not found: {target_path}. Check the spelling and the folder you run zn-gate from, then try again.", file=sys.stderr)
         return 1
 
     files_to_scan: List[Path] = []
@@ -631,7 +680,7 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
-        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner - Scanned {scanned} files")
         if nothing:
             print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:
@@ -646,6 +695,9 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
             if len(skipped_dirs) > 20:
                 print(f"  ... and {len(skipped_dirs) - 20} more")
+        if any(r.get("reason") == "cannot be read" for r in [*skipped, *skipped_dirs]):
+            print("Next step: give your account read access to the items marked 'cannot be read' "
+                  "(or leave them out of the scan), then scan again.")
         if not all_violations and nothing:
             print()
             return
@@ -661,11 +713,39 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
         print(f"{_lead(ALERT)}Found {leak_count} secrets and {other_count} threat vectors:\n")
         for v in all_violations:
             label = "Secret found" if v.get("type") == "secret_leak" else "Threat"
-            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}")
-            print(f"    Snippet: {v['content']}")
+            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {_safe_text(v['reason'])}")
+            print(f"    Snippet: {_safe_text(v['content'])}")
             if v.get("next_step"):
                 print(f"    {v['next_step']}")
             print()
+
+
+def _fs_error_text(err: OSError, path: object) -> str:
+    """A file system error in plain words, with the next step (same wording as the Node CLI's fsErrorText)."""
+    p = str(path)
+    code = errno.errorcode.get(err.errno or 0, "")
+    if code in ("EACCES", "EPERM"):
+        return (f"Your account is not allowed to read or change {p}. "
+                "Check who owns it and its permissions, then try again.")
+    if code == "ENOENT":
+        return (f"{p} does not exist, or a folder on its path is missing. "
+                "Create the folder first, or choose another --output path, then try again.")
+    if code == "ENOTDIR":
+        return (f"A part of the path {p} is a file where a folder should be. "
+                "Move or remove that file, then try again.")
+    if code == "EISDIR":
+        return f"{p} is a folder where a file should be. Choose a file name, then try again."
+    if code == "ENOSPC":
+        return f"The disk that holds {p} is full. Free some space, then try again."
+    if code == "EDQUOT":
+        return f"Your disk quota is used up, so {p} cannot be written. Free some space, then try again."
+    if code == "EROFS":
+        return f"{p} is on a read-only disk. Choose a path on a writable disk, then try again."
+    if code == "ENAMETOOLONG":
+        return f"The path {p} is too long. Choose a shorter path, then try again."
+    if code == "ELOOP":
+        return f"The links in the path {p} lead in a circle. Choose another path, then try again."
+    return f"{p} could not be written ({err.strerror or err}). Choose another path, then try again."
 
 
 def cmd_evidence(args: argparse.Namespace) -> int:
@@ -687,10 +767,17 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
             print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
-            Path(args.output).write_text(out_content, encoding="utf-8")
+            try:
+                Path(args.output).write_text(out_content, encoding="utf-8")
+            except OSError as err:
+                print(f"Error: the export was not saved. {_fs_error_text(err, args.output)}", file=sys.stderr)
+                return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
             print(out_content)
+        if not res.get("total") and res.get("valid"):
+            print("Note: there are no evidence records yet, so the export is empty. "
+                  "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
         return 0
 
     stats = get_evidence_stats()
@@ -715,57 +802,196 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"  Python Runtime  : {sys.version.split()[0]}")
     print(f"  Active Engine   : {'Local rules + cloud for analyze (ZN_CLOUD=1)' if cloud else 'Local rules only'}")
     print(f"  Endpoint        : {resolve_endpoint() if cloud else 'None (nothing leaves this machine)'}")
-    print(f"  API key         : {('Set' + ('' if cloud else ' (unused: cloud requires ZN_CLOUD=1)')) if has_key else 'Not set'}")
+    if not has_key:
+        key_line = 'Not set'
+    elif cloud:
+        key_line = 'Set'
+    elif os.environ.get('ZN_LOCAL_ONLY') == 'true':
+        key_line = 'Set (unused: ZN_LOCAL_ONLY=true overrides ZN_CLOUD=1)'
+    else:
+        key_line = 'Set (unused: cloud requires ZN_CLOUD=1)'
+    print(f"  API key         : {key_line}")
     print(f"  Leaves machine  : {'analyze() text only, secrets redacted locally first' if cloud else 'Nothing'}\n")
     return 0
 
 
+class _DaysGiven(argparse.Action):
+    """Store --days and remember it was typed, so the Top rules block follows it (7 days otherwise)."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.days_given = True
+
+
+# A made-up key in the shape of an AWS access key id. It is not a real credential.
+# It is built from parts so that no scanner sees a whole key in this file.
+_CHECK_FAKE_SECRET = "AKIA" + "ZNTESTFAKE" + "000000"
+_CHECK_BENIGN_TEXT = "Meeting notes: ship the report on Friday and update the roadmap.\n"
+
+
+def _guarded_reader() -> Any:
+    """The file reader that `check` runs through the guard (a tool that returns file text)."""
+    from .guard import guard
+
+    @guard(on_block="raise", check_result=True, mask_secrets=True)
+    def read_file(path: str) -> str:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+
+    return read_file
+
+
+def _check_redacted(text: str) -> str:
+    """`text` with any secret masked, for printing. Never raises."""
+    try:
+        clean, _ = _dlp_redact(text)
+        return mask_token_runs(clean).strip()
+    except Exception:
+        return "[output hidden]"
+
+
+def _check_rule_ids(text: str) -> str:
+    """Rule ids the secret rules report for `text` (ids only, never the value). Never raises."""
+    try:
+        _, found = _dlp_redact(text)
+        return ", ".join(sorted({str(f.get("rule", "unknown")) for f in found})) or "none"
+    except Exception:
+        return "unknown"
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """Run the Python guard on a fake secret and on a benign text, in a temp folder."""
+    import tempfile
+    from .guard import GuardBlockError
+
+    ok = True
+    try:
+        with tempfile.TemporaryDirectory(prefix="zn-gate-check-") as tmp:
+            secret_file = os.path.join(tmp, "fake.env")
+            benign_file = os.path.join(tmp, "notes.txt")
+            secret_text = "AWS_ACCESS_KEY_ID=" + _CHECK_FAKE_SECRET + "\n"
+            with open(secret_file, "w", encoding="utf-8") as handle:
+                handle.write(secret_text)
+            with open(benign_file, "w", encoding="utf-8") as handle:
+                handle.write(_CHECK_BENIGN_TEXT)
+            reader = _guarded_reader()
+
+            # 1. A tool that returns a fake secret: the guard must block or mask it.
+            try:
+                got = reader(secret_file)
+            except GuardBlockError:
+                print(f"{_lead(CHECK)}PASS  fake secret: blocked by the guard (rule: {_check_rule_ids(secret_text)})")
+            else:
+                shown = _check_redacted(str(got))
+                if _CHECK_FAKE_SECRET in str(got):
+                    ok = False
+                    print(f"{_lead(ALERT)}FAIL  fake secret: the guard let it through. Rule that should have fired: {_check_rule_ids(secret_text)}. Result (redacted): {shown}")
+                    print("      Next step: reinstall with pip install -U zn-gate and run this check again.")
+                else:
+                    print(f"{_lead(CHECK)}PASS  fake secret: redacted -> {shown} (rule: {_check_rule_ids(secret_text)})")
+
+            # 2. A harmless text: the guard must pass it unchanged.
+            try:
+                got = reader(benign_file)
+            except GuardBlockError as exc:
+                ok = False
+                print(f"{_lead(ALERT)}FAIL  benign text: blocked by mistake ({exc.assessment.rule})")
+                print("      Next step: report it at https://github.com/usezn/zn/issues (do not paste real secrets).")
+            else:
+                if got == _CHECK_BENIGN_TEXT:
+                    print(f"{_lead(CHECK)}PASS  benign text: passed unchanged")
+                else:
+                    ok = False
+                    print(f"{_lead(ALERT)}FAIL  benign text: changed by the guard")
+                    print("      Next step: report it at https://github.com/usezn/zn/issues (do not paste real secrets).")
+    except Exception as exc:
+        ok = False
+        print(f"{_lead(ALERT)}FAIL  the check could not run: {type(exc).__name__}")
+    if ok:
+        print("OK: the Python guard works. Nothing was sent and nothing was written outside a temporary folder.")
+        print(f"This covers the Python guard only. For agent hooks (Claude Code, Codex, Cursor...) run: {npx_name()} -y zn-gate check")
+        return 0
+    print("NOT OK: the Python guard did not behave as expected.")
+    return 1
+
+
 def cmd_stats(args) -> int:
     from . import stats as _stats
+    given = bool(getattr(args, "days_given", False))
     if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
         sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
         return 2
     days = args.days
     s = _stats.summary(days=days)
+    top_days = days if given else _stats.TOP_RULES_DAYS
+    top = {"days": top_days, "rules": _stats.top_rules(days=top_days)}
     if args.json:
-        print(json.dumps(s, indent=2))
+        print(json.dumps({**s, "top_rules_days": top["days"], "top_rules": top["rules"]}, indent=2))
     else:
-        sys.stdout.write(_stats.render(s))
+        sys.stdout.write(_stats.render(s, top))
     return 0
 
 
 # Commands of the npm package. The Python package has none of them, so instead of
 # argparse's "invalid choice" it says where they are.
 NPM_ONLY_COMMANDS = frozenset({
-    "hooks", "hook", "init", "check", "doctor", "unlock", "lock", "run", "secret",
+    "hooks", "hook", "init", "doctor", "unlock", "lock", "run", "secret",
     "secrets", "env", "vault", "pins", "shield", "mcp", "mcp-shield", "secrets-mcp",
     "wrap", "team", "audit", "logs", "export",
 })
 
 
 def npm_only_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is in the npm package, not in this Python package.\n"
+            "The Python package protects agents you build yourself (LangChain, CrewAI, "
+            "LlamaIndex or plain tool calling).\n"
+            "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, "
+            "install Node.js 18 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
+            "from https://nodejs.org, then follow the install steps at https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
         "LlamaIndex or plain tool calling).\n"
-        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run this in your own "
+        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, run this in your own "
         "terminal (it needs Node.js 18 or later):\n"
-        "  npx -y zn-gate init\n"
+        f"  {npx_name()} -y zn-gate init\n"
     )
 
 
 # Commands that exist only in the npm package and take no explanation of the
 # Python/agents split: they just say where the command lives.
-NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect"})
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "why", "connect", "disconnect", "uninstall"})
 
 
 def npm_only_simple_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+            "It needs Node.js 18 or later: install it from https://nodejs.org, then follow the install steps at "
+            "https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
         "Run it with Node.js 18 or later:\n"
-        f"  npx -y zn-gate {command}\n"
+        f"  {npx_name()} -y zn-gate {command}\n"
         f"or, after npm install -g zn-gate:\n"
-        f"  zn-gate {command}\n"
+        f"  {zn_gate_name()} {command}\n"
+    )
+
+
+def npm_help_message() -> str:
+    if not node_available():
+        return (
+            "zn-gate help is not a command. This package shows its help with --help:\n"
+            "  zn-gate --help\n"
+        )
+    return (
+        "zn-gate help is not a command. The npm package shows its help with --help.\n"
+        "Run it with Node.js 18 or later:\n"
+        f"  {npx_name()} -y zn-gate --help\n"
     )
 
 
@@ -773,7 +999,9 @@ def build_parser() -> argparse.ArgumentParser:
     """The argument parser. Its sub-commands are the commands this package knows."""
     parser = argparse.ArgumentParser(
         prog="zn-gate",
-        description="zn deterministic guardrail engine for AI agents and LLM tool calling."
+        description="zn deterministic guardrail engine for AI agents and LLM tool calling.",
+        epilog="Also: reach --history  which secrets your coding agents kept in their session history "
+               "(types and counts, never values) [--json] [--max-seconds N]",
     )
     # -v and -V print the version too, as in the npm package.
     parser.add_argument("-v", "-V", "--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
@@ -793,7 +1021,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--url", help="Custom API endpoint URL")
     analyze_parser.add_argument("--local-only", action="store_true", help="Force local deterministic rules only")
     analyze_parser.add_argument("--long-input", choices=["windows", "off"], help="Long texts sent to the cloud: overlapping 512-token windows (default) or the first 512 tokens only")
-    analyze_parser.add_argument("--json", action="store_true", default=True, help="Output results as JSON")
+    analyze_parser.add_argument("--json", action="store_true", help="Output as JSON (the only output format; accepted so existing scripts keep working)")
 
     # scan command
     scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")
@@ -817,8 +1045,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     # stats command
     st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
-    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--days", type=int, default=30, action=_DaysGiven, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # check command
+    subparsers.add_parser(
+        "check",
+        help="Prove the Python guard works on a fake secret (no Node.js, no network)",
+        description="Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary "
+                    "folder. Prints OK and exits 0 only if the secret is blocked or redacted and the harmless "
+                    "text passes. Nothing is sent. This covers the Python guard only: for agent hooks "
+                    f"(Claude Code, Codex, Cursor...) run {npx_name()} -y zn-gate check.",
+    )
 
     return parser
 
@@ -831,8 +1069,18 @@ def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
 def main() -> int:
     _configure_output_streams()
     first = sys.argv[1] if len(sys.argv) > 1 else None
+    if first == "reach" and any(a in ("--history", "-h", "--help") or a.startswith("--max-seconds") for a in sys.argv[2:]):
+        # The one part of reach that is in this package: the history of your agents (the rest is npm only).
+        from .reach_history import run as run_reach_history
+        return run_reach_history(sys.argv[2:])
     if first in NPM_ONLY_SIMPLE_COMMANDS:
         sys.stderr.write(npm_only_simple_message(first))
+        return 2
+    if first == "help":
+        sys.stderr.write(npm_help_message())
+        return 2
+    if first == "stats" and sys.argv[2:3] == ["share"]:
+        sys.stderr.write(npm_only_simple_message("stats share"))
         return 2
     if first == "version":
         print(f"zn-gate {__version__} (rules: {RULES_VERSION})")
@@ -848,6 +1096,8 @@ def main() -> int:
     if args.command == "test":
         return cmd_test(args)
     elif args.command == "analyze":
+        if not args.text:
+            parser.error("analyze needs the text to inspect: zn-gate analyze \"<text>\"")
         return cmd_analyze(args)
     elif args.command == "scan":
         return cmd_scan(args)
@@ -857,6 +1107,8 @@ def main() -> int:
         return cmd_status(args)
     elif args.command == "stats":
         return cmd_stats(args)
+    elif args.command == "check":
+        return cmd_check(args)
     else:
         parser.print_help()
         return 0

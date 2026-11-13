@@ -143,7 +143,7 @@ test('sync puts team.json back from the vault when it was deleted or edited, als
 
 test('teamHookInfo gives a hook the detectors of the vault policy and restores both copies', async () => {
   const m = await joined();
-  assert.deepStrictEqual(await m.o.teamHookInfo(), { joined: true, org: m.r.org, state: 'none', version: null, detectors: [], change: null });
+  assert.deepStrictEqual(await m.o.teamHookInfo(), { joined: true, org: m.r.org, kid: m.secrets.team.pin.kid, state: 'none', version: null, detectors: [], change: null, change_shown: null, pin_mismatch: false });
   cloud.publishPolicy({ rules: [], detectors: [ACME] });
   await sync(m);
   fs.rmSync(policy.paths().teamFile);

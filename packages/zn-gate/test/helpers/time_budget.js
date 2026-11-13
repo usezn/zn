@@ -1,0 +1,67 @@
+'use strict';
+// Time limits for the tests that check a command or a text "quickly".
+//
+// A fixed number of milliseconds fails a correct change on a slow or busy CI runner (a Windows runner
+// ran the same check in 15 ms on one run and 27 ms on the next). budget(limit) scales the limit by how
+// slow this machine is right now, measured with a fixed loop in the same run: the limit never goes
+// below the value given, which is the limit on an idle reference machine, and it is capped, so a check
+// that became quadratic (hundreds of times slower) still fails. Only time limits use this; every
+// security and behaviour assertion stays exact.
+
+// Milliseconds the loop below takes on the reference machine (measured on a Linux CI-class machine under moderate load, so the limit rarely drops below the value given).
+const REFERENCE_MS = 5;
+const MAX_SCALE = 20;
+
+function spin() {
+  const t0 = process.hrtime.bigint();
+  let x = 0;
+  for (let i = 0; i < 1e6; i++) x = (x + i * 7) | 0;
+  return Number(process.hrtime.bigint() - t0) / 1e6 + (x === 1 ? 1 : 0);
+}
+
+function scale() {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) best = Math.min(best, spin());
+  return Math.min(MAX_SCALE, Math.max(1, best / REFERENCE_MS));
+}
+
+// The limit for this run, in milliseconds. Call it where the limit is checked, after the timed work,
+// so the measure reflects the machine at that moment.
+function budget(limitMs) {
+  return Math.round(limitMs * scale());
+}
+
+// Time a check hook gets to start on a slow Windows runner (the same hook took 3-8 s on Linux and 16-27 s on windows-latest, over the 15 s default); undefined elsewhere, so the product default applies.
+const hookTimeoutMs = () => (process.platform === 'win32' ? 60000 : undefined);
+
+// CPU time of this process (user + system), for the tests that bound a linear-time check. Wall time also
+// counts the moments a busy shared runner does not run the process at all, which no code change causes;
+// CPU time leaves them out, and a check that became quadratic still burns the CPU, so the limit still
+// fails it. It does not count child processes, so a test that waits for one keeps wall time.
+function cpuNow() {
+  return process.cpuUsage();
+}
+
+// Milliseconds of CPU time since the value cpuNow() returned.
+function cpuMsSince(start) {
+  const c = process.cpuUsage(start);
+  return (c.user + c.system) / 1000;
+}
+
+// The limit for a check of CPU time (cpuNow / cpuMsSince) on a CI runner: at least twice the given limit, and never
+// less than budget(). It does not multiply the two. Measured on the Linux reference machine, the slowest linear input
+// of the destructive-command tests (30,000 backtick commands) takes about 150 ms of CPU, 4x the input takes 4x the
+// time, and a Windows runner took 2.9 s for it (the machine-speed loop in budget() cannot see that, it only measures
+// plain arithmetic). A check that reads that input in quadratic time takes minutes, so even 4 s fails it.
+function cpuBudget(limitMs) {
+  return Math.max(budget(limitMs), process.env.CI ? limitMs * 2 : 0);
+}
+
+// A limit that is looser on Windows, where file and process work of the same check takes several times longer than on
+// the Linux reference (a 90 KB patch took 1.5 s there, 100 KB of here-document 33 ms). It still fails a check that
+// became quadratic, which takes orders of magnitude longer.
+function budgetWin(limitMs, winLimitMs) {
+  return budget(process.platform === 'win32' ? winLimitMs : limitMs);
+}
+
+module.exports = { budget, budgetWin, cpuBudget, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };

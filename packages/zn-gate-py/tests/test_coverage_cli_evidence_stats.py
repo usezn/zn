@@ -16,6 +16,7 @@ from unittest import mock
 
 import pytest
 
+from zn_gate.shell_names import npx_name
 from zn_gate import cli, evidence, stats
 from zn_gate.evidence import (
     GENESIS_HASH,
@@ -313,15 +314,34 @@ def test_scan_key_begin_and_end_on_one_line_is_left_to_line_pass(tmp_path):
 
 # ------------------------------------------------------------ console output
 
+def _terminal(encoding):
+    return SimpleNamespace(encoding=encoding, isatty=lambda: True)
+
+
 def test_icon_falls_back_to_ascii(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
-    ascii_stream = SimpleNamespace(encoding="ascii")
+    monkeypatch.delenv("CI", raising=False)
+    ascii_stream = _terminal("ascii")
     assert cli._icon(cli.SHIELD, ascii_stream) == "[+]"
     assert cli._icon(cli.CHECK, ascii_stream) == "[ok]"
     assert cli._icon("☃", ascii_stream) == ""
-    assert cli._icon(cli.ALERT, SimpleNamespace(encoding="no-such-codec")) == "[!]"
-    assert cli._icon(cli.LOCK, SimpleNamespace(encoding=None)) == cli.LOCK
+    assert cli._icon(cli.ALERT, _terminal("no-such-codec")) == "[!]"
+    assert cli._icon(cli.LOCK, _terminal(None)) == cli.LOCK
+
+
+def test_icon_is_ascii_off_a_terminal_or_in_ci(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    utf8 = _terminal("utf-8")
+    assert cli._icon(cli.SHIELD, utf8) == cli.SHIELD
+    assert cli._icon(cli.SHIELD, SimpleNamespace(encoding="utf-8")) == "[+]"
+    assert cli._icon(cli.SHIELD, io.StringIO()) == "[+]"
+    monkeypatch.setenv("CI", "true")
+    assert cli._icon(cli.SHIELD, utf8) == "[+]"
+    monkeypatch.setenv("CI", "")
+    assert cli._icon(cli.SHIELD, utf8) == cli.SHIELD
 
 
 def test_configure_output_streams_replaces_errors():
@@ -389,13 +409,13 @@ def test_cmd_analyze_json_and_block(capsys, monkeypatch):
     assert json.loads(capsys.readouterr().out)["verdict"] == "block"
 
 
-def test_cmd_analyze_plain_text(capsys, monkeypatch):
+def test_cmd_analyze_prints_json_even_without_the_json_flag(capsys, monkeypatch):
     monkeypatch.setenv("ZN_API_KEY", "fake-key-for-tests")
     monkeypatch.setenv("ZN_STAGE", "v31")
     with mock.patch.object(cli, "analyze", return_value={"verdict": "allow", "engine": "t"}) as m:
         assert cli.cmd_analyze(argparse.Namespace(text="t", json=False)) == 0
     assert m.call_args.kwargs["api_key"] == "fake-key-for-tests" and m.call_args.kwargs["stage"] == "v31"
-    assert "Verdict: allow | Engine: t" in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out)["verdict"] == "allow"
 
 
 def test_cmd_status_local_and_cloud(capsys, monkeypatch):
@@ -408,6 +428,11 @@ def test_cmd_status_local_and_cloud(capsys, monkeypatch):
     with mock.patch.object(cli, "is_cloud_enabled", return_value=False):
         cli.cmd_status(argparse.Namespace())
     assert "unused: cloud requires ZN_CLOUD=1" in capsys.readouterr().out
+    monkeypatch.setenv("ZN_LOCAL_ONLY", "true")
+    with mock.patch.object(cli, "is_cloud_enabled", return_value=False):
+        cli.cmd_status(argparse.Namespace())
+    assert "unused: ZN_LOCAL_ONLY=true overrides ZN_CLOUD=1" in capsys.readouterr().out
+    monkeypatch.delenv("ZN_LOCAL_ONLY")
     with mock.patch.object(cli, "is_cloud_enabled", return_value=True), \
          mock.patch.object(cli, "resolve_endpoint", return_value="https://api.example.invalid/v30"):
         cli.cmd_status(argparse.Namespace())
@@ -476,7 +501,7 @@ def test_main_without_command_prints_help(capsys):
 
 def test_main_npm_only_command(capsys):
     assert _main(["init"]) == 2
-    assert "npx -y zn-gate init" in capsys.readouterr().err
+    assert npx_name() + " -y zn-gate init" in capsys.readouterr().err
 
 
 def test_main_version(capsys):

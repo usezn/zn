@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 const { getAdapter } = require('../lib/agents');
 const { reach, report, _internal } = require('../lib/reach');
 const { tempDir } = require('./helpers/tmp');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -463,7 +464,7 @@ test('--remember never waits on a pipe or a device standing in for the memory fi
     const t0 = Date.now();
     const res = spawnSync(process.execPath, [CLI, 'reach', m.root, '--remember', '--json'], { encoding: 'utf8', env, cwd: m.root, timeout: 15000 });
     assert.equal(res.status, 0, kind + ': ' + (res.error || res.stderr));
-    assert.ok(Date.now() - t0 < 5000, kind + ' took too long');
+    assert.ok(Date.now() - t0 < budget(5000), kind + ' took too long');
     assert.equal(JSON.parse(res.stdout).previous, null, kind + ' is treated as absent');
   }
 });

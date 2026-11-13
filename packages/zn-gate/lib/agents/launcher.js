@@ -39,6 +39,7 @@ const os = require('os');
 const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath } = require('../shell-quote');
+const { winCommandText } = require('../zn-command');
 
 // Events where exit 2 with a reason on stderr is the documented block.
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
@@ -67,11 +68,15 @@ const WARN_STDERR = new Set(['cursor']);
 const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
 const blockJson = (agentId) => BLOCK_JSON_BY_AGENT[agentId] || BLOCK_JSON;
 
-const FIX = 'run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
+const FIX = 'install Node.js again from nodejs.org if it is gone (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
+// The one extra way out when zn-gate is gone: `npx` downloads it for one command, so it works with nothing installed.
+const REMOVE = 'or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`';
 
-function reasonText(agentId) {
-  return 'zn: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone, so this was blocked. Ask the user to ' +
-    FIX.replace('codex', agentId).replace('in your own terminal', 'in their terminal') + '.';
+function reasonText(agentId, short) {
+  // The Windows launcher carries this text several times inside one command line of at most 8191 characters, so it gets a shorter wording of the same message.
+  if (short) return 'zn: its hook cannot start because zn-gate is not installed any more (Node.js or its files are gone), but the hooks for ' + agentId + ' still point at it, so this was blocked. Ask the user to install Node.js again if it is gone, then run `npm install -g zn-gate` and `zn hooks install ' + agentId + '` in their terminal, or remove the hooks with `npx -y zn-gate hooks uninstall ' + agentId + '`.';
+  return 'zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for ' + agentId + ' still point at it, so this was blocked. Ask the user to ' +
+    FIX.replace('codex', agentId).replace('in your own terminal', 'in their terminal') + ', ' + REMOVE.replace('codex', agentId) + '.';
 }
 
 function changedText(agentId) {
@@ -90,13 +95,80 @@ function runnerSha(runnerPath) {
 // The exit status of VERIFY_JS when the runner is not the one recorded at install time (nothing of it ran).
 const CHANGED_RC = 86;
 
-// Started as `node -e VERIFY_JS <runner> <sha256> <agent>`: reads the runner once, checks its SHA-256 and runs that same
-// content as the main module, so no hash tool from the PATH decides and nothing changes between the check and the run.
-const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path');" +
-  "const [f,h,...a]=process.argv.slice(1);let b;try{b=fs.readFileSync(f)}catch(e){process.exit(" + CHANGED_RC + ")}" +
-  "if(!/^[0-9a-f]{64}$/.test(h||'')||require('crypto').createHash('sha256').update(b).digest('hex')!==h)process.exit(" + CHANGED_RC + ");" +
-  "process.argv=[process.argv[0],f,...a];const m=new M(f,null);m.id='.';m.filename=f;m.paths=M._nodeModulePaths(p.dirname(f));" +
-  "process.mainModule=m;M._cache[f]=m;m._compile(b.toString('utf8'),f);m.loaded=true;";
+// Started as `node -e VERIFY_JS <runner> <sha256> <manifest> <agent>`: reads the runner once, checks its SHA-256 and runs that
+// same content as the main module, so no hash tool from the PATH decides and nothing changes between the check and the run.
+// <manifest> is the list of the package files the runner can load, "<path>=<sha256>;..." (see treeManifest), or '-' when it
+// could not be made (only the runner is then checked). With a manifest, every module the runner requires afterwards is read
+// once, hashed and compiled from those same bytes: a file that is not in the list, differs from it, or lies outside the package
+// ends the run with CHANGED_RC, so a file swapped after the check, a link, or a planted file never runs. Only files that are
+// loaded are read, plus the vault files (the list V in the program), which are read on every call: a file nothing requires costs nothing.
+// V is the vault client and the modules it loads. A hook call that never needs the vault does not load them (that saves about 3 ms), but they
+// are still read and checked on every call, so an edited vault file blocks the call as any other edited file does. V is written out in the
+// program text itself, so the plugin build's pinned hash of this statement covers it; CHANGED_RC is the only value spliced in.
+const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path'),c=require('crypto');" +
+  "const [f,h,t,...a]=process.argv.slice(1);const X=()=>process.exit(" + CHANGED_RC + ");const H=(x)=>c.createHash('sha256').update(x).digest('hex');" +
+  "const D=/^[0-9a-f]{64}$/;const V=[\"lib/vault/client.js\",\"lib/vault/store.js\",\"lib/vault/winacl.js\",\"lib/exe.js\",\"lib/errors.js\",\"lib/linear-text.js\"];let b,R=f;" +
+  "if(t==='-'){try{b=fs.readFileSync(f)}catch(e){X()}}else{" +
+  "const T=new Map();for(const e of t.split(';')){const i=e.lastIndexOf('=');const k=e.slice(0,i);if(!k||!D.test(e.slice(i+1)))X();T.set(k,e.slice(i+1))}" +
+  "try{R=fs.realpathSync(f)}catch(e){X()}const r=p.resolve(R,'..','..','..')+p.sep;" +
+  "const G=(n)=>{if(!n.startsWith(r))X();let v;try{v=fs.readFileSync(n)}catch(e){X()}if(T.get(n.slice(r.length).split(p.sep).join('/'))!==H(v))X();return v};" +
+  "const S=(v)=>{v=v.toString('utf8');return v.charCodeAt(0)===65279?v.slice(1):v};" +
+  "const oj=M._extensions['.json'],oc=M._extensions['.js'];" +
+  "M._extensions['.js']=(m,n)=>m._compile(S(G(n)),n);M._extensions['.json']=(m,n)=>{m.exports=JSON.parse(S(G(n)))};M._extensions['.node']=X;" +
+  "b=G(R);for(const k of V)if(T.has(k))G(r+k)}" +
+  "if(!D.test(h||'')||H(b)!==h)X();" +
+  "process.argv=[process.argv[0],f,...a];const m=new M(R,null);m.id='.';m.filename=R;m.paths=M._nodeModulePaths(p.dirname(R));" +
+  "process.mainModule=m;M._cache[R]=m;m._compile(b.toString('utf8'),R);m.loaded=true;";
+
+// Files of the package that the manifest lists: the code and data the runner can require (.js, .cjs, .mjs, .json) under lib/,
+// plus package.json and bin/cli.js. Names are kept to a plain set of characters so the list can sit in a launcher line.
+const MANIFEST_FILE = /\.(?:js|cjs|mjs|json)$/;
+const MANIFEST_NAME = /^[A-Za-z0-9._@+\/-]+$/;
+
+/**
+ * The manifest of the package the runner belongs to: "<path>=<sha256>;..." sorted by path, paths relative to the package with
+ * "/". The runner must be <package>/lib/hooks/runner.js. '' when the list cannot be made: the runner is elsewhere, a link or
+ * another kind of entry is in lib/, a name is outside the plain character set, or a file cannot be read. Nothing runs here.
+ */
+function treeManifest(runnerPath) {
+  const crypto = require('crypto');
+  let real;
+  try { real = fs.realpathSync(runnerPath); } catch (_) { return ''; }
+  const root = path.resolve(real, '..', '..', '..');
+  if (real !== path.join(root, 'lib', 'hooks', 'runner.js')) return '';
+  const entries = new Map();
+  const add = (abs) => {
+    const rel = path.relative(root, abs).split(path.sep).join('/');
+    if (!MANIFEST_NAME.test(rel)) throw new Error('name');
+    entries.set(rel, crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex'));
+  };
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (!e.isFile()) throw new Error('not a regular file');
+      else if (MANIFEST_FILE.test(e.name)) add(abs);
+    }
+  };
+  try {
+    walk(path.join(root, 'lib'));
+    add(path.join(root, 'package.json'));
+    add(path.join(root, 'bin', 'cli.js'));
+  } catch (_) { return ''; }
+  return [...entries.keys()].sort().map((k) => k + '=' + entries.get(k)).join(';');
+}
+
+/** The manifest text as { path: sha256 }, or null when it is not a valid list. */
+function parseManifest(text) {
+  if (typeof text !== 'string' || !text) return null;
+  const out = {};
+  for (const e of text.split(';')) {
+    const i = e.lastIndexOf('=');
+    if (i <= 0 || !MANIFEST_NAME.test(e.slice(0, i)) || !/^[0-9a-f]{64}$/.test(e.slice(i + 1))) return null;
+    out[e.slice(0, i)] = e.slice(i + 1);
+  }
+  return out;
+}
 
 function crashText(agentId) {
   return 'zn: its hook failed, so this was blocked. Ask the user to run `zn-gate check` in their terminal to see why.';
@@ -116,9 +188,10 @@ function noAckWarnText(agentId) {
   return 'zn is NOT protecting this session: its hook ended without confirming its answer (the zn-gate that answered is older than this hook, or it stopped half way). Please run `npm install -g zn-gate` and then `zn hooks install ' + agentId + '` in your own terminal.';
 }
 
-function warnText(agentId) {
-  return 'zn is NOT protecting this session: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone. Please ' +
-    FIX.replace('codex', agentId) + '.';
+function warnText(agentId, short) {
+  if (short) return 'zn is NOT protecting this session: zn-gate is not installed any more (Node.js or its files are gone), but the hooks for ' + agentId + ' still point at it. Please install Node.js again if it is gone, then run `npm install -g zn-gate` and `zn hooks install ' + agentId + '` in your own terminal, or remove the hooks with `npx -y zn-gate hooks uninstall ' + agentId + '`.';
+  return 'zn is NOT protecting this session: zn-gate is not installed any more (the Node.js or the files its hook was installed with are gone), but its hooks for ' + agentId + ' still point at it. Please ' +
+    FIX.replace('codex', agentId) + ', ' + REMOVE.replace('codex', agentId) + '.';
 }
 
 /** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks, or $ZN_HOOK_DIR itself). */
@@ -154,22 +227,29 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
   const sha = opts.runnerDigest === undefined ? runnerSha(runnerPath) : opts.runnerDigest;
   if (typeof sha !== 'string' || !/^[0-9a-f]*$/.test(sha)) throw new Error('zn: bad runner digest');
-  const changed = changedText(agentId);
-  const changedWarn = changedWarnText(agentId);
+  // '-' (only the runner is checked) when the manifest of the package cannot be made; a manifest is only meaningful with a runner digest.
+  const manifest = opts.manifest === undefined ? (sha ? treeManifest(runnerPath) : '') : opts.manifest;
+  if (manifest && !parseManifest(manifest)) throw new Error('zn: bad manifest');
+  const files = manifest || '-';
+  // The next-step commands in these texts are written for the shell the person uses (see zn-command.js).
+  const platform = opts.platform || process.platform;
+  const T = (s) => winCommandText(s, platform);
+  const changed = T(changedText(agentId));
+  const changedWarn = T(changedWarnText(agentId));
   const run = (...w) => (deadlineS ? 'zn_run ' : 'zn_cap ') + w.join(' ');
   // Without a timer or private output a strict launcher (ZCode) does not run the hook and blocks; the others (the runner
   // has its own deadline too) run it directly, still through zn_cap (private output and the confirmation check).
   const noTimer = opts.deadlineSoft ? 'zn_cap "$@"' : 'ZN_RC=127';
-  const reason = reasonText(agentId);
-  const warn = warnText(agentId);
+  const reason = T(reasonText(agentId));
+  const warn = T(warnText(agentId));
   const exitEvents = [...blockExit(agentId)];
   const jsonEvents = [...blockJson(agentId)];
-  const crash = crashText(agentId);
-  const crashWarn = crashWarnText();
+  const crash = T(crashText(agentId));
+  const crashWarn = T(crashWarnText());
   const pick = (ifRan, ifGone, ifNoAck, ifChanged) => (ifNoAck ? 'if [ -n "$ZN_NOACK" ]; then ' + ifNoAck + '; elif ' : 'if ') +
     (ifChanged ? '[ -n "$ZN_CHANGED" ]; then ' + ifChanged + '; elif ' : '') + '[ -n "$ZN_RAN" ]; then ' + ifRan + '; else ' + ifGone + '; fi';
-  const noAck = noAckText(agentId);
-  const noAckWarn = noAckWarnText(agentId);
+  const noAck = T(noAckText(agentId));
+  const noAckWarn = T(noAckWarnText(agentId));
   const deny = (r) => 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }));
   return [
     '#!/bin/sh',
@@ -179,6 +259,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
     'ZN_SHA=' + shQuote(sha),
+    'ZN_FILES=' + shQuote(files),
     'ZN_VERIFY=' + shQuote(VERIFY_JS),
     'ZN_RAN=; ZN_CHANGED=',
     '# Removes private files by absolute path: the PATH of a hook can be empty, and a bare rm would leave them behind on every call.',
@@ -283,6 +364,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '}',
     'zn_mk ack; ZN_AF=$ZN_MK',
     'export ZN_HOOK_ACK="$ZN_AF"',
+    '# The runner learns which hook it serves from this: an event it cannot read is refused on a hook that can block.',
+    'unset ZN_HOOK_EVENT; case "$ZN_EVENT" in ""|*[!A-Za-z]*) ;; *) export ZN_HOOK_EVENT="$ZN_EVENT" ;; esac',
     'trap \'zn_rm "$ZN_AF"\' EXIT',
     'zn_acked() { [ -n "$ZN_AF" ] || return 1; ZN_X=; read -r ZN_X <"$ZN_AF" 2>/dev/null; [ "$ZN_X" = ok ]; }',
     '# Passes a private output file on to the agent: cat by absolute path, else the shell alone (the PATH of a hook can be empty). A failed write is a failure.',
@@ -299,7 +382,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '# The runner runs only while it has the SHA-256 recorded at install time: the Node.js above reads it once, checks it and runs',
     '# that same content (ZN_VERIFY), so no hash tool from the PATH decides. Status ' + CHANGED_RC + ' means it changed and nothing of it ran.',
     '# --input-type=commonjs: a NODE_OPTIONS with --input-type=module would otherwise make that code an ES module, with no require.',
-    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + run('"$ZN_NODE" --input-type=commonjs -e "$ZN_VERIFY" "$ZN_RUNNER" "$ZN_SHA" ' + agentId) + '; ' +
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + run('"$ZN_NODE" --input-type=commonjs -e "$ZN_VERIFY" "$ZN_RUNNER" "$ZN_SHA" "$ZN_FILES" ' + agentId) + '; ' +
       'case $ZN_RC in ' + CHANGED_RC + ') ZN_RAN=; ZN_CHANGED=1 ;; esac; zn_leave $ZN_RC; fi',
     '# Nothing is run from the PATH instead: an unverified `zn` could be any program.',
     'zn_block',
@@ -316,7 +399,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
-  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest }), 0o755);
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest, manifest: opts.manifest, platform }), 0o755);
   // Windows: the folder cannot be held open, so check the chain again after the write, now with the launcher file itself (owner
   // and access list, counting what it inherited from the folder); a swap in between removes the file.
   if (platform === 'win32' && (opts.env || process.env).ZN_HOOK_DIR) {
@@ -324,6 +407,33 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   }
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
+}
+
+/** The agents whose user hooks go through a launcher script (Copilot and OpenCode have none). */
+const LAUNCHER_AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'antigravity', 'zcode'];
+const LAUNCHER_MARK = '#!/bin/sh\n# Written by `zn hooks install ';
+
+/** True when the file is a launcher script that zn wrote (a regular file with zn's header). */
+function isOurLauncher(file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) return false;
+    return fs.readFileSync(file, 'utf8').startsWith(LAUNCHER_MARK);
+  } catch (_) { return false; }
+}
+
+/**
+ * Removes the launcher of one agent (only the file with that exact name, and only if zn wrote it), then the
+ * hooks folder if nothing else is in it. Returns the removed file path or null. Never touches other files.
+ */
+function removeLauncher(agentId, opts = {}) {
+  if (!LAUNCHER_AGENTS.includes(agentId)) return null;
+  const file = launcherFile(agentId, opts);
+  let removed = null;
+  if (isOurLauncher(file)) {
+    try { fs.unlinkSync(file); removed = file; } catch (_) { /* in use or not allowed: left */ }
+  }
+  try { fs.rmdirSync(path.dirname(file)); } catch (_) { /* not empty, or not there */ }
+  return removed;
 }
 
 /** The hook command for one event: the launcher, then the event name. */
@@ -509,7 +619,7 @@ function isProjectWindowsScript(script, agentId) {
 }
 
 /** Every event name an installer writes the project guard for (any agent); the exact check tries each one. */
-const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'PermissionRequest', 'BeforeTool',
+const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'ConfigChange', 'InstructionsLoaded', 'PermissionRequest', 'BeforeTool',
   'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
 
 /** Whether a command is exactly a POSIX project guard that this version writes (any event of this agent). */
@@ -963,7 +1073,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   const n = portablePath(nodePath, 'win32');
   const r = portablePath(runnerPath, 'win32');
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
-  const reason = reasonText(agentId);
+  const reason = winCommandText(reasonText(agentId, true), 'win32');
   const DENY_JSON = {
     antigravity: (r) => ({ decision: 'deny', reason: r }),
     cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
@@ -986,7 +1096,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
   return 'zd; ' + tail;
   };
-  const tail = tailOf(reason, warnText(agentId));
+  const tail = tailOf(reason, winCommandText(warnText(agentId, true), 'win32'));
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
   // A 0 counts only when the hook confirmed (zk: the ack file holds ok) that its whole answer was written.
@@ -1008,7 +1118,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
     return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + zr +
       "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
       "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
-      'if ($zt -eq 1) { ' + tailOf(crashText(agentId), crashWarnText()) + ' }; ' + tail + ' # zn hook ' + agentId;
+      'if ($zt -eq 1) { ' + tailOf(winCommandText(crashText(agentId), 'win32'), winCommandText(crashWarnText(), 'win32')) + ' }; ' + tail + ' # zn hook ' + agentId;
   }
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
     "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
@@ -1028,7 +1138,8 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
   if (t === null) return null;
   const head = "$ProgressPreference='SilentlyContinue'; $zt=0; ";
   if (!t.startsWith(head)) throw new Error('zn: unexpected launcher script');
-  return head + ZK + t.slice(head.length);
+  const named = typeof event === 'string' && /^[A-Za-z]+$/.test(event) ? "$env:ZN_HOOK_EVENT = '" + event + "'; " : '';
+  return head + ZK + named + t.slice(head.length);
 }
 
 /**
@@ -1040,4 +1151,4 @@ function windowsScriptCommand(script, opts = {}) {
   return (opts.cmd ? q.CMD_POWERSHELL : q.powershellExe()) + ' -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { LAUNCHER_AGENTS, isOurLauncher, removeLauncher, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON, treeManifest, parseManifest };

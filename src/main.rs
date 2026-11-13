@@ -20,7 +20,7 @@ use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
@@ -96,20 +96,20 @@ struct Args {
     #[arg(long, short, default_value_t = false)]
     dashboard: bool,
 
-    /// Management API port
-    #[arg(long)]
+    /// Management API port (also accepted after `start` and `dashboard`)
+    #[arg(long, global = true)]
     port: Option<u16>,
 
-    /// Path to zn configuration file
-    #[arg(long, short)]
+    /// Path to zn configuration file (also accepted after `start`)
+    #[arg(long, short, global = true)]
     config: Option<String>,
 
-    /// API key for Management API authentication
-    #[arg(long)]
+    /// API key for Management API authentication (also accepted after `start` and `dashboard`)
+    #[arg(long, global = true)]
     api_key: Option<String>,
 
-    /// Database path for audit logs
-    #[arg(long)]
+    /// Database path for audit logs (also accepted after `start`)
+    #[arg(long, global = true)]
     db_path: Option<String>,
 }
 
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
 
     // 3. Handle Commands
     match &args.command {
-        Some(Commands::Dashboard) => return tui::TuiApp::run(args.api_key.clone()).await,
+        Some(Commands::Dashboard) => return run_dashboard(&args).await,
         Some(Commands::Start) => return start_proxy(args).await,
         Some(Commands::Shield { action }) => match action {
             ShieldAction::Scan => {
@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
         Some(Commands::Mcp) => return run_mcp().await,
         None => {
             if args.dashboard {
-                return tui::TuiApp::run(args.api_key.clone()).await;
+                return run_dashboard(&args).await;
             }
             if args.start {
                 start_proxy(args).await?;
@@ -234,11 +234,37 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Open the dashboard on the port given with --port, or else the port from the
+/// settings file or ZN_PORT, or else the default one.
+async fn run_dashboard(args: &Args) -> Result<()> {
+    let port = args.port.or_else(|| {
+        ZnConfig::load(args.config.as_ref().map(std::path::Path::new))
+            .ok()
+            .map(|c| c.server.port)
+    });
+    tui::TuiApp::run(args.api_key.clone(), port).await
+}
+
+/// The startup error for a Management API address that cannot be bound.
+fn bind_error(addr: &str, port: u16, e: &std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::AddrInUse {
+        anyhow!(
+            "Port {port} is already in use, so the Management API cannot start on {addr}. Stop the program that uses it, or pick another port with --port <number> (or set ZN_PORT, or server.port in zn.json)."
+        )
+    } else {
+        anyhow!("Cannot start the Management API on {addr}: {e}")
+    }
+}
+
 async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
     // Load configuration
-    let mut zn_config = ZnConfig::load(args.config.as_ref().map(std::path::Path::new))?;
+    let (mut zn_config, config_notices) =
+        ZnConfig::load_with_notices(args.config.as_ref().map(std::path::Path::new))?;
+    for notice in &config_notices {
+        log::warning(notice)?;
+    }
 
     // Apply CLI overrides
     if let Some(port) = args.port {
@@ -279,11 +305,10 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initial load of all policies from configured directory
     let policy_dir = &zn_config.engine.policy_dir;
+    let mut policy_load_error: Option<anyhow::Error> = None;
     if let Err(e) = engine.load_all_policies(policy_dir) {
-        log::warning(format!(
-            "Failed to load initial policies from {}: {}",
-            policy_dir, e
-        ))?;
+        log::warning(zn::user_errors::policy_folder_problem(policy_dir, &e))?;
+        policy_load_error = Some(e);
     } else {
         log::success(format!(
             "Loaded {} initial security policies",
@@ -292,8 +317,14 @@ async fn start_proxy(args: Args) -> Result<()> {
     }
 
     // Initialize Policy Watcher for Hot-Reload
-    let watcher = PolicyWatcher::new(Arc::clone(&engine), policy_dir)
-        .map_err(|e| anyhow!("Failed to start policy watcher: {}", e))?;
+    let watcher = PolicyWatcher::new(Arc::clone(&engine), policy_dir).map_err(|e| {
+        anyhow!(zn::user_errors::policy_watch_problem(
+            policy_dir,
+            std::path::Path::new(policy_dir).exists(),
+            policy_load_error.as_ref(),
+            &e
+        ))
+    })?;
 
     // Explicitly keep watcher alive
     let _watcher = watcher;
@@ -355,8 +386,12 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Key for the content references kept in the audit log and the vector
     // memory; it never leaves this machine.
-    zn::ai::init_ref_key(std::path::Path::new("data"))
-        .map_err(|e| anyhow!("cannot set up data/ref.key: {e}"))?;
+    zn::ai::init_ref_key(std::path::Path::new("data")).map_err(|e| {
+        anyhow!(zn::user_errors::data_folder_problem(
+            std::path::Path::new("data"),
+            &e
+        ))
+    })?;
 
     // Initialize Audit Vault
     if zn_config.audit.store_payloads && db_key.is_none() {
@@ -476,6 +511,20 @@ async fn start_proxy(args: Args) -> Result<()> {
         );
         McpPool::new(std::collections::HashMap::new())
     });
+    for notice in pool.notices() {
+        log::warning(notice)?;
+    }
+    let skipped = pool.skipped_servers();
+    if !skipped.is_empty() {
+        let names: Vec<String> = skipped.iter().map(|(n, _)| format!("\"{n}\"")).collect();
+        log::warning(format!(
+            "Tool calls for the skipped MCP server(s) {} will be refused.",
+            names.join(", ")
+        ))?;
+    }
+    if !pool.list_mcps().is_empty() {
+        log::warning(zn::user_errors::mcp_not_forwarded(pool.list_mcps().len()))?;
+    }
     let cache = Arc::new(zn::engine::cache::ResultCache::new(
         zn_config.caching.clone(),
     ));
@@ -527,13 +576,19 @@ async fn start_proxy(args: Args) -> Result<()> {
             )
         })?;
 
+    // Bound before the task starts, so a port that is taken stops the gateway
+    // with a clear message instead of leaving it running without an API.
+    let addr = format!("{}:{}", bind_address, port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| bind_error(&addr, port, &e))?;
+
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
+        let serve_limits = zn::http_limits::ServeLimits::from_server(&api_state.config.server);
 
-        let governor_layer = GovernorLayer {
-            config: std::sync::Arc::new(governor_conf),
-        };
+        let governor_layer = GovernorLayer::new(std::sync::Arc::new(governor_conf));
 
         let auth_config = Arc::new(
             AuthConfig::new(
@@ -579,23 +634,11 @@ async fn start_proxy(args: Args) -> Result<()> {
             .layer(cors)
             .with_state(api_state);
 
-        let addr = format!("{}:{}", bind_address, port);
-        match tokio::net::TcpListener::bind(&addr).await {
-            Ok(listener) => {
-                log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to bind Management API to {}: {}", addr, e);
-            }
-        }
+        log::info(format!("🛰️ Management API listening on {}", addr)).ok();
+        // Header and body timeouts, a connection cap that keeps room for served clients, and a
+        // write timeout and idle time for streams (axum::serve has none of these). The listener was
+        // bound before this task started, so a port in use is a startup error (bind_error).
+        zn::http_limits::serve_limited(listener, app, serve_limits).await;
     });
 
     log::success("zn Core active. Zero Trust Layer Engaged.")?;
@@ -607,10 +650,26 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
-    let mut reader = BufReader::new(stdin).lines();
+    let mut reader = BufReader::new(stdin);
 
-    while let Some(line) = reader.next_line().await? {
-        if let Ok(Some(response)) = process_mcp_message(&line, &state, None).await {
+    // A line is read with a size limit: one without a newline cannot make the gateway buffer forever.
+    loop {
+        let response = match zn::bounded_line::read_line_bounded(
+            &mut reader,
+            zn::bounded_line::MAX_STDIN_LINE_BYTES,
+        )
+        .await?
+        {
+            zn::bounded_line::BoundedLine::Eof => break,
+            zn::bounded_line::BoundedLine::TooLong => Some(
+                r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Request too large"}}"#
+                    .to_string(),
+            ),
+            zn::bounded_line::BoundedLine::Line(line) => {
+                process_mcp_message(&line, &state, None).await.ok().flatten()
+            }
+        };
+        if let Some(response) = response {
             stdout.write_all(response.as_bytes()).await?;
             stdout.write_all(b"\n").await?;
             stdout.flush().await?;
@@ -632,7 +691,10 @@ struct AnalyzerPipeline {
 
 async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // Load configuration (defaults + env vars)
-    let config = ZnConfig::load(None)?;
+    let (config, config_notices) = ZnConfig::load_with_notices(None)?;
+    for notice in &config_notices {
+        eprintln!("Warning: {notice}");
+    }
 
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
@@ -981,7 +1043,28 @@ async fn process_mcp_message(
             // and never an identity: the reputation (bans, violations) is kept per namespace, so one tenant can
             // neither ban another tenant's agent ids nor share a ban with it.
             let agent_id_str = bounded_agent_id(agent_id.as_deref());
+            // What reaches the logs and the audit database: both come from the
+            // message, so they are redacted like the arguments. Matching and
+            // forwarding keep using the originals.
+            let tool_log = Scrubber::redact_for_log(&tool_name);
+            let agent_log = Scrubber::redact_for_log(&agent_id_str);
             let rep_key = reputation_key(&memory_namespace, &agent_id_str);
+
+            // A tool of an MCP server that was left out when the servers file
+            // was loaded is refused with the reason, never passed on as allowed.
+            if let Some((server, reason)) = state.pool.skip_reason_for_tool(&tool_name) {
+                log::warning(format!(
+                    "Tool call '{tool_log}' refused: MCP server '{server}' was skipped ({reason})"
+                ))
+                .ok();
+                return Ok(Some(jsonrpc_error_response(
+                    id,
+                    jsonrpc_error::POLICY_DENIED,
+                    &format!(
+                        "Tool call '{tool_name}' was not forwarded: MCP server '{server}' was skipped ({reason})"
+                    ),
+                )));
+            }
 
             // 🎯 OCR GUARD: detect malicious text embedded in images (prompt
             // injection, credentials, destructive commands) on the RAW input,
@@ -1005,7 +1088,7 @@ async fn process_mcp_message(
                     use sha2::{Digest, Sha256};
                     let hash = hex::encode(Sha256::digest(ocr_text.as_bytes()));
                     log::error(format!(
-                        "BLOCKED OCR VETO: rule={rule} agent={agent_id_str} ocr_len={} ocr_sha256={hash}",
+                        "BLOCKED OCR VETO: rule={rule} agent={agent_log} ocr_len={} ocr_sha256={hash}",
                         ocr_text.len()
                     ))
                     .ok();
@@ -1018,7 +1101,7 @@ async fn process_mcp_message(
                 Ok(None) => {}
                 Err(e) => {
                     log::error(format!(
-                        "BLOCKED VISION BUDGET: {} for agent {agent_id_str}",
+                        "BLOCKED VISION BUDGET: {} for agent {agent_log}",
                         e.as_str()
                     ))
                     .ok();
@@ -1035,7 +1118,7 @@ async fn process_mcp_message(
                 Ok(a) => a,
                 Err(e) => {
                     log::error(format!(
-                        "BLOCKED VISION SANITIZE: {} for agent {agent_id_str}",
+                        "BLOCKED VISION SANITIZE: {} for agent {agent_log}",
                         e.as_str()
                     ))
                     .ok();
@@ -1048,7 +1131,8 @@ async fn process_mcp_message(
             if let Err(ban_msg) = state.reputation.check_agent_status(&rep_key) {
                 log::error(format!(
                     "⛔ BLOCKED BANNED AGENT {}: {}",
-                    agent_id_str, ban_msg
+                    agent_log,
+                    Scrubber::redact_for_log(&ban_msg)
                 ))
                 .ok();
                 return Ok(Some(jsonrpc_error_response(
@@ -1059,17 +1143,13 @@ async fn process_mcp_message(
 
             // 1. CLOUDFLARE STYLE: CACHE CHECK (only for agents that are not banned)
             if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
-                log::info(format!(
-                    "✨ CACHE HIT: {} (Agent: {})",
-                    tool_name, agent_id_str
-                ))
-                .ok();
+                log::info(format!("✨ CACHE HIT: {} (Agent: {})", tool_log, agent_log)).ok();
                 return Ok(Some(cached_result));
             }
 
             log::info(format!(
                 "🎯 Tool call detected: {} (Agent: {})",
-                tool_name, agent_id_str
+                tool_log, agent_log
             ))
             .ok();
 
@@ -1079,7 +1159,11 @@ async fn process_mcp_message(
                 &tool_name,
                 &arguments,
             ) {
-                log::warning(format!("🚫 MANAGED RULE BLOCKED: {}", msg)).ok();
+                log::warning(format!(
+                    "🚫 MANAGED RULE BLOCKED: {}",
+                    Scrubber::redact_for_log(&msg)
+                ))
+                .ok();
                 state
                     .reputation
                     .record_violation(&rep_key, "Managed Rules Violation", 10);
@@ -1092,7 +1176,11 @@ async fn process_mcp_message(
                     .loop_breaker
                     .check_and_record(&agent_id_str, &tool_name, &arguments)
             {
-                log::warning(format!("🚫 LOOP BREAKER: {}", msg)).ok();
+                log::warning(format!(
+                    "🚫 LOOP BREAKER: {}",
+                    Scrubber::redact_for_log(&msg)
+                ))
+                .ok();
                 state
                     .reputation
                     .record_violation(&rep_key, "Recursive Loop Detected", 15);
@@ -1111,7 +1199,7 @@ async fn process_mcp_message(
                 {
                     log::warning(format!(
                         "⏳ CONSENSUS REQUIRED: {} (ID: {})",
-                        tool_name, action_id
+                        tool_log, action_id
                     ))
                     .ok();
                     return Ok(Some(jsonrpc_error_response(
@@ -1232,21 +1320,30 @@ async fn process_mcp_message(
                         .check_tool_call_all(&tool_name, &arguments, agent_id.clone())
                     {
                         Ok(true) => {
-                            log::success(format!("✅ ALLOWED: {}", tool_name)).ok();
+                            log::success(format!("✅ ALLOWED: {}", tool_log)).ok();
                             state.reputation.record_success(&rep_key);
                             ("ALLOWED".to_string(), None)
                         }
                         Ok(false) => {
-                            log::warning(format!("🚫 DENIED: {}", tool_name)).ok();
+                            log::warning(format!("🚫 DENIED: {}", tool_log)).ok();
                             state
                                 .reputation
                                 .record_violation(&rep_key, "Policy Violation", 5);
                             ("DENIED".to_string(), Some("wasm_policy".to_string()))
                         }
                         Err(e) => {
-                            log::warning(format!("⚠️ Policy error: {} - denying by default", e))
-                                .ok();
-                            ("DENIED".to_string(), Some(format!("error: {}", e)))
+                            log::warning(format!(
+                                "⚠️ Policy error: {} - denying by default",
+                                Scrubber::redact_for_log(&e.to_string())
+                            ))
+                            .ok();
+                            (
+                                "DENIED".to_string(),
+                                Some(format!(
+                                    "error: {}",
+                                    Scrubber::redact_for_log(&e.to_string())
+                                )),
+                            )
                         }
                     }
                 }
@@ -1294,12 +1391,12 @@ async fn process_mcp_message(
                 id: Uuid::new_v4().to_string(),
                 timestamp: Utc::now().to_rfc3339(),
                 event: "TOOL_CALL".to_string(),
-                tool_name: tool_name.clone(),
+                tool_name: tool_log.clone(),
                 status: status.clone(),
                 policy_match: policy_match.clone(),
                 payload: zn::audit::payload_if_enabled(
                     state.config.audit.store_payloads,
-                    Scrubber::scrub(&arguments),
+                    Scrubber::redact_for_log(&arguments),
                 ),
                 agent_id: Some(agent_id_str.clone()),
                 namespace: Some(memory_namespace.clone()),
@@ -1314,7 +1411,7 @@ async fn process_mcp_message(
             // any TOOL_CALL row exists, so no row says ALLOWED for a denied call.
             let mut audit_written = true;
             if let Some(nn) = nearest_neighbor_entry {
-                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
+                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_log, "AUDIT")
                     .with_nearest_neighbor(nn.clone())
                     .with_namespace(&memory_namespace)
                     .with_agent_id(&agent_id_str);
@@ -1338,8 +1435,16 @@ async fn process_mcp_message(
             // The event stream carries metadata only, never a payload (even
             // when `audit.store_payloads` keeps one in the database): the
             // scrubber cannot know every secret field.
+            // It carries the same redacted text as the database row (`AuditVault::log`): the agent id
+            // and the policy name come from the message, so a token in them must not leave through the
+            // SSE stream or the SIEM exporter either.
             let mut streamed = entry.clone();
             streamed.payload = None;
+            streamed.agent_id = streamed.agent_id.as_deref().map(Scrubber::redact_for_log);
+            streamed.policy_match = streamed
+                .policy_match
+                .as_deref()
+                .map(Scrubber::redact_for_log);
             let _ = state.tx.send(streamed);
 
             if status == "ALLOWED" {
@@ -1383,7 +1488,11 @@ async fn process_mcp_message(
         }
         JsonRpcValidation::PassThrough => Ok(Some(scrubbed_line)),
         JsonRpcValidation::Error { id, code, message } => {
-            log::warning(format!("JSON-RPC error: {}", message)).ok();
+            log::warning(format!(
+                "JSON-RPC error: {}",
+                Scrubber::redact_for_log(&message)
+            ))
+            .ok();
             Ok(Some(jsonrpc_error_response(id, code, &message)))
         }
     }
@@ -1447,7 +1556,7 @@ async fn handle_ws_socket(
         if let Message::Text(text) = msg {
             match process_mcp_message(&text, &state, Some(namespace.clone())).await {
                 Ok(Some(response)) => {
-                    if let Err(e) = sender.send(Message::Text(response)).await {
+                    if let Err(e) = sender.send(Message::Text(response.into())).await {
                         tracing::error!("WS send error: {}", e);
                         break;
                     }
@@ -1820,7 +1929,10 @@ fn init_tracing() -> Result<TracingGuard> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
+    // Logs go to stderr, through the redactor: stdout carries the JSON-RPC
+    // replies of `zn start` and nothing else may be written there.
     let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(zn::scrubber::RedactingStderr)
         .with_thread_ids(true)
         .with_target(false);
 
@@ -2306,6 +2418,44 @@ mod audit_isolation_tests {
         .to_string()
     }
 
+    #[tokio::test]
+    async fn a_tool_of_a_skipped_server_is_refused_with_the_reason() {
+        let (mut state, _dir) = test_state(None);
+        let mut skipped = std::collections::HashMap::new();
+        skipped.insert(
+            "bad".to_string(),
+            "\"rm\" is not an allowed command".to_string(),
+        );
+        state.pool = Arc::new(McpPool::new(std::collections::HashMap::new()).with_skipped(skipped));
+        let out = process_mcp_message(&frame("mcp__bad__run"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let msg = v["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("'bad'") && msg.contains("skipped"), "{msg}");
+        assert!(msg.contains("not an allowed command"), "{msg}");
+        let ok = process_mcp_message(&frame("other_tool"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!ok.contains("\"error\""), "{ok}");
+    }
+
+    #[tokio::test]
+    async fn a_port_that_is_in_use_gives_a_plain_startup_error() {
+        let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{port}");
+        let e = tokio::net::TcpListener::bind(&addr).await.unwrap_err();
+        let msg = bind_error(&addr, port, &e).to_string();
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "{msg}"
+        );
+        assert!(msg.contains("--port") && msg.contains("ZN_PORT"), "{msg}");
+    }
+
     fn tenant(namespace: &str, role: TenantRole) -> TenantContext {
         TenantContext {
             id: format!("id-{namespace}"),
@@ -2632,6 +2782,44 @@ mod audit_metadata_tests {
         );
     }
 
+    #[tokio::test]
+    async fn event_stream_carries_the_redacted_agent_id_like_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path(), false);
+        let mut rx = state.tx.subscribe();
+        let secret = ["xo", "xb-123456789012-example0123456789"].concat();
+        let frame = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "agent_id": format!("agent-{secret}"),
+            "params": {"name": "read_note", "arguments": {"text": "hello"}}
+        })
+        .to_string();
+        process_mcp_message(&frame, &state, None).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(!events.is_empty(), "the call must reach the event stream");
+        let streamed = serde_json::to_string(&events).unwrap();
+        assert!(
+            !streamed.contains(&secret),
+            "token left in the event stream: {streamed}"
+        );
+        assert!(
+            events.iter().any(|e| e
+                .agent_id
+                .as_deref()
+                .is_some_and(|a| a.starts_with("agent-"))),
+            "the agent id is still reported: {streamed}"
+        );
+        let rows = serde_json::to_string(&state.vault.get_recent(100).unwrap()).unwrap();
+        assert!(
+            !rows.contains(&secret),
+            "token left in the database: {rows}"
+        );
+    }
+
     #[test]
     fn webhook_alerts_carry_metadata_only() {
         let mut entry = AuditEntry::new("TOOL_CALL", "read_note", "DENIED");
@@ -2703,5 +2891,59 @@ mod audit_metadata_tests {
             "require_write must deny: {out}"
         );
         assert!(v.get("result").is_none());
+    }
+}
+
+#[cfg(test)]
+mod cli_form_tests {
+    use super::{Args, Commands};
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn the_command_definition_is_consistent() {
+        Args::command().debug_assert();
+    }
+
+    #[test]
+    fn start_accepts_port_config_and_db_path_after_it() {
+        let args = Args::try_parse_from([
+            "zn",
+            "start",
+            "--port",
+            "9191",
+            "--config",
+            "my.json",
+            "--db-path",
+            "a.db",
+        ])
+        .expect("zn start --port must parse");
+        assert!(matches!(args.command, Some(Commands::Start)));
+        assert_eq!(args.port, Some(9191));
+        assert_eq!(args.config.as_deref(), Some("my.json"));
+        assert_eq!(args.db_path.as_deref(), Some("a.db"));
+    }
+
+    #[test]
+    fn the_old_form_still_works() {
+        let args = Args::try_parse_from(["zn", "--start", "--port", "9191", "-c", "my.json"])
+            .expect("zn --start --port must parse");
+        assert!(args.start);
+        assert!(args.command.is_none());
+        assert_eq!(args.port, Some(9191));
+        assert_eq!(args.config.as_deref(), Some("my.json"));
+    }
+
+    #[test]
+    fn dashboard_accepts_port_and_key_after_it() {
+        let args = Args::try_parse_from(["zn", "dashboard", "--port", "9191", "--api-key", "k"])
+            .expect("zn dashboard --port must parse");
+        assert!(matches!(args.command, Some(Commands::Dashboard)));
+        assert_eq!(args.port, Some(9191));
+        assert_eq!(args.api_key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn a_port_out_of_range_is_still_refused() {
+        assert!(Args::try_parse_from(["zn", "start", "--port", "99999"]).is_err());
     }
 }

@@ -4,6 +4,17 @@ Worked examples of `zn-gate stats` and `zn-gate report`. All numbers, names and 
 
 Both commands read only counts kept on your computer. Nothing is sent.
 
+## Outputs at a glance
+
+| Output | Flag or setting | Section |
+| --- | --- | --- |
+| Weekly report | none (default period is 7 days) | [Weekly report](#weekly-report) |
+| Longer period | `--since 30d` | [A longer period](#a-longer-period) |
+| JSON | `--json` | [JSON for scripts](#json-for-scripts) |
+| Most frequent detectors | `zn-gate stats` | [Top rules in stats](#top-rules-in-stats) |
+| No closing line | `--no-team-line` | [Leave out the closing line](#leave-out-the-closing-line) |
+| Nothing to show | none; counting off with `ZN_STATS=off` | [When there is nothing to show](#when-there-is-nothing-to-show) |
+
 ## Weekly report
 
 ```bash
@@ -29,6 +40,32 @@ How to read it:
 - `Secrets hidden` counts secret values replaced before the agent saw them, by kind. Only the kind is shown, never the name or value.
 - `New MCP servers` shows a server by its program and package or script name, never by its arguments.
 - `Tools changed, waiting for your approval` points to `zn-gate pins`, where you review the changes.
+
+## Top rules in stats
+
+```bash
+zn-gate stats
+```
+
+```text
+zn-gate on this machine, last 30 days (counting since 2026-10-02):
+
+  412 events checked (prompts, tool calls and tool results)
+  12 blocked (a secret file read, a pasted secret, a prompt injection or a risky call)
+  31 secret values replaced before the model saw them
+
+  Secret types found: AWS_KEY 14, DB_PASSWORD 8, GITHUB_TOKEN 6, JWT 3, EMAIL 2
+
+  Top rules, last 7 days:
+    AWS_KEY  Built-in detector  9
+    DB_PASSWORD  Built-in detector  4
+    GITHUB_TOKEN  Built-in detector  4
+    JWT  Built-in detector  3
+    EMAIL  Built-in detector  2
+  Most frequent: AWS_KEY. To understand your last block, run: zn why
+```
+
+The `Top rules` block covers 7 days by default. `zn-gate stats --days 30` makes it cover 30 days. It shows only detector ids, the generic label `Built-in detector` and counts, never values, paths or command text. With `--json`, the same list is in `top_rules`. The hint line above is the npm package's; the Python package points to the troubleshooting page instead.
 
 ## A longer period
 

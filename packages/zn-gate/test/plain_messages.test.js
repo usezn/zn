@@ -12,9 +12,10 @@ const { humanError, CODES } = require('../lib/errors');
 const { decidePrompt, decidePre } = require('../lib/hooks/runner');
 const { dispatch } = require('../lib/broker/cli');
 const { createClient } = require('../lib/vault/client');
+const { ZN, NPXN, ZN_RE, NPX_RE } = require('./helpers/wincmd');
 
-const NPX = 'npx -y zn-gate@' + PACKAGE_VERSION;
-const UNLOCK_RE = /(zn|npx -y zn-gate@\S+) unlock/;
+const NPX = NPXN + ' -y zn-gate@' + PACKAGE_VERSION;
+const UNLOCK_RE = new RegExp('(' + ZN_RE + '|' + NPX_RE + ' -y zn-gate@\\S+) unlock');
 
 function writeFile(dir, name, mode) {
   const p = path.join(dir, name);
@@ -67,7 +68,7 @@ test('znCommand: plain zn when zn is an executable on PATH, npx with this versio
     writeFile(without, 'zn', 0o644);
     assert.equal(znOnPath({ PATH: without }), false);
   }
-  assert.equal(znCommand('env shadow .env', { env: pathEnv(withZn) }), 'zn env shadow .env');
+  assert.equal(znCommand('env shadow .env', { env: pathEnv(withZn) }), ZN + ' env shadow .env');
   assert.equal(znCommand('unlock', { env: pathEnv(without) }), NPX + ' unlock');
   assert.equal(znCommand('env shadow .env', { env: pathEnv('') }), NPX + ' env shadow .env');
 });
@@ -81,7 +82,7 @@ test('znCommand: a relative PATH entry is ignored, even when zn sits in the curr
     assert.equal(znOnPath(pathEnv('.')), false);
     assert.equal(znOnPath(pathEnv('' + path.delimiter + '.')), false);
     assert.equal(znCommand('unlock', { env: pathEnv('.') }), NPX + ' unlock');
-    assert.equal(znCommand('unlock', { env: pathEnv('.' + path.delimiter + dir) }), 'zn unlock');
+    assert.equal(znCommand('unlock', { env: pathEnv('.' + path.delimiter + dir) }), ZN + ' unlock');
   } finally {
     process.chdir(cwd);
   }
@@ -95,7 +96,7 @@ test('znCommand: Windows finds zn.cmd through PATHEXT and not an extensionless s
     assert.equal(znOnPath(env), false);
     fs.writeFileSync(path.join(dir, 'zn.cmd'), '@echo zn\r\n');
     assert.equal(znOnPath(env), true);
-    assert.equal(znCommand('unlock', { env }), 'zn unlock');
+    assert.equal(znCommand('unlock', { env }), ZN + ' unlock');
   });
 
 test('humanError: the plain unlock steps only when the vault is not running', () => {
@@ -268,7 +269,7 @@ test('admin commands: each kind says what it does and the exact command for the 
     assert.doesNotMatch(m, /manages secret values/, cmd);
   }
   // The command for the user keeps a safe argument, and never a value.
-  assert.match(policy.bashDenial('zn hooks uninstall codex'), /run `(zn|npx -y zn-gate@\S+) hooks uninstall codex`/);
+  assert.match(policy.bashDenial('zn hooks uninstall codex'), new RegExp('run `(' + ZN_RE + '|' + NPX_RE + ' -y zn-gate@\\S+) hooks uninstall codex`'));
   assert.match(policy.bashDenial('zn hooks install'), /hooks install <agent>`/);
   assert.match(policy.bashDenial('zn secret set DB_PASSWORD'), /secret set DB_PASSWORD`/);
   assert.match(policy.bashDenial('zn secret set "hunter2-value"'), /secret set NAME`/);

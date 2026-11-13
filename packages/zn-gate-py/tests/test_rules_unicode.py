@@ -94,12 +94,13 @@ class TestInvisibleRedaction(unittest.TestCase):
         self.assertIsNone(R.invisible_view("plain"))
 
 
+# CPU time, not wall time: a busy shared runner can pause the test between timings (same reasoning as test_cli).
 def _best_ms(fn, runs=5):
     best = float("inf")
     for _ in range(runs):
-        t = time.perf_counter()
+        t = time.process_time()
         fn()
-        best = min(best, (time.perf_counter() - t) * 1000)
+        best = min(best, (time.process_time() - t) * 1000)
     return best
 
 

@@ -9,6 +9,9 @@
 # Anything under packages/, plugins/, skill/, bench/ or .github/ always needs the
 # checks, Markdown files included (some are checked by the package and plugin checks).
 # With SCOPE=core (scrubber, leak bench) examples/ and the other workflows' files do not count.
+# A Rust-only change needs no JS or Python check: no JS or Python test reads a .rs file. The Rust-to-Node
+# parity test (invisible_table_equals_shared_fixture) is a cargo test, so the required Rust job runs it,
+# and rust-scope.sh also runs that job when the Node side of the parity (invisible.js, its fixture) changes.
 # Any error while listing the files means true: when in doubt, run the checks.
 set -uo pipefail
 
@@ -16,6 +19,8 @@ out() { echo "run=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$1" >> "$GITHUB_
 
 [ "${EVENT_NAME:-}" = "pull_request" ] || out true
 [ "${FULL:-false}" = "true" ] && out true
+# SKIP_LEG=true: this matrix leg is left to the merge queue for a pull request (the job still reports).
+[ "${SKIP_LEG:-false}" = "true" ] && { echo "skipped here: this version runs in the merge queue"; out false; }
 [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || out true
 
 git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || out true
@@ -43,7 +48,7 @@ while IFS= read -r f; do
     packages/*|plugins/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;
     # Documentation files a test reads. Keep in step with the tests: test-ci-scope.sh fails when a
     # test mentions a docs file that is not listed here.
-    docs/api-reference.md|docs/audit.md|docs/check.md|docs/cli.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
+    docs/api-reference.md|docs/audit.md|docs/by-agent.md|docs/check.md|docs/cli.md|docs/commands-cheatsheet.md|docs/compat.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
     docs/*|*.md|LICENSE|NOTICE|assets/*) ;;   # documentation
     src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;   # Rust gateway
     *) needed=true; echo "needs the checks: $f"; break ;;

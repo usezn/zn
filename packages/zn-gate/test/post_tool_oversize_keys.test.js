@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const runner = require('../lib/hooks/runner');
+const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const CAP = runner.POST_STDIN_CAP;
 const NOTICE = /output withheld because it is too large to check/;
@@ -209,14 +210,29 @@ test('topLevelKeys: top-level keys in any order, nothing from deeper levels or s
 });
 
 test('topLevelKeys: 33 MiB with many keys and strings is scanned in one linear pass', () => {
-  const parts = [];
-  for (let i = 0; i < 200000; i++) parts.push('"k' + i + '":{"hook_event_name":"N","x":["a\\"b",1]}');
-  const text = '{' + parts.join(',') + ',"hook_event_name":"Real","pad":"' + 'x'.repeat(CAP) + '"}';
-  const t = Date.now();
-  const keys = runner.topLevelKeys(text);
-  const ms = Date.now() - t;
-  assert.equal(keys.hook_event_name, 'Real');
-  assert.ok(ms < 3000, 'scanned in ' + ms + ' ms');
+  // Linear means four times the text costs about four times the work, on any machine and with or without coverage; a scan that
+  // became quadratic costs sixteen times. The two sizes are timed in the same run, so the machine's speed cancels out.
+  const make = (keys, pad) => {
+    const parts = [];
+    for (let i = 0; i < keys; i++) parts.push('"k' + i + '":{"hook_event_name":"N","x":["a\\"b",1]}');
+    return '{' + parts.join(',') + ',"hook_event_name":"Real","pad":"' + 'x'.repeat(pad) + '"}';
+  };
+  const cpuOf = (text) => {
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const c = cpuNow();
+      const keys = runner.topLevelKeys(text);
+      best = Math.min(best, cpuMsSince(c));
+      assert.equal(keys.hook_event_name, 'Real');
+    }
+    return best;
+  };
+  const small = make(50000, Math.floor(CAP / 4));
+  const large = make(200000, CAP);
+  assert.ok(large.length > 3.5 * small.length, 'the large text is about four times the small one');
+  const a = cpuOf(small);
+  const b = cpuOf(large);
+  assert.ok(b < 9 * Math.max(a, 20), 'four times the text took ' + (b / Math.max(a, 1)).toFixed(1) + ' times the CPU time (' + a.toFixed(0) + ' ms, then ' + b.toFixed(0) + ' ms)');
 });
 
 // Copilot CLI: its events have no event name (the result is a key of the event, after the arguments), and a

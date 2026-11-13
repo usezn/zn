@@ -22,6 +22,7 @@ const { test, run } = require('./_harness');
 const E = require('../lib/scrub/engine');
 const P = require('../lib/scrub/patterns');
 const { generateAll, mulberry32 } = require('./fixtures/fake_secrets');
+const { budget } = require('./helpers/time_budget');
 
 const N = 2500; // samples per family
 const rnd = mulberry32(20261017);
@@ -269,7 +270,7 @@ test('the benign families run in linear time', () => {
   const t0 = Date.now();
   const big = ('commit ' + hex(40) + '\n' + 'sha512-' + b64Bytes(64) + '\n' + uuidWith('4') + '\n').repeat(4000);
   hits(big);
-  assert.ok(Date.now() - t0 < 2000, 'scan too slow: ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(2000), 'scan too slow: ' + (Date.now() - t0) + ' ms');
 });
 
 module.exports = { FAMILIES };

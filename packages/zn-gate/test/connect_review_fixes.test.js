@@ -15,6 +15,7 @@ const cloudKey = require('../lib/cloud-key');
 const { createSecretsServer } = require('../lib/broker/mcp');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
+const { budget } = require('./helpers/time_budget');
 
 const HOME = path.join(os.tmpdir(), 'zn-review-home');
 const OPTS = { cwd: path.join(HOME, 'project'), home: HOME, env: {} };
@@ -36,7 +37,7 @@ test('keychain checks take well under a second on 100 KB of padding, and the ver
     const t0 = process.hrtime.bigint();
     policy.bashDenial(p.slice(0, n), OPTS);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2500, JSON.stringify(p.slice(0, 14)) + ' took ' + ms.toFixed(0) + ' ms');
+    assert.ok(ms < budget(2500), JSON.stringify(p.slice(0, 14)) + ' took ' + ms.toFixed(0) + ' ms');
   }
 });
 
@@ -241,7 +242,7 @@ test('the client-module check stays linear on 100 KB', () => {
     const t0 = process.hrtime.bigint();
     policy.bashDenial(p.slice(0, n), OPTS);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2500, p.slice(0, 12) + ' took ' + ms.toFixed(0) + ' ms');
+    assert.ok(ms < budget(2500), p.slice(0, 12) + ' took ' + ms.toFixed(0) + ' ms');
   }
 });
 

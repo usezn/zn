@@ -1,0 +1,128 @@
+# Nightly runs on next: a manual or scheduled start at 02:40 UTC starts the full runs, and a check at 06:40 UTC reads their results.
+name: Nightly run of next
+
+# Pushes to next do not start any workflow of the required checks (zn CI, Rust gateway, scrubber, leak bench,
+# Public facts) or Quick checks: every change reaches next through the merge queue, which runs the required checks on
+# the exact commit that lands. Once a night this workflow starts a manual run of each of them on next, which runs
+# its full matrix (every Node.js and Python version, Windows and macOS, the coverage reports, CodeQL and MSRV)
+# and every Quick checks step. cargo audit has its own nightly run on next (cargo-audit.yml), and it also still runs on a
+# push to next that changes the Rust dependency files. A schedule runs on the
+# default branch (main), so the runs are started with --ref next and use the
+# workflow files of next. A second scheduled run, four hours later, looks at the runs started that night and opens
+# an issue (or comments on the open one) when one of them failed, did not finish or never started.
+# Pull requests into main and release branches, and pushes to them, still run the full matrix every time.
+on:
+  schedule:
+    - cron: '40 2 * * *' # start the runs on next
+    - cron: '40 6 * * *' # check the runs started at 02:40 UTC
+  # A manual run starts the runs on next (it does not check them).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-next
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: start the full runs on next
+    if: github.repository == 'usezn/zn' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '40 2 * * *')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # gh workflow run (the workflow dispatch API) needs actions: write. A workflow_dispatch event created with
+      # the run's own token does start a run. No checkout and no secrets: gh reads the repository name from GH_REPO.
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Start each workflow on next
+        shell: bash
+        # Every workflow is tried even when an earlier one could not be started; the job fails at the end if any failed.
+        # Windows Python 3.12 is not in the list: the full matrix of ci.yml runs it.
+        run: |
+          set -uo pipefail
+          failed=0
+          for wf in ci.yml rust.yml scrubber.yml leak-bench.yml public-facts.yml quick-checks.yml codeql.yml windows-paths.yml node-macos.yml; do
+            if gh workflow run "$wf" --ref next; then
+              echo "started $wf on next"
+            else
+              echo "::error::could not start $wf on next"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+  check:
+    name: check the runs on next
+    if: github.repository == 'usezn/zn' && github.event.schedule == '40 6 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # actions: read lists the runs; issues: write opens the failure issue or comments on it. This job starts nothing.
+      actions: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_TITLE: Nightly scheduled check failed
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Check the runs and open or update the failure issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runs started at 02:40 UTC: manual runs on next created in the last five hours. The newest one of each
+          # workflow counts, so a manual re-run that passed clears an earlier failure.
+          since="$(date -u -d '5 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          problems=""
+          for wf in ci.yml rust.yml scrubber.yml leak-bench.yml public-facts.yml quick-checks.yml codeql.yml windows-paths.yml node-macos.yml; do
+            line="$(gh run list --workflow "$wf" --branch next --event workflow_dispatch --created ">=$since" --limit 1 \
+              --json status,conclusion,url --jq '.[0] | select(.) | "\(.url) \(.status) \(.conclusion)"')"
+            if [ -z "$line" ]; then
+              echo "$wf: no run"
+              problems+="- $wf: no run was started"$'\n'
+              continue
+            fi
+            read -r url status conclusion <<< "$line"
+            echo "$wf: $status $conclusion $url"
+            if [ "$status" != "completed" ]; then
+              problems+="- $wf: not finished after four hours ($status): $url"$'\n'
+            elif [ "$conclusion" != "success" ]; then
+              problems+="- $wf: $conclusion: $url"$'\n'
+            fi
+          done
+          if [ -z "$problems" ]; then
+            echo "every run on next passed"
+            exit 0
+          fi
+          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Nightly scheduled check failed") | .number' | head -n 1)"
+          {
+            echo "The nightly scheduled check found a problem (checked by ${RUN_URL}):"
+            echo
+            printf '%s' "$problems"
+            echo
+            echo "Open each run above to see the job that failed. \"no run was started\" means the start step of the nightly"
+            echo "workflow failed for that workflow (see its run at 02:40 UTC)."
+            echo
+            echo "This issue stays open until someone closes it. Each later night with a problem adds a comment."
+          } > "$RUNNER_TEMP/body.md"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file "$RUNNER_TEMP/body.md"
+            echo "Commented on issue #$number"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+          fi
+          # The check itself fails too, so the failure also shows in the Actions tab.
+          exit 1

@@ -9,7 +9,7 @@ For each wrapped server the shield:
 3. **Checks tool output.** Secrets are redacted, and output that carries an injection is replaced by a short notice.
    The same check covers the other text the server sends to the agent: notifications, requests such as sampling, resource and prompt contents (text blobs too), the descriptions in resource and prompt lists, the initialize instructions, completion values, error messages, and the structured content, embedded resources and resource links of tool results. A line from the server that is not valid JSON is dropped (shadow mode passes it on and reports it). JSON-RPC batches are checked message by message in both directions.
 4. **Pins the tools.** It remembers what each tool looked like the first time and flags any tool that changes later (see [Tool pinning](#tool-pinning)).
-5. **Records each decision** in the local audit log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
+5. **Records each decision** in the local decision log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
 
 ## Wrap one server: `shield`
 
@@ -33,7 +33,7 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 }
 ```
 
-`mcp-shield` and `wrap` are other names for the same command. Always use `--`: without it, zn-gate takes the words after `shield` that do not start with `--` as the command, which is easy to get wrong. If you give no command, `shield` prints a usage message and exits with code 1.
+`mcp-shield` and `wrap` are other names for the same command. Always use `--`: without it, zn-gate takes the words after `shield` that do not start with `--` as the command, which people often get wrong. If you give no command, `shield` prints a usage message and exits with code 1.
 
 `--verbose` prints what the shield does (each request it inspects and each redaction) to stderr. In an agent app, stderr goes to the app's MCP log, not to your terminal.
 
@@ -74,7 +74,7 @@ In shadow mode:
 - Tool descriptions and parameter descriptions that would be neutralized are left as the server sent them.
 - Tool output is forwarded untouched: no secret is redacted and no output is replaced. This is the one place where shadow mode lets a secret reach the agent, so use it to evaluate, not as a protection.
 - Tool pinning still detects changes and logs them, but it does not mark, remove or refuse any tool, whatever the pinning mode is.
-- Every detection is written to the audit log.
+- Every detection is written to the decision log.
 
 Review what the shield found with:
 
@@ -112,7 +112,7 @@ Pins belong to a server's command line. A server key is computed from the progra
 | `block` | The tool is removed from the list, and any call to a tool that is not approved is refused with an error, even when the agent calls it from a list it saved earlier. Use this mode when you want a hard stop. |
 | `off` | No pinning. |
 
-Every change is also written to the audit log. Tools flagged as duplicate or without a name are removed in `block` mode and reported in both modes.
+Every change is also written to the decision log. Tools flagged as duplicate or without a name are removed in `block` mode and reported in both modes.
 
 Set the mode in `~/.zn/config.json`:
 
@@ -122,13 +122,24 @@ Set the mode in `~/.zn/config.json`:
 
 or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode that applies is the strictest of the two. An MCP server's environment can make pinning stricter but never weaker: only `"mcpPinning": "off"` in your own `~/.zn/config.json` turns it off. With `--shadow`, pinning only logs (see above).
 
+### Tool shadowing
+
+When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in four cases:
+
+- a tool has the same name as an approved tool of another server, so the agent may call the wrong one;
+- the name of a tool reads like that of an approved tool of another server once case, full-width letters, look-alike letters of other alphabets and invisible or default-ignorable characters are set aside;
+- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters, names that are a single plain word (`update`, `commit`: they are in every text) and names that only appear inside a longer word are ignored for this check.
+- the text of a tool is over 1 MiB, so it is reported as too long to check in full and the shield cannot check it for names of other servers' tools; read it yourself.
+
+This is a warning, not a block: the same name on two servers can be legitimate. Each overlap is reported once per run of the shield, and it is logged in the decision log (`mcp_tool_shadowing`) without any tool text. A tool that is new or changed on the other server and not yet approved is not used as a reference.
+
 ### See the pins
 
 ```bash
 npx -y zn-gate pins
 ```
 
-lists each pinned server with its key, its command line, how many tools are pinned and when, and the names of the tools that changed or are new since then. `zn-gate pins list` does the same. If nothing is pinned yet, it says so; servers are pinned the first time the shield sees their tools.
+lists each pinned server with its key, its command line, how many tools are pinned and when, and the names of the tools that changed or are new since then, each with what changed: its description, its parameters (the input and output schema, including every parameter description), other fields (annotations and the like), or `new tool`. `zn-gate pins list` does the same. Pins written by an older version say `whole tool` until the next approval. If nothing is pinned yet, it says so; servers are pinned the first time the shield sees their tools.
 
 ### Approve a change
 
@@ -151,23 +162,25 @@ Approval is your decision, not your agent's, so it is refused:
 - when the agent's hooks see the command in a tool call.
 
 If what you typed does not match, nothing changes and you can run the command again.
+A worked example of this decision, with one new tool denied in block mode and the error the agent sees, is in [deny one MCP tool with the shield](examples/shield-deny-rule-example.md).
 
 ### What happens when a tool changes
 
 1. The agent asks the server for its tools. The shield compares the list with the pins and flags the changed tool.
 2. In `warn` mode the agent sees the tool with a notice in front of its description. In `block` mode the tool is not in the list, and a call to it returns an error that tells the agent to ask you to review the tool and run `zn-gate pins approve` in your own terminal.
-3. The shield writes `[zn-shield TOOLS CHANGED] <tools>: new or changed since the tools of this server were approved` with the exact command to run, and records the event in the audit log.
+3. The shield writes `[zn-shield TOOLS CHANGED] <tools>: new or changed since the tools of this server were approved` with the exact command to run, and records the event in the decision log.
 4. You review the tool and either run `pins approve`, or remove the server.
 
 If the pins file of a server cannot be read or written, the shield treats every tool of that list as unapproved until the pins work again, and says so on stderr. A corrupt pins file is moved aside (`.corrupt-<time>`) and never trusted again silently.
 
 ### What is stored
 
-Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your account on Linux and macOS. Each file holds the program name, its arguments with secrets removed, and the tool names with their fingerprints. It never holds tool text.
+Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your account on Linux and macOS. Each file holds the program name, its arguments with secrets removed, and the tool names with their fingerprints (one for the whole tool and one each for its text, its parameters and its other fields). It never holds tool text.
 
 ## Limits
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
+- The shadowing check only knows servers that were pinned on this machine, and it compares names, not what a tool does.
 - Tool results are checked in full up to 32 MB. A larger result is removed and the agent is told to ask the tool for a smaller part (a page or a line range).
 - Text nested more than 8 levels deep in a server message or in a tool result's structured content is not checked. It is replaced by a notice, so the agent does not get it unchecked; in shadow mode it is passed on unchanged, and the shield writes one line to stderr saying the message was not fully checked.
 - Lines are capped before they are read in full: a line over 64 MiB from the server (32 MiB from the client) is dropped, in shadow mode too, because it cannot be held in memory to be checked. A message nested more than 128 levels, with more than 4 million values, or in a batch of 1000 messages or more is refused with a JSON-RPC error; when the server sends such a batch, each request it was answering gets its own error. While a lot of server output waits to be checked, the shield stops reading from the server.
@@ -179,4 +192,12 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 - Pinning protects only servers that run through `zn-gate shield`. Remote (URL) servers are not covered.
 - The checks look at what goes in and out of a tool. They do not decide which tools an agent should have. After wrapping, keep only the tools your agent needs and put destructive operations behind explicit approval.
 
-More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the audit log works](architecture.md).
+## Exit codes
+
+The exit codes of `zn-gate shield`, from the table in [Exit codes](exit-codes.md#agents-and-mcp-servers):
+
+| Code | Meaning |
+| --- | --- |
+| `1` | When no command is given or the program cannot be started; otherwise the shield ends when the wrapped server ends. |
+
+More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield/), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).

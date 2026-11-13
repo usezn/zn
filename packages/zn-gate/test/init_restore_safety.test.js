@@ -315,7 +315,8 @@ test('the CLI marks skipped_unsafe with the warning symbol', opts, () => {
     });
     const line = out.split('\n').find((l) => l.includes('[skipped_unsafe]'));
     assert.ok(line, out);
-    assert.match(line, /!\s*Cursor/);
+    // The warning symbol, or its ASCII marker where symbols are off (a pipe here).
+    assert.match(line, /(!|\[!\])\s*Cursor/);
   } finally { clean(d); }
 });
 

@@ -8,10 +8,10 @@ One page with every `zn-gate` command, its most useful flags and one example. Ev
 |---|---|---|
 | [`init`](cli.md#init) | `--wrap-mcp`, `--dry-run`, `--shadow`, `--revert` | `zn-gate init --wrap-mcp --dry-run` |
 | [`uninstall`](cli.md#uninstall) | `--dry-run` | `zn-gate uninstall --dry-run` |
-| [`check`](cli.md#check) | none (alias `doctor`) | `zn-gate check` |
+| [`check`](cli.md#check) | `--hooks`, `--json` (alias `doctor`) | `zn-gate check --json` |
 | [`status`](cli.md#status) | none | `zn-gate status` |
 | [`test`](cli.md#test) | none | `zn-gate test` |
-| [`version`](cli.md#version) | `-V`, `--version` | `zn-gate version` |
+| [`version`](cli.md#version) | `-v`, `-V`, `--version` | `zn-gate version` |
 | [`connect`](cli.md#connect) | `--reconnect` | `zn-gate connect` |
 | [`disconnect`](cli.md#disconnect) | `--revoke`, `--no-revoke` | `zn-gate disconnect --no-revoke` |
 
@@ -19,11 +19,12 @@ One page with every `zn-gate` command, its most useful flags and one example. Ev
 
 | Command | Useful flags | Example |
 |---|---|---|
-| [`scan`](cli.md#scan) | `--format text\|json\|github`, `--all`, `--include`, `--exclude`, `--include-home` | `zn-gate scan ./docs --format json` |
-| [`audit`](cli.md#audit) | `--format text\|json\|sarif`, `--output`, `--fail-on`, `--agents`, `--include-home` | `zn-gate audit . --fail-on high --agents claude,codex` |
-| [`reach`](cli.md#reach) | `--json`, `--sarif`, `--fail-on`, `--remember` | `zn-gate reach . --fail-on high` |
+| [`scan`](cli.md#scan) | `--format text\|json\|github`, `--all`, `--include`, `--exclude`, `--include-home`, `--allow-partial`, `--package` | `zn-gate scan ./docs --format json` |
+| [`audit`](cli.md#audit) | `--format text\|json\|sarif`, `--output`, `--fail-on`, `--agents`, `--include-home`, `--approve` | `zn-gate audit . --fail-on high --agents claude,cursor` |
+| [`reach`](cli.md#reach) | `--json`, `--sarif`, `--fail-on`, `--remember`, `--history`, `--max-seconds` | `zn-gate reach . --fail-on high` |
 | [`analyze`](cli.md#analyze) | none | `zn-gate analyze "Summarize this file"` |
 | [`pins`](cli.md#pins) | `approve <server>`, `approve --all` | `zn-gate pins` |
+| [`pins approve`](cli.md#pins-approve) | `--all` | `zn-gate pins approve --all` |
 
 ## Secrets and the vault
 
@@ -36,20 +37,21 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | [`secret rm`](cli.md#secret-rm) | none | `zn-gate secret rm API_TOKEN` |
 | [`secret allow`](cli.md#secret-allow) | `--host`, `--command`, `--in`, `--mode`, `--replace` | `zn-gate secret allow API_TOKEN --host api.example.com` |
 | [`secret approve`](cli.md#secret-approve) | `--command` | `zn-gate secret approve API_TOKEN --command "psql"` |
-| [`secret import`](cli.md#secret-import) | `--all`, `--keys`, `--host`, `--command`, `--force` | `zn-gate secret import .env --keys A,B` |
+| [`secret import`](cli.md#secret-import) | `--all`, `--keys`, `--mode`, `--host`, `--command`, `--force` | `zn-gate secret import .env --keys A,B` |
 | [`secret adopt`](cli.md#secret-adopt) | `--name`, `--host`, `--command` | `zn-gate secret adopt AWS_KEY_1 --name AWS_PROD` |
 | [`secret log`](cli.md#secret-log) | `--since` | `zn-gate secret log --since 1h` |
-| [`env shadow`](cli.md#env-shadow) | `--all`, `--keys`, `--host`, `--command`, `--force`, `--dry-run` | `zn-gate env shadow .env --dry-run` |
+| [`env shadow`](cli.md#env-shadow) | `--all`, `--keys`, `--mode`, `--host`, `--command`, `--force`, `--dry-run` | `zn-gate env shadow .env --dry-run` |
 | [`env unshadow`](cli.md#env-unshadow) | `--backup` | `zn-gate env unshadow .env --backup ENVBAK_NAME` |
-| [`run`](cli.md#run) | `--secrets` (`-s`), `--agent` | `zn-gate run --secrets API_TOKEN -- psql` |
+| [`run`](cli.md#run) | `--secrets` (`-s`), `--agent`, `--egress-allow` | `zn-gate run --secrets API_TOKEN -- psql` |
 | [`unlock`](cli.md#unlock) | `--ttl`, `--idle`, `--backend`, `--passphrase-stdin`, `--foreground` | `zn-gate unlock --ttl 8h --idle 30m` |
 | [`lock`](cli.md#lock) | none | `zn-gate lock` |
 | [`vault status`](cli.md#vault-status) | none | `zn-gate vault status` |
 | [`vault log`](cli.md#vault-log) | `--since` | `zn-gate vault log --since 1h` |
-| [`vault log export`](cli.md#vault-log-export) | `--otlp`, `--since`, `--out` | `zn-gate vault log export --otlp --since 7d --out audit.jsonl` |
-| [`vault verify`](cli.md#vault-verify) | none | `zn-gate vault verify` |
+| [`vault log export`](cli.md#vault-log-export) | `--otlp`, `--since`, `--out`, `--unverified` | `zn-gate vault log export --otlp --since 7d --out audit.jsonl` |
+| [`vault verify`](cli.md#vault-verify) | `--acknowledge` | `zn-gate vault verify --acknowledge` |
 | [`vault forget`](cli.md#vault-forget) | `[dir]` | `zn-gate vault forget .` |
 | [`vault reset`](cli.md#vault-reset) | none | `zn-gate vault reset` |
+| [`vault purge`](cli.md#vault-purge) | `--yes` | `zn-gate vault purge` |
 | [`vault team`](cli.md#vault-team) | none | `zn-gate vault team` |
 
 `zn-gate secret get NAME` never prints a value: it exits `77` and points you to `run`.
@@ -70,8 +72,12 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | Command | Useful flags | Example |
 |---|---|---|
 | [`evidence`](cli.md#evidence) | `--verify`, `--ui`, `--port`, `--export`, `--format`, `--output`, `--tail` | `zn-gate evidence --verify` |
+| [`why`](cli.md#why) | `<id>` (optional) | `zn-gate why` |
 | [`stats`](cli.md#stats) | `--days`, `--json` | `zn-gate stats --days 30` |
 | [`stats share`](cli.md#stats-share) | `on`, `off`, `status`, `show` | `zn-gate stats share status` |
+| [`stats share on`](cli.md#stats-share-on) | none | `zn-gate stats share on` |
+| [`stats share off`](cli.md#stats-share-off) | none | `zn-gate stats share off` |
+| [`stats share show`](cli.md#stats-share-show) | none | `zn-gate stats share show` |
 | [`report`](cli.md#report) | `--since`, `--json`, `--no-team-line` | `zn-gate report --since 7d` |
 
 ## zn Team
@@ -80,8 +86,8 @@ Needs the vault unlocked. See [zn Team](team.md).
 
 | Command | Useful flags | Example |
 |---|---|---|
-| [`team join`](cli.md#team-join) | `--api`, `--agent` | `zn-gate team join "$JOIN_TOKEN"` |
-| [`team status`](cli.md#team-status) | `--json` | `zn-gate team status --json` |
+| [`team join`](cli.md#team-join) | `--api`, `--agent`, `--include-history` | `zn-gate team join -` |
+| [`team status`](cli.md#team-status) | `--json`, `--rules` | `zn-gate team status --json` |
 | [`team sync`](cli.md#team-sync) | none | `zn-gate team sync` |
 | [`team leave`](cli.md#team-leave) | none | `zn-gate team leave` |
 | [`team managed-config`](cli.md#team-managed-config) | `--agent`, `--os`, `--managed-hooks-only`, `--exclusive-mcp`, `--json` | `zn-gate team managed-config --agent claude-code --os linux` |
@@ -93,6 +99,24 @@ Needs the vault unlocked. See [zn Team](team.md).
 | `--help`, `-h` | Print the short help. |
 | `--local-only` | Never use the cloud check. |
 | `--verbose` | Print debug messages to the error output. |
-| `NO_COLOR` | Turn off colors. |
+| `NO_COLOR` | Turn off colors, emoji and box-drawing characters (short ASCII markers such as `[ok]` take their place). |
+| `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
 
 Exit codes: `0` done, `1` a problem was found, `2` wrong usage (or `analyze` blocked the text), `64` wrong usage for the secrets commands, `77` refused on purpose, `127` `run` could not find the program. Each command lists its own codes in the [reference](cli.md#exit-codes).
+
+## When to use which command
+
+| When you want to | Command |
+|---|---|
+| Set zn-gate up on this machine | [`init`](cli.md#init) |
+| Check that the install works and every agent is protected | [`check`](cli.md#check) |
+| See why something was blocked | [`why`](cli.md#why) |
+| Find secrets and injection traps in files | [`scan`](cli.md#scan) |
+| Review agent configs before you open a repo | [`audit`](cli.md#audit) |
+| See the history of what zn-gate decided | [`evidence`](cli.md#evidence) |
+| Store a secret | [`secret set`](cli.md#secret-set) |
+| Run a command with its secrets filled in | [`run`](cli.md#run) |
+| Unlock the vault for this session | [`unlock`](cli.md#unlock) |
+| Lock the vault now | [`lock`](cli.md#lock) |
+| See the version, rules version and cloud-check state | [`status`](cli.md#status) |
+| Remove zn-gate from this computer | [`uninstall`](cli.md#uninstall) |

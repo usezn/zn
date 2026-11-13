@@ -95,3 +95,63 @@ test('silent names are all in the scan list or are tool caches only', () => {
   }
   assert.ok(SCAN_DIRS.has('dist') && !SILENT.has('dist'));
 });
+
+test('a build file in the parent folder does not explain a nested target', () => withDir((dir) => {
+  fs.writeFileSync(path.join(dir, 'Cargo.toml'), '');
+  const nested = path.join(dir, 'crates', 'inner');
+  fs.mkdirSync(nested, { recursive: true });
+  assert.equal(pruneInfo('target', nested), null);
+  assert.equal(pruneInfo('target', path.join(dir, 'crates')), null);
+  assert.equal(pruneInfo('target', dir).silent, false);
+}));
+
+test('a build file inside a nested folder does not explain a vendor folder above it', () => withDir((dir) => {
+  const nested = path.join(dir, 'sub');
+  fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 'go.mod'), '');
+  assert.equal(pruneInfo('vendor', dir), null);
+  assert.equal(pruneInfo('vendor', nested).silent, false);
+}));
+
+test('only the first matching marker in list order is named', () => withDir((dir) => {
+  fs.writeFileSync(path.join(dir, 'build.gradle'), '');
+  fs.writeFileSync(path.join(dir, 'pom.xml'), '');
+  assert.equal(pruneInfo('target', dir).reason, 'skipped by name: build output next to pom.xml');
+}));
+
+test('similar file names are not markers', () => withDir((dir) => {
+  fs.writeFileSync(path.join(dir, 'Cargo.toml.bak'), '');
+  fs.writeFileSync(path.join(dir, 'go.mod.txt'), '');
+  assert.equal(pruneInfo('target', dir), null);
+  assert.equal(pruneInfo('vendor', dir), null);
+}));
+
+test('a folder that does not exist or is not a folder has no markers', () => withDir((dir) => {
+  assert.equal(pruneInfo('target', path.join(dir, 'missing')), null);
+  assert.equal(pruneInfo('vendor', path.join(dir, 'missing')), null);
+  const file = path.join(dir, 'plain.txt');
+  fs.writeFileSync(file, '');
+  assert.equal(pruneInfo('target', file), null);
+  // Names without markers never look at the folder.
+  assert.deepEqual(pruneInfo('dist', path.join(dir, 'missing')), { silent: false, reason: 'skipped by name: build output' });
+  assert.equal(pruneInfo('node_modules', path.join(dir, 'missing')).silent, true);
+}));
+
+test('a folder that cannot be read has no markers and does not throw', (t) => {
+  if (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) {
+    t.skip('permissions are not enforced here');
+    return;
+  }
+  withDir((dir) => {
+    const locked = path.join(dir, 'locked');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'Cargo.toml'), '');
+    fs.chmodSync(locked, 0o000);
+    try {
+      assert.equal(pruneInfo('target', locked), null);
+      assert.equal(pruneInfo('dist', locked).silent, false);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+});

@@ -20,7 +20,7 @@ const { tempDir } = require('./helpers/tmp');
 const ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'cli.js');
 const RUNNER = path.join(ROOT, 'lib', 'hooks', 'runner.js');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix } = require('./helpers/posix_sh');
 
 // A Claude Code PreToolUse event that zn answers with a deny on stdout: reading zn's own config file.
 function denyEvent(home) {
@@ -104,6 +104,20 @@ test('hook: a refusal (exit 2) writes no confirmation and keeps its status', asy
 
 // ---- the POSIX launcher ----
 
+// Starts the launcher so that a TERM can be sent to it. Node cannot send TERM on Windows (child.kill is TerminateProcess, so the
+// launcher's trap never runs and the exit status is null). There the launcher runs under a small sh of Git Bash that sends the
+// TERM from inside, once the file `flag` exists, and ends with the launcher's own exit status.
+function startLauncherForTerm(t, file, event, { env, cwd }) {
+  if (process.platform !== 'win32') {
+    const child = spawn('/bin/sh', [file, event], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    return { child, term: () => child.kill('SIGTERM') };
+  }
+  const flag = path.join(tempDir(t, 'zn-ov-termflag-'), 'term').replace(/\\/g, '/');
+  const script = '/bin/sh "$1" "$2" <&0 & p=$!; while kill -0 $p 2>/dev/null && [ ! -e "$3" ]; do /bin/sleep 0.1; done; [ ! -e "$3" ] || kill -TERM $p; wait $p; exit $?';
+  const child = spawn('/bin/sh', ['-c', script, 'sh', file.replace(/\\/g, '/'), event, flag], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  return { child, term: () => fs.writeFileSync(flag, '') };
+}
+
 function writeScript(t, agent, runnerBody, opts = {}) {
   const dir = tempDir(t, 'zn-ov-launch-');
   const runner = path.join(dir, 'runner.js');
@@ -163,6 +177,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
   });
 
+  // The home of the runner on Windows comes from USERPROFILE, not HOME: without it the runner looked in another home, saw no zn state and allowed the read (the launcher then exited 0 with no output, which is not a launcher gap).
   test('posix launcher (' + name + '): the Daybreak case: the real runner cannot write its answer (EPIPE), so the launcher blocks instead of accepting status 0', { skip: !posix }, async (t) => {
     const dir = tempDir(t, 'zn-ov-real-');
     const file = path.join(dir, 'launcher.sh');
@@ -170,7 +185,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     const home = tempDir(t, 'zn-ov-home-');
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     const r = await new Promise((resolve) => {
-      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
       child.stdout.destroy();
       let stderr = '';
       child.stderr.on('data', (b) => { stderr += b; });
@@ -257,7 +272,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     const home = tempDir(t, 'zn-ov-home-');
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     const run = (closeRead) => new Promise((resolve) => {
-      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: bin + ':/usr/bin:/bin', HOME: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: bin + ':/usr/bin:/bin', HOME: home, USERPROFILE: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       if (closeRead) child.stdout.destroy();
@@ -344,9 +359,9 @@ test('posix launcher: a status 0 without the confirmation (an older zn on the PA
   const r = await runLauncher(file, 'PreToolUse', '{}');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /older than this hook/);
-  assert.match(r.stderr, /npm install -g zn-gate.*zn hooks install claude-code/);
+  assert.match(r.stderr, /npm install -g zn-gate.*zn(?:\.cmd)? hooks install claude-code/);
   const post = await runLauncher(file, 'PostToolUse', '{}');
-  assert.match(JSON.parse(post.stdout).systemMessage, /zn hooks install claude-code/);
+  assert.match(JSON.parse(post.stdout).systemMessage, /zn(?:\.cmd)? hooks install claude-code/);
 });
 
 // ---- private files: every call removes what it made, whatever the PATH of the hook (it can be empty) ----
@@ -392,12 +407,12 @@ for (const [mode, opts, edit] of MODES) {
 test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
   const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
-  const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp } });
   child.stdin.end('{}');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
   await new Promise((r) => setTimeout(r, 300));
   assert.ok(zfiles(tmp).length >= 2, 'the launcher made its private files');
-  child.kill('SIGTERM');
+  term();
   assert.equal(await exited, 2);
   assert.deepEqual(zfiles(tmp), []);
 });
@@ -451,17 +466,52 @@ test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no 
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
   const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
-  const child = spawn('/bin/sh', [file, 'PreToolUse'], { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp } });
   child.stdin.write('{');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
   await new Promise((r) => setTimeout(r, 400));
-  child.kill('SIGTERM');
+  term();
   assert.equal(await exited, 2);
   assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '');
   assert.deepEqual(zfiles(tmp), []);
 });
 
 // ---- Windows: zn and node are looked up only in fully qualified PATH entries ----
+
+test('windows (real PowerShell): the real runner whose answer cannot be written is blocked, never accepted as status 0', { skip: process.platform !== 'win32' }, async (t) => {
+  const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  const psDir = path.join(sys32, 'WindowsPowerShell', 'v1.0');
+  const ps = path.join(psDir, 'powershell.exe');
+  const fwd = (p) => p.replace(/\\/g, '/');
+  // closeRead: the agent's end of the pipe is gone before zn answers (what the reader of a hook does when it gives up).
+  const run = (deadlineS, closeRead) => {
+    const home = tempDir(t, 'zn-ov-winreal-');
+    fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
+    const script = launcher.windowsScript('claude-code', 'PreToolUse', fwd(process.execPath), fwd(RUNNER), { deadlineS });
+    return new Promise((resolve) => {
+      const child = spawn(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
+        env: { ...process.env, PATH: [sys32, psDir].join(';'), USERPROFILE: home, HOME: home, ZN_STATS: 'off' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      if (closeRead) child.stdout.destroy();
+      else child.stdout.on('data', (b) => { stdout += b; });
+      child.stderr.on('data', (b) => { stderr += b; });
+      child.stdin.on('error', () => {});
+      child.stdin.end(JSON.stringify(denyEvent(home)));
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+  };
+  for (const deadlineS of [0, 5]) {
+    const ok = await run(deadlineS, false);
+    assert.equal(ok.code, 0, 'deadline ' + deadlineS + ': ' + ok.stderr);
+    assert.match(ok.stdout, /"permissionDecision":\s*"deny"/, 'the answer reaches the reader when it is there');
+    const closed = await run(deadlineS, true);
+    assert.equal(closed.code, 2, 'deadline ' + deadlineS + ': the answer cannot be written, so the call is blocked: ' + closed.stderr);
+    assert.match(closed.stderr, /so this was blocked/);
+  }
+});
 
 test('windows launchers: every zn.cmd call runs after the PATH keeps only absolute entries and cmd.exe stops looking in the current folder', () => {
   const PREFIX = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PATH -split ';') -match ";

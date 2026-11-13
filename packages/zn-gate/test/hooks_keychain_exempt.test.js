@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('os');
 const policy = require('../lib/hooks/policy');
+const { budget } = require('./helpers/time_budget');
 
 const opts = { home: os.homedir(), cwd: process.cwd(), env: {} };
 const denied = (c) => policy.bashDenial(c, opts);
@@ -114,7 +115,7 @@ test('the escape decoding is fast on a long run of escapes and ignores impossibl
   denied('node -e "require(\'' + '\\u{110000}\\u{ffffff}'.repeat(3000) + '\').loadStoredKey()"');
   denied('node -e "require(\'' + '\\x"'.repeat(20000) + 'x\').loadStoredKey()"');
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(ms < 1000, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(1000), 'took ' + ms + ' ms');
 });
 
 test('a name built from quoted pieces, a path join or a Bun cache folder is recognised', () => {
@@ -156,7 +157,7 @@ test('the join and version patterns stay linear on long adversarial lines', () =
   denied('node -e "require(' + "'zn-gate@'".repeat(8000) + ').loadStoredKey()"');
   denied('node -e "require(\'' + "'   ".repeat(12000) + '\').loadStoredKey()"');
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(ms < 1500, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(1500), 'took ' + ms + ' ms');
 });
 
 test('joins with escaped quotes, line breaks, .concat, join(empty), shell-decoded quotes and a Deno cache folder are recognised', () => {
@@ -192,5 +193,5 @@ test('the new join patterns stay linear on long adversarial lines', () => {
   denied('node -e "require(\'zn-gate/1' + '/2'.repeat(15000) + '/lib/clien\').loadStoredKey()"');
   denied("printf '" + (BS + 'x27 + ').repeat(15000) + "' | node");
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(ms < 1500, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(1500), 'took ' + ms + ' ms');
 });

@@ -17,14 +17,36 @@ them.
 3. Run `zn-gate check`. Every agent that is set up should say **OK**.
 
 The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
-runner and run it only while it matches. An update with npm rewrites them by
-itself (an install step of the package). If your update does not run install
-scripts (`npm install --ignore-scripts`, or pnpm and bun, which skip them by
-default), run `zn hooks install <agent>` again for each agent: until then the
-hooks block tool calls and say so.
+runner, and of every other zn-gate file the hook loads (the code and data under
+`lib/`, `package.json` and `bin/cli.js`), and run a file only while it matches.
+A file that changed, that the launcher does not list, or that lies outside the
+package stops the hook with the same block as a changed runner. `npm update -g
+zn-gate` rewrites the launchers by itself (an install step of the package). If
+your update does not run install scripts, the launchers are not refreshed, and
+what happens depends on how you installed zn-gate:
+
+- **pnpm** (`pnpm add -g zn-gate@<newer>`) skips install scripts. The old
+  version's folder stays on disk, so the hooks keep working but run the runner
+  of the previous version, with its older rules, until you run
+  `zn hooks install <agent>` again. `zn-gate check` still says **OK** and adds a
+  note that names the older version.
+- **bun** and `npm install --ignore-scripts` skip them too. The zn-gate files
+  changed, so the hooks block tool calls and say so until you run
+  `zn hooks install <agent>` again for each agent.
+
+If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
 
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
+
+### Upgrade methods
+
+| Method | Command | Then |
+|---|---|---|
+| npm (global install) | `npm install -g zn-gate` | Run `zn-gate check`. |
+| pip (Python package) | `pip install -U zn-gate` | Run `zn-gate check`. |
+| npx | `npx -y zn-gate ...` | Nothing to update. |
+| Claude Code plugin | `/plugin` inside Claude Code, or `claude plugin update zn-gate@usezn` in your terminal | Start a new Claude Code session. |
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
@@ -83,9 +105,9 @@ depends on the agent and on how the hooks were installed. A user install
 (`zn hooks install <agent>`) writes a small launcher script as the hook command
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
-Node.js it was installed with, while its runner still has the SHA-256 recorded
-at install time (never a `zn` from the PATH, except in the inline PowerShell
-hooks on Windows), else it answers the
+Node.js it was installed with, while its runner and the other zn-gate files it
+loads still have the SHA-256 recorded at install time (the inline PowerShell hooks on Windows check neither the runner
+nor the other files; never a `zn` from the PATH, except in those inline PowerShell hooks on Windows), else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a
@@ -223,6 +245,36 @@ If you use the Python package (`pip install -U zn-gate`):
   block a generator or other one-shot iterator (pass a list). Check that your
   tools still pass.
 
+## Going back to the previous version
+
+Run these in your own terminal, not through an AI agent. Going back does not
+touch your code or your vault.
+
+If you keep the hooks and only change the program, run the hook install again
+right after the change. Until you run `zn hooks install <agent>` for each agent
+with the older version, that agent's hooks block its actions: zn fails closed on
+purpose, so nothing runs unchecked. Run step 4 below straight after the install
+of the older release.
+
+1. Remove the hooks of each agent you set up with `zn hooks install`:
+   `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
+   `opencode` or `antigravity` for the others, and add `--project` for a project
+   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#3-claude-code-plugin).
+2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
+   if you also installed the Python package
+   ([details](uninstall.md#5-the-program-itself-last)).
+3. Install the older release with your package manager, the same way you
+   installed zn-gate the first time. The commands on this page
+   (`npm install -g zn-gate`, `pip install -U zn-gate`) install the newest release.
+4. Run `zn hooks install <agent>` again for each agent, and trust the hooks in
+   `/hooks` if you use Codex.
+5. Run `zn-gate check`. Every agent that is set up should say **OK**.
+
+Before you go back, look up your versions in
+[the table below](#what-each-release-asks-you-to-do): one row says not to go back
+to 1.7.1 in a zn Team organization with Warn rules. For the full removal steps,
+see [Remove zn-gate](uninstall.md).
+
 ## What each release asks you to do
 
 Versions from 1.8.0 on. "No action" means that updating the package is enough.
@@ -244,3 +296,9 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 If you are updating from a version older than 1.8.0, go through the rows of every
 release in between. Older releases are in the [changelog](../CHANGELOG.md).
+
+## Next steps
+
+- [Example: upgrade checklist](examples/upgrade-checklist.md) is a one-screen version of this page, with the steps to run before, during and after the update.
+- [Verifying a zn-gate release](verify-release.md) shows how to check the checksums, the signatures and the provenance of the zn-gate release you installed.
+- [Remove zn-gate](uninstall.md) explains how to remove zn-gate in one step, or piece by piece, if an update does not work out.

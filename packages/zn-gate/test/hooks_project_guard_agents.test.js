@@ -1,5 +1,10 @@
 'use strict';
+// Bash reads the account ~/.bashrc when its stdin is a socket (Node's piped stdio is one) and SHLVL is unset,
+// which is how bash treats a shell started by a remote daemon such as sshd. That file may set PATH, so skip it
+// with --norc --noprofile to keep the guard cases hermetic.
 process.env.ZN_STATS = 'off';
+// Only bash needs the flags; dash and sh are spawned exactly as before.
+const shellArgs = (sh) => (/(^|\/)bash$/.test(sh) ? ['--norc', '--noprofile'] : []);
 
 // Project installs (`zn hooks install <agent> --project`) share the hooks file through the repository, so the command names `zn`
 // on the PATH. A bare `zn hook <agent>` fails open when `zn` or Node.js cannot start (exit 127: every agent runs the call). Each
@@ -45,7 +50,7 @@ function shells() {
 
 // The agent runs the command through a shell.
 function run(command, bin, input = '{}') {
-  return spawnSync(whichSh(), ['-c', command], { input, encoding: 'utf8', env: { PATH: bin }, cwd: '/' });
+  return spawnSync(whichSh(), [...shellArgs(whichSh()), '-c', command], { input, encoding: 'utf8', env: { PATH: bin }, cwd: '/' });
 }
 
 // agent -> how the project install is made, which file it writes and where the commands are, and the blocking answer.
@@ -157,12 +162,12 @@ for (const agent of Object.keys(AGENTS)) {
         ['planted node first', mkbin(t, { shell, zn: 'echo ok' }) + ':.:' + withZn],
       ];
       for (const [name, PATH] of cases) {
-        const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
+        const r = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
         assert.ok(!/planted|^ok$/m.test(r.stdout), shell + ' ' + name + ': ' + r.stdout);
         assert.ok(blocked(r), shell + ' ' + name + ': ' + r.stdout + r.stderr);
       }
       for (const PATH of [withZn, withZn + '/']) {
-        const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
+        const r = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
         assert.equal(r.status, 0, shell + ' ' + PATH + ' ' + r.stderr);
         assert.match(r.stdout, /^ok$/m, shell + ' ' + PATH);
       }
@@ -183,7 +188,7 @@ test('the guard works with dash and bash as the outer shell', skip, (t) => {
   const shells = ['dash', 'bash'].map((n) => ['/bin', '/usr/bin'].map((d) => path.join(d, n)).find((f) => fs.existsSync(f))).filter(Boolean);
   assert.ok(shells.length >= 1);
   for (const shell of shells) {
-    const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH: mkbin(t, { node: true }) } });
+    const r = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: '{}', encoding: 'utf8', env: { PATH: mkbin(t, { node: true }) } });
     assert.equal(r.status, 2, shell);
     assert.match(r.stderr, /npm install -g zn-gate/);
   }
@@ -195,7 +200,7 @@ test('with the real zn hook behind it, the project command of each agent answers
   const bin = mkbin(t, { node: true, zn: 'exec "' + process.execPath + '" "' + RUNNER + '" "$2"' });
   const home = tempDir(t, 'zn-pg-real-');
   const read = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(home, '.ssh', 'id_rsa') }, cwd: home });
-  const r = spawnSync(whichSh(), ['-c', command], { input: read, encoding: 'utf8', env: { PATH: bin, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
+  const r = spawnSync(whichSh(), [...shellArgs(whichSh()), '-c', command], { input: read, encoding: 'utf8', env: { PATH: bin, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
   assert.match(r.stdout, /"permissionDecision":"deny"/, r.stdout + r.stderr);
   assert.match(r.stdout, /id_rsa|secrets/, r.stdout);
 });
@@ -281,11 +286,14 @@ test('check: a bare `zn hook` in a project file is reported as not protected; th
     getAdapter(agent).install({ scope: 'project', projectDir: proj, home, env: { HOME: home }, mcp: false, managedDir: path.join(home, 'no-managed-policy'), command: 'zn hook ' + agent });
     const env = { HOME: home, PATH: process.env.PATH };
     const find = (res) => res.results ? res.results.find((x) => x.id === agent) : (Array.isArray(res) ? res.find((x) => x.id === agent) : null);
-    const bare = find(await check({ home, env, cwd: proj }));
+    // Both answers come from the hook commands in the settings files, which are read without starting any hook. A live
+    // check starts the hook of every installed agent (slow on Windows) and gives the same answers, so only claude-code runs live here.
+    const live = agent === 'claude-code';
+    const bare = find(await check({ home, env, cwd: proj, live }));
     assert.equal(bare.state, 'not-protected', agent);
     assert.match(bare.problem, /bare `zn hook /, agent);
     assert.match(bare.fix, /--project/, agent);
-    const ok = find(await check({ home, env, cwd: guarded }));
+    const ok = find(await check({ home, env, cwd: guarded, live }));
     assert.equal(ok.state, 'project-only', agent);
     void spec;
   }

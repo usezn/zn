@@ -14,6 +14,7 @@ const { RULES, RANK } = require('../lib/audit/rules');
 const { parseToml, parseJsonc } = require('../lib/audit/parse');
 const P = require('../lib/audit/patterns');
 const { CVE_CASES, RULE_CASES, BENIGN_CASES, FAKE_GH_TOKEN, FAKE_AWS_KEY, ATTACKER } = require('./fixtures/audit_cases');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 
@@ -39,7 +40,14 @@ function describe(findings) {
 function runCase(t, c) {
   if (c.skipOn && c.skipOn.includes(process.platform)) { t.skip('not on ' + process.platform); return; }
   const dir = build(t, c.files, c.mode);
-  const res = audit({ root: dir, agents: c.agents || ['all'], env: {} });
+  let baselineHome;
+  if (c.approvedThen) {
+    baselineHome = tempDir(t, 'zn-audit-home-');
+    const bl = require('../lib/audit/baseline');
+    bl.saveBaseline(baselineHome, dir, bl.extractSurface(dir));
+    for (const [rel, content] of Object.entries(c.approvedThen)) fs.writeFileSync(path.join(dir, ...rel.split('/')), content);
+  }
+  const res = audit({ root: dir, agents: c.agents || ['all'], env: {}, baselineHome });
   const all = describe(res.findings);
   if (c.expectNone) {
     assert.equal(res.findings.length, 0, 'expected no findings, got:\n' + all);
@@ -446,6 +454,6 @@ test('patterns stay linear on long adversarial lines', () => {
     P.weakening(s);
     P.splitCommand(s);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 250, 'took ' + ms.toFixed(1) + ' ms on ' + JSON.stringify(s.slice(0, 30)));
+    assert.ok(ms < budget(250), 'took ' + ms.toFixed(1) + ' ms on ' + JSON.stringify(s.slice(0, 30)));
   }
 });

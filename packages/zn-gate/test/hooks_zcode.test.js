@@ -21,6 +21,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const { WIN, SH, fwd, shEnv } = require('./helpers/git_bash');
+const { winCmdRe } = require('./helpers/wincmd');
 
 const zc = getAdapter('zcode');
 const HOME = process.env.HOME || require('os').homedir(); // the fixtures name ~/.zn: the home zn itself uses (no HOME on Windows)
@@ -248,6 +249,8 @@ test('the secrets MCP server is zn\'s own only when the user config registers zn
   assert.equal(ev().ours, undefined);
   write(home, { mcp: { servers: { secrets: { type: 'stdio', command: 'zn', args: ['secrets-mcp', '--agent', 'zcode'] } } } });
   assert.equal(ev().ours, 'secrets');
+  assert.equal(zc.normalize(pre('mcp__secrets__x__secrets_list', {})).mcp.ours, undefined, 'a server named secrets__x is not the zn one');
+  assert.equal(zc.normalize(pre('mcp__secrets___secrets_list', {})).mcp.ours, undefined, 'a server named secrets_ is not the zn one');
   write(home, { mcp: { servers: { secrets: { type: 'stdio', command: 'zn', args: ['secrets-mcp'], enabled: false } } } });
   assert.equal(ev().ours, undefined, 'a disabled server is not what ran');
   assert.equal(zc.normalize(pre('mcp__other__secrets_list', {})).mcp.ours, undefined);
@@ -478,13 +481,13 @@ test('launcher: with the Node.js gone the events that can deny exit 2 with the r
     // ZCode starts a "process" hook with the file and its arguments, no shell.
     const r = spawnSync(h.command, h.args, { input: '{}', encoding: 'utf8', env: { PATH: bin, HOME: '/nonexistent' } });
     assert.equal(r.status, 2, ev);
-    assert.match(r.stderr, /zn hooks install zcode/);
+    assert.match(r.stderr, winCmdRe(/zn hooks install zcode/));
     assert.equal(r.stdout, '');
   }
   const post = data.hooks.events.PostToolUse[0].hooks[0];
   const r = spawnSync(post.command, post.args, { input: '{}', encoding: 'utf8', env: { PATH: bin, HOME: '/nonexistent' } });
   assert.equal(r.status, 0);
-  assert.match(JSON.parse(r.stdout).systemMessage, /NOT protecting this session.*zn hooks install zcode/);
+  assert.match(JSON.parse(r.stdout).systemMessage, winCmdRe(/NOT protecting this session.*zn hooks install zcode/));
 });
 
 test('launcher: with the recorded Node.js it runs the real hook, and a deny comes out as the PreToolUse JSON', (t) => {

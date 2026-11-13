@@ -9,3 +9,11 @@ extend-ignore-re = []
 rasie = "rasie"
 # Windows 8.3 short names used as test data for the protected-path checks (SETTIN~1.JSO is settings.json).
 SETTIN = "SETTIN"
+# Misspelled package name used as an example of a name that looks like a well-known one (docs/package-install-check.md).
+expresss = "expresss"
+# It is the Spanish imperative of "ignore" and appears inside a quoted Spanish example phrase.
+ignora = "ignora"
+# It is the German word for "your" and appears inside a quoted German example phrase.
+deine = "deine"
+# Misspelled secret name used as an example of a typo in a secret name (docs/secrets.md).
+EXMPLE = "EXMPLE"

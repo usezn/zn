@@ -22,20 +22,20 @@ const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix, skipUnlessPosixSh } = require('./helpers/posix_sh');
 const GONE = '/nonexistent/node-gone/bin/node';
 const REINSTALL = 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install claude-code`, in your own terminal';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion'];
 
 function setup(t, nodePath) {
-  const home = tempDir(t, 'zn-b95-');
+  const home = tempDir(t, 'zn-claude-launcher-');
   const env = { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   claude.install({ env, home, nodePath, runnerPath: RUNNER, mcp: false });
   const data = JSON.parse(fs.readFileSync(claude.settingsFile({ env, home }), 'utf8'));
   return { home, env, data, file: launcher.launcherFile('claude-code', { env, home }) };
 }
 
-function emptyBin(t) { return tempDir(t, 'zn-b95-bin-'); }
+function emptyBin(t) { return tempDir(t, 'zn-claude-launcher-bin-'); }
 
 function runLauncher(file, event, input, pathValue) {
   return spawnSync('/bin/sh', [file, event], { input, encoding: 'utf8', env: { PATH: pathValue, HOME: '/nonexistent' } });
@@ -45,7 +45,7 @@ function breakNode(file) {
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^ZN_NODE=.*$/m, "ZN_NODE='" + GONE + "'"));
 }
 
-test('claude-code install: a user install writes the launcher and one command per event', { skip: !posix }, (t) => {
+test('claude-code install: a user install writes the launcher and one command per event', { skip: skipUnlessPosixSh('fails on Windows today: the test expects the POSIX form of the launcher command and the file mode 0755, which differ there; not adapted yet') }, (t) => {
   const { data, file, home } = setup(t, process.execPath);
   assert.ok(file.startsWith(path.join(home, '.zn', 'hooks')), 'the launcher stays inside the temporary home');
   assert.equal(fs.statSync(file).mode & 0o777, 0o755);
@@ -66,7 +66,7 @@ test('claude-code install: a user install writes the launcher and one command pe
 
 test('claude-code launcher: with the recorded Node.js it runs the real hook and denies .env', { skip: !posix }, (t) => {
   const { file } = setup(t, process.execPath);
-  const dir = tempDir(t, 'zn-b95-proj-');
+  const dir = tempDir(t, 'zn-claude-launcher-proj-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk-test-EXAMPLE0000000000000000\n');
   const ev = { hook_event_name: 'PreToolUse', session_id: 's', cwd: dir, tool_name: 'Bash', tool_input: { command: 'cat .env' } };
   const r = runLauncher(file, 'PreToolUse', JSON.stringify(ev), process.env.PATH);
@@ -81,19 +81,19 @@ test('claude-code launcher: Node.js gone and no zn on PATH: PreToolUse and the p
     const r = runLauncher(file, ev, '{}', bin);
     assert.equal(r.status, 2, ev + ' exits 2 (Claude Code: exit code 2 blocks, stderr is the reason)');
     assert.match(r.stderr, /zn: its hook cannot start/);
-    assert.match(r.stderr, /zn hooks install claude-code/);
+    assert.match(r.stderr, /zn(?:\.cmd)? hooks install claude-code/);
     assert.doesNotMatch(r.stderr, /No such file|missing/, 'Claude Code treats an exit 2 that says a file is missing as non-blocking in some events');
     assert.equal(r.stdout, '');
   }
   // PostToolUse: the tool already ran, so it only warns the user.
   const post = runLauncher(file, 'PostToolUse', '{}', bin);
   assert.equal(post.status, 0);
-  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn hooks install claude-code/);
+  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn(?:\.cmd)? hooks install claude-code/);
 });
 
 test('claude-code launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: !posix }, (t) => {
   const { file } = setup(t, GONE);
-  const bin = tempDir(t, 'zn-b95-bin-');
+  const bin = tempDir(t, 'zn-claude-launcher-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\nprintf ok > "$ZN_HOOK_ACK"\n', { mode: 0o755 });
   const r = runLauncher(file, 'PreToolUse', '{}', bin);
@@ -113,7 +113,7 @@ test('claude-code: reinstall replaces the launcher, uninstall removes it; a proj
   claude.install({ env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   claude.uninstall({ env, home, mcp: false, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
-  const proj = tempDir(t, 'zn-b95-proj-');
+  const proj = tempDir(t, 'zn-claude-launcher-proj-');
   claude.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const pd = JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8'));
   assert.ok(launcher.isProjectGuard(pd.hooks.PreToolUse[0].hooks[0].command, 'claude-code'));
@@ -129,7 +129,7 @@ test('claude-code windows: the launcher path is written with forward slashes for
 test('check: the Node.js recorded in the launcher is gone and nothing else can run the hook: not protected', { skip: !posix }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
-  const r = (await check({ home, env: { ...env, PATH: emptyBin(t) }, cwd: tempDir(t, 'zn-b95-cwd-') })).results.find((x) => x.id === 'claude-code');
+  const r = (await check({ home, env: { ...env, PATH: emptyBin(t) }, cwd: tempDir(t, 'zn-claude-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /Node\.js \(\/nonexistent\/node-gone\/bin\/node\) is no longer there, so zn now blocks the tool calls/);
   assert.equal(r.fix, REINSTALL);
@@ -138,10 +138,10 @@ test('check: the Node.js recorded in the launcher is gone and nothing else can r
 test('check: the recorded Node.js is gone and only a zn on the PATH is left: not protected (the launcher does not run it)', { skip: !posix }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
-  const bin = tempDir(t, 'zn-b95-bin-');
+  const bin = tempDir(t, 'zn-claude-launcher-bin-');
   fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec "' + process.execPath + '" "' + RUNNER + '" "$2"\n', { mode: 0o755 });
-  const r = (await check({ home, env: { ...env, PATH: bin }, cwd: tempDir(t, 'zn-b95-cwd-') })).results.find((x) => x.id === 'claude-code');
+  const r = (await check({ home, env: { ...env, PATH: bin }, cwd: tempDir(t, 'zn-claude-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /Node\.js .* is no longer there, so zn now blocks/);
 });
@@ -149,7 +149,7 @@ test('check: the recorded Node.js is gone and only a zn on the PATH is left: not
 test('check: a launcher script that was deleted is reported', { skip: !posix }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   fs.unlinkSync(file);
-  const r = (await check({ home, env, cwd: tempDir(t, 'zn-b95-cwd-') })).results.find((x) => x.id === 'claude-code');
+  const r = (await check({ home, env, cwd: tempDir(t, 'zn-claude-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /launcher script .* is missing or was changed/);
 });

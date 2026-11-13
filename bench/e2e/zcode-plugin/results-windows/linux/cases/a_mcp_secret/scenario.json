@@ -1,0 +1,15 @@
+{
+ "steps": [
+  {
+   "tool": "echo",
+   "values": {
+    "command": "ls",
+    "description": "test",
+    "file_path": "/work/proj/a.txt",
+    "content": "ZN_WRITTEN",
+    "text": "token AKIAIOSFODNN7EXAMPLE"
+   }
+  }
+ ],
+ "final": "done"
+}

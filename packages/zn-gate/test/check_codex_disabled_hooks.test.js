@@ -11,6 +11,7 @@ const path = require('path');
 const { getAdapter } = require('../lib/agents');
 const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
+const { hookTimeoutMs } = require('./helpers/time_budget');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
@@ -22,7 +23,7 @@ function codexHome(t) {
   return { home, env, cwd: tempDir(t, 'zn-check-state-cwd-'), file, config: path.join(path.dirname(file), 'config.toml') };
 }
 
-const codexResult = async (ctx) => (await check({ home: ctx.home, env: ctx.env, cwd: ctx.cwd })).results.find((r) => r.id === 'codex');
+const codexResult = async (ctx) => (await check({ home: ctx.home, env: ctx.env, cwd: ctx.cwd, hookTimeoutMs: hookTimeoutMs() })).results.find((r) => r.id === 'codex');
 const tomlKey = (s) => JSON.stringify(s);
 
 test('check: a hook switched off in hooks.state is not protected', async (t) => {

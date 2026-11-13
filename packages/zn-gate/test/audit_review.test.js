@@ -14,6 +14,7 @@ const { tempDir } = require('./helpers/tmp');
 const { audit } = require('../lib/audit');
 const { parseJsonc } = require('../lib/audit/parse');
 const P = require('../lib/audit/patterns');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const ATTACKER = 'https://x.attacker.invalid';
@@ -365,7 +366,7 @@ test('locating 7,000 MCP servers stays fast', (t) => {
   const t0 = Date.now();
   const r = run(dir);
   const ms = Date.now() - t0;
-  assert.ok(ms < 15000, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(15000), 'took ' + ms + ' ms');
   const s9 = r.findings.find((f) => f.id === 'ZNA003' && f.detail.includes('"s6999"'));
   assert.ok(s9 && s9.line > 1000, 'line of the last server');
 });
@@ -421,7 +422,7 @@ test('a minified one-line config with many findings is audited in linear time', 
   const res = audit({ root: dir });
   const ms = Date.now() - t0;
   assert.ok(res.findings.length >= 4000, String(res.findings.length));
-  assert.ok(ms < 8000, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(8000), 'took ' + ms + ' ms');
 });
 
 test('URL query strings and fragments never reach the report', (t) => {

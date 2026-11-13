@@ -1,6 +1,6 @@
 [package]
 name = "zn"
-version = "1.15.0"
+version = "1.16.0-rc.1"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -8,6 +8,24 @@ authors = ["usezn <admin@usezn.com>"]
 homepage = "https://usezn.com"
 repository = "https://github.com/usezn/zn"
 description = "Local-first prompt-injection gate and active-defense proxy for AI agents. MCP-native."
+# Experimental and not distributed (see docs/rust-core.md). The name zn on crates.io belongs to an unrelated crate.
+publish = false
+# Publish only what the crate builds and tests from: sources, integration tests, and the
+# fixture files that src/ reads at compile time (outside src/, inside the repository).
+# Keeps evidence, captures, package sources and docs out of the .crate.
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/THIRD_PARTY_NOTICES.md",
+    "/src/**",
+    "/tests/**",
+    "/packages/zn-gate/test/fixtures/benign_phrases.json",
+    "/packages/zn-gate/test/fixtures/invisible_chars.json",
+    "/packages/zn-gate/test/fixtures/prompt_guard_tables.json",
+    "/packages/zn-gate/test/fixtures/scrub_validator_cases.json",
+]
 
 [[bin]]
 name = "zn"
@@ -21,13 +39,16 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
-tower-http = { version = "0.5", features = ["cors", "auth", "fs"] }
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
+tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
+# Already in the tree through axum; named here to run the management API with read timeouts.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
 wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
-rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
-cliclack = "0.2"
+cliclack = "0.5"
 regex = "1.10"
 uuid = { version = "1.6", features = ["v4"] }
 futures = "0.3"
@@ -35,7 +56,7 @@ dashmap = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
-tower_governor = "0.4"
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 aho-corasick = "1.1"
 reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
@@ -71,7 +92,7 @@ candle-onnx = "0.11"
 tokenizers = "0.22.2"
 # Official MCP SDK (modelcontextprotocol/rust-sdk). Pinned exact; Apache-2.0/MIT.
 # schemars needed directly: JsonSchema derive expands to `schemars::` paths.
-rmcp = { version = "=3.5.1", features = ["server", "macros", "schemars", "transport-io"] }
+rmcp = { version = "=3.9.0", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
 
 [target.'cfg(unix)'.dependencies]
@@ -80,10 +101,18 @@ libc = "0.2.189"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
+[dev-dependencies]
+# Property tests for the scrubber (tests/scrubber_properties.rs). Test-only: the shipped binary does not depend on it.
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,
 # so the crate must be a direct dependency even though no source line names it.
 ignored = ["schemars"]
+
+# gemm (via candle) still uses the unmaintained paste crate (RUSTSEC-2024-0436); route it to pastey.
+[patch.crates-io]
+paste = { path = "tools/paste-shim" }
 
 [profile.release]
 strip = true

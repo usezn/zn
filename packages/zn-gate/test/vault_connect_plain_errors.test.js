@@ -14,6 +14,7 @@ const { spawnSync } = require('child_process');
 const { tempDir } = require('./helpers/tmp');
 const m = require('../lib/messages');
 const { untilText } = require('../lib/vault/cli');
+const { winRe } = require('./helpers/wincmd');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const NPX = /npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?/;
@@ -84,7 +85,7 @@ test('lock and vault status with correct arguments still exit 0', (t) => {
   assert.match(lock.stdout, /Vault was not unlocked\./);
   const status = zn(home, ['vault', 'status']);
   assert.equal(status.status, 0, status.stderr);
-  assert.match(status.stdout, /Vault: not created yet \(run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\)\./);
+  assert.match(status.stdout, winRe(/Vault: not created yet \(run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\)\./));
 });
 
 /* ------------------- the command that works on this computer ------------------- */

@@ -6,7 +6,7 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
+1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
 2. **Install zn-gate and turn on its protection for Cursor.** Paste each line in the same terminal and press Enter after each one:
 
    ```bash
@@ -14,10 +14,10 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
    zn hooks install cursor
    ```
 
-   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead (not yet verified).
+   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead. That workaround was verified on Windows Server 2022 (PowerShell 5.1, with the execution policy set to Restricted, which is the default on Windows 10 and 11).
 3. **Restart Cursor.**
 
-Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically), and not at all on Windows.
+Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: hooks verified on Windows Server 2022 (PowerShell 5.1), where they block reads of `.env` files; the Cursor app itself not yet tested.
 
 Once it works, Cursor's agent is blocked from reading `.env` files with real values and common credential files (file reads and most shell commands), a secret zn-gate recognizes in your chat message is blocked before it is sent, and secrets it recognizes are removed from MCP tool results.
 
@@ -39,6 +39,21 @@ To undo it: `zn hooks uninstall cursor`.
 | Cursor CLI (`cursor-agent`) | Not covered: its hook support is not documented |
 
 **Not covered:** a secret printed by a shell command, or written in a file the agent reads that is not blocked, reaches the model. Keep secrets in zn-gate's vault (`zn unlock`, then `zn env shadow .env`) so your files hold markers instead of real values: see [Scrubber](https://usezn.com/docs/zn-gate/scrubber/). Hooks are a guardrail, not a sandbox.
+
+## Known limits
+
+These limits are stated on this page and in [compat.md](../compat.md):
+
+- Cursor does not let hooks change shell output or file contents, so zn-gate cannot remove secrets from them. A secret printed by a shell command, or in a file the agent reads that is not blocked, reaches the model.
+- `postToolUse` replaces the output of MCP tools only.
+- Support is best effort: Cursor does not document the input of every tool, so `preToolUse` checks writes and deletes as well as it can. A write whose file cannot be read is refused.
+- A Grep without a `path` searches the whole workspace, so files that zn would shadow or refuse can be found that way. zn does not filter those results.
+- A secret written inside inline code is checked only where zn can read the path as a word.
+- Only `beforeReadFile` and `beforeSubmitPrompt` fail closed. If the hook for an MCP call, a shell command or `preToolUse` crashes or times out, the call runs unchecked.
+- `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
+- MCP arguments over 1 MB are denied, because zn cannot check them.
+- The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.
+- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end, and the install steps are not verified on Windows.
 
 ## Technical reference
 
@@ -87,13 +102,18 @@ This checks the hooks. To check the MCP server too, restart Cursor and ask the a
 
 ## Uninstall
 
-In your own terminal:
+In your own terminal, in this order (the same order `npx -y zn-gate uninstall` uses):
 
-```bash
-zn hooks uninstall cursor
-```
+1. If you ran `npx -y zn-gate init --wrap-mcp`, put back the MCP settings files first: `npx -y zn-gate init --revert`. Do this before the next step: a saved copy put back after the hooks are removed could bring the zn-gate server back.
+2. Remove the hooks:
 
-If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first. To remove the MCP server, delete the `zn-gate` entry from the MCP settings file you edited in Install. If you ran `npx -y zn-gate init --wrap-mcp`, `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved before wrapping. See [Remove zn-gate](../uninstall.md).
+   ```bash
+   zn hooks uninstall cursor
+   ```
+
+   If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first.
+
+3. If you added the `zn-gate` MCP server by hand, delete its entry from the MCP settings file you edited in Install, then restart Cursor. See [Remove zn-gate](../uninstall.md).
 
 ## Troubleshooting
 
@@ -106,6 +126,6 @@ All messages: [Troubleshooting](../troubleshooting.md).
 
 ## Cursor documentation
 
-- MCP: <https://cursor.com/docs/context/mcp>
-- MCP install links: <https://cursor.com/docs/context/mcp/install-links>
+- MCP: <https://cursor.com/docs/mcp>
+- MCP install links: <https://cursor.com/docs/mcp/install-links>
 - Hooks: <https://cursor.com/docs/hooks>

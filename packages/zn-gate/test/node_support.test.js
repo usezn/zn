@@ -73,3 +73,16 @@ test('the end-of-life message lists every patched release', () => {
   const a = nodeAdvice('20.0.0');
   for (const min of Object.values(PATCHED_MINIMUM)) assert.ok(a.message.includes(min), min);
 });
+
+test('a call with no argument and strings that are not dotted numbers give no advice', () => {
+  assert.equal(nodeAdvice(), null);
+  for (const v of ['   ', 'latest', '22.x.1', 'v22.23.x', '22.23.', 'twenty.one.two', '-22.23.4']) assert.equal(nodeAdvice(v), null, v);
+});
+
+test('the advice for a version below the minimum has exactly the documented fields', () => {
+  const a = nodeAdvice('24.21.0');
+  assert.deepEqual(Object.keys(a).sort(), ['level', 'message', 'minimum', 'version']);
+  assert.equal(a.version, '24.21.0');
+  assert.equal(a.minimum, '24.22.1');
+  assert.equal(nodeAdvice('24.22.1'), null);
+});

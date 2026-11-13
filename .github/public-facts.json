@@ -1,7 +1,7 @@
 {
   "_comment": "Public facts of zn-gate, checked on every pull request by .github/scripts/check-public-facts.mjs. A release changes version.value in the same pull request as the manifests and the pinned docs.",
   "version": {
-    "value": "1.15.0",
+    "value": "1.16.0-rc.1",
     "files": [
       {
         "file": "packages/zn-gate/package.json",
@@ -72,6 +72,11 @@
         "why": "the release that added the experimental Gemini CLI and GitHub Copilot CLI adapters (not a pin)"
       },
       {
+        "file": "docs/editors/gemini.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the minimum version for the experimental Gemini CLI hooks, which 1.14.0 added (not a pin)"
+      },
+      {
         "file": "docs/editors/cursor.md",
         "pin": "zn-gate 1.14.0",
         "why": "the release that removed the Cursor plugin (not a pin)"
@@ -100,6 +105,11 @@
         "file": "docs/team.md",
         "pin": "zn-gate 1.8.0",
         "why": "first zn-gate version with the Team Warn choice; matches the version once 1.8.0 is released"
+      },
+      {
+        "file": "docs/examples/vault-status-reading.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "sample status of a vault started by an older release, which zn reports as outdated (not a pin)"
       }
     ]
   },
@@ -115,7 +125,7 @@
   },
   "examplesVersion": {
     "_comment": "The release the examples pin: always one that is published on npm and PyPI. It moves after a release is published (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
-    "value": "1.15.0-rc.1",
+    "value": "1.15.0",
     "files": [
       {
         "file": "examples/ag2-agent/requirements.txt",
@@ -188,7 +198,7 @@
         "packages/zn-gate/package.json"
       ],
       "must": [
-        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app"
+        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot"
       ]
     },
     {
@@ -197,7 +207,7 @@
         "README.md"
       ],
       "must": [
-        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app"
+        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot"
       ]
     },
     {
@@ -240,6 +250,36 @@
     }
   ],
   "fields": [
+    {
+      "id": "short description (npm)",
+      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default; the optional cloud check uses the Galvanize 3 classifier.",
+      "files": [
+        {
+          "file": "packages/zn-gate/package.json",
+          "json": "description"
+        }
+      ]
+    },
+    {
+      "id": "short description (PyPI)",
+      "value": "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate-py/pyproject.toml",
+          "regex": "^description = \"([^\"]+)\""
+        }
+      ]
+    },
+    {
+      "id": "short description (MCP Registry)",
+      "value": "The local security layer for coding agents. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate/server.json",
+          "json": "description"
+        }
+      ]
+    },
     {
       "id": "license",
       "value": "MIT",

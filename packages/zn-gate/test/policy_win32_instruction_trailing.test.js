@@ -8,6 +8,7 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const policy = require('../lib/hooks/policy');
+const { budget } = require('./helpers/time_budget');
 
 function asWindows(fn) {
   const real = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -133,7 +134,7 @@ test('win32: many short folders after .cursor/rules still ask, and a long path s
     policy.instructionWriteNotice(long, O);
     policy.instructionWriteNotice(plain, O);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2000, 'took ' + ms + ' ms');
+    assert.ok(ms < budget(2000), 'took ' + ms + ' ms');
     assert.equal(policy.instructionWriteNotice(plain, O), null);
   });
 });

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zn-gate"
-version = "1.15.0"
-description = "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies."
+version = "1.16.0rc1"
+description = "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies. No account, and nothing is sent by default."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -42,7 +42,7 @@ dependencies = []
 
 [project.optional-dependencies]
 # Only for the tests that run the integrations through the real frameworks.
-test-frameworks = ["langchain-core>=1.3.3,<2", "llama-index-core>=0.14,<0.15"]
+test-frameworks = ["langchain-core>=1.3.3,<2", "llama-index-core>=0.14.25,<0.15"]
 
 [project.urls]
 Homepage = "https://usezn.com"

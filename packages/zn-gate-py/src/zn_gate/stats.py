@@ -8,7 +8,8 @@ opt-in sharing of pseudonymous daily counts is managed with the npm package (`np
 import datetime
 import json
 import os
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 KEEP_DAYS = 90
 LAYER_NAMES = {
@@ -20,10 +21,14 @@ LAYER_NAMES = {
 }
 
 
-def stats_file() -> str:
+def zn_home() -> str:
+    """~/.zn, or the folder ZN_HOME names (the same rule as the npm package)."""
     home = os.environ.get("ZN_HOME")
-    base = os.path.abspath(home) if home else os.path.join(os.path.expanduser("~"), ".zn")
-    return os.path.join(base, "stats.json")
+    return os.path.abspath(home) if home else os.path.join(os.path.expanduser("~"), ".zn")
+
+
+def stats_file() -> str:
+    return os.path.join(zn_home(), "stats.json")
 
 
 def load(path: Optional[str] = None) -> Dict[str, Any]:
@@ -40,7 +45,7 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
 def _num(v: Any) -> int:
     try:
         n = int(v or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
     return n if n > 0 else 0
 
@@ -73,7 +78,33 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
             "events": dict(data.get("events") or {})}
 
 
-def render(s: Dict[str, Any]) -> str:
+_CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_ESCAPE_RE = re.compile("\x1b\\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _label(v: Any) -> str:
+    """A label read from the stats file, made safe to print: escape sequences and control characters become spaces."""
+    return _CONTROL_RE.sub(" ", _ESCAPE_RE.sub(" ", str(v)[:4096]))
+
+
+TOP_RULES_DAYS = 7
+TOP_RULES_LIMIT = 5
+GENERIC_RULE_NAME = "Built-in detector"
+WHY_HINT = "To understand a block, see https://usezn.com/docs/zn-gate/troubleshooting/"
+# The same shape the npm package accepts for a detector id (lib/stats.js TYPE_RE): upper case, digits, underscores.
+DETECTOR_ID_RE = re.compile(r"[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?")
+
+
+def top_rules(days: int = TOP_RULES_DAYS, limit: int = TOP_RULES_LIMIT, now: Optional[datetime.date] = None,
+              path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Most frequent detector ids over the last `days` days: ids and counts only, highest count first, ties by id."""
+    dets = summary(days=days, now=now, path=path)["detections"]
+    items = sorted(((t, n) for t, n in dets.items() if n > 0 and DETECTOR_ID_RE.fullmatch(t)),
+                   key=lambda kv: (-kv[1], kv[0]))[:limit]
+    return [{"id": t, "name": GENERIC_RULE_NAME, "count": n} for t, n in items]
+
+
+def render(s: Dict[str, Any], top: Optional[Dict[str, Any]] = None) -> str:
     t = s["total"]
     lines = ["zn-gate on this machine, last {} day{}{}:".format(
         s["days"], "" if s["days"] == 1 else "s", " (counting since {})".format(s["since"]) if s["since"] else ""), ""]
@@ -88,14 +119,22 @@ def render(s: Dict[str, Any]) -> str:
         types = sorted(s["detections"].items(), key=lambda kv: -kv[1])[:8]
         if types:
             lines.append("")
-            lines.append("  Secret types found: " + ", ".join("{} {:,}".format(k, n) for k, n in types))
+            lines.append("  Secret types found: " + ", ".join("{} {:,}".format(_label(k), n) for k, n in types))
+        rules = (top or {}).get("rules") or []
+        if rules:
+            d = (top or {})["days"]
+            lines.append("")
+            lines.append("  Top rules, last {} day{}:".format(d, "" if d == 1 else "s"))
+            for r in rules:
+                lines.append("    {}  {}  {:,}".format(r["id"], r["name"], r["count"]))
+            lines.append("  Most frequent: {}. {}".format(rules[0]["id"], WHY_HINT))
         if s["byKey"]:
             lines.append("")
             lines.append("  By agent:")
             for key, c in sorted(s["byKey"].items(), key=lambda kv: -kv[1]["checked"]):
                 layer, _, agent = key.partition(":")
                 lines.append("    {} ({}): {:,} events, {:,} blocked, {:,} replaced".format(
-                    agent, LAYER_NAMES.get(layer, layer), c["checked"], c["blocked"], c["redacted"]))
+                    _label(agent), _label(LAYER_NAMES.get(layer, layer)), c["checked"], c["blocked"], c["redacted"]))
     lines.append("")
     lines.append("  These counts stay on this machine. Sharing pseudonymous daily counts is opt-in: `npx zn-gate stats share show`.")
     return "\n".join(lines) + "\n"

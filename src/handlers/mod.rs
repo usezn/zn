@@ -9,3 +9,6 @@ pub mod websocket;
 
 #[cfg(test)]
 mod limits_tests;
+
+#[cfg(test)]
+mod framing_tests;

