@@ -12,7 +12,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const agy = getAdapter('antigravity');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' };
 const hooksPath = (home) => path.join(home, '.gemini', 'config', 'hooks.json');
 const cmdOf = (home) => JSON.parse(fs.readFileSync(hooksPath(home), 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
 const quote = (c) => c.replace(/^(\S+) (\w+)$/, "'$1' $2");

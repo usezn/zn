@@ -339,7 +339,7 @@ test('secrets_render_file: only new files inside the project are written without
   assert.ok(!fs.existsSync(path.join(elsewhere, 'z.rc')));
 });
 
-test('secrets_render_file: a directory swapped for a link before the file is opened writes nothing outside', { skip: process.platform === 'win32' }, async (t) => {
+test('secrets_render_file: a directory swapped for a link before the file is opened writes nothing outside', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, async (t) => {
   const base = tempDir(t, 'zn-render-race-');
   const dir = path.join(base, 'proj');
   const elsewhere = path.join(base, 'elsewhere');
@@ -400,7 +400,7 @@ test('secrets_render_file: the approved location is checked again after the user
   assert.equal(vault.fileConfirmations[0].file, path.join(fs.realpathSync(first), 'x.rc'));
 });
 
-test('secrets_render_file: an approved overwrite replaces the file in place with mode 0600', { skip: process.platform === 'win32' }, async (t) => {
+test('secrets_render_file: an approved overwrite replaces the file in place with mode 0600', { skip: process.platform === 'win32' && 'POSIX file modes' }, async (t) => {
   const base = tempDir(t, 'zn-render-over-');
   const dir = path.join(base, 'proj');
   const elsewhere = path.join(base, 'elsewhere');

@@ -32,7 +32,7 @@ function fakeProgram(dir, name, marker) {
   return dir;
 }
 
-test('trustedPath drops entries in the project, its work tree, CLAUDE_PROJECT_DIR and node_modules, and keeps the home folder', { skip: !POSIX }, (t) => {
+test('trustedPath drops entries in the project, its work tree, CLAUDE_PROJECT_DIR and node_modules, and keeps the home folder', { skip: !POSIX && 'fake sh programs on a POSIX PATH' }, (t) => {
   const { home, proj } = project(t);
   const other = tempDir(t, 'zn-trust-agentproj-');
   const nm = path.join(tempDir(t, 'zn-trust-nm-'), 'node_modules', '.bin');
@@ -49,7 +49,7 @@ test('trustedPath drops entries in the project, its work tree, CLAUDE_PROJECT_DI
   assert.deepEqual(exe.trustedPath([homeBin, '/usr/bin'].join(':'), home, { HOME: home }).split(':'), [homeBin, '/usr/bin']);
 });
 
-test('findProgram skips a program in the project bin/ and one that links into the project', { skip: !POSIX }, (t) => {
+test('findProgram skips a program in the project bin/ and one that links into the project', { skip: !POSIX && 'fake sh programs on a POSIX PATH' }, (t) => {
   const { home, proj, marker } = project(t);
   const projBin = fakeProgram(path.join(proj, 'bin'), 'git', marker);
   const linkDir = tempDir(t, 'zn-trust-linkdir-');
@@ -62,7 +62,7 @@ test('findProgram skips a program in the project bin/ and one that links into th
   assert.equal(fs.existsSync(marker), false);
 });
 
-test('a hook checking git status never starts the project git (gitStatusOf from the project folder)', { skip: !POSIX }, (t) => {
+test('a hook checking git status never starts the project git (gitStatusOf from the project folder)', { skip: !POSIX && 'fake sh programs on a POSIX PATH' }, (t) => {
   const { home, proj, marker } = project(t);
   const projBin = fakeProgram(path.join(proj, 'bin'), 'git', marker);
   fs.writeFileSync(path.join(proj, 'src', 'a.txt'), 'x');
@@ -77,7 +77,7 @@ test('a hook checking git status never starts the project git (gitStatusOf from 
   assert.equal(fs.existsSync(marker), false, 'gitStatusOf started the git of the project');
 });
 
-test('zn-gate shield never starts an MCP server program from the project bin/', { skip: !POSIX }, (t) => {
+test('zn-gate shield never starts an MCP server program from the project bin/', { skip: !POSIX && 'fake sh programs on a POSIX PATH' }, (t) => {
   const { home, proj, marker } = project(t);
   const projBin = fakeProgram(path.join(proj, 'bin'), 'zn-fake-mcp-server', marker);
   const r = spawnSync(process.execPath, [CLI, 'shield', '--', 'zn-fake-mcp-server'], {

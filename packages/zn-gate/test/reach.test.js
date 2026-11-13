@@ -266,7 +266,7 @@ test('an incomplete check never says that nothing needs fixing', () => {
   assert.match(s, /Some files were not checked in time/);
 });
 
-test('a .env that is a link is reported, not read', { skip: process.platform === 'win32' }, async (t) => {
+test('a .env that is a link is reported, not read', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, async (t) => {
   const m = machine(t, { secrets: false });
   const outside = path.join(m.home, 'elsewhere.env');
   fs.writeFileSync(outside, 'OPENAI_API_KEY=' + FAKES[0] + '\n');
@@ -388,7 +388,7 @@ test('zn-gate reach on the command line: --json, and usage errors exit 2', (t) =
   assert.equal(spawnSync(process.execPath, [CLI, 'reach', path.join(m.root, 'missing')], { encoding: 'utf8', env }).status, 2);
 });
 
-test('a name with a newline or invisible characters cannot start a fake line in the report', { skip: process.platform === 'win32' }, async (t) => {
+test('a name with a newline or invisible characters cannot start a fake line in the report', { skip: process.platform === 'win32' && 'Windows file names cannot hold a newline' }, async (t) => {
   const m = machine(t, { secrets: false });
   const FAKE = '\nHIGH fake finding\r\nNothing to fix.\u2028HIGH other\u200b\u200c\u200d\u2060\u2064\ufeff\u{e0041}\u{e007f}\t.';
   fs.writeFileSync(path.join(m.root, '.mcp.json'), JSON.stringify({ mcpServers: {
@@ -449,7 +449,7 @@ test('--remember ignores a memory file bigger than 1 MiB, without failing', asyn
   assert.ok(fs.statSync(file).size < 1024 * 1024, 'the file is replaced by a small one');
 });
 
-test('--remember never waits on a pipe or a device standing in for the memory file', { skip: process.platform === 'win32' }, async (t) => {
+test('--remember never waits on a pipe or a device standing in for the memory file', { skip: process.platform === 'win32' && 'named pipes (FIFOs) in the file system' }, async (t) => {
   for (const kind of ['fifo', 'zero']) {
     const m = machine(t, { found: ['.cursor'] });
     const env = { ...m.env, ZN_STATS: 'off' };

@@ -231,7 +231,7 @@ for (const [label, bad] of [['not hex', 'z'.repeat(64)], ['upper case', 'A'.repe
 
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-test('a log that is readable but not writable: warns, writes nothing, does not throw', { skip: process.platform === 'win32' || isRoot }, () => {
+test('a log that is readable but not writable: warns, writes nothing, does not throw', { skip: (process.platform === 'win32' && 'POSIX file modes') || (isRoot && 'root can write any file') }, () => {
   const { dir, file } = tmpLedger();
   try {
     fs.chmodSync(file, 0o400);
@@ -254,7 +254,7 @@ test('a log that is readable but not writable: warns, writes nothing, does not t
   }
 });
 
-test('a directory that cannot be written: warns, does not throw', { skip: process.platform === 'win32' || isRoot }, () => {
+test('a directory that cannot be written: warns, does not throw', { skip: (process.platform === 'win32' && 'POSIX file modes') || (isRoot && 'root can write any file') }, () => {
   const { dir } = tmpLedger(0);
   const sub = path.join(dir, 'ro');
   try {
@@ -540,7 +540,7 @@ test('a lock dated in the future counts as stale', () => {
   }
 });
 
-test('a lock path that cannot be read does not spin the CPU while waiting', { skip: process.platform === 'win32' }, () => {
+test('a lock path that cannot be read does not spin the CPU while waiting', { skip: process.platform === 'win32' && 'POSIX file modes' }, () => {
   const { dir, file } = tmpLedger(1);
   try {
     fs.symlinkSync(path.join(dir, 'missing-target'), file + '.lock');

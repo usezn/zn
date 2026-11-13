@@ -72,7 +72,7 @@ function enableIn(home) {
   return JSON.parse(res.stdout.trim());
 }
 
-test('the compile cache lives under ZN_HOME, closed to other users', { skip: process.platform === 'win32' }, () => {
+test('the compile cache lives under ZN_HOME, closed to other users', { skip: process.platform === 'win32' && 'POSIX folder modes' }, () => {
   const home = path.join(tmp(), 'zhome');
   fs.mkdirSync(home, { mode: 0o700 });
   const dir = enableIn(home);
@@ -84,14 +84,14 @@ test('the compile cache lives under ZN_HOME, closed to other users', { skip: pro
   }
 });
 
-test('the compile cache is skipped when the directory is open to other users', { skip: process.platform === 'win32' }, () => {
+test('the compile cache is skipped when the directory is open to other users', { skip: process.platform === 'win32' && 'POSIX folder modes' }, () => {
   const home = path.join(tmp(), 'zhome');
   fs.mkdirSync(path.join(home, 'cache', 'compile'), { recursive: true, mode: 0o700 });
   fs.chmodSync(path.join(home, 'cache', 'compile'), 0o777);
   assert.equal(cc.enable({ ZN_HOME: home }), null);
 });
 
-test('the compile cache is skipped when its directory is a link, or when turned off', { skip: process.platform === 'win32' }, () => {
+test('the compile cache is skipped when its directory is a link, or when turned off', { skip: process.platform === 'win32' && 'POSIX folder modes and symbolic links' }, () => {
   const base = tmp();
   const elsewhere = path.join(base, 'elsewhere');
   fs.mkdirSync(elsewhere, { mode: 0o700 });
