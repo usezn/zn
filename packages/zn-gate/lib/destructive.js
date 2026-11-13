@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-12.1';
+const COMMAND_RULES_VERSION = '2026-11-13.3';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -58,7 +58,10 @@ const DISK_TOOLS = /^(?:mkfs(?:\.[a-z0-9]+)?|mke2fs|mkswap|wipefs|shred|blkdisca
 const FIND_TESTS = /^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$/;
 // Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 const SHELL_KEYWORDS = new Set(['{', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!']);
-const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', '-U', '-D', '-R']);
+const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', '-U', '-D', '-R', '--user', '--group', '--host', '--prompt',
+  '--close-from', '--other-user', '--role', '--type', '--command-timeout', '--chroot']);
+// More words than this that could each be the command behind an unsure wrapper chain: the line is refused, not guessed at.
+const LATER_HEADS_MAX = 64;
 
 const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib32', '/lib64', '/opt', '/proc', '/root',
   '/sbin', '/srv', '/sys', '/usr', '/var', '/Users', '/System', '/Library', '/Applications', '/private', '/Volumes']);
@@ -331,6 +334,10 @@ function unwrapDir(args) {
   const dirs = [];
   const splits = [];
   let overflow = false;
+  // Set when the chain may not end on the program (see policy.skipWrapper): the caller also reads the later words.
+  const chain = { unsure: false };
+  // Where the first wrapper starts: when the chain is unsure, the words it skipped as option values are read as commands too.
+  let first = -1;
   for (let guard = 0; i < args.length; guard++) {
     // Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
     // So are the words that only introduce a command: function NAME { ...; } (the body is read like any other commands,
@@ -347,6 +354,7 @@ function unwrapDir(args) {
     const name = programName(a);
     // The guard is used up and the next word is still a wrapper: the rest cannot be read, so the line is refused.
     if (guard >= 32) { overflow = WRAPPERS.has(name) || policyModule().WRAPPER_NAMES.has(name); break; }
+    if (first < 0 && (name === 'sudo' || name === 'doas' || name === 'env' || policyModule().WRAPPER_NAMES.has(name))) first = i;
     if (name === 'sudo' || name === 'doas') {
       i++;
       while (i < args.length && args[i].startsWith('-')) {
@@ -354,7 +362,9 @@ function unwrapDir(args) {
         if (f === '-D' || f === '--chdir') { addDir(dirs, args[i++]); continue; }
         if (/^-D./.test(f)) { addDir(dirs, f.slice(2)); continue; }
         if (f.startsWith('--chdir=')) { addDir(dirs, f.slice(8)); continue; }
-        if (SUDO_ARG_FLAGS.has(f)) i++;
+        if (SUDO_ARG_FLAGS.has(f)) { i++; continue; }
+        // A flag zn does not know may take a value (a cluster such as -Eu root, a newer option).
+        if (!/^--[^=]+=/.test(f)) chain.unsure = true;
       }
       continue;
     }
@@ -370,12 +380,12 @@ function unwrapDir(args) {
     // Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
     const P = policyModule();
     if (P.WRAPPER_NAMES.has(name)) {
-      i = P.skipWrapper(args, i, name);
+      i = P.skipWrapper(args, i, name, chain);
       continue;
     }
     break;
   }
-  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow };
+  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow, unsure: chain.unsure, all: first >= 0 ? args.slice(first) : args };
 }
 
 /* The words of a command after wrappers and shell keywords. */
@@ -548,6 +558,33 @@ function checkSimple(words, depth, known) {
     if (hit) return hit;
   }
   if (!args.length) return null;
+  const hit = checkHead(args, depth, known);
+  if (hit || !un.unsure) return hit;
+  // From the first wrapper on, so a word skipped as an option's value is read as a possible command as well.
+  return checkLaterHeads(un.all, depth, known);
+}
+
+/* Whether the rules below read a command with this program name as its head. */
+function headIsRead(name) {
+  return RM_HEADS.has(name) || DISK_TOOLS.test(name) || SHELLS.has(name) || POWERSHELLS.has(name) || name === 'su' || name === 'eval' ||
+    name === 'cmd' || name === 'find' || name === 'chmod' || name === 'chown' || name === 'chgrp' || name === 'dd' || Boolean(interpreterKind(name));
+}
+
+/* A wrapper chain that may not end on the program (an option zn does not know may have taken the next word as its value):
+   each later word that names a program these rules read is checked as the head too, so the option cannot hide the command. */
+function checkLaterHeads(args, depth, known) {
+  let n = 0;
+  for (let j = 1; j < args.length; j++) {
+    if (!headIsRead(programName(args[j]))) continue;
+    if (++n > LATER_HEADS_MAX) return OVERFLOW;
+    const hit = checkHead(args.slice(j), depth, known);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/* The rules for one simple command whose head is args[0]. */
+function checkHead(args, depth, known) {
   const head = programName(args[0]);
   const rest = args.slice(1);
 
@@ -667,10 +704,22 @@ function segmentDir(known, dir) {
   return dir === null ? known : inDir(known, dir);
 }
 
+/* The words of a pipeline segment from its program on. When the wrapper chain may not end on the program (unwrapDir's
+   unsure) and its head is not a downloader, shell or interpreter, the first later word that is one starts it
+   (curl URL | nice --adj 5 sh). */
+function pipeArgs(un) {
+  const a = un.args;
+  if (!un.unsure || a.length < 2) return a;
+  const isProg = (w) => { const n = programName(w); return DOWNLOADERS.has(n) || SHELLS.has(n) || Boolean(interpreterKind(n)); };
+  if (isProg(a[0])) return a;
+  const j = a.findIndex((w, i) => i > 0 && isProg(w));
+  return j > 0 ? a.slice(j) : a;
+}
+
 function checkPipeline(pipe, known = null) {
   const heads = pipe.map((s) => {
     const un = unwrapDir(stripRedirects(s.words));
-    const a = un.args;
+    const a = pipeArgs(un);
     const alts = a.length ? braceAlts(a[0]) : [''];
     const names = (alts || [String(a[0])]).map(programName);
     return { args: a, head: names[0], names, overflow: alts === null, dir: segmentDir(known, un.dir) };

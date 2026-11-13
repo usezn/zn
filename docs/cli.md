@@ -116,7 +116,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
 | `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
 | `ZN_BLOCK_DESTRUCTIVE=1` | Two rules on (`rm_root_home`, `disk_overwrite`) | `1` turns on all six destructive-command rules. | npm |
-| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` (or in `$ZN_HOME/config.json` when `ZN_HOME` is set). | npm |
+| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` in your operating-system account's home folder. A `config.json` in the folder `ZN_HOME` (or `HOME`) points to can only add protection: settings that turn a check off or turn on a network lookup are not read from there. | npm |
 | `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
 | `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. `1` does the same. The environment can only add offline mode: `online` is read as offline. | npm |
 | `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |

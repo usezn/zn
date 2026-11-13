@@ -59,12 +59,76 @@ const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'ls
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
-function readConfig(home) {
+function readConfigIn(dir) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(home ? path.join(home, '.zn') : require('../stats').znHome(), 'config.json'), 'utf8')) || {};
+    return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) || {};
   } catch (_) {
     return {};
   }
+}
+
+/*
+ * The hook settings. With `home` (tests, and callers that name the home folder) they come from that folder's .zn.
+ * Otherwise from the .zn folder of the operating-system account (stats.userHome(), which HOME, USERPROFILE and ZN_HOME
+ * cannot move). The zn folder that ZN_HOME or HOME names (stats.znHome()), when it is another folder, may only add
+ * protection (see tightenHooks): a project can set those variables for the agent, so a config.json it ships there must
+ * not turn a check off or turn on a network lookup.
+ */
+function readConfig(home) {
+  if (home) return readConfigIn(path.join(home, '.zn'));
+  const stats = require('../stats');
+  const own = stats.userHome();
+  const base = own ? readConfigIn(own) : {};
+  const zn = stats.znHome();
+  if (own && path.resolve(zn) === path.resolve(own)) return base;
+  const extra = readConfigIn(zn);
+  if (!extra || typeof extra.hooks !== 'object' || extra.hooks === null) return base;
+  const baseHooks = base && typeof base.hooks === 'object' && base.hooks !== null ? base.hooks : {};
+  return Object.assign({}, base, { hooks: tightenHooks(baseHooks, extra.hooks) });
+}
+
+const LEVEL = { off: 0, ask: 1, deny: 2 };
+
+/* The level of agentInstructionWrites or egressCheck a hooks object sets: off, ask (the default) or deny. */
+function levelOf(v, strict) {
+  const s = String(v === undefined || v === null ? '' : v).toLowerCase();
+  if (v === false || s === 'off' || s === 'allow') return 'off';
+  if (s === 'deny' || strict === true) return 'deny';
+  return 'ask';
+}
+
+/*
+ * The account's hook settings with what `extra` (a config.json the environment points at) adds: only values that protect
+ * more are taken from it. The scrubber engine missing denies (whenUnavailable deny or a failMode other than open);
+ * blockDestructiveCommands true or a list adds rules; agentInstructionWrites, egressCheck and strict raise the level;
+ * checkToolOutputInstructions true, packageInstallCheck offline (never online: that sends package names out),
+ * stopReview block and replaceToolOutputOnSecret true. Everything else in it, and every value that relaxes, is ignored.
+ */
+function tightenHooks(base, extra) {
+  const h = Object.assign({}, base);
+  const low = (v) => String(v === undefined || v === null ? '' : v).toLowerCase();
+  if (low(extra.whenUnavailable) === 'deny' || (extra.failMode !== undefined && low(extra.failMode) !== 'open')) {
+    h.whenUnavailable = 'deny';
+    h.failMode = 'closed';
+  }
+  const z = extra.blockDestructiveCommands;
+  if (z === true) h.blockDestructiveCommands = true;
+  else if (Array.isArray(z) && h.blockDestructiveCommands !== true) {
+    const cur = h.blockDestructiveCommands;
+    const from = Array.isArray(cur) ? cur : (cur === false ? [] : require('../destructive').DEFAULT_RULES);
+    h.blockDestructiveCommands = Array.from(new Set(from.concat(z.filter((r) => typeof r === 'string'))));
+  }
+  if (extra.strict === true) h.strict = true;
+  const writes = levelOf(extra.agentInstructionWrites, extra.strict);
+  if (LEVEL[writes] > LEVEL[levelOf(h.agentInstructionWrites, h.strict)]) h.agentInstructionWrites = writes;
+  const egress = levelOf(extra.egressCheck);
+  if (LEVEL[egress] > LEVEL[levelOf(h.egressCheck)]) h.egressCheck = egress;
+  if (extra.checkToolOutputInstructions === true) h.checkToolOutputInstructions = true;
+  const pkg = require('../package-check-settings');
+  if (pkg.modeOf(extra.packageInstallCheck) === 'offline' && pkg.modeOf(h.packageInstallCheck) === 'off') h.packageInstallCheck = 'offline';
+  if (low(extra.stopReview) === 'block') h.stopReview = 'block';
+  if (extra.replaceToolOutputOnSecret === true) h.replaceToolOutputOnSecret = true;
+  return h;
 }
 
 /*
@@ -1415,12 +1479,16 @@ function decideConfigChange(ev, opts) {
   if (typeof file !== 'string' || !path.isAbsolute(file) || !/(^|[\\/])\.claude[\\/][^\\/]+$/.test(file)) return { decision: 'allow' };
   const root = path.dirname(path.dirname(file));
   let result;
-  try {
-    result = auditSettings(root, path.relative(root, file).split(path.sep).join('/'));
-  } catch (_) {
-    return { decision: 'allow' };
-  }
   const rel = path.relative(root, file).split(path.sep).join('/');
+  try {
+    result = auditSettings(root, rel);
+  } catch (_) {
+    // The audit could not run on the file: the change is not applied unchecked (the baseline treats a failed audit the same way).
+    return {
+      decision: 'deny', kinds: ['config-change-unchecked'],
+      message: 'zn: this change to ' + rel + ' was not applied: zn could not check this settings change. Run `zn audit` to see the file, fix it if needed, and save it again.',
+    };
+  }
   const critical = (result.findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel);
   const sf = seenFile(ev, 'config-change', opts);
   const prev = readSeen(sf);
