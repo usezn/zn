@@ -1,2 +1,0 @@
-### Security
-- `zn-gate uninstall` keeps the shared Claude Code hook launcher script whenever it cannot check every profile: if the home folder cannot be listed, or a hooks file cannot be read for any reason other than not existing, the launcher stays and the output says why, instead of treating the unreadable file as one that does not use it. Only folders count as Claude Code profiles, so `~/.claude.json` and its backups no longer keep the launcher for good; a link to a profile folder is followed, and a link that cannot be followed keeps the launcher.

@@ -1,2 +1,0 @@
-### Added
-- `zn-gate check` in the Python package runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints OK only if the secret is blocked or redacted and the harmless text passes (exit 1 otherwise). It needs no Node.js, sends nothing and never prints the fake secret in full. It covers the Python guard only: for agent hooks, run `npx -y zn-gate check`.

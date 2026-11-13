@@ -1,3 +1,0 @@
-### Changed
-- When an agent sends zn data in a shape this version does not know (a renamed field, a new event name, a different tool name), the message now says the format probably changed and gives the update command (`npm install -g zn-gate@latest`, then `zn hooks install <agent>`; for the Claude Code plugin, `claude plugin update zn-gate@usezn`).
-- An event with an unknown name, or valid JSON wrapped in a shape zn does not know, is now blocked on the hooks that can block (a tool call before it runs, a prompt) in Claude Code, Codex CLI, ZCode and Cursor, with that message. Hooks that cannot block, GitHub Copilot CLI and OpenCode still let it through with a note on the hook error output. Run `zn hooks install <agent>` to get the new hook launcher.

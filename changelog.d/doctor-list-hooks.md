@@ -1,2 +1,0 @@
-### Added
-- `zn-gate check --hooks` (also `doctor --hooks`) lists every installed zn hook, with its agent, settings file, event and the command it runs, and says whether each is OK, stale (written by an older zn-gate) or broken (cannot run, is turned off, is written twice, or is in a settings file zn cannot read), with the command that fixes it. It only reads files: nothing is run, changed or sent.

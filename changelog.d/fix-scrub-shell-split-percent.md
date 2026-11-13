@@ -1,3 +1,0 @@
-### Fixed
-- The scrubber now redacts a secret split by shell quoting (`AKIA""rest`, `'AKIA''rest'`, `key='part''part'`) and a secret written with percent-encoding (`%41KIA...`, `api_key=%66ake...`, `api_key%3Dvalue`). Detection also runs on a decoded view of the text and the whole original word or encoded value is replaced. Ordinary quoted strings and `%20` in URLs are left as they are. It also works when the vault matches values remotely.
-- The scrubber decodes every percent escape of a text, however long. It no longer stops after a fixed number of escapes and leaves the rest of the text encoded, where a secret would have looked clean.

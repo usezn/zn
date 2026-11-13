@@ -1,2 +1,0 @@
-### Security
-- A `.env` file is no longer treated as shadowed while a variable with a secret-looking name (`API_KEY`, `DB_PASSWORD`, `DEBUG_TOKEN`) still holds a value, however short. Before, values under 8 characters were ignored, so an agent could read a file where `zn env shadow` had left them. The block message now names the variables that still hold a value (never the values) and says to store them with `zn secret set NAME` and write `__ZN_NAME__` in their place. Empty values and variables with ordinary names (`PORT=8080`) behave as before.

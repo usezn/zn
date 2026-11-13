@@ -1,2 +1,0 @@
-### Security
-- The tool-call guard (`zn-gate` for Node.js and the `zn-gate` Python package) now refuses a Windows `cmd.exe` command that reads a `.env` file through caret or percent spelling, such as `type .e^nv`, `type ^.env`, `type %CD%\.e^nv`, `cmd /c "type %CD%\.e^nv"` and `set X=.env & type %X%`. The shell hooks already refused these; the guard used by the Python package and by the library now agrees with them. Commands that name no protected file, such as `type notes^.txt` or `grep ^.env notes.md`, are still allowed.

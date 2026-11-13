@@ -1,2 +1,0 @@
-### Added
-- `zn run --egress-allow HOST[:PORT],...` (opt-in, off by default) limits the hosts a command reaches over HTTP(S): a local proxy on 127.0.0.1 is set for the command through `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY`, and requests to other hosts get 403. It covers programs that read the proxy variables (curl, gh, requests, axios) and, in Node, only versions that honour `NODE_USE_ENV_PROXY`; the `fetch` of an older Node, programs that ignore the variables, raw sockets and DNS are not covered. See "Egress allowlist for `zn run`" in the secrets guide.
