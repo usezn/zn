@@ -4,6 +4,23 @@
 command you allowed still holds the value: scope it, and turn on your agent's
 sandbox.**
 
+## On this page
+
+- [What zn protects against](#what-zn-protects-against)
+- [What zn does not protect against](#what-zn-does-not-protect-against)
+- [Google Antigravity](#google-antigravity)
+- [Experimental adapters](#experimental-adapters)
+- [What the vault daemon protects, and what it does not](#what-the-vault-daemon-protects-and-what-it-does-not)
+- [Memory, swap and crash dumps](#memory-swap-and-crash-dumps)
+- [Starting the approved program](#starting-the-approved-program)
+- [Where the value lives while a program runs](#where-the-value-lives-while-a-program-runs)
+- [Local copies, per agent](#local-copies-per-agent)
+- [Confirmation channel](#confirmation-channel)
+- [The saved API key (`zn-gate connect`)](#the-saved-api-key-zn-gate-connect)
+- [Failure behaviour](#failure-behaviour)
+- [Design decisions and known limits](#design-decisions-and-known-limits)
+- [Next steps](#next-steps)
+
 ## What zn protects against
 
 The goal: a secret value never reaches the model, or the provider's logs and
@@ -75,6 +92,14 @@ a write the hooks cannot read as a word of the command (inline code, a path
 built at run time) is not seen, and an agent that cannot ask (see
 [compat.md](compat.md#agent-memory-and-instruction-files)) gets a block with the
 reason instead of a question. You can turn it off with `hooks.agentInstructionWrites`.
+
+- **Commands whose arguments are built when they run.** zn reads the command as it is written. An argument that a
+  program only gets when the command runs (the output of `$(...)` or backticks, `xargs`, `eval`, `bash -c` with built
+  text, shell functions, `read` or `printf -v` into a variable, arrays, `IFS` changes, `${var/x/y}` substitutions) is
+  not known to zn, for curl as for any other command. For curl, zn refuses the forms it cannot read (options read from
+  standard input or a pipe, a file to upload or to send with `@file` whose name is built at run time), but other programs and other ways to build arguments
+  can still name a protected file. Keep secrets out of plain-text files (`zn-gate env shadow .env`) so that there is
+  nothing to send.
 
 ## Google Antigravity
 

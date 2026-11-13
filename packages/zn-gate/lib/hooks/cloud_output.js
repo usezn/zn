@@ -68,8 +68,10 @@ function cloudSample(text) {
 
 // Personal data kinds removed from the sample before it leaves the machine (the scrubber's own detectors, so the
 // checks that already decide what counts as an email, a phone number, an IBAN or a card number are the ones used here).
-const PII_ONLY = { email: true, phone: true, iban: true, card: true, dni: false, ssn: false, ipv4: false, name: false, address: false, username: false };
-const PII_PLACEHOLDER = { EMAIL: '[EMAIL]', PHONE: '[PHONE]', IBAN: '[IBAN]', CARD: '[CARD]' };
+// National ID numbers (Spanish DNI and NIE, US SSN) are replaced too. IPv4 addresses, names, postal addresses and usernames are not
+// (docs/connect.md says so).
+const PII_ONLY = { email: true, phone: true, iban: true, card: true, dni: true, ssn: true, ipv4: false, name: false, address: false, username: false };
+const PII_PLACEHOLDER = { EMAIL: '[EMAIL]', PHONE: '[PHONE]', IBAN: '[IBAN]', CARD: '[CARD]', DNI: '[ID]', NIE: '[ID]', SSN: '[ID]' };
 
 /* The text with secrets and then personal data replaced. Throws when it cannot: the caller then sends nothing. */
 function redactForCloud(sample) {

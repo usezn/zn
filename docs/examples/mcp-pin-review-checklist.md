@@ -44,4 +44,5 @@ Every change is also written to the decision log (`~/.zn/evidence.jsonl`; check 
 
 - [Protect MCP servers: shield, shadow mode and tool pins](../shield.md)
 - [`pins` in the CLI reference](../cli.md#pins)
+- [Pins when you add a new MCP server](zn-pins-reviewing-a-new-server.md)
 - [Set up zn-gate, preview the steps, remove it](init-and-uninstall.md)

@@ -165,7 +165,11 @@ analyze('Please summarize this page.')
 
 ## Errors you may see
 
+For a live check of the API and any published incident notes, see the [status page](https://usezn.com/status/), or call `https://api.usezn.com/health` from your own monitoring.
+
 A failed request returns a JSON body with two fields: `error`, a sentence you can show to a person, and `code`, a stable value you can match in your code.
+
+A path that does not exist returns `404` with `{"message": "Not Found"}` from the gateway. That answer has no `error` and no `code`, so check the URL first.
 
 | Status | `code` | What it means | What to do |
 |---|---|---|---|

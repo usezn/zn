@@ -45,7 +45,9 @@ No internet on this computer? See [Install on a machine without internet](docs/i
 
 **On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
 
-> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it. More in [troubleshooting](docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
+**Windows and macOS:** the [install matrix](docs/install-matrix.md#operating-system) says what each system needs and how to verify it. For problems, see [troubleshooting](docs/troubleshooting.md) and the [Windows checklist](docs/examples/windows-checklist.md); on macOS, the keychain prompt is in [troubleshooting section 5](docs/troubleshooting.md#5-your-secret-vault-is-locked).
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -69,7 +71,7 @@ npx -y zn-gate init
 
 Run it yourself, in your own terminal, with no arguments. When an AI agent or a script runs it, it only prints the steps.
 
-> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd`, `npx.cmd` and `zn.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd`, `npx.cmd` and `zn.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it.
 
 **If something fails:**
 
@@ -194,6 +196,7 @@ It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.
 - [By agent](docs/by-agent.md)
 - [Examples](docs/examples/README.md)
 - [CLI reference](docs/cli.md)
+- [Glossary: words you do not know](docs/glossary.md)
 - [API quickstart](docs/api-quickstart.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Uninstall](docs/uninstall.md)
@@ -225,6 +228,10 @@ npx -y zn-gate check
 ```
 
 For each agent set up for your user, zn-gate asks its hook to let the agent read a `.env` file with a fake key and an ordinary file, in a temporary folder. It shows what your agent would be told, and a line that says **NOT protected** says how to fix it. Nothing is sent over the network and no setting changes. [What the output means](docs/check.md).
+
+What a block looks like: when an agent tries to read a `.env` file that holds real values, zn-gate answers with a message like this one (shortened here; the full text is in [Troubleshooting](docs/troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets)) and the agent carries on. On Windows the message names the `.cmd` form, `zn.cmd env shadow .env`, or `npx.cmd -y zn-gate@<version> env shadow .env` when `zn` is not installed.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/block-message-animated-dark.svg"><img alt="The agent tries to read .env. zn-gate blocks the read before it happens and answers with a message like this (shortened): zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_&lt;NAME&gt;__ markers you can read and use. The agent reads the message and carries on. On Windows the message names the .cmd form: `zn.cmd env shadow .env`." src="docs/diagrams/block-message-animated-light.svg" width="800"></picture>
 
 <!-- snippet-test -->
 ```bash
@@ -286,7 +293,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
 | Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
-| Results of web fetches, MCP tools and shell commands, seen by the Claude Code hook | Locally first | Off by default. Only if you ran `zn-gate connect` and also turned it on with `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json`. The setting and the record `zn-gate connect` leaves are read only from the `.zn` folder in the home folder of your operating-system account (the one the system reports for your user, not the `HOME` or `USERPROFILE` variable), and the path stays off when `HOME`, `USERPROFILE` or `ZN_HOME` points zn-gate at another folder. So `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot turn it on, because a project can set environment variables for the agent. zn-gate then sends a sample of each result, at most 16 KiB, counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), to `api.usezn.com` to look for hidden instructions aimed at the agent. It skips a result the local check already flagged. Secrets and personal data (email addresses, phone numbers, IBANs and card numbers) are removed before sending, and each personal value is replaced with [EMAIL], [PHONE], [IBAN] or [CARD]; a secret zn-gate does not recognize is sent as written. `Read` results, other agents and the other hooks send nothing. If the call fails (no connection, a timeout, an error from the service), nothing is blocked or added; if the service answers with a verdict that is neither allow nor block (rule `cloud:unknown-verdict`), the same note is added, and the output is still not blocked or changed. Remove that setting, or set it to `false`, to turn this path off. |
+| Results of web fetches, MCP tools and shell commands, seen by the Claude Code hook | Locally first | Off by default. Only if you ran `zn-gate connect` and also turned it on with `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json`. The setting and the record `zn-gate connect` leaves are read only from the `.zn` folder in the home folder of your operating-system account (the one the system reports for your user, not the `HOME` or `USERPROFILE` variable), and the path stays off when `HOME`, `USERPROFILE` or `ZN_HOME` points zn-gate at another folder. So `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot turn it on, because a project can set environment variables for the agent. zn-gate then sends a sample of each result, at most 16 KiB, counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), to `api.usezn.com` to look for hidden instructions aimed at the agent. It skips a result the local check already flagged. Secrets and personal data (email addresses, phone numbers, IBANs, card numbers and national ID numbers: Spanish DNI and NIE, US SSN) are removed before sending, and each personal value is replaced with [EMAIL], [PHONE], [IBAN], [CARD] or [ID]; IP addresses, names, postal addresses and usernames are not removed, and a secret zn-gate does not recognize is sent as written. `Read` results, other agents and the other hooks send nothing. If the call fails (no connection, a timeout, an error from the service), nothing is blocked or added; if the service answers with a verdict that is neither allow nor block (rule `cloud:unknown-verdict`), the same note is added, and the output is still not blocked or changed. Remove that setting, or set it to `false`, to turn this path off. |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
 | Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then, each time you run `zn-gate stats`, one report per complete day (at most the last 3 days) with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
@@ -303,7 +310,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 
 We only publish numbers we can reproduce, with the method next to them.
 
-- **Latency of the local engine:** one table by input size, with hardware, date and the script to reproduce it (`bench/bench_by_size.js`), in the [npm package README](packages/zn-gate/README.md#performance-local-rules-engine-no-network). Short summary from that run, with secret redaction (p50): about 0.045 ms for a 200 B prompt, 0.3 ms for a 4 KB tool output, about 4 ms for 64 KB.
+- **Latency of the local engine:** one table by input size, with hardware, date and the script to reproduce it (`bench/bench_by_size.js`), in the [npm package README](packages/zn-gate/README.md#performance-local-rules-engine-no-network). Short summary from that run, with secret redaction (p50): about 0.045 ms for a 200 B prompt, 0.3 ms for a 4 KB tool output, 3.8 ms for 64 KB.
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, the rules can flag ordinary code comments. Version 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own source files, run `zn-gate scan --code <path>`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
 - **Known limitation:** credentials under prefixed upper-case variable names (`OPENAI_API_KEY=`, `MY_APP_DB_PASSWORD=`, `export X_SECRET=`) are redacted in env files, JSON, YAML, Dockerfile and shell forms, and placeholders such as `YOUR_KEY` or `${VAR}` are left alone (tested in the npm and PyPI packages). Lower-case or dotted names such as `openai_api_key=` or `my.app.db.password=` are not redacted by the prompt and tool-result rules.
@@ -328,6 +335,10 @@ zn Team: `zn team join <token>` connects a machine to your organization's signed
 Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.config.json` at your project root ([example](packages/zn-gate/README.md#custom-rules-znrules-or-znconfigjson)).
 
 Decision log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
+
+### Where zn-gate keeps its files
+
+By default, zn-gate keeps its vault and its settings in a `.zn` folder in your home folder (`~/.zn`; the `ZN_HOME` environment variable points it at another folder): the encrypted vault files, the vault audit log (`audit.jsonl`), the decision log (`evidence.jsonl`) and a small launcher script under `~/.zn/hooks`. The settings and configs of your agents stay where each agent keeps them; zn-gate writes a backup before it changes one. The full list, what each file is and how to remove it: [Files and folders zn-gate reads or writes](docs/files-and-folders.md).
 
 ### GitHub Action
 
@@ -459,7 +470,7 @@ Run both checks before each commit with the [pre-commit](https://pre-commit.com)
 
 ## Examples
 
-Runnable examples are in [`examples/`](examples/). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
+Runnable examples are in [`examples/`](examples/), with the command to run each one in its [index](examples/README.md). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
 
 | Example | Language | Framework | What it shows |
 |---|---|---|---|
@@ -511,6 +522,7 @@ Releases published by the release workflow, starting with the first one after 1.
 ## Community and support
 
 - **[Discussions](https://github.com/usezn/zn/discussions)**: questions about setup and use, ideas, and show and tell. Start here if you are not sure where your question belongs.
+- **Before you open an issue**, read [Troubleshooting](docs/troubleshooting.md), [Before you ask for help](docs/examples/doctor-before-asking-for-help.md) (the commands to run and paste) and the [FAQ](#faq).
 - **[Issues](https://github.com/usezn/zn/issues)**: reproducible bugs and concrete feature requests.
 - **Security vulnerabilities**: do not post them in Discussions or Issues. Report them privately as described in [SECURITY.md](SECURITY.md).
 
@@ -518,6 +530,8 @@ Releases published by the release workflow, starting with the first one after 1.
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+New here? Start with the small tasks in [CONTRIBUTING.md](CONTRIBUTING.md#where-to-start) and the worked examples in [docs/examples](docs/examples/README.md).
+
 ## License
 
-MIT. Copyright (c) 2026 usezn ([usezn.com](https://usezn.com)). The [Galvanize 2](https://huggingface.co/usezn/Galvanize-2) and [Galvanize-60M](https://huggingface.co/usezn/Galvanize-60M) weights are Apache-2.0. The [zn-prompt-injection-bench](https://huggingface.co/datasets/usezn/zn-prompt-injection-bench) dataset is CC-BY-4.0. The npm package bundles third-party code listed in [THIRD_PARTY_NOTICES.md](packages/zn-gate/THIRD_PARTY_NOTICES.md).
+MIT. Copyright (c) 2026 usezn ([usezn.com](https://usezn.com)). The [Galvanize 3](https://huggingface.co/usezn/Galvanize-3), [Galvanize 2](https://huggingface.co/usezn/Galvanize-2) and [Galvanize-60M](https://huggingface.co/usezn/Galvanize-60M) weights are Apache-2.0. The [zn-prompt-injection-bench](https://huggingface.co/datasets/usezn/zn-prompt-injection-bench) dataset is CC-BY-4.0. The npm package bundles third-party code listed in [THIRD_PARTY_NOTICES.md](packages/zn-gate/THIRD_PARTY_NOTICES.md).

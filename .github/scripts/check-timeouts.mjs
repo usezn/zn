@@ -26,10 +26,22 @@ export function findMissingTimeouts(text) {
   };
   for (const line of lines) {
     if (/^jobs:\s*(#.*)?$/.test(line)) { inJobs = true; hasJobsKey = true; continue; }
+    // An inline value (`jobs: { build: ... }`) hides the jobs from the block reader below: fail it.
+    if (/^jobs:\s*[^\s#]/.test(line)) {
+      hasJobsKey = true;
+      problems.push({ job: '(file)', reason: '"jobs:" has an inline value; write the jobs in block form under it, the timeouts cannot be read' });
+      continue;
+    }
     if (inJobs && /^\S/.test(line) && !line.startsWith('#')) { flush(); inJobs = false; }
     if (!inJobs) continue;
     const key = line.match(/^ {2}(["']?)([A-Za-z0-9_-]+)\1:\s*(#.*)?$/);
     if (key) { flush(); jobs++; cur = { name: key[2], timeout: false, reusable: false }; continue; }
+    // A job written in flow style (`  name: { ... }`) or with an unusual key cannot be read for its timeout: fail it.
+    if (/^ {2}[^\s#]/.test(line)) {
+      flush();
+      problems.push({ job: line.trim().split(':')[0].slice(0, 60), reason: 'job is not in block form (use one key per line under the job name), its timeout cannot be read' });
+      continue;
+    }
     if (!cur) continue;
     if (/^ {4}timeout-minutes:\s*\S/.test(line)) cur.timeout = true;
     if (/^ {4}uses:\s*\S/.test(line)) cur.reusable = true;
@@ -60,6 +72,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error('check-timeouts: ' + e.message); process.exitCode = 1; }
 }

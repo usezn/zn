@@ -108,8 +108,24 @@ Open the settings file you edited in Install, delete the `zn-gate` entry (and an
 
 - **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
-- **The zn-gate tools do not appear in Zed:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Zed.
+- **The zn-gate tools do not appear in Zed:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Zed. If they still do not appear, see [The zn-gate MCP server does not start](#the-zn-gate-mcp-server-does-not-start).
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+
+### The zn-gate MCP server does not start
+
+If Zed lists `zn-gate` as an MCP server but it never starts, or the zn-gate tools stay missing after a restart, these are the three most common causes. To see why Zed could not start it, open the Command Palette, type **zed: open log** and press Enter, then search the log for `zn-gate`. Run the commands below in your own terminal, not through your AI agent.
+
+1. **Zed cannot find `npx`, or Node.js is too old.**
+   - **Check:** run `node --version` and `npx --version`. `node --version` must show 18 or later. Then run `which npx` (macOS and Linux) or `where.exe npx` (Windows; in PowerShell, plain `where` is a different command) to see where `npx` is.
+   - **Fix:** if either command fails, install the **LTS** version from [nodejs.org](https://nodejs.org/), then quit Zed completely and open it again: a Zed window opened before the install does not see the new `npx`. If you installed Node.js with a version manager such as nvm, Zed may not see it: replace `"npx"` in the `"command"` line with the full path that `which npx` or `where.exe npx` printed. See [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+2. **The settings file cannot be read, or the entry is in the wrong place.**
+   - **Check:** open the settings file again (**zed: open settings file**). The `zn-gate` entry must sit inside one `"context_servers"` section at the top level of the file, and the file must have exactly one `"context_servers"` key. Look for a missing comma or brace next to the lines you pasted.
+   - **Fix:** move the `"zn-gate": {...}` part into the existing `"context_servers"` section, delete the second `"context_servers"` key if there is one, save the file and restart Zed.
+3. **npm cannot download zn-gate the first time.** The first start runs `npx -y zn-gate mcp`, which downloads zn-gate from the npm registry. Without a connection, or behind a VPN or proxy that blocks npm, the server stops before it starts.
+   - **Check:** run `npx -y zn-gate --version`. It must print a line that starts with `zn-gate` and a version number.
+   - **Fix:** if it prints an npm error instead, check your connection, VPN or proxy and run it again. Once it prints the version, restart Zed. To stop downloading at each start, run `npm install -g zn-gate`, then use `"command": "zn-gate"` and `"args": ["mcp"]` in the entry. See [Init cannot install zn-gate: no internet connection](../troubleshooting.md#12-init-cannot-install-zn-gate-no-internet-connection).
+
+After the fix, follow [Verify](#verify) to check that the server runs. These checks follow Zed's documentation and were not yet run by us in Zed.
 
 All messages: [Troubleshooting](../troubleshooting.md).
 

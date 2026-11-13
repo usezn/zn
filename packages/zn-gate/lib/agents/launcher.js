@@ -101,10 +101,13 @@ const CHANGED_RC = 86;
 // could not be made (only the runner is then checked). With a manifest, every module the runner requires afterwards is read
 // once, hashed and compiled from those same bytes: a file that is not in the list, differs from it, or lies outside the package
 // ends the run with CHANGED_RC, so a file swapped after the check, a link, or a planted file never runs. Only files that are
-// loaded are read: a file nothing requires costs nothing, and `zn-gate check` reads the whole list.
+// loaded are read, plus the vault files (the list V in the program), which are read on every call: a file nothing requires costs nothing.
+// V is the vault client and the modules it loads. A hook call that never needs the vault does not load them (that saves about 3 ms), but they
+// are still read and checked on every call, so an edited vault file blocks the call as any other edited file does. V is written out in the
+// program text itself, so the plugin build's pinned hash of this statement covers it; CHANGED_RC is the only value spliced in.
 const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path'),c=require('crypto');" +
   "const [f,h,t,...a]=process.argv.slice(1);const X=()=>process.exit(" + CHANGED_RC + ");const H=(x)=>c.createHash('sha256').update(x).digest('hex');" +
-  "const D=/^[0-9a-f]{64}$/;let b,R=f;" +
+  "const D=/^[0-9a-f]{64}$/;const V=[\"lib/vault/client.js\",\"lib/vault/store.js\",\"lib/vault/winacl.js\",\"lib/exe.js\",\"lib/errors.js\",\"lib/linear-text.js\"];let b,R=f;" +
   "if(t==='-'){try{b=fs.readFileSync(f)}catch(e){X()}}else{" +
   "const T=new Map();for(const e of t.split(';')){const i=e.lastIndexOf('=');const k=e.slice(0,i);if(!k||!D.test(e.slice(i+1)))X();T.set(k,e.slice(i+1))}" +
   "try{R=fs.realpathSync(f)}catch(e){X()}const r=p.resolve(R,'..','..','..')+p.sep;" +
@@ -112,7 +115,7 @@ const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path'),
   "const S=(v)=>{v=v.toString('utf8');return v.charCodeAt(0)===65279?v.slice(1):v};" +
   "const oj=M._extensions['.json'],oc=M._extensions['.js'];" +
   "M._extensions['.js']=(m,n)=>m._compile(S(G(n)),n);M._extensions['.json']=(m,n)=>{m.exports=JSON.parse(S(G(n)))};M._extensions['.node']=X;" +
-  "b=G(R)}" +
+  "b=G(R);for(const k of V)if(T.has(k))G(r+k)}" +
   "if(!D.test(h||'')||H(b)!==h)X();" +
   "process.argv=[process.argv[0],f,...a];const m=new M(R,null);m.id='.';m.filename=R;m.paths=M._nodeModulePaths(p.dirname(R));" +
   "process.mainModule=m;M._cache[R]=m;m._compile(b.toString('utf8'),R);m.loaded=true;";
@@ -404,6 +407,33 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   }
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
+}
+
+/** The agents whose user hooks go through a launcher script (Copilot and OpenCode have none). */
+const LAUNCHER_AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'antigravity', 'zcode'];
+const LAUNCHER_MARK = '#!/bin/sh\n# Written by `zn hooks install ';
+
+/** True when the file is a launcher script that zn wrote (a regular file with zn's header). */
+function isOurLauncher(file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) return false;
+    return fs.readFileSync(file, 'utf8').startsWith(LAUNCHER_MARK);
+  } catch (_) { return false; }
+}
+
+/**
+ * Removes the launcher of one agent (only the file with that exact name, and only if zn wrote it), then the
+ * hooks folder if nothing else is in it. Returns the removed file path or null. Never touches other files.
+ */
+function removeLauncher(agentId, opts = {}) {
+  if (!LAUNCHER_AGENTS.includes(agentId)) return null;
+  const file = launcherFile(agentId, opts);
+  let removed = null;
+  if (isOurLauncher(file)) {
+    try { fs.unlinkSync(file); removed = file; } catch (_) { /* in use or not allowed: left */ }
+  }
+  try { fs.rmdirSync(path.dirname(file)); } catch (_) { /* not empty, or not there */ }
+  return removed;
 }
 
 /** The hook command for one event: the launcher, then the event name. */
@@ -1121,4 +1151,4 @@ function windowsScriptCommand(script, opts = {}) {
   return (opts.cmd ? q.CMD_POWERSHELL : q.powershellExe()) + ' -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { runnerSha, treeManifest, parseManifest, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { LAUNCHER_AGENTS, isOurLauncher, removeLauncher, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON, treeManifest, parseManifest };

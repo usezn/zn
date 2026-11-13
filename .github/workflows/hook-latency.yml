@@ -1,3 +1,4 @@
+# Hook latency budget of zn-gate on Linux and Windows, on pushes to main and pull requests that touch the package.
 name: Hook latency
 
 # How long an agent waits for zn's hook on each tool call, by agent, event and output size
@@ -20,7 +21,7 @@ on:
   pull_request:
     branches: [ next, main, 'release/**' ]
     # ready_for_review: a draft that is marked ready runs the budget without another push.
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/**'
       - 'packages/zn-gate/bin/**'

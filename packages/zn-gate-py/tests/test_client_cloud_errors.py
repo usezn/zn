@@ -6,6 +6,7 @@ nothing here opens a socket.
 """
 
 import io
+import json
 import os
 import socket
 import unittest
@@ -101,6 +102,26 @@ class TestCloudErrors(unittest.TestCase):
 
     def test_bare_connection_refused(self):
         self._assert_fallback(self._run(self._raising(ConnectionRefusedError(111, "Connection refused"))), "refused")
+
+    def test_failed_cloud_call_never_shows_the_api_key(self):
+        # Patched for this test only, so verbose mode cannot reach another test.
+        patcher = mock.patch.dict(os.environ, {"ZN_VERBOSE": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        failures = {
+            "http_500": _http_error(500, "Server Error"),
+            "connection_refused": urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
+        }
+        for name, err in failures.items():
+            with self.subTest(failure=name):
+                stderr = io.StringIO()
+                with mock.patch("sys.stderr", stderr):
+                    res = self._run(self._raising(err))
+                self.assertIs(res["fallback"], True)
+                # The verbose warning is written, so the stderr check is not vacuous.
+                self.assertIn("Cloud gate error", stderr.getvalue())
+                self.assertNotIn(FAKE_KEY, json.dumps(res))
+                self.assertNotIn(FAKE_KEY, stderr.getvalue())
 
     def test_fallback_keeps_no_cloud_fields(self):
         res = self._run(self._raising(_http_error(500, "Server Error")))

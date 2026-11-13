@@ -72,6 +72,16 @@ function listMarkdown(dir) {
   return files;
 }
 
+// A numbered heading ("### 12. Where is my data?") changes its anchor when another page change inserts or removes an
+// entry before it, and two pull requests that are each correct then fail together in the merge queue. The message
+// names the anchor that now carries the same words, so the fix is one edit.
+function renumbered(anchor, anchors) {
+  const words = anchor.replace(/^\d+-/, '');
+  if (words === anchor || !words) return '';
+  const now = [...anchors].filter((x) => /^\d+-/.test(x) && x.replace(/^\d+-/, '') === words);
+  return now.length ? ` (the heading was renumbered: use #${now[0]})` : '';
+}
+
 function problems(files) {
   const cache = new Map();
   const anchorsFor = (file) => {
@@ -89,7 +99,7 @@ function problems(files) {
       }
       let a = anchor;
       try { a = decodeURIComponent(anchor).toLowerCase(); } catch { /* keep raw */ }
-      if (!anchorsFor(dest).has(a)) bad.push(`${file}: #${anchor} not found in ${dest}`);
+      if (!anchorsFor(dest).has(a)) bad.push(`${file}: #${anchor} not found in ${dest}${renumbered(a, anchorsFor(dest))}`);
     }
   }
   return bad;
@@ -129,6 +139,22 @@ test('the checker accepts good links and reports broken ones', () => {
 
     fs.writeFileSync(a, '# Alpha\n\n[bad](#missing) [bad2](sub/b.md#nothing) [bad3](gone.md#alpha)\n');
     assert.strictEqual(problems([a, b]).length, 3);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a link to a renumbered heading is reported with the new anchor', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-anchors-'));
+  try {
+    const a = path.join(dir, 'a.md');
+    const b = path.join(dir, 'b.md');
+    fs.writeFileSync(a, '# Page\n\n### 12. Where is my data?\n');
+    fs.writeFileSync(b, '# Other\n\n[data](a.md#11-where-is-my-data) [gone](a.md#3-nothing-like-it)\n');
+    const bad = problems([a, b]);
+    assert.strictEqual(bad.length, 2);
+    assert.match(bad[0], /renumbered: use #12-where-is-my-data/);
+    assert.doesNotMatch(bad[1], /renumbered/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

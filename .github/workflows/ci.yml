@@ -1,25 +1,26 @@
+# Main test workflow: Node.js, Python, lint, package and build checks on pushes and pull requests to main, next and release branches.
 name: zn CI
 
-# Pull requests into next run, all on Ubuntu, the checks of this workflow that the rulesets require: Node.js 18.x,
-# 22.x and 24.x (only 22.x runs there; the 18.x and 24.x jobs are skipped, which counts as passed, and run in the
-# merge queue),
-# Python 3.12, the npm and Python package builds and the lint job. The other required checks (leak bench,
+# Pull requests into next run, all on Ubuntu, only the light checks of this workflow that the rulesets require: the
+# npm and Python package builds and the lint job. The heavy required checks (Node.js 18.x, 22.x and 24.x, and
+# Python 3.12) are skipped there, which counts as passed, and run in the merge queue, or on the pull request
+# when it has the full-ci label. The other required checks (leak bench,
 # scrubber + vault, Public facts, and build, test, clippy, fmt) come from other workflows. The Python 3.14
 # warnings job is not required. The full matrix (Node.js 18.x, 20.x, 22.x, 24.x and 26.x; Python 3.10 to 3.14,
 # Windows and macOS) runs on pull requests into main and release branches, on pushes to main and release
-# branches, on the daily schedule, on manual runs, and on any pull request labelled full-ci. A push to next runs
-# only the matrix entries the merge queue did not run (Node.js 20.x and 26.x; Python 3.10, 3.11, 3.13, 3.14,
-# Windows and macOS). The only macOS job is Python 3.12. The merge queue is enabled for next only; if one is
-# enabled for main or a release branch, it runs the full matrix.
+# branches, on the daily schedule, on manual runs, and on any pull request labelled full-ci. Pushes to next do not
+# run this workflow: next gets the full matrix once a night (nightly-next.yml starts a manual run on it). The only
+# macOS job is Python 3.12. The merge queue is enabled for next only; if one is enabled for main or a release
+# branch, it runs the full matrix.
 on:
   push:
     # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
     # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
     # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
-    branches: [ main, next, 'release/**' ]
+    branches: [ main, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
-    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
   # The merge queue (enabled for next only today): the same Node.js and Python entries as a pull request into
@@ -35,11 +36,10 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main always complete.
+# A new push to a pull request cancels the run still going for it. Other runs always complete.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -52,17 +52,18 @@ env:
 jobs:
   test-node:
     name: Node.js ${{ matrix.node-version }} tests & benchmarks
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Node.js 20.x and 26.x, not required, in the full matrix only. The required Node.js 22.x check is the job
+    # below, outside the matrix, so that its name is literal. Draft pull requests skip this job; marking the
+    # pull request ready for review runs it.
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        # 22.x is a required check and runs everywhere. 18.x and 24.x, also required, are the two jobs below.
-        # 20.x and 26.x run with the full matrix only.
-        # On a push to next the queue already ran 22.x on this commit: only 20.x and 26.x run.
-        node-version: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && fromJSON('["20.x", "26.x"]') || fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "26.x"]' || '["22.x"]') }}
+        # 18.x, 22.x and 24.x, the required checks, are the three jobs below. 20.x and 26.x run with the full matrix
+        # only (the job's if).
+        node-version: ["20.x", "26.x"]
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -76,8 +77,8 @@ jobs:
           node-version: ${{ matrix.node-version }}
           full: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
 
-  test-node-18:
-    name: Node.js 18.x tests & benchmarks
+  test-node-22:
+    name: Node.js 22.x tests & benchmarks
     # A required check, outside the matrix so that its name is literal: a job skipped by its if reports under
     # this exact name, as skipped, and a skipped job counts as passed for a required check. A matrix job skipped
     # this way would report under its unexpanded name and leave the required check pending.
@@ -85,6 +86,32 @@ jobs:
     # draft pull requests, and on a push to next (the merge queue already ran it on that commit). It runs in the
     # merge queue, on pull requests into main and release branches, on pushes to main and release branches, on
     # the daily schedule, on manual runs and on pull requests labelled full-ci.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/node-tests
+        with:
+          node-version: 22.x
+          full: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+
+  test-node-18:
+    name: Node.js 18.x tests & benchmarks
+    # A required check, outside the matrix so that its name is literal: a job skipped by its if reports under
+    # this exact name, as skipped, and a skipped job counts as passed for a required check. A matrix job skipped
+    # this way would report under its unexpanded name and leave the required check pending.
+    # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge), on
+    # draft pull requests. A push to next does not start this workflow (the guard below stays as a safety net).
+    # It runs in the merge queue, on pull requests into main and release branches, on pushes to main and release
+    # branches, on the daily schedule, on manual runs (including the nightly run on next) and on pull requests
+    # labelled full-ci.
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -107,9 +134,10 @@ jobs:
     # this exact name, as skipped, and a skipped job counts as passed for a required check. A matrix job skipped
     # this way would report under its unexpanded name and leave the required check pending.
     # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge), on
-    # draft pull requests, and on a push to next (the merge queue already ran it on that commit). It runs in the
-    # merge queue, on pull requests into main and release branches, on pushes to main and release branches, on
-    # the daily schedule, on manual runs and on pull requests labelled full-ci.
+    # draft pull requests. A push to next does not start this workflow (the guard below stays as a safety net).
+    # It runs in the merge queue, on pull requests into main and release branches, on pushes to main and release
+    # branches, on the daily schedule, on manual runs (including the nightly run on next) and on pull requests
+    # labelled full-ci.
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -126,24 +154,109 @@ jobs:
           node-version: 24.x
           full: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
 
-  # Pull requests into next run Python 3.12 on Ubuntu only. Older and newer Python versions, Windows and
-  # macOS run on the push to next, on pull requests into main and release branches, on a merge queue for main
+  # Pull requests into next run no Python tests unless they carry the full-ci label; the merge queue runs the
+  # required Python 3.12 on Ubuntu before the merge. Older and newer Python versions, Windows and
+  # macOS run in the nightly run on next, on pull requests into main and release branches, on a merge queue for main
   # or a release branch if one is enabled, and on pull requests labelled full-ci (so they run before the merge).
+  test-python-312:
+    name: Python 3.12 tests & benchmarks (ubuntu-latest)
+    # A required check, outside the matrix so that its name is literal: a job skipped by its if reports under this
+    # exact name, as skipped, and a skipped job counts as passed for a required check. A matrix job skipped this way
+    # would report under its unexpanded name and leave the required check pending.
+    # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge), on
+    # draft pull requests, and on a push to next (the merge queue already ran it on that commit). It runs in the
+    # merge queue, on pull requests into main and release branches, on pushes to main and release branches, on
+    # the daily schedule, on manual runs and on pull requests labelled full-ci.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
+      - name: Set up Python 3.12
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
+      - name: Install package and test dependencies
+        if: steps.scope.outputs.run == 'true'
+        # Test tools pinned with hashes; the package itself has no dependencies.
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Install LangChain and LlamaIndex for the integration tests
+        # The tests that drive the integrations through the real frameworks run in this job and skip in the matrix.
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
+      - name: Run pytest (unit + integration)
+        if: steps.scope.outputs.run == 'true'
+        working-directory: packages/zn-gate-py
+        env:
+          # Where the frameworks were installed above, their tests must run, not skip.
+          ZN_REQUIRE_FRAMEWORKS: "1"
+        # Three pytest processes at once (see the script): each of the two long linear-time files has its own and the rest share the third.
+        run: bash ../../.github/scripts/run-pytest-sharded.sh python
+      - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
+        # The same real-framework tests, in a separate virtual environment with langchain-core 1.3.3, the
+        # oldest version the integration supports. The frameworks are installed: the tests must run, not skip.
+        if: steps.scope.outputs.run == 'true'
+        env:
+          ZN_REQUIRE_FRAMEWORKS: "1"
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-oldest-langchain"
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -c "import langchain_core; assert langchain_core.__version__ == '1.3.3', langchain_core.__version__"
+          cd packages/zn-gate-py
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pytest tests/test_langchain_real.py tests/test_llamaindex_real.py -v
+      - name: Run benchmark verification
+        if: steps.scope.outputs.run == 'true'
+        run: python bench/bench_python.py
+
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Every entry except the required Python 3.12 on Ubuntu, which is the job below, outside the matrix so that its
+    # name is literal. Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check (plain pytest; the coverage
-        # report is the python-coverage job): it is in both lists. The
-        # list depends only on the event (never on another job), so every job name is known when the
-        # run starts.
-        # On a push to next the queue already ran Python 3.12 on Ubuntu on this commit: only the other entries run.
-        include: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && fromJSON('[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]') || fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
+        # report is the python-coverage job): it is the job below, not an entry here.
+        include:
+          - {os: ubuntu-latest, python-version: "3.10"}
+          - {os: ubuntu-latest, python-version: "3.11"}
+          - {os: ubuntu-latest, python-version: "3.13"}
+          - {os: ubuntu-latest, python-version: "3.14"}
+          - {os: windows-latest, python-version: "3.12"}
+          - {os: macos-latest, python-version: "3.12"}
     defaults:
       run:
         shell: bash
@@ -179,47 +292,24 @@ jobs:
           python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
-      - name: Install LangChain and LlamaIndex for the integration tests
-        # One entry is enough: the tests that drive the integrations through the real frameworks run here
-        # and skip on the other entries.
-        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: |
-          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
-          python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
       - name: Run pytest (unit + integration)
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
-        env:
-          # Where the frameworks were installed above, their tests must run, not skip.
-          ZN_REQUIRE_FRAMEWORKS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '1' || '' }}
-        run: python -m pytest tests/ -v
-      - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
-        # The same real-framework tests, in a separate virtual environment with langchain-core 1.3.3, the
-        # oldest version the integration supports. The frameworks are installed: the tests must run, not skip.
-        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        env:
-          ZN_REQUIRE_FRAMEWORKS: "1"
-        run: |
-          python -m venv "$RUNNER_TEMP/venv-oldest-langchain"
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -c "import langchain_core; assert langchain_core.__version__ == '1.3.3', langchain_core.__version__"
-          cd packages/zn-gate-py
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pytest tests/test_langchain_real.py tests/test_llamaindex_real.py -v
+        # Three pytest processes at once (see the script): each of the two long linear-time files has its own and the rest share the third.
+        run: bash ../../.github/scripts/run-pytest-sharded.sh python
       - name: Run benchmark verification
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
-  # The Python package on the newest Python with deprecation and resource warnings as errors, in pull requests
-  # too: a call that a future Python removes, or a file or socket left open, fails here instead of in a user's
-  # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
+  # The Python package on the newest Python with deprecation and resource warnings as errors: a call that a
+  # future Python removes, or a file or socket left open, fails here instead of in a user's upgrade. No -X dev:
+  # its debug checks multiply the run time and break the linear-time tests.
   python-warnings:
     name: Python 3.14 tests with warnings as errors (ubuntu-latest)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it. Not a required check,
-    # so the merge queue leaves it out: it runs in pull requests and on the push to next.
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Not a required check, so the merge queue leaves it out. A pull request runs it only with the full-ci label
+    # (and not as a draft); every other run covers it: pushes to main and release branches, the nightly run on
+    # next (nightly-next.yml starts a manual run of this workflow there), and manual runs.
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'full-ci')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -260,8 +350,8 @@ jobs:
 
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
-  # report upload never delay a merge. Runs on pushes (main, next and release branches), on the daily schedule and on
-  # manual runs; it is not a required check. Report only, no threshold.
+  # report upload never delay a merge. Runs on pushes to main and release branches, on the daily schedule and on
+  # manual runs (the nightly run on next is one); it is not a required check. Report only, no threshold.
   python-coverage:
     name: Python 3.12 coverage report (ubuntu-latest)
     # Not in pull requests or the merge queue: it is a report, not a required check.
@@ -316,9 +406,7 @@ jobs:
   lint:
     name: Lint (eslint, ruff, mypy)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -397,9 +485,7 @@ jobs:
   pack-node:
     name: npm package (pack, inspect, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -479,9 +565,7 @@ jobs:
   build-python:
     name: Python package (build, twine check, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -38,7 +38,7 @@ const HELP = {
     '  --keys A,B       move only these keys',
     '  --dry-run        list what would move and change nothing',
     '  --force          replace a value already stored under the same name',
-    '  --mode           how the secret may be used: proxy, env or file (default proxy, or env with --command)',
+    '  --mode           how the secret may be used: proxy, env or file (default env)',
     '  --host, --command  allow these hosts or commands to use the value',
     'An encrypted copy of the original file is kept in the vault; zn env unshadow restores it.',
   ],

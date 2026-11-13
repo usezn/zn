@@ -4,18 +4,24 @@
 #
 # Each check keeps the trigger and the path filter it had when it was a workflow of its own:
 #   changelog     pull requests, always
-#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check and docs title check
+#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check, cheat sheet command check, docs table check, docs command name check, README entry point check, docs examples index order check, docs examples index target check, docs examples name check, simply/just check, last reviewed check, docs anchor check, docs wording check, docs marker (TODO/FIXME) check, docs examples command, section checks, docs shell block quote check, code block trailing space check, code fence check and bare http link check
+#   doclinks      pull requests and pushes to main or next: docs, the READMEs the docs checks cover, CHANGELOG.md,
+#                 SECURITY.md, the changelog and security link check and its test
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
+#   wfheader      pull requests and pushes to main or next: workflows, the header and first-line checks, the changed-workflows summary and their tests
 # Workflow lint (actionlint + zizmor) is not decided here: its job in quick-checks.yml keeps its own inline
 # paths filter (workflows, actions, workflow-lint config, zizmor config, action.yml) because it runs no
 # script of the repository.
 #   timeouts      pull requests and pushes to main or next: workflows, the timeout check and its test
+#   wfformat      pull requests and pushes to main or next: workflows, the format check and its test
+#   actioninputs  pull requests and pushes to main or next: action.yml, the input description check and its test
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
 #   scopetest     pull requests and pushes to main or next: this script and its test
+#   fragmentnames pull requests and pushes to main or next: changelog.d/ and the fragment name check
 # A change to the workflow or to this script runs every check. Manual runs run every check, the schedule
 # runs only the doc snippets, the changelog check runs only for a pull request (it compares the pull
 # request with its base, which no other event has), and a pull request into a branch other than main, next or release/* runs only
@@ -24,7 +30,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck timeouts packagelint hooks snippets scopetest"
+CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat actioninputs packagelint hooks snippets doclinks fragmentnames scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -83,9 +89,12 @@ while IFS= read -r f; do
   readme_root=false
   case "$f" in README*) [[ "$f" != */* ]] && readme_root=true ;; esac
   case "$f" in
-    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*) run[markdownlint]=true ;;
+    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*|.github/scripts/check-docs-command-names*|.github/scripts/check-readme-entry-points*|.github/scripts/check-docs-examples-index*|.github/scripts/check-docs-examples-names*|.github/scripts/check-docs-no-simply-just*|.github/scripts/check-docs-last-reviewed*|scripts/check-docs-https*|CHANGELOG.md|.github/scripts/check-changelog-dates*|action.yml|.github/scripts/check-action-inputs-documented*|.github/scripts/check-docs-anchors*|.github/scripts/check-docs-wording*|.github/scripts/check-docs-todo*|.github/scripts/check-docs-examples-sections*|.github/scripts/check-docs-bash-quotes*|.github/scripts/check-docs-code-trailing-space*|.github/scripts/check-docs-fences*|scripts/test-check-docs-https*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
+  case "$f" in
+    docs/*|packages/*/README.md|changelog.d/README.md|README.md|CHANGELOG.md|SECURITY.md|.github/scripts/check-docs-changelog-security-links*) run[doclinks]=true ;;
+  esac
   case "$f" in
     docs/*|packages/*/README.md|changelog.d/*|.typos.toml) run[typos]=true ;;
   esac
@@ -97,7 +106,14 @@ while IFS= read -r f; do
     *.sh) run[shellcheck]=true ;;
   esac
   case "$f" in
-    .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
+    .github/workflows/*|.github/scripts/check-workflow-header*|.github/scripts/check-workflow-first-line*|.github/scripts/changed-workflows-summary*) run[wfheader]=true ;;
+  esac
+  case "$f" in
+    .github/workflows/*|.github/scripts/check-timeouts*|.github/scripts/check-heavy-jobs-gating*) run[timeouts]=true ;;
+  esac
+  case "$f" in
+    .github/workflows/*|.github/scripts/check-workflow-format*) run[wfformat]=true ;;
+    action.yml|.github/scripts/check-action-inputs.*) run[actioninputs]=true ;;
   esac
   case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;
@@ -107,6 +123,9 @@ while IFS= read -r f; do
   esac
   case "$f" in
     .github/scripts/test-quick-scope.sh) run[scopetest]=true ;;
+  esac
+  case "$f" in
+    changelog.d/*|.github/scripts/check-changelog-fragment-names*) run[fragmentnames]=true ;;
   esac
   case "$f" in
     docs/*|packages/*|README.md|.github/scripts/doc-snippets*) run[snippets]=true ;;
