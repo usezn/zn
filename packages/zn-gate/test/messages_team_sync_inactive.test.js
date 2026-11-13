@@ -6,14 +6,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { teamSyncInactive } = require('../lib/messages');
+const { znCommand } = require('../lib/zn-command');
 
-const NEXT_STEP = /Once it is active, run: zn team sync$/;
+const NEXT_STEP = 'Once it is active, run: ' + znCommand('team sync');
 
 test('no waiting records: nothing is lost and no count is shown', () => {
   const text = teamSyncInactive(0);
   assert.match(text, /^Your organization is not active on zn right now: ask your organization admin\. /);
   assert.ok(text.includes('Nothing is lost. '), text);
-  assert.ok(!/\d/.test(text), text);
+  assert.ok(!/\d/.test(text.replace(NEXT_STEP, '')), text);
   assert.ok(!/audit record/.test(text), text);
 });
 
@@ -35,7 +36,7 @@ test('several waiting records use the plural forms', () => {
 
 test('every variant ends with the command to run once active', () => {
   for (const n of [0, 1, 2, 7, undefined, -1]) {
-    assert.match(teamSyncInactive(n), NEXT_STEP, String(n));
+    assert.ok(teamSyncInactive(n).endsWith(NEXT_STEP), String(n));
   }
 });
 

@@ -71,7 +71,7 @@ test('team messages', () => {
   assert.equal(m.TEAM_INVALID_JOIN_TOKEN, 'invalid join token (expected znj_...). Copy it again from the invitation your administrator sent.');
   assert.equal(m.TEAM_INVALID_REQUEST, 'invalid request: the name, kind or value is not valid, so nothing was approved.');
   assert.equal(m.TEAM_NOTHING_TO_APPROVE,
-    'nothing to approve: this machine has no organization policy waiting for your answer. Run `zn team status` to check.');
+    'nothing to approve: this machine has no organization policy waiting for your answer. Run `' + require('../lib/zn-command').znCommand('team status') + '` to check.');
   assert.equal(m.TEAM_NOT_ASKED, 'the organization policy does not ask for this, so nothing was approved.');
   assert.equal(m.TEAM_INVALID_ORG_KEY, 'the server sent an invalid organization key, so this machine was not connected. Ask your administrator.');
   assert.equal(m.teamJoinFailed('HTTP 403'), 'join failed (HTTP 403). This machine was not connected.');

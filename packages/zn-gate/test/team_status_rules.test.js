@@ -30,11 +30,13 @@ const { runTeamCommand } = require('../lib/team/cli');
 test.after(() => fs.rmSync(HOME, { recursive: true, force: true }));
 test.beforeEach(() => { clientCalls = 0; fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true }); });
 
+const { asTyped } = require('./helpers/zn_typed');
+
 async function capture(fn) {
   const o = process.stdout.write;
   let stdout = '';
   process.stdout.write = (s) => { stdout += s; return true; };
-  try { const code = await fn(); return { code, stdout }; } finally { process.stdout.write = o; }
+  try { const code = await fn(); return { code, stdout: asTyped(stdout) }; } finally { process.stdout.write = o; }
 }
 
 const DAY = 86400000;

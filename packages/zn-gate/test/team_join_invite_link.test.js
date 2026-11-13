@@ -44,5 +44,6 @@ test('the same link on standard input gets the same message', async () => {
 
 test('a real join token is not taken for an invitation', () => {
   assert.ok(!messages.looksLikeEmailInvite('znj_' + 'A'.repeat(40)));
-  assert.match(messages.TEAM_INVITE_NOT_A_JOIN_TOKEN, /usezn\.com\/team.*znj_.*zn team join <token>/);
+  assert.match(messages.TEAM_INVITE_NOT_A_JOIN_TOKEN, /usezn\.com\/team.*znj_/);
+  assert.ok(messages.TEAM_INVITE_NOT_A_JOIN_TOKEN.endsWith(require('../lib/zn-command').znCommand('team join <token>')));
 });

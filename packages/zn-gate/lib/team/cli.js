@@ -55,8 +55,8 @@ function withClient(fn) {
 }
 
 function describePolicy(p) {
-  if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `zn team sync`)';
-  if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `zn team sync`';
+  if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `' + znCommand('team sync') + '`)';
+  if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `' + znCommand('team sync') + '`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
   if (p.state === 'expired' && p.clock === 'behind') return base + " -- STRICT MODE (only restrictions apply): this computer's clock is behind the time this policy was issued. Check the computer's date and time.";
   if (p.state === 'expired') return base + " -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.";
@@ -101,7 +101,7 @@ async function joinCmd(args, io) {
   // The invitation email's link is not a join token: say what to do instead of a generic invalid-token error.
   if (messages.looksLikeEmailInvite(token)) { err('[zn] ' + messages.TEAM_INVITE_NOT_A_JOIN_TOKEN); return 2; }
   if (got.via === 'argument') {
-    err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `zn team join -` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
+    err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `' + znCommand('team join -') + '` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
   }
   // Audit records written before joining stay on this machine unless this flag asks to send them too.
   const joinArgs = { join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') };
@@ -124,7 +124,7 @@ async function joinCmd(args, io) {
     out('Policy: ' + why + '.');
   }
   err('[zn] The join is not finished: this machine is registered, but no valid policy is applied yet (' + why + '). ' +
-    "The organization's restrictions do not apply until one is. `zn team status` shows it as pending; run `zn team sync` to retry (zn also retries while the vault is unlocked).");
+    "The organization's restrictions do not apply until one is. `" + znCommand('team status') + "` shows it as pending; run `" + znCommand('team sync') + "` to retry (zn also retries while the vault is unlocked).");
   return 1;
 }
 
@@ -169,7 +169,7 @@ async function statusCmd(args) {
   if (wantRules) res.rules = rulesView(team ? policy.state({ team }) : null);
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {
-    out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
+    out('Not in a zn organization. Join with: ' + znCommand('team join <token>') + ' (from your organization admin).');
     if (wantRules) out('Rules: none, because this machine has not joined an organization.');
     for (const l of describeRevocations(res.revocation_pending)) out(l);
     for (const l of describeDropped(res.revocations_dropped)) out(l);
@@ -188,11 +188,11 @@ async function statusCmd(args) {
     out('Last sync:    ' + (ls.ok ? 'ok, ' + ls.at : 'FAILED ' + ls.at + ': ' + (ls.problems.join('; ') || 'unknown') +
       (ls.last_ok_at ? ' (last success ' + ls.last_ok_at + ')' : ' (never succeeded)') +
       // A removed installation cannot sync again: retrying would not help.
-      (res.revoked_at ? '' : '; run `zn team sync` to retry')));
+      (res.revoked_at ? '' : '; run `' + znCommand('team sync') + '` to retry')));
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
   for (const l of describeDropped(res.revocations_dropped)) out(l);
-  if (wantRules) out('Local view only: with --rules the vault and the server were not contacted, so upload counts, last sync and removal status are left out. Run `zn team status` without --rules for those.');
+  if (wantRules) out('Local view only: with --rules the vault and the server were not contacted, so upload counts, last sync and removal status are left out. Run `' + znCommand('team status') + '` without --rules for those.');
   else if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
@@ -203,7 +203,7 @@ function describeRevocations(list) {
   for (const r of Array.isArray(list) ? list : []) {
     lines.push('Revocation pending since ' + r.since + ' (installation ' + r.install_id + (r.org ? ', ' + r.org : '') + '): last error ' + (r.last_error || 'unknown') +
       (r.last_try_at ? ' (last try ' + r.last_try_at + ')' : '') + '.');
-    lines.push('  The server was not told that this installation left, so its token still works there. Next step: `zn team sync` retries now (zn also retries every 15 minutes while the vault is unlocked)' +
+    lines.push('  The server was not told that this installation left, so its token still works there. Next step: `' + znCommand('team sync') + '` retries now (zn also retries every 15 minutes while the vault is unlocked)' +
       (r.give_up_at ? ' until ' + r.give_up_at + ', when it stops; an admin can then remove the installation from the dashboard' : '') + '.');
   }
   return lines;
@@ -227,7 +227,7 @@ async function syncCmd() {
   const special = pol.status === 'revoked' ? 'revoked' : inactive ? 'inactive' : pol.status === 'offline' && !(r.upload && r.upload.status === 'tampered') ? 'offline' : null;
   if (!special) out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
   if (r.upload && !special) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
-  if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
+  if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `' + znCommand('team status') + '`.');
   else if (r.revocations && r.revocations.done) out('Revocation: the server has now been told that the earlier installation left.');
   if (r.upload && r.upload.status === 'error' && r.upload.error) out('Nothing was uploaded: ' + r.upload.error);
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
@@ -259,7 +259,7 @@ async function leaveCmd() {
       : 'The server was told: installation ' + r.install_id + ' is revoked and its token no longer works.');
   } else if (r.left && rev && rev.status === 'pending') {
     out('The server was NOT told yet that you left (' + rev.error + '): installation ' + r.install_id + ' stays on the organization\'s list, and its token still works there, until a retry succeeds.');
-    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, and stops on ' + rev.give_up_at + '. `zn team status` shows it.');
+    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `' + znCommand('team sync') + '` and every 15 minutes while the vault is unlocked, and stops on ' + rev.give_up_at + '. `' + znCommand('team status') + '` shows it.');
   } else if (!r.left && Array.isArray(r.revocations) && r.revocations.length) {
     for (const l of describeRevocations(r.revocations)) out(l);
   }

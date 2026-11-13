@@ -10,6 +10,7 @@
  */
 
 const { INVISIBLE_ANY_RE } = require('../vault/confirm');
+const { znCommand } = require('../zn-command');
 
 const clean = (s) => String(s).replace(INVISIBLE_ANY_RE, '');
 const list = (a) => a.map(clean).join(', ');
@@ -41,9 +42,9 @@ function ruleText(r) {
  * state: the result of policy.state() (or null).
  */
 function rulesView(st) {
-  if (!st || st.state === 'none') return { shown: false, state: 'none', message: 'No organization policy has been received yet, so there are no rules to show. Run `zn team sync`.' };
-  if (st.state === 'invalid') return { shown: false, state: 'invalid', message: 'The saved policy does not verify (' + (st.error || 'invalid') + '), so no rules are shown from it. Run `zn team sync`.' };
-  if (st.state === 'expired') return { shown: false, state: 'expired', message: 'The saved policy (version ' + st.version + ') expired on ' + st.expires_at + ', so it is not active and no rules are shown from it. Only restrictions apply until a new policy arrives; run `zn team sync`.' };
+  if (!st || st.state === 'none') return { shown: false, state: 'none', message: 'No organization policy has been received yet, so there are no rules to show. Run `' + znCommand('team sync') + '`.' };
+  if (st.state === 'invalid') return { shown: false, state: 'invalid', message: 'The saved policy does not verify (' + (st.error || 'invalid') + '), so no rules are shown from it. Run `' + znCommand('team sync') + '`.' };
+  if (st.state === 'expired') return { shown: false, state: 'expired', message: 'The saved policy (version ' + st.version + ') expired on ' + st.expires_at + ', so it is not active and no rules are shown from it. Only restrictions apply until a new policy arrives; run `' + znCommand('team sync') + '`.' };
   const p = st.policy;
   const env = (require('./policy').readCache() || {}).envelope || {};
   return {

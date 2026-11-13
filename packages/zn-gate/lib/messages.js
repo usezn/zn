@@ -276,11 +276,18 @@ function pinsError(reason) {
 
 /* ------------------------------- teams ------------------------------- */
 
+/* A zn command as the person should type it: `zn.cmd` on Windows, the npx form when zn is not on PATH. */
+function zn(args) {
+  return require('./zn-command').znCommand(args);
+}
+
 const TEAM_INVALID_JOIN_TOKEN = 'invalid join token (expected znj_...). Copy it again from the invitation your administrator sent.';
 
 const TEAM_INVALID_REQUEST = 'invalid request: the name, kind or value is not valid, so nothing was approved.';
 
-const TEAM_NOTHING_TO_APPROVE = 'nothing to approve: this machine has no organization policy waiting for your answer. Run `zn team status` to check.';
+function teamNothingToApprove() {
+  return 'nothing to approve: this machine has no organization policy waiting for your answer. Run `' + zn('team status') + '` to check.';
+}
 
 const TEAM_NOT_ASKED = 'the organization policy does not ask for this, so nothing was approved.';
 
@@ -291,47 +298,57 @@ function withDetails(text, detail) {
   return detail ? text + '\ndetails: ' + detail : text;
 }
 
-const TEAM_JOIN_TOKEN_REJECTED = 'This join token is expired, already used or not valid, so this machine was not connected. ' +
-  'Ask your organization admin for a new invitation, then run: zn team join <new token>';
+function teamJoinTokenRejectedText() {
+  return 'This join token is expired, already used or not valid, so this machine was not connected. ' +
+    'Ask your organization admin for a new invitation, then run: ' + zn('team join <new token>');
+}
 
 function teamJoinTokenRejected(detail) {
-  return withDetails(TEAM_JOIN_TOKEN_REJECTED, detail);
+  return withDetails(teamJoinTokenRejectedText(), detail);
 }
 
 function teamJoinNoNetwork(detail) {
   return withDetails('Could not reach the zn server, so this machine was not connected. ' +
-    'Check your internet connection and run the same command again: zn team join <token>', detail);
+    'Check your internet connection and run the same command again: ' + zn('team join <token>'), detail);
 }
 
-const TEAM_JOIN_NO_TOKEN = 'No join token given. Your organization admin sends you a token that starts with znj_. ' +
-  'Run: zn team join <token> (or `zn team join -` to paste it, or set ZN_TEAM_JOIN_TOKEN). All options: zn team --help';
+function teamJoinNoToken() {
+  return 'No join token given. Your organization admin sends you a token that starts with znj_. ' +
+    'Run: ' + zn('team join <token>') + ' (or `' + zn('team join -') + '` to paste it, or set ZN_TEAM_JOIN_TOKEN). All options: ' + zn('team --help');
+}
 
 function teamJoinNoPolicyYet() {
   return 'Your admin has not published a policy yet, so no restrictions apply for now. ' +
-    'This is expected: zn checks again by itself; to check now run: zn team sync';
+    'This is expected: zn checks again by itself; to check now run: ' + zn('team sync');
 }
 
-const TEAM_REMOVED = 'An admin removed this machine from the organization, so it no longer gets the policy. ' +
-  'To disconnect it run: zn team leave. To join again, ask your admin for a new token and run: zn team join <token>';
+function teamRemoved() {
+  return 'An admin removed this machine from the organization, so it no longer gets the policy. ' +
+    'To disconnect it run: ' + zn('team leave') + '. To join again, ask your admin for a new token and run: ' + zn('team join <token>');
+}
 
 function teamSyncNoNetwork(detail) {
-  return withDetails('Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync', detail);
+  return withDetails('Could not reach the zn server. Nothing was changed. Check your internet connection and run again: ' + zn('team sync'), detail);
 }
 
 function teamSyncInactive(pending) {
   const kept = pending > 0
     ? 'Nothing is lost: ' + pending + ' audit record' + (pending === 1 ? ' stays' : 's stay') + ' on this machine and ' + (pending === 1 ? 'is' : 'are') + ' sent when it is active again. '
     : 'Nothing is lost. ';
-  return 'Your organization is not active on zn right now: ask your organization admin. ' + kept + 'Once it is active, run: zn team sync';
+  return 'Your organization is not active on zn right now: ask your organization admin. ' + kept + 'Once it is active, run: ' + zn('team sync');
 }
 
+/* The words the person typed stay as typed ('zn team login'); the commands to run next are written for their shell. */
 function teamNotACommand(sub) {
-  if (sub === 'login') return "'zn team login' is not a zn command. To connect this machine run: zn team join <token>. To export the audit log run: zn vault log export --otlp";
-  if (sub === 'export') return "'zn team export' is not a zn command. To export the audit log run: zn vault log export --otlp. To connect this machine run: zn team join <token>";
+  const join = zn('team join <token>');
+  const exportLog = zn('vault log export --otlp');
+  if (sub === 'login') return "'zn team login' is not a zn command. To connect this machine run: " + join + '. To export the audit log run: ' + exportLog;
+  if (sub === 'export') return "'zn team export' is not a zn command. To export the audit log run: " + exportLog + '. To connect this machine run: ' + join;
   // Never echo anything that looks like a join token (a forgotten 'join'), nor a very long word.
-  if (/^znj_/i.test(String(sub).trim())) return "That looks like a join token. Run: zn team join <token>";
+  if (/^znj_/i.test(String(sub).trim())) return 'That looks like a join token. Run: ' + join;
   const shown = String(sub).length > 20 ? 'that' : String(sub).replace(/[\u0000-\u001f\u007f]/g, ' ');
-  return "'zn team " + shown + "' is not a zn command. Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help";
+  return "'zn team " + shown + "' is not a zn command. Commands: " + join + ', ' + zn('team status') + ', ' + zn('team sync') + ', ' +
+    zn('team leave') + '. All options: ' + zn('team --help');
 }
 
 /* An email invitation (the link or its zninv_ token) is accepted in the dashboard; the machine joins with a different token. */
@@ -339,8 +356,10 @@ function looksLikeEmailInvite(text) {
   return /zninv_/i.test(String(text)) || /[?&]invite=/i.test(String(text));
 }
 
-const TEAM_INVITE_NOT_A_JOIN_TOKEN = 'That is the link from your invitation email, not a join token. ' +
-  'Open the link to accept the invitation at usezn.com/team, then ask your organization admin for a join token (it starts with znj_) and run: zn team join <token>';
+function teamInviteNotAJoinToken() {
+  return 'That is the link from your invitation email, not a join token. ' +
+    'Open the link to accept the invitation at usezn.com/team, then ask your organization admin for a join token (it starts with znj_) and run: ' + zn('team join <token>');
+}
 
 function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
@@ -355,8 +374,14 @@ module.exports = {
   CONNECT_KEY_ON_COMMAND_LINE, CONNECT_CANCELLED, CONNECT_NOT_A_KEY, CONNECT_REJECTED,
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
-  TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
-  TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
+  TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
+  teamJoinFailed, looksLikeEmailInvite, teamJoinTokenRejected, teamJoinNoNetwork, teamJoinNoPolicyYet,
+  teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
+  // Messages that name a zn team command: read when used, so the command fits this machine (zn.cmd, npx form).
+  get TEAM_NOTHING_TO_APPROVE() { return teamNothingToApprove(); },
+  get TEAM_INVITE_NOT_A_JOIN_TOKEN() { return teamInviteNotAJoinToken(); },
+  get TEAM_JOIN_TOKEN_REJECTED() { return teamJoinTokenRejectedText(); },
+  get TEAM_JOIN_NO_TOKEN() { return teamJoinNoToken(); },
+  get TEAM_REMOVED() { return teamRemoved(); },
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

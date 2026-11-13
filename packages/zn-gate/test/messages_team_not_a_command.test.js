@@ -5,25 +5,28 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { teamNotACommand } = require('../lib/messages');
+const { znCommand: zn } = require('../lib/zn-command');
 
-const COMMANDS = 'Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help';
+const JOIN = zn('team join <token>');
+const EXPORT_LOG = zn('vault log export --otlp');
+const COMMANDS = 'Commands: ' + JOIN + ', ' + zn('team status') + ', ' + zn('team sync') + ', ' + zn('team leave') + '. All options: ' + zn('team --help');
 
 test('login has its own sentence that points to zn team join <token>', () => {
   const msg = teamNotACommand('login');
   assert.equal(msg,
-    "'zn team login' is not a zn command. To connect this machine run: zn team join <token>. To export the audit log run: zn vault log export --otlp");
-  assert.match(msg, /zn team join <token>/);
+    "'zn team login' is not a zn command. To connect this machine run: " + JOIN + '. To export the audit log run: ' + EXPORT_LOG);
+  assert.ok(msg.includes(JOIN));
 });
 
 test('export has its own sentence that points to zn team join <token>', () => {
   const msg = teamNotACommand('export');
   assert.equal(msg,
-    "'zn team export' is not a zn command. To export the audit log run: zn vault log export --otlp. To connect this machine run: zn team join <token>");
-  assert.match(msg, /zn team join <token>/);
+    "'zn team export' is not a zn command. To export the audit log run: " + EXPORT_LOG + '. To connect this machine run: ' + JOIN);
+  assert.ok(msg.includes(JOIN));
 });
 
 test('a word that looks like a join token gives the join hint and is not echoed', () => {
-  const hint = 'That looks like a join token. Run: zn team join <token>';
+  const hint = 'That looks like a join token. Run: ' + JOIN;
   for (const word of ['znj_FAKE0000example', 'ZNJ_fake1111example', 'Znj_Fake2222', '  znj_fake3333  ']) {
     const msg = teamNotACommand(word);
     assert.equal(msg, hint);
@@ -50,6 +53,6 @@ test('an ordinary word is echoed in quotes with the list of real sub-commands', 
   const msg = teamNotACommand('frobnicate');
   assert.equal(msg, "'zn team frobnicate' is not a zn command. " + COMMANDS);
   for (const sub of ['join', 'status', 'sync', 'leave']) {
-    assert.ok(msg.includes('zn team ' + sub), 'lists zn team ' + sub);
+    assert.ok(msg.includes(zn('team ' + sub)), 'lists zn team ' + sub);
   }
 });

@@ -38,12 +38,14 @@ test.beforeEach(() => {
   };
 });
 
+const { asTyped } = require('./helpers/zn_typed');
+
 async function capture(fn) {
   const o = process.stdout.write; const e = process.stderr.write;
   let stdout = ''; let stderr = '';
   process.stdout.write = (s) => { stdout += s; return true; };
   process.stderr.write = (s) => { stderr += s; return true; };
-  try { const code = await fn(); return { code, stdout, stderr }; } finally { process.stdout.write = o; process.stderr.write = e; }
+  try { const code = await fn(); return { code, stdout: asTyped(stdout), stderr: asTyped(stderr) }; } finally { process.stdout.write = o; process.stderr.write = e; }
 }
 
 test('an argument still works and prints a one-line history warning, without the token', async () => {

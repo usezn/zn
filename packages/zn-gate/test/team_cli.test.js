@@ -38,7 +38,9 @@ test.beforeEach(() => {
   fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true });
 });
 
-/** Runs fn with stdout and stderr captured. */
+const { asTyped } = require('./helpers/zn_typed');
+
+/** Runs fn with stdout and stderr captured (zn commands written back as `zn ...`). */
 async function capture(fn) {
   const o = process.stdout.write;
   const e = process.stderr.write;
@@ -48,7 +50,7 @@ async function capture(fn) {
   process.stderr.write = (s) => { stderr += s; return true; };
   try {
     const code = await fn();
-    return { code, stdout, stderr };
+    return { code, stdout: asTyped(stdout), stderr: asTyped(stderr) };
   } finally {
     process.stdout.write = o;
     process.stderr.write = e;

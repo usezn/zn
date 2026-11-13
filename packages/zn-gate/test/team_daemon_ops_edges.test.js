@@ -103,12 +103,12 @@ test('a join the server refuses or cannot answer is reported with its reason and
   await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /join failed \(HTTP 402: This organization has no active Team subscription\)/);
   assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'team_join_failed' });
   cloud.setOrgActive(true);
-  await assert.rejects(m.o.teamJoin({ join_token: 'znj_' + 'Z'.repeat(40), api_base: cloud.base }), /^Error: This join token is expired, already used or not valid, so this machine was not connected\. Ask your organization admin for a new invitation, then run: zn team join <new token>\ndetails: HTTP 403: This join token is invalid, expired or used up$/);
+  await assert.rejects(m.o.teamJoin({ join_token: 'znj_' + 'Z'.repeat(40), api_base: cloud.base }), /^Error: This join token is expired, already used or not valid, so this machine was not connected\. Ask your organization admin for a new invitation, then run: .*team join <new token>\ndetails: HTTP 403: This join token is invalid, expired or used up$/);
   net.status = 500;
   await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /join failed \(HTTP 500: simulated failure\)/);
   net.status = 0;
   net.throwError = true;
-  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /^Error: Could not reach the zn server, so this machine was not connected\. Check your internet connection and run the same command again: zn team join <token>\ndetails: ZN_TEAM_NETWORK$/);
+  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /^Error: Could not reach the zn server, so this machine was not connected\. Check your internet connection and run the same command again: .*team join <token>\ndetails: ZN_TEAM_NETWORK$/);
   assert.strictEqual(m.secrets.team, undefined, 'nothing was stored');
 });
 
