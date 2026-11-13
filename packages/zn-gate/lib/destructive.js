@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-13.3';
+const COMMAND_RULES_VERSION = '2026-11-13.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -636,9 +636,9 @@ function checkHead(args, depth, known) {
     }
   }
   if (head === 'dd') {
-    if ((rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(w.slice(3)))) && on('disk_overwrite')) return 'disk_overwrite';
+    if ((rest.some((w) => w.startsWith('of=') && isBlockDevice(w.slice(3)))) && on('disk_overwrite')) return 'disk_overwrite';
   }
-  if ((DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) && on('disk_overwrite')) return 'disk_overwrite';
+  if ((DISK_TOOLS.test(head) && rest.some((w) => isBlockDevice(w))) && on('disk_overwrite')) return 'disk_overwrite';
   return null;
 }
 
@@ -648,8 +648,14 @@ function worldWritable(mode) {
   return Boolean(m && (m[1] === '' || /[ao]/.test(m[1])));
 }
 
+/* A disk device path, also when written with repeated slashes or "." and ".." segments (//dev/sda, /tmp/../dev/sda). */
+function isBlockDevice(w) {
+  return BLOCK_DEVICE_RE.test(resolveDots(String(w).replace(/\/{2,}/g, '/')));
+}
+
 function isRcPath(w) {
-  const t = String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
+  // Repeated slashes and "." or ".." segments name the same file (~//.bashrc, /tmp/../etc/profile).
+  const t = resolveDots(String(w).replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/'));
   return RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w));
 }
 
@@ -764,7 +770,7 @@ function checkPipeline(pipe, known = null) {
   }
   // A redirect to a block device, with or without a download.
   for (const s of pipe) {
-    for (const t of redirectTargets(s.words)) if ((BLOCK_DEVICE_RE.test(t)) && on('disk_overwrite')) return 'disk_overwrite';
+    for (const t of redirectTargets(s.words)) if ((isBlockDevice(t)) && on('disk_overwrite')) return 'disk_overwrite';
   }
   return null;
 }

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-13.3"
+COMMAND_RULES_VERSION = "2026-11-13.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1146,17 +1146,24 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
             if head == "chmod" and "home" in targets and _world_writable(mode):
                 return "perm_root"
     if head == "dd":
-        if any(w.startswith("of=") and _BLOCK_DEVICE_RE.match(w[3:]) for w in rest):
+        if any(w.startswith("of=") and _is_block_device(w[3:]) for w in rest):
             return "disk_overwrite"
-    if _DISK_TOOLS.match(head) and any(_BLOCK_DEVICE_RE.match(w) for w in rest):
+    if _DISK_TOOLS.match(head) and any(_is_block_device(w) for w in rest):
         return "disk_overwrite"
     return None
 
 
+def _is_block_device(w: str) -> bool:
+    """A disk device path, also when written with repeated slashes or "." and ".." segments (//dev/sda, /tmp/../dev/sda)."""
+    return bool(_BLOCK_DEVICE_RE.match(_resolve_dots(re.sub(r"/{2,}", "/", str(w)))))
+
+
 def _is_rc_path(w: str) -> bool:
-    t = str(w).replace("\\", "/")
+    # Repeated slashes and "." or ".." segments name the same file (~//.bashrc, /tmp/../etc/profile).
+    t = re.sub(r"/{2,}", "/", str(w).replace("\\", "/"))
     t = re.sub(r"^~/", "/", t)
     t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
+    t = _resolve_dots(t)
     return bool(_RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)))
 
 
@@ -1314,7 +1321,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
-            if _BLOCK_DEVICE_RE.match(t):
+            if _is_block_device(t):
                 return "disk_overwrite"
     return None
 
