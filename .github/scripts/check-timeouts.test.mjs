@@ -43,6 +43,19 @@ test('a file without jobs passes, a jobs block it cannot read fails', () => {
   assert.equal(findMissingTimeouts('jobs:\n    a:\n        timeout-minutes: 3\n').length, 1);
 });
 
+test('a job written in flow style cannot hide a missing timeout', () => {
+  const text = wf('  a:\n    timeout-minutes: 3\n    runs-on: x\n  b: { runs-on: ubuntu-latest }\n');
+  const problems = findMissingTimeouts(text);
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].job, 'b');
+  assert.match(problems[0].reason, /block form/);
+});
+
+test('a job key with a quoted name is still checked', () => {
+  const text = wf('  "a":\n    runs-on: x\n');
+  assert.deepEqual(findMissingTimeouts(text), [{ job: 'a', reason: 'no timeout-minutes' }]);
+});
+
 test('checkDir reads every workflow file of a folder', () => {
   const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'timeouts-'));
   try {
