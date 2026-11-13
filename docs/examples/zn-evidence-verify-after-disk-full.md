@@ -1,6 +1,6 @@
 # Example: verify the decision log after a disk filled up
 
-The disk of your computer was full for a while. Programs that were writing files at that moment can stop in the middle of a line, and the decision log of zn-gate is one such file. This page shows what `zn-gate evidence --verify` prints when the last record of the log was cut short, how that differs from a log that is simply missing its last line, and what to do.
+The disk of your computer was full for a while. Programs that were writing files at that moment can stop in the middle of a line, and the decision log of zn-gate is one such file. This page shows what `zn-gate evidence --verify` prints when the last record of the log was cut short, how that differs from a log that only lacks its last line, and what to do.
 
 The log is the file `evidence.jsonl` in the `.zn` folder (see [files and folders](../files-and-folders.md)). The check only reads it: nothing is changed and nothing is sent anywhere. For every option, see the [command line reference](../cli.md#evidence).
 
