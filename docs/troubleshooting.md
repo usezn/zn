@@ -4,6 +4,36 @@ The eighteen messages people most often meet when they first use zn-gate: what e
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Which page answers which question
+
+Start here if you are not sure the message you met is in this page.
+
+| If you want to know | Read |
+|---|---|
+| What one error message means and what to do | [Symptoms by command](#symptoms-by-command) below, then [Block and warn reasons, by family](#block-and-warn-reasons-by-family) |
+| Why your agent was blocked, in plain words | [Why was this blocked?](why-was-this-blocked.md) |
+| What an exit code means, in a script or in CI | [Exit codes](exit-codes.md) |
+| Whether zn-gate works and your hooks are installed | [Check that it works](check.md) |
+| How to update or remove zn-gate | [Upgrading zn-gate](upgrading.md) and [Remove zn-gate](uninstall.md) |
+| Which files and folders zn-gate reads or writes | [Files and folders](files-and-folders.md) |
+| Which command to use for a task | [Command cheat sheet](commands-cheatsheet.md) |
+
+## Reporting without secrets
+
+Before you paste zn-gate output into an issue, a discussion or a chat, go through this list. Run every command in your own terminal.
+
+1. **Start with `zn-gate check --json`.** It holds no secret values and writes your home folder as `~`. The [checklist of commands to paste](examples/doctor-before-asking-for-help.md) lists what to run and what each command prints.
+2. **Read `zn why` and `zn evidence` output before you paste it.** A record in the decision log keeps only the first 120 characters of what was checked, with secrets replaced first, and `zn why` removes secrets from that text once more. Redaction works by recognising the format of a secret: a password written in a sentence, or a value zn does not recognise, stays as it is. The full text of a command or a file is not kept, only a SHA-256 hash of it. When you export the log with `zn-gate evidence --export`, paste only the records you need.
+3. **Read `zn audit` output before you paste it.** Each `evidence:` line is cut to 160 characters, secrets in it become `[REDACTED:<TYPE>]`, and every URL is shortened to `scheme://host[:port]`. It still shows file names and lines from your own project, and a password written in prose is not redacted. See [what an audit report shows](audit.md#limitations).
+4. **Never paste these files or values:**
+   - the vault files in `~/.zn` (`vault/secrets.age`, `vault/identity.age`, `vault/keychain.json`), `run/session.key`, any `vault-backup-<date>` folder, and `config.json`;
+   - your `.env` files, and credential files such as `~/.aws/credentials`, `~/.netrc` and `~/.kube/config`;
+   - your zn API key (`zn_` followed by 48 characters), the value of `ZN_API_KEY` or `--key`, and a team join token (`znj_...`).
+
+   The [list of files and folders](files-and-folders.md#who-creates-each-one-and-how-to-remove-it) says what each file in `~/.zn` is.
+5. **Look over verbose output.** `ZN_VERBOSE=1` and `DEBUG=zn` add technical details of errors. Read them like the rest, and leave out paths or names you would not share.
+6. **If a secret went into a post, treat it as leaked.** Replace the secret first, then remove the post. You can revoke a zn API key at <https://usezn.com/api-keys>.
+
 ## Symptoms by command
 
 Find the command you ran, then the symptom that matches.
@@ -96,7 +126,7 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 - Use the `.cmd` versions: `npx.cmd -y zn-gate init`, or `npm.cmd install -g zn-gate`.
 - Run the same commands in Command Prompt instead of PowerShell.
-- Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+- Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it.
 
 More in the [README](../README.md#install).
 
@@ -140,7 +170,7 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If `zn vault verify` says the vault audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
-For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
+For the other messages of `zn unlock`, `zn lock` and `zn vault forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-vault-forget).
 
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
@@ -1136,7 +1166,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What to do:** run `zn team status` to see what, if anything, is waiting. If something should be waiting, ask your administrator.
 
-### Messages from the vault commands (`zn unlock`, `zn lock`, `zn forget`)
+### Messages from the vault commands (`zn unlock`, `zn lock`, `zn vault forget`)
 
 The vault being locked, damaged or refusing a keychain are in [section 5](#5-your-secret-vault-is-locked). These are the other messages of the vault commands.
 
@@ -1166,9 +1196,9 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 
 #### "Lock the vault first"
 
-**What happened:** `zn forget` removes what zn stored for a project, and the unlocked vault may hold that project in memory.
+**What happened:** `zn vault forget` removes what zn stored for a project, and the unlocked vault may hold that project in memory.
 
-**What to do:** run `zn lock`, then `zn forget` again.
+**What to do:** run `zn lock`, then `zn vault forget` again.
 
 #### "The vault is already unlocked"
 

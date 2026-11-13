@@ -9,7 +9,7 @@
  *   zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all]
  *                          [--managed-hooks-only] [--exclusive-mcp] [--json]
  *
- * The hook commands are the ones `zn hooks install --scope project` writes
+ * The hook commands are the ones `zn hooks install --project` writes
  * (`zn hook <agent>`, see lib/agents/config-file.js hookCommand), so each
  * machine needs zn-gate installed with `zn` on the PATH, and the policy check
  * of `zn hooks install` (lib/agents/managed-policy.js) recognizes them as zn's.

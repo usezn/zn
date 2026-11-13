@@ -28,7 +28,7 @@ zn-gate makes a temporary folder with two files: a `.env` file that holds a fake
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
 - **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
-- **Nothing changes**: nothing is sent over the network, no agent is started and no setting changes. The folder is deleted at the end.
+- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds, to read the version (see [Agent versions](#agent-versions)), with no tokens, with updates and update notices turned off, and stopped after 2 seconds; no agent session is started. The folder is deleted at the end.
 
 ## What you will see
 

@@ -265,7 +265,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       hooks, wrapped MCP servers. Shows the plan first; the vault is only deleted if
                       you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
-                      (also: doctor). Safe: a temporary folder, nothing is sent
+                      (also: doctor). Safe: a temporary folder, zn-gate sends nothing over the network;
+                      it runs the installed zn hooks; the only agent program it starts is <agent> --version
   check --json        Same check as one JSON object for scripts, CI and support requests
   check --hooks       List every installed zn hook and say if it is OK, stale or broken
                       (reads files only; nothing is run or changed)
