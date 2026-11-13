@@ -266,11 +266,11 @@ Measured 2026-10-11 on a 2-vCPU Intel Xeon Platinum 8259CL (AWS), Node 24, zn-ga
 
 | Input size | `evaluate()` p50 | `evaluate()` p99 | `check_tool_result` p50 | `check_tool_result` p99 |
 |---|---|---|---|---|
-| 200 B (typical prompt) | 0.012 ms | 0.09 ms | 0.045 ms | 0.19 ms |
+| 200 B (typical prompt) | 0.013 ms | 0.09 ms | 0.045 ms | 0.19 ms |
 | 4 KB (typical tool output) | 0.16 ms | 0.45 ms | 0.30 ms | 0.81 ms |
 | 64 KB (large file) | 2.4 ms | 4.8 ms | 3.8 ms | 6.7 ms |
 
-`check_tool_result` includes secret redaction. Latency grows roughly linearly with input size. The MCP stdio round-trip for a 4 KB `check_tool_result` was 0.5 ms p50 on the same host.
+`check_tool_result` includes secret redaction. The 200 B `evaluate()` p50 (0.013 ms) comes from the 2026-10-10 run of the 1.4.0 release, the figure published on usezn.com; the other figures in this table are from the 2026-10-11 run of the 1.4.1 release. Latency grows roughly linearly with input size. The MCP stdio round-trip for a 4 KB `check_tool_result` was 0.5 ms p50 on the same host.
 
 Reproduce with `node bench/bench_by_size.js` from the [repository](https://github.com/usezn/zn). Please send us your numbers.
 
