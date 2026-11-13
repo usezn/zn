@@ -83,6 +83,8 @@
     { "cmd": "nsenter --target 1 --uts --ipc --cgroup --time rm -rf ~", "rule": "rm_root_home" },
     { "cmd": "nsenter --target 1 --root rm -rf ~", "rule": "rm_root_home" },
     { "cmd": "nsenter --pid=/proc/1/ns/pid rm -rf ~", "rule": "rm_root_home" },
-    { "cmd": "nsenter --target 1 --mount=/proc/1/ns/mnt rm -rf ~", "rule": "rm_root_home" }
+    { "cmd": "nsenter --target 1 --mount=/proc/1/ns/mnt rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nice --adjustment 'C:\\x\\rm' -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nice --adjustment /usr/bin/rm -rf ~", "rule": "rm_root_home" }
   ]
 }

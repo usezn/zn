@@ -336,6 +336,8 @@ function unwrapDir(args) {
   let overflow = false;
   // Set when the chain may not end on the program (see policy.skipWrapper): the caller also reads the later words.
   const chain = { unsure: false };
+  // Where the first wrapper starts: when the chain is unsure, the words it skipped as option values are read as commands too.
+  let first = -1;
   for (let guard = 0; i < args.length; guard++) {
     // Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
     // So are the words that only introduce a command: function NAME { ...; } (the body is read like any other commands,
@@ -352,6 +354,7 @@ function unwrapDir(args) {
     const name = programName(a);
     // The guard is used up and the next word is still a wrapper: the rest cannot be read, so the line is refused.
     if (guard >= 32) { overflow = WRAPPERS.has(name) || policyModule().WRAPPER_NAMES.has(name); break; }
+    if (first < 0 && (name === 'sudo' || name === 'doas' || name === 'env' || policyModule().WRAPPER_NAMES.has(name))) first = i;
     if (name === 'sudo' || name === 'doas') {
       i++;
       while (i < args.length && args[i].startsWith('-')) {
@@ -382,7 +385,7 @@ function unwrapDir(args) {
     }
     break;
   }
-  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow, unsure: chain.unsure };
+  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow, unsure: chain.unsure, all: first >= 0 ? args.slice(first) : args };
 }
 
 /* The words of a command after wrappers and shell keywords. */
@@ -557,7 +560,8 @@ function checkSimple(words, depth, known) {
   if (!args.length) return null;
   const hit = checkHead(args, depth, known);
   if (hit || !un.unsure) return hit;
-  return checkLaterHeads(args, depth, known);
+  // From the first wrapper on, so a word skipped as an option's value is read as a possible command as well.
+  return checkLaterHeads(un.all, depth, known);
 }
 
 /* Whether the rules below read a command with this program name as its head. */

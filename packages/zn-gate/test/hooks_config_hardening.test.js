@@ -169,3 +169,20 @@ test('a stricter failMode from ZN_HOME wins over an open account failMode, which
   writeConfig(znHome, { hooks: { failMode: 'open' } });
   assert.equal(runner.readConfig().hooks.failMode, 'open');
 });
+
+test('the account config is read from <home>/.zn/config.json, and a ZN_HOME that names that folder is the account folder', (t) => {
+  const { accountZn } = homes(t);
+  assert.equal(stats.userHome(), accountZn);
+  writeConfig(accountZn, { hooks: { whenUnavailable: 'allow', egressCheck: 'off' } });
+  // Not a config.json in the home folder itself.
+  fs.writeFileSync(path.join(path.dirname(accountZn), 'config.json'), JSON.stringify({ hooks: { egressCheck: 'deny' } }));
+  process.env.ZN_HOME = accountZn;
+  assert.deepEqual(runner.readConfig().hooks, { whenUnavailable: 'allow', egressCheck: 'off' });
+  // A ZN_HOME that names another folder only tightens it.
+  const other = tempDir(t, 'zn-other-');
+  writeConfig(other, { hooks: { egressCheck: 'deny', whenUnavailable: 'allow' } });
+  process.env.ZN_HOME = other;
+  const h = runner.readConfig().hooks;
+  assert.equal(h.egressCheck, 'deny');
+  assert.equal(h.whenUnavailable, 'allow');
+});

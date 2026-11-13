@@ -587,7 +587,7 @@ def _add_dir(dirs: List[str], w: Optional[str]) -> None:
 _WRAPPER_CAP_NAMES = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
 
 
-def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool]:
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool, List[str]]:
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
     keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
     followed were met (the line is then refused), the strings of env -S / --split-string, and whether the chain may not
@@ -598,6 +598,8 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
     splits: List[str] = []
     overflow = False
     chain = {"unsure": False}
+    # Where the first wrapper starts: when the chain is unsure, the words it skipped as option values are read as commands too.
+    first = -1
     while i < len(args):
         guard += 1
         # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
@@ -621,6 +623,8 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
         if guard > 32:
             overflow = name in _WRAPPER_CAP_NAMES or name in _WRAPPERS
             break
+        if first < 0 and (name in ("sudo", "doas", "env") or name in _WRAPPERS):
+            first = i
         if name in ("sudo", "doas"):
             i += 1
             while i < len(args) and args[i].startswith("-"):
@@ -657,7 +661,7 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
             i = _skip_wrapper(args, i, name, chain)
             continue
         break
-    return args[i:], chdir, overflow, splits, chain["unsure"]
+    return args[i:], chdir, overflow, splits, chain["unsure"], (args[first:] if first >= 0 else args)
 
 
 _ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
@@ -1026,7 +1030,7 @@ def _from_cwd(cwd: Any, word: str) -> str:
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
-    args, chdir, overflow, splits, unsure = _unwrap_dir(words)
+    args, chdir, overflow, splits, unsure, chain_words = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
     if chdir:
@@ -1047,7 +1051,8 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
     hit = _check_head(args, depth, known)
     if hit or not unsure:
         return hit
-    return _check_later_heads(args, depth, known)
+    # From the first wrapper on, so a word skipped as an option's value is read as a possible command as well.
+    return _check_later_heads(chain_words, depth, known)
 
 
 def _head_is_read(name: str) -> bool:
@@ -1258,7 +1263,7 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf, _spl, unsure = _unwrap_dir(_strip_redirects(words))
+        a, d, _ovf, _spl, unsure, _all = _unwrap_dir(_strip_redirects(words))
         a = _pipe_args(a, unsure)
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]

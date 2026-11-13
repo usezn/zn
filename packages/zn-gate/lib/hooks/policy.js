@@ -3315,7 +3315,7 @@ const WRAPPER_LONG_OPTIONAL = {
 // A word taken as an option's value that names a program zn reads (rm, sh, find, curl ...) may really be the program, if the
 // option was guessed wrong: the chain is then unsure, so that word and the later ones are read as commands too.
 const SKIPPED_PROGRAM_RE = /^(?:rm|rmdir|del|erase|rd|ri|remove-item|shred|mkfs[a-z0-9.]*|mke2fs|mkswap|wipefs|blkdiscard|dd|find|chmod|chown|chgrp|sh|bash|zsh|dash|ksh|ash|mksh|rbash|su|eval|cmd|pwsh|powershell|python[0-9.]*|perl|ruby|node|curl|wget|iwr|irm|aria2c|fetch)$/i;
-const skippedIsProgram = (t) => SKIPPED_PROGRAM_RE.test(String(t).replace(/^\(+/, '').split(/[\/]/).pop());
+const skippedIsProgram = (t) => SKIPPED_PROGRAM_RE.test(String(t).replace(/^\(+/, '').split(/[\\/]/).pop());
 // A word in command position that reads like an option value, not a program: a number or duration (10, +5, 1e3),
 // a one-letter mode (stdbuf L), a user:group, a list or a format (%e).
 const VALUE_LIKE_RE = /^[+-]?[0-9.]|^[A-Z]$|[:,%]/;
