@@ -378,7 +378,8 @@ function privateRegistry(eco, opts = {}) {
   if (projectDirList.incomplete) return true;
   for (const dir of projectDirList) files.push(path.join(dir, 'uv.toml'), path.join(dir, 'pip.conf'));
   files.push('/etc/pip.conf', '/etc/xdg/pip/pip.conf', '/etc/uv/uv.toml');
-  for (const d of String(env.XDG_CONFIG_DIRS || '').split(':')) if (d) files.push(path.join(d, 'pip', 'pip.conf'));
+  // The list uses the platform's separator (';' on Windows, where ':' also follows the drive letter).
+  for (const d of String(env.XDG_CONFIG_DIRS || '').split(path.delimiter)) if (d) files.push(path.join(d, 'pip', 'pip.conf'));
   const programData = env.ProgramData || env.PROGRAMDATA;
   if (programData) files.push(path.join(programData, 'pip', 'pip.ini'), path.join(programData, 'uv', 'uv.toml'));
   for (const f of files) {
