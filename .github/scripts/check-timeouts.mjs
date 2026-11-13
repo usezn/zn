@@ -26,6 +26,12 @@ export function findMissingTimeouts(text) {
   };
   for (const line of lines) {
     if (/^jobs:\s*(#.*)?$/.test(line)) { inJobs = true; hasJobsKey = true; continue; }
+    // An inline value (`jobs: { build: ... }`) hides the jobs from the block reader below: fail it.
+    if (/^jobs:\s*[^\s#]/.test(line)) {
+      hasJobsKey = true;
+      problems.push({ job: '(file)', reason: '"jobs:" has an inline value; write the jobs in block form under it, the timeouts cannot be read' });
+      continue;
+    }
     if (inJobs && /^\S/.test(line) && !line.startsWith('#')) { flush(); inJobs = false; }
     if (!inJobs) continue;
     const key = line.match(/^ {2}(["']?)([A-Za-z0-9_-]+)\1:\s*(#.*)?$/);
