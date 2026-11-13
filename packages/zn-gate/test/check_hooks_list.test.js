@@ -37,7 +37,7 @@ test('no agent set up: nothing listed, exit 0', (t) => {
   assert.match(out, /None found/);
 });
 
-test('a fresh install is all OK, and every event is listed with its command', { skip: process.platform === 'win32' }, (t) => {
+test('a fresh install is all OK, and every event is listed with its command', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = setup(t, ['claude-code', 'codex', 'cursor']);
   const res = list(s);
   for (const id of ['claude-code', 'codex', 'cursor']) {
@@ -55,7 +55,7 @@ test('a fresh install is all OK, and every event is listed with its command', { 
   assert.match(out, / 0 stale, 0 broken\./);
 });
 
-test('a launcher the current zn-gate would write differently is STALE', { skip: process.platform === 'win32' }, (t) => {
+test('a launcher the current zn-gate would write differently is STALE', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = setup(t, ['codex']);
   const f = launcherPath(s.home, 'codex');
   fs.writeFileSync(f, fs.readFileSync(f, 'utf8') + '# an older launcher had other text here\n');
@@ -66,7 +66,7 @@ test('a launcher the current zn-gate would write differently is STALE', { skip: 
   assert.match(out, /Fix: run `zn hooks install codex`/);
 });
 
-test('a launcher that did not record the package files (older zn-gate) is STALE', { skip: process.platform === 'win32' }, (t) => {
+test('a launcher that did not record the package files (older zn-gate) is STALE', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = setup(t, ['codex']);
   const f = launcherPath(s.home, 'codex');
   fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^ZN_FILES=.*\n/m, ''));
@@ -74,7 +74,7 @@ test('a launcher that did not record the package files (older zn-gate) is STALE'
   assert.ok(rows.length > 0 && rows.every((r) => r.status === 'STALE'), JSON.stringify(rows));
 });
 
-test('a missing launcher file, or a missing Node.js, is BROKEN', { skip: process.platform === 'win32' }, (t) => {
+test('a missing launcher file, or a missing Node.js, is BROKEN', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const a = setup(t, ['codex']);
   fs.unlinkSync(launcherPath(a.home, 'codex'));
   const rowsA = rowsOf(list(a), 'codex');
@@ -89,7 +89,7 @@ test('a missing launcher file, or a missing Node.js, is BROKEN', { skip: process
   assert.match(rowsB[0].reason, /Node\.js/);
 });
 
-test('the same hook written twice for an event is BROKEN (duplicate)', { skip: process.platform === 'win32' }, (t) => {
+test('the same hook written twice for an event is BROKEN (duplicate)', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = setup(t, ['cursor']);
   const file = path.join(s.home, '.cursor', 'hooks.json');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -125,7 +125,7 @@ test('hooks that are not zn\'s are not listed', (t) => {
   assert.equal(list(s).agents.length, 0);
 });
 
-test('it never changes a file', { skip: process.platform === 'win32' }, (t) => {
+test('it never changes a file', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = setup(t, ['claude-code', 'codex']);
   const snap = () => {
     const out = {};
@@ -144,7 +144,7 @@ test('it never changes a file', { skip: process.platform === 'win32' }, (t) => {
   assert.deepEqual(snap(), before);
 });
 
-test('zn-gate check --hooks (and doctor --hooks) prints the list and exits 1 when something is wrong', { skip: process.platform === 'win32' }, (t) => {
+test('zn-gate check --hooks (and doctor --hooks) prints the list and exits 1 when something is wrong', { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = setup(t, ['codex']);
   const env = { ...s.env, ZN_STATS: 'off' };
   const ok = spawnSync(process.execPath, [CLI, 'check', '--hooks'], { cwd: s.cwd, env, encoding: 'utf8' });

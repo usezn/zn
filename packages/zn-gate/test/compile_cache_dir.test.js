@@ -14,7 +14,7 @@ function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cc-dir-'));
 }
 
-test('isPrivateDir is true for a real directory with mode 0700 owned by this user', { skip: !posix }, () => {
+test('isPrivateDir is true for a real directory with mode 0700 owned by this user', { skip: !posix && 'POSIX folder modes (0700)' }, () => {
   const base = tmp();
   try {
     const dir = path.join(base, 'private');
@@ -44,7 +44,7 @@ test('isPrivateDir is false for a symlink to a private directory', () => {
   }
 });
 
-test('isPrivateDir is false when group or others can write', { skip: !posix }, () => {
+test('isPrivateDir is false when group or others can write', { skip: !posix && 'POSIX folder modes (0700)' }, () => {
   const base = tmp();
   try {
     const dir = path.join(base, 'open');
@@ -107,7 +107,7 @@ function enableWithHome(home) {
 
 const hasCompileCache = typeof require('module').enableCompileCache === 'function';
 
-test('cacheRoot follows a temporary HOME when ZN_HOME is not set', { skip: !posix }, () => {
+test('cacheRoot follows a temporary HOME when ZN_HOME is not set', { skip: !posix && 'POSIX folder modes (0700)' }, () => {
   const base = tmp();
   try {
     const code = 'console.log(require(' + JSON.stringify(require.resolve('../lib/compile-cache')) +
@@ -121,7 +121,7 @@ test('cacheRoot follows a temporary HOME when ZN_HOME is not set', { skip: !posi
   }
 });
 
-test('enable in a new HOME creates private folders under ~/.zn', { skip: !posix || !hasCompileCache }, () => {
+test('enable in a new HOME creates private folders under ~/.zn', { skip: (!posix && 'POSIX folder modes (0700)') || (!hasCompileCache && 'this Node.js has no module compile cache') }, () => {
   const base = tmp();
   try {
     const dir = enableWithHome(base);
@@ -136,7 +136,7 @@ test('enable in a new HOME creates private folders under ~/.zn', { skip: !posix 
   }
 });
 
-test('enable reuses an existing private ~/.zn and keeps its files', { skip: !posix || !hasCompileCache }, () => {
+test('enable reuses an existing private ~/.zn and keeps its files', { skip: (!posix && 'POSIX folder modes (0700)') || (!hasCompileCache && 'this Node.js has no module compile cache') }, () => {
   const base = tmp();
   try {
     const zn = path.join(base, '.zn');
@@ -152,7 +152,7 @@ test('enable reuses an existing private ~/.zn and keeps its files', { skip: !pos
   }
 });
 
-test('enable is skipped when ~/.zn is open to other users', { skip: !posix }, () => {
+test('enable is skipped when ~/.zn is open to other users', { skip: !posix && 'POSIX folder modes (0700)' }, () => {
   const base = tmp();
   try {
     const zn = path.join(base, '.zn');

@@ -77,7 +77,7 @@ test('gitStatusOf: a relative path is resolved before it is checked', { skip: !h
   }
 });
 
-test('gitStatusOf: a path below a linked folder is judged where the link points', { skip: !haveGit || noLinks }, () => {
+test('gitStatusOf: a path below a linked folder is judged where the link points', { skip: (!haveGit && 'git is not installed') || (noLinks && 'symbolic links need privileges on Windows') }, () => {
   const repo = initRepo();
   const plain = tmp();
   try {
@@ -89,7 +89,7 @@ test('gitStatusOf: a path below a linked folder is judged where the link points'
   } finally { rm(repo, plain); }
 });
 
-test('realTargetOf: a symlink to a file resolves to the file', { skip: noLinks }, () => {
+test('realTargetOf: a symlink to a file resolves to the file', { skip: noLinks && 'symbolic links need privileges on Windows' }, () => {
   const dir = tmp();
   try {
     fs.writeFileSync(path.join(dir, 'real.txt'), 'x');
@@ -98,7 +98,7 @@ test('realTargetOf: a symlink to a file resolves to the file', { skip: noLinks }
   } finally { rm(dir); }
 });
 
-test('realTargetOf: a link to a folder that is missing keeps the typed path', { skip: noLinks }, () => {
+test('realTargetOf: a link to a folder that is missing keeps the typed path', { skip: noLinks && 'symbolic links need privileges on Windows' }, () => {
   const dir = tmp();
   try {
     fs.symlinkSync(path.join(dir, 'gone'), path.join(dir, 'dangling'));
@@ -107,7 +107,7 @@ test('realTargetOf: a link to a folder that is missing keeps the typed path', { 
   } finally { rm(dir); }
 });
 
-test('realTargetOf: links and missing names in the middle of a path', { skip: noLinks }, () => {
+test('realTargetOf: links and missing names in the middle of a path', { skip: noLinks && 'symbolic links need privileges on Windows' }, () => {
   const dir = tmp();
   try {
     fs.mkdirSync(path.join(dir, 'real', 'sub'), { recursive: true });
