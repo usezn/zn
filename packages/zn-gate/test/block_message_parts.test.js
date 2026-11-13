@@ -45,7 +45,7 @@ test('.env read: rule, why and the one command', (t) => {
   assert.match(msg, /^zn: \.env holds plain-text secrets/);
   assert.equal(rule(msg), 'secret-file:dotenv');
   assert.match(msg, /secret values never go to the model/);
-  assert.match(msg, new RegExp('Ask the user to run `' + ZN + ' env shadow \.env` in their terminal'));
+  assert.match(msg, new RegExp('Ask the user to run `' + ZN + ' env shadow \\.env` in their terminal'));
 });
 
 test('secret file read: rule, why and the one command', (t) => {
