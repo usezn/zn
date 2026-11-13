@@ -849,7 +849,7 @@ test('launcher deadline: a hook that answers in time gets the input and its exit
 });
 
 // Windows: install writes no sh launcher (see 'Windows launcher: install gives ZCode the deadline' below for its PowerShell form).
-test('install writes the zcode launcher with a deadline far under the entry timeout; other agents\' launchers have none', { skip: !posix }, (t) => {
+test('install writes the zcode launcher with a deadline far under the entry timeout; other agents\' launchers have none', { skip: !posix && 'the POSIX launcher (the Windows launcher deadline has its own tests here)' }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-text-');
   zc.install({ home, nodePath: '/usr/bin/node' });
   const text = fs.readFileSync(launcher.launcherFile('zcode', { home, env: process.env }), 'utf8');
@@ -896,7 +896,7 @@ test('Windows launcher: install gives ZCode the deadline; other agents\' Windows
 });
 
 // Windows: the test reads the process id the sh script writes and checks it with process.kill(pid, 0); a Git Bash id is not a Windows id.
-test('launcher deadline: a grandchild that holds the output open neither keeps the caller waiting nor outlives the launcher', { skip: !posix }, (t) => {
+test('launcher deadline: a grandchild that holds the output open neither keeps the caller waiting nor outlives the launcher', { skip: !posix && 'the POSIX launcher (the Windows launcher deadline has its own tests here)' }, (t) => {
   const home = tempDir(t, 'zn-zc-grandchild-');
   const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
   const cases = [
@@ -931,7 +931,7 @@ test('launcher deadline: a hook that ignores TERM is killed (KILL) one second af
 });
 
 // Windows: child.kill('SIGTERM') ends the process at once on Windows; there is no signal for the launcher's trap to catch.
-test('launcher deadline: a TERM sent to the launcher removes its private temporary files', { skip: !posix }, async (t) => {
+test('launcher deadline: a TERM sent to the launcher removes its private temporary files', { skip: !posix && 'the POSIX launcher (the Windows launcher deadline has its own tests here)' }, async (t) => {
   const home = tempDir(t, 'zn-zc-term-');
   const tmp = tempDir(t, 'zn-zc-term-tmp-');
   const hook = fakeNode(t, 'cat >/dev/null; sleep 30');

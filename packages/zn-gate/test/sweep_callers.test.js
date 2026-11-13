@@ -30,21 +30,21 @@ function project(t) {
   return { root, proj, marker };
 }
 
-test('the init guide does not find a program through a relative PATH entry', { skip: WIN }, (t) => {
+test('the init guide does not find a program through a relative PATH entry', { skip: WIN && 'the planted programs are #!/bin/sh scripts' }, (t) => {
   project(t);
   assert.equal(ig.findProgram('claude', { PATH: 'bin' }), null);
   assert.equal(ig.findProgram('npm', { PATH: 'bin' + path.delimiter + '' }), null);
   assert.deepEqual(ig.globalInstall({ PATH: 'bin' }), {});
 });
 
-test('a program the init guide starts gets only the absolute PATH entries', { skip: WIN }, (t) => {
+test('a program the init guide starts gets only the absolute PATH entries', { skip: WIN && 'the planted programs are #!/bin/sh scripts' }, (t) => {
   project(t);
   const r = ig.spawnProgram('/bin/sh', ['-c', 'printf %s "$PATH"'], { PATH: 'bin:/usr/bin::.:/bin' }, { encoding: 'utf8' });
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '/usr/bin:/bin');
 });
 
-test('uninstall does not run a claude found through a relative PATH entry', { skip: WIN }, (t) => {
+test('uninstall does not run a claude found through a relative PATH entry', { skip: WIN && 'the planted programs are #!/bin/sh scripts' }, (t) => {
   const { root, marker } = project(t);
   const home = path.join(root, 'home');
   fs.mkdirSync(home);

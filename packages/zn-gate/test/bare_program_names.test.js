@@ -13,7 +13,7 @@ const { spawnSync } = require('child_process');
 const exe = require('../lib/exe');
 const { tempDir } = require('./helpers/tmp');
 
-const posix = { skip: process.platform === 'win32' };
+const posix = { skip: process.platform === 'win32' && 'the planted programs are #!/bin/sh scripts' };
 const LIB = path.join(__dirname, '..', 'lib');
 
 // A project folder with a program named `name` in it and in its bin folder; running either one creates the marker.
