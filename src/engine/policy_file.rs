@@ -51,3 +51,71 @@ pub fn write_policy_file(path: &Path, data: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Temporary files left in `dir` by a write (their names end in `.tmp`).
+    fn leftovers(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .map(|r| {
+                r.filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.ends_with(".tmp"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn writes_and_replaces_a_policy_file_without_leaving_a_temporary_file() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("policy.wasm");
+        write_policy_file(&p, b"first").unwrap();
+        write_policy_file(&p, b"second").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"second");
+        assert!(leftovers(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_path_without_a_directory_or_a_name_is_refused() {
+        let err = write_policy_file(Path::new("/"), b"x")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has no directory"), "{err}");
+        let dir = TempDir::new().unwrap();
+        let err = write_policy_file(&dir.path().join(".."), b"x")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has no name"), "{err}");
+    }
+
+    #[test]
+    fn a_missing_directory_fails_without_creating_anything() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("missing").join("policy.wasm");
+        let err = write_policy_file(&p, b"x").unwrap_err().to_string();
+        assert!(err.contains("temporary policy file"), "{err}");
+        assert!(!dir.path().join("missing").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_refused_and_its_target_is_not_written() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("target.txt");
+        std::fs::write(&target, b"keep").unwrap();
+        let link = dir.path().join("policy.wasm");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = write_policy_file(&link, b"x").unwrap_err().to_string();
+        assert!(err.contains("is a symlink"), "{err}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        // A dangling link is refused too, and nothing is created where it points.
+        std::fs::remove_file(&target).unwrap();
+        assert!(write_policy_file(&link, b"x").is_err());
+        assert!(!target.exists());
+        assert!(leftovers(dir.path()).is_empty());
+    }
+}

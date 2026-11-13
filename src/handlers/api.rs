@@ -431,4 +431,90 @@ mod tests {
         assert_eq!(res.0["status"], "error");
         assert_eq!(res.0["error"], "Forbidden: SuperAdmin role required");
     }
+
+    #[tokio::test]
+    async fn health_answers_ok() {
+        assert_eq!(health().await, "OK");
+    }
+
+    #[tokio::test]
+    async fn tenants_list_needs_super_admin() {
+        let state = setup_test_state();
+        let res = tenants_list(State(state.clone()), Extension(user_tenant())).await;
+        assert_eq!(res.0["status"], "error");
+        assert_eq!(res.0["error"], "Forbidden: SuperAdmin role required");
+        assert!(
+            res.0.get("tenants").is_none(),
+            "a regular tenant sees no list"
+        );
+
+        let (status, _) = tenants_create(
+            State(state.clone()),
+            Extension(super_admin_tenant()),
+            axum::Json(CreateTenantRequest {
+                name: "org-acme".to_string(),
+                namespace: "acme".to_string(),
+                api_key: "acme-key-for-tests".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let res = tenants_list(State(state), Extension(super_admin_tenant())).await;
+        assert_eq!(res.0["status"], "ok");
+        let listed = res.0["tenants"].to_string();
+        assert!(listed.contains("acme"), "{listed}");
+    }
+
+    #[tokio::test]
+    async fn logs_show_a_regular_tenant_only_its_namespace() {
+        let state = setup_test_state();
+        for (ns, tool) in [("tenant-ns", "mine_tool"), ("other-ns", "other_tool")] {
+            let mut e = crate::audit::AuditEntry::new("TOOL_CALL", tool, "ALLOWED");
+            e.namespace = Some(ns.to_string());
+            state.vault.log(e).expect("log");
+        }
+        let q = |l: &str| {
+            axum::extract::Query(
+                [("limit".to_string(), l.to_string())]
+                    .into_iter()
+                    .collect::<std::collections::HashMap<_, _>>(),
+            )
+        };
+        let body = logs(State(state.clone()), Extension(user_tenant()), q("50"))
+            .await
+            .0
+            .to_string();
+        assert!(body.contains("mine_tool"), "{body}");
+        assert!(
+            !body.contains("other_tool"),
+            "another namespace leaked: {body}"
+        );
+        let body = logs(
+            State(state.clone()),
+            Extension(super_admin_tenant()),
+            q("50"),
+        )
+        .await
+        .0
+        .to_string();
+        assert!(
+            body.contains("mine_tool") && body.contains("other_tool"),
+            "{body}"
+        );
+        // A limit that is not a number falls back to the default; a huge one is capped.
+        let body = logs(
+            State(state.clone()),
+            Extension(user_tenant()),
+            q("not-a-number"),
+        )
+        .await
+        .0
+        .to_string();
+        assert!(body.contains("mine_tool"), "{body}");
+        let body = logs(State(state), Extension(user_tenant()), q("100000000"))
+            .await
+            .0
+            .to_string();
+        assert!(body.contains("mine_tool"), "{body}");
+    }
 }
