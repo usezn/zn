@@ -66,4 +66,6 @@ Run `npx -y zn-gate status` again to confirm that the cloud check is off.
 - **usezn.com cannot be reached:** nothing was saved. Check your connection and try again.
 - **The computer has no keychain and the vault is locked:** run `zn unlock`, then `connect` again.
 
+## More
+
 More in [Troubleshooting](../troubleshooting.md#7-zn-gate-connect-does-not-accept-your-key).

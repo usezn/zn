@@ -118,4 +118,6 @@ It removes the saved key from this computer and then asks whether to also revoke
 - **`fallback: true` in a result**: the cloud call failed and the local rules answered. Read `cloud_error` for the cause.
 - **Your Node.js ignores `NODE_USE_ENV_PROXY`**: it is too old for the switch. Update Node.js, or use the Python package for the cloud check.
 
+## More
+
 More in [Troubleshooting](../troubleshooting.md) and on the [connect page](../connect.md).

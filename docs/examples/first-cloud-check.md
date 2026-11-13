@@ -56,4 +56,6 @@ This removes the saved key from this computer. It then asks whether to also revo
 - **The key is refused**: create an analysis-only key on the connect page, then run `zn-gate connect` again. Nothing was saved.
 - **`fallback: true` in a result**: the cloud call failed and the local rules checked the prompt. Check your connection, and see [What is sent](../connect.md#what-is-sent) for what that means.
 
+## More
+
 More in [Troubleshooting](../troubleshooting.md#7-zn-gate-connect-does-not-accept-your-key) and on the [connect page](../connect.md).
