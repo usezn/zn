@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-10.1';
+const COMMAND_RULES_VERSION = '2026-11-12.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -109,13 +109,21 @@ const OI_HOME_RE = /^(?:(?:os\s{0,20}\.\s{0,20}path\s{0,20}\.\s{0,20})?expanduse
 const OI_LITERAL_RE = /^[rRbBuUfF]{0,2}(['"`])((?:[^'"`\\\r\n]|\\.){0,200})\1/;
 const OI_ENV_HOME_RE = /\$ENV\{['"]?HOME['"]?\}|\$\{?HOME\}?|%USERPROFILE%/gi;
 
+// policy.js requires this file back, so it is loaded on first use. The result is kept: calling require() for every word
+// repeats the module lookup (file-system checks), which is slow on Windows and was most of the time of a long line there.
+let policyCached = null;
+function policyModule() {
+  if (policyCached === null) policyCached = require('./hooks/policy');
+  return policyCached;
+}
+
 function programName(text) {
   return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
 }
 
 /* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
 function segmentsOf(cmd, posix = false) {
-  const { scanFirstCommand } = require('./hooks/policy');
+  const { scanFirstCommand } = policyModule();
   // 2>&1 and &> are redirections, not the control operator &.
   // A drive root C:\ before a space is a path, not an escaped space.
   let rest = String(cmd).replace(/(\d*[<>]+)&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
@@ -338,7 +346,7 @@ function unwrapDir(args) {
     const a = args[i];
     const name = programName(a);
     // The guard is used up and the next word is still a wrapper: the rest cannot be read, so the line is refused.
-    if (guard >= 32) { overflow = WRAPPERS.has(name) || require('./hooks/policy').WRAPPER_NAMES.has(name); break; }
+    if (guard >= 32) { overflow = WRAPPERS.has(name) || policyModule().WRAPPER_NAMES.has(name); break; }
     if (name === 'sudo' || name === 'doas') {
       i++;
       while (i < args.length && args[i].startsWith('-')) {
@@ -360,7 +368,7 @@ function unwrapDir(args) {
       continue;
     }
     // Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
-    const P = require('./hooks/policy');
+    const P = policyModule();
     if (P.WRAPPER_NAMES.has(name)) {
       i = P.skipWrapper(args, i, name);
       continue;
@@ -634,7 +642,7 @@ function expandSequences(w) {
 /* The words a brace list in `w` expands to (c{u,}rl -> curl, cl); just `w` when there is none, and null when there
    are too many: the caller reads that as a match, since the shell runs the first alternative and any of them may be it. */
 function braceAlts(w) {
-  return require('./hooks/policy').expandBraces(expandSequences(String(w)));
+  return policyModule().expandBraces(expandSequences(String(w)));
 }
 
 function isRcTarget(w) {
@@ -795,7 +803,7 @@ function analyze(cmd, depth = 0, known = null) {
   // this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
   // $'.bash\x72c', $'\x72m' -rf $'\x7e').
   if (text.includes("$'")) {
-    const ansiHit = checkSegments(segmentsOf(require('./hooks/policy')._decodeAnsiC(text), true), depth, known);
+    const ansiHit = checkSegments(segmentsOf(policyModule()._decodeAnsiC(text), true), depth, known);
     if (ansiHit === 'pipe_to_shell' || ansiHit === 'rc_download' || ansiHit === 'rm_root_home') return ansiHit;
   }
   // Fail closed: never allow a line whose tail was not read.
