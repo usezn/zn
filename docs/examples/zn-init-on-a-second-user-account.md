@@ -25,7 +25,7 @@ npx -y zn-gate vault status
 ```
 
 ```text
-Vault: not created yet (run `npx -y zn-gate@1.15.0 unlock`).
+Vault: not created yet (run `npx -y zn-gate@1.16.0 unlock`).
 ```
 
 ## 2. Run `init` on the second account
