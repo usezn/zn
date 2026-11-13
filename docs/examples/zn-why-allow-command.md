@@ -117,3 +117,8 @@ When a hook block does not record which check fired, `zn why` says `Missing from
 | `0` | A record was explained. |
 | `1` | Nothing to explain: no log yet, no block in it, an id that is not in it, or a log that cannot be read. |
 | `2` | Wrong usage, for example an unknown option or more than one id. |
+
+## More
+
+- [Why was this blocked?](../why-was-this-blocked.md)
+- [All examples](README.md)

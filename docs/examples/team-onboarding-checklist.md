@@ -34,4 +34,6 @@ A checklist for the first day of a new member of a zn Team organization: one lin
 
 - [ ] `zn team leave`. Expected: `Left <organization>. The organization policy no longer applies on this machine.`
 
+## More
+
 See also: [`team` in the command reference](../cli.md#team) and [Offline, expiry and removal](../team.md#offline-expiry-and-removal).

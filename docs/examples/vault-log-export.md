@@ -86,4 +86,6 @@ With the vault unlocked, a log that was changed is not exported. To see it, one 
 [zn] Not exported: the audit log was changed behind the vault (noticed 2026-11-07T20:18:21.065Z): bad mac (record 1). Keep a copy of ~/.zn/audit.jsonl as evidence, look into the change, then run `zn-gate vault verify --acknowledge` in your own terminal.
 ```
 
+## Next steps
+
 See [`vault verify`](../cli.md#vault-verify) for what to do next.

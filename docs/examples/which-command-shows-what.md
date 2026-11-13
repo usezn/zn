@@ -20,4 +20,6 @@ Six common questions about zn-gate, and the command that answers each one. One r
 - `audit` reviews the agent configs of a folder before you open it - hooks, MCP servers, endpoint overrides, permissions, instructions and planted programs - and runs nothing.
 - `scan` looks through prompt templates, markdown, skills and configs for injection traps and secrets; matched values are never printed.
 
+## More
+
 For every command and flag, read the [cheat sheet](../commands-cheatsheet.md) or the [command line reference](../cli.md).

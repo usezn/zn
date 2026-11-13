@@ -109,4 +109,6 @@ chain: valid, 6 records
 | `64` | Wrong usage, for example a name that already exists |
 | `77` | Refused on purpose, for example `secret get` or a command run by an agent |
 
+## More
+
 The full list is in [Exit codes](../exit-codes.md). For the rules that decide what an agent may read, see [Keep secrets out of your coding agent](../secrets.md).

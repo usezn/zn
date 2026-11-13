@@ -64,3 +64,8 @@ zn also syncs by itself while the vault is unlocked: a few seconds after `zn unl
 | `1` | The machine is offline, the organization has no policy yet, the policy was refused, the machine was removed from the organization, or an upload failed. The command says why; `zn team status` keeps the last reason. |
 
 A sync that was running when you left the organization, or joined another one, has its results discarded: zn does not apply them or write any more state on this machine. An upload request that was already on its way may still have reached the server.
+
+## More
+
+- [Teams](../team.md)
+- [Exit codes](../exit-codes.md)
