@@ -24,6 +24,12 @@ test('shared wrapper cases: each command gets the expected rule', () => {
   for (const c of CASES) assert.equal(rule(c.cmd), c.rule, c.cmd);
 });
 
+test('shared git cases: the git check still reaches git behind each wrapper, whatever the options', () => {
+  const GIT = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'wrapper_value_cases.json'), 'utf8')).git_cases;
+  assert.ok(GIT.length >= 6);
+  for (const c of GIT) assert.equal(policy.gitStart(c.cmd.split(' ').map((text) => ({ text }))), c.git_at, c.cmd);
+});
+
 test('timeout skips exactly one duration operand, whatever its spelling', () => {
   const words = (s) => s.split(' ');
   for (const d of ['5', '1.5m', 'inf', 'infinity', '1e3', '+5', '0x10', '.5', 'abc']) {
@@ -47,10 +53,13 @@ test('skipWrapper marks a chain unsure after an unknown option or on a value-lik
   assert.equal(unsure('nohup a:b ls', 'nohup'), true);
 });
 
-test('the long options are read by the egress wrapper skip too (one table)', () => {
-  for (const o of ['--adjustment', '--class', '--classdata', '--pid', '--input', '--output', '--error', '--format', '--wait', '--timeout',
-    '--conflict-exit-code', '--userspec', '--groups', '--target']) {
-    assert.equal(policy.skipWrapper(['nice', o, 'X', 'ls'], 0, 'nice'), 3, o);
+test('long options that take a value are read per wrapper; any other long option is a flag', () => {
+  const val = { nice: '--adjustment', ionice: '--class', stdbuf: '--output', timeout: '--signal', time: '--format', flock: '--timeout',
+    chroot: '--userspec', nsenter: '--target', chrt: '--sched-runtime', runuser: '--user', sudo: '--user', env: '--unset', xargs: '--max-args' };
+  for (const [name, o] of Object.entries(val)) assert.equal(policy.skipWrapper([name, o, 'X', 'ls', 'a', 'b'], 0, name), name === 'timeout' ? 4 : name === 'chrt' || name === 'chroot' || name === 'flock' ? 4 : 3, name + ' ' + o);
+  // The same name is a flag for a wrapper that does not list it: nothing is skipped.
+  for (const [name, o] of [['sudo', '--shell'], ['sudo', '--login'], ['nsenter', '--pid'], ['nsenter', '--user'], ['nice', '--pid'], ['stdbuf', '--target']]) {
+    assert.equal(policy.skipWrapper([name, o, 'ls'], 0, name), 2, name + ' ' + o);
   }
 });
 

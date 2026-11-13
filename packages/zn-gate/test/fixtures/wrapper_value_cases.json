@@ -1,5 +1,5 @@
 {
-  "comment": "Wrapped commands whose wrapper options take a value, or whose timeout duration is spelled as strtod reads it. Read by test/destructive_wrapper_values.test.js and the Python test_destructive_wrapper_values.py. Only text is checked, nothing is run. Example paths and example.com only.",
+  "comment": "Wrapped commands whose wrapper options take a value, or whose timeout duration is spelled as strtod reads it. Read by test/destructive_wrapper_values.test.js and the Python test_destructive_wrapper_values.py. Only text is checked, nothing is run. git_cases (Node only: the git check is Node-only) give the index of the word that must be read as git. Example paths and example.com only.",
   "cases": [
     { "cmd": "timeout inf rm -rf ~", "rule": "rm_root_home" },
     { "cmd": "timeout infinity rm -rf /", "rule": "rm_root_home" },
@@ -85,6 +85,30 @@
     { "cmd": "nsenter --pid=/proc/1/ns/pid rm -rf ~", "rule": "rm_root_home" },
     { "cmd": "nsenter --target 1 --mount=/proc/1/ns/mnt rm -rf ~", "rule": "rm_root_home" },
     { "cmd": "nice --adjustment 'C:\\x\\rm' -rf ~", "rule": "rm_root_home" },
-    { "cmd": "nice --adjustment /usr/bin/rm -rf ~", "rule": "rm_root_home" }
+    { "cmd": "nice --adjustment /usr/bin/rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "sudo --shell rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "sudo --login rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nice --pid rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "ionice --ignore rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "stdbuf --target rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "timeout --foreground 5 rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "time --verbose rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "flock --nonblock /tmp/example.lock rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "chroot --skip-chdir / rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "chrt --batch 0 rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "runuser --pty -u nobody -- rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "env --ignore-environment rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "xargs --null rm -rf ~", "rule": "rm_root_home" }
+  ],
+  "git_cases": [
+    { "cmd": "sudo --shell git push --force origin main", "git_at": 2 },
+    { "cmd": "sudo -s git push --force origin main", "git_at": 2 },
+    { "cmd": "sudo --login git push --force origin main", "git_at": 2 },
+    { "cmd": "sudo --user root git push --force origin main", "git_at": 3 },
+    { "cmd": "nice --adjustment 5 git push --force origin main", "git_at": 3 },
+    { "cmd": "nice --future-option git push --force origin main", "git_at": 2 },
+    { "cmd": "nsenter --target 1 --pid git push --force origin main", "git_at": 4 },
+    { "cmd": "timeout --foreground 5 git push --force origin main", "git_at": 3 },
+    { "cmd": "nice --adjustment git push --force origin main", "git_at": 2 }
   ]
 }

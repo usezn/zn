@@ -20,6 +20,7 @@
     "egressParts",
     "egressUrlParts",
     "expandBraces",
+    "gitStart",
     "globClass",
     "globRegExp",
     "hasNetworkSignals",
@@ -33,7 +34,7 @@
     "writeDenial"
   ],
   "sha256": {
-    "lib/hooks/policy.js": "9445814c933e3a8bf3438911e878df2ee190a5548841bc8d09d235da9b42bdfc",
+    "lib/hooks/policy.js": "73d091a045df2a4bcbe7201c8206df76bd555dfe4b5f1f87ba99d1de1778c0ab",
     "lib/hooks/curl-files.js": "c1c87057eabf0f7cf1eccacf1822ec92e6242b328455b0756d269a168945a6c8",
     "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
     "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",

@@ -3299,19 +3299,25 @@ const GIT_WRAPPERS = {
 };
 // Wrappers that take positional arguments before the command: chrt <priority>, taskset <mask> (not with -c), chroot <newroot>, flock <lock>.
 const WRAPPER_POSITIONAL = { chrt: 1, taskset: 1, chroot: 1, flock: 1 };
-// Long options of these wrappers that take the next word as their value (--opt=value is one word either way).
-const WRAPPER_LONG_VALUE = new Set(['--user', '--group', '--chdir', '--unset', '--max-args', '--max-procs', '--replace', '--delimiter',
-  '--arg-file', '--eof', '--signal', '--kill-after', '--split-string', '--cpu-list', '--host', '--prompt', '--close-from', '--role', '--type',
-  '--other-user', '--chroot', '--command-timeout', '--argv0',
-  '--adjustment', '--class', '--classdata', '--pid', '--pgid', '--uid', '--input', '--output', '--error', '--format',
-  '--wait', '--timeout', '--conflict-exit-code', '--userspec', '--groups', '--target', '--setuid', '--setgid',
-  '--supp-group', '--shell', '--whitelist-environment', '--sched-runtime', '--sched-period', '--sched-deadline']);
-// nsenter's namespace options take a value only as --opt=value (in `nsenter --target 1 --pid rm -rf ~` the word after --pid is
-// the program); its --target, --setuid and --setgid take the next word. Per wrapper, so a shared name is not read the same way everywhere.
-const WRAPPER_LONG_OPTIONAL = {
-  nsenter: new Set(['--mount', '--uts', '--ipc', '--net', '--pid', '--cgroup', '--time', '--user', '--root', '--wd', '--wdns',
-    '--preserve-credentials', '--no-fork', '--all', '--follow-context', '--env']),
+// Long options of each wrapper that take the next word as their value, from its own manual (--opt=value is one word either way).
+// Per wrapper: a name is read the way that tool reads it, and a long option not listed for the wrapper is a flag (so the chain is
+// unsure and the later words are read as commands too). sudo --shell and --login, nsenter --pid and --user are flags.
+const WRAPPER_LONG_VALUE = {
+  sudo: new Set(['--user', '--group', '--host', '--prompt', '--chdir', '--role', '--type', '--close-from', '--other-user', '--command-timeout', '--chroot']),
+  env: new Set(['--unset', '--chdir', '--split-string', '--argv0']),
+  time: new Set(['--format', '--output']),
+  nice: new Set(['--adjustment']),
+  timeout: new Set(['--signal', '--kill-after']),
+  xargs: new Set(['--max-args', '--max-procs', '--delimiter', '--arg-file', '--max-lines', '--max-chars', '--process-slot-var']),
+  ionice: new Set(['--class', '--classdata', '--pid', '--pgid', '--uid']),
+  stdbuf: new Set(['--input', '--output', '--error']),
+  chrt: new Set(['--sched-runtime', '--sched-period', '--sched-deadline']),
+  chroot: new Set(['--userspec', '--groups']),
+  runuser: new Set(['--user', '--group', '--supp-group', '--shell', '--command', '--whitelist-environment', '--session-command']),
+  flock: new Set(['--timeout', '--wait', '--conflict-exit-code', '--command']),
+  nsenter: new Set(['--target', '--setuid', '--setgid']),
 };
+const NO_LONG_VALUE = new Set();
 // A word taken as an option's value that names a program zn reads (rm, sh, find, curl ...) may really be the program, if the
 // option was guessed wrong: the chain is then unsure, so that word and the later ones are read as commands too.
 const SKIPPED_PROGRAM_RE = /^(?:rm|rmdir|del|erase|rd|ri|remove-item|shred|mkfs[a-z0-9.]*|mke2fs|mkswap|wipefs|blkdiscard|dd|find|chmod|chown|chgrp|sh|bash|zsh|dash|ksh|ash|mksh|rbash|su|eval|cmd|pwsh|powershell|python[0-9.]*|perl|ruby|node|curl|wget|iwr|irm|aria2c|fetch)$/i;
@@ -3340,8 +3346,7 @@ function skipWrapper(words, k, name, info) {
     const t = textAt(k);
     if (t === '--') { k++; break; }
     if (t.startsWith('--') && t.length > 2) {
-      const optional = WRAPPER_LONG_OPTIONAL[name];
-      const valued = !t.includes('=') && WRAPPER_LONG_VALUE.has(t) && !(optional && optional.has(t));
+      const valued = !t.includes('=') && (WRAPPER_LONG_VALUE[name] || NO_LONG_VALUE).has(t);
       if (!valued && !t.includes('=')) unsure = true;
       if (valued && k + 1 < words.length && skippedIsProgram(textAt(k + 1))) unsure = true;
       k += valued ? 2 : 1;
@@ -4074,6 +4079,7 @@ module.exports = {
   POLICY_RULES_VERSION,
   WRAPPER_NAMES: new Set(Object.keys(GIT_WRAPPERS)),
   skipWrapper,
+  gitStart,
   classifyPath,
   classifyWord,
   globClass,

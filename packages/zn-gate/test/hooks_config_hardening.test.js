@@ -134,6 +134,8 @@ test('ConfigChange: a project settings change whose audit cannot run is not appl
   const ev = { session_id: 'abc123', cwd: dir, permission_mode: 'default', hook_event_name: 'ConfigChange', source: 'project_settings', file_path: file };
   const res = await runner.handle(adapter, ev, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home });
   assert.equal(res.output.decision, 'block');
+  // The decision of the config-change handler itself, not the generic fail-closed answer of handle() (which fails open here).
+  assert.deepEqual(res.decision.kinds, ['config-change-unchecked']);
   assert.match(res.output.reason, /could not check this settings change/);
   assert.match(res.output.reason, /\.claude\/settings\.json/);
   // Local settings stay the user's own file: never blocked, also when the audit fails.
