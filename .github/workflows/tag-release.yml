@@ -53,7 +53,7 @@ jobs:
       checks: read
     steps:
       - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: audit
       - name: Check the inputs and where this runs
@@ -150,7 +150,7 @@ jobs:
       # and api.github.com for the app token. objects.githubusercontent.com is the other host GitHub uses for
       # release-asset redirects. A new destination fails the run on purpose: add it here after reviewing it.
       - name: Harden the runner (egress block)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: >-
