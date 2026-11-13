@@ -1,8 +1,12 @@
 # Rust gateway (legacy, not released)
 
+## In one minute
+
+The Rust gateway in the root `src/` directory is an older, experimental program that is not released: `npx zn-gate`, `npm install zn-gate`, `pip install zn-gate` and the agent plugin do not contain or start it. You only run it if you build `src/` yourself. It serves a management API and an MCP proxy on `localhost:9090`, checks tool calls with its rules, and keeps an audit log in SQLite that stores only metadata unless you turn payloads on (`audit.store_payloads`, off by default). Nothing in its source names `api.usezn.com`. Its restricted-command rule matches a short list of whole words in the arguments (`rm`, `dd`, `format`, `mkfs`, `chmod`, `chown`, `shutdown`, `reboot`; a tool name also matches a few joined forms such as `rmrf` or `rimraf`), so it misses many destructive shell commands, such as a download piped into a shell. To protect an agent, use `zn-gate`.
+
 The root `src/` directory contains the original Rust gateway (`zn`) from the 1.0.0 line: an HTTP management API and MCP proxy on `localhost:9090`, a rules engine, an optional local ONNX classifier (Candle), a SQLite audit log, WASM policies and a terminal UI.
 
-It is **experimental** and **not distributed**: nothing you install with `npx zn-gate`, `npm install zn-gate`, `pip install zn-gate` or the agent plugin contains or starts it. It is kept for reference and for future work on a local classifier. It is not published on crates.io, has no published container image and is not part of the npm or PyPI packages. CI builds it, runs its tests, clippy and rustfmt, and checks its dependencies with `cargo audit` (`.github/workflows/rust.yml`). `zn mcp` exposes two MCP tools: `analyze_prompt` and `version`.
+It is **experimental** and **not distributed**: nothing you install with `npx zn-gate`, `npm install zn-gate`, `pip install zn-gate` or the agent plugin contains or starts it. It is kept for reference and for future work on a local classifier. It is not published on crates.io, has no published container image and is not part of the npm or PyPI packages. CI builds it, runs its tests, clippy and rustfmt, and checks its dependencies with `cargo audit` (`.github/workflows/cargo-audit.yml`). `zn mcp` exposes two MCP tools: `analyze_prompt` and `version`.
 
 The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It never contacts `api.usezn.com`.
 
@@ -25,7 +29,7 @@ A review of an older snapshot of this gateway found issues that only affect some
 - **Bounded WebSocket messages.** `/mcp/ws` closes a connection whose message or frame is over 1 MiB (the library default was 64 MiB).
 - **WebSocket limits are configurable.** The limits are the `server.ws_max_message_bytes` (default 1048576, 1 MiB) and `server.ws_max_frame_bytes` (default 1048576, 1 MiB) settings; a message or frame over its limit closes the connection.
 - **Idle and stuck connections are closed.** A management API connection that sends nothing for `server.session_idle_timeout_secs` (default 900, 15 minutes) is closed, which ends an unused SSE stream or WebSocket session; browsers reconnect on their own. A client that stops reading is cut after `server.write_timeout_secs` (default 30). A value of 0 keeps the default.
-- **Idle sockets cannot lock out the dashboard.** The management API serves at most 256 connections at once. When the limit is reached, a new connection takes the place of the oldest one that has not yet had a request answered successfully; a client that has been served is never closed to make room.
+- **Idle sockets cannot lock out the dashboard.** The management API serves at most 256 connections at once. When the limit is reached, a new connection takes the place of the oldest idle connection that has not yet had a request answered successfully. Only if there is none does it take the place of the oldest idle connection that was served before, such as a long-lived idle WebSocket session. A connection with a request in flight is never closed to make room.
 - **Consensus actions expire.** A proposed action that is not approved within `consensus.pending_ttl_secs` seconds (default 900, 15 minutes; 0 means the default) can no longer be approved and is removed.
 - **Query-string credentials only for SSE and WebSocket.** The `api_key` and `token` query parameters are accepted only on `/api/v1/events` and `/mcp/ws`, where a browser client cannot send headers; on every other route a credential must come in a header.
 
@@ -86,7 +90,12 @@ Earlier versions used Dilithium3 from the unmaintained PQClean bindings. A Dilit
 
 ## Dependency advisories that cannot be fixed yet
 
-`cargo audit` ignores three advisories in `zip` 8.6.0 (RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369); `.cargo/audit.toml` lists them with the reason. `zip` comes only through Candle (`candle-core`), and no Candle release accepts the fixed `zip` 9 yet: the latest, 0.11.0, needs `zip` ^8.6.0. All three are in `extract()`, which unpacks an archive to disk. Candle only opens archives to read named entries from `.npz` and PyTorch `.pth` files, and the gateway loads neither kind. When a Candle release accepts `zip` 9, Candle and `zip` are updated and the three entries are removed.
+`cargo audit` ignores two advisories; `.cargo/audit.toml` lists them with the reason. Both say that a crate is no longer maintained, and neither crate has a drop-in replacement today:
+
+- RUSTSEC-2024-0436, `paste`: a procedural macro that runs only at build time. It comes through `gemm`, which Candle (`candle-core`) uses.
+- RUSTSEC-2025-0119, `number_prefix`: it formats numbers in command line progress bars. It comes through `indicatif`, which `cliclack` and `hf-hub` use.
+
+`zip`, which Candle uses to read `.npz` and PyTorch `.pth` files, is at 9.3.0 and needs no exception.
 
 ## Management API authentication
 

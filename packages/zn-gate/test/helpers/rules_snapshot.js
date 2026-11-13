@@ -4,16 +4,22 @@
 // scripts/update-rules-snapshot.js so both compute exactly the same thing.
 //
 // A layer is a set of source files plus the version constant that must move
-// with them. The snapshot stores, per layer, the version, the sorted rule ids
+// with them. The snapshot stores, per layer and version, the sorted rule ids
 // and a sha256 of each file (line endings normalized to LF). Adding or
-// removing a file in a layer counts as a change.
+// removing a file in a layer counts as a change. The newest entry of a layer
+// is its reference; older entries only show that a version was already used.
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
 const PKG = path.join(__dirname, '..', '..');
-const SNAPSHOT_FILE = path.join(PKG, 'test', 'fixtures', 'rules_snapshot.json');
+// One file per layer and version: fixtures/rules_snapshot/<layer>/<version>.json.
+// Two pull requests that bump different versions add different files, so their
+// snapshots never touch the same lines and merge without a conflict.
+const SNAPSHOT_DIR = path.join(PKG, 'test', 'fixtures', 'rules_snapshot');
+// Entries kept per layer; older ones are removed when the snapshot is regenerated.
+const KEEP_ENTRIES = 5;
 const VERSION_FORMAT = /^\d{4}-\d{2}-\d{2}\.\d+$/;
 const UPDATE_HINT = 'run node packages/zn-gate/scripts/update-rules-snapshot.js from the repository root';
 // Codes that the update script refuses to write over (unless --force).
@@ -77,6 +83,7 @@ const LAYERS = {
       'lib/broker/dotenv.js',
       'lib/shell-quote.js',
       'lib/destructive.js',
+      'lib/shell-vars.js',
     ],
     versionFile: 'lib/hooks/policy.js',
     versionConst: 'POLICY_RULES_VERSION',
@@ -120,13 +127,41 @@ function computeSnapshot() {
   return { layers };
 }
 
+function entryFile(name, version) {
+  return path.join(SNAPSHOT_DIR, name, `${version}.json`);
+}
+
+// Entries of one layer, oldest version first. Files with a malformed name are ignored.
+function readLayerEntries(name) {
+  const dir = path.join(SNAPSHOT_DIR, name);
+  if (!fs.existsSync(dir)) return [];
+  const entries = [];
+  for (const f of fs.readdirSync(dir)) {
+    const m = /^(\d{4}-\d{2}-\d{2}\.\d+)\.json$/.exec(f);
+    if (m) entries.push(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
+  }
+  return entries.sort((a, b) => compareVersions(a.version, b.version));
+}
+
+// Returns null when no layer has any entry yet.
 function readSnapshot() {
-  if (!fs.existsSync(SNAPSHOT_FILE)) return null;
-  return JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8'));
+  const layers = {};
+  let any = false;
+  for (const name of Object.keys(LAYERS)) {
+    layers[name] = readLayerEntries(name);
+    if (layers[name].length) any = true;
+  }
+  return any ? { layers } : null;
 }
 
 function writeSnapshot(snapshot) {
-  fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2) + '\n');
+  for (const [name, layer] of Object.entries(snapshot.layers)) {
+    fs.mkdirSync(path.join(SNAPSHOT_DIR, name), { recursive: true });
+    fs.writeFileSync(entryFile(name, layer.version), JSON.stringify(layer, null, 2) + '\n');
+    // Drop the oldest entries; nobody edits them, so deleting them cannot conflict.
+    const old = readLayerEntries(name).slice(0, -KEEP_ENTRIES);
+    for (const e of old) fs.unlinkSync(entryFile(name, e.version));
+  }
 }
 
 // Returns a list of { code, message }:
@@ -136,9 +171,14 @@ function writeSnapshot(snapshot) {
 //   stale      the snapshot needs regenerating (files changed with a newer version,
 //              or the version moved without a file change)
 //   ids        rule ids were added or removed
-function compareLayer(name, expected, actual) {
+function compareLayer(name, entries, actual) {
   const def = LAYERS[name];
   const problems = [];
+  const list = entries || [];
+  const latest = list.length ? list[list.length - 1] : null;
+  // Compare against the entry for this very version when there is one (so a
+  // changed file with an unchanged version is "unbumped"), else the newest.
+  const expected = list.find((e) => e.version === actual.version) || latest;
   if (!expected) {
     return [{ code: 'invalid', message: `layer "${name}" is missing from the snapshot: ${UPDATE_HINT}` }];
   }
@@ -182,6 +222,13 @@ function compareLayer(name, expected, actual) {
     });
   }
 
+  if (latest && compareVersions(actual.version, latest.version) < 0 && order === 0) {
+    problems.push({
+      code: 'backwards',
+      message: `${def.versionConst} is ${actual.version} but the snapshot already has ${latest.version}: versions must increase`,
+    });
+  }
+
   const before = new Set(expected.ids);
   const now = new Set(actual.ids);
   const added = actual.ids.filter((id) => !before.has(id));
@@ -197,12 +244,13 @@ function compareLayer(name, expected, actual) {
 
 module.exports = {
   LAYERS,
-  SNAPSHOT_FILE,
+  SNAPSHOT_DIR,
   BLOCKING_CODES,
   compareVersions,
   computeLayer,
   computeSnapshot,
   readSnapshot,
+  readLayerEntries,
   writeSnapshot,
   compareLayer,
 };

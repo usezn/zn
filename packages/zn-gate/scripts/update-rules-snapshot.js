@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Rewrites test/fixtures/rules_snapshot.json from the current rule layers.
+// Writes the snapshot entry of each rule layer (test/fixtures/rules_snapshot/<layer>/<version>.json).
 //
 // It refuses to record a change whose layer version did not increase: that is
 // exactly what the snapshot test exists to catch. --force writes anyway and
@@ -16,7 +16,7 @@ const {
   compareLayer,
   BLOCKING_CODES,
   LAYERS,
-  SNAPSHOT_FILE,
+  SNAPSHOT_DIR,
 } = require('../test/helpers/rules_snapshot');
 
 const force = process.argv.includes('--force');
@@ -47,5 +47,5 @@ if (previous) {
 
 writeSnapshot(next);
 const summary = Object.entries(next.layers).map(([name, l]) => `${name} ${l.version} (${l.ids.length} ids)`).join(', ');
-console.log(`wrote ${path.relative(process.cwd(), SNAPSHOT_FILE) || SNAPSHOT_FILE}`);
+console.log(`wrote ${path.relative(process.cwd(), SNAPSHOT_DIR) || SNAPSHOT_DIR}`);
 console.log(summary);

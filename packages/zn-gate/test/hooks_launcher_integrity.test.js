@@ -51,6 +51,16 @@ test('integrity: the launcher records the SHA-256 of the runner', { skip: !posix
   assert.match(launcher.runnerSha(runner), /^[0-9a-f]{64}$/);
 });
 
+test('integrity: a launcher made with an empty digest (unreadable runner at install time) refuses to run the runner', { skip: !posix }, (t) => {
+  const { file, runner } = setup(t);
+  fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, runner, { runnerDigest: '' }), { mode: 0o755 });
+  assert.match(fs.readFileSync(file, 'utf8'), /^ZN_SHA=''$/m);
+  const r = run(file, 'PreToolUse');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, CHANGED);
+  assert.doesNotMatch(r.stdout, /REAL_RUNNER/);
+});
+
 test('integrity: a stub runner that exits 0 is blocked with the new reason, not passed through', { skip: !posix }, (t) => {
   const { file, runner } = setup(t);
   fs.writeFileSync(runner, 'process.exit(0);\n');

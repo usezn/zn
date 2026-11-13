@@ -16,6 +16,7 @@ from unittest import mock
 
 import pytest
 
+from zn_gate.shell_names import npx_name
 from zn_gate import cli, evidence, stats
 from zn_gate.evidence import (
     GENESIS_HASH,
@@ -500,7 +501,7 @@ def test_main_without_command_prints_help(capsys):
 
 def test_main_npm_only_command(capsys):
     assert _main(["init"]) == 2
-    assert "npx -y zn-gate init" in capsys.readouterr().err
+    assert npx_name() + " -y zn-gate init" in capsys.readouterr().err
 
 
 def test_main_version(capsys):

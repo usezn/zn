@@ -34,7 +34,7 @@ npm install -g zn-gate
 zn unlock
 ```
 
-> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it.
 
 The first `zn unlock` creates the vault: an [age](https://age-encryption.org)
 identity stored in your OS keychain (macOS Keychain, Windows Credential
@@ -74,14 +74,22 @@ For a connection string with a long password, only the password moves, as
 whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
 `DATABASE_URL=__ZN_DATABASE_URL__`.
 
-Values shorter than 8 characters are not moved, because they cannot be told
-apart from ordinary settings. They stay in `.env` in clear text, and `zn env
-shadow` says so: it names each variable it left (never its value), and gives
+Your agent can read a `.env` only when every variable with a secret-looking name is
+empty or holds a marker, however short its value is. A secret-looking name contains
+KEY, SECRET, TOKEN, PASS, PWD, CREDENTIAL, AUTH, DSN, CONN or DATABASE_URL, or ends in
+`_URL` or `_URI`, in any letter case. One exception applies: under a name that ends in
+`_URL` or `_URI`, a value that starts with a scheme such as `https://` and carries no
+password, like `https://example.com`, does not count. Any other value under such a
+name counts, including `DATABASE_URL=sometoken`, and a URL under any other secret-looking
+name, such as `API_KEY=https://example.com`, counts too. A short value left in the file keeps the read blocked, and the message names the variables that still hold a value (never the values). Variables with ordinary names (`PORT=8080`, `DEBUG=1`) never block the read.
+
+`zn env shadow` leaves values under 8 characters in the file, because they cannot be
+told apart from ordinary settings. They stay in `.env` in clear text, and it says so: it names each variable it left (never its value), and gives
 the command to keep it out of the file. For example, for `API_KEY=abc`:
 
 ```text
-  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
-1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, treat it as readable by an agent.
+  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. Your agent cannot read the file while it does. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
+1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, your agent cannot read this file.
 ```
 
 There is no option to force a short value into the vault with `zn env shadow`.
@@ -338,6 +346,17 @@ lookup, and zn logs the refused host and port (never the body or headers).
   lookups made by the program itself, or a command that unsets the variables.
   It is a guard for well-behaved tools, not a sandbox.
 
+## Common mistakes
+
+The mistakes below come up most with the vault and with `zn env shadow`. Run each fix in your own terminal.
+
+1. **The vault is locked.** `zn secret list`, `zn run` and the other vault commands stop with "Your secret vault is locked." While it is locked, the hooks still redact what they can recognise, but with markers that cannot be restored. Fix: `zn unlock`, then run the command again.
+2. **A secret name with a typo.** `zn run --secrets EXMPLE_API_KEY -- ...` stops with `zn run: Not found: secret EXMPLE_API_KEY is not in the vault` and exits `127`. Fix: `zn secret list` shows the exact names. A program that reads a fixed variable needs the secret under that name (`PGPASSWORD` for `psql`, see [section 4](#4-let-a-command-use-a-secret)).
+3. **A program that is not allowed yet.** `zn run` exits `77` with "`env` is not allowed to use EXAMPLE_API_KEY yet" for a program the secret does not allow. Fix: `zn secret allow EXAMPLE_API_KEY --command <program>`, with the program you mean (see [section 4](#4-let-a-command-use-a-secret) for the warning about interpreters).
+4. **A short value left in `.env`.** `zn env shadow` does not move a value shorter than 8 characters. It stays in clear text, and the command names it. Fix: `zn secret set API_KEY`, then put `__ZN_API_KEY__` in its place in the file (see [section 2](#2-move-your-env-values-into-the-vault)).
+5. **Shadowing a file that was already committed.** `zn env shadow` changes the file, not the git history, so the old values stay in the history. Fix: rotate each value at its provider, and store the new one with `zn secret set NAME --force`. The `--force` option replaces the value, and you repeat the options the secret had (`--command`, `--host`), because they are not kept.
+6. **Deleting the `~/.zn` folder by hand.** The vault is in it, and a deleted vault cannot be recovered. If you ran `env shadow`, the `.env` file then holds markers with no values behind them. Fix, before you delete: `zn env unshadow .env --backup <name>` puts the values back (the name is printed when you run `env shadow`). To remove the vault, use `zn vault purge` (see [Remove zn-gate](uninstall.md#4-your-env-files-and-the-vault)).
+
 ## Useful commands
 
 | Command | What it does |
@@ -388,7 +407,8 @@ To delete the vault, follow [Remove zn-gate](uninstall.md#4-your-env-files-and-t
 | `stats.json` | Counts per day, such as checks and blocks. No values. | No command. Delete it by hand. `ZN_STATS=off` stops the counting. |
 | `requests.jsonl` | A record of each time an agent asked for a secret: the name, the agent and the reason it gave. No value. | No command. Delete it by hand; the agent can ask again. |
 | `package-registry-cache.json` | Saved answers to package lookups. | No command. Delete it by hand; the next lookup fetches the answer again. |
-| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-upload.lock` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `team-notice.json` | A record of which team notices were already shown, so that each one shows once. | No command. Deleting it only lets a notice show again. `zn-gate team leave` does not remove it. |
 | `hooks/` | The launcher scripts that your agent's hooks start. No secrets. | Run `zn-gate hooks uninstall AGENT` first. If you delete the folder while the hooks are still installed, the hooks cannot start, and `zn-gate check` reports the agent as NOT protected. |
 
 ### Files outside `~/.zn`
@@ -411,6 +431,55 @@ When you have finished, `npx -y zn-gate check` shows what is still set up. The [
 - **You forgot the vault passphrase**: nobody can recover it, so the values in that vault cannot be opened again. Run `zn lock`, then `zn vault reset` in your own terminal and type `reset my vault` when it asks. zn keeps the old vault in a `vault-backup-<date>-<time>` folder inside `~/.zn`, and the next `zn unlock` creates a new empty vault. The backup stays encrypted; `zn vault purge` is the separate command that deletes it, with the vault and its token maps. Store your values again with `zn env shadow .env` or `zn secret set NAME`, and rotate any secret you cannot re-enter. It refuses if your agent runs it, if there is no terminal, or if this computer belongs to a zn Team organization.
 - **You want your old `.env` back**: run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`, in your own terminal.
 - **Not sure what is protected**: run `npx -y zn-gate check`.
+
+## Common questions about the vault
+
+**Where does the vault live?**
+In `~/.zn/vault/` on your computer (or in the `vault` folder inside the folder
+that the `ZN_HOME` variable names). Your named secrets are in `secrets.age`, an
+encrypted file. The same folder holds one more encrypted `.age` file for each
+project (the values zn detected there) and `keychain.json` (settings, no
+values), or `identity.age` when there is no keychain. zn writes no secret value
+in clear in that folder. The key that opens the vault is in your OS keychain, or
+behind your passphrase when there is no keychain. See
+[step 1](#1-install-and-unlock-the-vault) and [Files and folders](files-and-folders.md).
+
+**Does the agent ever see a secret value?**
+It is not meant to. The agent works with markers. `zn secret get` and
+`zn secret reveal` do not print a value: they refuse and point you to `zn run`.
+The `secrets` MCP server has four tools (`secrets_list`, `secrets_http_request`,
+`secrets_render_file` and `secrets_request`), and none of them returns a value.
+A value goes only to the program, the host or the file you allowed, and zn masks
+the output and the response. `secrets_render_file` does write real values into
+the file you allowed, and masking is a safety net, not a boundary: read
+[the limits](threat-model.md). See [step 4](#4-let-a-command-use-a-secret) and
+[step 5](#5-let-the-agent-call-an-api).
+
+**Can the agent change what a secret is allowed to do?**
+Not on its own. `zn secret set`, `rm`, `allow` and `approve` refuse to run
+inside an agent's shell and need your own terminal. `allow`, `approve` and the
+first use of a secret by a command are also confirmed in the vault's own
+prompt, which is a system dialog or the `zn unlock --foreground` terminal.
+`zn secret rm` asks you to confirm in the terminal where you ran it.
+
+**How do I remove one secret?**
+Run `zn secret rm NAME` in your own terminal and confirm. To see the names
+first, run `zn secret list` (it never prints values). To delete everything, see
+`zn vault purge` in [Useful commands](#useful-commands).
+
+**I forgot my passphrase. Can I get my secrets back?**
+No. Nobody can recover them. `zn vault reset` sets the old vault aside as an
+encrypted backup, and the next `zn unlock` starts a new, empty one. It refuses
+on a computer that belongs to a zn Team organization. The steps are in
+[If something fails](#if-something-fails).
+
+**How do I move to another computer?**
+No command exports or syncs the secret values in the vault: `zn export` and
+`zn vault log export` write logs, and `zn team sync` downloads your
+organization's policy and uploads the audit log. So the vault does not travel.
+On the new computer, install zn-gate, run `zn unlock`, and store your values
+again with `zn secret set NAME` or `zn env shadow .env`. Keep the originals in
+your own password manager so you can do this.
 
 Words you do not know? See the [glossary](glossary.md).
 

@@ -6,19 +6,19 @@ A command that succeeds exits with `0`. A command that is not listed here with a
 
 ## Quick reference
 
-One row per exit code. The source column gives the line that returns the code, so you can check each row in the code. The per-command tables below list the codes each command uses.
+One row per exit code. The source column names the function in the code that returns the code, so you can check each row there (line numbers move with every release). The per-command tables below list the codes each command uses.
 
 | Code | Meaning | Commands that return it | Usual fix | Source |
 |---|---|---|---|---|
-| `0` | Done, or nothing to report. | `scan` with no findings; `check` and `doctor` when every agent that is set up is protected; `check --hooks` when every hook is OK; `hook` when the action is allowed; `analyze` when the text is allowed. | Nothing to fix. | `bin/cli.js:739`, `lib/check.js:1515`, `lib/hooks-list.js:185` |
-| `1` | The command ran and found a problem, or it failed. | `scan` with findings, or with a path that does not exist; `check` and `doctor` when an agent is not protected or the project rules have errors; `check --hooks` when a hook is stale or broken; `evidence --verify` when the log chain is broken; `analyze` with no text; `hook` when the agent name is unknown; `uninstall` when you answer no or a step fails. | Read the message. Run `zn-gate check` in your own terminal to see which agent or rule needs a fix. | `bin/cli.js:736`, `bin/cli.js:578`, `lib/check.js:1515`, `bin/cli.js:1299`, `lib/hooks-list.js:185`, `bin/cli.js:1221`, `bin/cli.js:1337`, `lib/hooks/runner.js:2302`, `lib/uninstall.js:216`, `lib/uninstall.js:269` |
-| `2` | The command was used wrongly, or the action was blocked. | `scan` with an unknown `--format`; `reach` with a wrong option or a path that is not a folder; `analyze` when the text is blocked; `hook` when the action is blocked. | For a usage error, check the options in the [command line reference](cli.md) and run the command again. For a block, read the message and follow its next step in your own terminal. Do not look for a way around the block. | `bin/cli.js:584`, `bin/cli.js:926`, `bin/cli.js:1345`, `lib/hooks/runner.js:2035` |
-| `3` | A scan read no file, or skipped a file or folder it should have read. | `scan` | Fix the access problem, or check the path. Use `--allow-partial` only when you accept the skipped items. | `bin/cli.js:737`, `bin/cli.js:738` |
-| `64` | Wrong usage for the run and secrets commands. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | Check the command name and options in the [command line reference](cli.md), then run it again. | `lib/broker/run.js:497`, `lib/broker/cli.js:621` |
-| `77` | zn refused on purpose: a value was not shown, or the action was not allowed or not approved. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | If the action is needed, the user runs it in their own terminal. | `lib/broker/run.js:498`, `lib/broker/cli.js:621` |
-| `127` | The program that `run` was asked to start was not found. | `run` | Check the program name and that it is on your PATH, then run the command again. | `lib/broker/run.js:499` |
+| `0` | Done, or nothing to report. | `scan` with no findings; `check` and `doctor` when every agent that is set up is protected; `check --hooks` when every hook is OK; `hook` when the action is allowed; `analyze` when the text is allowed. | Nothing to fix. | `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js` |
+| `1` | The command ran and found a problem, or it failed. | `scan` with findings, or with a path that does not exist; `check` and `doctor` when an agent is not protected or the project rules have errors; `check --hooks` when a hook is stale or broken; `evidence --verify` when the log chain is broken; `analyze` with no text; `hook` when the agent name is unknown; `uninstall` when you answer no or a step fails. | Read the message. Run `zn-gate check` in your own terminal to see which agent or rule needs a fix. | `handleScan` and `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js`, `main` in `bin/cli.js` (`evidence`, `analyze`), `run` in `lib/uninstall.js`, `main` in `lib/hooks/runner.js` |
+| `2` | The command was used wrongly, or the action was blocked. | `scan` with an unknown `--format`; `reach` with a wrong option or a path that is not a folder; `analyze` when the text is blocked; `hook` when the action is blocked. | For a usage error, check the options in the [command line reference](cli.md) and run the command again. For a block, read the message and follow its next step in your own terminal. Do not look for a way around the block. | `handleScan` and `runReachCommand` in `bin/cli.js`, `main` in `bin/cli.js` (`analyze`), `main` in `lib/hooks/runner.js` |
+| `3` | A scan read no file, or skipped a file or folder it should have read. | `scan` | Fix the access problem, or check the path. Use `--allow-partial` only when you accept the skipped items. | `coverageExit` in `bin/cli.js` |
+| `64` | Wrong usage for the run and secrets commands. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | Check the command name and options in the [command line reference](cli.md), then run it again. | `runBroker` in `lib/broker/run.js`, `dispatch` in `lib/broker/cli.js` |
+| `77` | zn refused on purpose: a value was not shown, or the action was not allowed or not approved. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | If the action is needed, the user runs it in their own terminal. | `runBroker` in `lib/broker/run.js`, `dispatch` in `lib/broker/cli.js` |
+| `127` | The program that `run` was asked to start was not found. | `run` | Check the program name and that it is on your PATH, then run the command again. | `runBroker` in `lib/broker/run.js` |
 
-zn-gate does not return `126`. A command that zn-gate starts ends with its own code when it stops, for example 143 or 137 after a time limit (`lib/agents/launcher.js:306`).
+zn-gate does not return `126`. A command that zn-gate starts ends with its own code when it stops, for example 143 or 137 after a time limit (see the `ZN_RC` handling in `lib/agents/launcher.js`).
 
 ## Which exit code in a script
 
@@ -29,6 +29,22 @@ In a script, these three codes are the ones you will check most. The [full table
 | `0` | Carry on: the command is done, or it found nothing to report. |
 | `1` | Stop and look: the command ran and found a problem. |
 | `2` | Fix the call: the command was used wrongly, or `analyze` blocked the text. |
+
+## For CI authors
+
+In a pipeline, branch on the exit code and not on the text a command prints. The codes are listed on this page; the wording of a message is not a promise. For the Action itself, see [GitHub Action](github-action.md).
+
+| What you want to know | Exit code | Where |
+|---|---|---|
+| The action or the text was blocked | `2` | `hook` and `analyze` |
+| zn refused on purpose, or the action was not allowed or not approved | `77` | `run`, `secret`, `env`, `hooks`, `vault log` (`secret get` always exits `77`) |
+| The command was used wrongly | `2`, or `64` for `run`, `secret`, `env`, `hooks` and `vault log` | most commands |
+| The command needs a person at a terminal | `77` for `uninstall`, `hooks install` and `hooks uninstall`, `2` for `pins` | a pipeline has no interactive terminal, so do not run these there |
+| A scan was not complete | `3` | `scan` |
+| The program that `run` should start was not found | `127` | `run` |
+| `run` was stopped by a signal | `130` after `SIGINT`, `143` after any other signal | `run` |
+
+When the program that `zn run` started ends normally, `zn run` exits with that program's own code, so a `1`, `2`, `64` or `77` from `run` can come from your program and not from zn-gate. When the program ends because of a signal, `zn run` has no code to pass on and returns `130` or `143` as in the table.
 
 ## Common codes
 

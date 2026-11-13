@@ -97,6 +97,39 @@ The table below gives the full description of each setting.
 
 Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
+### All environment variables
+
+Every `ZN_` variable you can set, with its default and the package that reads it. "Both" means the npm and the Python package read it the same way. Not listed: variables that zn sets for its own helper processes (for example `ZN_HOOK_ACK` and `ZN_HOOK_VAULT_WAIT_MS`), the names passed to the Windows helper scripts, and the test-only switches. You never need to set those.
+
+| Variable | Default | What it does | Package |
+|---|---|---|---|
+| `ZN_HOME` | `~/.zn` | Folder for zn's own files: stats, the evidence log, pins and hook launchers. | Both |
+| `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
+| `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
+| `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
+| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
+| `ZN_STAGE` | The production API | Which cloud API route the check is sent to: `prod`, or unset for the default route. Any other value also uses the default route. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values under `--stage`. | Both |
+| `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check. `windows` sends overlapping windows of the text; `off` sends only the start. The values `none`, `truncate`, `0`, `false` and `no` also count as `off`. Any other value counts as `windows`. | Both |
+| `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |
+| `ZN_ALLOW_TRUNCATED=1` | Off | Lets through output too large to scan in full. It is still marked as truncated. By default such output is blocked. | Both |
+| `ZN_BLOCK_TRUNCATED=1` | Off | Blocks output too large to scan in full, even when `ZN_ALLOW_TRUNCATED=1` is set. | Both |
+| `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
+| `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
+| `ZN_BLOCK_DESTRUCTIVE=1` | Two rules on (`rm_root_home`, `disk_overwrite`) | `1` turns on all six destructive-command rules. | npm |
+| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` (or in `$ZN_HOME/config.json` when `ZN_HOME` is set). | npm |
+| `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
+| `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. `1` does the same. The environment can only add offline mode: `online` is read as offline. | npm |
+| `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
+| `ZN_SHIELD_LIMITS` | The built-in limits | A JSON object that lowers the shield's size and count limits, for tests and unusual setups. Values above a built-in limit are cut to it; values that are not positive whole numbers are ignored. | npm |
+| `ZN_HOOK_DIR` | `~/.zn/hooks` (`$ZN_HOME/hooks` when `ZN_HOME` is set) | Folder for the hook launchers. It must be private to your user. | npm |
+| `ZN_AGENT` | None | Agent name for `zn run` and the MCP server when `--agent` is not given. | npm |
+| `ZN_TEAM_JOIN_TOKEN` | None | Join token for `team join` when no token is given as an argument. An argument wins. | npm |
+| `ZN_KEYCHAIN_BACKEND` | Detected | Forces the system keychain backend. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_SERVICE` | `zn-vault` | Service name used in the keychain. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_PATH` | The system default | On macOS, the keychain file to use. For tests and unusual setups. | npm |
+| `ZN_NO_COMPILE_CACHE` | Off | Any value turns off the Node.js compile cache. | npm |
+| `ZN_NPM_REGISTRY` | `https://registry.npmjs.org` | Registry that `zn-gate scan --package` downloads from. Must be an https address; plain http is accepted for localhost only. | npm |
+
 ## Set up and check
 
 ### `init`
@@ -142,11 +175,11 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--json`) exits with `2`, names it and lists the option that `check` takes (`--hooks`).
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
 
 ```bash
 zn-gate check --hooks
@@ -242,7 +275,7 @@ A scan never reports a clean result for something it could not read. A folder it
 ### `audit`
 
 ```bash
-zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home]
+zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home] [--approve]
 ```
 
 Reviews the agent configs of a folder before you open it: hooks, MCP servers, endpoint overrides, permissions, instructions and planted programs. It runs nothing. [What it finds](audit.md).
@@ -252,6 +285,7 @@ Reviews the agent configs of a folder before you open it: hooks, MCP servers, en
 - `--fail-on`: `low`, `medium`, `high` (default), `critical` or `none`.
 - `--agents`: a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all` (default).
 - `--include-home`: also review your own agent configs in your home folder.
+- `--approve`: record the executable configuration of the project (MCP servers, hooks, permissions, helper commands and similar) as approved, then exit. Later audits report an entry that changed, was added or was removed since. It runs only at a terminal, not when an agent started it. Only entry names and hashes are stored, never a value. [Details](audit.md).
 
 Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2` wrong usage or a path that is not a folder.
 
@@ -423,10 +457,12 @@ Puts the original values back into the file from the encrypted copy that `env sh
 ### `run`
 
 ```text
-zn-gate run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]
+zn-gate run [--secrets NAME[,NAME...]] [--agent ID] [--egress-allow HOST[:PORT],...] -- <command> [args...]
 ```
 
 Runs a command with markers replaced by real values, only for commands you allowed, and masks the values in its output. Everything after `--` belongs to your command. `-s` is short for `--secrets`.
+
+- `--egress-allow HOST[:PORT],...`: off by default. The command can reach only those hosts over HTTP(S), through a local proxy that zn starts for the command. Other requests are refused and the refused host is logged, never the body. An entry without a port allows every port of that host. [Details and limits](secrets.md#egress-allowlist-for-zn-run).
 
 Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not allowed or not approved), `127` the program was not found, `1` another error.
 
@@ -681,6 +717,12 @@ zn-gate report [--since 7d] [--json] [--no-team-line]
 ```
 
 A short summary of the last days (`--since 1d` to `90d`, default 7): blocked actions, secrets hidden, new protected MCP servers and tool changes waiting for approval. It is built from local files and nothing is sent. [What it shows](report.md). Exit codes: `0` done, `2` wrong usage.
+
+### Related commands
+
+- [`why`](#why): [Reading `zn why` after a blocked command](examples/why-blocked-walkthrough.md), [Allow a blocked action after `zn why`](examples/zn-why-allow-command.md) and [Why was this blocked?](why-was-this-blocked.md). It reads the log that [`evidence`](#evidence) shows.
+- [`stats`](#stats): [Examples of stats and report](examples/stats-and-report.md), in particular [Top rules in stats](examples/stats-and-report.md#top-rules-in-stats). The optional sharing of daily counts is [`stats share`](#stats-share).
+- [`report`](#report): [See what zn-gate did this week](report.md) and [the weekly report example](examples/stats-and-report.md#weekly-report). For the counts alone, use [`stats`](#stats).
 
 ## Cloud check
 

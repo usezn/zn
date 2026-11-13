@@ -1,7 +1,10 @@
+# Short checks for docs, workflows and packages (changelog, Markdown, spelling, links, shell, workflow lint, package lint), scoped per change.
 name: Quick checks
 
 # The short checks that used to be a workflow each, in two jobs so a pull request queues two runners for them
-# instead of nine. The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
+# instead of nine. They replaced nine workflows: changelog, markdownlint, spellcheck, link-check, shellcheck,
+# package-lint, pre-commit-hooks, doc-snippets and workflow-lint (the test of the scope script is new here).
+# The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
 # (publint, attw, check-wheel-contents), the pre-commit hooks and the runnable doc snippets. The second job,
 # "Workflow lint" (actionlint + zizmor), keeps its own runner because zizmor gets a token: that job runs no script
 # of this repository, only pinned installs and the two tools, as the former workflow-lint.yml did.
@@ -11,9 +14,11 @@ name: Quick checks
 # require neither job of this workflow (the comment of the former workflow-lint.yml that said Workflow lint was
 # required was out of date), so they do not run in the merge queue. To make one required, add a merge_group
 # trigger for it first, or the queue waits for a check that never reports.
+# A push to next does not run this workflow (pull requests ran it before the merge, and the merge queue does not
+# run it): nightly-next.yml starts a manual run on next every night, which runs every step.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main ]
   # No paths filter: the scope script decides per step. A pull request into any branch runs the changelog check.
   # Label events run the checks again on the same commit (the no-changelog label changes the changelog result).
   # No job is skipped on them: a skipped run of a check would count as passing and could hide an earlier failure.
@@ -27,12 +32,12 @@ on:
 permissions:
   contents: read
 
-# A new push or label change on a pull request, or a new push to next, cancels the run still going for it (the new
+# A new push or label change on a pull request cancels the run still going for it (the new
 # run checks the same or a newer commit). Runs for main, the schedule and manual runs always complete (each has
 # its own group).
 concurrency:
-  group: quick-checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: quick-checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -51,7 +56,7 @@ jobs:
       # Pinned release binaries; each archive is verified against its SHA-256 before it is unpacked.
       LYCHEE_VERSION: lychee-v0.24.2
       LYCHEE_SHA256: 1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
-      LINK_TARGETS: README.md docs packages/*/README.md plugins
+      LINK_TARGETS: README.md CONTRIBUTING.md docs packages/*/README.md plugins
       SHELLCHECK_VERSION: 0.11.0
       # SHA-256 of shellcheck-v<version>.linux.x86_64.tar.xz.
       SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
@@ -81,12 +86,24 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.scopetest == 'true' }}
         run: bash .github/scripts/test-quick-scope.sh
 
-      # Node.js 22 for the changelog tools, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
+      # Node.js 22 for the changelog tools, the workflow header check, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.timeouts == 'true') }}
+        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.wfheader == 'true' || steps.scope.outputs.timeouts == 'true' || steps.scope.outputs.wfformat == 'true' || steps.scope.outputs.fragmentnames == 'true' || steps.scope.outputs.actioninputs == 'true') }}
         with:
           node-version: 22.x
           package-manager-cache: false
+
+      # Changed workflows: the job summary lists the workflow files this pull request changes, against its base.
+      - name: Changed workflows - write the summary
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        # The summary is information only: a failure here does not fail the run.
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/changed-workflows-summary.mjs "$BASE_SHA"
+      - name: Changed workflows - test the summary script
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/changed-workflows-summary.test.mjs
 
       # Changelog
       - name: Changelog - test the fragment tools
@@ -101,7 +118,45 @@ jobs:
           CHANGELOG_RELEASE: ${{ (startsWith(github.base_ref, 'release/') || (github.event.pull_request.head.repo.full_name == github.repository && ((startsWith(github.head_ref, 'release/') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/pin-plugin-') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/backmerge-') && github.base_ref == 'next')))) && '1' || '0' }}
         # HEAD is the merge commit GitHub made for this pull request: its first parent is the base it was merged onto.
         run: node .github/scripts/changelog.mjs check --base HEAD^1
+      - name: Changelog - list this pull request's fragments in the job summary
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node .github/scripts/changelog.mjs summary --base HEAD^1
+      - name: Changelog - warn when a docs-only pull request adds no fragment
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        env:
+          # Dependency updates by Dependabot and changes labelled no-changelog need no fragment (security updates get one by hand).
+          CHANGELOG_SKIP: ${{ (contains(github.event.pull_request.labels.*.name, 'no-changelog') || github.event.pull_request.user.login == 'dependabot[bot]') && '1' || '0' }}
+          # Release work may edit CHANGELOG.md: release, back-merge and plugin-pin branches of this repository, and pull requests into a release branch.
+          CHANGELOG_RELEASE: ${{ (startsWith(github.base_ref, 'release/') || (github.event.pull_request.head.repo.full_name == github.repository && ((startsWith(github.head_ref, 'release/') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/pin-plugin-') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/backmerge-') && github.base_ref == 'next')))) && '1' || '0' }}
+        run: node .github/scripts/changelog.mjs warn-docs --base HEAD^1
+      # Fragment names: every file in changelog.d is a lowercase .md file (README.md excepted).
+      - name: Changelog fragment names - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.fragmentnames == 'true' }}
+        run: node --test .github/scripts/check-changelog-fragment-names.test.mjs
+      - name: Changelog fragment names - every file is a lowercase .md name
+        if: ${{ !cancelled() && steps.scope.outputs.fragmentnames == 'true' }}
+        run: node .github/scripts/check-changelog-fragment-names.mjs
 
+      - name: Changelog - test the version heading check
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node --test .github/scripts/check-changelog-versions.test.mjs
+      - name: Changelog - no version has two sections in CHANGELOG.md
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node .github/scripts/check-changelog-versions.mjs CHANGELOG.md
+
+      # Workflow header: every workflow has a top-level name and a top-level permissions block.
+      - name: Workflow header - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/check-workflow-header.test.mjs
+      - name: Workflow header - every workflow has name and permissions
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node .github/scripts/check-workflow-header.mjs
+      - name: Workflow header - test the first-line comment check
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/check-workflow-first-line.test.mjs
+      - name: Workflow header - every workflow starts with a comment line
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node .github/scripts/check-workflow-first-line.mjs
       # Workflow timeouts: every job of a workflow sets timeout-minutes (a stuck job would run for 6 hours).
       - name: Workflow timeouts - test the check
         if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
@@ -109,6 +164,28 @@ jobs:
       - name: Workflow timeouts - every job sets timeout-minutes
         if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
         run: node .github/scripts/check-timeouts.mjs
+      # Workflow file format: a final newline, no tabs, indents in multiples of two spaces.
+      - name: Workflow format - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.wfformat == 'true' }}
+        run: node --test .github/scripts/check-workflow-format.test.mjs
+      - name: Workflow format - newline at the end, no tabs, two-space indents
+        if: ${{ !cancelled() && steps.scope.outputs.wfformat == 'true' }}
+        run: node .github/scripts/check-workflow-format.mjs
+      # Action inputs: every input of action.yml has a description (the Marketplace page shows it).
+      - name: Action inputs - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.actioninputs == 'true' }}
+        run: node --test .github/scripts/check-action-inputs.test.mjs
+      - name: Action inputs - every input has a description
+        if: ${{ !cancelled() && steps.scope.outputs.actioninputs == 'true' }}
+        run: node .github/scripts/check-action-inputs.mjs
+      # Heavy test jobs: they are skipped on a pull request into next without the full-ci label, run in the merge
+      # queue, and every required check keeps its name.
+      - name: Heavy test jobs - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node --test .github/scripts/check-heavy-jobs-gating.test.mjs
+      - name: Heavy test jobs - gated by the full-ci label
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node .github/scripts/check-heavy-jobs-gating.mjs
 
       # Markdown lint
       - name: Markdown lint - install markdownlint-cli2 (locked)
@@ -123,12 +200,154 @@ jobs:
       - name: Markdown lint - docs examples only run commands documented in cli.md
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-examples-commands.mjs
+      - name: Markdown lint - test the docs examples section check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-sections.test.mjs
+      - name: Markdown lint - docs examples added or changed here end with a closing section
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        env:
+          # HEAD^1 is the base tip on a pull request, the previous tip on a push (as in quick-scope.sh).
+          CHANGES_BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: node .github/scripts/check-docs-examples-sections.mjs --base "$CHANGES_BASE"
       - name: Markdown lint - test the docs title check
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-titles.test.mjs
       - name: Markdown lint - no two docs pages share a first-level title
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-titles.mjs
+      - name: Markdown lint - test the CLI headings check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-cli-headings.test.mjs
+      - name: Markdown lint - every CLI command has a section and a Contents entry
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-cli-headings.mjs
+      - name: Markdown lint - test the cheat sheet command check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-cheatsheet-commands.test.mjs
+      - name: Markdown lint - every command in the cheat sheet is documented in cli.md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-cheatsheet-commands.mjs
+      - name: Markdown lint - test the docs command name check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-command-names.test.mjs
+      # Warning only (no --strict): a page that uses both zn-gate and zn in inline code is listed, and the step still passes.
+      - name: Markdown lint - docs pages use one command name in inline code (warning)
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-command-names.mjs
+      # One step: the test, then the script that writes the page counts to the job summary (informational, never fails).
+      - name: Markdown lint - test and write the docs page counts to the job summary
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/summarize-docs-pages.test.mjs && node .github/scripts/summarize-docs-pages.mjs
+      - name: Markdown lint - test the SECURITY.md advisory link check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-security-advisory-links.test.mjs
+      - name: Markdown lint - every link in SECURITY.md to docs/advisories/ resolves
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-security-advisory-links.mjs SECURITY.md
+      - name: Markdown lint - test the docs table check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-tables.test.mjs
+      - name: Markdown lint - every table row has the cell count of its header row, and a delimiter row
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-tables.mjs
+      - name: Docs links - test the changelog and security link check
+        if: ${{ !cancelled() && steps.scope.outputs.doclinks == 'true' }}
+        run: node --test .github/scripts/check-docs-changelog-security-links.test.mjs
+      - name: Docs links - links to CHANGELOG.md and SECURITY.md resolve
+        if: ${{ !cancelled() && steps.scope.outputs.doclinks == 'true' }}
+        run: node .github/scripts/check-docs-changelog-security-links.mjs
+      - name: Markdown lint - test the README entry point check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-readme-entry-points.test.mjs
+      - name: Markdown lint - README.md and docs/README.md link the same entry points
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-readme-entry-points.mjs
+      - name: Markdown lint - test the docs examples index order check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-index.test.mjs
+      - name: Markdown lint - the docs examples index is in alphabetical order
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-examples-index.mjs
+      - name: Markdown lint - test the docs examples name check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-names.test.mjs
+      - name: Markdown lint - docs examples file names use lowercase letters, digits and hyphens, ending in .md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-examples-names.mjs
+      - name: Markdown lint - test the docs examples index target check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-index-targets.test.mjs
+      - name: Markdown lint - every docs examples index entry points to an existing page
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-examples-index-targets.mjs
+
+      - name: Markdown lint - test the simply and just check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-no-simply-just.test.mjs
+      - name: Markdown lint - no docs page uses simply or just before a command
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-no-simply-just.mjs
+
+      - name: Markdown lint - test the last reviewed check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-last-reviewed.test.mjs
+      - name: Markdown lint - compat and install matrix carry a valid last reviewed date
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-last-reviewed.mjs
+      - name: Markdown lint - test the bare http link check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: bash scripts/test-check-docs-https.sh
+      - name: Markdown lint - docs and READMEs use https links
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: bash scripts/check-docs-https.sh
+      - name: Markdown lint - test the changelog date check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-changelog-dates.test.mjs
+      - name: Markdown lint - CHANGELOG.md release headings carry ISO dates
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-changelog-dates.mjs CHANGELOG.md
+      - name: Markdown lint - test the action inputs check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-action-inputs-documented.test.mjs
+      - name: Markdown lint - every action input is named in docs/github-action.md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-action-inputs-documented.mjs action.yml docs/github-action.md
+      - name: Markdown lint - test the docs anchor check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-anchors.test.mjs
+      - name: Markdown lint - no two headings of a docs page share an anchor
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-anchors.mjs
+      - name: Markdown lint - test the docs wording check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-wording.test.mjs
+      - name: Markdown lint - no easy, easily or simply in docs pages
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-wording.mjs
+      - name: Markdown lint - test the docs marker check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-todo.test.mjs
+      - name: Markdown lint - no TODO or FIXME in the docs or the README
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-todo.mjs
+      - name: Markdown lint - test the docs shell block quote check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-bash-quotes.test.mjs
+      - name: Markdown lint - no curly quotes in docs shell code blocks
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-bash-quotes.mjs
+      - name: Markdown lint - test the code block trailing space check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-code-trailing-space.test.mjs
+      - name: Markdown lint - no trailing space inside a code block
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-code-trailing-space.mjs
+      - name: Markdown lint - test the code fence check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-fences.test.mjs
+      - name: Markdown lint - no docs page leaves a code fence open
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-fences.mjs
 
       # Spellcheck
       - name: Spellcheck - typos

@@ -49,13 +49,21 @@ each agent's zn hook whether the agent may read them. This is what happened:
   -  Codex CLI    not found on this machine
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
+  -  Antigravity  not found on this machine
+  -  GitHub Copilot (VS Code, CLI) not found on this machine
+  -  Gemini CLI (experimental) not found on this machine
+  -  ZCode        not found on this machine
 
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 If your agent needs a value from .env, keep it in zn's vault instead: `zn env shadow .env`.
 More: https://usezn.com/docs/check
 
 The test folder was deleted.
+
+Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.
 ```
+
+The `Decision time per tool call` line is the time zn takes to decide each tool call your agent makes on this machine, as the p50 and p95 of the calls it has measured recently. It says `no data yet` until zn has checked a tool call. [What you will see](check.md#what-you-will-see) explains it.
 
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
 
@@ -109,7 +117,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
   "rule": "none",
   "reason": null,
   "engine": "oss-local",
-  "rules_version": "2026-10-16.10",
+  "rules_version": "2026-11-07.1",
   "advisory": {
     "rule": "pi:bypass",
     "reason": "Guardrail bypass attempt"
@@ -145,7 +153,7 @@ node --version
 
 ## Install your agent first
 
-> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it. More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
 zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
 
@@ -183,7 +191,7 @@ On Windows, zn prints the `.cmd` form in its own messages, so copy the command i
 
 ## Remove zn-gate
 
-To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). It does the steps below in the safe order.
+To remove most of it in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). It does steps 1, 2 and 3 below for you, in that order, after you confirm the list, and deletes the launcher scripts in `~/.zn/hooks`. It then asks separately before it deletes the vault (the second question, part of step 5), runs `zn-gate check`, and prints the program removal as its last line. It does not edit your `.env` files (step 4), does not delete the rest of the `.zn` folder (step 5) and does not remove the program, so step 4, the rest of step 5, step 6 and step 7 are yours to do.
 
 To remove one part at a time, go in this order: wrapped MCP servers first, then the hooks, then the plugin, and the program last. This is the order `zn-gate uninstall` uses. If you remove the program first, your agent's settings still point at a command that is gone.
 
@@ -191,7 +199,7 @@ To remove one part at a time, go in this order: wrapped MCP servers first, then 
 2. **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
 3. **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 4. **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back (`npx -y zn-gate env unshadow .env --backup <name>`). Do that before you delete the vault.
-5. **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them. The second question of `zn-gate uninstall` deletes the vault; you can also delete the folder by hand.
+5. **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing the plugin, the hooks or the program leaves it there (`zn-gate uninstall` only deletes the launcher scripts in `~/.zn/hooks`). Delete it only after you have put your `.env` values back, because the vault holds them. The second question of `zn-gate uninstall` deletes the vault and what goes with it (its audit log, backups, token maps and session key); the rest of the folder, such as your settings and the decision log, stays. You can also delete the folder by hand.
 6. **The program itself**, last, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
 7. **The Python package**, after that, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
 
