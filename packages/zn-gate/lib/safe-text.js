@@ -37,11 +37,14 @@ function isUnsafeText(s) {
   return false;
 }
 
-/** true when any string in a JSON value (a key or a value, at any depth) is unsafe. */
+// Nothing real nests deeper than this: a deeper value is refused rather than only partly looked at.
+const MAX_NESTING = 64;
+
+/** true when any string in a JSON value (a key or a value, at any depth) is unsafe, or the value nests too deeply. */
 function hasUnsafeText(value, depth = 0) {
   if (typeof value === 'string') return isUnsafeText(value);
   if (value === null || typeof value !== 'object') return false;
-  if (depth > 64) return true; // nothing real nests this deep: refuse rather than stop looking
+  if (depth > MAX_NESTING) return true;
   if (Array.isArray(value)) return value.some((v) => hasUnsafeText(v, depth + 1));
   for (const k of Object.keys(value)) {
     if (isUnsafeText(k) || hasUnsafeText(value[k], depth + 1)) return true;
@@ -49,4 +52,12 @@ function hasUnsafeText(value, depth = 0) {
   return false;
 }
 
-module.exports = { isUnsafeText, hasUnsafeText };
+/** true when a JSON value nests deeper than hasUnsafeText looks (so the refusal can say why). */
+function nestedTooDeep(value, depth = 0) {
+  if (value === null || typeof value !== 'object') return false;
+  if (depth > MAX_NESTING) return true;
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.some((v) => nestedTooDeep(v, depth + 1));
+}
+
+module.exports = { isUnsafeText, hasUnsafeText, nestedTooDeep, MAX_NESTING };

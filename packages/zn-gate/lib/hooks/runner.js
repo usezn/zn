@@ -52,7 +52,7 @@ const deps = require('../deps');
 const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand, winCommandText } = require('../zn-command');
-const { hasUnsafeText } = require('../safe-text');
+const { hasUnsafeText, nestedTooDeep, MAX_NESTING } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -446,9 +446,12 @@ const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was
  * paths the policy turns into file system calls, is checked whole.
  */
 function guardNativeText(ev) {
-  if (!(ev.event === 'pre_tool' ? hasUnsafeText(ev) : hasUnsafeEventPaths(ev))) return;
-  const err = new Error('malformed text in the event');
-  err.code = 'ZN_MALFORMED_TEXT';
+  const checked = ev.event === 'pre_tool' ? ev : eventPathFields(ev);
+  if (!hasUnsafeText(checked)) return;
+  // Both are refused; the reason says which one it was.
+  const deep = nestedTooDeep(checked);
+  const err = new Error(deep ? 'the event is nested too deeply to check' : 'malformed text in the event');
+  err.code = deep ? 'ZN_TOO_DEEP' : 'ZN_MALFORMED_TEXT';
   throw err;
 }
 
@@ -457,13 +460,13 @@ function guardNativeText(ev) {
 const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'output', 'result', 'response', 'last_assistant_message']);
 
 /** Every other field of a post-tool, prompt or stop event (working directory, transcript, workspace roots, tool input) is checked. */
-function hasUnsafeEventPaths(ev) {
+function eventPathFields(ev) {
   const input = ev.input && typeof ev.input === 'object' ? { ...ev.input, prompt: undefined } : ev.input;
   const raw = {};
   if (ev.raw && typeof ev.raw === 'object') {
     for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output) raw[k] = v;
   }
-  return hasUnsafeText([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
+  return [ev.cwd, ev.sessionId, ev.toolName, input, raw];
 }
 
 /**
@@ -1786,6 +1789,10 @@ function failDecision(ev, err, mode, agentId) {
   // A Stop check never blocks because zn failed: that could keep the agent going.
   if (ev && ev.event === 'stop') {
     return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
+  }
+  if (err.code === 'ZN_TOO_DEEP') {
+    return failClosed(ev, err, 'zn: this action is nested more than ' + MAX_NESTING + ' levels deep, too deep to check, so it was blocked. ' +
+      'Ask the user to check the request.');
   }
   if (err.code === 'ZN_MALFORMED_TEXT') {
     return failClosed(ev, err, 'zn: this action names a file or text that is not valid Unicode text, so it was blocked. ' +
