@@ -20,7 +20,7 @@ One page with every `zn-gate` command, its most useful flags and one example. Ev
 | Command | Useful flags | Example |
 |---|---|---|
 | [`scan`](cli.md#scan) | `--format text\|json\|github`, `--all`, `--include`, `--exclude`, `--include-home`, `--allow-partial`, `--package` | `zn-gate scan ./docs --format json` |
-| [`audit`](cli.md#audit) | `--format text\|json\|sarif`, `--output`, `--fail-on`, `--agents`, `--include-home`, `--approve` | `zn-gate audit . --fail-on high --agents claude-code,cursor` |
+| [`audit`](cli.md#audit) | `--format text\|json\|sarif`, `--output`, `--fail-on`, `--agents`, `--include-home`, `--approve` | `zn-gate audit . --fail-on high --agents claude,cursor` |
 | [`reach`](cli.md#reach) | `--json`, `--sarif`, `--fail-on`, `--remember`, `--history`, `--max-seconds` | `zn-gate reach . --fail-on high` |
 | [`analyze`](cli.md#analyze) | none | `zn-gate analyze "Summarize this file"` |
 | [`pins`](cli.md#pins) | `approve <server>`, `approve --all` | `zn-gate pins` |
