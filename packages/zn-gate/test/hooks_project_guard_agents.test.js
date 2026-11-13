@@ -22,7 +22,7 @@ const cfg = require('../lib/agents/config-file');
 const { windowsCommandScript } = require('../lib/shell-quote');
 const { tempDir } = require('./helpers/tmp');
 
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' && 'the project guard cases run in sh and bash' };
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
 function whichSh() {

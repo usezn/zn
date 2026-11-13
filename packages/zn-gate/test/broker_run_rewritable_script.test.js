@@ -60,7 +60,7 @@ const TIGHT = POSIX && ancestorsAreTight(__dirname); // package folder (zn run i
 const TIGHT_TMP = POSIX && ancestorsAreTight(require('os').tmpdir());
 const NOT_ROOT = POSIX && process.getuid() !== 0;
 
-test('openExecutable tells a `#!` script from a native program', { skip: !POSIX }, (t) => {
+test('openExecutable tells a `#!` script from a native program', { skip: !POSIX && 'POSIX file modes and #! scripts' }, (t) => {
   const dir = scratch(t);
   const s = path.join(dir, 's.sh');
   fs.writeFileSync(s, '#!/bin/sh\necho hi\n', { mode: 0o755 });
@@ -81,13 +81,13 @@ test('scriptRisk: a script only you can write passes with a warning', { skip: !T
   assert.ok(r.warn, 'warns');
 });
 
-test('scriptRisk: a native program and a missing descriptor are not scripts', { skip: !POSIX }, () => {
+test('scriptRisk: a native program and a missing descriptor are not scripts', { skip: !POSIX && 'POSIX file modes and #! scripts' }, () => {
   const b = exe.openExecutable(fs.realpathSync(process.execPath));
   try { assert.equal(exe.scriptRisk(b, process.execPath), null); } finally { fs.closeSync(b.fd); }
   assert.equal(exe.scriptRisk(null, '/x'), null);
 });
 
-test('scriptRisk: a group- or other-writable script is refused', { skip: !POSIX }, (t) => {
+test('scriptRisk: a group- or other-writable script is refused', { skip: !POSIX && 'POSIX file modes and #! scripts' }, (t) => {
   const dir = scratch(t);
   for (const mode of [0o775, 0o757, 0o777, 0o770 | 0o002]) {
     const s = path.join(dir, 's' + mode.toString(8) + '.sh');
@@ -173,7 +173,7 @@ async function runTool(dir, opts) {
   return { code, err: err.text(), ran: fs.existsSync(marker), vault };
 }
 
-test('zn run refuses a group-writable script, audits it, and starts nothing', { skip: !POSIX }, async (t) => {
+test('zn run refuses a group-writable script, audits it, and starts nothing', { skip: !POSIX && 'POSIX file modes and #! scripts' }, async (t) => {
   const r = await runTool(scratch(t), { mode: 0o775 });
   assert.equal(r.code, 77, r.err);
   assert.match(r.err, /others can rewrite/);
@@ -189,7 +189,7 @@ test('zn run starts your own script (0755) with a warning and an audit note', { 
   assert.ok(r.vault.auditLog.some((e) => e.decision === 'allow' && /script writable by the current user/.test(e.reason)));
 });
 
-test('zn run still starts a native program with a secret, without a warning', { skip: !POSIX }, async () => {
+test('zn run still starts a native program with a secret, without a warning', { skip: !POSIX && 'POSIX file modes and #! scripts' }, async () => {
   const vault = createFakeVault({ withApprovals: true });
   const NODE = path.basename(process.execPath);
   await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: [NODE] });

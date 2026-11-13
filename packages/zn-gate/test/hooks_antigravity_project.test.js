@@ -23,7 +23,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const agy = getAdapter('antigravity');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' && 'the project guard cases run in sh and bash' };
 const EVENT = JSON.stringify({ conversationId: 'c', workspacePaths: ['/work/proj'], toolCall: { name: 'search_web', args: { query: 'x' } }, stepIdx: 1 });
 
 function projectCommand(t) {

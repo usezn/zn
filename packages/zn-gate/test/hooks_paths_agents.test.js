@@ -49,7 +49,7 @@ test('credential paths are found through ~, $HOME, ${HOME}, %USERPROFILE% and $e
   }
 });
 
-test('a link inside the project to a credential file is the credential file', { skip: WIN }, (t) => {
+test('a link inside the project to a credential file is the credential file', { skip: WIN && 'symbolic links need privileges on Windows' }, (t) => {
   const { home, proj } = tmpHome(t);
   fs.mkdirSync(path.join(home, '.aws'));
   fs.writeFileSync(path.join(home, '.aws', 'credentials'), 'x\n');
@@ -246,7 +246,7 @@ test('a project folder named like an agent folder is not the agent plugin folder
   assert.match(policy.writeDenial(path.join(proj, '.agents', 'plugins', 'p', 'hooks.json'), opts), /protected/);
 });
 
-test('~/.zn and the plugin folders through a linked home or project: the real path is protected too', { skip: WIN }, (t) => {
+test('~/.zn and the plugin folders through a linked home or project: the real path is protected too', { skip: WIN && 'symbolic links need privileges on Windows' }, (t) => {
   const base = tempDir(t, 'zn-linkhome-');
   const realHome = path.join(base, 'data', 'u');
   fs.mkdirSync(realHome, { recursive: true });
@@ -350,7 +350,7 @@ test('env -C, git -C and find -delete or -exec rm under the home folder are foll
   }
 });
 
-test('a linked agent configuration or plugin folder (dotfiles) is protected at its real place too', { skip: WIN }, (t) => {
+test('a linked agent configuration or plugin folder (dotfiles) is protected at its real place too', { skip: WIN && 'symbolic links need privileges on Windows' }, (t) => {
   // For each agent: the configuration folder linked elsewhere, and (separately) only its plugin folder linked elsewhere.
   for (const [conf, sub] of [['.claude', 'plugins'], ['.codex', 'plugins'], ['.cursor', 'plugins'], ['.zcode/cli', 'plugins'],
     ['.gemini/config', 'plugins'], ['.gemini/antigravity-cli', 'plugins']]) {
@@ -383,7 +383,7 @@ test('a linked agent configuration or plugin folder (dotfiles) is protected at i
   }
 });
 
-test('a linked Gemini or ZCode configuration folder keeps its plugin state protected at its real place', { skip: WIN }, (t) => {
+test('a linked Gemini or ZCode configuration folder keeps its plugin state protected at its real place', { skip: WIN && 'symbolic links need privileges on Windows' }, (t) => {
   const { home, proj } = tmpHome(t);
   const elsewhere = tempDir(t, 'zn-dotfiles-');
   const opts = { home, cwd: proj, env: { HOME: home } };
@@ -398,7 +398,7 @@ test('a linked Gemini or ZCode configuration folder keeps its plugin state prote
   assert.equal(policy.writeDenial(path.join(elsewhere, 'gemini', 'notes.md'), opts), null);
 });
 
-test('a linked plugin folder named by CLAUDE_CONFIG_DIR or CODEX_HOME is protected at its real place', { skip: WIN }, (t) => {
+test('a linked plugin folder named by CLAUDE_CONFIG_DIR or CODEX_HOME is protected at its real place', { skip: WIN && 'symbolic links need privileges on Windows' }, (t) => {
   for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME']) {
     const { home, proj } = tmpHome(t);
     const elsewhere = tempDir(t, 'zn-dotfiles-');
@@ -499,7 +499,7 @@ test('OpenCode plugin: only known actions are acted on, and a project plugin nam
 
 /* ------------------------------ install files ------------------------------ */
 
-test('config files: a symlinked file is written through, its mode is kept, and bad content is refused', { skip: WIN }, (t) => {
+test('config files: a symlinked file is written through, its mode is kept, and bad content is refused', { skip: WIN && 'symbolic links need privileges on Windows' }, (t) => {
   const dir = tempDir(t, 'zn-cfg-');
   const target = path.join(dir, 'real.json');
   const link = path.join(dir, 'link.json');

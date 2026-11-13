@@ -11,7 +11,7 @@ const launcher = require('../lib/agents/launcher');
 const { tempDir } = require('./helpers/tmp');
 
 const TMP_ROOT = fs.realpathSync(os.tmpdir());
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' && 'POSIX folder owners, modes and links' };
 const mkdirMode = (dir, mode) => { fs.mkdirSync(dir, { recursive: true }); fs.chmodSync(dir, mode); return dir; };
 const refusal = (fn) => { try { fn(); } catch (e) { return e.message; } assert.fail('expected a refusal'); };
 
