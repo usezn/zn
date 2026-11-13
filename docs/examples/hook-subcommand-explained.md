@@ -49,3 +49,8 @@ The deny travels in the JSON answer (`permissionDecision: deny`), and the reason
   - `zn-gate why` explains one block from the local decision log in plain words (worked example: [zn-why-allow-command.md](zn-why-allow-command.md)), and `zn-gate evidence` shows the log.
   - `zn hooks install <agent>` again repairs the settings after an upgrade or when the Node.js the hook used is gone.
 - One table of common questions and the command that answers each is in [which-command-shows-what.md](which-command-shows-what.md).
+
+## More
+
+- [Check that it works](../check.md)
+- [Command reference](../cli.md)

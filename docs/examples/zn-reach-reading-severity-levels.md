@@ -171,4 +171,6 @@ That run exits `2`, which stays apart from `1` so that a CI job can tell a broke
 - **A finding you do not expect is `HIGH`**: read its `Fix:` line. For a `.env`, it is `npx -y zn-gate env shadow .env`.
 - **A `.env` in a sub-folder is missing**: reach checks one folder. Run it in that folder.
 
+## More
+
 More in [what reach shows](../reach.md#what-it-shows), the [severity rules](../reach.md#severity) and the [flags](../reach.md#flags).

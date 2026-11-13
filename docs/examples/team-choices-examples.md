@@ -106,3 +106,8 @@ record the reasons `run` and `render`. It is not recorded as a warning.
 - The organization can never read secret values, open a new command, mode
   or HTTP placement for a secret, or change the protections for credential
   files, `~/.zn` and agent configuration.
+
+## More
+
+- [Teams](../team.md)
+- [Team quick guide](../team-quick-guide.md)

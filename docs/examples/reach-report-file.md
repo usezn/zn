@@ -64,3 +64,8 @@ Exit code 1 means a finding met `--fail-on`. Exit code 2 means a usage error or 
 A CI runner normally has no coding agent installed, so reach mainly reports the `.env` files and the MCP and project settings of the repository. Run it on a developer machine to see the agent and credential-file findings too. Reach checks one folder and does not walk sub-folders for `.env` files.
 
 To show findings in code scanning instead of keeping a file, see the SARIF workflow in the [reach page](../reach.md#sarif-and-ci) and the [GitHub Action](../github-action.md).
+
+## More
+
+- [The reach page](../reach.md)
+- [GitHub Action](../github-action.md)

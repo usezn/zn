@@ -94,3 +94,8 @@ npx -y zn-gate audit --format sarif --output zn-audit.sarif --fail-on none
 
 If you installed zn-gate globally (`npm install -g zn-gate`), `zn audit` is the
 same command.
+
+## More
+
+- [The audit page](../audit.md)
+- [All examples](README.md)
