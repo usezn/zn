@@ -465,6 +465,21 @@ _WRAPPER_LONG_VALUE = frozenset((
     "--wait", "--timeout", "--conflict-exit-code", "--userspec", "--groups", "--target", "--setuid", "--setgid",
     "--supp-group", "--shell", "--whitelist-environment", "--sched-runtime", "--sched-period", "--sched-deadline",
 ))
+# nsenter's namespace options take a value only as --opt=value (in `nsenter --target 1 --pid rm -rf ~` the word after --pid is
+# the program); its --target, --setuid and --setgid take the next word. Per wrapper, as in the Node policy.
+_WRAPPER_LONG_OPTIONAL = {
+    "nsenter": frozenset((
+        "--mount", "--uts", "--ipc", "--net", "--pid", "--cgroup", "--time", "--user", "--root", "--wd", "--wdns",
+        "--preserve-credentials", "--no-fork", "--all", "--follow-context", "--env",
+    )),
+}
+# A word taken as an option's value that names a program zn reads (rm, sh, find, curl ...) may really be the program, if the
+# option was guessed wrong: the chain is then unsure, so that word and the later ones are read as commands too.
+_SKIPPED_PROGRAM_RE = re.compile(r"^(?:rm|rmdir|del|erase|rd|ri|remove-item|shred|mkfs[a-z0-9.]*|mke2fs|mkswap|wipefs|blkdiscard|dd|find|chmod|chown|chgrp|sh|bash|zsh|dash|ksh|ash|mksh|rbash|su|eval|cmd|pwsh|powershell|python[0-9.]*|perl|ruby|node|curl|wget|iwr|irm|aria2c|fetch)\Z", re.ASCII | re.IGNORECASE)
+
+
+def _skipped_is_program(t: str) -> bool:
+    return bool(_SKIPPED_PROGRAM_RE.match(re.split(r"[\\/]", t.lstrip("("))[-1]))
 # A word in command position that reads like an option value, not a program: a number or duration (10, +5, 1e3),
 # a one-letter mode (stdbuf L), a user:group, a list or a format (%e).
 _VALUE_LIKE_RE = re.compile(r"^[+-]?[0-9.]|^[A-Z]\Z|[:,%]")
@@ -485,8 +500,10 @@ def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, 
             k += 1
             break
         if t.startswith("--") and len(t) > 2:
-            valued = "=" not in t and t in _WRAPPER_LONG_VALUE
+            valued = "=" not in t and t in _WRAPPER_LONG_VALUE and t not in _WRAPPER_LONG_OPTIONAL.get(name, ())
             if not valued and "=" not in t:
+                unsure = True
+            if valued and k + 1 < len(words) and _skipped_is_program(words[k + 1]):
                 unsure = True
             k += 2 if valued else 1
             continue
@@ -495,6 +512,8 @@ def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, 
                 saw_c = True
             valued = bool(re.match(r"^-[A-Za-z]+\Z", t)) and t[-1] in value_opts
             if not valued:
+                unsure = True
+            if valued and k + 1 < len(words) and _skipped_is_program(words[k + 1]):
                 unsure = True
             k += 2 if valued else 1
             continue

@@ -22,6 +22,7 @@ const LOCK_TTL_MS = 10 * 60 * 1000;
 const MAX_RESYNCS = 3;
 const MAX_BATCH = 500;
 
+const TEXT_BEFORE_JOIN = 'the server asked for records from before this machine joined; nothing was uploaded';
 const TEXT_DIVERGED = 'local audit log does not match what was uploaded';
 const TEXT_LOCAL_GAP = 'local audit log has a gap in its sequence numbers';
 
@@ -276,9 +277,22 @@ function confirmedUpTo(batch, body) {
   return { record: batch[index], accepted: accepted === undefined ? index + 1 : accepted };
 }
 
+/* Where a log scan starts. The join point is a floor that is kept after a resync too, so records written before
+   joining are never read for upload. With a head, the scan starts one record before it so the head is found. */
+function afterFor(o, head) {
+  const floor = o.startAfterSeq || 0;
+  return head ? Math.max(0, Math.min(floor, head.seq - 1)) : floor;
+}
+
+/* A stored head below the join floor belongs to an earlier membership (the state file could not be removed on
+   leave). It is not usable: the scan starts at the floor, so nothing from before the join is ever read or sent. */
+function usableHead(floor, head) {
+  return head && head.seq >= (floor || 0) ? head : null;
+}
+
 function pendingOf(o, head) {
   try {
-    return scanLog(o.auditFile, head ? 0 : o.startAfterSeq, head ? head.seq : 0, 0, o.chunk).pending;
+    return scanLog(o.auditFile, afterFor(o, head), head ? head.seq : 0, 0, o.chunk).pending;
   } catch (err) {
     return -1;
   }
@@ -296,7 +310,7 @@ async function fail(o, ctx, status, text) {
 async function sync(o, ctx) {
   // Without a confirmed head, the upload starts after the join (o.startAfterSeq), not at the first record.
   const cap = o.maxBatches * o.batchSize;
-  const load = () => scanLog(o.auditFile, ctx.head ? 0 : o.startAfterSeq, ctx.head ? ctx.head.seq : 0, cap, o.chunk);
+  const load = () => scanLog(o.auditFile, afterFor(o, ctx.head), ctx.head ? ctx.head.seq : 0, cap, o.chunk);
   let scan = load();
   let scanHead = ctx.head;
   // Records after a local gap are never sent: the window stops at the gap.
@@ -341,6 +355,11 @@ async function sync(o, ctx) {
           break;
         }
         const exp = err.body.expected;
+        if (exp.seq - 1 < o.startAfterSeq) {
+          // The server points before the join: those records were never meant to be shared. Upload nothing.
+          outcome = { status: 'error', text: TEXT_BEFORE_JOIN };
+          break;
+        }
         const target = findRecord(o.auditFile, exp.seq - 1, o.chunk);
         if (!target || target.mac !== exp.prev) {
           outcome = { status: 'diverged', text: TEXT_DIVERGED };
@@ -415,7 +434,7 @@ async function sync(o, ctx) {
 async function uploadPending(opts) {
   const o = checkOptions(opts);
   const state = readState(o.stateFile);
-  const ctx = { head: state.head, lastUpload: state.last_upload, uploaded: 0 };
+  const ctx = { head: usableHead(o.startAfterSeq, state.head), lastUpload: state.last_upload, uploaded: 0 };
   let fd = null;
   try {
     // The lock is a file in ~/.zn: it is created only while the membership that started the upload is current.
@@ -436,9 +455,9 @@ async function uploadPending(opts) {
 /* Cheap count for `zn team status`: records after the stored head (or after opts.startAfterSeq when there is none). */
 function pendingCount(opts) {
   const o = opts || {};
-  const head = readState(o.stateFile).head;
   const after = Number.isInteger(o.startAfterSeq) && o.startAfterSeq > 0 ? o.startAfterSeq : 0;
-  return scanLog(o.auditFile, head ? 0 : after, head ? head.seq : 0, 0, o.chunk).pending;
+  const head = usableHead(after, readState(o.stateFile).head);
+  return scanLog(o.auditFile, afterFor({ startAfterSeq: after }, head), head ? head.seq : 0, 0, o.chunk).pending;
 }
 
 module.exports = { uploadPending, pendingCount };

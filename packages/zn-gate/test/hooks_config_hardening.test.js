@@ -58,7 +58,7 @@ test('a ZN_HOME config that tightens protection applies', (t) => {
   const tight = { whenUnavailable: 'deny', blockDestructiveCommands: true, agentInstructionWrites: 'deny', egressCheck: 'deny',
     checkToolOutputInstructions: true, packageInstallCheck: 'offline', stopReview: 'block', replaceToolOutputOnSecret: true };
   writeConfig(znHome, { hooks: tight });
-  assert.deepEqual(runner.readConfig().hooks, tight);
+  assert.deepEqual(runner.readConfig().hooks, Object.assign({}, tight, { failMode: 'closed' }));
 });
 
 test('the account home config still relaxes, and a ZN_HOME config can only raise it again', (t) => {
@@ -150,4 +150,22 @@ test('cloud sample of tool output: national ID numbers are replaced with [ID]', 
   assert.ok(!out.includes('X4012459V'), out);
   assert.ok(!out.includes('219-09-9999'), out);
   assert.ok(out.includes('[ID]'), out);
+});
+
+test('a stricter failMode from ZN_HOME wins over an open account failMode, whichever key is read', (t) => {
+  const { accountZn, znHome } = homes(t);
+  writeConfig(accountZn, { hooks: { failMode: 'open' } });
+  writeConfig(znHome, { hooks: { failMode: 'closed' } });
+  const h = runner.readConfig().hooks;
+  assert.equal(h.failMode, 'closed');
+  assert.equal(h.whenUnavailable, 'deny');
+  // The same with the other key, and an account that allows unchecked actions.
+  writeConfig(accountZn, { hooks: { whenUnavailable: 'allow', failMode: 'open' } });
+  writeConfig(znHome, { hooks: { whenUnavailable: 'deny' } });
+  const h2 = runner.readConfig().hooks;
+  assert.equal(h2.failMode, 'closed');
+  assert.equal(h2.whenUnavailable, 'deny');
+  // A ZN_HOME that says open changes nothing.
+  writeConfig(znHome, { hooks: { failMode: 'open' } });
+  assert.equal(runner.readConfig().hooks.failMode, 'open');
 });

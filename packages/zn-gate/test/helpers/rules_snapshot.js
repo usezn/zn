@@ -78,6 +78,7 @@ const LAYERS = {
   policy: {
     files: [
       'lib/hooks/policy.js',
+      'lib/hooks/curl-files.js',
       'lib/broker/files.js',
       'lib/broker/markers.js',
       'lib/broker/dotenv.js',

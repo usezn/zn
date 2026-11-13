@@ -75,6 +75,14 @@
     { "cmd": "flock --wait 5 /var/lock/example.lock make build", "rule": "allow" },
     { "cmd": "nice --adjustment 5 grep -r TODO src", "rule": "allow" },
     { "cmd": "nice --adj 5 rm -rf ./build", "rule": "allow" },
-    { "cmd": "sudo -E make install", "rule": "allow" }
+    { "cmd": "sudo -E make install", "rule": "allow" },
+    { "cmd": "nsenter --target 1 --pid rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --target 1 --user rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --target 1 --mount rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --target 1 --net rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --target 1 --uts --ipc --cgroup --time rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --target 1 --root rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --pid=/proc/1/ns/pid rm -rf ~", "rule": "rm_root_home" },
+    { "cmd": "nsenter --target 1 --mount=/proc/1/ns/mnt rm -rf ~", "rule": "rm_root_home" }
   ]
 }

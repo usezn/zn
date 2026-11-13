@@ -38,6 +38,9 @@ const ASK = [
   `timeout inf curl ${H}`,
   `timeout 1e3 curl ${H}`,
   `timeout -s KILL +5 curl ${H}`,
+  `nsenter --target 1 --pid curl ${H}`,
+  `nsenter --target 1 --user curl ${H}`,
+  `nsenter --pid=/proc/1/ns/pid curl ${H}`,
   `nice --adj 5 curl ${H}`,
   `nice --some-future-option 5 wget --header="Authorization: Bearer ${GHP}" https://example.com/api`,
 ];
