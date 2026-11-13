@@ -448,7 +448,13 @@ async function audit(args, io) {
     out(io, 'Shows who used which secret where (no values), then checks the audit log chain.');
     return 0;
   }
-  const { flags } = parseFlags(args, {});
+  const { flags, positional } = parseFlags(args, {});
+  // Only --since is known: an unknown option would otherwise take the next word as its value without a word said.
+  const unknown = Object.keys(flags).filter((k) => k !== 'since');
+  if (unknown.length || positional.length) {
+    throw deps.znError('ZN_USAGE', (unknown.length ? 'unknown option --' + unknown[0] : 'unexpected argument ' + positional[0]) +
+      '. usage: zn vault log [--since 1h]');
+  }
   let mod;
   try {
     mod = require('../vault/audit');

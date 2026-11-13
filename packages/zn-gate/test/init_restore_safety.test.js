@@ -300,7 +300,7 @@ test('an empty symlinked config produces no skipped_unsafe noise on wrap', opts,
 });
 
 test('the CLI marks skipped_unsafe with the warning symbol', opts, () => {
-  const { execFileSync } = require('child_process');
+  const { spawnSync } = require('child_process');
   const d = tmp();
   try {
     const hm = path.join(d, 'home');
@@ -308,11 +308,14 @@ test('the CLI marks skipped_unsafe with the warning symbol', opts, () => {
     const real = path.join(d, 'outside.json');
     fs.writeFileSync(real, CFG);
     fs.symlinkSync(real, path.join(hm, '.cursor', 'mcp.json'));
-    const out = execFileSync(process.execPath, [path.join(__dirname, '..', 'bin', 'cli.js'), 'init', '--revert', '--dry-run'], {
+    const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'cli.js'), 'init', '--revert', '--dry-run'], {
       cwd: d,
       env: { PATH: process.env.PATH, HOME: hm, USERPROFILE: hm, APPDATA: path.join(hm, 'AppData'), XDG_CONFIG_HOME: path.join(hm, '.config') },
       encoding: 'utf8',
     });
+    const out = r.stdout;
+    // A config that is skipped is not wrapped: the run exits 1.
+    assert.equal(r.status, 1, out + r.stderr);
     const line = out.split('\n').find((l) => l.includes('[skipped_unsafe]'));
     assert.ok(line, out);
     // The warning symbol, or its ASCII marker where symbols are off (a pipe here).

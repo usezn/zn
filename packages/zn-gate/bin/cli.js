@@ -214,7 +214,8 @@ USAGE:
 COMMANDS:
   init                Set up zn for the coding agents on this machine, one step at a time, then check it
   init --wrap-mcp     Find and wrap the MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
-  shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
+  shield, mcp-shield, wrap
+                      Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
                       [--format text|json|github] (matched values are never printed)
   scan --package NAME[@VERSION]
@@ -239,14 +240,16 @@ COMMANDS:
 
 SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret set NAME     Store a secret (hidden prompt or --clipboard; never as an argument)
-                      [--mode proxy|env|file] [--host H] [--command C]
+                      [--mode proxy|env|file] [--host H] [--command C] [--in header|query|body] [--force]
   secret list         List stored secrets (names and policy, never values)
   secret allow NAME   Add allowed hosts (--host) or commands (--command) to a secret
   secret approve NAME Approve the first use of a secret by an allowed command
   secret rm NAME      Remove a secret
   secret import FILE  Copy the secret values of a .env file into the vault
+                      [--all] [--keys A,B] [--force] [--mode proxy|env|file] [--host H] [--command C]
   secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
+                      [--all] [--keys A,B] [--dry-run] [--force] [--mode proxy|env|file] [--host H] [--command C]
   env unshadow FILE --backup NAME
                       Put the original values back into FILE from the encrypted copy that env shadow printed
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
@@ -1298,6 +1301,10 @@ ${ruleLine(process.env, 60)}\n`);
 
     const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
     process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n\n`);
+    // A config that could not be wrapped (an error, one zn cannot read, or one left to wrap by hand) is not a success.
+    const notWrapped = actions.filter(a => a.status === 'error' || a.status === 'manual_required' || a.status === 'skipped_unsafe').length
+      + notFound.filter(nf => nf.unreadable).length;
+    if (notWrapped) process.exitCode = 1;
     return;
   }
 
