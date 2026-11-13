@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const rules = require('../lib/rules');
 const { compileCustomPattern, MAX_PATTERN_LENGTH, MAX_PATTERNS } = require('../lib/linear-regex');
-const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
+const { budget, cpuBudget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 // Pieces are joined at run time so the test file holds no ready-made adversarial expression.
 const NESTED = ['(a+)', '+$'].join('');
@@ -205,15 +205,15 @@ test('the worst accepted file (the whole budget in patterns that keep every stat
     const cfg = rules.loadCustomConfig();
     assert.deepEqual(cfg.errors, []);
     assert.equal(cfg.bannedPatterns.length, lines.length);
-    // A fixed loop measures how busy the machine is (the whole suite runs in parallel), so the limit
-    // follows it: about two seconds on an idle machine.
-    const spin = () => { const t0 = process.hrtime.bigint(); let x = 0; for (let i = 0; i < 3e7; i++) x = (x + i * 7) | 0; return Number(process.hrtime.bigint() - t0) / 1e6 + (x === 1 ? 1 : 0); };
-    const idle = spin();
-    const { ms } = timed(() => { for (const p of cfg.bannedPatterns) assert.equal(p.test(text), false); });
-    const busy = Math.max(idle, spin());
-    const limit = 2000 * Math.max(1, busy / 15);
-    console.log(`# worst accepted file: ${lines.length} patterns, 256K characters, ${ms.toFixed(0)} ms (reference loop ${busy.toFixed(0)} ms, limit ${limit.toFixed(0)} ms)`);
-    assert.ok(ms < limit, `the worst accepted file took ${ms} ms`);
+    // CPU time of this process, not wall time: a busy shared runner that does not schedule the process
+    // (the whole suite runs in parallel) no longer fails the test, and a scan that became quadratic still
+    // burns the CPU and fails it. cpuBudget scales the two seconds by the machine's speed.
+    const c0 = cpuNow();
+    for (const p of cfg.bannedPatterns) assert.equal(p.test(text), false);
+    const ms = cpuMsSince(c0);
+    const limit = cpuBudget(2000);
+    console.log(`# worst accepted file: ${lines.length} patterns, 256K characters, ${ms.toFixed(0)} ms of CPU (limit ${limit} ms)`);
+    assert.ok(ms < limit, `the worst accepted file took ${ms} ms of CPU`);
   });
 });
 
