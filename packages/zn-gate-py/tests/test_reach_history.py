@@ -454,3 +454,22 @@ def test_the_scan_report_escapes_terminal_controls_in_reason_and_snippet(capsys)
     out = capsys.readouterr().out
     assert esc not in out
     assert (chr(92) + "x1b[31mred") in out and (chr(92) + "x1b[2Jclear") in out
+
+
+def test_a_rule_id_in_two_tables_reports_one_type_like_the_npm_package():
+    """The npm package reports the type of the pattern that matched. Here the type is looked up by rule id, so every id
+    that two tables share must carry the same type in both: then the first entry wins and nothing differs from npm."""
+    from zn_gate import rules
+    marker = re.compile(r"\[REDACTED_([A-Z0-9_]+)\]")
+    found = {}
+    for table in (rules.SECRET_PATTERNS, rules.PROVIDER_SECRET_PATTERNS,
+                  rules.SCRUB_FIRST_PATTERNS, rules.SCRUB_LAST_PATTERNS):
+        for rule_id, _pattern, replacement in table:
+            m = marker.search(replacement)
+            if m:
+                found.setdefault(rule_id.partition("#")[0], set()).add(m.group(1))
+    shared = {k: v for k, v in found.items() if len(v) > 1}
+    assert not shared, shared
+    types = reach_history._types()
+    assert types["secret:openai_key"] == "OPENAI_KEY"
+    assert types["secret:github_token"] == "GITHUB_TOKEN"

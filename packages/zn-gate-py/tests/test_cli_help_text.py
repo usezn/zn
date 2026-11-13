@@ -39,7 +39,7 @@ def test_help_mentions_no_npm_only_command(texts):
         if name == "check":
             # The one command that points to the npm package on purpose: it covers
             # the Python guard only and names the npm check for agent hooks.
-            assert npx_name() + " -y zn-gate check" in " ".join(text.split())
+            assert npx_name() + " -y zn-gate check" in " ".join(text.split()).replace("zn- gate", "zn-gate")  # argparse may wrap at the hyphen
             continue
         assert "npx" not in text and "npm" not in text, name
         for cmd in sorted(NPM_ONLY_COMMANDS):

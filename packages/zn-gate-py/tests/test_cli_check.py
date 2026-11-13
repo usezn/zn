@@ -103,7 +103,7 @@ class TestCheckCommand(unittest.TestCase):
 
     def test_help_points_to_npm_for_agent_hooks(self):
         sub = cli.build_parser().get_default("_subparsers").choices["check"]
-        text = " ".join(sub.format_help().split())
+        text = " ".join(sub.format_help().split()).replace("zn- gate", "zn-gate")  # argparse may wrap at the hyphen
         self.assertIn("Python guard only", text)
         self.assertIn(npx_name() + " -y zn-gate check", text)
 
