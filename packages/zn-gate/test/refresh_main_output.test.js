@@ -31,23 +31,23 @@ function run(ctx, extra = {}) {
   return calls;
 }
 
-test('refresh main: one line names every refreshed agent, in order', { skip: !posix }, (t) => {
+test('refresh main: one line names every refreshed agent, in order', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const ctx = setup(t, ['codex', 'claude-code']);
   const calls = run(ctx);
   assert.deepEqual(calls, ['zn-gate: refreshed hook launchers for claude-code, codex\n']);
 });
 
-test('refresh main: nothing refreshed means out is never called', { skip: !posix }, (t) => {
+test('refresh main: nothing refreshed means out is never called', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const ctx = setup(t, ['claude-code']);
   assert.equal(run(ctx).length, 1);
   assert.deepEqual(run(ctx), []);
 });
 
-test('refresh main: no launchers at all means out is never called', { skip: !posix }, (t) => {
+test('refresh main: no launchers at all means out is never called', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   assert.deepEqual(run(setup(t, [])), []);
 });
 
-test('refresh main: a failing out function does not make main throw', { skip: !posix }, (t) => {
+test('refresh main: a failing out function does not make main throw', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const ctx = setup(t, ['claude-code']);
   assert.doesNotThrow(() => run(ctx, { out: () => { throw new Error('closed pipe'); } }));
 });
