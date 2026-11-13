@@ -24,7 +24,7 @@ files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD 2>/dev/null)" || out
 needed=false
 while IFS= read -r f; do
   case "$f" in
-    packages/zn-gate/lib/invisible.js|packages/zn-gate/lib/rules.js|packages/zn-gate/lib/scrub/patterns.js|packages/zn-gate/test/fixtures/benign_phrases.json|packages/zn-gate/test/fixtures/invisible_chars.json|packages/zn-gate/test/fixtures/prompt_guard_tables.json|packages/zn-gate/test/fixtures/scrub_validator_cases.json|src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs|benches/*|tests/*|rust-toolchain|rust-toolchain.toml|.github/workflows/rust.yml|.github/scripts/rust-scope.sh)
+    packages/zn-gate/lib/invisible.js|packages/zn-gate/lib/rules.js|packages/zn-gate/lib/scrub/patterns.js|packages/zn-gate/test/fixtures/benign_phrases.json|packages/zn-gate/test/fixtures/invisible_chars.json|packages/zn-gate/test/fixtures/prompt_guard_tables.json|packages/zn-gate/test/fixtures/scrub_validator_cases.json|src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs|benches/*|tests/*|rust-toolchain|rust-toolchain.toml|.github/workflows/rust.yml|.github/scripts/rust-scope.sh|.github/actions/setup-protoc/*)
       needed=true; echo "needs the Rust checks: $f"; break ;;
   esac
 done <<< "$files"
