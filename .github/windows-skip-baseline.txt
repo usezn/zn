@@ -2,17 +2,5 @@
 # lines that node --test prints in the output of npm test. The job fails above this number and only prints it below.
 # When tests stop being skipped on Windows, lower the number to the one the job prints. Raise it only for a
 # test that cannot run on Windows, and give that test a skip reason.
-# The value was measured on a Windows VM, not on the GitHub runner: adjust it with the first real run of the job.
-# 13-nov (432, from 348 set on 30-oct): measured on the GitHub runner (windows-paths.yml, Node.js 22). Against the
-# last green main run (7-nov, 293 skips) the count grew by 139:
-#   +34 verify_release_script.test.js: scripts/verify-release.sh needs a POSIX shell.
-#   +34 tests that read the sh hook launcher (hooks_launcher_manifest 17, check_hooks_list 7, status_stale_hooks 4,
-#       refresh_main_output 4, check_hooks_summary 2): a Windows install writes a PowerShell hook instead, covered
-#       by the windows tests. In the other direction 47 launcher tests now run on Windows (hooks_output_validation 15,
-#       hooks_launcher_integrity 13, hooks_launcher_refresh 8, hooks_shared_launcher 4, hooks_claude_launcher 4,
-#       hooks_codex_launcher 3).
-#   +18 fake #!/bin/sh programs on a POSIX PATH (versions 6, path_filter_edges 6, exe_project_places 6).
-#   +100 in other files, mostly POSIX-only cases with a reason in the skip (file modes, symbolic links, signals,
-#       Linux clipboard tools, POSIX error codes); 22 of them have generated names. The skips there that still have
-#       no reason are checked one by one after the release: lower this number as they start to run.
+# The value is the count the job printed on the GitHub runner.
 432
