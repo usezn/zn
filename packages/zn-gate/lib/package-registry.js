@@ -338,6 +338,12 @@ function uvConfigPrivate(text, isPyproject) {
  * asked about that ecosystem's names: a private package name must never be sent to it. Reads settings files only
  * in online mode. opts: { cwd, home, env }.
  */
+/* The folders of an XDG_CONFIG_DIRS value. The list uses the platform's separator: ';' on Windows, where ':' also
+ * follows the drive letter (C:\cfg), so a ':' split would break every entry there. Empty entries are skipped. */
+function xdgConfigDirs(value, delimiter = path.delimiter) {
+  return String(value || '').split(delimiter).filter(Boolean);
+}
+
 function privateRegistry(eco, opts = {}) {
   const env = opts.env || process.env;
   const cwd = opts.cwd;
@@ -378,8 +384,7 @@ function privateRegistry(eco, opts = {}) {
   if (projectDirList.incomplete) return true;
   for (const dir of projectDirList) files.push(path.join(dir, 'uv.toml'), path.join(dir, 'pip.conf'));
   files.push('/etc/pip.conf', '/etc/xdg/pip/pip.conf', '/etc/uv/uv.toml');
-  // The list uses the platform's separator (';' on Windows, where ':' also follows the drive letter).
-  for (const d of String(env.XDG_CONFIG_DIRS || '').split(path.delimiter)) if (d) files.push(path.join(d, 'pip', 'pip.conf'));
+  for (const d of xdgConfigDirs(env.XDG_CONFIG_DIRS)) files.push(path.join(d, 'pip', 'pip.conf'));
   const programData = env.ProgramData || env.PROGRAMDATA;
   if (programData) files.push(path.join(programData, 'pip', 'pip.ini'), path.join(programData, 'uv', 'uv.toml'));
   for (const f of files) {
@@ -395,4 +400,4 @@ function privateRegistry(eco, opts = {}) {
   return false;
 }
 
-module.exports = { lookupMany, urlFor, httpsFetch, requestOptions, createdOf, versionOf, privateRegistry, CACHE_FILE, TTL_MS, LATEST_TTL_MS, TIMEOUT_MS, MAX_BYTES };
+module.exports = { lookupMany, urlFor, httpsFetch, requestOptions, createdOf, versionOf, privateRegistry, xdgConfigDirs, CACHE_FILE, TTL_MS, LATEST_TTL_MS, TIMEOUT_MS, MAX_BYTES };

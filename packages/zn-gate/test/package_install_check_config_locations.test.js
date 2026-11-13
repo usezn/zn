@@ -60,6 +60,20 @@ test('the global npmrc is read from the override variables and from the default 
   assert.equal(reg.privateRegistry('npm', { home: none, cwd: none, env: { PREFIX: empty, NPM_CONFIG_GLOBALCONFIG: path.join(empty, 'nothing') } }), false);
 });
 
+test('xdgConfigDirs: a Windows value (drive paths separated by ;) gives whole folders; a : split would break them', () => {
+  const win = 'C:\\ProgramData\\cfg;D:\\cfg';
+  assert.deepStrictEqual(reg.xdgConfigDirs(win, ';'), ['C:\\ProgramData\\cfg', 'D:\\cfg']);
+  // The old split on ':' cut each drive path in two: neither folder would have been searched.
+  assert.deepStrictEqual(win.split(':'), ['C', '\\ProgramData\\cfg;D', '\\cfg']);
+  assert.ok(!reg.xdgConfigDirs(win, ':').includes('D:\\cfg'));
+  // POSIX value with the POSIX separator; empty entries are skipped on both.
+  assert.deepStrictEqual(reg.xdgConfigDirs('/etc/xdg::/opt/cfg:', ':'), ['/etc/xdg', '/opt/cfg']);
+  assert.deepStrictEqual(reg.xdgConfigDirs(';C:\\cfg;;', ';'), ['C:\\cfg']);
+  assert.deepStrictEqual(reg.xdgConfigDirs(undefined), []);
+  // Without a separator argument the platform's own is used.
+  assert.deepStrictEqual(reg.xdgConfigDirs(['a', 'b'].join(path.delimiter)), ['a', 'b']);
+});
+
 test('pip: XDG_CONFIG_DIRS is a list in the platform separator; a pip.conf in its second folder applies', (t) => {
   // On Windows the list is ';'-separated and each folder starts with a drive letter and ':' (C:\...), so splitting on
   // ':' would break every entry. The temporary folders here are drive paths on Windows and POSIX paths elsewhere.
