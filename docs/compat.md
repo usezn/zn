@@ -90,9 +90,11 @@ request). zn's servers do not implement it yet. Tested on 2026-10-23 by sending 
 A `tools/list` request without a prior `initialize`, with or without the version in `_meta`, also lists the tools,
 but the servers do not read that version. A client that accepts the `2025-11-25` answer connects. A client that
 requires `2026-07-28` and gives up when the server answers with another version does not.
-Last checked against real clients on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and
-with the official TypeScript MCP SDK client whose newest version was then `2025-11-25` (both servers connect and
-list their tools). Not yet re-checked with Claude Code 2.1.309 or the latest SDK.
+Last checked against real clients on 2026-11-12, on Linux with Node.js 22.20: Claude Code 2.1.322 (`claude mcp list`:
+both connected), the official TypeScript MCP SDK client 1.32.2 (the v1 package `@modelcontextprotocol/sdk`, whose newest
+protocol version is `2025-11-25`) and the v2 client 2.4.0 (`@modelcontextprotocol/client`, with its default settings).
+With both clients both servers connect on `2025-11-25` and list their tools: `analyze_prompt`, `check_tool_call`,
+`check_tool_result` and `zn_status`; `secrets_list`, `secrets_http_request`, `secrets_render_file` and `secrets_request`.
 
 In every agent, a shell command longer than 100 KB (counted in characters; this
 includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
@@ -717,3 +719,16 @@ For example: `Checked on Codex CLI 0.163.0 on Linux, 2026-10-17.` (the numbers h
 - **What you checked:** if the check was narrower than the row, say so in the same sentence (for example "hook command only, no agent started").
 - **Not tested:** write "not tested" for a version or system you did not run. Do not copy a version from another row.
 - **A new test replaces the old note:** change the version and the date; do not add a second note next to it.
+
+The table at the top of this page ("Tested in the last release") has one row per agent. Fill its cells the same way, from one run:
+
+```text
+| <agent> | <agent version, or what was run> | <YYYY-MM-DD> | <zn-gate version> |
+```
+
+For example: `| Codex CLI | 0.163.0 | 2026-10-17 | 1.15.0 |` (the numbers here are an example, not a test result).
+
+- **Agent version tested:** the version, written as in the list above. When no agent was started, write `Hook command only (no agent started)`, as the table does now. When the agent was not run in this release, write `not tested in this release`.
+- **Tested on:** the day of the run, as `YYYY-MM-DD`. Write `-` when the row was not tested.
+- **zn-gate version:** the zn-gate release you ran, for example `1.15.0`. Write `-` when the row was not tested.
+- **One run, one row:** all three cells come from the same run. Change them together; do not leave the date of an older run next to a new version.
