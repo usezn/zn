@@ -80,4 +80,6 @@ Missing from the log: which check of the hook fired.
 2. If you did not expect it, ask your agent why it wanted the file. Do not look for a way around the block.
 3. To put the file back later, run the restore command that `env shadow` printed, for example `zn env unshadow .env --backup <name>`.
 
+## More
+
 For more, read [section 6 of the troubleshooting page](../troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets), [secrets](../secrets.md) and [the why command](../cli.md#why).

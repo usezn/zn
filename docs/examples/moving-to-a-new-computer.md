@@ -56,3 +56,8 @@ To move the values out of a `.env` file again, run `zn env shadow .env`. It show
 ## 5. Remove zn-gate from the old computer
 
 When the new computer passes the check, you can remove zn-gate from the old one with `npx -y zn-gate uninstall`. It keeps your vault unless you answer yes to a second question, and it asks before it removes anything. See [Remove zn-gate completely](../faq.md#7-how-do-i-remove-zn-gate-completely).
+
+## More
+
+- [First 5 minutes](../first-5-minutes.md)
+- [Keep secrets out of your coding agent](../secrets.md)

@@ -213,7 +213,7 @@ rm -rf "$TEST_HOME"
 
 Read the path that `echo` prints before you run the last line: `rm -rf` cannot be undone.
 
-## Full pages
+## More
 
 - [Remove zn-gate](../uninstall.md), including [what each command removes and leaves](../uninstall.md#what-each-command-removes-and-leaves)
 - [Files and folders zn-gate reads or writes](../files-and-folders.md)

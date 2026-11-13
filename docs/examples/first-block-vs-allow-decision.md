@@ -70,3 +70,8 @@ The check is a guardrail against a mistake of the model or a bad suggestion,
 not a sandbox. Untrusted code should run in a sandbox, such as a container or
 a virtual machine, not on your own machine. And the check reads command text
 only: for the shapes it does not cover, see [What it does not do](../destructive-commands.md#what-it-does-not-do).
+
+## More
+
+- [Why was this blocked?](../why-was-this-blocked.md)
+- [Destructive commands](../destructive-commands.md)

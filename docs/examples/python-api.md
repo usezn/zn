@@ -69,3 +69,8 @@ from zn_gate import verify_evidence_ledger
 result = verify_evidence_ledger("/tmp/example/evidence.jsonl")
 print(result["valid"], result["total"], result["verified"])
 ```
+
+## More
+
+- [API reference](../api-reference.md)
+- [Command reference](../cli.md)

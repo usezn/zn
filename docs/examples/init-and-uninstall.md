@@ -60,7 +60,7 @@ It prints the same plan and asks "Remove what is listed above?". Nothing is remo
 
 Exit code `0` means everything listed was removed, or there was nothing to remove. `1` means you answered no, or a step failed. `77` means there was no interactive terminal, or an AI agent ran it: nothing was changed.
 
-## Full pages
+## More
 
 - [Command reference: `init`](../cli.md#init) and [`uninstall`](../cli.md#uninstall)
 - [Remove zn-gate](../uninstall.md), including removing one part at a time

@@ -80,4 +80,6 @@ Add `--project` and run it from the project's folder if you installed for one pr
 | Blocks a secret pasted into the chat | **No** | Yes |
 | Removes secrets from shell output and file contents | **No** | **No** |
 
+## More
+
 See [VS Code: what it protects](../editors/vscode.md#what-zn-gate-protects-in-vs-code-and-what-it-does-not) and [Cursor: what it protects](../editors/cursor.md#what-zn-gate-protects-in-cursor-and-what-it-does-not). All agents: [By agent](../by-agent.md). To remove everything: [Remove zn-gate](../uninstall.md).

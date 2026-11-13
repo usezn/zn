@@ -64,3 +64,8 @@ With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's h
 ## Remove
 
 Remove the plugin with `claude plugin uninstall zn-gate@usezn`, or the hooks with `zn hooks uninstall claude-code`. To remove everything at once, run `npx -y zn-gate uninstall`: it lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Piece by piece: [Remove zn-gate](../uninstall.md).
+
+## More
+
+- [Install matrix](../install-matrix.md)
+- [Check that it works](../check.md)

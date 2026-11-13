@@ -78,3 +78,8 @@ curl -d "a=jane.doe@example.com" http://localhost:8080/items
 # Not flagged: this only mentions an address, it is not a network request
 git config user.email jane.doe@example.com
 ```
+
+## More
+
+- [Egress check](../egress-check.md)
+- [Threat model](../threat-model.md)

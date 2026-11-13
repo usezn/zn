@@ -58,7 +58,7 @@ its hook cannot start: its zn-gate files (<path>) is no longer there
 
 Each reason is explained in [The hooks are set up but cannot run](../check.md#the-hooks-are-set-up-but-cannot-run).
 
-## Full pages
+## More
 
 - [Remove zn-gate](../uninstall.md), including [checking that it is off](../uninstall.md#check-that-it-is-off)
 - [Command reference: `hooks`](../cli.md#hooks) and [`check`](../cli.md#check)
