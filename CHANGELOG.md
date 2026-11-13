@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.16.0] - 2026-11-13
+## [1.16.0-rc.1] - 2026-11-13
 
 ### Added
 - `zn audit --approve` records the executable configuration of a project (MCP servers of Claude Code, Cursor, VS Code, Gemini, Amazon Q, OpenCode and Codex, hooks with their matchers, permissions, `disableAllHooks`, helper commands, endpoint, proxy, loader and shell-prefix environment overrides, install scripts, dev container commands, folder-open tasks) and later audits report a changed, added or removed entry as ZNA023, by name only. A config file that is a link is followed inside the project and hashed by content outside it, and one that can no longer be read counts as a change. The approval is the person's: the command runs only at a terminal and not when an agent started it, zn blocks `audit --approve` as an agent writes it (quoted or fed through `xargs` included), and when the vault is unlocked the approval is also confirmed on the vault's own channel (its terminal or an OS dialog), as is `zn-gate pins approve`. With no vault running the terminal check is the only one, and a process an agent started inside a pseudo-terminal can pass it. Without a recorded baseline nothing changes.
@@ -1410,8 +1410,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.16.0...next
-[1.16.0]: https://github.com/usezn/zn/compare/v1.15.0...v1.16.0
+[Unreleased]: https://github.com/usezn/zn/compare/v1.16.0-rc.1...next
+[1.16.0-rc.1]: https://github.com/usezn/zn/compare/v1.15.0...v1.16.0-rc.1
 [1.15.0]: https://github.com/usezn/zn/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/usezn/zn/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/usezn/zn/compare/v1.13.1...v1.14.0
