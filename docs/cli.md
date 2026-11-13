@@ -149,7 +149,7 @@ With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
-Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed. `2` an argument it does not know.
+Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the guided steps were only printed (no terminal). `2` an argument it does not know. With `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert` the command exits `0` once it has finished: the line of each config says what was wrapped, skipped or failed.
 
 ### `uninstall`
 
@@ -358,7 +358,7 @@ Aliases: `secrets`.
 zn-gate secret set NAME [--clipboard] [--force] [--mode proxy|env|file] [--host api.example.com] [--command psql] [--in header|query|body]
 ```
 
-Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in.
+Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in. `--mode` defaults to `env` when `--command` is given and to `proxy` otherwise.
 
 #### `secret list`
 
@@ -402,7 +402,7 @@ Approves the first use of a secret by a command that is already allowed. It is c
 zn-gate secret import [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force]
 ```
 
-Copies the secret values of a `.env` file (default `.env`) into the vault. The file is not changed.
+Copies the secret values of a `.env` file (default `.env`) into the vault. The file is not changed. `--mode proxy|env|file` sets how the values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `secret adopt`
 
@@ -446,7 +446,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `env unshadow`
 
@@ -476,7 +476,7 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). The defaults are `--ttl 8h` and `--idle 30m`. `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
 
 If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
 
@@ -512,7 +512,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the vault audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
+Shows the vault audit log of secret use: every record, unless `--since` limits it. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
 
 #### `vault log export`
 
