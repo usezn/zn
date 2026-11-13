@@ -60,6 +60,22 @@ test('the global npmrc is read from the override variables and from the default 
   assert.equal(reg.privateRegistry('npm', { home: none, cwd: none, env: { PREFIX: empty, NPM_CONFIG_GLOBALCONFIG: path.join(empty, 'nothing') } }), false);
 });
 
+test('pip: XDG_CONFIG_DIRS is a list in the platform separator; a pip.conf in its second folder applies', (t) => {
+  // On Windows the list is ';'-separated and each folder starts with a drive letter and ':' (C:\...), so splitting on
+  // ':' would break every entry. The temporary folders here are drive paths on Windows and POSIX paths elsewhere.
+  const none = files(t, {});
+  const first = files(t, {});
+  const second = files(t, { 'pip/pip.conf': PIP });
+  const list = [first, second].join(path.delimiter);
+  if (process.platform === 'win32') {
+    assert.ok(list.includes(';') && /^[A-Za-z]:\\/.test(second), 'a semicolon-separated list of drive paths: ' + list);
+  }
+  assert.equal(reg.privateRegistry('pypi', { home: none, cwd: none, env: { XDG_CONFIG_DIRS: list } }), true, 'pip.conf in the second XDG folder');
+  // Empty entries in the list are ignored, as pip does.
+  const sparse = ['', first, '', second, ''].join(path.delimiter);
+  assert.equal(reg.privateRegistry('pypi', { home: none, cwd: none, env: { XDG_CONFIG_DIRS: sparse } }), true, 'empty entries are skipped');
+});
+
 test('pip: system configs, ProgramData, XDG dirs, venv pip.ini, project folders above the cwd', (t) => {
   const none = files(t, {});
   const pd = files(t, { 'pip/pip.ini': PIP });
