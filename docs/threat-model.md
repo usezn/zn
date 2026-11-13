@@ -4,6 +4,23 @@
 command you allowed still holds the value: scope it, and turn on your agent's
 sandbox.**
 
+## On this page
+
+- [What zn protects against](#what-zn-protects-against)
+- [What zn does not protect against](#what-zn-does-not-protect-against)
+- [Google Antigravity](#google-antigravity)
+- [Experimental adapters](#experimental-adapters)
+- [What the vault daemon protects, and what it does not](#what-the-vault-daemon-protects-and-what-it-does-not)
+- [Memory, swap and crash dumps](#memory-swap-and-crash-dumps)
+- [Starting the approved program](#starting-the-approved-program)
+- [Where the value lives while a program runs](#where-the-value-lives-while-a-program-runs)
+- [Local copies, per agent](#local-copies-per-agent)
+- [Confirmation channel](#confirmation-channel)
+- [The saved API key (`zn-gate connect`)](#the-saved-api-key-zn-gate-connect)
+- [Failure behaviour](#failure-behaviour)
+- [Design decisions and known limits](#design-decisions-and-known-limits)
+- [Next steps](#next-steps)
+
 ## What zn protects against
 
 The goal: a secret value never reaches the model, or the provider's logs and
