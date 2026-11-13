@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-12.1';
+const POLICY_RULES_VERSION = '2026-11-13.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -39,8 +39,22 @@ const POLICY_RULES_VERSION = '2026-11-12.1';
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
 
+// A directory-stack entry other than the top (~1, ~+2, ~-1): zn does not know where it points.
+const DIR_STACK_RE = /(?:^|[\s=@<:,{])~[+-]?[1-9]\d*(?=$|[\\/\s,}])/;
+
 function expandHome(p, home) {
   if (p === '~') return home;
+  if (p.charCodeAt(0) === 126) {
+    // ~+ is $PWD: read as the working folder (a path relative to it), so ~+/.env is .env. ~- is $OLDPWD, which zn does not
+    // know, and ~-0 is the same entry: both are turned into $OLDPWD so they are refused exactly like the variable.
+    if (p === '~+') return '.';
+    if (/^~\+[\\/]/.test(p)) return '.' + p.slice(2);
+    if (/^~-(?:$|[\\/])/.test(p)) return '$OLDPWD' + p.slice(2);
+    if (/^~-0(?=$|[\\/])/.test(p)) return '$OLDPWD' + p.slice(3);
+    // ~0 and ~+0 are the top of the directory stack: the working folder. ~1, ~+2, ~-1 (deeper entries) are not known:
+    // they are left as written and refused where a file is sent (DIR_STACK_RE).
+    if (/^~\+?0(?=$|[\\/])/.test(p)) return '.' + p.replace(/^~\+?0/, '');
+  }
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
@@ -1054,7 +1068,7 @@ const INSTRUCTION_WRAPPERS = new Map([
 function commandWordAt(seg, progs) {
   let i = 0;
   while (i < progs.length) {
-    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
+    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(seg[i].text)) { i++; continue; }
     const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
     if (!takesValue) return i;
     const wrapper = progs[i];
@@ -1360,7 +1374,7 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, opAfter: scan.operator });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -1430,6 +1444,37 @@ const LINK_WRAPPERS = new Set(['env', 'sudo', 'doas', 'command', 'exec', 'nohup'
  * The options are read only from that command's own words. A link made some other way (an interpreter) is not seen here;
  * a link that already exists is followed instead (physicalDotDot, cdBasesOf).
  */
+
+/*
+ * The curl and @file checks live in curl-files.js, loaded on the first command that can need them. They only act on a word
+ * that names curl (programName lower-cases it, so a case-insensitive match is a superset), on a command with so many words
+ * that the program of a group cannot be told (programOfGroup gives up after 64), or on a word atFileWords can read
+ * something from.
+ */
+let curlFilesApi = null;
+function curlFilesOf() {
+  if (!curlFilesApi) {
+    curlFilesApi = require('./curl-files')({ ASSIGNMENT_RE, CD_CMDS, DIR_STACK_RE, GIT_WRAPPERS, REDIRECT_OP_WORD_RE, bareHead, expandHome, programName, skipWrapper, slash });
+  }
+  return curlFilesApi;
+}
+const CURL_WORD_RE = /curl/i;
+const CURL_GROUP_WORDS = 64;
+function mayRunCurl(words) {
+  return words.length >= CURL_GROUP_WORDS || words.some((w) => CURL_WORD_RE.test(String(w.text)));
+}
+// An upload option, an @file or < value, a variable or assignment, a {a,b} list, a space, a backslash escape: what
+// atFileWords reads a file name out of. A word with none of them, and none of curl's marks, adds nothing.
+const AT_FILE_WORD_RE = /[=$@<{\\\s]|upload-file/;
+function mayHaveAtFiles(words) {
+  return words.some((w) => {
+    if (w.curl || w.upload || w.expandOpt) return true;
+    const t = String(w.text);
+    // -T, the short upload option (a dash and a T), tested with includes so a long word costs one pass each.
+    return AT_FILE_WORD_RE.test(t) || (t.includes('T') && t.includes('-'));
+  });
+}
+
 function markLinkWords(readings) {
   for (const r of readings) {
     let i = 0;
@@ -1459,7 +1504,7 @@ function markLinkWords(readings) {
 }
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
-const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;   // NAME=value and NAME+=value
 
 /**
  * Commands with named markers. A marker in a command's arguments is never
@@ -2337,7 +2382,7 @@ function textOnlyCommand(text) {
   if (/[;&|\n\r`]|\$\(|<\(|>\(/.test(text)) return false;
   const toks = text.trim().split(/\s+/).map((x) => x.replace(/^['"]+|['"]+$/g, ''));
   let i = 0;
-  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || ['env', 'command', 'nohup', 'time'].includes(programBase(toks[i])))) i++;
+  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(toks[i]) || ['env', 'command', 'nohup', 'time'].includes(programBase(toks[i])))) i++;
   const prog = programBase(toks[i]);
   if (prog === 'echo' || prog === 'printf') return true;
   if (prog !== 'git') return false;
@@ -2447,6 +2492,12 @@ function bashDenialOf(cmd, opts = {}) {
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
+  // $PWD is the folder the command runs in (not the hook's own); $OLDPWD is not known.
+  if (!opts.pwdSet) {
+    const env0 = { ...(opts.env || process.env), PWD: path.resolve(opts.cwd || process.cwd()) };
+    delete env0.OLDPWD;
+    opts = { ...opts, env: env0, pwdSet: true };
+  }
   // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
   const assigned = shellAssignments(cmd, opts);
   if (assigned.env || assigned.unknown.size) {
@@ -2557,6 +2608,44 @@ function bashDenialOf(cmd, opts = {}) {
   opts.cdBases = cdBasesOf(readings, opts);
   opts.elsewhere = new Map();
   markLinkWords(readings);
+  if (mayRunCurl(words)) {
+    const curlFiles = curlFilesOf();
+    curlFiles.markCurlWords(readings, opts, text);
+    if (words.some((x) => x.curlConfigUnreadable)) return curlFiles.CURL_CONFIG_UNREADABLE_MESSAGE;
+    if (words.some((x) => x.curlConfigExpansionWrite)) return curlFiles.CURL_CONFIG_EXPANSION_WRITE_MESSAGE;
+  }
+  // The content of a curl configuration file zn could read (-K file, ~/.curlrc) is read like a word of the command:
+  // its upload-file, -T, data @file and form lines name files that are sent.
+  for (const x of words.slice()) {
+    for (const c of x.curlConfigContents || []) {
+      words.push({ text: c.content, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true });
+      for (const it of c.items) {
+        words.push({
+          text: it.value, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true,
+          upload: it.name === 'upload-file', urlencode: curlFilesOf().CURL_NAME_AT_FILE_OPTS.has('--' + it.name),
+        });
+      }
+    }
+  }
+  {
+    // After a cd, $PWD is wherever the cd led: left as written, the path rules follow it there.
+    const atEnv = { ...(opts.env || process.env) };
+    if (opts.cdBases && opts.cdBases.moved) delete atEnv.PWD;
+    const atWords = mayHaveAtFiles(words) ? curlFilesOf().atFileWords(words, atEnv) : [];
+    if (atWords === null) return curlFilesOf().GLOB_TOO_LARGE_MESSAGE;
+    if (atWords.refuse) return atWords.refuse;
+    words.push(...atWords);
+  }
+  // ~1, ~+2, ~-1 (directory-stack entries other than the top): zn does not know which folder they are, so each is read
+  // in every folder the command may be in (the working folder and every place a cd or pushd leads to).
+  for (const x of words.slice()) {
+    if (String(x.text).charCodeAt(0) !== 126) continue;
+    const m = /^~[+-]?[1-9]\d*(?=$|[\\/])/.exec(String(x.text));
+    if (!m) continue;
+    const rest = String(x.text).slice(m[0].length).replace(/^[\\/]+/, '');
+    const dirs = new Set([path.resolve(opts.cwd || process.cwd()), ...((opts.cdBases && opts.cdBases.dirs) || []).map((d) => path.resolve(d))]);
+    for (const d of dirs) words.push({ text: path.join(d, rest), head: x.head, redirectTarget: x.redirectTarget, seq: x.seq });
+  }
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
@@ -2582,19 +2671,29 @@ function bashDenialOf(cmd, opts = {}) {
   for (const w of withEqualsReadings(listed)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
-    if (text.startsWith('-')) {
+    if (w.atFile) {
+      // A file named by @file and its kin (atFileWords): classified as it is.
+    } else if (text.startsWith('-')) {
       const eq = text.indexOf('=');
       // git log -L<range>:<file> names a file after the colon.
       const lineRange = w.git ? /^-L[^:]*:(.+)$/.exec(text) : null;
+      // curl -d@.env, -sd@.env, -Ff=@.env: the value is glued to the option letter.
+      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z0-9#:]*?[dFTH](.+)$/.exec(text) : null;
       // PowerShell binds a value with a colon (gc -Path:.env, -LiteralPath:.env, -Lit:.env).
       const psValue = w.git ? null : PS_COLON_PARAM_RE.exec(text);
       if (lineRange) text = lineRange[1];
+      else if (glued) text = glued[1];
       else if (psValue) text = psValue[1];
       else if (eq < 0) continue;
       else text = text.slice(eq + 1);
     } else if (NAME_VALUE_RE.test(text)) {
       // name=value carries a path too (dd if=.env, ENV_FILE=.env).
       text = text.slice(text.indexOf('=') + 1);
+    }
+    // curl -d @.env, --json @.env, -F f=@.env, -F f=<.env: the file is sent as the body of the request.
+    if (w.curl && text && !w.atFile) {
+      const file = curlFilesOf().curlFileOf(text, w.urlencode === true);
+      if (file) text = file;
     }
     if (!text) continue;
     // A git pathspec with magic names the path after it.

@@ -1,0 +1,10 @@
+[package]
+name = "paste"
+version = "1.0.15"
+edition = "2021"
+description = "Local stand-in for the unmaintained paste crate: re-exports its maintained successor pastey."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+pastey = "0.2"
