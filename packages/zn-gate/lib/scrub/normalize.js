@@ -17,11 +17,11 @@
  * The view also lists `marks`: the offsets in `clean` where a quote pair was
  * removed or a sequence decoded, so a caller can rescan only around them.
  *
- * Linear time: one left-to-right pass. The number of decoded sequences is
- * capped (MAX_DECODES); past the cap the rest stays literal.
+ * Linear time: one left-to-right pass. There is no cap on the number of decoded
+ * sequences: a cap would leave the rest of a long text encoded, and a secret
+ * after it would look clean.
  */
 
-const MAX_DECODES = 200000;
 const Q_SINGLE = 0x27;
 const Q_DOUBLE = 0x22;
 const PERCENT = 0x25;
@@ -84,7 +84,6 @@ function normalisedView(text) {
   const parts = [];
   const marks = [];
   let c = 0;
-  let decodes = 0;
   let changed = false;
   let lit = 0; // start of the literal run not yet copied to parts
   for (let k = 0; k < first; k++) { starts[c] = k; ends[c] = k + 1; c++; }
@@ -99,10 +98,9 @@ function normalisedView(text) {
         lit = j; i = j; changed = true;
         continue;
       }
-    } else if (ch === PERCENT && decodes < MAX_DECODES) {
+    } else if (ch === PERCENT) {
       const b = percentByte(text, n, i);
       if (b >= 0) {
-        decodes++;
         if (i > lit) parts.push(text.slice(lit, i));
         parts.push(String.fromCharCode(b));
         marks.push(c);
@@ -120,4 +118,4 @@ function normalisedView(text) {
   return { clean: parts.join(''), marks, starts: starts.subarray(0, c + 1), ends: ends.subarray(0, c + 1) };
 }
 
-module.exports = { normalisedView, MAX_DECODES, CANDIDATE_RE };
+module.exports = { normalisedView, CANDIDATE_RE };

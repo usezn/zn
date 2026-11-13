@@ -607,14 +607,40 @@ function curlConfigNamedElsewhere(readings, paths, opts) {
   return pathsNamedElsewhere(readings, paths, opts);
 }
 
-/* Every place curl may read a default configuration from (whether it exists now or not). */
-function curlDefaultConfigPlaces(opts) {
+/* The files curl looks for as its default configuration, in curl's own search order (whether they exist or not):
+   .curlrc in CURL_HOME, then curlrc in XDG_CONFIG_HOME, then .curlrc in HOME; on Windows also _curlrc and .curlrc in
+   USERPROFILE, APPDATA and USERPROFILE\Application Data, and last the folder of the curl program itself. zn models
+   every one of those names and folders on every system (a stray file there is only checked, never run), so a default
+   file with -T .env cannot send a protected file without an option on the command line. curlProgram is the word the
+   command runs: a path gives its folder; a bare name is searched in PATH. A curl zn cannot find adds no folder. */
+function curlDefaultConfigPlaces(opts, curlProgram) {
   const env = opts.env || process.env;
   const home = opts.home || os.homedir();
-  const out = [path.join(home, '.curlrc'), path.join(home, '.config', 'curlrc')];
-  if (env.CURL_HOME) out.push(path.join(String(env.CURL_HOME), '.curlrc'));
+  const dirs = [home, path.join(home, 'Application Data')];
+  for (const k of ['CURL_HOME', 'HOME', 'USERPROFILE', 'APPDATA']) if (env[k]) dirs.push(String(env[k]));
+  if (env.USERPROFILE) dirs.push(path.join(String(env.USERPROFILE), 'Application Data'));
+  if (env.HOMEDRIVE && env.HOMEPATH) dirs.push(String(env.HOMEDRIVE) + String(env.HOMEPATH));
+  const exe = curlExecutableDir(env, opts.cwd || process.cwd(), curlProgram);
+  if (exe) dirs.push(exe);
+  const out = [path.join(home, '.config', 'curlrc')];
   if (env.XDG_CONFIG_HOME) out.push(path.join(String(env.XDG_CONFIG_HOME), 'curlrc'));
-  return out;
+  for (const d of new Set(dirs)) for (const n of ['.curlrc', '_curlrc']) out.push(path.join(d, n));
+  return [...new Set(out)];
+}
+
+/* The folder of the curl program a command runs: the folder of a path, or the first PATH folder holding curl or
+   curl.exe. null when it cannot be found. */
+function curlExecutableDir(env, cwd, program) {
+  const word = program ? String(program).replace(/^["']+|["']+$/g, '') : '';
+  if (/[\/]/.test(word) && !/[$`]/.test(word)) return path.dirname(path.resolve(cwd, word));
+  const sepRe = process.platform === 'win32' ? /;/ : /:/;
+  for (const d of String(env.PATH || env.Path || '').split(sepRe)) {
+    if (!d) continue;
+    for (const n of ['curl', 'curl.exe']) {
+      try { if (fs.statSync(path.join(d, n)).isFile()) return path.resolve(cwd, d); } catch (_) { /* not here */ }
+    }
+  }
+  return null;
 }
 
 /* A small file read for a curl --variable name@file: its content, or null when zn cannot read it. */
@@ -636,14 +662,8 @@ function curlVariableFile(f, opts) {
 }
 
 /* The configuration files curl reads by default (unless -q/--disable is its first argument), that exist now. */
-function curlDefaultConfigs(opts) {
-  const env = opts.env || process.env;
-  const home = opts.home || os.homedir();
-  const out = [];
-  if (env.CURL_HOME) out.push(path.join(String(env.CURL_HOME), '.curlrc'));
-  if (env.XDG_CONFIG_HOME) out.push(path.join(String(env.XDG_CONFIG_HOME), 'curlrc'));
-  out.push(path.join(home, '.config', 'curlrc'), path.join(home, '.curlrc'));
-  return out.filter((f) => { try { return fs.statSync(f).isFile(); } catch (_) { return false; } });
+function curlDefaultConfigs(opts, curlProgram) {
+  return curlDefaultConfigPlaces(opts, curlProgram).filter((f) => { try { return fs.statSync(f).isFile(); } catch (_) { return false; } });
 }
 
 /* True when this command names a curlrc anywhere but as an argument curl reads: a redirect target, a word of
@@ -668,7 +688,7 @@ function curlHomeChanged(readings) {
   for (const r of readings) {
     for (const w of r) {
       const t = String(w.text).replace(/\\(.)/g, '$1').replace(/["']/g, '');
-      if (/^(?:CURL_HOME|XDG_CONFIG_HOME|HOME)\+?=/.test(t)) return true;
+      if (/^(?:CURL_HOME|XDG_CONFIG_HOME|HOME|USERPROFILE|APPDATA|HOMEDRIVE|HOMEPATH)\+?=/i.test(t)) return true;
     }
   }
   return false;
@@ -777,12 +797,12 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
         const first = group[prog.at + 1] ? String(group[prog.at + 1].text) : '';
         if (first !== '-q' && first !== '--disable') {
           // A curlrc written by this command, or the folders curl looks in changed by it, cannot be checked.
-          const placesNamed = pathsNamedElsewhere(readings, curlDefaultConfigPlaces(opts), opts);
+          const placesNamed = pathsNamedElsewhere(readings, curlDefaultConfigPlaces(opts, curlWord.text), opts);
           if (curlrcWritten(readings, group) || curlHomeChanged(readings) || (placesNamed && placesNamed !== NAMED_THROUGH_EXPANSION) ||
-            /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME)\+?=/.test(cmdText)) {
+            /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME|USERPROFILE|APPDATA|HOMEDRIVE|HOMEPATH)\+?=/i.test(cmdText)) {
             curlWord.curlConfigUnreadable = true;
           } else markConfigNamed(curlWord, placesNamed);
-          for (const f of curlDefaultConfigs(opts)) {
+          for (const f of curlDefaultConfigs(opts, curlWord.text)) {
             const c = curlConfigFile(f, opts);
             if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts))) configs.push(c);
           }

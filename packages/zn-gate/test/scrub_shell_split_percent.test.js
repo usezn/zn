@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { scan } = require('../lib/scrub/engine');
-const { normalisedView, MAX_DECODES } = require('../lib/scrub/normalize');
+const { normalisedView } = require('../lib/scrub/normalize');
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE';
 const V = 'fakeSecretValue1234';
@@ -76,11 +76,11 @@ test('the view decodes only printable ASCII and keeps %20', () => {
   assert.equal(normalisedView("''a"), null);
 });
 
-test('work is capped and linear', () => {
-  const big = '%41'.repeat(MAX_DECODES + 50000);
+test('work is linear and no decode count leaves the rest of a text encoded', () => {
+  const big = '%41'.repeat(250000);
   const t0 = Date.now();
   const v = normalisedView(big);
-  assert.equal(v.clean.length, MAX_DECODES + 50000 * 3);
+  assert.equal(v.clean, 'A'.repeat(250000));
   const long = ("a''".repeat(200000)) + '%41'.repeat(100000);
   scan(long, CTX);
   // A quadratic scan of this text takes minutes; the linear one takes about half a second here, so 10 s leaves a wide margin for a loaded Windows runner.
@@ -98,4 +98,15 @@ test('a joined quote pair or stray percent far from any secret leaves the verdic
   const text = ("x = ''\ny = a''b\nz = 100%d\n" + 'plain\n'.repeat(3000));
   assert.deepEqual(scan(text, CTX), []);
   assert.equal(normalisedView('plain text, "" and %zz and 100%'), null);
+});
+
+test('a secret after a very long run of percent escapes is still found', () => {
+  const enc = (str) => [...str].map((ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')).join('');
+  const secret = 'AKIAIOSFODNN7EXAMPLE';
+  const text = '%41'.repeat(200000) + '%3D' + enc(secret);
+  const t0 = Date.now();
+  const spans = scan(text, CTX);
+  assert.ok(Date.now() - t0 < 10000, 'too slow');
+  assert.ok(spans.length > 0, 'the secret behind 200000 escapes must be found');
+  assert.ok(spans.some((s) => s.end === text.length), 'the span reaches the end of the encoded secret');
 });
