@@ -30,7 +30,7 @@ After the cut, the same command ends with exit code `1`:
   Integrity     : ✖ TAMPER DETECTED AT RECORD 7
 
   Details: Malformed JSON at line 8: Unterminated string in JSON at position 537 (line 1 column 538)
-  To start a new log and keep the old file for review, move it aside (mv "$HOME/.zn/evidence.jsonl" "$HOME/.zn/evidence.damaged.jsonl"); the next event starts a new chain.
+  To start a new log and keep the old file for review, move it aside (mv "/home/you/.zn/evidence.jsonl" "/home/you/.zn/evidence.damaged.jsonl"); the next event starts a new chain.
 ```
 
 How to read it:
@@ -46,8 +46,10 @@ How to read it:
 While the last line is cut, zn-gate does not add records after it. It will not start a new chain by accident, so it tells you instead. Any command that writes a decision, such as `zn-gate check`, prints this on the error output:
 
 ```text
-zn-gate: the evidence log ~/.zn/evidence.jsonl is damaged (Malformed JSON in the last line: Unterminated string in JSON at position 537 (line 1 column 538)) Events are not being recorded. Run 'zn-gate evidence --verify' for details. To start a new log and keep the old file for review, move it aside (mv "$HOME/.zn/evidence.jsonl" "$HOME/.zn/evidence.damaged.jsonl"); the next event starts a new chain.
+zn-gate: the evidence log /home/you/.zn/evidence.jsonl is damaged (Malformed JSON in the last line: Unterminated string in JSON at position 537 (line 1 column 538)) Events are not being recorded. Run 'zn-gate evidence --verify' for details. To start a new log and keep the old file for review, move it aside (mv "/home/you/.zn/evidence.jsonl" "/home/you/.zn/evidence.damaged.jsonl"); the next event starts a new chain.
 ```
+
+The messages show the full path of your log, so `/home/you` is your own home folder (on Windows, `C:\Users\you`).
 
 Your protection keeps working: the hooks still allow and block as before. Only the record of it is not written.
 
