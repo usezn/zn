@@ -454,7 +454,7 @@ def test_cmd_evidence_export_to_stdout_and_file(tmp_path, capsys):
     with mock.patch.object(cli, "export_evidence_ledger", return_value=res) as m:
         assert cli.cmd_evidence(argparse.Namespace(export=True, format="csv", output=None)) == 0
         assert m.call_args.kwargs == {"format": "csv"}
-        assert capsys.readouterr().out == "a,b\n\n"
+        assert capsys.readouterr().out == "a,b\n"
         out = tmp_path / "out.csv"
         assert cli.cmd_evidence(argparse.Namespace(export=True, output=str(out))) == 0
     assert out.read_text(encoding="utf-8") == "a,b\n"

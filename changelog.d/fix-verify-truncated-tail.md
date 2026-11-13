@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate evidence --verify` now says when the last record of the ledger was cut off (for example by a crash or a full disk) instead of reporting tampering. Only a last line that starts like a written record and has no trailing newline counts as a cut-off write; the ledger still counts as not verified, and the output explains how to start a new log. Any other unreadable last line, such as extra text with a trailing newline or an edited record, and any record changed in the middle of the ledger, is still reported as tampering.

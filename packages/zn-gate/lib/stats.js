@@ -109,6 +109,22 @@ function load(file = statsFile()) {
   }
 }
 
+/**
+ * A stats file that cannot be read is replaced by a fresh one on the next write. Keep the first unreadable copy
+ * next to it (stats.damaged.json) so the history is not lost without a trace. Best effort, never throws.
+ */
+function keepDamagedCopy(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
+  try {
+    const data = JSON.parse(text);
+    if (data && typeof data === 'object' && typeof data.days === 'object') return;
+  } catch { /* unreadable: keep a copy below */ }
+  try {
+    fs.copyFileSync(file, path.join(path.dirname(file), 'stats.damaged.json'), fs.constants.COPYFILE_EXCL);
+  } catch { /* a copy is already there, or the folder is not writable */ }
+}
+
 function save(data, file = statsFile()) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -155,6 +171,7 @@ function record(entry, opts = {}) {
   try {
     const file = opts.file || statsFile();
     const now = opts.now || new Date();
+    keepDamagedCopy(file);
     const data = load(file);
     const layer = LAYERS.has(entry.layer) ? entry.layer : 'cli';
     const key = `${layer}:${normName(entry.agent)}`;

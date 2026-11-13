@@ -358,7 +358,7 @@ test('check: a plugin outside the folder where Claude Code installs plugins is n
     fakePlugin(home, launcher({ marker }), null, { root: link });
     r = byId(await check({ home, env, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
     assert.equal(r.state, 'not-protected');
-    assert.match(r.problem, /not inside the folder where Claude Code installs plugins/);
+    assert.match(r.problem, /reached through a link .* outside the folder where plugins are installed/);
     assert.equal(fs.existsSync(marker), false);
   }
   // Claude Code keeps its plugins under CLAUDE_CODE_PLUGIN_CACHE_DIR when it is set.
@@ -780,7 +780,7 @@ test('check: a plugin hook is NOT protected, and nothing it names runs, when its
     ['/*/sh ' + S, /a pattern the shell or the host expands/, null],
     ['/bin/s? ' + S, /a pattern the shell or the host expands/, null],
     // the script is a link inside the plugin to a file in the project
-    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/link.sh" PreToolUse hook claude-code', /not a file inside the plugin folder/, 'link'],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/link.sh" PreToolUse hook claude-code', /holds a link .* that goes outside it|not a file inside the plugin folder/, 'link'],
     // the script does not exist
     ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh" PreToolUse hook claude-code', /is missing/, null],
   ];
@@ -1138,6 +1138,33 @@ test('check: with a pre-release zn-gate command, a plugin of another version get
   assert.match(pluginVersionNote(root, '1.15.0'), /claude plugin update/);
   assert.match(pluginVersionNote(root, '1.14.0'), /npm install -g zn-gate@latest/);
   assert.equal(pluginVersionNote(root, '1.14.1'), '');
+});
+
+test('check: a plugin version that equals the command version in another spelling gets both versions and no advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-spelling-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  const both = (v, own) => 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
+  for (const [v, own] of [['1.14', '1.14.0'], ['1.14.1+b', '1.14.1'], ['1.14.0', '1.14']]) {
+    fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: v }));
+    assert.equal(pluginVersionNote(root, own), both(v, own));
+  }
+});
+
+test('check: a pre-release plugin newer than a stable command gets both versions and no advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-prerelease-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.15.0-rc.1' }));
+  assert.equal(pluginVersionNote(root, '1.14.1'), 'the zn-gate plugin is version 1.15.0-rc.1 and the zn-gate command is 1.14.1');
+});
+
+test('check: a pre-release plugin older than a stable command keeps the plugin update advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-older-rc-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.14.0-rc.1' }));
+  assert.match(pluginVersionNote(root, '1.14.1'), /claude plugin update zn-gate@usezn/);
 });
 
 test('check: the plugin version is the one the launcher runs (scripts/zn-gate.lock.json), plugin.json only as a fallback', (t) => {

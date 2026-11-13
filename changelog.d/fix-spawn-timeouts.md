@@ -1,0 +1,2 @@
+### Fixed
+- A clipboard tool that does not answer within 5 seconds is stopped, and zn reads the next one. If none answers, zn names the tool and tells you to copy the value again or type it at the hidden prompt. Likewise, claude mcp add-json and claude mcp remove are stopped after 30 seconds, and zn says which command to run yourself (claude mcp list, or claude mcp add or remove). Normal runs are unchanged.

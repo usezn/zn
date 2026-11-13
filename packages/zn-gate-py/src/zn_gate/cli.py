@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
-from .rules import RULES_VERSION, evaluate, mask_token_runs
+from .rules import RULES_VERSION, evaluate, mask_pii_preview, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
@@ -211,7 +211,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     t0 = time.perf_counter()
     assessment = evaluate(text)
     clean_text, findings = _dlp_redact(text)
-    clean_text = mask_token_runs(clean_text)
+    clean_text = mask_pii_preview(mask_token_runs(clean_text))
     latency_us = (time.perf_counter() - t0) * 1_000_000
 
     if args.json:
@@ -755,6 +755,11 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
             return 0
         else:
+            if res.get("truncated_tail"):
+                print(f"\n{_lead(ALERT, sys.stderr)}Integrity: LAST RECORD INCOMPLETE (NOT VERIFIED)", file=sys.stderr)
+                print(f"Details: {res.get('error')}", file=sys.stderr)
+                print(f"The first {res.get('verified', 0)} records verified; the last line was cut off. {recovery_hint()}\n", file=sys.stderr)
+                return 1
             print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
             print(f"{recovery_hint()}\n", file=sys.stderr)
             return 1
@@ -774,7 +779,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
                 return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
-            print(out_content)
+            # The content already ends with a newline (or is empty when the
+            # ledger has no records); print() would add a blank line, which
+            # Node's process.stdout.write does not.
+            sys.stdout.write(out_content)
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)

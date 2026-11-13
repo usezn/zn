@@ -60,6 +60,11 @@ where = ["src"]
 # PEP 561 marker: the public API is typed.
 zn_gate = ["py.typed"]
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: large-input tests (oversize results, ReDoS worst cases) that take minutes; skip locally with -m 'not slow' or ZN_SKIP_SLOW=1. CI runs them.",
+]
+
 [tool.ruff]
 target-version = "py310"
 

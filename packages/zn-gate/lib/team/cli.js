@@ -16,6 +16,8 @@
  */
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const readline = require('readline');
 const policy = require('./policy');
 const { pendingCount } = require('./upload');
@@ -56,7 +58,7 @@ function withClient(fn) {
 
 function describePolicy(p) {
   if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `zn team sync`)';
-  if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `zn team sync`';
+  if (p.state === 'invalid') return 'the stored copy could not be verified (' + (p.error || 'invalid') + ') -- INVALID: strict mode (every secret is blocked, nothing is opened) until a valid policy arrives; run `zn team sync`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
   if (p.state === 'expired' && p.clock === 'behind') return base + " -- STRICT MODE (only restrictions apply): this computer's clock is behind the time this policy was issued. Check the computer's date and time.";
   if (p.state === 'expired') return base + " -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.";
@@ -358,8 +360,24 @@ async function runLogExport(args) {
       }
       err('Exported ' + res.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + res.sha256 + ').');
     } else {
-      // Pipes and files are written synchronously by Node on POSIX, so the output is not queued in memory.
-      sameBytes(exportAuditStream(opts, (text) => { process.stdout.write(text); }));
+      // Nothing reaches stdout until the bytes are confirmed: the records go to a private temporary file first,
+      // then are copied out. A log that changed in between leaves stdout empty and the command fails.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-export-'));
+      const tmp = path.join(dir, 'export.jsonl');
+      try {
+        const fd = fs.openSync(tmp, 'wx', 0o600);
+        try {
+          sameBytes(exportAuditStream(opts, (s) => fs.writeSync(fd, s)));
+        } finally { fs.closeSync(fd); }
+        const rd = fs.openSync(tmp, 'r');
+        try {
+          const buf = Buffer.alloc(65536);
+          let n;
+          while ((n = fs.readSync(rd, buf, 0, buf.length, null)) > 0) process.stdout.write(Buffer.from(buf.subarray(0, n)));
+        } finally { fs.closeSync(rd); }
+      } finally {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e2) { /* gone */ }
+      }
     }
     warn();
     return 0;
