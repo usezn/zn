@@ -169,6 +169,18 @@ installed packages. You can also look at the attestations directly:
 npm view zn-gate@1.5.0 dist.attestations
 ```
 
+The package on npm must also be the file of the GitHub Release. The registry
+shows the SHA-512 of its tarball, and the SHA-512 of the release file must give
+the same value:
+
+```sh
+npm view zn-gate@1.5.0 dist.integrity
+openssl dgst -sha512 -binary zn-gate-1.5.0.tgz | openssl base64 -A
+```
+
+The first command prints `sha512-` followed by the same text the second one
+prints.
+
 ## 5. PyPI
 
 Each file on [pypi.org/project/zn-gate](https://pypi.org/project/zn-gate/)
@@ -240,7 +252,7 @@ works on them too.
 
 ## What this does and does not prove
 
-A valid attestation or signature in steps 2 and 3 proves that the files of the GitHub Release were produced by the named workflow of the `usezn/zn` repository, from the commit the release tag points to, and that they have not changed since. Steps 4 and 5 prove less. Step 4 confirms that npm shows valid signatures and provenance attestations for this version, but the script does not check which repository, workflow or tag that provenance names. Step 5 checks the PyPI attestations of the wheel and the source archive against the `usezn/zn` repository, but not against a workflow or tag. Neither step compares the files on npm or PyPI with the files of the release. Read the provenance section of each registry page (see below) for that. The release workflow also makes a maintainer approve the release on the `release` environment before anything is signed or published, and (from 1.14.1) approve the npm stage with two-factor authentication.
+A valid attestation or signature in steps 2 and 3 proves that the files of the GitHub Release were produced by the named workflow of the `usezn/zn` repository, from the commit the release tag points to, and that they have not changed since. Steps 4 and 5 prove less. Step 4 confirms that npm shows valid signatures and provenance attestations for this version and that the tarball on npm has the same SHA-512 as the release file `zn-gate-<version>.tgz` that steps 1 to 3 verified, but the script does not check which repository, workflow or tag that provenance names. Step 5 checks the PyPI attestations of the wheel and the source archive against the `usezn/zn` repository, but not against a workflow or tag. Step 5 does not compare the files on PyPI with the files of the release. Read the provenance section of the PyPI page (see below) for that. The release workflow also makes a maintainer approve the release on the `release` environment before anything is signed or published, and (from 1.14.1) approve the npm stage with two-factor authentication.
 
 It does **not** prove:
 

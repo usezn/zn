@@ -153,7 +153,7 @@ node --version
 
 ## Install your agent first
 
-> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it. More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
 zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
 
