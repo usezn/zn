@@ -20,7 +20,7 @@ The exit code is `0`. Without an interactive terminal, or when an AI agent runs 
 
 ```text
 zn-gate disconnect needs an interactive terminal. Open a terminal window yourself and run it there.
-Nothing was removed or revoked. To revoke the key yourself, use https://usezn.com/api-keys.
+Nothing was removed or revoked. To revoke the key yourself, use https://usezn.com/api-keys/.
 ```
 
 That case exits with `1`. If the system keychain cannot be reached, `disconnect` still removes the setting and tells you to delete the item named `zn-cloud` in your keychain app, and to revoke the key at usezn.com/api-keys. The key keeps working until you revoke it.

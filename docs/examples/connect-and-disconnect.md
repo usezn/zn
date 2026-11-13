@@ -13,7 +13,7 @@ npx -y zn-gate connect
 (or `zn-gate connect` if you installed it with `npm i -g zn-gate`).
 
 1. The command tells you what will change and asks you to confirm.
-2. It opens <https://usezn.com/connect> in your browser. Create a free account (or log in) and create an analysis-only API key there.
+2. It opens <https://usezn.com/connect/> in your browser. Create a free account (or log in) and create an analysis-only API key there.
 3. Back in the terminal, paste the key at the hidden prompt. Nothing you type is shown. A key looks like `zn_` followed by 48 characters, for example `zn_` followed by placeholder characters. Never type a real key into an example, a note or the command line.
 4. zn-gate checks the key once with <https://api.usezn.com>. It accepts only an analysis-only key. A full-access key, a key the server rejects and a key that could not be checked are all refused, and nothing is saved.
 5. The key is saved in your system keychain, or in the zn vault when there is no keychain (unlock it with `zn unlock`). It is never saved in a plain file. The command prints the last four characters so you can recognise the key.
@@ -53,7 +53,7 @@ npx -y zn-gate disconnect --revoke
 npx -y zn-gate disconnect --no-revoke
 ```
 
-`--revoke` revokes without asking. `--no-revoke` only removes the local copy and makes no network call. The local copy is removed in every case, even if a revoke request fails. In that case the command says so, and you can revoke the key yourself at <https://usezn.com/api-keys>.
+`--revoke` revokes without asking. `--no-revoke` only removes the local copy and makes no network call. The local copy is removed in every case, even if a revoke request fails. In that case the command says so, and you can revoke the key yourself at <https://usezn.com/api-keys/>.
 
 Exit code `0` means the local setting was removed (or there was nothing to remove). `1` means something was not done (no terminal, the vault is locked, or a revoke you asked for did not happen). `2` means the command was used wrongly.
 

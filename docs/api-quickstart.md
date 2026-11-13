@@ -4,7 +4,7 @@ Send text to the zn analysis API from curl, Python or Node.js. This page covers 
 
 ## 1. Get an API key
 
-Create an analysis-only API key on the [connect page](https://usezn.com/connect). An analysis-only key can only analyze text. It cannot read your usage or manage other keys.
+Create an analysis-only API key on the [connect page](https://usezn.com/connect/). An analysis-only key can only analyze text. It cannot read your usage or manage other keys.
 
 Keep the key out of your code, out of files you commit and out of shared documents. Store it in an environment variable named `ZN_API_KEY`:
 
@@ -173,7 +173,7 @@ A failed request returns a JSON body with two fields: `error`, a sentence you ca
 |---|---|---|---|
 | 400 | `missing_input` | The body has no `input` field, or `input` is empty or not a string. | Send `input` as a non-empty string. |
 | 400 | `input_too_long` | `input` is longer than 20,000 characters. | Split the text into shorter parts and send each part. |
-| 401 | `invalid_api_key` | The key is missing, wrong or revoked. | Check `ZN_API_KEY`. If the key was revoked, create a new one on the [connect page](https://usezn.com/connect). |
+| 401 | `invalid_api_key` | The key is missing, wrong or revoked. | Check `ZN_API_KEY`. If the key was revoked, create a new one on the [connect page](https://usezn.com/connect/). |
 | 402 | `TRIAL_ENDED` | The account has no plan quota and no prepaid credits left to use. | Check your plan, or add credits, on the [pricing page](https://usezn.com/pricing/). Retrying will not help until then. |
 | 403 | none | This endpoint does not return 403. | If you get a 403, check that the URL matches the one in this guide. |
 | 429 | `MONTHLY_LIMIT_REACHED` or `INSUFFICIENT_QUOTA` | The monthly quota is used up. `INSUFFICIENT_QUOTA` means this input needs more calls than are left this month. | Retrying the same request will not help. The `Retry-After` header gives the seconds until the quota resets at the start of next month. Wait for the reset or check your plan. With `INSUFFICIENT_QUOTA`, a shorter input may still pass. |

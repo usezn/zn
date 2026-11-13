@@ -32,7 +32,7 @@ Before you paste zn-gate output into an issue, a discussion or a chat, go throug
 
    The [list of files and folders](files-and-folders.md#who-creates-each-one-and-how-to-remove-it) says what each file in `~/.zn` is.
 5. **Look over verbose output.** `ZN_VERBOSE=1` and `DEBUG=zn` add technical details of errors. Read them like the rest, and leave out paths or names you would not share.
-6. **If a secret went into a post, treat it as leaked.** Replace the secret first, then remove the post. You can revoke a zn API key at <https://usezn.com/api-keys>.
+6. **If a secret went into a post, treat it as leaked.** Replace the secret first, then remove the post. You can revoke a zn API key at <https://usezn.com/api-keys/>.
 
 ## Symptoms by command
 
@@ -120,7 +120,7 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 ## 3. `running scripts is disabled on this system` (Windows)
 
-**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate. PowerShell prints the message as `npx.ps1 cannot be loaded because running scripts is disabled on this system.` (the file is `npm.ps1`, `npx.ps1` or `zn.ps1`, depending on the command). Microsoft explains the setting in [about_Execution_Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies).
+**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate. PowerShell prints the message as `npx.ps1 cannot be loaded because running scripts is disabled on this system.` (the file is `npm.ps1`, `npx.ps1` or `zn.ps1`, depending on the command). Microsoft explains the setting in [about_Execution_Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-7.6).
 
 **What to do, any one of these:**
 

@@ -13,7 +13,7 @@ Set up zn-gate in OpenCode in two minutes, then the technical details: the plugi
    zn hooks install opencode
    ```
 
-   The hooks need zn-gate 1.5 or later from npm. On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). On Windows, if PowerShell says running scripts is disabled, see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+   The hooks need zn-gate 1.5 or later from npm. On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). On Windows, if PowerShell says running scripts is disabled, see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
    The install writes the plugin file `~/.config/opencode/plugins/zn-gate.js` (all your projects), or `.opencode/plugins/zn-gate.js` in one project when you run `zn hooks install opencode --project` from that project's folder. A plugin file that is there already and was not written by zn is left unchanged. The install also prints an optional hint: to let OpenCode use the secrets kept in zn's vault, add the `secrets` MCP server to `opencode.json` under `mcp`. A project plugin calls `zn` from the `PATH`, so everyone who uses the project needs zn on their `PATH`.
 
