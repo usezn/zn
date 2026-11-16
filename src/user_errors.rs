@@ -165,7 +165,7 @@ pub fn unknown_security_setting(file: &str, setting: &str, suggestion: Option<&s
         None => "the settings file that `zn init` writes lists every setting zn knows.".to_string(),
     };
     format!(
-        "{file}: unknown setting \"{setting}\". Settings in the security and audit sections are not ignored, because a typo would silently weaken them, so zn did not start; {hint}"
+        "{file}: unknown setting \"{setting}\". Settings in the sections that turn protections on (security, audit, engine, kms, neural, fusion, managed_rules, loop_breaker, consensus and guardrails) are not ignored, because a typo would silently weaken them, so zn did not start; {hint}"
     )
 }
 

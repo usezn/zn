@@ -552,7 +552,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ed:
                 user_excluded.add(ed)
 
-    valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
+    # Prompts, docs and configs, plus .py, .ts and .js, which the Python scan has always read (the npm package reads
+    # them only with --code). --code (or --all) adds the rest of the npm source set, so both read the same files then.
+    valid_exts = {".md", ".txt", ".prompt", ".json", ".yaml", ".yml", ".toml", ".env", ".pem", ".key",
+                  ".py", ".ts", ".js"}
+    if getattr(args, "code", False):
+        valid_exts |= {".js", ".ts", ".py", ".sh", ".html", ".go", ".rs"}
     if getattr(args, "include", None):
         for ie in args.include.split(","):
             ie = ie.strip().lower()
@@ -1041,6 +1046,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--include", help="Comma-separated custom extensions to include (e.g. .custom,.xml)")
     scan_parser.add_argument("--exclude", help="Comma-separated directory names to exclude")
     scan_parser.add_argument("--allow-partial", action="store_true", help="Exit 0 even when some files or folders were not read (they are still listed). Reading no file at all stays an error (exit 3)")
+    scan_parser.add_argument("--code", "--all", dest="code", action="store_true", help="Include source code files in the scan (.js, .ts, .py, .sh, .html, .go, .rs)")
     scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command

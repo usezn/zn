@@ -826,8 +826,17 @@ function startMcpShield(command, args, options = {}) {
     try {
       msg = JSON.parse(line);
     } catch {
-      // Non-JSON line, forward as-is
-      toChild(line + '\n');
+      // Not JSON for this parser (for example NaN, which some other JSON parsers accept): it cannot be checked
+      // for injection or tool pins, so it is not sent. Shadow mode never alters traffic and only reports. The
+      // client gets an error for the request when its id can be read, as for a line the server sends.
+      if (options.shadow) {
+        process.stderr.write(`[zn-shield] A line from the client is not valid JSON (${line.length} characters); shadow mode passes it on unchecked.\n`);
+        toChild(line + '\n');
+      } else {
+        process.stderr.write(`[zn-shield BLOCKED REQUEST] A line from the client that is not valid JSON was not sent (${line.length} characters). MCP messages must be one JSON message per line.\n`);
+        const f = framing.topLevelFields(raw.subarray(0, 4096));
+        if (f.hasId && f.hasMethod) toClient(JSON.stringify(rpcError(f.id, -32700, '[zn-gate] Parse error: the message is not valid JSON and was not sent.')) + '\n');
+      }
       return;
     }
 

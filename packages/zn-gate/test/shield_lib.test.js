@@ -291,15 +291,15 @@ test('block pinning refuses a tool that was never listed, and allows it after th
   }
 });
 
-test('a non-JSON line from the client is forwarded; one from the server is dropped and reported', async () => {
+test('a non-JSON line from the client is refused and never reaches the server; one from the server is dropped and reported', async () => {
   const s = startShield();
   try {
     s.send('hello not json');
-    const echo = await until(s, (m) => m.method === 'notifications/echo');
-    assert.strictEqual(echo.params.line, 'hello not json');
+    await waitStderr(s, /from the client that is not valid JSON was not sent/);
     s.send(call(7, 'noise'));
     const r = await s.reply(7);
     assert.strictEqual(resultText(r), 'after noise');
+    assert.ok(!s.lines.some((l) => l.includes('notifications/echo')), 'the server never saw the client line, so it echoed nothing');
     assert.ok(!s.lines.includes('this is not json'));
     await waitStderr(s, /not valid JSON was dropped/);
   } finally {
