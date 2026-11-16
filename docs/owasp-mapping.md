@@ -7,7 +7,7 @@ Read it as a map, not as a score. A mapping shows which zn-gate feature touches 
 The two lists:
 
 - [OWASP Top 10 for LLM Applications 2025](https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/). This page maps the 2025 edition. A newer edition may exist; check the OWASP page.
-- [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/) (project page: <https://owasp.org/projects/mcp-top-10>). It is a living document, so category names and numbers can change, and another OWASP page may name a category differently (for example MCP06). This page uses the names of the project's list as published when this page was written.
+- [OWASP MCP Top 10](https://owasp.org/projects/mcp-top-10). It is a living document, so category names and numbers can change, and another OWASP page may name a category differently (for example MCP06). This page uses the names of the project's list as published when this page was written.
 
 Rule ids such as `ZNA011` are the ids of [`zn audit`](audit.md#rules). Rule names such as `rm_root_home` are the rules of [destructive commands](destructive-commands.md).
 

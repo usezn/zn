@@ -3,33 +3,34 @@ name: Public facts
 
 # The version, agents with hooks, license and install command must read the same in every manifest and
 # doc of this repository (.github/public-facts.json). A release changes them in the same pull request.
-# Pushes always run it. Pull requests and the merge queue always run it too: "Public facts" is a required check,
+# Pushes to main and release branches, pull requests and the merge queue always run it (a push to next does not:
+# the merge queue ran it on the exact commit that lands, and nightly-next.yml starts a manual run on next every
+# night). Pull requests and the merge queue always run it too: "Public facts" is a required check,
 # and a workflow skipped by a paths filter leaves a required check pending forever. The job takes under a
 # minute, so there is no paths filter and no skip step.
 on:
   push:
-    branches: [ main, next, 'release/**' ]
+    branches: [ main, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
   # The merge queue on next runs the required checks again on the queued commit.
   merge_group:
     types: [ checks_requested ]
+  # Started on next by nightly-next.yml.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main always complete.
+# A new push to a pull request cancels the run still going for it. Runs for main, release branches and manual
+# runs always complete.
 concurrency:
-  group: public-facts-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: public-facts-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   public-facts:
     name: Public facts
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

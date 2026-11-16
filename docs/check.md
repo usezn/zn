@@ -28,7 +28,7 @@ zn-gate makes a temporary folder with two files: a `.env` file that holds a fake
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
 - **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
-- **Nothing changes**: nothing is sent over the network, no agent is started and no setting changes. The folder is deleted at the end.
+- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds, to read the version (see [Agent versions](#agent-versions)), with no tokens, with updates and update notices turned off, and stopped after 2 seconds; no agent session is started. The folder is deleted at the end.
 
 ## What you will see
 
@@ -567,6 +567,15 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
 - **ZCode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>. We read that setting as "ZCode does not start zn's `secrets` MCP server", but we did not test what it does in the ZCode desktop app. The hooks still work.
 
+- **A Codex hooks file is too large to check.**
+
+  ```text
+  zn could not check <file> for another hook that runs before Codex calls: the file is larger than 256 KB, so zn did not read it
+  make that file smaller, or move its hooks out of it, then run `zn-gate check` again
+  ```
+
+  zn reads at most 256 KB of `hooks.json` or `config.toml`. A larger file is reported instead of skipped, so that it cannot hide another tool's hook.
+
 ### Gemini CLI settings switch the hook off
 
 - **Hooks are turned off, or zn's hook is on the disabled list.**
@@ -633,6 +642,14 @@ zn could not check it: <error>
 
 Something unexpected stopped the check for that agent, and the line gives the error. Nothing was changed. Run `npx -y zn-gate check` again; if it repeats, ask in [Discussions](https://github.com/usezn/zn/discussions) and include the line, without any secret.
 
+### Programs that come from the project are skipped
+
+zn starts a few programs by name (`node`, `git`, `sh`, your agent). It never starts one that sits in your project, so a repository cannot slip in its own copy. A folder on your `PATH` is skipped when it is inside the folder zn runs in, inside a git repository around it, inside the folder your agent names as the project, or inside a `node_modules` folder. Three cases need a word:
+
+- **Your home folder is a git repository (dotfiles).** That repository is not taken as your project: your tools live in your home (nvm, volta, asdf, `~/.local/bin`, a global npm folder) and stay usable. A project inside your home without its own git is found as below, by its project file.
+- **A project without git.** zn uses the project your agent names. If none is named, it uses the nearest folder above the current one that holds a project file (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Gemfile`, `pom.xml`, `composer.json`, `CLAUDE.md` or `AGENTS.md`), looking up to 8 levels. A project with none of these is only known by the folder zn runs in, so a `bin/` folder beside it is not skipped.
+- **A repository inside another repository.** The repositories around it count too, up to 8 levels above the nearest one. A repository that contains your home folder does not.
+
 ## Reading the Active Engine line
 
 `zn-gate check` tests your agents and does not print an engine line. The **Active Engine** line comes from `zn-gate status`, which tells you whether zn decides only on your machine or also uses the optional cloud check. In a clean setup it reads:
@@ -640,7 +657,7 @@ Something unexpected stopped the check for that agent, and the line gives the er
 ```text
 [+]  zn-gate Status:
   Package Version : 1.15.0
-  Rules Version   : 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)
+  Rules Version   : 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)
   Active Engine   : Local rules only
   Endpoint        : None (nothing leaves this machine)
   API key         : Not set

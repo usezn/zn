@@ -4,7 +4,7 @@ name: Dependency and license review
 # Informational for now: every job except the cargo deny bans and sources step
 # only reports (job summary and warnings). That step fails on a banned crate or
 # an unknown registry or git source. None of them are meant to be required checks.
-# Known vulnerabilities in the Rust tree stay with `cargo audit` in rust.yml;
+# Known vulnerabilities in the Rust tree stay with `cargo audit` in cargo-audit.yml;
 # this workflow adds the review of new dependencies in a pull request and the
 # license checks.
 
@@ -147,7 +147,7 @@ jobs:
             echo "::warning title=cargo deny licenses::licenses outside the allowlist; see the job summary"
           fi
       # Bans and sources block: a banned crate or an unknown registry or git source fails the job.
-      # Advisories are not checked here (deny.toml leaves them out); cargo audit in rust.yml covers them.
+      # Advisories are not checked here (deny.toml leaves them out); cargo audit in cargo-audit.yml covers them.
       - name: cargo deny bans and sources (blocking)
         run: cargo deny --locked check --hide-inclusion-graph bans sources
 

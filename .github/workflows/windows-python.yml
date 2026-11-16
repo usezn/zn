@@ -24,8 +24,8 @@ permissions:
 
 # A new push to a pull request cancels the run still going for it.
 concurrency:
-  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

@@ -1,0 +1,4 @@
+### Fixed
+- `zn-gate uninstall` now finds and removes the OpenCode plugin that zn wrote (for your user and for the current project) and leaves any other plugin in that folder alone. Before, the plugin stayed behind and, once the program was removed, OpenCode blocked every tool call.
+- `zn-gate uninstall` now also lists and removes zn's hook launcher scripts in `~/.zn/hooks` (only the files zn wrote), including one left behind after its hooks were already gone, and the folder when it is empty. `zn hooks uninstall` still leaves the shared launcher in place.
+- `zn-gate uninstall` keeps a hook launcher script when its hooks could not be removed (including project hooks) or when a hooks file of yours still names it, and prints how to delete it by hand. The Claude Code launcher, shared by every Claude Code profile, is also kept when another profile in the home folder names it or when `CLAUDE_CONFIG_DIR` is set.

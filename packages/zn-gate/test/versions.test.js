@@ -12,7 +12,7 @@ const { tempDir } = require('./helpers/tmp');
 const V = require('../lib/agents/versions');
 const { check, report } = require('../lib/check');
 
-const POSIX = { skip: process.platform === 'win32' };
+const POSIX = { skip: process.platform === 'win32' && 'the fake agents are #!/bin/sh scripts' };
 
 function fakeBin(dir, name, body) {
   const f = path.join(dir, name);

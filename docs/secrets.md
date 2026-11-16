@@ -34,7 +34,7 @@ npm install -g zn-gate
 zn unlock
 ```
 
-> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it.
 
 The first `zn unlock` creates the vault: an [age](https://age-encryption.org)
 identity stored in your OS keychain (macOS Keychain, Windows Credential

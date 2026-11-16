@@ -74,4 +74,6 @@ There is no command that removes one host or one program. Pick the way that fits
 
 Changing the policy is confirmed the same way each time, so you can always see what you are approving.
 
-More worked examples: [Examples](README.md).
+## Next steps
+
+- More worked examples: [Examples](README.md).

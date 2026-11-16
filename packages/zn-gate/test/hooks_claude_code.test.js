@@ -19,7 +19,7 @@ const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
-const { budget } = require('./helpers/time_budget');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const FAKE = generateAll(4242, { perType: 1, piiPerType: 1 });
 const fake = (type) => FAKE.secrets.find((s) => s.type === type);
@@ -1143,9 +1143,11 @@ test('Bash, PowerShell and Monitor commands over 100 KB are blocked before they 
   const cap = policy.SHELL_SCAN_CAP;
   const long = 'echo ' + 'a'.repeat(cap + 1 - 5);
   for (const tool of ['Bash', 'PowerShell', 'Monitor']) {
-    const start = process.hrtime.bigint();
+    // CPU time, not wall time: a busy shared runner can pause this process in the middle of a correct run, and a
+    // check that scanned the text would still burn the CPU.
+    const start = cpuNow();
     const r = await run(preTool(tool, { command: long, description: 'x' }, dir), { nodePath: '/usr/bin/node' });
-    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    const ms = cpuMsSince(start);
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /too long for zn to check \(over 100 KB\)/, tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /do not resend it in parts/, tool);

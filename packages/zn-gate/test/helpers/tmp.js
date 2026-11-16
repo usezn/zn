@@ -6,7 +6,14 @@ const os = require('os');
 const path = require('path');
 
 function removeDir(dir) {
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (err) {
+    // On Windows a child process that was just stopped can hold the folder for a moment longer; a temporary folder
+    // left behind must not fail the test that owns it (its assertions already ran).
+    if (process.platform === 'win32' && (err.code === 'EBUSY' || err.code === 'EPERM')) return;
+    throw err;
+  }
 }
 
 // `t` is the node:test context of the test that owns the directory.

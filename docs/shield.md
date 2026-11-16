@@ -200,4 +200,4 @@ The exit codes of `zn-gate shield`, from the table in [Exit codes](exit-codes.md
 | --- | --- |
 | `1` | When no command is given or the program cannot be started; otherwise the shield ends when the wrapped server ends. |
 
-More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).
+More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield/), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).
