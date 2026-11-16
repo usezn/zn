@@ -197,6 +197,10 @@ function normalize(raw) {
   }
   const args = isObj(rawInput) ? rawInput : {};
   const ev = { ...base, toolName, rawArgs: args };
+  const unreadable = (what) => ({ ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read ' + what + ' of this call, so zn cannot check it.' });
+  // Arguments that are not a JSON object are refused before anything else reads the call, MCP tools included
+  // (malformed is only ever set for a pre-tool event).
+  if (malformed) return unreadable('the arguments');
   const mcp = MCP_TOOL_RE.exec(toolName);
 
   if (event === 'post_tool') {
@@ -206,9 +210,7 @@ function normalize(raw) {
     return { ...ev, tool, mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null, input: { texts: [] }, output };
   }
 
-  const unreadable = (what) => ({ ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read ' + what + ' of this call, so zn cannot check it.' });
   if (!toolName) return unreadable('the tool name');
-  if (malformed) return unreadable('the arguments');
 
   // pathsOf is shared with the Gemini CLI adapter: every string argument whose key looks like a file or folder.
   const { pathsOf } = require('./gemini');
