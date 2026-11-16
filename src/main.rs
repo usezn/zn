@@ -37,9 +37,7 @@ use zn::engine::reputation::ReputationSystem;
 use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
 use zn::engine::{ZnEngine, ZnEngineConfig};
-#[cfg(test)]
-use zn::jsonrpc::ArgSource;
-use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, JsonRpcValidation};
+use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, ArgSource, JsonRpcValidation};
 use zn::metrics;
 use zn::proxy::McpPool;
 use zn::scrubber::Scrubber;
@@ -85,6 +83,25 @@ fn reputation_key(namespace: &str, agent_id: &str) -> String {
 }
 
 /// Build a JSON-RPC 2.0 error response
+/// The frame to send on when the image guard changed the arguments of an allowed tool call: the call rebuilt with the
+/// checked arguments, or, when it cannot be rebuilt (for example a call that carried several argument keys), a JSON-RPC
+/// error. The original arguments are never forwarded.
+fn forward_changed_arguments(
+    scrubbed_line: &str,
+    arguments: &str,
+    source: ArgSource,
+    id: Option<serde_json::Value>,
+) -> String {
+    match with_arguments(scrubbed_line, arguments, source) {
+        Some(frame) => frame,
+        None => jsonrpc_error_response(
+            id,
+            -32001,
+            "zn could not rebuild the sanitized tool call, so it was not forwarded",
+        ),
+    }
+}
+
 fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &str) -> String {
     serde_json::json!({
         "jsonrpc": "2.0",
@@ -1509,14 +1526,12 @@ async fn process_mcp_message(
                 }
                 // The vision guard changed the arguments: forward what it checked and what the audit vault
                 // stored, never the original images. A frame that cannot be rebuilt is refused.
-                match with_arguments(&scrubbed_line, &arguments, source) {
-                    Some(frame) => Ok(Some(frame)),
-                    None => Ok(Some(jsonrpc_error_response(
-                        id,
-                        -32001,
-                        "zn could not rebuild the sanitized tool call, so it was not forwarded",
-                    ))),
-                }
+                Ok(Some(forward_changed_arguments(
+                    &scrubbed_line,
+                    &arguments,
+                    source,
+                    id,
+                )))
             } else {
                 metrics::record_tool_call(&tool_name, "DENIED");
                 if status == "DENIED" {
@@ -2348,7 +2363,10 @@ mod kms_key_tests {
 
 #[cfg(test)]
 mod gateway_hardening_tests {
-    use super::{bounded_agent_id, reputation_key, with_arguments, ArgSource, MAX_AGENT_ID_CHARS};
+    use super::{
+        bounded_agent_id, forward_changed_arguments, reputation_key, with_arguments, ArgSource,
+        MAX_AGENT_ID_CHARS,
+    };
 
     fn parsed(s: Option<String>) -> serde_json::Value {
         serde_json::from_str(&s.expect("rebuilt frame")).expect("valid JSON")
@@ -2370,6 +2388,41 @@ mod gateway_hardening_tests {
         let key = reputation_key("a", &bounded_agent_id(Some("b\u{1f}c")));
         assert_eq!(key.matches('\u{1f}').count(), 1);
         assert_eq!(bounded_agent_id(Some("x\ny")), "x?y");
+    }
+
+    #[test]
+    fn changed_arguments_of_a_call_with_several_keys_are_refused_not_forwarded() {
+        let frame = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"t","arguments":{"img":"RAW"},"input":{"note":"AKIAIOSFODNN7EXAMPLE"}}}"#;
+        let out = forward_changed_arguments(
+            frame,
+            r#"{"img":"CLEAN"}"#,
+            ArgSource::Multiple,
+            Some(serde_json::json!(9)),
+        );
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["id"], 9);
+        assert_eq!(v["error"]["code"], -32001);
+        assert!(
+            v.get("params").is_none(),
+            "the call itself is not forwarded: {out}"
+        );
+        assert!(
+            !out.contains("RAW") && !out.contains("AKIAIOSFODNN7EXAMPLE"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn changed_arguments_of_a_call_with_one_key_are_forwarded_rebuilt() {
+        let frame = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t","arguments":{"img":"RAW"}}}"#;
+        let out = forward_changed_arguments(
+            frame,
+            r#"{"img":"CLEAN"}"#,
+            ArgSource::Key("arguments"),
+            Some(serde_json::json!(3)),
+        );
+        assert!(out.contains("CLEAN") && !out.contains("RAW"), "{out}");
+        assert!(!out.contains("\"error\""), "{out}");
     }
 
     #[test]
