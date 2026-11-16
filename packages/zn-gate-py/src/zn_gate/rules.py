@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-16.14
+RULES_VERSION: 2026-11-16.34
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-16.14"
+RULES_VERSION = "2026-11-16.34"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -60,29 +60,131 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # identical (tests/test_rules_parity.py compares them) and the JavaScript "i"
 # flag maps to re.IGNORECASE. Every pattern runs in linear time: no unbounded
 # lazy wildcards, and repeated character classes are bounded.
+# Texts of this many characters or more are checked against the literals their pattern needs
+# before the pattern runs (see _LazyPattern.search).
+_PREFILTER_MIN_CHARS = 16384
+_PREFILTER_MIN_NEEDLE = 3
+_PREFILTER_MAX_ALTERNATIVES = 128
+# ASCII letters, plus the four characters re.IGNORECASE folds into ASCII letters.
+_NEEDLE_FOLD = {**{c: c + 32 for c in range(65, 91)}, 0x212A: 'k', 0x17F: 's', 0x131: 'i', 0x130: 'i'}
+_folded_cache: Tuple[str, str] = ('', '')
+
+
+def _folded(text: str) -> str:
+    """The text with ASCII letters lower-cased (and the four folded characters mapped), kept for the next call."""
+    global _folded_cache
+    cached = _folded_cache
+    if cached[0] is text:
+        return cached[1]
+    folded = text.translate(_NEEDLE_FOLD)
+    _folded_cache = (text, folded)
+    return folded
+
+
+def _needles_of_sequence(items: Any) -> Optional[List[str]]:
+    """Literals of which at least one occurs in every match of the sequence, or None.
+
+    Only ASCII literals are used and lookarounds, character classes and optional parts are
+    skipped, so the result is a necessary condition: a text without any of the needles
+    (after _folded) cannot match. The best requirement of the sequence is the one with the
+    longest shortest needle.
+    """
+    candidates: List[List[str]] = []
+    run = ''
+
+    def flush() -> None:
+        nonlocal run
+        if len(run) >= _PREFILTER_MIN_NEEDLE:
+            candidates.append([run])
+        run = ''
+
+    for op, av in items:
+        name = str(op)
+        if name == 'LITERAL' and av < 128:
+            run += chr(av).lower()
+            continue
+        flush()
+        found: Optional[List[str]] = None
+        if name == 'SUBPATTERN':
+            found = _needles_of_sequence(av[-1])
+        elif name == 'ATOMIC_GROUP':
+            found = _needles_of_sequence(av)
+        elif name == 'BRANCH':
+            merged: List[str] = []
+            for branch in av[1]:
+                part = _needles_of_sequence(branch)
+                if part is None:
+                    merged = []
+                    break
+                merged.extend(part)
+            found = merged or None
+        elif name in ('MAX_REPEAT', 'MIN_REPEAT', 'POSSESSIVE_REPEAT') and av[0] >= 1:
+            found = _needles_of_sequence(av[2])
+        if found:
+            candidates.append(found)
+    flush()
+    candidates = [c for c in candidates if len(c) <= _PREFILTER_MAX_ALTERNATIVES]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda c: (-min(len(n) for n in c), len(c)))
+
+
+def _needles_for(pattern: str, flags: int) -> Tuple[str, ...]:
+    """The needles of a pattern, or an empty tuple when none can be derived."""
+    try:
+        parser = getattr(re, '_parser', None)
+        if parser is None:
+            import sre_parse as parser  # type: ignore[no-redef]
+        found = _needles_of_sequence(parser.parse(pattern, flags))
+    except Exception:
+        return ()
+    return tuple(found) if found and all(len(n) >= _PREFILTER_MIN_NEEDLE for n in found) else ()
+
+
 class _LazyPattern:
     """A regex that is compiled on first use and then behaves as the compiled pattern.
 
     Importing this module defines a few hundred patterns; compiling them all up
     front cost about a third of the import time even though most calls never
     reach most of them. `pattern` is available at once; any other attribute
-    (`search`, `sub`, `flags`, ...) compiles the pattern and is then served
+    (`sub`, `finditer`, `flags`, ...) compiles the pattern and is then served
     straight from the instance, so later calls cost the same as a real compiled
     pattern.
+
+    `search` on a large text first looks for the literals every match of the
+    pattern must contain (a plain substring scan, far cheaper than a regex scan
+    of 256 KB); a text without them is rejected without running the regex. The
+    answer is the same as without the check. Calls with pos or endpos skip it: a loop
+    over matches would rescan the whole text each time.
     """
 
-    __slots__ = ("pattern", "_flags", "_compiled", "__dict__")
+    __slots__ = ("pattern", "_flags", "_compiled", "_needles", "__dict__")
 
     def __init__(self, pattern: str, flags: int = 0) -> None:
         self.pattern = pattern
         self._flags = flags
         self._compiled: Optional["re.Pattern[str]"] = None
+        self._needles: Optional[Tuple[str, ...]] = None
 
     def _compile(self) -> "re.Pattern[str]":
         compiled = self._compiled
         if compiled is None:
             compiled = self._compiled = re.compile(self.pattern, self._flags)
         return compiled
+
+    def search(self, string: str, *args: Any) -> Any:
+        if not args and len(string) >= _PREFILTER_MIN_CHARS:
+            needles = self._needles
+            if needles is None:
+                needles = self._needles = _needles_for(self.pattern, self._flags)
+            if needles:
+                folded = _folded(string)
+                for needle in needles:
+                    if needle in folded:
+                        break
+                else:
+                    return None
+        return self._compile().search(string, *args)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
