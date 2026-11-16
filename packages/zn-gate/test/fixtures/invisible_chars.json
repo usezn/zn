@@ -1,6 +1,9 @@
 {
   "_comment": "The invisible characters the Node.js, Python and Rust rules strip before matching (hex code points, inclusive ranges). Each language has a test that its own list equals this one.",
   "ranges": [
+    ["0000", "0008"],
+    ["000E", "001A"],
+    ["001C", "001F"],
     ["00AD", "00AD"],
     ["061C", "061C"],
     ["115F", "1160"],

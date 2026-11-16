@@ -40,11 +40,22 @@ def _ensure_dir(file_path: str) -> None:
 
 def _open_for_append(file_path: str) -> TextIO:
     """Opens the ledger for appending. New files are created 0600 and an existing
-    file that is readable by others is restricted to 0600 (POSIX only)."""
-    fd = os.open(file_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-    if os.name == "posix" and os.fstat(fd).st_mode & 0o077:
-        os.fchmod(fd, 0o600)
-    return os.fdopen(fd, "a", encoding="utf-8")
+    file that is readable by others is restricted to 0600 (POSIX only). If the file is
+    not empty and its last byte is not a newline, a newline is written first so the next
+    record starts its own line (the caller holds the write lock)."""
+    fd = os.open(file_path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        st = os.fstat(fd)
+        if os.name == "posix" and st.st_mode & 0o077:
+            os.fchmod(fd, 0o600)
+        if st.st_size > 0:
+            os.lseek(fd, st.st_size - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b"\n":
+                os.write(fd, b"\n")  # O_APPEND: always lands at the end of the file
+        return os.fdopen(fd, "a", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 class EvidenceLedgerError(Exception):
@@ -185,8 +196,16 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
             fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 os.write(fd, token.encode("ascii"))
-            finally:
-                os.close(fd)
+            except BaseException:
+                # The lock is ours: we created it a moment ago with O_EXCL. If the token cannot be
+                # written (a full disk, ENOSPC), remove the empty lock again. Left behind, it makes
+                # every later writer wait for it and report that another process is writing.
+                try:
+                    os.close(fd)
+                finally:
+                    _unlink_lock(lock_path)
+                raise
+            os.close(fd)
             return token
         except FileExistsError:
             pass
@@ -276,7 +295,13 @@ def _break_stale_lock(lock_path: str, token: str) -> bool:
     try:
         os.write(fd, token.encode("utf-8"))
     except OSError:
-        pass  # best effort: without it the mutex is never released by us
+        # Without the token this process cannot release the mutex. The mutex is ours (just created
+        # with O_EXCL), so remove it and report the error instead of leaving an empty mutex behind.
+        try:
+            os.close(fd)
+        finally:
+            _unlink_lock(mutex)
+        raise
     try:
         try:
             os.close(fd)
@@ -384,17 +409,63 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 _HASH_RE = re.compile(r"[0-9a-f]{64}")
 
 
+_CONF_MARK = "@@zn-confidence@@"
+
+
+def _js_number(x: float) -> str:
+    """The text JavaScript's Number toString gives for a finite non-integer float."""
+    from decimal import Decimal
+
+    sign, digit_tuple, exp = Decimal(repr(x)).as_tuple()
+    assert isinstance(exp, int)  # a finite float, so never 'n', 'N' or 'F'
+    all_digits = "".join(map(str, digit_tuple))
+    digits = all_digits.rstrip("0") or "0"
+    # Decimal point position: value = 0.<digits> * 10**n
+    n = len(all_digits) + exp
+    k = len(digits)
+    if 0 < n <= 21:
+        out = digits.ljust(n, "0") if k <= n else digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        out = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        out = digits[0] + ("." + digits[1:] if k > 1 else "") + "e" + ("-" if e < 0 else "+") + str(abs(e))
+    return ("-" if sign else "") + out
+
+
+def _serialize(record: Dict[str, Any], ascii_only: bool = False, js_numbers: bool = False) -> str:
+    conf = record.get("confidence")
+    swap = js_numbers and isinstance(conf, float) and math.isfinite(conf) and not conf.is_integer()
+    text = json.dumps({**record, "confidence": _CONF_MARK} if swap else record,
+                      separators=(",", ":"), ensure_ascii=ascii_only)
+    if swap and isinstance(conf, float):
+        text = text.replace('"' + _CONF_MARK + '"', _js_number(conf), 1)
+    return text if ascii_only else _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
+
+
 def _canonical(record: Dict[str, Any]) -> str:
-    """Canonical serialization of a record for hashing: compact JSON with UTF-8 left as is and
-    lone surrogates escaped, byte for byte what JSON.stringify gives in the Node package."""
-    text = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
-    return _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
+    """Canonical serialization of a record for hashing: compact JSON with UTF-8 left as is, lone
+    surrogates escaped and numbers written as JavaScript writes them (0.00001, not 1e-05), byte
+    for byte what JSON.stringify gives in the Node package."""
+    return _serialize(record, js_numbers=True)
 
 
 def _canonical_ascii(record: Dict[str, Any]) -> str:
-    """The older form (non-ASCII escaped as \\uXXXX) that earlier Python versions hashed.
+    """The older Python form (non-ASCII escaped as \\uXXXX) that earlier versions hashed.
     Verification accepts it so existing logs stay valid; new records use _canonical."""
-    return json.dumps(record, separators=(",", ":"))
+    return _serialize(record, ascii_only=True)
+
+
+def _canonical_forms(record: Dict[str, Any]) -> List[str]:
+    """Every form a record may have been hashed in: the current one, the older Python forms
+    (non-ASCII escaped as \\uXXXX; small numbers as Python writes them, 1e-05) and their mix.
+    Verification accepts all of them so existing logs stay valid."""
+    return [
+        _serialize(record, js_numbers=True),
+        _serialize(record),
+        _serialize(record, ascii_only=True),
+        _serialize(record, ascii_only=True, js_numbers=True),
+    ]
 
 
 _last_write_warn: Optional[float] = None
@@ -463,28 +534,40 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
     # Note: a payload with a lone surrogate hashes as "?" here and as U+FFFD in the Node package,
     # so payload_sha256 differs between the two for such text; record_hash and verification are
     # not affected.
-    payload_raw = event.get("payload", "")
-    payload_str = payload_raw if isinstance(payload_raw, str) else json.dumps(payload_raw, separators=(",", ":"))
+    # A missing or None payload is the empty string; any other non-string payload is its compact
+    # JSON (so 0 is "0" and False is "false"), as in the Node package.
+    payload_raw = event.get("payload")
+    if isinstance(payload_raw, str):
+        payload_str = payload_raw
+    elif payload_raw is None:
+        payload_str = ""
+    else:
+        payload_str = json.dumps(payload_raw, separators=(",", ":"), ensure_ascii=False)
     payload_sha256 = hashlib.sha256(payload_str.encode("utf-8", errors="replace")).hexdigest()
 
-    raw_conf = event.get("confidence", 1.0)
-    conf_val = int(raw_conf) if isinstance(raw_conf, (int, float)) and float(raw_conf).is_integer() else float(raw_conf)
+    # A confidence of 0 is kept as 0; only a missing or non-numeric one defaults to 1.
+    raw_conf = event.get("confidence")
+    if isinstance(raw_conf, bool) or not isinstance(raw_conf, (int, float)) or not math.isfinite(raw_conf):
+        raw_conf = 1.0
+    conf_val = int(raw_conf) if float(raw_conf).is_integer() else float(raw_conf)
+    raw_lat = event.get("latency_us")
+    latency = int(raw_lat) if isinstance(raw_lat, (int, float)) and not isinstance(raw_lat, bool) and math.isfinite(raw_lat) else 0
 
     base_record = {
         "id": record_id,
         "timestamp": timestamp,
         "agent_environment": event.get("agent") or event.get("agent_environment") or "python-agent",
-        "phase": event.get("phase", "tool-call"),
+        "phase": event.get("phase") or "tool-call",
         "tool_name": event.get("tool_name") or event.get("tool") or "unknown",
         "payload_sha256": payload_sha256,
         # Redact the full payload first, then cut, so a secret straddling the cut is not leaked.
         "payload_preview": (_redact(payload_str) or "")[:120],
-        "verdict": event.get("verdict", "allow"),
-        "rule": event.get("rule", None),
-        "reason": event.get("reason", None),
+        "verdict": event.get("verdict") or "allow",
+        "rule": event.get("rule") or None,
+        "reason": event.get("reason") or None,
         "confidence": conf_val,
-        "latency_us": int(event.get("latency_us", 0)),
-        "engine": event.get("engine", "python-deterministic"),
+        "latency_us": latency,
+        "engine": event.get("engine") or "python-deterministic",
         "prev_hash": prev_hash,
     }
 
@@ -492,6 +575,45 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
     final_record = dict(base_record)
     final_record["record_hash"] = hashlib.sha256(hash_input).hexdigest()
     return final_record
+
+
+# The last line of a ledger that is not JSON is most likely a write cut off by a crash or a full
+# disk. It is still reported as not verified (valid: False), but with truncated_tail: True so the
+# output can say so and explain how to continue. Any other problem stays a tamper report.
+TRUNCATED_TAIL_MESSAGE = "Last record is incomplete (the write was cut off, for example by a crash or a full disk)"
+
+
+# A last line that is not JSON counts as a write cut off by a crash or a full disk only if it is
+# the last line, the file does not end with a newline (every complete write does), and the line
+# starts like a written record. Anything else stays a tamper report.
+_RECORD_START = '{"id":"ev_'
+
+
+def _ends_with_newline(file_path: str) -> bool:
+    try:
+        with open(file_path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            if size == 0:
+                return True
+            f.seek(size - 1)
+            return f.read(1) == b"\n"
+    except OSError:
+        return True
+
+
+def _is_cut_tail(file_path: str, line: str) -> bool:
+    return line.startswith(_RECORD_START) and not _ends_with_newline(file_path)
+
+
+def _truncated_tail_result(total: int, index: int) -> Dict[str, Any]:
+    return {
+        "valid": False,
+        "total": total,
+        "verified": index,
+        "broken_index": index,
+        "error": f"{TRUNCATED_TAIL_MESSAGE} at line {index+1}: the line is not valid JSON.",
+        "truncated_tail": True,
+    }
 
 
 def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
@@ -515,6 +637,8 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         try:
             rec = json.loads(line)
         except Exception as e:
+            if i == len(lines) - 1 and _is_cut_tail(file_path, line):
+                return _truncated_tail_result(len(lines), i)
             return {
                 "valid": False,
                 "total": len(lines),
@@ -547,7 +671,7 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         def _hash_of(text: str) -> str:
             return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()  # noqa: B023
 
-        if recorded_hash not in (_hash_of(_canonical(base_record)), _hash_of(_canonical_ascii(base_record))):
+        if recorded_hash not in {_hash_of(text) for text in _canonical_forms(base_record)}:
             return {
                 "valid": False,
                 "total": len(lines),

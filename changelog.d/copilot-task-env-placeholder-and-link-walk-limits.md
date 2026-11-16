@@ -1,0 +1,3 @@
+### Security
+- The Copilot task review now refuses a task environment variable that loads code or moves a configuration (such as `BASH_ENV` or `PATH`) when its value is only a placeholder like `${TASK_SCRIPT}`, because VS Code fills the placeholder in before it starts the task. It also refuses a task that sets `dependsOn` or `dependsOrder`, because the tasks it starts are not part of the call.
+- `zn-gate check` no longer reports a plugin as protected when its folder holds more than 20000 entries, has folders more than 12 levels deep, or has a folder it cannot read: it says the folder could not be checked for links that leave it and the plugin is not trusted.

@@ -74,6 +74,7 @@ const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings, managedDir } = require('./managed-policy');
 const cfg = require('./config-file');
+const { configParseError } = require('../config-parse');
 const { hooksOf } = cfg;
 const launcher = require('./launcher');
 const { isSecretsToolName } = require('../broker/secrets-tools');
@@ -90,6 +91,14 @@ const HOOK_TIMEOUT_S = 15;
 // zn's launcher script (lib/agents/launcher.js) is ours too: '<dir>/zn-hook-claude-code.sh' <Event>
 const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code|zn-hook-claude-code\.sh["']? [A-Za-z]+)\s*$/;
 const MCP_SERVER_NAME = 'secrets';
+// `claude mcp` is a CLI that zn runs at install and uninstall: a CLI that never answers must not hang the command.
+const CLAUDE_MCP_TIMEOUT_MS = 30000;
+function claudeMcpSpawn(claude, args, opts) {
+  return spawnSync(claude, args, { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env),
+    timeout: opts.mcpTimeoutMs || CLAUDE_MCP_TIMEOUT_MS, killSignal: 'SIGKILL' });
+}
+function timedOut(r) { return !!(r.error && r.error.code === 'ETIMEDOUT'); }
+function mcpSeconds(opts) { return (opts.mcpTimeoutMs || CLAUDE_MCP_TIMEOUT_MS) / 1000; }
 
 const TOOL_MAP = {
   Bash: 'bash',
@@ -145,7 +154,7 @@ function unknownToolEvent(base, toolName, ti) {
   const { pathsOf, firstString, COMMAND_KEYS, patchTextOf, patchInput, nestedCommand } = require('./copilot');
   const patch = patchTextOf(toolName, ti);
   if (patch !== undefined) return { ...base, tool: 'write', toolName, input: patchInput(patch) };
-  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti);
+  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti, base.cwd);
   if (cmd === null) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
   if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
   const { paths, bad } = pathsOf(ti);
@@ -319,14 +328,23 @@ function hookCommand(opts = {}) {
 }
 
 function readJson(file) {
-  let data;
+  let text;
   try {
-    const text = fs.readFileSync(file, 'utf8');
-    data = text.replace(/^\uFEFF/, '').trim() ? cfg.parseJson(text) : {};
+    text = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     // A file that cannot be read (no permission, a folder in its place) is not a parse error.
     throw new Error(require('../errors').fsErrorText(err, file) || 'cannot parse ' + file + ': ' + err.message);
+  }
+  let data;
+  if (text.replace(/^\uFEFF/, '').trim()) {
+    try {
+      data = cfg.parseJson(text);
+    } catch (err) {
+      throw new Error(configParseError(file, text, err));
+    }
+  } else {
+    data = {};
   }
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error(file + ' must hold a JSON object, not ' + (data === null ? 'null' : Array.isArray(data) ? 'an array' : typeof data) + ' (left unchanged)');
@@ -351,12 +369,9 @@ function assertMcpFile(opts = {}) {
   if (fs.existsSync(file)) objectField(readJson(file), 'mcpServers', file);
 }
 
+// The shared backup (config-file.js): keeps the newest few copies and records a file that install created.
 function backup(file) {
-  if (!fs.existsSync(file)) return null;
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-  const dest = file + '.bak-zn-' + stamp;
-  fs.copyFileSync(file, dest);
-  return dest;
+  return cfg.backup(file);
 }
 
 function stripOurs(groups) {
@@ -466,9 +481,10 @@ function installMcp(opts, report) {
   }
   // Only absolute PATH entries outside the project: a `claude` script that starts with `#!/usr/bin/env node`
   // looks node up there.
-  const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
-    { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env) });
+  const r = claudeMcpSpawn(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })], opts);
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
+  else if (timedOut(r)) report.warnings.push('`claude mcp add-json` did not answer within ' + mcpSeconds(opts) + ' seconds, so zn stopped it. ' +
+    'Check with `claude mcp list`; if the MCP server is missing, register it yourself with: ' + manual);
   else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
@@ -518,25 +534,29 @@ function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   assertMcpFile(opts);
-  if (fs.existsSync(file)) {
-    const data = readJson(file);
+  // Takes zn's entries out of data in place; true when it removed any.
+  const removeOurs = (data) => {
     const hooks = hooksOf(data, file);
-    const before = JSON.stringify(hooks);
+    let changed = false;
     for (const event of Object.keys(hooks)) {
       const kept = stripOurs(hooks[event]);
+      if (JSON.stringify(kept) === JSON.stringify(hooks[event])) continue;
+      changed = true;
       if (kept.length) hooks[event] = kept; else delete hooks[event];
     }
-    if (Object.keys(hooks).length === 0) delete data.hooks;
-    if (JSON.stringify(hooks) !== before) {
-      report.backup = backup(file);
-      report.removed = 1;
-      writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
-      // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
-      // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
-      // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
-      if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
-        try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
-      }
+    if (changed && Object.keys(hooks).length === 0) delete data.hooks;
+    return changed;
+  };
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
+  const res = cfg.uninstallJson(file, removeOurs, readJson);
+  if (res.action !== 'unchanged') {
+    report.backup = res.backup;
+    report.removed = 1;
+    // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
+    // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
+    // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
+    if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
     }
   }
   if (opts.mcp !== false) {
@@ -564,8 +584,9 @@ function uninstall(opts = {}) {
       } else if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
         report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (claude) {
-        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME],
-          { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env) });
+        const removed = claudeMcpSpawn(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], opts);
+        if (timedOut(removed)) report.warnings.push('`claude mcp remove` did not answer within ' + mcpSeconds(opts) + ' seconds, so zn stopped it: ' +
+          'remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (ours === true) {
         report.warnings.push('`claude` is not on your PATH: remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       }

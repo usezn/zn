@@ -34,26 +34,27 @@ test('strict JSON - plain valid text lists the server', () => {
   assert.deepEqual(r.servers[0].args, ['--flag']);
 });
 
-test('strict JSON - a trailing comma is reported as not strict JSON', () => {
+test('strict JSON - a trailing comma is reported in plain words and the file is left alone', () => {
   const r = scanOpencode('{"mcp":{"demo":{"type":"local","command":["example-server"],}}}');
   assert.equal(r.serverCount, 0);
   assert.equal(r.servers.length, 1);
-  assert.match(r.servers[0].error, /opencode\.json is not strict JSON/);
-  assert.match(r.servers[0].error, /Not rewriting it/);
+  assert.match(r.servers[0].error, /^cannot parse .*opencode\.json: /);
+  assert.match(r.servers[0].error, /the file is not valid JSON at line 1/);
+  assert.match(r.servers[0].error, /\(left unchanged\)$/);
 });
 
-test('strict JSON - a comment is reported as not strict JSON', () => {
+test('strict JSON - a comment is reported as JSONC and the file is left alone', () => {
   const r = scanOpencode('{\n  // example note\n  "mcp": {}\n}\n');
   assert.equal(r.serverCount, 0);
-  assert.match(r.servers[0].error, /is not strict JSON/);
+  assert.match(r.servers[0].error, /the file has comments \(JSONC\)/);
   const block = scanOpencode('{ /* note */ "mcp": {} }');
-  assert.match(block.servers[0].error, /is not strict JSON/);
+  assert.match(block.servers[0].error, /the file has comments \(JSONC\)/);
 });
 
-test('strict JSON - a byte order mark at the start is reported as not strict JSON', () => {
+test('strict JSON - a byte order mark at the start is dropped for reading, as the file is valid JSON without it', () => {
   const r = scanOpencode('\uFEFF' + GOOD);
-  assert.equal(r.serverCount, 0);
-  assert.match(r.servers[0].error, /is not strict JSON/);
+  assert.equal(r.serverCount, 1);
+  assert.equal(r.servers[0].name, 'demo');
 });
 
 function scanToml(lines) {

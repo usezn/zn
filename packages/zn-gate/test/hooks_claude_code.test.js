@@ -277,7 +277,8 @@ test('install registers UserPromptExpansion with onFailure block, and uninstall 
   const home = tempDir(t, 'zn-upe-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
-  const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
+  // After uninstall the file install created is gone: read it as empty.
+  const read = () => (fs.existsSync(path.join(home, '.claude', 'settings.json')) ? JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {} : {});
   adapter.install(opts);
   adapter.install(opts);
   assert.equal(read().UserPromptExpansion.length, 1);
@@ -911,7 +912,8 @@ test('project install writes .claude/settings.json and no .mcp.json', (t) => {
   assert.ok(!settingsText.includes('/opt/'), 'no absolute path in a shared file');
   assert.ok(!settingsText.includes(process.execPath), 'no Node.js path in a shared file');
   adapter.uninstall({ scope: 'project', projectDir: dir });
-  assert.equal(Object.values(JSON.parse(fs.readFileSync(rep.settings, 'utf8')).hooks || {}).flat().length, 0, 'uninstall finds and removes the zn hook commands');
+  // The project settings file held only zn's hooks, so uninstall removes the file (install created it).
+  assert.equal(fs.existsSync(rep.settings), false, 'uninstall finds and removes the zn hook commands');
 });
 
 test('project install removes the bare `zn secrets-mcp` an earlier zn-gate wrote to .mcp.json, with a backup', (t) => {
@@ -1000,7 +1002,7 @@ test('the prompt and pre-tool hooks block when they cannot run; the post-tool ho
   const home = tempDir(t, 'zn-onf-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
-  const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
+  const read = () => (fs.existsSync(path.join(home, '.claude', 'settings.json')) ? JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {} : {});
   adapter.install(opts);
   assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
   // A tool call is blocked too when its pre hook cannot run; the post hook only warns (the tool already ran).
@@ -1324,7 +1326,8 @@ test('install writes the new PreToolUse matcher, replaces an old exact-list one,
   assert.equal(pre().length, 1);
   assert.equal(pre()[0].matcher, adapter.PRE_MATCHER);
   adapter.uninstall({ scope: 'user', home, env, mcp: false });
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks, undefined);
+  // Only zn's entries were in the file, so the file install left behind is gone.
+  assert.equal(fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).hooks : undefined, undefined);
 });
 
 /* ---------- zn's own servers are recognised from the MCP configuration, not from a name ---------- */

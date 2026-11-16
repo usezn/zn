@@ -194,7 +194,8 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   gem.install({ scope: 'project', projectDir: dir });
   assert.equal(readSettings(file).hooks.BeforeTool.length, 1);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
-  assert.deepEqual(readSettings(file), {});
+  // The file install created is removed again.
+  assert.equal(fs.existsSync(file), false);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
 });
 
