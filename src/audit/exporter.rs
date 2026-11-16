@@ -1066,4 +1066,137 @@ mod tests {
             "application/json"
         );
     }
+
+    // ── Small error branches ────────────────────────────────────────
+
+    #[test]
+    fn endpoint_log_line_handles_urls_without_a_host_and_ipv6_hosts() {
+        assert_eq!(endpoint_for_log(""), "(configured endpoint)");
+        assert_eq!(endpoint_for_log("file:example"), "(configured endpoint)");
+        assert_eq!(
+            endpoint_for_log("mailto:ops@example.com"),
+            "(configured endpoint)"
+        );
+        // The default port is not shown; an explicit other port is.
+        assert_eq!(
+            endpoint_for_log("https://siem.example.com:443/x"),
+            "https://siem.example.com"
+        );
+        assert_eq!(
+            endpoint_for_log("http://[2001:db8::1]:9000/x?t=1"),
+            "http://[2001:db8::1]:9000"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_endpoint_keeps_the_whole_buffer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let endpoint = format!("http://127.0.0.1:{port}/");
+        let exporter = exporter_for(&endpoint);
+        let mut batch = buffer_of(5, None, 100, usize::MAX);
+        assert!(!exporter.send_batch(&endpoint, &mut batch).await);
+        assert_eq!(batch.len(), 5);
+        assert_eq!(batch.bytes, real_bytes(&batch));
+    }
+
+    #[tokio::test]
+    async fn client_error_statuses_are_failures_that_keep_the_buffer() {
+        for status in [400u16, 401, 404, 429] {
+            let (endpoint, hits) = counting_server(status).await;
+            let exporter = exporter_for(&endpoint);
+            let mut batch = buffer_of(3, None, 100, usize::MAX);
+            assert!(
+                !exporter.send_batch(&endpoint, &mut batch).await,
+                "status {status}"
+            );
+            assert_eq!(hits.load(Ordering::SeqCst), 1);
+            assert_eq!(batch.len(), 3, "status {status}");
+        }
+    }
+
+    /// Test server: records the header block of the first request and answers 200.
+    async fn header_capturing_server() -> (String, Arc<Mutex<String>>) {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let head_seen = Arc::new(Mutex::new(String::new()));
+        let log = head_seen.clone();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut data: Vec<u8> = Vec::new();
+                let mut buf = vec![0u8; 65536];
+                loop {
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&buf[..n]);
+                    if let Some(i) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&data[..i]).to_ascii_lowercase();
+                        let len = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if data.len() >= i + 4 + len {
+                            *log.lock().unwrap() = head;
+                            break;
+                        }
+                    }
+                }
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+        (format!("http://127.0.0.1:{port}/"), head_seen)
+    }
+
+    #[tokio::test]
+    async fn the_bearer_token_is_sent_only_when_configured() {
+        let (endpoint, head) = header_capturing_server().await;
+        let exporter = SiemExporter::with_timeouts(
+            SiemConfig {
+                endpoint: Some(endpoint.clone()),
+                token: Some("example-token".to_string()),
+                batch_size: 100,
+            },
+            Duration::from_millis(500),
+            Duration::from_secs(10),
+        );
+        let chunk = vec![entry("e1", None)];
+        assert!(exporter.send_chunk(&endpoint, &chunk).await);
+        let head = head.lock().unwrap().clone();
+        assert!(
+            head.contains("authorization: bearer example-token"),
+            "{head}"
+        );
+        assert!(head.contains("content-type: application/json"), "{head}");
+
+        let (endpoint, head) = header_capturing_server().await;
+        let exporter = exporter_for(&endpoint);
+        assert!(exporter.send_chunk(&endpoint, &chunk).await);
+        let head = head.lock().unwrap().clone();
+        assert!(!head.is_empty());
+        assert!(!head.contains("authorization"), "{head}");
+    }
+
+    #[tokio::test]
+    async fn flush_counts_failures_and_one_success_resets_them() {
+        let (bad, _) = counting_server(500).await;
+        let (good, _) = counting_server(200).await;
+        let mut exporter = exporter_for(&bad);
+        let mut batch = buffer_of(3, None, 100, usize::MAX);
+        exporter.flush(&bad, &mut batch).await;
+        exporter.flush(&bad, &mut batch).await;
+        assert_eq!(exporter.backoff.failures, 2);
+        assert!(!exporter.backoff.ready(Instant::now()), "waiting to retry");
+        assert_eq!(batch.len(), 3, "nothing is lost while the endpoint fails");
+        exporter.flush(&good, &mut batch).await;
+        assert_eq!(exporter.backoff.failures, 0);
+        assert!(exporter.backoff.ready(Instant::now()));
+        assert!(batch.is_empty());
+    }
 }
