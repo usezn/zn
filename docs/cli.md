@@ -177,7 +177,7 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and each blocked test request is written to your local decision log (see [what check writes to the log](check.md#what-check-writes-to-the-decision-log)). The only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
@@ -348,7 +348,7 @@ The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, 
 zn-gate secret <set|list|rm|allow|approve|import|adopt|log> ...
 ```
 
-Groups the commands below. Run `zn-gate secret --help` for the short usage.
+Groups the commands below. `zn-gate secret --help` prints the general help of zn-gate, not a page about `secret`, so read this section instead. `zn-gate secret set --help` (and the same with `list`, `rm`, `allow`, `approve`, `import` or `adopt`) prints one short line that lists all the `secret` subcommands. Only `zn-gate secret log --help` has a usage of its own.
 
 Aliases: `secrets`.
 
@@ -436,7 +436,7 @@ Aliases: `secret reveal`.
 zn-gate env <shadow|unshadow> ...
 ```
 
-Groups the two commands below. Run `zn-gate env --help` for the short usage.
+Groups the two commands below. `zn-gate env --help` prints the general help of zn-gate, not a page about `env`, so read this section instead. `zn-gate env shadow --help` and `zn-gate env unshadow --help` each print their own usage.
 
 Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
 
