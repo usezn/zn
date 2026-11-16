@@ -132,7 +132,8 @@ Claude Code builds that have these events use them.
   endpoint moved to another server, or the zn folder moved with `ZN_HOME` or
   `HOME`), or when a skill file now
   holds text a person cannot see (Unicode tag characters or bidirectional
-  overrides). zn takes the starting point at the first tool call or prompt of the
+  overrides). A skill file over 1 MiB, or one zn cannot read, is blocked the same
+  way, because zn cannot check it for hidden text. zn takes the starting point at the first tool call or prompt of the
   session (or at the first change it sees, if that comes first), before anything
   can have changed it, for the project and the local settings file; a finding the file
   already had then is allowed, because `zn audit` reported it when the folder was
@@ -152,7 +153,8 @@ Claude Code builds that have these events use them.
   instruct the agent: one notice in the decision log (`hook-instructions_loaded-notice`)
   per session and file content, with the name of the rule and never the text; it is
   not counted as blocked in `zn-gate stats`. A `CLAUDE.md` that is a link to another
-  file is read through the link. Files over 1 MiB are not read.
+  file is read through the link. A file over 1 MiB is not read: it is recorded once per
+  session and version as loaded but not checked, also as a notice.
   `AGENTS.md` that Claude Code reads directly is not reported by this event.
 
 ## Skills, commands and @file in Claude Code
@@ -661,6 +663,7 @@ Settings in `~/.zn/config.json`:
 | not set | ask (the default) |
 | `{"hooks": {"agentInstructionWrites": "deny"}}` or `{"hooks": {"strict": true}}` | refuse the write |
 | `{"hooks": {"agentInstructionWrites": "off"}}` (also `false` or `"allow"`) | no check |
+| any other value, for example `"denied"`, or `"strict": "true"` in quotes | ask (the default), with a warning from `zn-gate check` and on the hooks' error output |
 
 `ZN_STRICT=1` in the environment also refuses these writes. The environment can only add protection: turning the check off is only possible from the config file, which the agent's file tools cannot write.
 

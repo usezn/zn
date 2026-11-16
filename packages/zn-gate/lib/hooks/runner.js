@@ -282,21 +282,83 @@ function outputInstructionNote(tool, strings, opts, agentId) {
  *
  * ~/.zn/config.json, {"hooks": {"blockDestructiveCommands": ...}}:
  *   true = all six rules, false = off, an array of rule names = exactly those; absent = the default two.
+ * A rule name may be written as the block message shows it (destructive:rm_root_home) or with dashes (pipe-to-shell).
+ * A list with a name zn does not know, or a value of another type, keeps the two default rules on (plus the known names
+ * in the list) and is reported as a warning (see hookConfigWarnings): a typo never turns the check off.
  * ZN_BLOCK_DESTRUCTIVE=1 turns on all six rules. The environment can only add protection, like ZN_HOOK_FAIL_MODE:
  * 0 or any other value is ignored, because the environment of an agent can be influenced by the project it works in.
  * Turning rules off is only possible from the config file.
  */
 function destructiveRulesOf(opts) {
-  const { DEFAULT_RULES, RULES } = require('../destructive');
-  const all = RULES.map((r) => r.replace(/^destructive:/, ''));
+  const { DEFAULT_RULES } = require('../destructive');
+  const all = destructiveRuleNames();
   if (opts.blockDestructive === true) return all;
   const env = process.env.ZN_BLOCK_DESTRUCTIVE;
   if (env === '1') return all;
-  const v = (readConfig(opts.home).hooks || {}).blockDestructiveCommands;
+  const v = hooksOf(readConfig(opts.home)).blockDestructiveCommands;
   if (v === true) return all;
   if (v === false) return [];
-  if (Array.isArray(v)) return v.filter((r) => all.includes(r));
-  return DEFAULT_RULES;
+  if (v === undefined || v === null) return DEFAULT_RULES;
+  if (!Array.isArray(v)) return DEFAULT_RULES;
+  const named = v.map(destructiveRuleName);
+  const known = named.filter((r) => r !== null);
+  // One name zn does not know: the defaults stay on, with the names it does know.
+  return Array.from(new Set(known.length === named.length ? known : DEFAULT_RULES.concat(known)));
+}
+
+/* The six destructive rule names, without the destructive: prefix the block message shows. */
+function destructiveRuleNames() {
+  return require('../destructive').RULES.map((r) => r.replace(/^destructive:/, ''));
+}
+
+/* A rule name as written in config.json (destructive:rm_root_home, pipe-to-shell, PIPE_TO_SHELL) -> its rule, or null. */
+function destructiveRuleName(r) {
+  if (typeof r !== 'string') return null;
+  const n = r.trim().toLowerCase().replace(/^destructive:/, '').replace(/-/g, '_');
+  return destructiveRuleNames().includes(n) ? n : null;
+}
+
+/* The hooks object of a config, or an empty one when it is missing or not an object. */
+function hooksOf(config) {
+  const h = config && config.hooks;
+  return h && typeof h === 'object' && !Array.isArray(h) ? h : {};
+}
+
+const show = (v) => { try { return JSON.stringify(v).slice(0, 60); } catch (_) { return String(v).slice(0, 60); } };
+
+/*
+ * Values in the hooks settings that zn does not know. Each one keeps the default for its setting (see destructiveRulesOf,
+ * instructionWritesOf, egressModeOf and strict), so it never turns a check off; the hooks print these lines on stderr and
+ * `zn-gate check` shows them, so the person learns the setting did not do what they meant.
+ */
+function hookConfigWarnings(home) {
+  const out = [];
+  let hooks;
+  try { hooks = hooksOf(readConfig(home)); } catch (_) { return out; }
+  const where = 'in ~/.zn/config.json, hooks.';
+  const d = hooks.blockDestructiveCommands;
+  if (Array.isArray(d)) {
+    const unknown = d.filter((r) => destructiveRuleName(r) === null);
+    if (unknown.length) {
+      out.push(where + 'blockDestructiveCommands lists ' + unknown.slice(0, 5).map(show).join(', ') + (unknown.length > 5 ? ' and more' : '') +
+        ', which zn does not know, so the default rules (rm_root_home, disk_overwrite) stay on. Known rules: ' + destructiveRuleNames().join(', ') + '.');
+    }
+  } else if (d !== undefined && d !== null && typeof d !== 'boolean') {
+    out.push(where + 'blockDestructiveCommands is ' + show(d) + ', which zn does not know, so the default rules (rm_root_home, disk_overwrite) stay on. Use true, false or a list of rule names.');
+  }
+  const level = (key, words, def) => {
+    const v = hooks[key];
+    if (v === undefined || v === null || typeof v === 'boolean') return;
+    if (typeof v === 'string' && words.includes(v.trim().toLowerCase())) return;
+    out.push(where + key + ' is ' + show(v) + ', which zn does not know, so the default (' + def + ') applies. Use ' + words.map((w) => '"' + w + '"').join(', ') + ' or false.');
+  };
+  level('agentInstructionWrites', ['ask', 'deny', 'off', 'allow'], 'ask');
+  level('egressCheck', ['ask', 'deny', 'off'], 'ask');
+  const s = hooks.strict;
+  if (s !== undefined && s !== null && typeof s !== 'boolean') {
+    out.push(where + 'strict is ' + show(s) + ', which zn does not know, so strict mode stays off. Use true or false (without quotes).');
+  }
+  return out;
 }
 
 /*
@@ -374,10 +436,12 @@ function withPackage(res, pkg) {
 function instructionWritesOf(opts) {
   if (opts.instructionWrites) return ['ask', 'deny', 'off'].includes(opts.instructionWrites) ? opts.instructionWrites : 'ask';
   if (envFlag('ZN_STRICT')) return 'deny';
-  const hooks = readConfig(opts.home).hooks || {};
+  const hooks = hooksOf(readConfig(opts.home));
   const v = hooks.agentInstructionWrites;
-  if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
-  if (String(v).toLowerCase() === 'deny' || hooks.strict === true) return 'deny';
+  // Any value zn does not know keeps the default, ask (hookConfigWarnings reports it); strict counts only as true.
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (v === false || s === 'off' || s === 'allow') return 'off';
+  if (s === 'deny' || hooks.strict === true) return 'deny';
   return 'ask';
 }
 
@@ -392,10 +456,12 @@ function instructionWritesOf(opts) {
  * environment; the environment cannot lower it, because the project an agent works in can set it.
  */
 function egressModeOf(opts) {
-  const v = opts.egressCheck !== undefined ? opts.egressCheck : (readConfig(opts.home).hooks || {}).egressCheck;
+  const v = opts.egressCheck !== undefined ? opts.egressCheck : hooksOf(readConfig(opts.home)).egressCheck;
+  // Any value zn does not know keeps the default, ask (hookConfigWarnings reports it).
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
   let mode = 'ask';
-  if (v === false || String(v).toLowerCase() === 'off') mode = 'off';
-  else if (String(v).toLowerCase() === 'deny') mode = 'deny';
+  if (v === false || s === 'off') mode = 'off';
+  else if (s === 'deny') mode = 'deny';
   const env = String(process.env.ZN_EGRESS_CHECK || '').toLowerCase();
   if (env === 'deny') mode = 'deny';
   else if (env === 'ask' && mode === 'off') mode = 'ask';
@@ -1359,13 +1425,29 @@ const CHANGED_FILE_CAP = 1024 * 1024;
 
 /** The text of a file the agent reports as changed or loaded, or null when it is not a plain file we can read within the cap. */
 function readReportedFile(file) {
+  const r = reportedFile(file);
+  return typeof r.text === 'string' ? r.text : null;
+}
+
+/**
+ * A file the agent reports as changed or loaded: {text}, {unchecked: true} for a plain file zn could not check (over
+ * CHANGED_FILE_CAP, or present but not readable), or {} when there is nothing to check (no absolute path, no such file,
+ * not a plain file).
+ */
+function reportedFile(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return {};
+  let st;
   try {
-    if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
-    const st = fs.statSync(file);
-    if (!st.isFile() || st.size > CHANGED_FILE_CAP) return null;
-    return fs.readFileSync(file, 'utf8');
+    st = fs.statSync(file);
   } catch (_) {
-    return null;
+    return {};
+  }
+  if (!st.isFile()) return {};
+  if (st.size > CHANGED_FILE_CAP) return { unchecked: true, tooLarge: true, size: st.size, mtimeMs: st.mtimeMs };
+  try {
+    return { text: fs.readFileSync(file, 'utf8') };
+  } catch (_) {
+    return { unchecked: true, size: st.size, mtimeMs: st.mtimeMs };
   }
 }
 
@@ -1502,7 +1584,17 @@ function decideConfigChange(ev, opts) {
   const source = ev.configSource;
   const file = ev.filePath;
   if (source === 'skills') {
-    const text = readReportedFile(file);
+    const r = reportedFile(file);
+    if (r.unchecked) {
+      // A skill file zn cannot read in full (over 1 MiB, or not readable) is not applied unchecked: padding a file must not
+      // switch the hidden-text check off. Settings files over the cap are blocked the same way (ZNA020).
+      return {
+        decision: 'deny', kinds: ['config-change-unchecked'],
+        message: 'zn: this change to a skill file was not applied: zn could not check this change (' +
+          (r.tooLarge ? 'the file is larger than 1 MiB' : 'the file could not be read') + '). Open ' + path.basename(file) + ', make it smaller or readable, and save it again.',
+      };
+    }
+    const text = typeof r.text === 'string' ? r.text : null;
     if (text === null) return { decision: 'allow' };
     if (HIDDEN_TEXT_RE.test(text)) {
       return {
@@ -1557,7 +1649,18 @@ function decideConfigChange(ev, opts) {
  * Claude Code discards the output of this event).
  */
 function decideInstructionsLoaded(ev, opts) {
-  const text = readReportedFile(ev.filePath);
+  const r = reportedFile(ev.filePath);
+  if (r.unchecked) {
+    // A file zn cannot read in full (over 1 MiB, or not readable) still went into context: it is recorded as not checked,
+    // once per session, path, size and time of change, as a notice that is not counted as blocked.
+    const sf = seenFile(ev, 'instructions-loaded', opts);
+    const prev = readSeen(sf);
+    const key = 'unchecked|' + require('crypto').createHash('sha256').update(String(ev.filePath)).update('\0' + r.size + '\0' + r.mtimeMs).digest('hex').slice(0, 24);
+    if (prev.includes(key)) return { decision: 'allow' };
+    writeSeen(sf, prev.concat([key]));
+    return { decision: 'deny', noBlock: true, kinds: ['instructions-unchecked'], message: 'zn: ' + path.basename(ev.filePath) + ' was loaded but not checked (' + (r.tooLarge ? 'larger than 1 MiB' : 'not readable') + ').' };
+  }
+  const text = typeof r.text === 'string' ? r.text : null;
   if (text === null) return { decision: 'allow' };
   const v = require('../rules').evaluate(text);
   if (v && v.verdict === 'block') {
@@ -1918,10 +2021,32 @@ function unreadablePre(ev, agentId) {
   if (typeof ev.toolName !== 'string' || !ev.toolName.trim()) {
     return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
-  if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof (ev.input || {}).command !== 'string') {
+  const input = ev.input || {};
+  if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof input.command !== 'string') {
     return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
+  // A file tool that needs a file (Read, Write, Edit, MultiEdit, NotebookEdit, LSP) and names none zn can read: a missing path,
+  // a path under another key, a list or a number. A patch zn could not read, or one that is too long, is refused by decidePre.
+  if (PATH_TOOLS.has(ev.tool) && !input.tooLong && !input.unparsed && !namesFile(input)) {
+    return { decision: 'deny', message: 'zn: could not read the file this call uses, so zn cannot check it and blocked it. Name the file as a single path. ' + formatChangeStep(agentId) };
+  }
+  // A search folder is optional (none = the working folder), but one that is there must be a path.
+  if (ev.tool === 'grep' && input.path !== undefined && input.path !== null && typeof input.path !== 'string') {
+    return { decision: 'deny', message: 'zn: could not read the folder this search uses, so zn cannot check it and blocked it. Name the folder as a single path. ' + formatChangeStep(agentId) };
+  }
+  if (ev.tool === 'webfetch' && !(typeof input.url === 'string' && input.url.trim())) {
+    return { decision: 'deny', message: 'zn: could not read the address this call fetches, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
+  }
   return null;
+}
+
+// Tools whose call must name a file: their input path is required in every agent that maps a tool to them.
+const PATH_TOOLS = new Set(['read', 'write', 'edit', 'multiedit', 'notebookedit', 'lsp']);
+
+/* True when a file tool's input names its file: a non-empty string path, or a list of them (a patch, several files). */
+function namesFile(input) {
+  if (typeof input.path === 'string' && input.path.trim()) return true;
+  return Array.isArray(input.paths) && input.paths.length > 0 && input.paths.every((p) => typeof p === 'string' && p.trim());
 }
 
 /**
@@ -2036,7 +2161,9 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
       rule: redacted ? 'hook-redacted-output' : (decision.noBlock ? 'hook-' + ev.event + '-notice' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy')),
       reason: redacted
         ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
-        : (decision.noBlock ? 'an instruction file holds text that tries to instruct the agent (recorded only: Claude Code cannot be told to hold it back)'
+        : (decision.noBlock ? (kinds.includes('instructions-unchecked')
+          ? 'an instruction file was loaded that zn could not check (larger than 1 MiB or not readable; recorded only: Claude Code cannot be told to hold it back)'
+          : 'an instruction file holds text that tries to instruct the agent (recorded only: Claude Code cannot be told to hold it back)')
           : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy')),
       engine: 'zn-hook',
     // _plainPreview: the payload above is the event name, the tool name and the checked secret kinds,
@@ -2575,6 +2702,8 @@ async function handleEvent(args, state, readText) {
     if (res.decision && res.decision.refuseText) { refuseInput(agentId, 'unknown event', res.decision.refuseText); return; }
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
     if (res.formatNote) process.stderr.write('zn hook: ' + res.formatNote + '\n');
+    // A hooks setting zn does not know kept its default: say so, so the person learns it did not do what they meant.
+    try { for (const w of hookConfigWarnings()) process.stderr.write('zn hook: warning: ' + w + '\n'); } catch (_) { /* a warning never changes the answer */ }
     closeVaultClient();
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.
@@ -2591,7 +2720,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
+module.exports = { readConfig, hookConfigWarnings, destructiveRulesOf, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

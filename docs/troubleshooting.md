@@ -810,9 +810,9 @@ The message gives the rule `(rule: vault:unavailable)`, says that an agent canno
 
 **What to do:** run `zn unlock` in your own terminal and try again. See [section 5](#5-your-secret-vault-is-locked).
 
-#### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call"
+#### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call" / "could not read the file this call uses"
 
-**What happened:** the event your agent sent to zn was damaged, so zn could not check it. If the message says your agent "changed the format of the data", see the next entry.
+**What happened:** the event your agent sent to zn was damaged, so zn could not check it. A file tool call (read, write, edit, LSP) that names no file as a single path, a fetch with no address, or a search whose folder is not a single path is blocked the same way. If the message says your agent "changed the format of the data", see the next entry.
 
 **What to do:** retry the action. If it repeats, run `zn hooks install <agent>` again, then `npx -y zn-gate check`.
 

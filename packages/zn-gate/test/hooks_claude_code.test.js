@@ -602,11 +602,16 @@ test('InstructionsLoaded records one notice per session and content, not a block
   assert.equal(fs.readFileSync(path.join(home, '.zn', 'evidence.jsonl'), 'utf8').trim().split('\n').length, 2, 'new content is recorded again');
 });
 
-test('ConfigChange and InstructionsLoaded never fail the session: a missing or huge file is allowed', async (t) => {
+test('InstructionsLoaded never fails the session; a skill file too large to check is not applied', async (t) => {
+  const home = tempDir(t, 'zn-instr-');
   const huge = projectWith(t, '.claude/rules/huge.md', INJECTION_TEXT + 'x'.repeat(1024 * 1024 + 10));
-  assert.equal((await run(instructionsLoaded(huge.file))).output, null);
-  assert.equal((await run(instructionsLoaded('/nonexistent/CLAUDE.md'))).output, null);
-  assert.equal((await run(configChange('skills', path.join(huge.dir, '.claude', 'rules', 'huge.md')))).output, null);
+  assert.equal((await run(instructionsLoaded(huge.file), { home })).output, null);
+  assert.equal((await run(instructionsLoaded('/nonexistent/CLAUDE.md'), { home })).output, null);
+  // Padding a skill file past the size cap must not switch the hidden-text check off.
+  const res = await run(configChange('skills', path.join(huge.dir, '.claude', 'rules', 'huge.md')), { home });
+  assert.equal(res.output.decision, 'block');
+  assert.match(res.output.reason, /could not check this change/);
+  assert.equal((await run(configChange('skills', '/nonexistent/SKILL.md'), { home })).output, null);
 });
 
 test('every error fails closed, a missing engine too unless the user allows it', async (t) => {

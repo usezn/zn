@@ -66,6 +66,7 @@ Set `hooks.egressCheck` in `~/.zn/config.json`:
 | not set, or `"ask"` | the agent asks you (the default) |
 | `"deny"` | the request is refused and the agent is told to send it without the data |
 | `"off"` or `false` | the check is off |
+| any other value (for example `"block"`) | the agent asks you (the default), and `zn-gate check` and the hooks print a warning |
 
 ```json
 {"hooks": {"egressCheck": "deny"}}

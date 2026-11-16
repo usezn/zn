@@ -1449,6 +1449,15 @@ function nodeWarnings(opts, env) {
   return out;
 }
 
+/* Values in the hooks settings of ~/.zn/config.json that zn does not know (each one keeps its default). */
+function hookSettingWarnings(opts) {
+  try {
+    return require('./hooks/runner').hookConfigWarnings(opts.home).map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  } catch (err) {
+    return []; // a warning never fails the check
+  }
+}
+
 /**
  * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
@@ -1468,7 +1477,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true, warnings: nodeWarnings(opts, env) };
+    return { results, removed: true, warnings: nodeWarnings(opts, env).concat(hookSettingWarnings(opts)) };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
@@ -1489,7 +1498,7 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
+  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env).concat(hookSettingWarnings(opts)) };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */

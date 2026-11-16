@@ -16,6 +16,9 @@ For the agent hooks (Claude Code, Codex CLI, Cursor, OpenCode and the others `zn
 | `true` | all six rules |
 | `false` | none: the check is off |
 | a list of rule names, for example `["rm_root_home", "pipe_to_shell"]` | exactly those rules |
+| a list with a name zn does not know, or a value of another type | the two default rules, plus the names in the list that zn knows |
+
+A rule name can also be written the way a block message shows it (`destructive:rm_root_home`) or with dashes (`pipe-to-shell`). A name zn does not know (a typo) never turns the check off: the default rules stay on, the hooks print a warning on their error output, and `zn-gate check` lists it under "Warning". An empty list (`[]`) turns the check off, like `false`.
 
 ```json
 {"hooks": {"blockDestructiveCommands": false}}
