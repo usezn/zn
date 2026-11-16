@@ -11,8 +11,8 @@ One row per exit code. The source column names the function in the code that ret
 | Code | Meaning | Commands that return it | Usual fix | Source |
 |---|---|---|---|---|
 | `0` | Done, or nothing to report. | `scan` with no findings; `check` and `doctor` when every agent that is set up is protected; `check --hooks` when every hook is OK; `hook` when the action is allowed; `analyze` when the text is allowed. | Nothing to fix. | `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js` |
-| `1` | The command ran and found a problem, or it failed. | `scan` with findings, or with a path that does not exist; `check` and `doctor` when an agent is not protected or the project rules have errors; `check --hooks` when a hook is stale or broken; `evidence --verify` when the log chain is broken; `analyze` with no text; `hook` when the agent name is unknown; `uninstall` when you answer no or a step fails. | Read the message. Run `zn-gate check` in your own terminal to see which agent or rule needs a fix. | `handleScan` and `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js`, `main` in `bin/cli.js` (`evidence`, `analyze`), `run` in `lib/uninstall.js`, `main` in `lib/hooks/runner.js` |
-| `2` | The command was used wrongly, or the action was blocked. | `scan` with an unknown `--format`; `reach` with a wrong option or a path that is not a folder; `analyze` when the text is blocked; `hook` when the action is blocked. | For a usage error, check the options in the [command line reference](cli.md) and run the command again. For a block, read the message and follow its next step in your own terminal. Do not look for a way around the block. | `handleScan` and `runReachCommand` in `bin/cli.js`, `main` in `bin/cli.js` (`analyze`), `main` in `lib/hooks/runner.js` |
+| `1` | The command ran and found a problem, or it failed. | `scan` with findings, or with a path that does not exist; `check` and `doctor` when an agent is not protected or the project rules have errors; `check --hooks` when a hook is stale or broken; `evidence --verify` when the log chain is broken; `hook` when the agent name is unknown; `uninstall` when you answer no or a step fails. | Read the message. Run `zn-gate check` in your own terminal to see which agent or rule needs a fix. | `handleScan` and `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js`, `main` in `bin/cli.js` (`evidence`, `analyze`), `run` in `lib/uninstall.js`, `main` in `lib/hooks/runner.js` |
+| `2` | The command was used wrongly, or the action was blocked. | `scan` with an unknown `--format`; `reach` with a wrong option or a path that is not a folder; `analyze` when the text is blocked or no text is given; `hook` when the action is blocked. | For a usage error, check the options in the [command line reference](cli.md) and run the command again. For a block, read the message and follow its next step in your own terminal. Do not look for a way around the block. | `handleScan` and `runReachCommand` in `bin/cli.js`, `main` in `bin/cli.js` (`analyze`), `main` in `lib/hooks/runner.js` |
 | `3` | A scan read no file, or skipped a file or folder it should have read. | `scan` | Fix the access problem, or check the path. Use `--allow-partial` only when you accept the skipped items. | `coverageExit` in `bin/cli.js` |
 | `64` | Wrong usage for the run and secrets commands. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | Check the command name and options in the [command line reference](cli.md), then run it again. | `runBroker` in `lib/broker/run.js`, `dispatch` in `lib/broker/cli.js` |
 | `77` | zn refused on purpose: a value was not shown, or the action was not allowed or not approved. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | If the action is needed, the user runs it in their own terminal. | `runBroker` in `lib/broker/run.js`, `dispatch` in `lib/broker/cli.js` |
@@ -65,7 +65,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 | `uninstall` | `0`, `1`, `64`, `77` | `0` removed or nothing to remove; `1` you answered no or a step failed; `64` an unknown option; `77` no interactive terminal or an agent ran it, so nothing changed. |
 | `check` (`doctor`) | `0`, `1` | `0` every agent that is set up is protected; `1` an agent is not protected, or none is set up. |
 | `status` | `0` | Always `0`. |
-| `test` | `0`, `1` | `0` all built-in examples passed; `1` at least one failed. |
+| `test` | `0`, `1` | With no text: `0` all built-in examples passed; `1` at least one failed. With a text: `0` nothing flagged; `1` the text is blocked or holds a secret. |
 | `version` | `0` | Always `0`. |
 | `connect` | `0`, `1`, `2` | `0` connected or already connected; `1` nothing was saved; `2` the command was used wrongly. |
 | `disconnect` | `0`, `1`, `2` | `0` the local setting was removed or there was nothing to remove; `1` something was not done; `2` the command was used wrongly. |
@@ -77,7 +77,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 | `scan` | `0`, `1`, `2`, `3` | `0` nothing found and everything that matched was read; `1` something was found or the path does not exist; `2` an unknown `--format`; `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. |
 | `audit` | `0`, `1`, `2` | `0` nothing at or above `--fail-on`; `1` findings at or above it; `2` wrong usage or a path that is not a folder. |
 | `reach` | `0`, `1`, `2` | `0` done; `1` findings meet `--fail-on`; `2` wrong usage or a failure. |
-| `analyze` | `0`, `1`, `2` | `0` the text is allowed; `1` no text given; `2` the text is blocked. |
+| `analyze` | `0`, `2` | `0` the text is allowed; `2` the text is blocked, or no text is given. |
 | `pins` | `0`, `2` | `0` done; `2` wrong usage, no terminal, an agent running it, or the approval was not confirmed. |
 
 ## Secrets and the vault
@@ -125,14 +125,14 @@ The Python package (`pip install zn-gate`) has a smaller command line than the n
 | Command | Codes | Meaning |
 |---|---|---|
 | `test "<text>"` | `0`, `1` | `0` nothing was flagged; `1` the text was blocked or contains a secret. It does not run the self-test that `test` runs in the npm package. |
-| `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked; without a text, `2` (the npm package exits `1`). |
+| `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked, or no text is given (as in the npm package). |
 | `scan [path]` | `0`, `1`, `3` | `0` nothing found; `1` something was found or the path does not exist; `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
 | `evidence` | `0`, `1` | `0` done; `1` `--verify` found a changed SHA-256 chain, or the export was not saved. |
 | `status` | `0` | Always `0`. |
 | `stats` | `0`, `2` | `0` done; `2` `--days` is out of range (1 to 90). |
 | The other commands on this page | `2` | They exist only in the npm package: the Python package prints a short note that points to it, then exits `2`. `help` does the same. |
 
-`version` exits `0` here as in the npm package, and `reach --history` is part of the Python package too (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`.
+`version` exits `0` here as in the npm package, and `reach --history` is part of the Python package too (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. `help` exits `2` in both packages, and so does an unknown option given before any command (for example `zn-gate --bogus`).
 
 ## GitHub Action
 

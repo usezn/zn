@@ -94,9 +94,9 @@ test('check --help still prints the general help and exits 0', (t) => {
   assert.doesNotMatch(r.stderr, /unknown option/);
 });
 
-test('test --help still prints the general help and exits 0', (t) => {
+test('test --help prints the test command help and exits 0', (t) => {
   const home = tempDir(t, 'zn-fixed-flag-');
   const r = run(['test', '--help'], home);
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /USAGE/);
+  assert.match(r.stdout, /Usage: zn-gate test/);
 });

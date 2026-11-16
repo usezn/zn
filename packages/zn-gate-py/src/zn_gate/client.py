@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import http.client
 import os
+import re
 import socket
 import threading
 import urllib.request
@@ -114,12 +115,23 @@ def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
     return DEFAULT_ENDPOINT
 
 
+# The key shape zn issues: the same check as usableApiKey in the npm package (lib/cloud-key.js).
+_API_KEY_RE = re.compile(r"[A-Za-z0-9._-]{16,256}")
+
+
+def usable_api_key(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    k = value.strip()
+    return k if _API_KEY_RE.fullmatch(k) else None
+
+
 def is_cloud_enabled(api_key: Optional[str] = None, local_only: bool = False) -> bool:
     """True only if the user opted in: an API key AND ZN_CLOUD=1, and no local-only override."""
     key = api_key or os.environ.get("ZN_API_KEY")
     opted_in = os.environ.get("ZN_CLOUD") == "1"
     force_local = local_only or os.environ.get("ZN_LOCAL_ONLY") == "true"
-    return bool(key) and opted_in and not force_local
+    return bool(usable_api_key(key)) and opted_in and not force_local
 
 
 # Long texts: the cloud gate reads the first 512 tokens unless the request
@@ -290,8 +302,9 @@ def analyze(
             "confidence": local_eval.confidence,
             "rule": "none",
             "reason": None,
-            "mode": "oss-local-fallback",
+            "mode": "oss-local",
             "engine": "oss-local",
+            "rules_version": local_eval.rules_version,
             "fallback": True,
             "cloud_error": str(exc),
             **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),

@@ -28,7 +28,7 @@ test('--days 0, 91, a word and a missing value exit with 2', () => {
   for (const args of [['--days', '0'], ['--days', '91'], ['--days', 'week'], ['--days']]) {
     const r = run(args);
     assert.equal(r.status, 2, args.join(' '));
-    assert.match(r.stdout + r.stderr, /Usage: zn-gate stats/, args.join(' '));
+    assert.match(r.stdout + r.stderr, /Usage: zn-gate stats|--days must be between 1 and 90/, args.join(' '));
   }
 });
 

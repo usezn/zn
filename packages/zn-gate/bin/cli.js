@@ -373,6 +373,39 @@ Learn more & documentation at https://usezn.com | GitHub: https://github.com/use
 `);
 }
 
+// zn-gate test "<text>": checks one text against the local rules, as the Python package does.
+// Exit 0 when nothing is flagged, 1 when the text is blocked or holds a secret, 2 for wrong usage.
+function runTestText(args) {
+  if (args.length !== 2) {
+    process.stderr.write('zn-gate test: give one text, in quotes, for example: zn-gate test "some text"\n');
+    return 2;
+  }
+  const text = args[1];
+  if (fs.existsSync(text)) {
+    process.stderr.write('Note: zn-gate test checks the text you typed, not the file at ' + text + '. To check a file, run: zn-gate scan ' + text + '\n');
+  }
+  const t0 = performance.now();
+  const assessment = evaluate(text);
+  const { sanitized, detections } = redactSecrets(text);
+  const latencyUs = (performance.now() - t0) * 1000;
+  const allowed = assessment.verdict !== 'block';
+  const out = [];
+  out.push('');
+  out.push((allowed ? '[+] ALLOW' : '[!] BLOCK') + ' | Verdict: ' + String(assessment.verdict).toUpperCase() + ' (latency: ' + latencyUs.toFixed(1) + ' us)');
+  out.push('Rule:       ' + assessment.rule);
+  if (assessment.reason) out.push('Reason:     ' + assessment.reason);
+  if (assessment.advisory) out.push('Note:       not blocked, but worth a look: ' + assessment.advisory.reason + ' (' + assessment.advisory.rule + ').');
+  if (detections && detections.length) {
+    const noun = detections.length === 1 ? 'secret' : 'secrets';
+    out.push('DLP Alert:  ' + detections.length + ' ' + noun + ' detected (verdict unchanged). Redacted: ' + sanitized);
+  }
+  out.push('Confidence: ' + (Number(assessment.confidence || 0) * 100).toFixed(1) + '%');
+  out.push('Engine:     ' + (assessment.engine || 'oss-local') + ' (rules: ' + RULES_VERSION + ')');
+  out.push('');
+  process.stdout.write(out.join('\n') + '\n');
+  return allowed && !(detections && detections.length) ? 0 : 1;
+}
+
 async function runTestSuite(options) {
   process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}Running zn-gate v${VERSION} Self-Test Suite
@@ -585,7 +618,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
 async function handleScan(targetPath, options) {
   const resolved = path.resolve(targetPath || '.');
   if (!fs.existsSync(resolved)) {
-    process.stderr.write(`Error: Target path does not exist: ${resolved}\n`);
+    process.stderr.write(`Error: target path not found: ${targetPath || '.'}. Check the spelling and the folder you run zn-gate from, then try again.\n`);
     process.exit(1);
   }
 
@@ -753,6 +786,8 @@ Files   : ${files.length} file(s) queued for audit\n
   const incomplete = files.skipped.length + unreadDirs > 0;
   const incompleteNote = `${files.skipped.length} file(s) and ${unreadDirs} folder(s) were not read`;
   const coverageExit = () => {
+    // --no-fail: always 0, as in the Python package (findings and skipped files are still printed).
+    if (options.noFail) return 0;
     if (totalFindings > 0) return 1;
     if (files.length - notRead === 0) return 3;
     if (incomplete && !options.allowPartial) return 3;
@@ -1023,13 +1058,97 @@ async function runReachCommand(rest) {
 // Options of scan and analyze. Any other option that starts with "--" is refused with exit 2: it is named and
 // the options the command takes are listed. Everything after a bare "--" is positional text, and so is anything
 // that does not start with "--" (analyze text may start with "-").
+// Own help of the commands that the Python package also has its own help for (zn-gate <command> --help).
+const COMMAND_HELP = {
+  scan: `Usage: zn-gate scan [path] [options]
+
+Audits prompt templates, docs, skills and configs under a folder (default: the current folder)
+for injection traps and secrets. Matched values are never printed.
+
+Options:
+  --format text|json|github  Output format (default: text)
+  --no-fail                  Exit 0 even when something is found or a file was not read
+  --allow-partial            Exit 0 even when some files or folders were not read (they are still listed)
+  --code, --all              Also scan source code files
+  --include <exts>           Extra file extensions to scan, comma-separated (e.g. .rst,.xml)
+  --exclude <dirs>           Extra folder names to skip, comma-separated
+  --include-home             Also check your own MCP configs for secrets written in plain text
+  --package NAME[@VERSION]   Scan a published npm package instead of a folder
+  -h, --help                 Show this help
+
+Exit codes: 0 nothing found, 1 something found or the path does not exist, 3 no file was read
+or a file was skipped (see docs/exit-codes.md).
+`,
+  analyze: `Usage: zn-gate analyze <text> [options]
+
+Checks one prompt and prints the answer as JSON. Local rules first; the optional cloud check is
+used only with ZN_CLOUD=1 and an API key. Words given without quotes are joined with spaces.
+
+Options:
+  --key <api_key>       API key for the cloud check (or ZN_API_KEY)
+  --stage <v30|prod>    Cloud gateway stage (default: v30)
+  --url <custom_url>    Override the gateway endpoint URL
+  --local-only          Never use the cloud, even if ZN_CLOUD=1 is set
+  --long-input MODE     windows (default) or off
+  --json                Accepted; the answer is always JSON
+  -h, --help            Show this help
+
+Exit codes: 0 allowed, 2 blocked or no text given. To analyze text that starts with "--",
+put "--" before it: zn-gate analyze -- "<text>".
+`,
+  status: `Usage: zn-gate status [options]
+
+Shows the engine configuration: the rules version, whether the cloud check is on, where the API key
+comes from and the agent hooks. It only reads; nothing is sent.
+
+Options:
+  --key <api_key>       API key to look for (or ZN_API_KEY)
+  --stage <v30|prod>    Cloud gateway stage (default: v30)
+  --url <custom_url>    Override the gateway endpoint URL
+  --local-only          Never use the cloud
+  --verbose             Debug logging to stderr
+  -h, --help            Show this help
+`,
+  stats: `Usage: zn-gate stats [--days 1-90] [--json]
+       zn-gate stats share on|off|status|show
+
+What zn-gate did on this machine, from local counts only. --days sets the window (1 to 90, default 30).
+--json prints the counts as JSON. "stats share" is the optional, opt-in sharing of pseudonymous daily counts.
+
+Options:
+  -h, --help            Show this help
+`,
+  evidence: `Usage: zn-gate evidence [--verify | --export | --ui] [options]
+
+Reads the local hash-chained decision log. Without an option it shows the counts.
+
+Options:
+  --verify              Check the SHA-256 chain; exit 1 if it was changed
+  --export              Export the records (jsonl or csv)
+  --format jsonl|csv    Export format (default: jsonl)
+  --output <file>       Write the export to a file instead of stdout
+  --ui                  Start the local dashboard
+  --port <n>            Port for --ui (default: 3100)
+  -h, --help            Show this help
+`,
+  test: `Usage: zn-gate test [<text>]
+
+With a text: checks that text against the local rules (it is never sent anywhere) and prints the verdict.
+Exit 0 when nothing is flagged, 1 when the text is blocked or holds a secret.
+With no text: runs the built-in self-test (51 curated vectors: 26 attacks, 25 benign).
+
+Options:
+  -h, --help            Show this help
+`,
+};
+
 const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
 const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
 const COMMAND_OPTIONS = {
   scan: {
     value: ['--format', '--include', '--exclude', '--package', ...CLOUD_VALUE_OPTIONS],
-    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
-    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--package'],
+    flag: ['--code', '--all', '--allow-partial', '--include-home', '--no-fail', ...CLOUD_FLAG_OPTIONS],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--no-fail', '--package'],
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,
@@ -1195,6 +1314,11 @@ async function main() {
     await runBrokerCommand(args[0], args.slice(1));
     return;
   }
+  // Own help of the commands listed in COMMAND_HELP (the same as the Python package's per-command help).
+  if (COMMAND_HELP[args[0]] && (args.includes('-h') || args.includes('--help'))) {
+    process.stdout.write(COMMAND_HELP[args[0]]);
+    process.exit(0);
+  }
   if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
     printHelp();
     process.exit(0);
@@ -1239,6 +1363,7 @@ async function main() {
     includeCode: args.includes('--code') || args.includes('--all'),
     includeHome: args.includes('--include-home'),
     allowPartial: args.includes('--allow-partial'),
+    noFail: args.includes('--no-fail'),
     include: null,
     exclude: null,
   };
@@ -1373,12 +1498,16 @@ ${ruleLine(process.env, 60)}\n`);
         try {
           fs.writeFileSync(options.output, res.content, 'utf8');
         } catch (err) {
-          process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + '\n');
+          process.stderr.write('Error: the export was not saved. ' + (fsErrorText(err, options.output) || humanError(err)) + '\n');
           process.exit(1);
         }
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
       } else {
         process.stdout.write(res.content);
+      }
+      // The same note as the Python package when there is nothing to export yet.
+      if (!res.total && res.valid) {
+        process.stderr.write('Note: there are no evidence records yet, so the export is empty. Run a check first, for example: zn-gate test "some text", then export again.\n');
       }
       return;
     }
@@ -1471,7 +1600,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'test') {
-    await runTestSuite(options);
+    if (args.length === 1) {
+      await runTestSuite(options);
+      return;
+    }
+    process.exitCode = runTestText(args);
     return;
   }
 
@@ -1541,10 +1674,13 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const textToAnalyze = textArgs.join(' ');
     if (!textToAnalyze) {
       process.stderr.write('Error: Please provide text to analyze: zn-gate analyze "<text>"\n');
-      process.exit(1);
+      process.exit(2);
     }
 
+    const startedAt = performance.now();
     const result = await analyze(textToAnalyze, options);
+    // The same field as the Python package: the time this run took, in milliseconds.
+    result.latency_ms = Math.round((performance.now() - startedAt) * 100) / 100;
     if (result.degraded) {
       process.stderr.write('[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.\n');
     }
@@ -1619,6 +1755,20 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
     process.exit(0);
   }
 
+  // B-6295/B-6303: a word that is not a command is a usage error (2) in both packages. An unknown option given
+  // before any command (zn-gate --bogus) is named as an unknown option, as argparse does in the Python package.
+  const NOT_A_COMMAND = new Set(['help']);
+  if (NOT_A_COMMAND.has(command)) {
+    process.stderr.write('zn-gate help is not a command. Run zn-gate --help to see the commands.\n');
+    process.exitCode = 2;
+    return;
+  }
+  if (String(command).startsWith('-')) {
+    const shown = String(command).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    process.stderr.write('zn-gate: unknown option "' + shown + '". Run zn-gate --help for usage.\n');
+    process.exitCode = 2;
+    return;
+  }
   process.stderr.write(`Unknown command: ${command}\nRun 'zn-gate --help' for usage.\n`);
   process.exit(1);
 }

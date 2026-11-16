@@ -46,7 +46,7 @@ def test_export_into_missing_folder_is_a_plain_message(tmp_path):
     assert out == ""
     assert "Traceback" not in err
     assert str(target) in err
-    assert "does not exist" in err and "Create the folder" in err
+    assert "does not exist" in err
 
 
 @needs_non_root

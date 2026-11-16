@@ -159,8 +159,8 @@ test('analyze --json still exits 2 for a blocked text and takes the text after i
   assert.strictEqual(JSON.parse(r.stdout).verdict, 'block');
 });
 
-test('analyze --json without text still says it needs text and exits 1', () => {
+test('analyze --json without text still says it needs text and exits 2', () => {
   const r = run(['analyze', '--json']);
-  assert.strictEqual(r.status, 1, r.stderr);
+  assert.strictEqual(r.status, 2, r.stderr);
   assert.match(r.stderr, /provide text/);
 });

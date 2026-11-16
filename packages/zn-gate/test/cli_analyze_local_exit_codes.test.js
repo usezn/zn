@@ -25,9 +25,9 @@ function run(args) {
   }
 }
 
-test('analyze --local-only with no text exits 1 with a message on stderr and no JSON', () => {
+test('analyze --local-only with no text exits 2 with a message on stderr and no JSON', () => {
   const r = run([]);
-  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.status, 2);
   assert.strictEqual(r.stdout, '');
   assert.match(r.stderr, /Please provide text to analyze/);
 });

@@ -71,7 +71,7 @@ class TestBoundedLookup(unittest.TestCase):
             res =client.analyze("hello there", api_key="zn_" + "0" * 48, endpoint="https://api.example.com/v30/analyze",
                                  timeout=0.4)
             self.assertLess(time.monotonic() - t0, 2.0)
-        self.assertEqual(res["mode"], "oss-local-fallback")
+        self.assertEqual(res["mode"], "oss-local")
 
 
 if __name__ == "__main__":

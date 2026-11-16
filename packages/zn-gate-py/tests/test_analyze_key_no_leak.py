@@ -83,7 +83,7 @@ def test_analyze_result_and_output_never_contain_the_key(status, reply, echo, de
         srv.server_close()
     assert srv.seen == ["Bearer " + FAKE_KEY]
     assert bool(result.get("fallback")) is fallback
-    assert result["mode"] == ("oss-local-fallback" if fallback else "hybrid-cloud")
+    assert result["mode"] == ("oss-local" if fallback else "hybrid-cloud")
     captured = capsys.readouterr()
     if fallback:
         assert "Cloud gate error" in captured.err

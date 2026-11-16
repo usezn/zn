@@ -728,8 +728,7 @@ def _fs_error_text(err: OSError, path: object) -> str:
         return (f"Your account is not allowed to read or change {p}. "
                 "Check who owns it and its permissions, then try again.")
     if code == "ENOENT":
-        return (f"{p} does not exist, or a folder on its path is missing. "
-                "Create the folder first, or choose another --output path, then try again.")
+        return f"{p} does not exist, or a folder on its path is missing."
     if code == "ENOTDIR":
         return (f"A part of the path {p} is a file where a folder should be. "
                 "Move or remove that file, then try again.")
@@ -1025,7 +1024,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # analyze command
     analyze_parser = subparsers.add_parser("analyze", allow_abbrev=False, help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
-    analyze_parser.add_argument("text", help="Prompt or message to analyze")
+    analyze_parser.add_argument("text", nargs="*", metavar="text", help="Prompt or message to analyze (words given without quotes are joined with spaces)")
     analyze_parser.add_argument("--key", help="API key for zn Cloud Gate")
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")
     analyze_parser.add_argument("--url", help="Custom API endpoint URL")
@@ -1106,6 +1105,7 @@ def main() -> int:
     if args.command == "test":
         return cmd_test(args)
     elif args.command == "analyze":
+        args.text = " ".join(args.text or [])
         if not args.text:
             parser.error("analyze needs the text to inspect: zn-gate analyze \"<text>\"")
         return cmd_analyze(args)

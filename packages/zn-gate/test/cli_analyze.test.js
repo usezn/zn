@@ -17,9 +17,9 @@ function analyze(t, args) {
   return spawnSync(process.execPath, [CLI, 'analyze', ...args], { encoding: 'utf8', cwd: home, env });
 }
 
-test('analyze without text exits 1 and explains on stderr', (t) => {
+test('analyze without text exits 2 and explains on stderr', (t) => {
   const r = analyze(t, []);
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 2);
   assert.match(r.stderr, /provide text to analyze/);
   assert.equal(r.stdout, '');
 });
@@ -36,7 +36,10 @@ test('analyze joins several words into one text', (t) => {
   const one = JSON.parse(analyze(t, ['The weather is nice today']).stdout);
   const many = analyze(t, ['The', 'weather', 'is', 'nice', 'today']);
   assert.equal(many.status, 0, many.stderr);
-  assert.deepEqual(JSON.parse(many.stdout), one);
+  // latency_ms is the time each run took, so it differs between runs: compare the rest.
+  const { latency_ms: _oneMs, ...rest} = one;
+  const { latency_ms: _manyMs, ...restMany } = JSON.parse(many.stdout);
+  assert.deepEqual(restMany, rest);
 });
 
 test('analyze of a blocked text exits 2 with a block verdict', (t) => {

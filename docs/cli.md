@@ -181,6 +181,8 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
+The Python package has a `check` too, but it is a different check: it only runs the Python guard on a built-in fake secret in a temporary folder (see [The Python package](#the-python-package)). For the agent hooks, use `npx -y zn-gate check`.
+
 Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
 
 ```bash
@@ -209,7 +211,7 @@ Shows the version, the rules version, whether the optional cloud check is on and
 zn-gate test
 ```
 
-Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed.
+Without a text, runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed. With a text, `zn-gate test "<text>"` checks that text against the local rules, as the Python package does: it is never sent anywhere, exit `0` when nothing is flagged and `1` when the text is blocked or holds a secret.
 
 ### `version`
 
@@ -250,7 +252,7 @@ Exit codes: `0` the local setting was removed (or there was nothing to remove), 
 ### `scan`
 
 ```bash
-zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--allow-partial]
+zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--allow-partial] [--no-fail]
 zn-gate scan --package <name>[@version]
 ```
 
@@ -260,6 +262,7 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
+- `--no-fail`: exit `0` even when something is found or a file was not read. The findings and the skipped files are still listed. The Python version has the same flag.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
 - `--package <name>[@version]`: audit an npm MCP server or skill before you add it. The package is downloaded from the registry (`ZN_NPM_REGISTRY`, or npmjs.org), checked against the checksum the registry gave, unpacked to a temporary folder, and its files with a scanned extension are read (see below for what is not). No folder is skipped by name: `node_modules`, `dist` and `build` inside the package are scanned too, with source files (`.js`, `.mjs`, `.cjs`, `.ts`, `.tsx` and the other extensions of a normal scan with `--code`). The agent-config audit (see [`audit`](#audit)) runs on it too, also without skipping folders. Nothing in the package is installed or run. Text output only for now; `--include-home`, `--allow-partial`, `--exclude` and a folder argument are refused (exit `2`).
 
@@ -272,7 +275,7 @@ With `--package`, exit `2` also means the package was not scanned: the registry 
 
 What `--package` does not cover: it reads the files inside the package itself, not the packages it depends on (unless they are bundled inside it); files of other types (binaries, `.wasm`, files without a scanned extension) are not read; and it does not run the package, so it cannot see what the code does when it runs. If you interrupt a scan with Ctrl+C, the temporary folder (`zn-scan-pkg-` and a random suffix, in your system temporary folder) is left behind and can be deleted.
 
-A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count (with `--package` nothing is skipped by name). Links found inside the folder are not followed and are not listed. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Python also has `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count (with `--package` nothing is skipped by name). Links found inside the folder are not followed and are not listed. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Both packages have `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
 ### `audit`
 
@@ -311,7 +314,7 @@ Exit codes: `0` done, `1` findings meet `--fail-on`, `2` wrong usage or a failur
 zn-gate analyze "<text>"
 ```
 
-Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
+Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Words given without quotes are joined with spaces. The answer includes `latency_ms`, the time this run took. Exit codes: `0` allowed, `2` blocked or no text given.
 
 ### `pins`
 
@@ -660,7 +663,7 @@ zn-gate stats [--days 30] [--json]
 zn-gate stats share on|off|status|show
 ```
 
-What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
+What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). A `--days` out of that range prints its error on stderr. Exit codes: `0` done, `2` wrong usage.
 
 `stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only detector ids, the generic label `Built-in detector` and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id. The npm package adds `zn why`, which explains your last block. The Python package points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/) instead, because `why` is only in the npm package. The block is left out when nothing matched in the window.
 
@@ -796,7 +799,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | Command | Options | What it does |
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2`, as in the npm package. |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
@@ -811,8 +814,8 @@ When a command prints JSON, the npm and the Python package print the same fields
 
 | Package | Command | Field or behavior | Why it differs |
 |---|---|---|---|
-| Python | `analyze` | `latency_ms` on every answer, and `latency_us` on blocked texts | It is the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. The npm package does not print timings. |
-| Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command runs its self-test instead and prints no JSON. |
+| Python | `analyze` | `latency_us` on blocked texts | Both packages print `latency_ms` on every answer: the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. Only the Python package adds `latency_us`, on blocked texts. |
+| Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command prints no JSON: with a text it prints the verdict lines, and with no text it runs its self-test. |
 | npm | `stats --json` | `sharing`, `sent_days`, `send_failed` | Sharing pseudonymous counts is an npm-only feature (`stats share`), so only the npm output reports whether sharing is on and which days were sent. |
 
 `analyze --json` is accepted by both packages and changes nothing. Key order can differ between the two packages. `scan --format json` has the same keys in both.

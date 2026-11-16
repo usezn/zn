@@ -30,11 +30,15 @@ test('an unknown flag prints the usage text and exits with 2', async () => {
 
 test('bad --days values and stray words are rejected with the usage text', async () => {
   reset();
-  for (const args of [['--days', '0'], ['--days', '91'], ['--days', 'abc'], ['--days'], ['--days', '1.5'], ['hello']]) {
+  // An out-of-range or non-number --days is an error on stderr (not the usage text), exit 2.
+  for (const args of [['--days', '0'], ['--days', '91'], ['--days', 'abc'], ['--days'], ['--days', '1.5']]) {
     const r = await run(args);
     assert.equal(r.code, 2, args.join(' '));
-    assert.ok(r.out.startsWith(USAGE_START), args.join(' '));
   }
+  // A stray word still prints the usage text.
+  const stray = await run(['hello']);
+  assert.equal(stray.code, 2);
+  assert.ok(stray.out.startsWith(USAGE_START));
 });
 
 test('--days accepts the whole range 1 to the retention limit', async () => {

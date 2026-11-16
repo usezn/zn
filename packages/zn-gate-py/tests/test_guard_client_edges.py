@@ -152,7 +152,7 @@ class TestAnalyzeFallbacks(_EnvCase):
 
     def _assert_fallback(self, res):
         self.assertEqual(res["verdict"], "allow")
-        self.assertEqual(res["mode"], "oss-local-fallback")
+        self.assertEqual(res["mode"], "oss-local")
         self.assertTrue(res["fallback"])
         self.assertTrue(res["cloud_error"])
 

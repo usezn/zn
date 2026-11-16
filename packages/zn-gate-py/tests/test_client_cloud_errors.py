@@ -61,7 +61,7 @@ class TestCloudErrors(unittest.TestCase):
         self.assertEqual(res["verdict"], "allow")
         self.assertEqual(res["rule"], "none")
         self.assertIsNone(res["reason"])
-        self.assertEqual(res["mode"], "oss-local-fallback")
+        self.assertEqual(res["mode"], "oss-local")
         self.assertEqual(res["engine"], "oss-local")
         self.assertIs(res["fallback"], True)
         self.assertIsInstance(res["cloud_error"], str)

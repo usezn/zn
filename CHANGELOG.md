@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `zn-gate analyze` JSON includes `latency_ms` in the npm package too, as the Python package already did.
+- `zn-gate analyze` without a text exits `2` (wrong usage) instead of `1`, in both packages.
+- `zn-gate analyze` in the Python package accepts words given without quotes and joins them with spaces, as the npm package does.
+- `zn-gate scan --no-fail` is accepted by the npm package and always exits `0`, as in the Python package.
+- `zn-gate test "<text>"` in the npm package checks the text it is given, as in the Python package. With no text it still runs the self-test.
+- `zn-gate scan --help`, `analyze --help`, `status --help`, `stats --help`, `evidence --help` and `test --help` print that command's own help in the npm package.
+- `zn-gate stats --days` out of range prints its error on stderr and exits `2`, as in the Python package.
+- `zn-gate evidence --export` with an empty ledger prints the same note on stderr in the npm package as in the Python package.
+- The Python package turns the cloud check on only for an API key of the shape zn issues, as the npm package does.
+- The Python package's answer when the cloud check fails has mode `oss-local` and includes `rules_version`, as in the npm package (it used to report `oss-local-fallback`).
+- `zn-gate help` exits `2` with a one-line pointer to `--help` (it exited `1` as an unknown command). An unknown option before any command, such as `zn-gate --bogus`, exits `2` in the npm package too, as in the Python package.
+- `zn-gate scan` with a missing path names the path as you typed it and says what to check, as the Python package does.
+- `zn-gate evidence --export --output` into a missing folder says the export was not saved, with the same wording in both packages.
+
 ## [1.15.0] - 2026-11-06
 
 zn-gate 1.15.0 hardens how the hooks start and what the command check reads. On macOS and Linux, and for Claude Code on Windows, zn's hook launcher now runs zn-gate's hook runner only while that file matches the copy recorded at install time, and no longer falls back to a `zn` found on the PATH. An update with npm refreshes those launchers through a short install step (`postinstall`, declared in the package's `DISCLOSURE` file); if you update with pnpm, bun or `--ignore-scripts`, run `zn hooks install <agent>` again. The destructive-command check now reads one-liners given to `python -c`, `node -e`, `perl -e` and `ruby -e`, ANSI-C quoting (`$'...'`) and PowerShell 7 line continuation. Messages are clearer when a check runs out of time, when `zn-gate init` has no internet connection and when the OpenCode hook cannot start, and in ZCode a tool output zn could not check is no longer reported as withheld. The Python package now warns when `ZN_STRICT` or `ZN_BLOCK_TRUNCATED` is set to a value other than `1`, and when a LangChain or LlamaIndex guard with `on_block="ignore"` lets a blocked item through.

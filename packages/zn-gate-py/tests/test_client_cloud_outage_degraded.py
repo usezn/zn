@@ -60,7 +60,7 @@ def test_benign_input_gets_local_allow_marked_degraded(monkeypatch, exc):
     res, seen = _analyze(monkeypatch, exc, BENIGN)
     assert len(seen) == 1  # the cloud was really attempted
     assert res["verdict"] == "allow"
-    assert res["mode"] == "oss-local-fallback"
+    assert res["mode"] == "oss-local"
     assert res["engine"] == "oss-local"
     assert res["fallback"] is True
     assert isinstance(res["cloud_error"], str) and res["cloud_error"]

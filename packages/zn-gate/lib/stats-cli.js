@@ -28,7 +28,7 @@ function parse(args) {
     else if (args[i].startsWith('-')) o.bad = true;
     else o.rest.push(args[i]);
   }
-  if (!Number.isInteger(o.days) || o.days < 1 || o.days > stats.KEEP_DAYS) o.bad = true;
+  if (!Number.isInteger(o.days) || o.days < 1 || o.days > stats.KEEP_DAYS) { o.bad = true; o.daysBad = true; }
   if (o.rest.length && o.rest[0] !== 'share') o.bad = true;
   return o;
 }
@@ -88,6 +88,10 @@ function explainShare(out) {
 
 async function run(args, out = (s) => process.stdout.write(s), { confirm = confirmInTerminal } = {}) {
   const o = parse(args);
+  if (o.daysBad) {
+    process.stderr.write('zn-gate stats: --days must be between 1 and ' + stats.KEEP_DAYS + '\n');
+    return 2;
+  }
   if (o.bad) { out(USAGE); return 2; }
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
