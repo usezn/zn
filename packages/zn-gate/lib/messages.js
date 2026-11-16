@@ -341,7 +341,7 @@ function teamNotACommand(sub) {
   // Never echo anything that looks like a join token (a forgotten 'join'), nor a very long word.
   if (/^znj_/i.test(String(sub).trim())) return "That looks like a join token. Run: zn team join <token>";
   const shown = String(sub).length > 20 ? 'that' : String(sub).replace(/[\u0000-\u001f\u007f]/g, ' ');
-  return "'zn team " + shown + "' is not a zn command. Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help";
+  return "'zn team " + shown + "' is not a zn command. Commands: zn team join <token>, zn team status, zn team sync, zn team leave, zn team managed-config. All options: zn team --help";
 }
 
 /* An email invitation (the link or its zninv_ token) is accepted in the dashboard; the machine joins with a different token. */

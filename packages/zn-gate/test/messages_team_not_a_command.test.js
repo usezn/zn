@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { teamNotACommand } = require('../lib/messages');
 
-const COMMANDS = 'Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help';
+const COMMANDS = 'Commands: zn team join <token>, zn team status, zn team sync, zn team leave, zn team managed-config. All options: zn team --help';
 
 test('login has its own sentence that points to zn team join <token>', () => {
   const msg = teamNotACommand('login');

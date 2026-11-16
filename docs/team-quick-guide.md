@@ -17,6 +17,7 @@ zn team status
 
 - The join token (`znj_...`) comes from an organization admin.
 - `zn team join` is confirmed on the vault's own channel (the terminal of `zn unlock --foreground`, or a system dialog), not in the terminal where the command ran. An AI agent cannot answer that dialog.
+- On a machine without a desktop (a Linux server, an SSH session) there is no system dialog: `zn unlock` says so, and `zn team join` then stops with "no confirmation channel". Run `zn unlock --foreground` in a terminal of its own instead, keep it open, and run `zn team join -` in a second terminal; the confirmation appears in the first one.
 - The dialog shows the organization name, who invited the developer, the server and the last characters of the token. Tell your team to compare them with what you sent, and to choose Deny if they did not start the command.
 - `zn team status` shows the organization, policy version and expiry, and the upload state. It never shows the install token.
 
