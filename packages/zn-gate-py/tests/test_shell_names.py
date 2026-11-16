@@ -32,8 +32,8 @@ class TestNpxName(unittest.TestCase):
             msg = mcp_next_step("environment variable", "API_KEY")
         self.assertIn("run npx.cmd -y zn-gate secret set ", msg)
         self.assertIn("run zn.cmd secret allow ", msg)
-        self.assertIn("so zn run may use it", msg)
-        self.assertIn("set the server's command to zn and put run, --secrets", msg)
+        self.assertIn("which lets the server receive the value through zn.", msg)
+        self.assertIn("set the server's command to zn (written zn, not zn.cmd: this file is read by the agent, not typed in a terminal) and put run, --secrets", msg)
         self.assertNotIn("run zn secret allow", msg)
         self.assertNotIn("npx.cmd -y zn-gate run", msg)
 

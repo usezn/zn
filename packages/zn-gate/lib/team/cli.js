@@ -32,6 +32,8 @@ const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] [--rules] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
+// Largest export kept in memory before it is written to stdout (larger logs: --out FILE).
+let STDOUT_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
 const out = (s) => process.stdout.write(s + '\n');
@@ -56,7 +58,7 @@ function withClient(fn) {
 
 function describePolicy(p) {
   if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `zn team sync`)';
-  if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `zn team sync`';
+  if (p.state === 'invalid') return 'the stored copy could not be verified (' + (p.error || 'invalid') + ') -- INVALID: strict mode (every secret is blocked, nothing is opened) until a valid policy arrives; run `zn team sync`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
   if (p.state === 'expired' && p.clock === 'behind') return base + " -- STRICT MODE (only restrictions apply): this computer's clock is behind the time this policy was issued. Check the computer's date and time.";
   if (p.state === 'expired') return base + " -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.";
@@ -358,8 +360,19 @@ async function runLogExport(args) {
       }
       err('Exported ' + res.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + res.sha256 + ').');
     } else {
-      // Pipes and files are written synchronously by Node on POSIX, so the output is not queued in memory.
-      sameBytes(exportAuditStream(opts, (text) => { process.stdout.write(text); }));
+      // Nothing reaches stdout until the bytes are confirmed: the records are kept in memory (no copy of the audit
+      // on disk), then written out. A log that changed in between leaves stdout empty and the command fails. A log
+      // larger than STDOUT_EXPORT_MAX_BYTES is not buffered: --out FILE writes it to a private file instead.
+      const parts = [];
+      let size = 0;
+      sameBytes(exportAuditStream(opts, (s) => {
+        size += Buffer.byteLength(s);
+        if (size > STDOUT_EXPORT_MAX_BYTES) {
+          throw new Error('the audit log is larger than ' + (STDOUT_EXPORT_MAX_BYTES / 1048576) + ' MiB, too large to export to the terminal. Export it to a file with --out FILE.');
+        }
+        parts.push(s);
+      }));
+      for (const p of parts) process.stdout.write(p);
     }
     warn();
     return 0;
@@ -369,4 +382,4 @@ async function runLogExport(args) {
   }
 }
 
-module.exports = { runTeamCommand, runLogExport, describePolicy };
+module.exports = { runTeamCommand, runLogExport, describePolicy, _internal: { setStdoutExportMax(n) { STDOUT_EXPORT_MAX_BYTES = n; } } };

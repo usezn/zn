@@ -1,0 +1,2 @@
+### Fixed
+- `zn vault log export --otlp` printing to the terminal or a pipe now writes nothing unless the audit log is confirmed to be the one the vault verified. If the log changed in between, the command fails with the same message and stdout stays empty, as `--out` already did. The records are held in memory until they are confirmed, so no copy of the audit log is written to disk; a log over 64 MiB is not printed and the command asks for `--out FILE` instead.

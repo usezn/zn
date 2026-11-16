@@ -1318,13 +1318,39 @@ fn unknown_setting_notices(file: &str, content: &str) -> Vec<String> {
         .collect()
 }
 
-/// True for a setting inside the `security` or `audit` sections.
+/// Sections whose settings turn a protection on or tune it. A misspelt key there would leave the
+/// protection at its default (often off: no policy signature, no consensus, neural shadow mode).
+const PROTECTION_SECTIONS: &[&str] = &[
+    "security",
+    "audit",
+    "engine",
+    "kms",
+    "neural",
+    "fusion",
+    "managed_rules",
+    "loop_breaker",
+    "consensus",
+    "guardrails",
+];
+
+/// True for a setting inside a section that can turn a protection on, and for an unknown top-level
+/// name close to one of those sections (a misspelt section name drops the whole section).
 fn is_security_setting(path: &str) -> bool {
-    path.starts_with("security.") || path.starts_with("audit.")
+    match path.split_once('.') {
+        Some((section, _)) => PROTECTION_SECTIONS.contains(&section),
+        None => {
+            let name = path.to_lowercase();
+            PROTECTION_SECTIONS.iter().any(|s| {
+                let limit = if s.chars().count() <= 4 { 1 } else { 2 };
+                edit_distance(&name, s) <= limit
+            })
+        }
+    }
 }
 
-/// Like `unknown_setting_notices`, but an unknown key inside `security` or `audit` is an
-/// error that names the key and the closest valid one. Other unknown keys stay warnings.
+/// Like `unknown_setting_notices`, but an unknown key inside a section that can turn a protection
+/// on (see `PROTECTION_SECTIONS`) is an error that names the key and the closest valid one. Other
+/// unknown keys stay warnings.
 fn checked_setting_notices(file: &str, content: &str) -> Result<Vec<String>> {
     let unknown = unknown_settings(content);
     if let Some(bad) = unknown.iter().find(|u| is_security_setting(u)) {
@@ -1680,6 +1706,44 @@ mod parse_message_tests {
             msg.contains("did you mean \"audit.encryption_enabled\""),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn an_unknown_key_in_any_protection_section_is_an_error() {
+        for (file, key) in [
+            (
+                "{\"engine\": {\"signing_public_kye\": \"x\"}}",
+                "engine.signing_public_kye",
+            ),
+            (
+                "{\"engine\": {\"allowed_policy_hash\": []}}",
+                "engine.allowed_policy_hash",
+            ),
+            ("{\"consensus\": {\"enabeld\": true}}", "consensus.enabeld"),
+            (
+                "{\"consensus\": {\"critical_tool\": [\"x\"]}}",
+                "consensus.critical_tool",
+            ),
+            (
+                "{\"neural\": {\"active_bloking\": true}}",
+                "neural.active_bloking",
+            ),
+            (
+                "{\"guardrails\": {\"alert_onyl\": false}}",
+                "guardrails.alert_onyl",
+            ),
+            ("{\"consensuss\": {\"enabled\": true}}", "consensuss"),
+        ] {
+            let err = checked_setting_notices("zn.json", file).expect_err(key);
+            assert!(err.to_string().contains(key), "{err}");
+        }
+    }
+
+    #[test]
+    fn correctly_spelt_protection_settings_load_without_notices() {
+        let file = "{\"engine\": {\"signing_public_key\": null, \"allowed_policy_hashes\": []}, \"consensus\": {\"enabled\": false, \"critical_tools\": []}, \"neural\": {\"active_blocking\": false}, \"guardrails\": {\"alert_only\": true}}";
+        let notices = checked_setting_notices("zn.json", file).expect("known settings load");
+        assert!(notices.is_empty(), "{notices:?}");
     }
 
     #[test]

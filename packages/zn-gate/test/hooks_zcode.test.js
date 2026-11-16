@@ -229,6 +229,13 @@ test('unknown tools that name a file get the read and write checks on every path
   assert.equal((await run(pre('Mystery', { q: 1 }))).output, null);
 });
 
+test('an unknown tool with a command and a protected file path is checked on both', async () => {
+  const cred = path.join(HOME, '.aws', 'credentials');
+  assert.equal((await run(pre('FutureRunner', { command: 'echo hi', file_path: cred }))).output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await run(pre('FutureRunner', { command: 'echo hi', file_path: '/work/proj/README.md' }))).output, null);
+  assert.equal((await run(pre('FutureRunner', { command: 'cat ' + cred, file_path: '/work/proj/README.md' }))).output.hookSpecificOutput.permissionDecision, 'deny');
+});
+
 test('an MCP call is checked before it runs: secret placeholders and credential paths are blocked', async () => {
   assert.equal((await run(pre('mcp__web__post', { auth: '__ZN_TOKEN__' }))).output.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal((await run(pre('mcp__fs__read', { path: path.join(HOME, '.ssh', 'id_rsa') }))).output.hookSpecificOutput.permissionDecision, 'deny');
@@ -579,6 +586,33 @@ test('configWarnings: a missing or unreadable file says nothing wrong', (t) => {
   write(home, '{ broken');
   assert.deepEqual(zc.configWarnings({ home }).problems, []);
   assert.equal(zc.configWarnings({ home }).notes.length, 1);
+});
+
+test('configWarnings: JSONC, a BOM and broken JSON in the ZCode config (plain message, file left as it is)', (t) => {
+  const cases = [
+    { name: 'comments', text: '{\n  // turned on by hand\n  "hooks": { "enabled": true }\n}\n', note: /^cannot parse .*: the file has comments \(JSONC\)/ },
+    { name: 'broken', text: '{\n  "hooks": { "enabled": true },\n}\n', note: /^cannot parse .*: the file is not valid JSON at line 3\. / },
+  ];
+  for (const c of cases) {
+    const home = tempDir(t, 'zn-zc-cw-' + c.name + '-');
+    write(home, c.text);
+    const before = fs.readFileSync(cliFile(home));
+    const w = zc.configWarnings({ home });
+    assert.deepEqual(w.problems, [], c.name);
+    assert.equal(w.notes.length, 1, c.name);
+    assert.match(w.notes[0], c.note, c.name);
+    assert.match(w.notes[0], /\(left unchanged\)$/, c.name);
+    assert.ok(fs.readFileSync(cliFile(home)).equals(before), c.name + ': the file was changed');
+  }
+
+  // A BOM is accepted, as config-file.js accepts it: the file is read, and nothing is reported about it.
+  const home = tempDir(t, 'zn-zc-cw-bom-');
+  write(home, '﻿' + JSON.stringify({ hooks: { enabled: false } }, null, 2) + '\n');
+  const before = fs.readFileSync(cliFile(home));
+  const w = zc.configWarnings({ home });
+  assert.match(w.problems[0], /"hooks\.enabled" is false/);
+  assert.deepEqual(w.notes, []);
+  assert.ok(fs.readFileSync(cliFile(home)).equals(before), 'bom: the file was changed');
 });
 
 test('detect: the zcode program on PATH or a ~/.zcode folder', (t) => {
@@ -979,4 +1013,16 @@ test('failed install and failed uninstall leave no .bak-zn file behind', (t) => 
     assert.throws(() => zc.uninstall({ home }), /disk full/);
   } finally { cfg.writeJson = realWrite; }
   assert.deepEqual(baks(), []);
+});
+
+test('normalize: an MCP tool call with arguments that cannot be read is flagged unreadable, not checked as an empty call', () => {
+  for (const bad of ['{"command":', '[1,2]', '42', 'not json', ['a'], 7, true]) {
+    const e = zc.normalize(pre('mcp__srv__tool', bad));
+    assert.equal(e.tool, 'unreadable', JSON.stringify(bad));
+    assert.ok(e.unreadable && /could not read the arguments/.test(e.unreadable), JSON.stringify(bad));
+  }
+  // The same arguments as a JSON string of an object are read normally.
+  const ok = zc.normalize(pre('mcp__srv__tool', '{"q":"x"}'));
+  assert.equal(ok.tool, 'mcp');
+  assert.equal(ok.unreadable, undefined);
 });

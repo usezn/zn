@@ -1,0 +1,219 @@
+'use strict';
+
+// The GnuPG home folder itself is protected like the files in it: archiving, copying or searching the whole folder
+// reads every private key. The gpg programs using their own home folder stay allowed. Values are fake.
+
+const { test, after } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const policy = require('../lib/hooks/policy');
+
+const made = [];
+after(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+});
+
+function fixture() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-gnupg-dir-'));
+  made.push(home);
+  fs.mkdirSync(path.join(home, '.gnupg', 'private-keys-v1.d'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'AppData', 'Roaming', 'gnupg'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'proj'), { recursive: true });
+  return { home, opts: { home, cwd: path.join(home, 'proj'), env: { HOME: home } } };
+}
+
+test('naming the GnuPG folder in a reading, copying or archiving command is refused', () => {
+  const { home, opts } = fixture();
+  const cmds = [
+    'tar czf out.tgz ~/.gnupg',
+    'tar czf out.tgz ~/.gnupg/',
+    'tar czf out.tgz $HOME/.gnupg',
+    'tar czf out.tgz ${HOME}/.gnupg/',
+    'cp -r ~/.gnupg backup',
+    'cp -r ~/.gnupg/ backup/',
+    'grep -r BEGIN ~/.gnupg',
+    'zip -r out.zip ~/.gnupg',
+    'rsync -a ~/.gnupg/ backup/',
+    'cp -r ~/AppData/Roaming/gnupg backup',
+    'cp -r $HOME/AppData/Roaming/gnupg/ backup',
+    'cp -r %APPDATA%/gnupg backup',
+    'cp -r %APPDATA%\\gnupg backup',
+    'cp -r $env:APPDATA\\gnupg backup',
+    'tar czf out.tgz ' + path.join(home, '.gnupg'),
+    'cd ~/.gnupg',
+    'ls ~/.gnupg',
+  ];
+  for (const c of cmds) assert.ok(policy.bashDenial(c, opts), 'should be refused: ' + c);
+});
+
+test('the GnuPG folder is refused as a path to read', () => {
+  const { home, opts } = fixture();
+  for (const p of ['~/.gnupg', '~/.gnupg/', path.join(home, '.gnupg'), '$HOME/.gnupg', '~/AppData/Roaming/gnupg', '%APPDATA%\\gnupg']) {
+    assert.ok(policy.readDenial(p, opts), 'read should be refused: ' + p);
+  }
+});
+
+test('the gpg programs using their own home folder stay allowed', () => {
+  const { opts } = fixture();
+  const allowed = [
+    'gpg --homedir ~/.gnupg --list-keys',
+    'gpg --homedir ~/.gnupg/ --list-secret-keys',
+    'gpg2 --homedir $HOME/.gnupg --armor --export user@example.com',
+    'gpgconf --homedir ~/.gnupg --list-dirs',
+    'gpg --list-keys',
+    'echo gnupg',
+    'tar czf out.tgz src',
+  ];
+  for (const c of allowed) assert.equal(policy.bashDenial(c, opts), null, 'should be allowed: ' + c);
+});
+
+test('exporting a GnuPG secret key is refused, with or without the GnuPG folder named', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg --export-secret-keys',
+    'gpg --armor --export-secret-keys user@example.com',
+    'gpg --export-secret-subkeys user@example.com > keys.asc',
+    'gpg2 --homedir ~/.gnupg --export-secret-keys user@example.com',
+    'gpg --homedir ~/.gnupg --export-secret-subkeys',
+    'gpg --export-secret-k user@example.com',
+    'gpg --export-se user@example.com',
+    'gpg --export-secret-keys=user@example.com',
+    '/usr/bin/gpg --export-secret-keys',
+    'gpgsm --export-secret-key-p12 0x12345678',
+    'gpg-connect-agent "EXPORT_KEY 0000" /bye',
+  ]) {
+    const d = policy.bashDenial(c, opts);
+    assert.ok(d, c);
+    assert.match(d, /GnuPG secret key/, c);
+  }
+});
+
+test('public key export and the keyring listing stay allowed', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg --export user@example.com',
+    'gpg --armor --export user@example.com',
+    'gpg --export-ssh-key user@example.com',
+    'gpg --homedir ~/.gnupg --list-secret-keys',
+    'gpg --export-options export-minimal --export user@example.com',
+    'echo --export-secret-keys',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('gpg-connect-agent that reads its commands from stdin or a file is refused', () => {
+  const { opts } = fixture();
+  for (const c of [
+    "echo 'EXPORT_KEY 0000' | gpg-connect-agent",
+    'printf "EXPORT_KEY 0000\\n/bye\\n" | /usr/bin/gpg-connect-agent',
+    'gpg-connect-agent < cmds.txt',
+    'gpg-connect-agent <cmds.txt',
+    "gpg-connect-agent <<< 'EXPORT_KEY 0000'",
+    'gpg-connect-agent --run cmds.txt /bye',
+    'gpg-connect-agent --run=cmds.txt',
+    'gpg-connect-agent -r cmds.txt',
+    "echo 'EXPORT_KEY 0000' | env gpg-connect-agent",
+    "echo 'EXPORT_KEY 0000' | timeout 5 gpg-connect-agent",
+    "echo 'EXPORT_KEY 0000' | sudo gpg-connect-agent",
+    "echo 'EXPORT_KEY 0000' |& gpg-connect-agent",
+    'gpg-connect-agent --ru cmds.txt',
+    'gpg-connect-agent -rcmds.txt',
+    'gpg-connect-agent -vr cmds.txt',
+    'gpg-connect-agent "$CMDS" /bye',
+    'gpg-connect-agent $(cat cmds.txt) /bye',
+    'gpg-connect-agent `cat cmds.txt` /bye',
+    'cat cmds.txt | xargs gpg-connect-agent',
+    'gpg-connect-agent.exe < cmds.txt',
+  ]) {
+    const d = policy.bashDenial(c, opts);
+    assert.ok(d, c);
+    assert.match(d, /gpg-connect-agent|GnuPG secret key/, c);
+  }
+});
+
+test('gpg-connect-agent with its commands as arguments stays allowed', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg-connect-agent reloadagent /bye',
+    'gpg-connect-agent updatestartuptty /bye > agent.log',
+    'gpgconf --kill gpg-agent',
+    'echo done; gpg-connect-agent /bye',
+    'gpg-connect-agent "GETINFO version" /bye',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('a gpg program that can start another program gets no exemption for the GnuPG folder', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg-agent --daemon tar czf out.tgz ~/.gnupg',
+    'gpg-connect-agent --exec tar czf out.tgz ~/.gnupg',
+    'gpg-connect-agent --homedir ~/.gnupg /bye',
+    "gpg --photo-viewer 'tar czf out.tgz %i' --homedir ~/.gnupg --list-keys",
+    'gpg --ph cat --homedir ~/.gnupg --list-keys',
+    'gpg --exec-path /tmp/x --homedir ~/.gnupg --list-keys',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of ['gpg --homedir ~/.gnupg --list-keys', 'gpgconf --homedir ~/.gnupg --list-dirs', 'gpgsm --homedir ~/.gnupg --list-keys']) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('gpg-connect-agent control commands other than /bye and /echo are refused; its option check covers only its own options', () => {
+  const { opts } = fixture();
+  for (const c of [
+    "gpg-connect-agent '/run cmds.txt' /bye",
+    'gpg-connect-agent /run /bye',
+    "gpg-connect-agent '/definqfile KEY keys.txt' /bye",
+    "gpg-connect-agent '/sendfd keys.txt r' /bye",
+    '/usr/bin/gpg-connect-agent "/RUN cmds.txt" /bye',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of [
+    "gpg-connect-agent '/echo hello' /bye",
+    '/usr/bin/gpg-connect-agent reloadagent /bye',
+    'ls -r && gpg-connect-agent /bye',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('the GnuPG folder exemption needs read-only options spelled out in full', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg --agent-program ./x --homedir ~/.gnupg --list-keys',
+    'gpgsm --dirmngr-program ./x --homedir ~/.gnupg --list-keys',
+    'gpg --keyboxd-program ./x --homedir ~/.gnupg --list-keys',
+    'gpg --list-k --homedir ~/.gnupg',
+    'gpg --homedir ~/.gnupg --import keys.asc',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of [
+    'gpg --homedir ~/.gnupg --list-secret-keys --with-colons',
+    'gpg --homedir=~/.gnupg --fingerprint',
+    'gpg2 --homedir ~/.gnupg -k',
+    'gpgv --homedir ~/.gnupg --verify file.sig file',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('gpg-connect-agent hidden input is refused when the program name is quoted or escaped', () => {
+  const { opts } = fixture();
+  for (const c of [
+    "echo 'EXPORT_KEY 0000' | gpg-connect-\"agent\"",
+    "echo 'EXPORT_KEY 0000' | 'gpg-connect-agent'",
+    'gpg-connect-agen\\t < cmds.txt',
+    '"gpg-connect-agent" <<< \'EXPORT_KEY 0000\'',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+});

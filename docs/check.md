@@ -28,7 +28,16 @@ zn-gate makes a temporary folder with two files: a `.env` file that holds a fake
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
 - **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
-- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds, to read the version (see [Agent versions](#agent-versions)), with no tokens, with updates and update notices turned off, and stopped after 2 seconds; no agent session is started. The folder is deleted at the end.
+- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds, to read the version (see [Agent versions](#agent-versions)), with no tokens, with updates and update notices turned off, and stopped after 2 seconds; no agent session is started. The folder is deleted at the end. The one thing that stays is described in [What check writes to the decision log](#what-check-writes-to-the-decision-log).
+
+## What check writes to the decision log
+
+The test requests go through the real zn hooks, so they are recorded like any other decision. For each agent whose hook runs, the blocked request for the fake `.env` file is added to your local decision log (`evidence.jsonl` in the `.zn` folder, or in the folder `ZN_HOME` names). The request for the ordinary file is allowed and is not logged. There are eight supported agents, so one `zn-gate check` can add up to eight records, one per agent whose hook ran. They show the agent, the `read` tool and the verdict `block`.
+
+- **They stay on your machine.** Like the rest of the log, they are never sent anywhere.
+- **They look like real blocks.** zn does not mark them as test records, and the preview in the record holds only the event and the tool, not the folder or the fake key. You can tell them apart by their time: they are written within a few seconds of each other, at the moment you ran the check.
+- **`zn-gate why` can explain one.** With no id, `zn-gate why` explains the last block in the log. If you ran the check after your last real block, that is one of these test records.
+- **Nothing else is added.** No setting changes, and the fake key is not stored.
 
 ## What you will see
 

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.16"
+COMMAND_RULES_VERSION = "2026-11-16.24"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -254,6 +254,11 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
             if cur is None:
                 cur = []
             i += 1
+            continue
+        if ch == "#" and cur is None:
+            # An unquoted word that starts with # opens a comment: the rest of the line is not part of the command.
+            j = s.find("\n", i)
+            i = n if j < 0 else j
             continue
         if ch == "`" or (ch == "$" and i + 1 < n and s[i + 1] == "("):
             if cur is None:

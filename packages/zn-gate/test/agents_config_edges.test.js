@@ -463,3 +463,33 @@ test('opencode: a project plugin calls zn on PATH; a user plugin names this node
 test('opencode: an unknown event type is not a hook event', () => {
   assert.equal(opencode.normalize({ type: 'nope', args: {} }).event, null);
 });
+
+// A `claude` that never answers: a real shell script that sleeps, so the timeout is what ends it (POSIX only).
+const posixOnly = { skip: process.platform === 'win32' && 'POSIX shell script' };
+function sleepingClaude(home) {
+  const bin = path.join(home, 'slow-bin', 'claude');
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  fs.writeFileSync(bin, '#!/bin/sh\nexec /bin/sleep 30\n');
+  fs.chmodSync(bin, 0o755);
+  return bin;
+}
+
+test('claude-code: install stops a claude mcp add-json that does not answer, and says what to do', posixOnly, (t) => {
+  const h = fakeHome(t);
+  const started = Date.now();
+  const r = claude.install(opts(h, { mcp: true, claudeBin: sleepingClaude(h), mcpTimeoutMs: 300 }));
+  assert.ok(Date.now() - started < 10000);
+  assert.equal(r.mcp, undefined);
+  assert.ok(r.warnings.some((w) => /`claude mcp add-json` did not answer within 0\.3 seconds/.test(w)
+    && /claude mcp list/.test(w) && /claude mcp add --scope user secrets/.test(w)));
+});
+
+test('claude-code: uninstall stops a claude mcp remove that does not answer, and says what to do', posixOnly, (t) => {
+  const h = fakeHome(t);
+  write(path.join(h, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SERVER } }));
+  const started = Date.now();
+  const r = claude.uninstall(opts(h, { mcp: true, claudeBin: sleepingClaude(h), mcpTimeoutMs: 300 }));
+  assert.ok(Date.now() - started < 10000);
+  assert.ok(r.warnings.some((w) => /`claude mcp remove` did not answer within 0\.3 seconds/.test(w)
+    && /claude mcp remove --scope user secrets/.test(w)));
+});
