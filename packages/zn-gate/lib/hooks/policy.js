@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.10';
+const POLICY_RULES_VERSION = '2026-11-16.13';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3842,6 +3842,12 @@ function egressCollectText(raw, text, opts, depth, found) {
     // Literal variables assigned earlier on the line are filled in (X=curl; $X ...). A variable an assignment may not have
     // changed (after &&, in an if, ...) holds each of its values: every reading is looked at.
     const readings = shellVars.applyVariants(vars, scan.words.map((w) => w.text), op, 0);
+    // Past the variable limits (too many possible values or combinations) the readings are incomplete: refuse rather
+    // than check only some of them (the same marker as a command too nested to check).
+    if (vars.overflow) {
+      found.push({ urls: [], parts: [{ where: 'code', text: 'a command whose variables have too many possible values for zn to check' }] });
+      return;
+    }
     for (const filled of readings) {
       let words = scan.words;
       if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
