@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.2';
+const POLICY_RULES_VERSION = '2026-11-16.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -103,12 +103,16 @@ const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connec
 // prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
 const GPG_SECRET_EXPORT_RE = /^--export-se/i;
 const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
-// gpg-connect-agent also reads its commands from stdin (a pipe, <, << or <<<) and from a file (--run FILE, -r FILE).
-// zn cannot see those commands, so an EXPORT_KEY there could not be refused: such a call is refused as a whole.
-const GPG_AGENT_HIDDEN_INPUT_RE = /(?<!\|)\|(?!\|)\s*(?:\S*[\\/])?gpg-connect-agent(?:\.exe)?(?![\w.-])|(?:^|[\s;&|(\\/])gpg-connect-agent(?:\.exe)?(?![\w.-])[^|;&\n]*?(?:<|(?:^|\s)--run(?:[=\s]|$)|(?:^|\s)-r(?:\s|$))/i;
-const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent here reads its commands from stdin or a file, which zn cannot check for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
+// gpg-connect-agent also reads its commands from stdin and from a file (--run FILE, -r FILE), and a shell can build
+// them from a variable or a command substitution. zn cannot see such commands, so an EXPORT_KEY there could not be
+// refused. Fail closed: a command line that runs gpg-connect-agent is allowed only when it has no pipe, no input
+// redirection, no $ or backtick expansion, and no option of gpg-connect-agent that starts with -r or --r (GnuPG
+// accepts unique prefixes of long options, and -rFILE attaches the file to the option).
+const GPG_AGENT_WORD_RE = /(?:^|[^\w.-])gpg-connect-agent(?:\.exe)?(?![\w.-])/i;
+const GPG_AGENT_HIDDEN_INPUT_RE = /[|<`$]|(?:^|\s)-(?:-r|r|[A-Za-z]*r)\S*/;
+const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent is allowed only with its commands written out as arguments: this command line could feed it commands zn cannot check (from stdin, a file, a variable or a command substitution) for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
 function gpgSecretExportDenial(words, text) {
-  if (typeof text === 'string' && /gpg-connect-agent/i.test(text) && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+  if (typeof text === 'string' && GPG_AGENT_WORD_RE.test(text) && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
   for (const w of words) {
     const prog = programName(w.head || '');
     if (!GPG_PROGRAMS.has(prog)) continue;

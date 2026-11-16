@@ -116,6 +116,18 @@ test('gpg-connect-agent that reads its commands from stdin or a file is refused'
     'gpg-connect-agent --run cmds.txt /bye',
     'gpg-connect-agent --run=cmds.txt',
     'gpg-connect-agent -r cmds.txt',
+    "echo 'EXPORT_KEY 0000' | env gpg-connect-agent",
+    "echo 'EXPORT_KEY 0000' | timeout 5 gpg-connect-agent",
+    "echo 'EXPORT_KEY 0000' | sudo gpg-connect-agent",
+    "echo 'EXPORT_KEY 0000' |& gpg-connect-agent",
+    'gpg-connect-agent --ru cmds.txt',
+    'gpg-connect-agent -rcmds.txt',
+    'gpg-connect-agent -vr cmds.txt',
+    'gpg-connect-agent "$CMDS" /bye',
+    'gpg-connect-agent $(cat cmds.txt) /bye',
+    'gpg-connect-agent `cat cmds.txt` /bye',
+    'cat cmds.txt | xargs gpg-connect-agent',
+    'gpg-connect-agent.exe < cmds.txt',
   ]) {
     const d = policy.bashDenial(c, opts);
     assert.ok(d, c);
@@ -130,7 +142,7 @@ test('gpg-connect-agent with its commands as arguments stays allowed', () => {
     'gpg-connect-agent updatestartuptty /bye > agent.log',
     'gpgconf --kill gpg-agent',
     'echo done; gpg-connect-agent /bye',
-    'pgrep gpg-agent || gpg-connect-agent /bye',
+    'gpg-connect-agent "GETINFO version" /bye',
   ]) {
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
