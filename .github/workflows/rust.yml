@@ -56,7 +56,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,7 +82,7 @@ jobs:
       - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.scope.outputs.rust == 'true'
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
@@ -139,7 +139,7 @@ jobs:
       - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.scope.outputs.rust == 'true'
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
@@ -163,7 +163,7 @@ jobs:
       rust: ${{ steps.scope.outputs.rust }}
     steps:
       - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -188,7 +188,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -209,7 +209,7 @@ jobs:
       - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.scope.outputs.rust == 'true'
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
@@ -235,7 +235,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -247,13 +247,13 @@ jobs:
           components: llvm-tools-preview
       - name: Install protoc 29.3 (checksum verified)
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
           lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           # Restores the cache of main for this job and saves nothing: the copy is over 1 GB of the 10 GB limit.
           save-if: false
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-llvm-cov
       - name: Run the tests with a coverage report
