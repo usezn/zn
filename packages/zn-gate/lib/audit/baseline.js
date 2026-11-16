@@ -9,6 +9,8 @@
 //   baselinePath(home, root)       -> where the baseline of this project is kept (the real folder, not the way it was spelled)
 //   saveBaseline / loadBaseline    -> write it (0600) / read it (null when missing or damaged)
 //
+// Plugin code of OpenCode and the agent and rule files of Amazon Q are one entry each, `<file>#file`, hashed by content.
+//
 // A file that is there but cannot be read (too large, not valid, a link that leaves the project or is broken) is one entry of its own,
 // `<file>#unreadable`, hashed from what can still be told of it, so turning a file into one of those is a change, not a removal.
 
@@ -19,6 +21,7 @@ const { parseJsonc, parseToml } = require('./parse');
 
 const MAX_FILE = 1024 * 1024;
 const MAX_HASHED = 8 * 1024 * 1024;
+const MAX_LISTED = 500;
 const LIFECYCLE = ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'prepack', 'postpack'];
 const SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.json', '.codex/config.json', '.cursor/hooks.json', '.gemini/settings.json'];
 const MCP_FILES = [
@@ -27,6 +30,14 @@ const MCP_FILES = [
 ];
 const SCALAR_SETTINGS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'statusLine', 'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disableAllHooks', 'otelHeadersHelper'];
 const ENV_RE = /^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI)_.*(?:URL|ENDPOINT|HOST)|(?:HTTPS?|ALL)_PROXY|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+|CLAUDE_CODE_SHELL_PREFIX|PERL5OPT|BASH_ENV|ENV|PATH|PYTHONPATH|GIT_SSH_COMMAND|SSL_CERT_FILE|REQUESTS_CA_BUNDLE)$/i;
+// Code and text an agent loads from the project as it is: plugin code (OpenCode runs it) and the agent definitions and rules of Amazon Q.
+// [folder, picks a file name, how many folder levels below it are searched]. Amazon Q's `mcp.json` is read as MCP servers above, not here.
+const WHOLE_FILES = [
+  ['.opencode/plugin', (n) => n.endsWith('.js'), 0], ['.opencode/plugins', (n) => n.endsWith('.js'), 0],
+  ['.amazonq/cli-agents', (n) => n.endsWith('.json'), 0], ['.amazonq/agents', (n) => n.endsWith('.json'), 0],
+  ['.amazonq/rules', (n) => n.endsWith('.md'), 3],
+];
+const WHOLE_SINGLE = ['.amazonq/default.mcp.json'];
 const DEVCONTAINER_FILES = ['.devcontainer/devcontainer.json', '.devcontainer.json'];
 const DEVCONTAINER_KEYS = ['initializeCommand', 'onCreateCommand', 'updateContentCommand', 'postCreateCommand', 'postStartCommand', 'postAttachCommand'];
 
@@ -43,8 +54,8 @@ function insideOf(realRoot, real) {
   return r === '' || (r !== '..' && !r.startsWith('..' + path.sep) && !path.isAbsolute(r));
 }
 
-/** { kind: 'missing' } | { kind: 'ok', value } | { kind: 'bad', hash }. A link is followed when it stays inside the project. */
-function readConfig(root, realRoot, rel) {
+/** { kind: 'missing' } | { kind: 'bad', hash } | { kind: 'raw', size, buf, digest }. A link is followed when it stays inside the project. */
+function readRaw(root, realRoot, rel) {
   const file = path.join(root, rel);
   let lst;
   try { lst = fs.lstatSync(file); } catch (_) { return { kind: 'missing' }; }
@@ -70,13 +81,51 @@ function readConfig(root, realRoot, rel) {
   let buf;
   try { buf = st.size <= MAX_HASHED ? fs.readFileSync(target) : null; } catch (_) { return { kind: 'bad', hash: sha(['unreadable']) }; }
   const digest = buf ? crypto.createHash('sha256').update(buf).digest('hex') : '';
-  if (st.size > MAX_FILE) return { kind: 'bad', hash: sha(['large', st.size, digest]) };
+  return { kind: 'raw', size: st.size, buf, digest };
+}
+
+/** { kind: 'missing' } | { kind: 'ok', value } | { kind: 'bad', hash }. */
+function readConfig(root, realRoot, rel) {
+  const r = readRaw(root, realRoot, rel);
+  if (r.kind !== 'raw') return r;
+  if (r.size > MAX_FILE) return { kind: 'bad', hash: sha(['large', r.size, r.digest]) };
   try {
-    const text = buf.toString('utf8');
+    const text = r.buf.toString('utf8');
     const v = rel.endsWith('.toml') ? parseToml(text).data : parseJsonc(text);
     if (v && typeof v === 'object' && !Array.isArray(v)) return { kind: 'ok', value: v };
   } catch (_) { /* below */ }
-  return { kind: 'bad', hash: sha(['invalid', digest]) };
+  return { kind: 'bad', hash: sha(['invalid', r.digest]) };
+}
+
+/** { kind: 'missing' } | { kind: 'ok', hash } | { kind: 'bad', hash }: a file taken as it is (code or text), hashed by its content. */
+function readWhole(root, realRoot, rel) {
+  const r = readRaw(root, realRoot, rel);
+  if (r.kind !== 'raw') return r;
+  if (r.size > MAX_FILE) return { kind: 'bad', hash: sha(['large', r.size, r.digest]) };
+  return { kind: 'ok', hash: r.digest };
+}
+
+/**
+ * The files of a folder that an agent loads as they are, as project-relative names in a fixed order. A folder that is a link leaving the
+ * project is not listed (it is one entry of its own); a link to a file is left to readRaw. `pick` chooses the files; `deep` goes into folders.
+ */
+function listFiles(root, realRoot, rel, pick, deep, out, bad) {
+  const dir = path.join(root, rel);
+  let lst;
+  try { lst = fs.lstatSync(dir); } catch (_) { return; }
+  if (lst.isSymbolicLink()) {
+    let real;
+    try { real = fs.realpathSync.native(dir); } catch (_) { bad(rel, sha(['broken-link'])); return; }
+    if (!insideOf(realRoot, real)) { bad(rel, sha(['link-outside-folder'])); return; }
+  }
+  let list;
+  try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+  list.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const e of list) {
+    const r = rel + '/' + e.name;
+    if (e.isDirectory()) { if (deep > 0) listFiles(root, realRoot, r, pick, deep - 1, out, bad); continue; }
+    if (pick(e.name) && out.length < MAX_LISTED) out.push(r);
+  }
 }
 
 // An object with its keys sorted, so reordering is not a change; arrays keep their order (arguments are ordered).
@@ -126,6 +175,13 @@ function extractSurface(root) {
   for (const rel of DEVCONTAINER_FILES) {
     const j = read(rel);
     if (j) for (const k of DEVCONTAINER_KEYS) if (j[k] !== undefined) out[rel + '#devcontainer:' + k] = sha(canon(j[k]));
+  }
+  const listed = [];
+  for (const [dir, pick, deep] of WHOLE_FILES) listFiles(root, realRoot, dir, pick, deep, listed, (rel, hash) => { out[rel + '#unreadable'] = hash; });
+  for (const rel of [...WHOLE_SINGLE, ...listed]) {
+    const c = readWhole(root, realRoot, rel);
+    if (c.kind === 'ok') out[rel + '#file'] = c.hash;
+    else if (c.kind === 'bad') out[rel + '#unreadable'] = c.hash;
   }
   const pkg = read('package.json');
   if (pkg && pkg.scripts && typeof pkg.scripts === 'object') for (const k of LIFECYCLE) if (typeof pkg.scripts[k] === 'string') out['package.json#script:' + k] = sha(pkg.scripts[k]);
