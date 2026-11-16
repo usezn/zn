@@ -56,7 +56,7 @@ A command that succeeds exits with `0`. The other codes depend on the command an
 |---|---|
 | `0` | Done, or nothing to report. |
 | `1` | The command ran and found a problem (findings, a check that failed, an error), or the command name is unknown. |
-| `2` | The command was used wrongly (an option it does not know, a missing value), or `analyze` blocked the text. |
+| `2` | The command was used wrongly (an option it does not know, an option that takes a value given as the last argument with no value, for example scan --format), or `analyze` blocked the text. |
 | `64` | Wrong usage, for the secrets commands (`secret`, `env`, `hooks`, `vault log`, `run`). |
 | `77` | zn refused on purpose, for example to print a secret value, or to run a command you have not allowed. |
 | `127` | `run` could not find the program you asked it to start. |
