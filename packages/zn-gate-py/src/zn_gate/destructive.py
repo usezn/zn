@@ -23,6 +23,7 @@ The Node.js and Python versions give the same answer on the shared test corpus
 
 from __future__ import annotations
 
+import itertools
 import re
 from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
@@ -87,31 +88,47 @@ _QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 _FORK_BOMB_RE = re.compile(r"(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)", _A)
 # The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
 # /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
-_SUBST_DL = r"(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*/)*(?:c\\?u\\?r\\?l|w\\?g\\?e\\?t)\b"
+# Up to three wrappers (sudo, doas, env, command, exec, nohup) with their option words may come before the downloader.
+_SUBST_DL = (
+    r"(?:(?:sudo|doas|env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*){0,3}"
+    r"\\?(?:[\w.~-]*/)*(?:c\\?u\\?r\\?l|w\\?g\\?e\\?t)\b"
+)
 _SUBST_SHELL = r"(?:[\w.~-]*/)*(?:ba|z|da|k)?sh"
+# An interpreter that runs a program given as a file, on stdin or as its code option: python3 <(curl URL),
+# python3 -c "$(curl URL)", node -e "$(curl URL)".
+_SUBST_INTERP = r"(?:[\w.~-]*/)*(?:python(?:[23](?:\.\d+)?)?|py|pypy3?|node(?:js)?|perl|ruby)"
+_SUBST_RUNNER = r"(?:" + _SUBST_SHELL + r"|" + _SUBST_INTERP + r")"
 _SHELL_RUNS_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:eval|" + _SUBST_SHELL + r"\s+(?:-\w+\s+)*-\w*c)\s+[\"']?(?:\$\(|`)\s*" + _SUBST_DL, _A
+    r"(?:^|[\s;&|(])(?:eval|" + _SUBST_SHELL + r"\s+(?:-\w+\s+)*-\w*c"
+    r"|" + _SUBST_INTERP + r"\s+(?:-\w+\s+)*?(?:-\w*[ceE]|-p|--eval|--print))"
+    r"\s+[\"']?(?:\$\(|`)\s*" + _SUBST_DL, _A
 )
 _SOURCE_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:source|\.|" + _SUBST_SHELL + r")\s+(?:-\w+\s+)*<\(\s*" + _SUBST_DL, _A
+    r"(?:^|[\s;&|(])(?:source|\.|" + _SUBST_RUNNER + r")\s+(?:-\w+\s+)*<\(\s*" + _SUBST_DL, _A
 )
-# A shell that reads its program from a substitution on stdin: bash < <(curl URL), sh <<< "$(curl URL)".
+# A shell or interpreter that reads its program from a substitution on stdin: bash < <(curl URL), sh <<< "$(curl URL)".
 _SHELL_STDIN_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])" + _SUBST_SHELL + r"\s+(?:-\S*\s+)*(?:<\s*<\(|<<<\s*[\"']?(?:\$\(|`))\s*" + _SUBST_DL, _A
+    r"(?:^|[\s;&|(])" + _SUBST_RUNNER + r"\s+(?:-\S*\s+)*(?:<\s*<\(|<<<\s*[\"']?(?:\$\(|`))\s*" + _SUBST_DL, _A
 )
 # After a pipe the next command may follow a line break or be a group: curl URL |<nl>sh, curl URL | (sh).
 _PIPE_LEAD_RE = re.compile(r"(?:\s|\()+", _A)
+# The executor may be called with the call or dot-source operator, and named in quotes: | & iex, | . 'iex', & "irm" URL.
+_PS_EXEC = r"(?:[&.]\s*)?['\"]?(?:iex|invoke-expression)\b"
 _PS_PIPE_RE = re.compile(
-    r"\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*(?:iex|invoke-expression)\b"
-    r"|\bdownloadstring\([^)]{0,300}\)\s*\|\s*(?:iex|invoke-expression)\b",
+    r"\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*" + _PS_EXEC
+    + r"|\bdownloadstring\([^)]{0,300}\)\s*\|\s*" + _PS_EXEC,
     _AI,
 )
 _PS_CALL_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:iex|invoke-expression)\b[\s($]*(?:\(\s*)*(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b",
+    r"(?:^|[\s;&|({])(?:iex|invoke-expression)\b[\s($]*(?:[&.]\s*)?['\"]?"
+    r"(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b",
     _AI,
 )
 # PowerShell escapes a character with a backtick (i`wr, Invoke-`Expression). Only a backtick inside a word counts: in
 # POSIX shells a backtick starts a command substitution, so the text is never stripped for the other patterns.
+_PS_QUOTED_NAME_RE = re.compile(
+    r"([&.]\s*)(['\"])(iex|invoke-expression|iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\2", _AI
+)
 _PS_TICK_RE = re.compile(r"(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])", _A)
 _PS_LINE_TICK_RE = re.compile(r"`\r?\n")
 _PS_NEXT_PIPE_RE = re.compile(r"\r?\n[ \t]*\|")
@@ -192,11 +209,25 @@ _ANSI_C_SIMPLE = {
 }
 
 _ESCAPABLE = set("\\\"'`$ \t;&|()<>\n#*?[]{}~")
+
+# The drive of the system and of the home folder, as cmd.exe and PowerShell name them.
+_DRIVE_VARS = r"%(?:systemdrive|homedrive)%|\$env:(?:systemdrive|homedrive)|\$\{env:(?:systemdrive|homedrive)\}"
+_DRIVE_ROOT_WIN_RE = re.compile(r"(^|[\s\"'=:\\])([A-Za-z]:|" + _DRIVE_VARS + r")\\(?=[\s\"');&|}]|\Z)", _AI)
+_DRIVE_VAR_RE = re.compile(r"^(?:" + _DRIVE_VARS + r")(?=/|\Z)", _AI)
+_WINDIR_VAR_RE = re.compile(r"^(?:%(?:windir|systemroot)%|\$env:(?:windir|systemroot)|\$\{env:(?:windir|systemroot)\})(?=/|\Z)", _AI)
 _DQ_ESCAPABLE = set('"\\$`\n')
 
 
+_COMSPEC_WORDS = frozenset(("%comspec%", "$env:comspec", "${env:comspec}"))
+
+
 def _program_name(text: str) -> str:
-    name = re.sub(r"^\\+", "", str(text))
+    # cmd.exe runs @rd like rd (the @ only hides the echo); PowerShell reads Rem`ove-Item as Remove-Item.
+    name = re.sub(r"^[\\@]+", "", str(text))
+    if "`" in name:
+        name = re.sub(r"`(?=[A-Za-z-])", "", name)
+    if name.lower() in _COMSPEC_WORDS:
+        return "cmd"
     name = re.split(r"[\\/]", name)[-1].lower()
     return re.sub(r"\.exe\Z", "", name)
 
@@ -321,7 +352,13 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
     rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
-    rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)
+    if posix:
+        rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)
+    else:
+        # The Windows reading: cmd.exe and PowerShell have no backslash escapes, so C:\ (or %SystemDrive%\, the long
+        # path form \\?\C:\, -Path:C:\, D=C:\) also ends before a quote, a ) ; & | or }. The POSIX reading keeps the
+        # shell's own escapes, so text that only bash would read differently is still checked there.
+        rest = _DRIVE_ROOT_WIN_RE.sub(r"\1\2/", rest)
     out = _Segs()
     out.raws = []
     out.opens = []
@@ -367,6 +404,9 @@ _VAR_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)\Z")
 _VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _VAR_SOLE_REF_RE = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))\Z")
 _DECLARERS = frozenset(("export", "declare", "typeset", "readonly", "local"))
+_PS_ASSIGN_RE = re.compile(r"^\$\{?((?:env:)?[A-Za-z_][A-Za-z0-9_]*)\}?(=([\s\S]*))?\Z", _AI)
+_PS_REF_RE = re.compile(r"\$(?:\{((?:env:)?[A-Za-z_][A-Za-z0-9_]*)\}|((?:env:)?[A-Za-z_][A-Za-z0-9_]*))", _AI)
+_CMD_REF_RE = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%|!([A-Za-z_][A-Za-z0-9_]*)!", _A)
 
 
 def _join_backticks(words: List[str]) -> List[str]:
@@ -388,38 +428,80 @@ def _join_backticks(words: List[str]) -> List[str]:
 
 
 class _Vars:
-    __slots__ = ("vars", "assignments", "expanded", "overflow")
+    __slots__ = ("vars", "ps", "cmd", "assignments", "expanded", "overflow")
 
     def __init__(self) -> None:
         self.vars: Dict[str, str] = {}
+        # PowerShell ($D = 'C:\', $env:D = ...) and cmd.exe (set D=C:\) variables; both ignore case.
+        self.ps: Dict[str, str] = {}
+        self.cmd: Dict[str, str] = {}
         self.assignments = 0
         self.expanded = 0
         self.overflow = False
 
+    def _value(self, v: Optional[str], whole: str) -> str:
+        if v is None:
+            return whole
+        self.expanded += len(v)
+        return whole if self.expanded > _MAX_EXPANDED else v
+
     def substitute(self, word: str) -> str:
-        if not self.vars or "$" not in word:
-            return word
+        if self.vars and "$" in word:
+            word = _VAR_REF_RE.sub(lambda m: self._value(self.vars.get(m.group(1) or m.group(2)), m.group(0)), word)
+        if self.ps and "$" in word:
+            word = _PS_REF_RE.sub(lambda m: self._value(self.ps.get((m.group(1) or m.group(2)).lower()), m.group(0)), word)
+        if self.cmd and ("%" in word or "!" in word):
+            word = _CMD_REF_RE.sub(lambda m: self._value(self.cmd.get((m.group(1) or m.group(2)).lower()), m.group(0)), word)
+        return word
 
-        def fill(m: "re.Match[str]") -> str:
-            v = self.vars.get(m.group(1) or m.group(2))
-            if v is None:
-                return m.group(0)
-            self.expanded += len(v)
-            return m.group(0) if self.expanded > _MAX_EXPANDED else v
+    def _record(self, table: Dict[str, str], name: str, value: str) -> None:
+        self.assignments += 1
+        if self.assignments > _MAX_ASSIGNMENTS:
+            self.overflow = True
+        elif len(value) > _MAX_VALUE:
+            table.pop(name, None)
+        else:
+            table[name] = value
 
-        return _VAR_REF_RE.sub(fill, word)
+    def _record_windows(self, out: List[str]) -> None:
+        """A PowerShell assignment ($D = 'C:\\', $D='C:\\', $env:D = ...) or a cmd.exe set D=C:\\ line. Recorded even
+        before a & (in cmd.exe it only separates commands), which can only add blocks."""
+        if not out:
+            return
+        if out[0].startswith("$"):
+            m = _PS_ASSIGN_RE.match(out[0])
+            if not m:
+                return
+            if m.group(2) is None and len(out) == 3 and out[1] == "=":
+                value: Optional[str] = out[2]
+            elif m.group(2) is not None and m.group(3) and len(out) == 1:
+                value = m.group(3)
+            elif m.group(2) is not None and not m.group(3) and len(out) == 2:
+                value = out[1]
+            else:
+                value = None
+            if value is not None:
+                self._record(self.ps, m.group(1).lower(), value)
+        elif out[0].lower() == "set" and len(out) == 2:
+            m = _VAR_ASSIGN_RE.match(out[1])
+            if m:
+                self._record(self.cmd, m.group(1).lower(), m.group(2))
 
     def apply(self, words: List[str], sep: Optional[str]) -> List[str]:
         """The words of one simple command with the known variables filled in, and any assignment it makes recorded.
         An assignment in a pipe or a background command runs in a subshell and is not recorded."""
         out = words
-        if self.vars:
+        if self.vars or self.ps or self.cmd:
             out = [self.substitute(w) for w in words]
             # A command word that is just a variable ($X url, | $S) is split on blanks, as an unquoted expansion is.
             if words:
                 m = _VAR_SOLE_REF_RE.match(words[0])
                 if m and (m.group(1) or m.group(2)) in self.vars:
                     out = out[0].split() + out[1:]
+        if sep not in ("|", "|&"):
+            self._record_windows(out)
+            if self.overflow:
+                return out
         if sep in ("|", "|&", "&"):
             return out
         out = _join_backticks(out)
@@ -534,6 +616,8 @@ def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, 
 
 # Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
+# Words of cmd.exe (call rd ...) and PowerShell (try { ... }) that only run the command after them.
+_RUN_NEXT_WORDS = frozenset(("call", "try"))
 
 
 def _backtick_code(text: str) -> str:
@@ -611,7 +695,7 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
         # commands, called or not) and coproc [NAME] { ...; } / coproc CMD (the command runs as a background job).
         while i < len(args):
             w = args[i]
-            if _ASSIGN_RE.match(w) or w in _SHELL_KEYWORDS:
+            if _ASSIGN_RE.match(w) or w in _SHELL_KEYWORDS or w.lower() in _RUN_NEXT_WORDS:
                 i += 1
             elif w == "function" and i + 1 < len(args):
                 i += 2
@@ -627,8 +711,16 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
         if guard > 32:
             overflow = name in _WRAPPER_CAP_NAMES or name in _WRAPPERS
             break
-        if first < 0 and (name in ("sudo", "doas", "env") or name in _WRAPPERS):
+        if first < 0 and (name in ("sudo", "doas", "env", "start") or name in _WRAPPERS):
             first = i
+        # cmd.exe's start [title] [/options] command: the options and an empty title are skipped. A title or an option
+        # value may also be taken for the program, so the chain is unsure and the later words are read as well.
+        if name == "start":
+            i += 1
+            while i < len(args) and (args[i] == "" or re.match(r"^/[A-Za-z]+\Z", args[i])):
+                i += 2 if args[i].lower() in ("/d", "/affinity", "/node") else 1
+            chain["unsure"] = True
+            continue
         if name in ("sudo", "doas"):
             i += 1
             while i < len(args) and args[i].startswith("-"):
@@ -749,6 +841,10 @@ def _dangerous_path(word: str) -> str:
     t = re.sub(r"/{2,}", "/", str(word).replace("\\", "/"))
     if not t:
         return ""
+    # \\?\C:\ and \\.\C:\ are the long-path spellings of C:\; %SystemDrive% and $env:SystemDrive name the drive.
+    t = re.sub(r"^/[?.]/(?=[A-Za-z]:)", "", t)
+    t = _DRIVE_VAR_RE.sub("C:", t)
+    t = _WINDIR_VAR_RE.sub("C:/Windows", t)
     t = _resolve_dots(t)
     for _ in range(4):
         s = re.sub(r"/(?:\*|\.\*|\.|\{\*,\.\*\})?\Z", "", t, count=1)
@@ -777,6 +873,16 @@ def _dangerous_path(word: str) -> str:
 
 
 def _recursive_flag(w: str, head: str) -> bool:
+    # PowerShell: a backtick inside a parameter name is dropped (-Rec`urse), and -Recurse:$true is -Recurse.
+    if "`" in w:
+        w = w.replace("`", "")
+    ps = re.match(r"^(-[A-Za-z]+):(\S*)\Z", w)
+    if ps:
+        if ps.group(2).lower() in ("$false", "false", "0", "$null"):
+            return False
+        w = ps.group(1)
+    if head in _CMD_HEADS and re.match(r"^(?:/[A-Za-z](?::[-A-Za-z]*)?)*/s(?:/[A-Za-z](?::[-A-Za-z]*)?)*\Z", w, re.I):
+        return True
     if re.match(r"^-[fiIrRdvx]*[rR][fiIrRdvx]*\Z", w) or w == "--recursive":
         return True
     if re.match(r"^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\Z", w, re.I):
@@ -785,7 +891,12 @@ def _recursive_flag(w: str, head: str) -> bool:
 
 
 def _is_cmd_flag(w: str, head: str) -> bool:
-    return head in _CMD_HEADS and re.match(r"^/[sqfaA]\Z", w) is not None
+    # cmd.exe options may be joined (/s/q) and written in either case (/S /Q); del takes /A:attributes.
+    return head in _CMD_HEADS and re.match(r"^(?:/[sqfa](?::?[-A-Za-z]*)?)+\Z", w, re.I) is not None
+
+
+# PowerShell's -Path:C:\ and -LiteralPath:C:\ give the path in the same word as the parameter.
+_PS_PATH_PARAM_RE = re.compile(r"^-(?:path|literalpath|lp|pspath):(.+)\Z", _AI | re.S)
 
 
 def _operands(args: List[str], head: str) -> List[str]:
@@ -796,6 +907,9 @@ def _operands(args: List[str], head: str) -> List[str]:
             rest = True
             continue
         if not rest and (w.startswith("-") or _is_cmd_flag(w, head)):
+            m = _PS_PATH_PARAM_RE.match(w) if head in _RM_HEADS else None
+            if m:
+                out.append(m.group(1))
             continue
         out.append(w)
     return out
@@ -1069,7 +1183,8 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
 def _head_is_read(name: str) -> bool:
     """Whether the rules of _check_head read a command with this program name as its head."""
     return (name in _RM_HEADS or bool(_DISK_TOOLS.match(name)) or name in _SHELLS or name in _POWERSHELLS
-            or name in ("su", "eval", "cmd", "find", "chmod", "chown", "chgrp", "dd") or bool(_interpreter_kind(name)))
+            or name in ("su", "eval", "iex", "invoke-expression", "cmd", "find", "chmod", "chown", "chgrp", "dd")
+            or bool(_interpreter_kind(name)))
 
 
 def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]:
@@ -1089,6 +1204,27 @@ def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]
     return None
 
 
+_PS_VALUE_OPTS = frozenset((
+    "-executionpolicy", "-ep", "-ex", "-windowstyle", "-w", "-win", "-inputformat", "-if", "-outputformat", "-of", "-o",
+    "-configurationname", "-workingdirectory", "-wd", "-settingsfile", "-version", "-v", "-psconsolefile",
+    "-custompipename", "-encodedarguments", "-ea",
+))
+
+
+def _ps_positional_code(rest: List[str]) -> Optional[str]:
+    """powershell Remove-Item ...: Windows PowerShell runs the words after its options as a command when no -Command,
+    -File or -EncodedCommand is given. A first word that names a .ps1 file is a script, not code."""
+    j = 0
+    while j < len(rest) and rest[j].startswith("-"):
+        opt = rest[j].lower()
+        if opt in ("-file", "-f", "-encodedcommand", "-enc", "-ec", "-e"):
+            return None
+        j += 2 if opt in _PS_VALUE_OPTS else 1
+    if j >= len(rest) or rest[j].lower().endswith(".ps1"):
+        return None
+    return " ".join(rest[j:])
+
+
 def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
     """The rules for one simple command whose head is args[0]."""
     head = _program_name(args[0])
@@ -1099,12 +1235,14 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
         k = next((j for j, w in enumerate(rest) if re.match(r"^-[A-Za-z]*c[A-Za-z]*\Z", w)), -1)
         if k >= 0 and k + 1 < len(rest):
             code = rest[k + 1]
-    elif head == "eval":
+    elif head in ("eval", "iex", "invoke-expression"):
         code = " ".join(rest)
     elif head in _POWERSHELLS:
         k = next((j for j, w in enumerate(rest) if re.match(r"^-c(?:ommand)?\Z", w, re.I)), -1)
         if k >= 0:
             code = " ".join(rest[k + 1:])
+        else:
+            code = _ps_positional_code(rest)
     elif head == "cmd":
         k = next((j for j, w in enumerate(rest) if re.match(r"^/[ck]\Z", w, re.I)), -1)
         if k >= 0:
@@ -1288,14 +1426,50 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
     return a[j:] if j > 0 else a
 
 
-def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
+def _split_glued_redirects(words: List[str]) -> List[str]:
+    """A redirect written against the word before it (curl URL>> ~/.bashrc, curl URL>~/.bashrc) is a word of its own:
+    the shell ends a word at >. A word of digits only before > is a file descriptor (2>), so it stays as it is."""
+    if not any(">" in w for w in words):
+        return words
+    out: List[str] = []
+    for w in words:
+        i = w.find(">")
+        if i > 0 and not w[:i].isdigit() and w[0] not in "<>":
+            out.append(w[:i])
+            out.append(w[i:])
+        else:
+            out.append(w)
+    return out
+
+
+def _pipe_head(words: List[str]) -> Tuple[List[str], List[str], bool, List[str]]:
+    """The words of a pipeline command from its program on, the program names it may be (brace lists), whether there
+    are too many of them, and its env -C / sudo -D folders. env -S 'curl URL' and eval curl URL run the words they are given."""
+    a, d, _ovf, spl, unsure, _all, _tail = _unwrap_dir(_strip_redirects(words))
+    if spl:
+        a = " ".join(spl).split() + a
+    if a and _program_name(a[0]) == "eval":
+        a = " ".join(a[1:]).split()
+    a = _pipe_args(a, unsure)
+    alts = _brace_alts(a[0]) if a else [""]
+    names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
+    return a, names, alts is None, d
+
+
+def _runs_download(words: List[str]) -> bool:
+    _a, names, overflow, _d = _pipe_head(words)
+    return overflow or any(n in _DOWNLOADERS for n in names)
+
+
+def _check_pipeline(
+    pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None, fds: Optional[Dict[str, str]] = None
+) -> Optional[str]:
+    """fds holds the files that exec opened earlier on the line (exec 3>> ~/.bashrc), by descriptor."""
+    pipe = [(_split_glued_redirects(w), s) for w, s in pipe]
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf, _spl, unsure, _all, _tail = _unwrap_dir(_strip_redirects(words))
-        a = _pipe_args(a, unsure)
-        alts = _brace_alts(a[0]) if a else [""]
-        names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
-        heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
+        a, names, overflow, d = _pipe_head(words)
+        heads.append((a, names[0], names, overflow, _segment_dir(known, d)))
     if any(h[4] is _CWD_OVERFLOW for h in heads):
         return _OVERFLOW
     first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
@@ -1320,8 +1494,12 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
             for i, w in enumerate(words):
                 prev = words[i - 1] if i > 0 else ""
                 target: Optional[str] = None
+                dup = re.match(r"^\d*>>?_(\d+)\Z", w, _A)
                 if re.match(r"^\d*>>?\|?\Z", prev, _A):
                     target = w
+                elif dup:
+                    # >&3 writes to the file descriptor 3 that an earlier exec 3>> FILE opened.
+                    target = (fds or {}).get(dup.group(1))
                 elif re.match(r"^\d*>>?\|?.+\Z", w, _A | re.S):
                     target = re.sub(r"^\d*>>?\|?", "", w, count=1, flags=_A)
                 elif _out_flag(prev):
@@ -1346,6 +1524,114 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
     return None
 
 
+# ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word}, ${NAME+word} and ${NAME:?word} with no
+# brace inside (an inner one is read first, so nested defaults are followed from the inside out).
+_DEFAULT_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?[-=+?])([^{}]*)\}", _A)
+# Readings of one simple command (one per choice of default values); past it every alternative is still read once.
+_MAX_VARIANTS = 64
+# Words one brace expansion may give (rm -rf build{1..99} is 99); past it the word is too many to follow.
+_BRACE_WORDS_MAX = 1024
+# Words a simple command may have after brace expansion.
+_EXPANDED_WORDS_MAX = 4096
+
+
+def _default_alts(word: str, scope: "_Vars") -> Optional[List[str]]:
+    """The words a word with default-value expansions may become: the variable's value when the line assigned it, else
+    both the variable (unknown) and the default word; None when there are more than _MAX_VARIANTS."""
+    if "${" not in word or not _DEFAULT_RE.search(word):
+        return [word]
+    out: List[str] = []
+    work = [word]
+    steps = 0
+    while work:
+        w = work.pop()
+        m = _DEFAULT_RE.search(w)
+        if not m:
+            if w not in out:
+                out.append(w)
+            if len(out) > _MAX_VARIANTS:
+                return None
+            continue
+        steps += 1
+        if steps > _MAX_VARIANTS * 8:
+            return None
+        name, op, dflt = m.group(1), m.group(2), m.group(3)
+        known = scope.vars.get(name)
+        colon = op.startswith(":")
+        if op.endswith("+"):
+            choices = ["", dflt] if known is None else ([dflt] if (known or not colon) else [""])
+        elif op.endswith("?"):
+            choices = ["$" + name] if known is None else [known]
+        elif known is None:
+            choices = ["$" + name, dflt]
+        else:
+            choices = [dflt] if (colon and not known) else [known]
+        for c in reversed(choices):
+            work.append(w[:m.start()] + c + w[m.end():])
+    return out
+
+
+def _brace_words(w: str) -> Optional[List[str]]:
+    """The words a word with brace lists becomes ({rm,-rf,/} is rm -rf /), or None when there are too many."""
+    if "{" not in w or ("," not in w and ".." not in w):
+        return [w]
+    return _expand_braces(_SEQ_RE.sub(_expand_seq, w), _BRACE_WORDS_MAX)
+
+
+def _word_readings(words: List[str], scope: "_Vars") -> Optional[List[List[str]]]:
+    """The readings of one simple command after default-value and brace expansion: the first is the plain reading with
+    braces expanded; there is one more for each choice of default values (or, past _MAX_VARIANTS, enough for each
+    alternative of each word to be read once). None when a word expands to more words than can be followed and the
+    command is one these rules read: the caller refuses the line."""
+    if not any("{" in w for w in words):
+        return [words]
+    per_word: List[List[List[str]]] = []
+    total = 1
+    too_many = False
+    prefix = True  # still in the assignment words before the command
+    for w in words:
+        alts = _default_alts(w, scope) if "${" in w else [w]
+        if alts is None:
+            too_many = True
+            alts = [w]
+        group: List[List[str]] = []
+        assign = prefix and bool(_ASSIGN_RE.match(w))
+        prefix = assign
+        for a in alts:
+            # An assignment word before the command (X={a,b} cmd) is not brace-expanded by the shell.
+            if assign:
+                group.append([a])
+                continue
+            bw = _brace_words(a)
+            if bw is None:
+                too_many = True
+                bw = [a]
+            group.append(bw)
+        per_word.append(group)
+        total *= len(group)
+        if total > _MAX_VARIANTS:
+            total = _MAX_VARIANTS + 1
+    if too_many and any(_head_is_read(_program_name(w)) for w in words):
+        return None
+    if total <= _MAX_VARIANTS:
+        combos: List[List[List[str]]] = [list(c) for c in itertools.product(*per_word)]
+    else:
+        width = max(len(g) for g in per_word)
+        combos = [[g[min(k, len(g) - 1)] for g in per_word] for k in range(width)]
+    # The words as written come first: the pipeline rules read a brace list in a program name as alternatives
+    # (curl URL | s{h,} counts as a pipe into sh), which a split into words would lose.
+    out: List[List[str]] = [words]
+    for combo in combos:
+        flat = [x for part in combo for x in part]
+        if len(flat) > _EXPANDED_WORDS_MAX:
+            if any(_head_is_read(_program_name(w)) for w in words):
+                return None
+            flat = words
+        if flat not in out:
+            out.append(flat)
+    return out
+
+
 # Most backtick substitutions read from a changed folder in one command line; past it the line is refused.
 _MAX_TICK_READS = 200
 
@@ -1355,6 +1641,8 @@ def _check_segments(
 ) -> Optional[str]:
     """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
+    # The readings of each command of the pipeline (default values and brace lists), see _word_readings.
+    pipe_readings: List[List[List[str]]] = []
     known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
     # A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
     groups: List[Any] = []
@@ -1362,6 +1650,11 @@ def _check_segments(
     opens = getattr(segs, "opens", None)
     ticks = 0
     var_scope = _Vars()
+    # One entry per open { } or ( ) group: whether a download ran inside it. The output of the group is the output of
+    # that download, so the command that closes it ({ curl URL; } | sh, (curl URL) >> ~/.bashrc) is read as a download.
+    dl_groups: List[bool] = []
+    closed_dl = False  # the last ) closed a group with a download in it
+    fds: Dict[str, str] = {}  # files exec opened by descriptor (exec 3>> ~/.bashrc)
     for idx, (words, sep) in enumerate(segs):
         # Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
         words = var_scope.apply(words, sep)
@@ -1369,9 +1662,29 @@ def _check_segments(
             return _OVERFLOW
         if sep == "(" and len(groups) < _MAX_SEGMENTS:
             groups.append(known)
-        hit = _check_simple(words, depth, known)
-        if hit:
-            return hit
+        readings = _word_readings(words, var_scope)
+        if readings is None:
+            return _OVERFLOW
+        for reading in readings:
+            hit = _check_simple(reading, depth, known)
+            if hit:
+                return hit
+        # The group bookkeeping for downloads.
+        group_dl = closed_dl
+        closed_dl = False
+        if words and words[0] == "{" and len(dl_groups) < _MAX_SEGMENTS:
+            dl_groups.append(False)
+        if words and words[0] == "}" and dl_groups:
+            group_dl = _close_group(dl_groups) or group_dl
+        if dl_groups and not dl_groups[-1] and _runs_download(readings[0]):
+            dl_groups[-1] = True
+        if words and words[0] == "exec":
+            _record_fds(words, fds)
+        if group_dl:
+            # The command that receives the output of the group: read with a downloader in front of it.
+            rest = words[1:] if words and words[0] == "}" else words
+            words = ["curl"] + rest
+            readings = [["curl"] + (r[1:] if r and r[0] == "}" else r) for r in readings]
         # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
         # is still the one the line started in, the whole-line reading in _analyze() has already covered it.
         if raws and raws[idx] and known is not cwd0 and depth < _MAX_DEPTH:
@@ -1389,26 +1702,94 @@ def _check_segments(
             if to is not _NOT_CD:
                 known = to
         pipe.append((words, sep))
+        pipe_readings.append(readings)
         if not _is_pipe(sep):
-            hit2 = _check_pipeline(pipe, known)
+            hit2 = _check_pipeline_readings(pipe, pipe_readings, known, fds)
             if hit2:
                 return hit2
             pipe = []
+            pipe_readings = []
         # A ( dropped after a pipe (curl URL | (sh)) opens a group of its own: save the folder so its ) pops that entry, not the enclosing one.
         if opens:
             for _ in range(opens[idx]):
                 if len(groups) < _MAX_SEGMENTS:
                     groups.append(known)
-        if sep == ")" and groups:
-            known = groups.pop()
-    return _check_pipeline(pipe, known) if pipe else None
+                if len(dl_groups) < _MAX_SEGMENTS:
+                    dl_groups.append(False)
+        if sep == "(" and len(dl_groups) < _MAX_SEGMENTS:
+            dl_groups.append(False)
+        if sep == ")":
+            if groups:
+                known = groups.pop()
+            if dl_groups:
+                closed_dl = _close_group(dl_groups)
+    return _check_pipeline_readings(pipe, pipe_readings, known, fds) if pipe else None
+
+
+def _close_group(dl_groups: List[bool]) -> bool:
+    """Close the innermost group; a download inside it is also inside the group around it."""
+    had = dl_groups.pop()
+    if had and dl_groups:
+        dl_groups[-1] = True
+    return had
+
+
+def _record_fds(words: List[str], fds: Dict[str, str]) -> None:
+    """The files an exec line opens for writing: exec 3>> FILE, exec 3>FILE."""
+    for i, w in enumerate(words):
+        m = re.match(r"^(\d+)>>?\|?(.*)\Z", w, _A | re.S)
+        if not m:
+            continue
+        target = m.group(2) or (words[i + 1] if i + 1 < len(words) else "")
+        if target and len(fds) < _MAX_ASSIGNMENTS:
+            fds[m.group(1)] = target
+
+
+def _check_pipeline_readings(
+    pipe: List[Tuple[List[str], Optional[str]]], readings: List[List[List[str]]], known: Any,
+    fds: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """The pipeline rules for each reading k: every command takes its own reading k (or its last one)."""
+    width = max(len(r) for r in readings)
+    n = len(pipe)
+    if width == 1 and all(readings[i][0] is pipe[i][0] for i in range(n)):
+        return _check_pipeline(pipe, known, fds)
+    for k in range(width):
+        hit = _check_pipeline([(readings[i][min(k, len(readings[i]) - 1)], pipe[i][1]) for i in range(n)], known, fds)
+        if hit:
+            return hit
+    return None
+
+
+# The rules a second reading of the line (ANSI-C decoded, PowerShell script blocks) may report.
+_NAMED_RULES = ("pipe_to_shell", "rc_download", "rm_root_home", "perm_root", "disk_overwrite")
+_PS_BLOCK_RE = re.compile(r"(?:^|[\s;&|(=])\{\s*`?(?:remove-item|ri|rm|rd|rmdir|del|erase|iex|invoke-expression)\b", _AI)
+
+
+def _pad_script_blocks(text: str) -> str:
+    """The text with each { and } that is not part of a ${...} or @{...} written as a word of its own."""
+    out: List[str] = []
+    stack: List[bool] = []
+    for i, ch in enumerate(text):
+        if ch == "{":
+            pad = not (i > 0 and text[i - 1] in "$@")
+            if len(stack) < _MAX_SEGMENTS:
+                stack.append(pad)
+            out.append(" { " if pad else ch)
+        elif ch == "}":
+            out.append(" } " if (stack.pop() if stack else True) else ch)
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
-    bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
+    # PowerShell runs a command named in quotes after & or . (& 'iex', . "irm"): such a name is kept, not blanked.
+    named = _PS_QUOTED_NAME_RE.sub(r"\1\3", text) if ("'" in text or '"' in text) and len(text) <= _QUOTE_SCAN_MAX else text
+    bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", named)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"
     # PowerShell reading: a backtick and a line break continue the line, and so does a next line that starts with a pipe
@@ -1448,8 +1829,14 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
         ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known)
-        if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
+        if ansi_hit in _NAMED_RULES:
             return ansi_hit
+    # PowerShell script blocks: & {Remove-Item -Recurse C:\} runs the command inside the braces. The braces are read as
+    # words of their own, only when one opens right before a delete command; as above, this reading only adds a block.
+    if "{" in text and _PS_BLOCK_RE.search(text):
+        ps_hit = _check_segments(_segments_of(_pad_script_blocks(text))[0], depth, known)
+        if ps_hit in _NAMED_RULES:
+            return ps_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None
 
