@@ -118,13 +118,20 @@ function listFiles(root, realRoot, rel, pick, deep, out, bad) {
     try { real = fs.realpathSync.native(dir); } catch (_) { bad(rel, sha(['broken-link'])); return; }
     if (!insideOf(realRoot, real)) { bad(rel, sha(['link-outside-folder'])); return; }
   }
+  if (!lst.isDirectory() && !lst.isSymbolicLink()) { bad(rel, sha(['not-a-folder'])); return; }
   let list;
-  try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+  // A folder that exists but cannot be listed counts as a change, like a file that cannot be read.
+  try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { bad(rel, sha(['unreadable-folder', e && e.code])); return; }
   list.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of list) {
     const r = rel + '/' + e.name;
     if (e.isDirectory()) { if (deep > 0) listFiles(root, realRoot, r, pick, deep - 1, out, bad); continue; }
-    if (pick(e.name) && out.length < MAX_LISTED) out.push(r);
+    if (!pick(e.name)) continue;
+    if (out.files.length < MAX_LISTED) { out.files.push(r); continue; }
+    // Past the cap a file is not hashed by content, but its name, size and time still count, so nothing is dropped.
+    let st = null;
+    try { st = fs.lstatSync(path.join(root, r)); } catch (_) { st = null; }
+    out.extra.push([r, st ? st.size : null, st ? Math.trunc(st.mtimeMs) : null]);
   }
 }
 
@@ -177,7 +184,13 @@ function extractSurface(root) {
     if (j) for (const k of DEVCONTAINER_KEYS) if (j[k] !== undefined) out[rel + '#devcontainer:' + k] = sha(canon(j[k]));
   }
   const listed = [];
-  for (const [dir, pick, deep] of WHOLE_FILES) listFiles(root, realRoot, dir, pick, deep, listed, (rel, hash) => { out[rel + '#unreadable'] = hash; });
+  // The cap is per folder: files in one folder cannot push another folder's files out of the baseline.
+  for (const [dir, pick, deep] of WHOLE_FILES) {
+    const found = { files: [], extra: [] };
+    listFiles(root, realRoot, dir, pick, deep, found, (rel, hash) => { out[rel + '#unreadable'] = hash; });
+    listed.push(...found.files);
+    if (found.extra.length) out[dir + '#over-cap'] = sha(found.extra);
+  }
   for (const rel of [...WHOLE_SINGLE, ...listed]) {
     const c = readWhole(root, realRoot, rel);
     if (c.kind === 'ok') out[rel + '#file'] = c.hash;

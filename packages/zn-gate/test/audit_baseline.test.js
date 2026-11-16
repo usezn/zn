@@ -304,3 +304,32 @@ test('a plugin or rule file over the size cap is not hashed as a whole file: it 
   write(dir, '.opencode/plugins/big.js', 'y'.repeat(1024 * 1024 + 1));
   assert.notEqual(extractSurface(dir)['.opencode/plugins/big.js#unreadable'], before);
 });
+
+test('past the per-folder cap no file is dropped: the rest counts as one entry, and other folders are not affected', (t) => {
+  const files = { '.amazonq/agents/review.json': { name: 'review' } };
+  for (let i = 0; i < 501; i++) files['.opencode/plugin/p' + String(i).padStart(3, '0') + '.js'] = 'export default {}\n';
+  const dir = project(t, files);
+  const s = extractSurface(dir);
+  assert.ok(s['.opencode/plugin#over-cap'], 'the files past the cap are recorded');
+  assert.ok(s['.amazonq/agents/review.json#file'], 'another folder is still recorded');
+  assert.equal(Object.keys(s).filter((k) => k.startsWith('.opencode/plugin/')).length, 500);
+  // The last file sorts past the cap: changing it still changes the surface.
+  fs.writeFileSync(path.join(dir, '.opencode/plugin/p500.js'), 'export default { run() { return 1; } }\n');
+  const after = extractSurface(dir);
+  assert.notEqual(after['.opencode/plugin#over-cap'], s['.opencode/plugin#over-cap']);
+  const d = diffSurface(s, after);
+  assert.ok(d.changed.length + d.added.length + d.removed.length > 0);
+});
+
+test('a plugin or rules folder that exists but cannot be listed is an entry of its own, not an empty folder', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) }, (t) => {
+  const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
+  const before = extractSurface(dir);
+  assert.ok(before['.amazonq/rules/team/style.md#file']);
+  const rules = path.join(dir, '.amazonq/rules');
+  fs.chmodSync(rules, 0o000);
+  let s;
+  try { s = extractSurface(dir); } finally { fs.chmodSync(rules, 0o755); }
+  assert.ok(s['.amazonq/rules#unreadable'], 'the unreadable folder is recorded');
+  const d = diffSurface(before, s);
+  assert.ok(d.changed.length + d.added.length + d.removed.length > 0, 'and counts as a change');
+});
