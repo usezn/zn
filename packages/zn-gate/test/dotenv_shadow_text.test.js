@@ -72,6 +72,11 @@ test('a hash inside a value: kept in quotes and without a space, cut after a spa
   assert.deepEqual(entries.map((e) => e.value), ['a # b', 'a#b', 'a', 'a', '#x']);
 });
 
+test('a single-quoted value keeps a hash inside it', () => {
+  const { entries } = d.parseDotenv("A='abc#def'\nB='x # y'\n");
+  assert.deepEqual(entries.map((e) => e.value), ['abc#def', 'x # y']);
+});
+
 test('a secret before a trailing comment is still detected', () => {
   assert.equal(d.isShadowed('API_KEY=fake-secret-value-123 # rotate me'), false);
   assert.equal(d.isShadowed('API_KEY=__ZN_API_KEY__ # fake-secret-value-123'), true);

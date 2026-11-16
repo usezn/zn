@@ -1,28 +1,31 @@
+# Windows Python 3.12 tests of the zn-gate-py package on pull requests into next that change it, and on demand.
 name: Windows checks for the Python package
 
 # Python 3.12 on Windows for pull requests into next that touch the Python package, its benchmark or its test
 # requirements (it has Windows-specific code: paths, file locking, the console). Pull requests that change none of
 # those paths do not run it. The merge queue runs only the required checks, so it does not run this workflow. Not a
 # required check. Python 3.12 on Windows is also part of ci.yml's full matrix (pushes to main and
-# release branches, pull requests into them, and the full-ci label).
+# release branches, pull requests into them, the full-ci label and the nightly run on next). A manual run runs it on
+# any branch.
 on:
   pull_request:
     branches: [ next ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     paths:
       - 'packages/zn-gate-py/**'
       - 'bench/bench_python.py'
       - '.github/ci-test-requirements.txt'
       - '.github/pip-bootstrap-requirements.txt'
       - '.github/workflows/windows-python.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 # A new push to a pull request cancels the run still going for it.
 concurrency:
-  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -37,8 +40,8 @@ jobs:
     name: Windows (Python 3.12)
     # Draft pull requests skip it, and so does a pull request labelled full-ci: zn CI runs Windows Python 3.12 there.
     if: >-
-      github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.labels.*.name, 'full-ci')
+      github.event_name != 'pull_request' || (github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:

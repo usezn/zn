@@ -171,6 +171,10 @@ async function main(argv) {
     registry: REGISTRY,
     integrity,
     attestations: !!(meta.dist && meta.dist.attestations),
+    // SHA-256 of the plugin repository builder at pin time. The Plugin repository workflow and the plugin
+    // repository's Verify build from the commit that last changed this file, so a builder fix only reaches
+    // them through a new pin; recording the builder makes that pin a real change of this file.
+    builder: crypto.createHash('sha256').update(fs.readFileSync(path.join(__dirname, 'build-plugin-repo.js'))).digest('hex'),
     files: sorted,
   };
   // Everything is computed before anything is written, so a failure leaves the plugin unchanged.

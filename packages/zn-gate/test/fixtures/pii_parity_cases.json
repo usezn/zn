@@ -6,7 +6,7 @@
 {"text":"see https://deploy@example.com/path and user@example.com:22 and x@@example.com","spans":[]},
 {"text":"bad..dots@example.com and trailing.dot@example..com and a@b.c","spans":[]},
 {"text":"averyveryveryveryveryveryveryveryveryveryveryveryverylonglocalpartover64chars@example.com","spans":[]},
-{"text":"UPPER.CASE@EXAMPLE.COM and ana_lopez@correo.example.es","spans":[["EMAIL","UPPER.CASE@EXAMPLE.COM"],["EMAIL","ana_lopez@correo.example.es"]]},
+{"text":"UPPER.CASE@EXAMPLE.COM and user.two@mail.example.com","spans":[["EMAIL","UPPER.CASE@EXAMPLE.COM"],["EMAIL","user.two@mail.example.com"]]},
 {"text":"card 4111111111111111 ok, 4111111111111112 not a card","spans":[["CARD","4111111111111111"]]},
 {"text":"cards 5555 5555 5555 4444, 3782-822463-10005, 6011 1111 1111 1117","spans":[["CARD","5555 5555 5555 4444"],["CARD","6011 1111 1111 1117"]]},
 {"text":"mixed 4111 1111-1111 1111 stays, 4111-1111-1111-1111 masked","spans":[["CARD","4111-1111-1111-1111"]]},

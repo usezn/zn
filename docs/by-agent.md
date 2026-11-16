@@ -4,6 +4,23 @@ A short list of the steps for each of the eight agents zn-gate can install hooks
 
 Verifying is the same for every agent that has hooks: `npx -y zn-gate check` makes a temporary folder with a fake `.env` file, asks the hook to read it, and reports whether it was blocked. See [Check that it works](check.md). To remove everything at once, run `npx -y zn-gate uninstall`: see [Remove zn-gate](uninstall.md). To move from one agent to another, follow the [switching agents checklist](examples/switching-agents-checklist.md).
 
+## Symptoms for hooks
+
+If the hooks of an agent do not seem to work, start with the page of that agent. Each one has a symptom section; ZCode has none yet, so use the general list.
+
+| Agent | Where to look |
+| - | - |
+| Claude Code | [The plugin rejects every call, or its MCP servers show "Failed to connect"](troubleshooting.md#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect); [Your agent says "zn-gate is not installed any more"](troubleshooting.md#18-your-agent-says-zn-gate-is-not-installed-any-more) |
+| Codex CLI | [Troubleshooting](editors/codex.md#troubleshooting); [Codex asks you to trust the hooks again](editors/codex.md#codex-asks-you-to-trust-the-hooks-again) |
+| OpenCode | [Troubleshooting](editors/opencode.md#troubleshooting) |
+| Cursor | [Troubleshooting](editors/cursor.md#troubleshooting) |
+| GitHub Copilot (VS Code, CLI) | [Troubleshooting](editors/vscode.md#troubleshooting) |
+| Google Antigravity | [Troubleshooting](editors/antigravity.md#troubleshooting) |
+| ZCode desktop app | [Symptom index](troubleshooting.md#symptom-index) |
+| Gemini CLI | [Troubleshooting](editors/gemini.md#troubleshooting); [When a Gemini CLI setting switches the hook off](editors/gemini.md#when-a-gemini-cli-setting-switches-the-hook-off) |
+
+For any agent: [Your agent ignores zn's hooks on a managed computer](troubleshooting.md#9-your-agent-ignores-zns-hooks-on-a-managed-computer), and the list of [symptoms by command](troubleshooting.md#symptoms-by-command).
+
 ## Agents with hooks
 
 The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
@@ -19,7 +36,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | [ZCode desktop app](editors/zcode.md) | `zn hooks install zcode` | `npx -y zn-gate check` | `zn hooks uninstall zcode` |
 | Gemini CLI (experimental) | `zn hooks install gemini` | `npx -y zn-gate check` | `zn hooks uninstall gemini` |
 
-Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece). To remove by hand, use the order `npx -y zn-gate uninstall` uses: put back wrapped MCP servers first (`npx -y zn-gate init --revert`, for the agents `init --wrap-mcp` changes: Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity), then the hooks, then the program (`npm uninstall -g zn-gate`).
+Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder (ZCode has no project hooks, so leave it out there). A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece). To remove by hand, use the order `npx -y zn-gate uninstall` uses: put back wrapped MCP servers first (`npx -y zn-gate init --revert`, for the agents `init --wrap-mcp` changes: Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity), then the hooks. Remove the program last, yourself (`npm uninstall -g zn-gate`).
 
 ## Agents with MCP only
 

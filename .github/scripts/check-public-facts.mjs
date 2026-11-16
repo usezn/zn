@@ -8,11 +8,17 @@
 //
 // A release changes the version in public-facts.json in the same pull request as the manifests.
 //
+// It also checks the `zn-gate status` samples in the Markdown files. A line such as
+// `Rules Version   : 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)` must show the rule versions
+// (RULES_VERSION, SCRUB_RULES_VERSION and AUDIT_RULES_VERSION in packages/zn-gate/lib) of the release the sample
+// names in its `Package Version` line: the constants at the tag vX.Y.Z when that tag exists, and the constants in
+// the code otherwise (a release being prepared, or a sample without a Package Version line).
+//
 // While version.value is a pre-release (1.14.0-rc.1): the Python files ("python": true) carry the PyPI
 // form (1.14.0rc1), and the pins in the docs and the {minor} of the text facts follow docsVersion, the
 // last final release, because the docs keep telling people to install that one. The examples pin what
 // is already published (examplesVersion): they move only after a release is on npm and PyPI.
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -251,6 +257,102 @@ export function check(facts, files, read, options = {}) {
   return errors;
 }
 
+// The three rule versions that `zn-gate status` prints, and where the code keeps each one.
+export const RULE_VERSION_SOURCES = [
+  { name: 'rules', file: 'packages/zn-gate/lib/rules.js', constant: 'RULES_VERSION' },
+  { name: 'scrub', file: 'packages/zn-gate/lib/scrub/patterns.js', constant: 'SCRUB_RULES_VERSION' },
+  { name: 'audit', file: 'packages/zn-gate/lib/audit/rules.js', constant: 'AUDIT_RULES_VERSION' },
+];
+const STATUS_SAMPLE = /Rules Version\s*:\s*(\S+) \(scrub (\S+), audit (\S+)\)/;
+
+/** The rule versions in the code: { rules, scrub, audit }. A missing constant is reported in errors. */
+export function codeRuleVersions(read, errors) {
+  const out = {};
+  for (const s of RULE_VERSION_SOURCES) {
+    let text = null;
+    try { text = read(s.file); } catch { /* reported below */ }
+    const m = text && text.match(new RegExp(`\\b${s.constant}\\s*=\\s*['"]([^'"]+)['"]`));
+    if (m) out[s.name] = m[1];
+    else errors.push(`${s.file}: ${s.constant} not found (the status samples in the docs are compared with it)`);
+  }
+  return out;
+}
+
+const PACKAGE_VERSION = /Package Version\s*:\s*(\S+)/;
+const fmt = (v) => `${v.rules} (scrub ${v.scrub}, audit ${v.audit})`;
+
+/**
+ * Errors for every `zn-gate status` sample line in a Markdown file whose rule versions differ from the release the
+ * sample names. readAt(version) returns a read function for the files at the tag v<version>, or null when there is
+ * no such tag (a version not released yet); it throws when the clone has no tags at all, which is reported. Without
+ * readAt every sample is compared with the code.
+ */
+export function checkStatusSamples(files, read, readAt = () => null) {
+  const errors = [];
+  const code = codeRuleVersions(read, errors);
+  if (errors.length) return errors;
+  const atRelease = new Map();
+  const expected = (version) => {
+    if (!version) return { want: code, source: 'the code' };
+    if (!atRelease.has(version)) {
+      let readTag = null;
+      try { readTag = readAt(version); } catch (e) { errors.push(e.message); atRelease.set(version, 'error'); }
+      if (!atRelease.has(version)) {
+        if (!readTag) atRelease.set(version, null);
+        else {
+          const tagErrors = [];
+          const v = codeRuleVersions(readTag, tagErrors);
+          for (const e of tagErrors) errors.push(`v${version}: ${e}`);
+          atRelease.set(version, tagErrors.length ? 'error' : v);
+        }
+      }
+    }
+    const v = atRelease.get(version);
+    if (v === 'error') return null;
+    return v ? { want: v, source: `zn-gate ${version}` } : { want: code, source: 'the code' };
+  };
+  for (const f of files) {
+    if (!f.endsWith('.md')) continue;
+    let text;
+    try { text = read(f); } catch { continue; }
+    if (!text.includes('Rules Version')) continue;
+    const lines = text.split(/\r?\n/);
+    lines.forEach((line, i) => {
+      const m = line.match(STATUS_SAMPLE);
+      if (!m) return;
+      // The Package Version line of the same sample, a few lines above.
+      let version = null;
+      for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+        const p = lines[j].match(PACKAGE_VERSION);
+        if (p) { version = p[1]; break; }
+      }
+      const got = `${m[1]} (scrub ${m[2]}, audit ${m[3]})`;
+      const exp = expected(version);
+      if (!exp) return; // already reported
+      const { want, source } = exp;
+      if (got !== fmt(want)) errors.push(`${f}:${i + 1}: the zn-gate status sample shows rules ${got}; ${source} has ${fmt(want)}`);
+    });
+  }
+  return errors;
+}
+
+/**
+ * A read function for the files at the tag v<version>, or null when that tag does not exist (a version not
+ * released yet). A clone without any tag cannot tell the two apart, so it throws: check out with fetch-depth: 0.
+ */
+function tagReader(root) {
+  let anyTag = null;
+  return (version) => {
+    if (anyTag === null) {
+      anyTag = execFileSync('git', ['tag', '--list', 'v*'], { cwd: root, encoding: 'utf8' }).trim() !== '';
+    }
+    if (!anyTag) throw new Error(`this clone has no release tags, so the zn-gate status samples that name Package Version ${version} cannot be checked against that release; fetch the tags (actions/checkout with fetch-depth: 0)`);
+    const tag = `v${version}`;
+    try { execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`], { cwd: root, stdio: 'ignore' }); } catch { return null; }
+    return (f) => execFileSync('git', ['show', `${tag}:${f}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  };
+}
+
 function main() {
   const root = resolve(process.argv[2] || '.');
   const read = (f) => readFileSync(join(root, f), 'utf8');
@@ -260,6 +362,7 @@ function main() {
   const pluginWarnings = process.env.PLUGIN_PIN_PENDING === 'true' ? [] : undefined;
   const warnings = [];
   const errors = check(facts, files, read, { pluginWarnings, warnings });
+  errors.push(...checkStatusSamples(files, read, tagReader(root)));
   for (const w of warnings) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   for (const w of pluginWarnings || []) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   if (pluginWarnings && pluginWarnings.length) console.log(`\n${pluginWarnings.length} plugin pin difference(s), allowed on a release pull request: pin the plugin after npm publishes the release.`);
@@ -276,4 +379,4 @@ function main() {
   console.log(`public facts OK: version ${facts.version.value}${extra}, ${(facts.text || []).length + (facts.fields || []).length} other facts`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();

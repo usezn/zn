@@ -4,3 +4,9 @@
 *.cmd text eol=crlf
 # npm reads this file on every system: the check compares it line by line, and the pin tool writes it with LF.
 plugins/zn-gate/.npmrc text eol=lf
+# The benign corpus and its expected decisions are compared byte for byte (and by the Python package): keep LF everywhere.
+packages/zn-gate/test/fixtures/benign-commands.txt text eol=lf
+packages/zn-gate/test/fixtures/benign-commands.expected.json text eol=lf
+# Most example pull requests add one line to the same group of the examples index, so two of them used to conflict
+# there. A union merge keeps the lines of both sides instead. Review the order of the group after such a merge.
+docs/examples/README.md merge=union

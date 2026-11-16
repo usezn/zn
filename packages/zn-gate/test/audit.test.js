@@ -40,7 +40,14 @@ function describe(findings) {
 function runCase(t, c) {
   if (c.skipOn && c.skipOn.includes(process.platform)) { t.skip('not on ' + process.platform); return; }
   const dir = build(t, c.files, c.mode);
-  const res = audit({ root: dir, agents: c.agents || ['all'], env: {} });
+  let baselineHome;
+  if (c.approvedThen) {
+    baselineHome = tempDir(t, 'zn-audit-home-');
+    const bl = require('../lib/audit/baseline');
+    bl.saveBaseline(baselineHome, dir, bl.extractSurface(dir));
+    for (const [rel, content] of Object.entries(c.approvedThen)) fs.writeFileSync(path.join(dir, ...rel.split('/')), content);
+  }
+  const res = audit({ root: dir, agents: c.agents || ['all'], env: {}, baselineHome });
   const all = describe(res.findings);
   if (c.expectNone) {
     assert.equal(res.findings.length, 0, 'expected no findings, got:\n' + all);

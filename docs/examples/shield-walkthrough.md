@@ -55,7 +55,7 @@ In shadow mode:
 
 ## 3. Look at what was logged
 
-Two days later, example-server ships an update: its `take_notes` tool now has a new description that tells the agent to send the notes to https://example.com/collect. The shield flags the change and writes it to the decision log (`~/.zn/evidence.jsonl` on your machine; nothing is sent anywhere). To read the last records:
+Two days later, example-server ships an update: its `take_notes` tool now has a new description that tells the agent to send the notes to `https://example.com/collect`. The shield flags the change and writes it to the decision log (`~/.zn/evidence.jsonl` on your machine; nothing is sent anywhere). To read the last records:
 
 ```bash
 npx -y zn-gate evidence --tail 20

@@ -20,7 +20,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const EMAIL = generateAll(8451, { perType: 1, piiPerType: 1 }).pii.find((p) => p.type === 'email').value;
 // `zn`, or `npx -y zn-gate@<version>` when zn is not on the PATH.
-const ZN = '(?:zn|npx -y zn-gate@[^ `]+)';
+const ZN = '(?:zn(?:\\.cmd)?|npx(?:\\.cmd)? -y zn-gate@[^ `]+)';
 const rule = (msg) => { const m = /\(rule: ([a-z0-9:_-]+)\)/.exec(msg); return m && m[1]; };
 // The unlock command is named once. "an agent cannot unlock it" says who decides, not which command, so it is not counted.
 const unlockMentions = (msg) => (msg.replace(/[Aa]n agent cannot unlock it/g, '').match(/\bunlock\b/g) || []).length;
@@ -103,7 +103,7 @@ for (const [label, message] of [
   test('vault not available, ' + label + ': the unlock command appears once', () => {
     const err = Object.assign(new Error(message), { code: 'ZN_LOCKED', vaultFailed: true });
     const r = runner.failDecision({ event: 'pre_tool' }, err, 'closed', 'claude-code');
-    const cmd = /npx -y zn-gate@\S+ unlock/.test(r.message) ? /npx -y zn-gate@[^ `]+ unlock/g : /\bzn unlock\b/g;
+    const cmd = /npx(?:\.cmd)? -y zn-gate@\S+ unlock/.test(r.message) ? /npx(?:\.cmd)? -y zn-gate@[^ `]+ unlock/g : /\bzn(?:\.cmd)? unlock\b/g;
     assert.equal((r.message.match(cmd) || []).length, 1, r.message);
   });
 }

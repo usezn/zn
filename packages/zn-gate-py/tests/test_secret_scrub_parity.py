@@ -44,7 +44,7 @@ FAMILY = {
 GENERIC = {"env_credential", "prefixed_credential", "credential_default", "credential_assignment",
            "cli_credential_flag"}
 # The Python match includes the key name, the scheme or the header name around the secret.
-WIDE = {"AWS_SECRET", "URL_PASSWORD", "BEARER_TOKEN", "AZURE_STORAGE_KEY"}
+WIDE = {"AWS_SECRET", "URL_PASSWORD", "BEARER_TOKEN", "AZURE_STORAGE_KEY", "TWILIO_AUTH_TOKEN"}
 
 rnd = random.Random(20261030)
 ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -213,6 +213,10 @@ for scheme in ("postgres", "mysql", "mongodb+srv", "redis", "amqp", "https", "ft
     tok("url password " + scheme, scheme + "://app:" + r(20, URLSAFE) + "@db.example.com:5432/app")
 tok("url password short", "postgres://app:" + r(4) + "@db.example.com/app")
 tok("url password placeholder", "postgres://app:changeme@db.example.com/app")
+case("twilio auth token env", "TWILIO_AUTH_TOKEN=" + r(32, HEX) + "\n")
+case("twilio auth token json", '{"auth_token": "' + r(32, HEX) + '"}\n')
+case("twilio auth token yaml upper", "auth_token: " + r(32, "0123456789ABCDEF") + "\n")
+case("twilio unlabelled hex", "md5: " + r(32, HEX) + "\n")
 case("bearer header", "Authorization: Bearer " + r(30, URLSAFE) + "\n")
 case("bearer masked", "Authorization: Bearer " + "x" * 30 + "\n")
 

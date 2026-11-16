@@ -34,6 +34,8 @@ Set up zn-gate in Continue in two minutes: add it as an MCP server, and what zn-
    Standalone files in `.continue/mcpServers/` need the `name`, `version` and `schema` lines at the top; your main `config.yaml` does not.
 4. Save the file. zn-gate's tools are available in Continue's **Agent** mode only.
 
+A complete example with made-up values, and how to check it, is in [Continue setup example](../examples/continue-hook-setup.md).
+
 Status: these steps follow Continue's documentation; not yet verified by us in Continue.
 
 ## What zn-gate protects in Continue, and what it does not
@@ -110,3 +112,9 @@ All messages: [Troubleshooting](../troubleshooting.md).
 ## Continue documentation
 
 - MCP in Continue: <https://docs.continue.dev/customize/deep-dives/mcp>
+
+## Where next
+
+- [By agent](../by-agent.md): what zn-gate covers in each agent, to compare Continue with the others.
+- [Check that it works](../check.md): what `zn-gate check` tests, and what it does not test for Continue.
+- [Remove zn-gate](../uninstall.md): how to uninstall.

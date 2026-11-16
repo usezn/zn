@@ -19,7 +19,9 @@ const { tempDir } = require('./helpers/tmp');
 const CORPUS = path.join(__dirname, 'fixtures', 'benign-commands.txt');
 const MIN_ALLOW_RATE = 0.99;
 
-const commands = fs.readFileSync(CORPUS, 'utf8').split('\n').filter((l) => l.trim() !== '');
+const { parseCommands } = require('./fixtures/make_benign_expected');
+
+const commands = parseCommands(fs.readFileSync(CORPUS, 'utf8'));
 
 function project(t) {
   const dir = tempDir(t, 'zn-benign-corpus-');
@@ -52,4 +54,18 @@ test('the benign corpus is allowed at or above the measured rate', (t) => {
   const rate = allowed / commands.length;
   assert.ok(rate >= MIN_ALLOW_RATE,
     `allow rate ${rate} is below ${MIN_ALLOW_RATE}: ${JSON.stringify(flagged, null, 1)}`);
+});
+
+test('benign-commands.expected.json matches the current Node decisions (run test/fixtures/make_benign_expected.js)', () => {
+  const { render, OUT } = require('./fixtures/make_benign_expected');
+  // Compare with normalized line endings: a Windows checkout may hold the JSON with CRLF.
+  assert.equal(fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n'), render(),
+    'benign-commands.expected.json is stale: run `node test/fixtures/make_benign_expected.js` and commit it');
+});
+
+test('a CRLF corpus yields the same commands as an LF corpus', () => {
+  const lf = fs.readFileSync(CORPUS, 'utf8').replace(/\r\n/g, '\n');
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.deepEqual(parseCommands(crlf), parseCommands(lf));
+  assert.ok(parseCommands(crlf).every((c) => !c.includes('\r')));
 });

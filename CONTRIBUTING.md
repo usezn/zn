@@ -26,6 +26,20 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 
 8. **Check an agent's version handling.** Files: `packages/zn-gate/lib/agents/claude-code.js` (it has version-dependent behavior, for example for Claude Code 2.1.295 and later) and `packages/zn-gate/test/hooks_claude_launcher.test.js`. Test: `cd packages/zn-gate` and `node --test test/hooks_claude_launcher.test.js`. Good PR: the agent version you checked and where you found it, and a test that pins the behavior for that version.
 
+## For first-time contributors
+
+A short list of what a pull request needs. Each step points to the section below that explains it.
+
+1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
+2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
+3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
+4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
+5. If you changed a detection rule, change it in both packages, add a positive and a negative test case, and bump the version ([Adding New Rules](#adding-new-rules), [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
+6. If users will notice the change, add a fragment file in `changelog.d/` and leave `CHANGELOG.md` alone ([Changelog](#changelog)).
+7. Update the docs that the change touches, and keep any marked snippet runnable ([Runnable doc snippets](#runnable-doc-snippets)).
+8. Keep secrets, tokens, keys and personal data out of the diff, the commit messages and the test fixtures. Do not force-push to a shared branch.
+9. Report a security vulnerability privately, never in a public issue or pull request ([Security Vulnerability Reporting](#security-vulnerability-reporting)).
+
 ## Architecture Overview
 
 `zn` is designed as a local-first security gate with minimal dependencies:
@@ -55,6 +69,34 @@ cd packages/zn-gate-py
 python -m pip install -e .
 python -m pytest tests/ -v
 ```
+
+## Continuous integration (CI)
+
+Each pull request into `next` runs automated checks on GitHub. Eleven checks are **required**, and a pull request cannot merge until all of them pass. These are the names you see on the pull request:
+
+- Node.js 18.x tests & benchmarks
+- Node.js 22.x tests & benchmarks
+- Node.js 24.x tests & benchmarks
+- Python 3.12 tests & benchmarks (ubuntu-latest)
+- Python package (build, twine check, install)
+- npm package (pack, inspect, install)
+- leak bench (node 22 / ubuntu-latest)
+- scrubber + vault (node 22 / ubuntu-latest)
+- Lint (eslint, ruff, mypy)
+- Public facts
+- build, test, clippy, fmt
+
+To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js, Python and Rust test checks report success at once without running. Add the label `full-ci` to your pull request to run them there; run the tests locally before you push. `cargo audit` also runs on every pull request: it checks the Rust dependencies only when the pull request changes `Cargo.lock`, `Cargo.toml`, `.cargo/audit.toml` or its own workflow file, and passes at once otherwise. A pull request that changes only documentation skips most code checks, which also report success.
+
+Only `next` has a merge queue; `main` does not. When a maintainer adds an approved pull request to the queue, the queue builds it on top of the pull requests ahead of it, runs the required checks on that combined result, and merges up to five pull requests at a time, in order. If a required check fails there, the pull request leaves the queue. Fix the problem, push a commit, and ask a maintainer to queue it again.
+
+Nine more checks are **not required**, so they do not block a merge: Changelog, Markdown lint, Typos, Link check, Shellcheck, Workflow lint, Package lint, Pre-commit hooks and Doc snippets. They check the changelog entry, Markdown, spelling, links, shell scripts, package files and the code samples in the docs. A failure there does not block the merge, but fix it before review if you can.
+
+If a check fails, open it from the Checks tab of the pull request. The first failed step shows the problem.
+
+Checks run again each time you push a commit, and a new push cancels a run still in progress. Without write access you cannot rerun a check yourself, so push a new commit to get a fresh run, for example an empty one with `git commit --allow-empty -m "Rerun checks"`. A maintainer with write access can open the run and choose "Re-run failed jobs".
+
+For what each check covers and how to run it on your own machine, see [Run the required checks locally](#run-the-required-checks-locally).
 
 ## Run the required checks locally
 
@@ -125,10 +167,84 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
 
    CI also checks external links, but only reports them and never fails the pull request.
 
+### Check every command you add to the docs
+
+Every command in a docs page must be one that zn-gate has and that [docs/cli.md](docs/cli.md) documents. Before you open a pull request that adds or changes a command in a page:
+
+1. **Run it.** Run the command yourself, in a throwaway folder and with a throwaway home folder (set `HOME` to an empty folder, so your own `~/.zn` is not touched), and copy the output you really got. Do not write an output you did not see.
+2. **Compare it with `docs/cli.md`.** Find the command in the reference. Check that its name, each option you use and each value are written there as you wrote them. If the reference is wrong or lacks the option, fix the reference in the same pull request.
+3. **Run the command check.** The check `check-docs-examples-commands.mjs` reads every shell block in `docs/examples/*.md` and fails when a block runs a `zn`, `zn-gate` or `npx -y zn-gate` command whose name has no heading in `docs/cli.md`. From the repository root:
+
+   ```bash
+   node .github/scripts/check-docs-examples-commands.mjs
+   ```
+
+   It prints `docs examples OK` and the number of commands it checked, or it names the file and line that must be fixed. CI runs the same script in the Markdown lint steps of the Quick checks workflow. Its own test is `node --test .github/scripts/check-docs-examples-commands.test.mjs`.
+
+The script checks command names only, in the example pages only. It does not check options, and it does not read the other pages under `docs/`. So step 2 is your job for every page, and for every option.
+
+### Check docs links before you push
+
+If you add or move a page, or link to a heading, check the links on your machine first. A broken link fails the pull request.
+
+- Two Node.js tests cover the pages under `docs/`: `test/docs_relative_links.test.js` (a relative link points to a file that exists) and `test/docs_anchor_links.test.js` (a link to a `#section` names a heading that exists). They need no install:
+
+  ```bash
+  cd packages/zn-gate
+  node --test test/docs_relative_links.test.js test/docs_anchor_links.test.js
+  ```
+
+- The offline link check CI runs, with lychee, covers the READMEs and `plugins` too. The command is in item 3 of the Documentation checks above.
+
+## Writing a CI check script
+
+The small checks of the [Quick checks workflow](.github/workflows/quick-checks.yml) are plain Node.js scripts in `.github/scripts/`, one `check-<name>.mjs` with a `check-<name>.test.mjs` next to it. Real ones to copy from: `check-timeouts.mjs` (every workflow job sets `timeout-minutes`), `check-workflow-header.mjs`, `check-docs-titles.mjs` and `check-docs-examples-commands.mjs`. Follow the same shape so that a failure reads the same everywhere.
+
+1. **Write the script** as `.github/scripts/check-<name>.mjs`:
+   - Start with a comment that says what makes the check fail and how to run it, with the default arguments.
+   - Use only `node:` imports; no packages are installed for these checks.
+   - Put the logic in exported functions that take text or a folder and return the problems, so a test can call them. Keep `main(argv)` small: it returns the exit code.
+   - Run `main` only when the file is run directly, as the existing scripts do (`import.meta.url` compared with `process.argv[1]`), and wrap it so that an unexpected error prints `check-<name>: <message>` and exits with `1`.
+2. **Exit codes and messages.** Exit `0` and print one line that says what was checked, for example `timeouts OK: every job in N workflow file(s) sets timeout-minutes` (N is the number of workflow files the script checked). Exit `1` when there is a problem: print one line per problem that names the file and, where it can, the line or the job (`<file>:<line>: <problem>`), then an empty line and one sentence that says how to fix it. Print problems on standard error.
+3. **Write the test** as `.github/scripts/check-<name>.test.mjs` with `node:test` and `node:assert/strict`. Cover an input that passes, one that fails with the exact message, and the edge that made you write the check. Use a temporary folder for the file-based case. Run it with `node --test .github/scripts/check-<name>.test.mjs`.
+4. **Add two steps to the job in `.github/workflows/quick-checks.yml`**, next to the other checks: one that runs the test and one that runs the check. Both use `if: ${{ !cancelled() && steps.scope.outputs.<name> == 'true' }}`, so a failing step does not hide the ones after it. If your check is the only reason Node.js is needed for a change, add the same output to the `if:` of the `setup-node` step.
+5. **Decide when it runs in `.github/scripts/quick-scope.sh`.** Add `<name>` to the `CHECKS` list and to the comment at the top, and add a `case` branch that sets `run[<name>]=true` for the paths that should trigger it (the script and its test, plus the files it reads). A change to `quick-checks.yml` or to `quick-scope.sh` itself runs every check.
+6. **Test the scope.** Add one `check pull_request next <path> "<checks that must run>"` line to `.github/scripts/test-quick-scope.sh` for each path you added, and update the existing lines that now run your check too (the line for `quick-checks.yml` lists every check). Run `bash .github/scripts/test-quick-scope.sh` from the repository root.
+
+Before you push, run the new script and its test on your own machine, then the [documentation checks](#documentation-checks) and the other checks that your change touches. The Quick checks are not among the required checks, so a maintainer decides if a new one should become required (that needs a change to the branch rules and a `merge_group` trigger, see the comment at the top of `quick-checks.yml`).
+
+## Before you open a pull request
+
+A short list for a pull request that changes only documentation: a page under `docs/`, a README or `changelog.d/README.md`. Run each command from the repository root. The three checks under [Documentation checks](#documentation-checks) explain what the docs tests, Markdown lint and link check cover.
+
+- [ ] Every command you wrote or changed ran on your machine, and every link and anchor points to something that exists.
+- [ ] The docs tests pass: `node --test packages/zn-gate/test/docs_*.test.js packages/zn-gate/test/docs-env-vars.test.js packages/zn-gate/test/install_docs_match.test.js`. They need no install.
+- [ ] Markdown lint passes: `.github/markdownlint/node_modules/.bin/markdownlint-cli2`, after `npm ci --prefix .github/markdownlint --ignore-scripts` the first time.
+- [ ] No two pages under `docs/` share a first-level title: `node .github/scripts/check-docs-titles.mjs`.
+- [ ] Every command in `docs/examples/` is one that `docs/cli.md` documents: `node .github/scripts/check-docs-examples-commands.mjs`.
+- [ ] If you touched a version number, a count, the list of agents, the license or the install command, the facts still agree everywhere: `node .github/scripts/check-public-facts.mjs`.
+- [ ] A change that users notice in a package, the plugin or the Action has a fragment in `changelog.d/`. A change to pages under `docs/` or to a README needs none. To check: `node .github/scripts/changelog.mjs check --base origin/<base>` after `git fetch origin <base>`, where `<base>` is the branch your pull request targets.
+- [ ] The pull request targets the branch named in [GOVERNANCE.md](GOVERNANCE.md#branches), and its description says what was wrong or missing.
+
 ## Your first pull request and draft pull requests
 
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
 - A draft pull request does not run the required checks, except Public facts. They stay pending until you mark the pull request as ready for review; then they start.
+
+## For package maintainers
+
+The npm package (`packages/zn-gate`) and the Python package (`packages/zn-gate-py`) are meant to give the same verdicts and the same redaction. When you change a rule, a verdict or the way a secret is redacted in one package, make the matching change in the other and run both test suites (see [Running Tests Locally](#running-tests-locally)).
+
+These Python tests compare the two packages. Most of them need the full repository checkout and a `node` binary, and are skipped with a message when either is missing (for example when testing an sdist):
+
+- `packages/zn-gate-py/tests/test_rules_parity.py` (with `packages/zn-gate/test/rules_parity.test.js`): the Python rules must equal the Node.js rules, checked on the shared samples in `packages/zn-gate/test/fixtures/rules_parity_samples.json`.
+- `packages/zn-gate-py/tests/test_tool_guard_parity.py`: the tool-call and tool-result guards must give the same verdicts as the Node.js guard on `packages/zn-gate/test/fixtures/tool_guard_parity.json`.
+- `packages/zn-gate-py/tests/test_secret_scrub_parity.py`: both engines must name the same secrets in the same places, apart from the cases listed there with a reason.
+- `packages/zn-gate-py/tests/test_redaction_parity_fuzz.py`: seeded random texts with fake keys must come out with no key visible from either engine.
+- `packages/zn-gate-py/tests/test_benign_corpus_parity.py`: the Python destructive-command check must decide each everyday command in `packages/zn-gate/test/fixtures/benign-commands.txt` as the Node.js package does.
+- `packages/zn-gate-py/tests/test_cli_node_parity.py`: the Python and Node.js command lines agree on the version and on basic exit codes.
+
+CI also runs `node .github/scripts/check-rule-versions.mjs`, which fails when the two packages disagree on `RULES_VERSION` or `COMMAND_RULES_VERSION` (see [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
 
 ## Adding New Rules
 
@@ -157,9 +273,9 @@ Each rule layer has a version constant. A change to any file of a layer must com
 
 1. Make the change and bump the constant of every layer you touched. The version format is `YYYY-MM-DD.N`: a date and an integer, for example `2026-10-31.1`. The new value must be greater than the value on `origin/next`. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`.
 2. Set the same value in the Python twin: `rules.py` for `RULES_VERSION`, `destructive.py` for `COMMAND_RULES_VERSION`. The Node and Python values must match.
-3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
+3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It writes one entry per layer and version under `packages/zn-gate/test/fixtures/rules_snapshot/<layer>/<version>.json` (one rule id and one file hash per line, the newest five kept) and refuses to record a change whose version did not increase.
 4. From `packages/zn-gate`, run `npm run check:rules`. It runs only the snapshot test, in well under a second, so a missing bump or a stale snapshot shows up before the full test matrix. Run `npm test` before you push.
-5. Commit the updated snapshot with the change.
+5. Commit the new snapshot entries with the change. Because every version has its own file, two pull requests that bump different versions do not conflict in the snapshot; after you merge `next` into your branch, rerun step 3 if the check asks for it.
 
 The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps `rules.py` equal to `rules.js`; `mcp_secrets.py` is kept equal to `lib/mcp-secrets.js` by the shared samples in `test/fixtures/mcp_config_secret_samples.json`, which both test suites run.
 
@@ -191,9 +307,29 @@ Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/z
 
 To install zn-gate, run `npx -y zn-gate init` in your own terminal ([Install](README.md#install)). To remove it, run `npx -y zn-gate uninstall` ([removal guide](docs/uninstall.md)).
 
+## For translators
+
+This repository contains no translated documentation: its pages are written in English. If you translate zn-gate text elsewhere, for example a guide, a blog post or a video, you can translate the explanations around the commands. Keep the following exactly as the docs and the tool show them:
+
+- Command names and subcommands, such as `zn run`.
+- Flags and environment variables.
+- File and folder names, such as `.znrules` and `zn.config.json`.
+- Anything zn prints, such as messages, verdicts and rule IDs, so that a reader can match your text with what their own terminal shows.
+- The contents of code blocks.
+
+[docs/glossary.md](docs/glossary.md) explains the terms the docs use.
+
 ## Security Vulnerability Reporting
 
 If you find a security vulnerability, please do NOT open a public issue, a pull request or a discussion. Follow our [Security Policy](SECURITY.md) and report it privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to `security@usezn.com`.
+
+## Commit messages for documentation changes
+
+No tool checks commit messages, and a pull request is reviewed as a whole. Many commits that change only `docs/` use the `docs:` prefix, so we suggest this shape:
+
+- Start with `docs:`, then a short sentence in the imperative that says what the page says or does now, for example `docs: point the quick answers to the renumbered FAQ entries`.
+- Leave out the final full stop, and keep the subject to one line.
+- Put the reason, and what you ran to check it, in the pull request description. Keep secrets, tokens and personal data out of the message, as in the pull request checklist.
 
 ## Changelog
 

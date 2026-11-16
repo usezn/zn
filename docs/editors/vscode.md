@@ -54,7 +54,7 @@ With the hooks (`zn hooks install copilot`), zn-gate checks every tool call befo
 
 All read 2026-10-30; VS Code's hooks are in Preview and may change.
 
-- Page: <https://code.visualstudio.com/docs/copilot/customization/hooks>.
+- Page: <https://code.visualstudio.com/docs/agent-customization/hooks>.
 - "VS Code, the GitHub Copilot app, and GitHub Copilot CLI share this harness and its hook format" (section on the Copilot harness; select **Copilot** in the **Session Target** control).
 - Where it loads hooks from: "User hook files in `~/.copilot/hooks/`, or `$COPILOT_HOME/hooks/` when `COPILOT_HOME` is set" and "`.github/hooks/*.json` at the repository root" (section "Choose a hook source").
 - The file: `"version": 1`, a `"hooks"` object, entries with `"type": "command"`, `bash` / `powershell` commands and `timeoutSec` (section "Configure commands and event data"). Events `preToolUse` and `postToolUse` receive `toolName` and `toolArgs`; a `preToolUse` answer of `permissionDecision: "deny"` blocks the call.
@@ -71,13 +71,13 @@ If the project holds zn-gate's Claude Code hooks (`zn hooks install claude-code 
 ## Questions people ask
 
 **What does zn-gate protect in VS Code?**
-It gives the agent checks for a prompt, a tool call or a tool result, and it can check your other MCP servers if you wrap them. See [What zn-gate protects in VS Code](#what-zn-gate-protects-in-vs-code-and-what-it-does-not) and [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers).
+With the hooks, it blocks reads and writes of `.env` and credential files and shell commands that handle secrets, and removes secret values from the results of read-type and shell tools. With the MCP server, it gives the agent checks for a prompt, a tool call or a tool result, and it can check your other MCP servers if you wrap them. See [What zn-gate protects in VS Code](#what-zn-gate-protects-in-vs-code-and-what-it-does-not) and [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers).
 
 **What does it not protect?**
-It does not block reads of `.env` and credential files, does not remove secrets from shell output or file contents, and does not block a secret pasted into the chat. See [the table above](#what-zn-gate-protects-in-vs-code-and-what-it-does-not).
+It does not block a secret pasted into the chat, and it does not check the MCP tools of other servers unless you wrap them. See [the table above](#what-zn-gate-protects-in-vs-code-and-what-it-does-not).
 
 **How do I undo it?**
-Delete the `zn-gate` entry from the settings file you edited, put back the original command of any server you wrapped, and restart VS Code. See [Uninstall](#uninstall).
+Run `zn hooks uninstall copilot` for the hooks. For the MCP server, delete the `zn-gate` entry from the settings file you edited, put back the original command of any server you wrapped, and restart VS Code. See [Uninstall](#uninstall).
 
 ## Technical reference
 
@@ -130,8 +130,13 @@ Run `zn hooks uninstall copilot` (add `--project` if you installed it in a proje
 
 All messages: [Troubleshooting](../troubleshooting.md).
 
+## Related pages
+
+- [Install, verify and uninstall by agent](../by-agent.md): the short steps for each agent.
+- [Troubleshooting](../troubleshooting.md): all messages and how to fix them.
+
 ## VS Code documentation
 
-- MCP servers in VS Code: <https://code.visualstudio.com/docs/copilot/customization/mcp-servers>
-- Agent hooks (preview): <https://code.visualstudio.com/docs/copilot/customization/hooks>
+- MCP servers in VS Code: <https://code.visualstudio.com/docs/agent-customization/mcp-servers>
+- Agent hooks (preview): <https://code.visualstudio.com/docs/agent-customization/hooks>
 - GitHub's hooks reference (events, exit codes, timeouts): <https://docs.github.com/en/copilot/reference/hooks-reference>

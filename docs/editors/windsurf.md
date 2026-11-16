@@ -105,8 +105,8 @@ All messages: [Troubleshooting](../troubleshooting.md).
 
 ## Windsurf documentation
 
-- MCP in Cascade: <https://docs.devin.ai/desktop/cascade/mcp>
-- Cascade hooks: <https://docs.devin.ai/desktop/cascade/hooks>
+- MCP in Cascade: <https://docs.devin.ai/desktop/devin-local/customizations>
+- Cascade hooks: <https://docs.devin.ai/desktop/devin-local/customizations>
 
 ## Related pages
 

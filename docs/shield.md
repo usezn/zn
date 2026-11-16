@@ -33,7 +33,7 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 }
 ```
 
-`mcp-shield` and `wrap` are other names for the same command. Always use `--`: without it, zn-gate takes the words after `shield` that do not start with `--` as the command, which is easy to get wrong. If you give no command, `shield` prints a usage message and exits with code 1.
+`mcp-shield` and `wrap` are other names for the same command. Always use `--`: without it, zn-gate takes the words after `shield` that do not start with `--` as the command, which people often get wrong. If you give no command, `shield` prints a usage message and exits with code 1.
 
 `--verbose` prints what the shield does (each request it inspects and each redaction) to stderr. In an agent app, stderr goes to the app's MCP log, not to your terminal.
 
@@ -124,11 +124,12 @@ or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode th
 
 ### Tool shadowing
 
-When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in two cases:
+When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in four cases:
 
 - a tool has the same name as an approved tool of another server, so the agent may call the wrong one;
 - the name of a tool reads like that of an approved tool of another server once case, full-width letters, look-alike letters of other alphabets and invisible or default-ignorable characters are set aside;
-- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters, names that are a single plain word (`update`, `commit`: they are in every text) and names that only appear inside a longer word are ignored for this check; a tool whose text is over 1 MiB is reported as too long to check in full.
+- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters, names that are a single plain word (`update`, `commit`: they are in every text) and names that only appear inside a longer word are ignored for this check.
+- the text of a tool is over 1 MiB, so it is reported as too long to check in full and the shield cannot check it for names of other servers' tools; read it yourself.
 
 This is a warning, not a block: the same name on two servers can be legitimate. Each overlap is reported once per run of the shield, and it is logged in the decision log (`mcp_tool_shadowing`) without any tool text. A tool that is new or changed on the other server and not yet approved is not used as a reference.
 
@@ -161,6 +162,7 @@ Approval is your decision, not your agent's, so it is refused:
 - when the agent's hooks see the command in a tool call.
 
 If what you typed does not match, nothing changes and you can run the command again.
+A worked example of this decision, with one new tool denied in block mode and the error the agent sees, is in [deny one MCP tool with the shield](examples/shield-deny-rule-example.md).
 
 ### What happens when a tool changes
 
@@ -190,4 +192,12 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 - Pinning protects only servers that run through `zn-gate shield`. Remote (URL) servers are not covered.
 - The checks look at what goes in and out of a tool. They do not decide which tools an agent should have. After wrapping, keep only the tools your agent needs and put destructive operations behind explicit approval.
 
-More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).
+## Exit codes
+
+The exit codes of `zn-gate shield`, from the table in [Exit codes](exit-codes.md#agents-and-mcp-servers):
+
+| Code | Meaning |
+| --- | --- |
+| `1` | When no command is given or the program cannot be started; otherwise the shield ends when the wrapped server ends. |
+
+More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield/), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).

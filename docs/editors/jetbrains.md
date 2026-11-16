@@ -94,3 +94,9 @@ All messages: [Troubleshooting](../troubleshooting.md).
 ## JetBrains AI Assistant documentation
 
 - MCP in AI Assistant: <https://www.jetbrains.com/help/ai-assistant/mcp.html>
+
+## Keep reading
+
+- [Example: connect, check and remove zn-gate in Zed and JetBrains](../examples/zed-and-jetbrains.md)
+- [Editors and coding agents](README.md)
+- [Glossary](../glossary.md)

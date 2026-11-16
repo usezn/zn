@@ -1,3 +1,4 @@
+# Reusable build of the release artifacts: resolves the tag commit, builds the npm and Python packages, then attests and signs them.
 name: Build release
 
 # Reusable workflow called only by release.yml: builds the npm tarball and the

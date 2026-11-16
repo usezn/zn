@@ -115,3 +115,17 @@ def test_verify_one_record(tmp_path, run):
     code, cap = run(_ledger(tmp_path, "one"), verify=True)
     assert code == 0
     assert "ALL 1 RECORDS VERIFIED (IMMUTABLE)" in cap.out.splitlines()[1]
+
+
+def test_export_jsonl_two_records_one_valid_object_per_line(tmp_path, run):
+    p = tmp_path / "evidence.jsonl"
+    for tool in ("example_tool_a", "example_tool_b"):
+        assert log_evidence({"verdict": "allow", "phase": "pre", "tool_name": tool}, str(p)) is not None
+    code, cap = run(str(p), export=True, format="jsonl", output=None)
+    assert code == 0
+    lines = [line for line in cap.out.split("\n") if line]
+    assert len(lines) == 2
+    records = [json.loads(line) for line in lines]
+    assert [r["tool_name"] for r in records] == ["example_tool_a", "example_tool_b"]
+    assert all(len(r["record_hash"]) == 64 for r in records)
+    assert records[1]["prev_hash"] == records[0]["record_hash"]

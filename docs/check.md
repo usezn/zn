@@ -8,6 +8,16 @@ npx -y zn-gate check
 
 (or `zn-gate check` if you installed it with `npm i -g zn-gate`).
 
+On this page:
+
+- [What it does](#what-it-does)
+- [What you will see](#what-you-will-see)
+- [What each NOT protected line means](#what-each-not-protected-line-means)
+- [Reading the Active Engine line](#reading-the-active-engine-line)
+- [If something fails](#if-something-fails)
+- [If your agent needs a value from `.env`](#if-your-agent-needs-a-value-from-env)
+- [Related](#related)
+
 ## What it does
 
 zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
@@ -18,7 +28,7 @@ zn-gate makes a temporary folder with two files: a `.env` file that holds a fake
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
 - **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
-- **Nothing changes**: nothing is sent over the network, no agent is started and no setting changes. The folder is deleted at the end.
+- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds, to read the version (see [Agent versions](#agent-versions)), with no tokens, with updates and update notices turned off, and stopped after 2 seconds; no agent session is started. The folder is deleted at the end.
 
 ## What you will see
 
@@ -557,6 +567,15 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
 - **ZCode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>. We read that setting as "ZCode does not start zn's `secrets` MCP server", but we did not test what it does in the ZCode desktop app. The hooks still work.
 
+- **A Codex hooks file is too large to check.**
+
+  ```text
+  zn could not check <file> for another hook that runs before Codex calls: the file is larger than 256 KB, so zn did not read it
+  make that file smaller, or move its hooks out of it, then run `zn-gate check` again
+  ```
+
+  zn reads at most 256 KB of `hooks.json` or `config.toml`. A larger file is reported instead of skipped, so that it cannot hide another tool's hook.
+
 ### Gemini CLI settings switch the hook off
 
 - **Hooks are turned off, or zn's hook is on the disabled list.**
@@ -622,6 +641,51 @@ zn could not check it: <error>
 ```
 
 Something unexpected stopped the check for that agent, and the line gives the error. Nothing was changed. Run `npx -y zn-gate check` again; if it repeats, ask in [Discussions](https://github.com/usezn/zn/discussions) and include the line, without any secret.
+
+### Programs that come from the project are skipped
+
+zn starts a few programs by name (`node`, `git`, `sh`, your agent). It never starts one that sits in your project, so a repository cannot slip in its own copy. A folder on your `PATH` is skipped when it is inside the folder zn runs in, inside a git repository around it, inside the folder your agent names as the project, or inside a `node_modules` folder. Three cases need a word:
+
+- **Your home folder is a git repository (dotfiles).** That repository is not taken as your project: your tools live in your home (nvm, volta, asdf, `~/.local/bin`, a global npm folder) and stay usable. A project inside your home without its own git is found as below, by its project file.
+- **A project without git.** zn uses the project your agent names. If none is named, it uses the nearest folder above the current one that holds a project file (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Gemfile`, `pom.xml`, `composer.json`, `CLAUDE.md` or `AGENTS.md`), looking up to 8 levels. A project with none of these is only known by the folder zn runs in, so a `bin/` folder beside it is not skipped.
+- **A repository inside another repository.** The repositories around it count too, up to 8 levels above the nearest one. A repository that contains your home folder does not.
+
+## Reading the Active Engine line
+
+`zn-gate check` tests your agents and does not print an engine line. The **Active Engine** line comes from `zn-gate status`, which tells you whether zn decides only on your machine or also uses the optional cloud check. In a clean setup it reads:
+
+```text
+[+]  zn-gate Status:
+  Package Version : 1.15.0
+  Rules Version   : 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)
+  Active Engine   : Local rules only
+  Endpoint        : None (nothing leaves this machine)
+  API key         : Not set
+  Leaves machine  : Nothing
+```
+
+The line has two values:
+
+| You see | What it means |
+| --- | --- |
+| `Local rules only` | zn decides with its built-in rules on your machine. `Endpoint` says `None (nothing leaves this machine)` and `Leaves machine` says `Nothing`. This is the default. |
+| `Local rules + cloud for analyze_prompt (ZN_CLOUD=1)` | The optional cloud check is on, either because you set `ZN_CLOUD=1` together with an API key or because you ran `zn-gate connect`. `Endpoint` shows where the text goes, and `Leaves machine` says `analyze_prompt text only, secrets redacted locally first`. |
+
+In cloud mode the same command prints:
+
+```text
+  Active Engine   : Local rules + cloud for analyze_prompt (ZN_CLOUD=1)
+  Endpoint        : https://api.usezn.com/v30/analyze
+  API key         : Set (ZN_API_KEY)
+  Leaves machine  : analyze_prompt text only, secrets redacted locally first
+```
+
+Two cases keep the engine local even though a key exists:
+
+- A key in `ZN_API_KEY` without `ZN_CLOUD=1` stays local. `API key` then reads `Set (ZN_API_KEY) (unused: cloud requires ZN_CLOUD=1)`.
+- `ZN_LOCAL_ONLY=true` (or `--local-only`) always wins over `ZN_CLOUD=1` and over a saved connection.
+
+`zn-gate status` only reads files: nothing is run, changed or sent. See [Local checks and API data](local-checks-and-api-data.md) for what the cloud check sends, and the [`status` section of the CLI reference](cli.md#status) for the full output.
 
 ## If something fails
 
