@@ -156,7 +156,9 @@ These commands work offline. In the npm package they make no network call:
 | `npx -y zn-gate scan [path]` | Scans files on this machine with the local rules. |
 
 Other commands are not listed here. `stats` is left out because, if you turn on
-sharing, it can send daily counts. The cloud check is also left out. For the full
+sharing, it can send daily counts. `scan --package` downloads the package from the
+npm registry, and `init` runs `npm install -g zn-gate` if you confirm that step.
+The cloud check is also left out. For the full
 picture, see [Example: running offline and with the cloud check off](examples/offline-and-local-only.md#the-default-nothing-leaves-your-machine).
 
 ### 15. Does zn-gate work without internet?
