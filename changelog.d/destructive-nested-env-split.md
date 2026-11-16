@@ -1,0 +1,2 @@
+### Security
+- The destructive-command check now splits an `env -S` string again when the string itself holds an `-S` option, and reads the words after an `-S` string as part of the command it names. `env -S "-S rm -rf /home/alice"` and `env -S "rm" -rf /home/alice` were allowed and are blocked now, like `rm -rf /home/alice`; the same forms on a build folder or a harmless command stay allowed. A line that nests `env -S` strings more than three levels deep is refused instead of read.

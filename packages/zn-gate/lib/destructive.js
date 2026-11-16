@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-16.15';
+const COMMAND_RULES_VERSION = '2026-11-16.16';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -333,6 +333,9 @@ function unwrapDir(args) {
   let i = 0;
   const dirs = [];
   const splits = [];
+  // Where the words after the last -S value start: the string is read in place of the option, so what follows it
+  // (options env had taken, such as the -rf of env -S "-S rm" -rf DIR) belongs to the command the string names.
+  let splitEnd = -1;
   let overflow = false;
   // Set when the chain may not end on the program (see policy.skipWrapper): the caller also reads the later words.
   const chain = { unsure: false };
@@ -373,7 +376,9 @@ function unwrapDir(args) {
       while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) {
         const f = args[i++];
         if (!f.startsWith('-')) continue;
+        const before = splits.length;
         i = envOption(f, args, i, dirs, splits);
+        if (splits.length > before) splitEnd = i;
       }
       continue;
     }
@@ -385,7 +390,7 @@ function unwrapDir(args) {
     }
     break;
   }
-  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow, unsure: chain.unsure, all: first >= 0 ? args.slice(first) : args };
+  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, splitTail: splitEnd >= 0 ? args.slice(splitEnd) : [], overflow, unsure: chain.unsure, all: first >= 0 ? args.slice(first) : args };
 }
 
 /* The words of a command after wrappers and shell keywords. */
@@ -550,8 +555,11 @@ function checkSimple(words, depth, known) {
   }
   // env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by the
   // words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
-  if (un.splits.length && depth < MAX_DEPTH) {
-    const tail = args.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
+  // Strings inside strings (env -S "env -S 'rm -rf /home/alice'", env -S "-S rm -rf /home/alice") are read again the same
+  // way, up to MAX_DEPTH levels; a deeper one is refused, not skipped.
+  if (un.splits.length && depth >= MAX_DEPTH) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  if (un.splits.length) {
+    const tail = un.splitTail.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
     // The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
     const text = un.splits.map((x) => x.replace(/\\_/g, ' ').replace(/\\[tnvfr]/g, ' ')).join(' ');
     const hit = analyze('env ' + text + ' ' + tail, depth + 1, known);

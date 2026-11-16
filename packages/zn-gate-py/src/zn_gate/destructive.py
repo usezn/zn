@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.15"
+COMMAND_RULES_VERSION = "2026-11-16.16"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -728,7 +728,7 @@ def _add_dir(dirs: List[str], w: Optional[str]) -> None:
 _WRAPPER_CAP_NAMES = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
 
 
-def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool, List[str]]:
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool, List[str], List[str]]:
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
     keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
     followed were met (the line is then refused), the strings of env -S / --split-string, and whether the chain may not
@@ -737,6 +737,9 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
     guard = 0
     chdir: List[str] = []
     splits: List[str] = []
+    # Where the words after the last -S value start: the string is read in place of the option, so what follows it
+    # (options env had taken, such as the -rf of env -S "-S rm" -rf DIR) belongs to the command the string names.
+    split_end = -1
     overflow = False
     chain = {"unsure": False}
     # Where the first wrapper starts: when the chain is unsure, the words it skipped as option values are read as commands too.
@@ -795,14 +798,17 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
                 i += 1
                 if not f.startswith("-"):
                     continue
+                before = len(splits)
                 i = _env_option(f, args, i, chdir, splits)
+                if len(splits) > before:
+                    split_end = i
             continue
         # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
         if name in _WRAPPERS:
             i = _skip_wrapper(args, i, name, chain)
             continue
         break
-    return args[i:], chdir, overflow, splits, chain["unsure"], (args[first:] if first >= 0 else args)
+    return args[i:], chdir, overflow, splits, chain["unsure"], (args[first:] if first >= 0 else args), (args[split_end:] if split_end >= 0 else [])
 
 
 _ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
@@ -1171,7 +1177,7 @@ def _from_cwd(cwd: Any, word: str) -> str:
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
-    args, chdir, overflow, splits, unsure, chain_words = _unwrap_dir(words)
+    args, chdir, overflow, splits, unsure, chain_words, split_tail = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
     if chdir:
@@ -1180,8 +1186,12 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             return _OVERFLOW
     # env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by
     # the words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
-    if splits and depth < _MAX_DEPTH:
-        tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in args)
+    # Strings inside strings (env -S "env -S 'rm -rf /home/alice'", env -S "-S rm -rf /home/alice") are read again the same
+    # way, up to _MAX_DEPTH levels; a deeper one is refused, not skipped.
+    if splits and depth >= _MAX_DEPTH:
+        return _OVERFLOW
+    if splits:
+        tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in split_tail)
         # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
         text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
         hit = _analyze("env " + text + " " + tail, depth + 1, known)
@@ -1421,7 +1431,7 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf, _spl, unsure, _all = _unwrap_dir(_strip_redirects(words))
+        a, d, _ovf, _spl, unsure, _all, _tail = _unwrap_dir(_strip_redirects(words))
         a = _pipe_args(a, unsure)
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
