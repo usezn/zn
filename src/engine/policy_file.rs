@@ -51,3 +51,52 @@ pub fn write_policy_file(path: &Path, data: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writing_into_a_missing_directory_fails_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("missing").join("p.wasm");
+        let err = write_policy_file(&path, b"x").expect_err("must fail");
+        assert!(err.to_string().contains("temporary policy file"), "{err}");
+        assert_eq!(std::fs::read_dir(dir.path()).expect("list").count(), 0);
+    }
+
+    #[test]
+    fn a_path_without_a_directory_part_is_refused() {
+        let err = write_policy_file(Path::new(""), b"x").expect_err("must fail");
+        assert!(err.to_string().contains("has no directory"), "{err}");
+    }
+
+    #[test]
+    fn a_path_without_a_file_name_is_refused() {
+        let err =
+            write_policy_file(Path::new("zn-nonexistent-dir/.."), b"x").expect_err("must fail");
+        assert!(err.to_string().contains("has no name"), "{err}");
+    }
+
+    #[test]
+    fn a_directory_in_the_way_fails_the_save_and_removes_the_temporary_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("p.wasm");
+        std::fs::create_dir(&path).expect("directory in the way");
+        let err = write_policy_file(&path, b"x").expect_err("must fail");
+        assert!(
+            err.to_string().contains("Failed to save policy file"),
+            "{err}"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("list")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        assert_eq!(
+            leftovers.len(),
+            1,
+            "only the directory remains: {leftovers:?}"
+        );
+        assert!(path.is_dir());
+    }
+}

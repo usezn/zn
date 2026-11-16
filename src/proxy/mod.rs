@@ -1032,4 +1032,334 @@ Content-Length: 0
             "{msg}"
         );
     }
+
+    // ---- Coverage of the refusal and failure paths (stdio, WebSocket, pool, servers file) ----
+
+    fn server_config(command: Option<&str>, url: Option<&str>) -> McpServerConfig {
+        McpServerConfig {
+            command: command.map(str::to_string),
+            args: vec![],
+            env: HashMap::new(),
+            url: url.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn environment_variables_that_could_hijack_the_server_process_are_refused() {
+        for name in [
+            "LD_PRELOAD",
+            "ld_library_path",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "Path",
+            "HOME",
+            "UserProfile",
+            "SHELL",
+            "ComSpec",
+        ] {
+            assert!(!McpConnection::is_safe_env_var(name), "{name}");
+        }
+        for name in ["API_TOKEN", "NODE_ENV", "PATHS", "MY_HOME", "LD_PRELOAD_X"] {
+            assert!(McpConnection::is_safe_env_var(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn command_whitelist_matches_the_whole_program_name_only() {
+        for ok in ["NODE.EXE", "npx.cmd", "/usr/local/bin/python3", "Uvx"] {
+            assert!(validate_command(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "nodejs",
+            "sh",
+            "powershell.exe",
+            "node extra",
+            "python3.12",
+            "node;id",
+        ] {
+            assert!(validate_command(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_without_command_or_url_is_an_error() {
+        let err = McpConnection::connect("demo", &server_config(None, None))
+            .await
+            .err()
+            .expect("must fail");
+        assert!(err.to_string().contains("must have either"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn connect_refuses_a_command_outside_the_whitelist_without_starting_it() {
+        let err = McpConnection::connect("demo", &server_config(Some("bash"), None))
+            .await
+            .err()
+            .expect("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bash") && msg.contains("not an allowed command"),
+            "{msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_reports_an_allowed_command_that_cannot_start() {
+        let missing = "/nonexistent/zn-coverage-test/node";
+        let err = McpConnection::connect("demo", &server_config(Some(missing), None))
+            .await
+            .err()
+            .expect("must fail");
+        assert!(err.to_string().contains(missing), "{err}");
+    }
+
+    #[tokio::test]
+    async fn connect_opens_a_websocket_when_the_server_accepts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while ws.next().await.is_some() {}
+        });
+        let url = format!("ws://{}", addr);
+        let mut conn = McpConnection::connect("ws-demo", &server_config(None, Some(&url)))
+            .await
+            .expect("connects");
+        assert!(matches!(conn, McpConnection::WebSocket { .. }));
+        assert!(conn.shutdown().await.is_ok());
+    }
+
+    #[cfg(unix)]
+    fn stdio_conn(program: &str) -> McpConnection {
+        let mut child = Command::new(program)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("test program starts");
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        McpConnection::Stdio {
+            name: program.into(),
+            child,
+            stdin: BufWriter::new(stdin),
+            stdout: BufReader::new(stdout),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_request_round_trips_and_shutdown_stops_the_process() {
+        let mut conn = stdio_conn("cat");
+        assert!(conn.is_alive().await);
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        assert_eq!(conn.send_request(request).await.unwrap(), request);
+        assert_eq!(conn.send_request(request).await.unwrap(), request);
+        conn.shutdown().await.unwrap();
+        assert!(!conn.is_alive().await, "a stopped process is not alive");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_server_that_exited_is_reported_dead_and_gives_no_reply() {
+        let mut conn = stdio_conn("true");
+        for _ in 0..100 {
+            if !conn.is_alive().await {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(!conn.is_alive().await);
+        // Either the write fails or the reply is empty: never a made-up answer.
+        let reply = conn.send_request(r#"{"id":1}"#).await;
+        assert!(reply.map(|r| r.is_empty()).unwrap_or(true));
+    }
+
+    #[tokio::test]
+    async fn ws_request_skips_non_text_frames_until_the_text_reply() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let _ = ws.next().await;
+            ws.send(Message::Binary(vec![1u8, 2, 3].into()))
+                .await
+                .unwrap();
+            ws.send(Message::Text("the reply".into())).await.unwrap();
+            while ws.next().await.is_some() {}
+        });
+        let mut conn = ws_conn(addr).await;
+        assert_eq!(conn.send_request("question").await.unwrap(), "the reply");
+    }
+
+    #[tokio::test]
+    async fn ws_request_fails_when_the_server_goes_away_without_replying() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let _ = ws.next().await;
+            // Dropped here: no reply is ever sent.
+        });
+        let mut conn = ws_conn(addr).await;
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            conn.send_request("question"),
+        )
+        .await
+        .expect("the request must not hang");
+        assert!(outcome.is_err(), "{outcome:?}");
+    }
+
+    #[tokio::test]
+    async fn sending_to_an_unknown_server_is_refused() {
+        let pool = McpPool::new(HashMap::new());
+        let err = pool
+            .send("ghost", "{}", None)
+            .await
+            .err()
+            .expect("must fail");
+        assert!(err.to_string().contains("Unknown MCP server"), "{err}");
+    }
+
+    /// Echo server that serves any number of connections, one task each.
+    async fn multi_echo_server() -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    while let Some(Ok(msg)) = ws.next().await {
+                        if let Message::Text(text) = msg {
+                            if ws.send(Message::Text(text)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn only_successful_results_with_an_agent_are_cached() {
+        let addr = multi_echo_server().await;
+        let cache = Arc::new(crate::engine::cache::ResultCache::new(
+            crate::config::CachingConfig {
+                enabled: true,
+                ttl_seconds: 60,
+            },
+        ));
+        let configs = HashMap::from([(
+            "srv".to_string(),
+            server_config(None, Some(&format!("ws://{}", addr))),
+        )]);
+        let pool = McpPool::new(configs).with_cache(cache.clone());
+
+        let ok = r#"{"id":1,"result":"fine"}"#;
+        let failed = r#"{"id":2,"error":"nope"}"#;
+        let anonymous = r#"{"id":3,"result":"fine"}"#;
+        assert_eq!(pool.send("srv", ok, Some("agent-a")).await.unwrap(), ok);
+        assert_eq!(
+            pool.send("srv", failed, Some("agent-a")).await.unwrap(),
+            failed
+        );
+        assert_eq!(pool.send("srv", anonymous, None).await.unwrap(), anonymous);
+
+        assert_eq!(cache.get("agent-a", "srv", ok).as_deref(), Some(ok));
+        assert!(
+            cache.get("agent-a", "srv", failed).is_none(),
+            "an error reply is never cached"
+        );
+        assert!(
+            cache.get("agent-a", "srv", anonymous).is_none(),
+            "a call without an agent is never cached"
+        );
+        assert!(
+            cache.get("agent-b", "srv", ok).is_none(),
+            "the cache is per agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_reconnects_when_the_connection_died() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            // Each connection answers one message and is then dropped.
+            while let Ok((tcp, _)) = listener.accept().await {
+                let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                if let Some(Ok(Message::Text(text))) = ws.next().await {
+                    let _ = ws.send(Message::Text(text)).await;
+                }
+            }
+        });
+        let configs = HashMap::from([(
+            "srv".to_string(),
+            server_config(None, Some(&format!("ws://{}", addr))),
+        )]);
+        let pool = McpPool::new(configs);
+        assert_eq!(pool.send("srv", "one", None).await.unwrap(), "one");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(pool.send("srv", "two", None).await.unwrap(), "two");
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_closes_every_connection() {
+        let addr = multi_echo_server().await;
+        let pool = ws_pool(&[("srv", addr)]);
+        assert_eq!(pool.send("srv", "hi", None).await.unwrap(), "hi");
+        assert_eq!(pool.health_check().await.get("srv"), Some(&true));
+        pool.shutdown_all().await;
+        assert_eq!(pool.health_check().await.get("srv"), Some(&false));
+        // The next request opens a fresh connection.
+        assert_eq!(pool.send("srv", "again", None).await.unwrap(), "again");
+    }
+
+    #[test]
+    fn a_missing_servers_file_is_reported_with_its_path() {
+        let path = "/nonexistent/zn-coverage-test/mcp_servers.json";
+        let err = McpPool::from_config_file(path).err().expect("must fail");
+        assert!(err.to_string().contains(path), "{err}");
+    }
+
+    #[test]
+    fn servers_file_keeps_only_well_formed_args_and_env() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers": {
+                "remote": {"url": "ws://127.0.0.1:1"},
+                "local": {"command": "node", "args": ["a.js", 5], "env": {"KEY": "v", "NUM": 3}}
+            }}"#,
+        )
+        .expect("write");
+        let pool = McpPool::from_config_file(file.to_str().expect("utf8")).expect("loads");
+        let mut names = pool.list_mcps();
+        names.sort();
+        assert_eq!(names, vec!["local".to_string(), "remote".to_string()]);
+        assert!(pool.notices().is_empty());
+        let local = pool.configs.get("local").expect("local");
+        assert_eq!(local.args, vec!["a.js".to_string()]);
+        assert_eq!(local.env.len(), 1);
+        assert_eq!(local.env.get("KEY").map(String::as_str), Some("v"));
+        assert!(pool.configs.get("remote").expect("remote").url.is_some());
+    }
+
+    #[test]
+    fn servers_file_without_a_servers_section_gives_an_empty_pool() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(&file, r#"{"other": 1}"#).expect("write");
+        let pool = McpPool::from_config_file(file.to_str().expect("utf8")).expect("loads");
+        assert!(pool.list_mcps().is_empty());
+        assert!(pool.skipped_servers().is_empty());
+    }
 }

@@ -485,4 +485,89 @@ mod tests {
             );
         }
     }
+
+    // ---- Coverage of the block paths and the character folding ----
+
+    #[test]
+    fn path_traversal_in_arguments_is_blocked_by_the_lfi_check() {
+        let err = ManagedRuleset::evaluate(&cfg(), "read_note", "open ../../etc/passwd")
+            .expect_err("must block");
+        assert!(err.contains("Local File Inclusion"), "{err}");
+
+        let off = ManagedRulesConfig {
+            lfi_protection: false,
+            ..cfg()
+        };
+        let verdict = ManagedRuleset::evaluate(&off, "read_note", "open ../../etc/passwd");
+        assert!(
+            verdict
+                .err()
+                .map_or(true, |e| !e.contains("Local File Inclusion")),
+            "the LFI check is skipped when it is switched off"
+        );
+    }
+
+    #[test]
+    fn sql_injection_in_arguments_is_blocked_by_the_sql_check() {
+        let err = ManagedRuleset::evaluate(&cfg(), "db_query", "name=x' or '1'='1")
+            .expect_err("must block");
+        assert!(err.contains("SQL Injection blocked"), "{err}");
+
+        let off = ManagedRulesConfig {
+            sql_injection: false,
+            ..cfg()
+        };
+        let verdict = ManagedRuleset::evaluate(&off, "db_query", "name=x' or '1'='1");
+        assert!(verdict
+            .err()
+            .map_or(true, |e| !e.contains("SQL Injection blocked")));
+    }
+
+    #[test]
+    fn restricted_commands_pass_only_when_that_check_is_off() {
+        let off = ManagedRulesConfig {
+            restricted_commands: false,
+            ..cfg()
+        };
+        let verdict = ManagedRuleset::evaluate(&off, "disk_tool", "rm -rf /tmp/x");
+        assert!(verdict
+            .err()
+            .map_or(true, |e| !e.contains("Restricted command")));
+        assert!(ManagedRuleset::evaluate(&cfg(), "disk_tool", "rm -rf /tmp/x").is_err());
+    }
+
+    #[test]
+    fn embedded_images_do_not_change_the_verdict_with_or_without_visual_redaction() {
+        let args = "see data:image/png;base64,AAAA for the chart";
+        for visual in [false, true] {
+            let config = ManagedRulesConfig {
+                visual_pii_redaction: visual,
+                ..cfg()
+            };
+            assert!(ManagedRuleset::evaluate(&config, "show_chart", args).is_ok());
+        }
+    }
+
+    #[test]
+    fn fold_maps_full_width_letters_and_digits_to_ascii() {
+        let wide = "\u{FF32}\u{FF2D} \u{FF41}\u{FF42}\u{FF5A} \u{FF10}\u{FF19}";
+        assert_eq!(fold_system1(wide), "RM abz 09");
+        assert_eq!(fold_system1_spaced(wide), "RM abz 09");
+    }
+
+    #[test]
+    fn fold_maps_look_alike_letters_to_their_latin_form() {
+        let lower = "\u{0430}\u{0435}\u{043E}\u{0440}\u{0441}\u{0443}\u{0445}\u{0456}";
+        assert_eq!(fold_system1(lower), "aeopcyxi");
+        let upper = "\u{0391}\u{0410}\u{0412}\u{0415}\u{041A}\u{041C}\u{041D}\u{041E}\u{0420}\u{0421}\u{0422}\u{0425}";
+        assert_eq!(fold_system1(upper), "AABEKMHOPCTX");
+        assert_eq!(fold_system1_spaced(upper), "AABEKMHOPCTX");
+    }
+
+    #[test]
+    fn restricted_command_written_with_look_alike_letters_is_still_blocked() {
+        // Cyrillic "с" for the Latin "c" in "chmod"; full-width "ｒｍ" for "rm".
+        assert!(ManagedRuleset::evaluate(&cfg(), "\u{0441}hmod", "").is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "run", "\u{FF52}\u{FF4D} -rf /tmp/x").is_err());
+    }
 }
