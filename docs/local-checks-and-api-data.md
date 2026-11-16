@@ -1,11 +1,12 @@
 # What runs locally and what goes to the API
 
-zn-gate runs its checks on your computer. One optional feature sends text to the zn API: the cloud check for prompts. This page says which checks run locally, when the cloud check is called, exactly what the request contains, what never leaves your computer, how to keep everything local, and what zn-gate stores on your computer.
+zn-gate runs its checks on your computer. Two optional features send text to the zn API: the cloud check for prompts and, in Claude Code, the cloud check of tool output. This page says which checks run locally, when the cloud check is called, exactly what the request contains, what never leaves your computer, how to keep everything local, and what zn-gate stores on your computer.
 
 ## The short answer
 
-- **The checks run on your computer.** Prompts, tool output, tool-call arguments, tool descriptions, shell commands and file contents are checked locally. None of these checks sends them anywhere.
+- **The checks run on your computer.** Prompts, tool output, tool-call arguments, tool descriptions, shell commands and file contents are checked locally. None of these checks sends them anywhere. The only exception is the opt-in cloud check of tool output, below.
 - **One optional path sends text.** The cloud check for `analyze_prompt` and `zn-gate analyze` sends the prompt text to `api.usezn.com`, after zn-gate has removed the secrets it detects. It is off unless you turn it on.
+- **A second optional path sends a sample of tool output.** In Claude Code, after `zn-gate connect` and only if you also set `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json`, a capped sample of web, MCP and shell results goes to `api.usezn.com`. It is off by default, also when you are connected. See [Other connections](#other-connections-and-what-they-send).
 - **A few other connections exist, all off by default or started by you:** the cloud key check in `zn-gate connect`, the optional usage statistics sharing, the optional zn Team upload, and two outbound features that go only to hosts you allow. They are listed in [Other connections](#other-connections-and-what-they-send).
 
 ## Checks that run locally
@@ -27,7 +28,7 @@ For how these pieces fit together, see [Architecture](architecture.md).
 
 The cloud check runs only when all of these are true:
 
-1. The text is checked by `analyze_prompt` or by `zn-gate analyze`. No other check calls it: tool output, tool-call arguments and tool descriptions never reach it.
+1. The text is checked by `analyze_prompt` or by `zn-gate analyze`. No other check calls it: tool-call arguments and tool descriptions never reach it. Tool output reaches the service only through the separate opt-in path described in [Other connections](#other-connections-and-what-they-send).
 2. The local rules did not already block the text. A text the local rules block is never sent.
 3. The cloud check is on. It is on when you set `ZN_CLOUD=1` together with an API key (`ZN_API_KEY` or `--key`), or when you have run `zn-gate connect` and the saved key can be read. An API key alone does nothing.
 4. The local-only override is not set. `ZN_LOCAL_ONLY=true` or `--local-only` turns the cloud check off, even when `ZN_CLOUD=1` is set or zn-gate is connected.
@@ -106,6 +107,7 @@ The cloud check receives only what is listed under [What the request contains](#
 | --- | --- | --- |
 | `zn-gate connect` | Only when you run it yourself, in your own terminal | The API key only, to `api.usezn.com`, to check it. |
 | `zn-gate disconnect` | Only when you run it yourself | The key only, to `api.usezn.com`, to revoke it. This happens only if you say yes at the prompt, or pass `--revoke`. `--no-revoke` makes no call. |
+| Cloud check of tool output (Claude Code hook) | Off by default, also after `zn-gate connect`. Only if you ran `zn-gate connect` and also added `{"hooks": {"cloudCheckToolOutput": true}}` to your own `~/.zn/config.json`. Environment variables and project settings cannot turn it on. | A sample of each web fetch, MCP tool or shell command result, at most 16 KiB (the first 12 KiB and the last 4 KiB), to `api.usezn.com`, with the saved key. Secrets zn-gate detects and email addresses, phone numbers, IBANs, card numbers and national ID numbers are replaced first; IP addresses, names, postal addresses, usernames and secrets it does not recognize are sent as written. A result the local check already flagged is not sent, and `Read` results are never sent. Remove the setting, or set it to `false`, to turn it off. See [Connect to the zn API](connect.md). |
 | `zn-gate stats share on` | Off by default. Once on, each `zn-gate stats` run | One report per complete day (at most the last 3 days) to `api.usezn.com`: a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type. Never values, prompts, variable or secret names, paths, hosts or emails. `zn-gate stats share show` shows the report first. |
 | zn Team (`zn team join`) | Only on a machine you join to an organization | The audit log metadata. See [zn Team](team.md). |
 | Online package check | Only in online mode, which is off by default | The package name only, to `registry.npmjs.org` or `pypi.org`. See [Packages your agent installs](package-install-check.md). |
