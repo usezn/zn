@@ -32,6 +32,10 @@
  * already be on this version. Every other release check, including the integrity, the attestation and the file digests of
  * the lock file as it is, stays strict. The strict form (no --pre-tag) runs on main once npm has the version: then the
  * lock file must equal it.
+ * --grace-hours N (with --release, strict form): for N hours after npm published this version, a lock file still on the
+ * previous release is accepted as in --pre-tag, with a warning, so main does not turn red while the pin pull request
+ * waits for review. The publish time comes from npm (the time field of the package); when it cannot be read the check
+ * stays strict. After the window a forgotten pin fails as before.
  * No dependencies; Node.js 18 or later.
  */
 
@@ -42,6 +46,24 @@ const ROOT = process.cwd();
 const PLUGIN = 'plugins/zn-gate';
 const release = process.argv.includes('--release');
 const preTag = release && process.argv.includes('--pre-tag');
+const graceArg = process.argv.indexOf('--grace-hours');
+const graceHours = release && !preTag && graceArg > 0 ? Number(process.argv[graceArg + 1]) : 0;
+if (graceArg > 0 && !(graceHours > 0 && graceHours <= 168)) {
+  process.stderr.write('check-plugins: --grace-hours needs --release (without --pre-tag) and a number of hours from 1 to 168\n');
+  process.exit(2);
+}
+// Hours since npm published zn-gate@version, or null when npm cannot say (then no grace: the check stays strict).
+function hoursSincePublished(version) {
+  let iso = process.env.ZN_CHECK_PLUGINS_PUBLISHED_AT;
+  if (iso === undefined) {
+    const r = require('child_process').spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'time', '--json'], { encoding: 'utf8' });
+    if (r.status !== 0) return null;
+    try { iso = (JSON.parse(r.stdout) || {})[version]; } catch (_) { return null; }
+  }
+  const t = Date.parse(iso || '');
+  return Number.isFinite(t) ? (Date.now() - t) / 3600000 : null;
+}
+let graceNote = '';
 const errors = [];
 
 function fail(msg) { errors.push(msg); }
@@ -90,6 +112,25 @@ for (const [where, got] of Object.entries(versions)) {
 if (!/^\d+\.\d+\.\d+$/.test(v || '')) fail('lock file: version must be an exact release, got ' + v);
 
 const pkg = json('packages/zn-gate/package.json');
+let lenientMemo;
+function lenient() {
+  if (preTag) return true;
+  if (lenientMemo !== undefined) return lenientMemo;
+  lenientMemo = false;
+  if (graceHours > 0) {
+    const lockV = json(PLUGIN + '/scripts/zn-gate.lock.json').version;
+    if (lockV !== pkg.version) {
+      const h = hoursSincePublished(pkg.version);
+      if (h !== null && h >= 0 && h < graceHours) {
+        lenientMemo = true;
+        graceNote = 'the plugin is still pinned to ' + lockVersionOf(lockV) + ' while zn-gate ' + pkg.version + ' was published ' + h.toFixed(1) + ' h ago; pin it within ' + graceHours + ' h (plugins/tools/pin-release.js)';
+        process.stdout.write('::warning::' + graceNote + '\n');
+      }
+    }
+  }
+  return lenientMemo;
+}
+function lockVersionOf(v) { return String(v); }
 if (pkg.mcpName !== server.name) fail('packages/zn-gate/package.json mcpName ' + pkg.mcpName + ' differs from ' + SERVER_JSON + ' name ' + server.name);
 // The registry entry follows the published package, not the plugin pin: on next the pin can lag a release.
 const serverVersions = { [SERVER_JSON + ' version']: server.version };
@@ -104,7 +145,7 @@ const olderFinal = (a, b) => {
 };
 for (const [where, got] of Object.entries(serverVersions)) {
   if (got !== pkg.version) fail(where + ': version ' + got + ' differs from packages/zn-gate/package.json version ' + pkg.version);
-  if (release && !pre && !preTag && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
+  if (release && !pre && !lenient() && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
 }
 if (release && pre && !olderFinal(v || '0.0.0', pre[1])) {
   fail('lock file: for the prerelease ' + pkg.version + ' the plugin pin must stay on the last final release (older than ' + pre[1] + '), got ' + v);
@@ -137,7 +178,7 @@ function missingOnNpm(version) {
   const r = require('child_process').spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate@' + version, 'version'], { cwd: ROOT, encoding: 'utf8' });
   return r.status !== 0 && /E404/.test(String(r.stderr || ''));
 }
-if (preTag && !pre && v !== pkg.version) {
+if (lenient() && !pre && v !== pkg.version) {
   const prev = previousRelease(pkg.version);
   if (!prev) fail('git tags: no release tag below ' + pkg.version + ' found (is the repository reachable?), cannot tell the previous release for --pre-tag');
   else if (v !== prev) fail('lock file: before the tag the plugin pin must be the previous release ' + prev + ' or ' + pkg.version + ', got ' + v);
@@ -434,5 +475,5 @@ if (errors.length) {
   process.stderr.write(errors.map((e) => 'check-plugins: ' + e).join('\n') + '\n');
   process.exitCode = 1;
 } else {
-  process.stdout.write('check-plugins: OK (zn-gate ' + v + (release ? (preTag ? ', release mode before the tag' : ', release mode') : '') + ')\n');
+  process.stdout.write('check-plugins: OK (zn-gate ' + v + (release ? (preTag ? ', release mode before the tag' : graceNote ? ', release mode within the pin grace window' : ', release mode') : '') + ')\n');
 }

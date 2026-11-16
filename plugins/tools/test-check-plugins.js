@@ -53,6 +53,18 @@ try {
     assert.ok(check(a, '--release', '--pre-tag').ok, 'pre-tag: the lock on the previous release passes');
     const b = check(a, '--release');
     assert.ok(!b.ok && /differs from the lock file version/.test(b.out), 'tag: the lock on the previous release fails');
+    // Grace window on main: published 2 h ago with a 24 h window passes with a warning; 30 h ago it fails again; an
+    // unreadable publish time keeps the strict check.
+    process.env.ZN_CHECK_PLUGINS_PUBLISHED_AT = new Date(Date.now() - 2 * 3600000).toISOString();
+    const g1 = check(a, '--release', '--grace-hours', '24');
+    assert.ok(g1.ok && g1.out.includes('::warning::') && g1.out.includes('pin grace window'), 'grace: a fresh release with the previous pin passes with a warning: ' + g1.out);
+    process.env.ZN_CHECK_PLUGINS_PUBLISHED_AT = new Date(Date.now() - 30 * 3600000).toISOString();
+    const g2 = check(a, '--release', '--grace-hours', '24');
+    assert.ok(!g2.ok && /differs from the lock file version/.test(g2.out), 'grace: after the window the previous pin fails: ' + g2.out);
+    process.env.ZN_CHECK_PLUGINS_PUBLISHED_AT = 'not a date';
+    assert.ok(!check(a, '--release', '--grace-hours', '24').ok, 'grace: an unreadable publish time keeps the check strict');
+    delete process.env.ZN_CHECK_PLUGINS_PUBLISHED_AT;
+    assert.ok(!check(a, '--release', '--grace-hours', '0').ok, 'grace: a window of 0 hours is refused');
     // Nothing older than the previous release (the tags say it is 1.13.0), and the changelog cannot change that.
     const c = copyTree();
     rewrite(c, 'CHANGELOG.md', (s) => s.replace('## [' + pkgVersion + ']', '## [' + pkgVersion + ']\n\n## [' + previous + ']\n\n## [0.0.1]'));
