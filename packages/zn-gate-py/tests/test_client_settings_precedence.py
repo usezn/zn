@@ -47,7 +47,7 @@ class _Case(unittest.TestCase):
         return _Resp()
 
     def run_analyze(self, text="hello there", **kw):
-        with mock.patch.object(client.urllib.request, "urlopen", self._open):
+        with mock.patch.object(client, "_open", self._open):
             return client.analyze(text, **kw)
 
 

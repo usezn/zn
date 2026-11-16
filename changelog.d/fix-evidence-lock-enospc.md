@@ -1,0 +1,2 @@
+### Fixed
+- The evidence log no longer leaves empty lock files behind when the disk is full. Before, a writer that ran out of space while writing its owner token left an empty lock (the Python package) or an empty break mutex used while replacing a stale lock (both packages). Those files made later evidence records wait and then be skipped for up to 10 seconds with "another process is writing to the log", even after space was freed. The disk error is still reported as before, and the next record is written at once.

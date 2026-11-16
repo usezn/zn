@@ -51,7 +51,7 @@ def _analyze(monkeypatch, exc, text):
         seen.append(req)
         raise exc
 
-    monkeypatch.setattr(client.urllib.request, "urlopen", opener)
+    monkeypatch.setattr(client, "_open", opener)
     return client.analyze(text, endpoint=ENDPOINT), seen
 
 
@@ -86,7 +86,7 @@ def test_key_passed_as_argument_is_not_leaked_either(monkeypatch, capsys):
     def opener(req, timeout=None):
         raise _http(503)
 
-    monkeypatch.setattr(client.urllib.request, "urlopen", opener)
+    monkeypatch.setattr(client, "_open", opener)
     res = client.analyze(BENIGN, api_key=KEY, endpoint=ENDPOINT)
     captured = capsys.readouterr()
     assert res["fallback"] is True

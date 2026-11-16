@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import shutil
@@ -136,3 +137,80 @@ def test_log_evidence_writes_only_to_the_given_file(tmp_path, monkeypatch):
     for p in tmp_path.rglob("*"):
         assert p == target or p == target.parent or p == fake_home or p.name.startswith(target.name) \
             or p.parent == target.parent
+
+
+# Fixed records (fake hashes, reserved values) so the CLI output is byte-stable.
+# The expected bytes match what the Node package writes for the same ledger.
+_FIXED_RECORDS = [
+    {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "verdict": "allow",
+        "phase": "tool-call",
+        "tool_name": "bash",
+        "agent_environment": "agent-a",
+        "rule": "",
+        "reason": "",
+        "payload_sha256": "a" * 64,
+        "record_hash": "b" * 64,
+        "prev_hash": GENESIS_HASH,
+        "latency_us": 15,
+    },
+    {
+        "timestamp": "2026-01-01T00:00:01Z",
+        "verdict": "block",
+        "phase": "tool-call",
+        "tool_name": "bash",
+        "agent_environment": "agent-b",
+        "rule": "path:sensitive_file",
+        "reason": 'says "no"',
+        "payload_sha256": "c" * 64,
+        "record_hash": "d" * 64,
+        "prev_hash": "b" * 64,
+        "latency_us": 20,
+    },
+]
+
+_CSV_HEADER = "timestamp,verdict,phase,tool_name,agent_environment,rule,reason,payload_sha256,record_hash,prev_hash,latency_us"
+
+
+def _run_cli_export(monkeypatch, capsys, ledger_path, fmt):
+    from zn_gate import cli as cli_mod
+    import zn_gate.evidence as evidence_mod
+
+    monkeypatch.setattr(evidence_mod, "EVIDENCE_FILE", str(ledger_path))
+    args = argparse.Namespace(verify=False, export=True, format=fmt, output=None)
+    assert cli_mod.cmd_evidence(args) == 0
+    return capsys.readouterr().out
+
+
+def test_cli_export_jsonl_matches_node_bytes(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "evidence.jsonl"
+    text = "".join(json.dumps(r) + "\n" for r in _FIXED_RECORDS)
+    ledger.write_text(text, encoding="utf-8")
+
+    out = _run_cli_export(monkeypatch, capsys, ledger, "jsonl")
+
+    assert out == text
+    assert not out.endswith("\n\n")
+
+
+def test_cli_export_csv_matches_node_bytes(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "evidence.jsonl"
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in _FIXED_RECORDS), encoding="utf-8")
+    expected = (
+        _CSV_HEADER + "\n"
+        + f'"2026-01-01T00:00:00Z","allow","tool-call","bash","agent-a","","","{"a" * 64}","{"b" * 64}","{GENESIS_HASH}","15"\n'
+        + f'"2026-01-01T00:00:01Z","block","tool-call","bash","agent-b","path:sensitive_file","says ""no""","{"c" * 64}","{"d" * 64}","{"b" * 64}","20"\n'
+    )
+
+    out = _run_cli_export(monkeypatch, capsys, ledger, "csv")
+
+    assert out == expected
+    assert not out.endswith("\n\n")
+
+
+def test_cli_export_missing_ledger_prints_nothing_for_jsonl(tmp_path, monkeypatch, capsys):
+    missing = tmp_path / "missing.jsonl"
+
+    assert _run_cli_export(monkeypatch, capsys, missing, "jsonl") == ""
+    assert _run_cli_export(monkeypatch, capsys, missing, "csv") == _CSV_HEADER + "\n"
