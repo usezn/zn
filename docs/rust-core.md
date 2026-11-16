@@ -24,7 +24,7 @@ The gateway's rules do not cover shell commands the way the [destructive-command
 
 A review of an older snapshot of this gateway found issues that only affect someone who builds `src/` and runs `zn start` themselves. Most were already fixed; these changed now:
 
-- **Bans per tenant.** The reputation and ban list is kept per namespace (WebSocket tenant or the configured namespace) and agent id, so a tenant can no longer ban another tenant's agent ids (such as the default `anonymous`), and `/api/v1/reputation` shows a tenant only its own namespace. The agent id in a message is a label, not an identity, and is cut to 128 characters.
+- **Bans per tenant.** The reputation and ban list is kept per namespace (WebSocket tenant or the configured namespace) and agent id, so a tenant can no longer ban another tenant's agent ids (such as the default `anonymous`), and `/api/v1/reputation` shows a tenant only its own namespace. The agent id in a message is a label, not an identity, and is cut to 128 characters. The loop breaker and multi-signature approvals are kept per namespace too, so one tenant cannot trip the loop breaker of another or use an approval it did not ask for.
 - **Sanitized images are forwarded.** With `visual_pii_redaction` on, an allowed tool call now carries the sanitized arguments (metadata stripped), the same ones that were checked and stored in the audit vault, instead of the original frame, in the place they were read from (the rebuilt frame may list its keys in another order). If the frame cannot be rebuilt, the call is refused.
 - **Bounded WebSocket messages.** `/mcp/ws` closes a connection whose message or frame is over 1 MiB (the library default was 64 MiB).
 - **WebSocket limits are configurable.** The limits are the `server.ws_max_message_bytes` (default 1048576, 1 MiB) and `server.ws_max_frame_bytes` (default 1048576, 1 MiB) settings; a message or frame over its limit closes the connection.
@@ -44,7 +44,7 @@ It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the p
 
 Only then does it write the file. It writes to a temporary file in the policy directory, which is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
 
-Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+Known limits that remain, because the gateway is not distributed: bans and the loop breaker follow the agent id that the message gives, inside its namespace, so a client that changes its agent id on every call starts each time with a clean record (the fixed rules and policies still check every call; give each client its own namespace to keep it apart); the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
 ## Audit payloads
 
@@ -186,7 +186,7 @@ A search runs on the request path, so it is tried once and gives up after one se
 
 To avoid the download:
 
-- `ZN_FAST_BOOT=1` (any value): the gateway does not load the model and runs with a stub. The neural check is off.
+- `ZN_FAST_BOOT=1` (any value): the gateway does not load the model and runs with a stub. The neural check is off, and the gateway says so when it starts. With `neural.active_blocking` on (and `guardrails.alert_only` off) the gateway does not start, because the check that should block would be missing. For tests only.
 - `"neural": {"enabled": false}` in `zn.json`: the model is not loaded and the neural check is off.
 - `ZN_NEURAL_MODEL_PATH=/path/to/folder` (or `neural.model_path` in `zn.json`): the gateway loads the model from that folder. Nothing is downloaded if the three files there match their hashes, so a local copy must be byte-identical.
 - `HF_ENDPOINT=<your-mirror-url>`: the gateway downloads from that server instead of huggingface.co. The server must serve the same paths, `<endpoint>/sentence-transformers/all-MiniLM-L6-v2/resolve/<commit>/<file>`.
