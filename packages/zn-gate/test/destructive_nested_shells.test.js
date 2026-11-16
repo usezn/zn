@@ -2,7 +2,7 @@
 
 process.env.ZN_STATS = 'off';
 
-// Shell code inside shell code (sh -c "sh -c ...") is read up to eight levels deep; deeper code is refused, not skipped.
+// Shell code inside shell code (sh -c "sh -c ...") is read up to three levels deep; deeper code is refused, not skipped.
 // Only the text is checked; nothing is run. Mirrored by packages/zn-gate-py/tests/test_input_hardening.py.
 
 const test = require('node:test');
@@ -26,13 +26,25 @@ test('a dangerous command in nested shells is blocked at any depth', () => {
 });
 
 test('a harmless command in nested shells is allowed up to the limit', () => {
-  for (const levels of [1, 2, 3, 4, 6]) assert.equal(checkCommand(wrap('echo hello', levels)).verdict, 'allow', String(levels));
+  for (const levels of [1, 2, 3]) assert.equal(checkCommand(wrap('echo hello', levels)).verdict, 'allow', String(levels));
 });
 
 test('nesting past the limit is refused, not skipped', () => {
-  for (const levels of [9, 10, 12]) {
+  for (const levels of [4, 5, 9, 12]) {
     const r = checkCommand(wrap('echo hello', levels));
     assert.equal(r.verdict, 'block');
     assert.equal(r.rule, 'destructive:too_many_commands');
   }
+});
+
+test('cost stays bounded near the scan cap: the limit finishes, one level more is refused at once', () => {
+  // Each level is read twice, so the work doubles per level.
+  const payload = 'echo ' + '"a" '.repeat(20) + 'word '.repeat(12000);
+  let t0 = Date.now();
+  assert.equal(checkCommand(wrap(payload, 3)).verdict, 'allow');
+  assert.ok(Date.now() - t0 < 3000, 'three levels took ' + (Date.now() - t0) + ' ms');
+  t0 = Date.now();
+  const r = checkCommand(wrap('echo ' + 'word '.repeat(30000), 4));
+  assert.equal(r.rule, 'destructive:too_many_commands');
+  assert.ok(Date.now() - t0 < 3000, 'four levels took ' + (Date.now() - t0) + ' ms');
 });

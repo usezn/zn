@@ -32,16 +32,32 @@ def test_dangerous_disk_write_in_nested_shells_is_blocked():
     assert not check_command(wrap("dd if=/dev/zero of=/dev/sda", 5)).allowed
 
 
-@pytest.mark.parametrize("levels", [1, 2, 3, 4, 6])
+@pytest.mark.parametrize("levels", [1, 2, 3])
 def test_benign_command_in_nested_shells_is_allowed(levels):
     assert check_command(wrap("echo hello", levels)).allowed
 
 
-@pytest.mark.parametrize("levels", [9, 10, 12])
+@pytest.mark.parametrize("levels", [4, 5, 9, 12])
 def test_nesting_past_the_limit_is_refused_not_skipped(levels):
     res = check_command(wrap("echo hello", levels))
     assert not res.allowed
     assert res.rule == "destructive:too_many_commands"
+
+
+def test_nesting_cost_stays_bounded_near_the_scan_cap():
+    # Each level is read twice, so the work doubles per level: at the limit a long harmless payload must still finish
+    # in seconds, and one level more must be refused at once without reading it all.
+    import time
+
+    payload = "echo " + '"a" ' * 20 + "word " * 12000
+    start = time.monotonic()
+    res = check_command(wrap(payload, 3))
+    assert res.allowed
+    assert time.monotonic() - start < 5.0
+    start = time.monotonic()
+    res = check_command(wrap("echo " + "word " * 30000, 4))
+    assert res.rule == "destructive:too_many_commands"
+    assert time.monotonic() - start < 5.0
 
 
 def test_eval_nesting_past_the_limit_is_refused():
@@ -177,6 +193,56 @@ def test_sanitize_object_cycle_and_unreadable_object():
     # Properties are not attributes of the instance: the object reads fine.
     clean, _ = sanitize_tool_result(Bad())
     assert isinstance(clean, Bad)
+
+
+def test_sanitize_object_that_cannot_be_copied_returns_a_dict_of_masked_attributes():
+    class NoCopy:
+        def __init__(self):
+            self.token = FAKE_KEY
+            self.name = "x"
+
+        def __copy__(self):
+            raise TypeError("no copy")
+
+    obj = NoCopy()
+    clean, found = sanitize_tool_result(obj)
+    assert isinstance(clean, dict)
+    assert FAKE_KEY not in repr(clean)
+    assert clean["name"] == "x"
+    assert found
+    assert obj.token == FAKE_KEY
+
+
+def test_sanitize_object_with_unreadable_attribute_listing_is_refused():
+    class Hidden:
+        def __init__(self):
+            self.token = FAKE_KEY
+
+        @property
+        def __dict__(self):  # type: ignore[override]
+            raise RuntimeError("no")
+
+        def __str__(self):
+            return "benign"
+
+    with pytest.raises(SanitizeLimitError) as exc:
+        sanitize_tool_result(Hidden())
+    assert exc.value.rule == "type:unscannable"
+
+
+def test_sanitize_object_whose_copy_is_itself_is_not_changed():
+    class SelfCopy:
+        def __init__(self):
+            self.token = FAKE_KEY
+
+        def __copy__(self):
+            return self
+
+    obj = SelfCopy()
+    clean, found = sanitize_tool_result(obj)
+    assert obj.token == FAKE_KEY
+    assert isinstance(clean, dict) and FAKE_KEY not in repr(clean)
+    assert found
 
 
 def test_sanitize_form_two_with_bytes_content():

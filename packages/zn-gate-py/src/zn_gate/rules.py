@@ -2451,7 +2451,8 @@ def _object_names(val: Any) -> List[str]:
                 if n not in names and hasattr(val, n):
                     names.append(n)
     except Exception:
-        return []
+        # Attributes that cannot be listed cannot be masked: refuse instead of passing the object through unread.
+        raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
     return names
 
 
@@ -2627,7 +2628,13 @@ def sanitize_tool_result(
             path.discard(id(val))
 
     def _sanitize_object(val: Any, names: List[str]) -> Any:
-        """Mask the attributes of an object that is not a container, in a copy; the original is left as it was."""
+        """Mask the attributes of an object that is not a container, in a copy; the original is left as it was.
+
+        An object with nothing to mask is returned as it is. When the object cannot be copied (copy or setattr fails),
+        a plain dict of its masked attributes is returned instead, so the secret never survives in the result; the same
+        happens when the copy is the object itself. Attributes that cannot be listed or an object whose text form cannot
+        be read raise SanitizeLimitError (rule type:unscannable).
+        """
         try:
             attrs = {n: getattr(val, n) for n in names}
         except Exception:
@@ -2638,6 +2645,9 @@ def sanitize_tool_result(
             return val
         try:
             twin = copy.copy(val)
+            if twin is val:
+                # A __copy__ that returns the object itself: never write onto the original.
+                return clean
             for n, v in clean.items():
                 object.__setattr__(twin, n, v)
             return twin
@@ -2681,7 +2691,7 @@ def sanitize_tool_result(
             try:
                 text = str(val)
             except Exception:
-                return val
+                raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
             clean_text, det = redact_secrets(text)
             if det:
                 detections.extend(det)

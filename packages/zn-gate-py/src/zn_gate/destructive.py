@@ -41,7 +41,11 @@ _REASONS = {
 
 _MAX_DEPTH = 3
 # Shell code inside shell code (sh -c, eval, backticks) is read this deep; deeper is refused, not skipped.
-_MAX_SHELL_DEPTH = 8
+# Each level is read twice (the Windows and the POSIX reading of its quotes), so the work doubles with every level:
+# near the shell scan cap three levels take about two seconds, four about four, eight about a minute. Same value in Node.
+# check_command has no rule subset (Node's denial() can enable only some rules), so every rule always runs and the
+# overflow returns below need no guard like Node's ENABLED check.
+_MAX_SHELL_DEPTH = 3
 # Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
 _MAX_SEGMENTS = 50000
 _OVERFLOW = "too_many_commands"

@@ -41,7 +41,9 @@ const REASONS = {
 
 const MAX_DEPTH = 3;
 // Shell code inside shell code (sh -c, eval, backticks) is read this deep; deeper is refused, not skipped.
-const MAX_SHELL_DEPTH = 8;
+// Each level is read twice (the Windows and the POSIX reading of its quotes), so the work doubles with every level.
+// Same value in the Python port, which always runs every rule (Node's denial() can enable a subset).
+const MAX_SHELL_DEPTH = 3;
 // Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
 const MAX_SEGMENTS = 50000;
 const OVERFLOW = 'too_many_commands';
