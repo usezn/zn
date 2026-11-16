@@ -35,7 +35,7 @@ const MCP_FILES = [
   ['.amazonq/mcp.json', 'mcpServers'], ['opencode.json', 'mcp'], ['opencode.jsonc', 'mcp'], ['.opencode/opencode.json', 'mcp'], ['.codex/config.toml', 'mcp_servers'],
 ];
 const SCALAR_SETTINGS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'statusLine', 'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disableAllHooks', 'otelHeadersHelper'];
-const ENV_RE = /^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI)_.*(?:URL|ENDPOINT|HOST)|(?:HTTPS?|ALL)_PROXY|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+|CLAUDE_CODE_SHELL_PREFIX|PERL5OPT|BASH_ENV|ENV|PATH|PYTHONPATH|GIT_SSH_COMMAND|SSL_CERT_FILE|REQUESTS_CA_BUNDLE|ZN_HOME|HOME|USERPROFILE)$/i;
+const ENV_RE = /^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI)_.*(?:URL|ENDPOINT|HOST)|(?:HTTPS?|ALL)_PROXY|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+|CLAUDE_CODE_SHELL_PREFIX|PERL5OPT|BASH_ENV|ENV|PATH|PYTHONPATH|GIT_SSH_COMMAND|SSL_CERT_FILE|REQUESTS_CA_BUNDLE|ZN_HOME|HOME|USERPROFILE|ZN_NPM_REGISTRY)$/i;
 // Code and text an agent loads from the project as it is: plugin code (OpenCode runs it) and the agent definitions and rules of Amazon Q.
 // [folder, picks a file name, how many folder levels below it are searched (-1: none, the agent loads only the top level)].
 // Amazon Q's `mcp.json` is read as MCP servers above, not here.

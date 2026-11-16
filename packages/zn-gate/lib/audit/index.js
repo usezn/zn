@@ -495,7 +495,7 @@ function checkEnv(ctx, env, keyPath, opts) {
       // an endpoint or proxy redirects that server's own credentials.
       const who = 'MCP server "' + opts.server + '": ';
       // The home folder of one server process only moves that server's own files, never the folder the agent's zn hooks use.
-      if (c.kind === 'statehome') continue;
+      if (c.kind === 'statehome' || c.kind === 'registry') continue;
       if (c.kind === 'endpoint') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' points to ' + P.safeUrl(v) + '; the server sends its requests and credentials there.', { title: 'MCP server endpoint overridden by the project', evidence: urlEvidence(ctx, line, String(v), k) });
       else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k, true) });
       else ctx.add('ZNA008', capHome(ctx, 'high'), line, who + k + ' is set for the server process' + (c.kind === 'confdir' ? ' and moves where it reads its configuration.' : ' and loads code or certificates into it.'));
@@ -509,6 +509,8 @@ function checkEnv(ctx, env, keyPath, opts) {
       ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k, true) });
     } else if (c.kind === 'statehome') {
       ctx.add('ZNA024', capHome(ctx, 'critical'), line, k + ' moves the folder zn reads its vault, MCP pins, evidence log and audit baselines from, for every process the agent starts (the zn hooks included).');
+    } else if (c.kind === 'registry') {
+      ctx.add('ZNA025', capHome(ctx, 'critical'), line, k + ' moves the registry that zn-gate scan --package downloads from, for every process the agent starts, so the package and the checksum it is checked against both come from the address the project chose.');
     } else if (c.kind === 'confdir') {
       ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' moves where the agent reads its own configuration (to ' + v + '), so a config shipped in the repository is loaded instead of yours.', { title: 'Environment variable redirects the agent configuration' });
     } else {

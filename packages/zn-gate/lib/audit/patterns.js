@@ -278,6 +278,9 @@ const CONFIG_DIR_ENV = new Set(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_H
 // ZN_HOME names it, and HOME (USERPROFILE on Windows) is where ~/.zn is looked up.
 const STATE_HOME_ENV = new Set(['ZN_HOME', 'HOME', 'USERPROFILE']);
 
+// Variable that moves where `zn-gate scan --package` downloads from (and so the checksum it trusts).
+const REGISTRY_ENV = new Set(['ZN_NPM_REGISTRY']);
+
 function isPlaceholder(v) {
   const s = String(v == null ? '' : v).trim();
   return !s || /^\$\{?[A-Za-z_][A-Za-z0-9_]*(?::?-[^}]*)?\}?$/.test(s) || /^\$\{\{[^}]*\}\}$/.test(s) || /^\{env:[A-Za-z_][A-Za-z0-9_]*\}$/.test(s);
@@ -347,6 +350,7 @@ function classifyEnv(key, value) {
   }
   const up = k.toUpperCase();
   if (STATE_HOME_ENV.has(up)) return { kind: 'statehome' };
+  if (REGISTRY_ENV.has(up)) return { kind: 'registry' };
   if (CONFIG_DIR_ENV.has(up)) return { kind: 'confdir' };
   if (CODE_ENV.has(up)) {
     if (up === 'NODE_OPTIONS' && !/(?:^|\s)(?:-r|--require|--import|--loader|--experimental[-_]loader|--experimental[-_]policy)\b/.test(v)) return null;

@@ -54,6 +54,32 @@ test('ZNA024 is not raised for a placeholder, another variable, or the env of on
   assert.equal(r.findings.filter((x) => x.id === 'ZNA024').length, 0);
 });
 
+test('zn audit reports ZN_NPM_REGISTRY set by project settings as critical (ZNA025), not a placeholder or one MCP server env', (t) => {
+  const dir = project(t, { '.claude/settings.json': settings({ env: { ZN_NPM_REGISTRY: 'https://registry.example.com' } }) });
+  const f = audit.audit({ root: dir, agents: ['all'], env: {} }).findings.filter((x) => x.id === 'ZNA025');
+  assert.equal(f.length, 1);
+  assert.equal(f[0].severity, 'critical');
+  assert.equal(f[0].file, '.claude/settings.json');
+  const dir2 = project(t, {
+    '.claude/settings.json': settings({ env: { ZN_NPM_REGISTRY: '${ZN_NPM_REGISTRY}' } }),
+    '.mcp.json': settings({ mcpServers: { docs: { command: 'npx', args: ['-y', 'docs-mcp@1.0.0'], env: { ZN_NPM_REGISTRY: 'https://registry.example.com' } } } }),
+  });
+  assert.equal(audit.audit({ root: dir2, agents: ['all'], env: {} }).findings.filter((x) => x.id === 'ZNA025').length, 0);
+});
+
+test('zn audit reports ZN_NPM_REGISTRY set by project settings as critical (ZNA025), not a placeholder or one MCP server env', (t) => {
+  const dir = project(t, { '.claude/settings.json': settings({ env: { ZN_NPM_REGISTRY: 'https://registry.example.com' } }) });
+  const f = audit.audit({ root: dir, agents: ['all'], env: {} }).findings.filter((x) => x.id === 'ZNA025');
+  assert.equal(f.length, 1);
+  assert.equal(f[0].severity, 'critical');
+  assert.equal(f[0].file, '.claude/settings.json');
+  const dir2 = project(t, {
+    '.claude/settings.json': settings({ env: { ZN_NPM_REGISTRY: '${ZN_NPM_REGISTRY}' } }),
+    '.mcp.json': settings({ mcpServers: { docs: { command: 'npx', args: ['-y', 'docs-mcp@1.0.0'], env: { ZN_NPM_REGISTRY: 'https://registry.example.com' } } } }),
+  });
+  assert.equal(audit.audit({ root: dir2, agents: ['all'], env: {} }).findings.filter((x) => x.id === 'ZNA025').length, 0);
+});
+
 /* ---------------- ConfigChange ---------------- */
 
 function configChange(source, file, cwd) {

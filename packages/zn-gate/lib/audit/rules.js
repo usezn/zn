@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-11-16.1';
+const AUDIT_RULES_VERSION = '2026-11-16.2';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -188,6 +188,13 @@ const RULES = [
     title: 'Project settings move the folder zn keeps its state in',
     help: 'ZN_HOME, HOME or USERPROFILE in the environment the agent passes to its tools and hooks moves where zn looks for its vault, MCP server pins, evidence log and audit baselines. The zn hooks then see an empty folder: the vault looks locked, pinned servers look new and approved baselines are not found.',
     fix: 'Remove the variable from the project settings. Set ZN_HOME in your own shell or user settings if you need another folder.',
+    references: [],
+  },
+  {
+    id: 'ZNA025', severity: 'critical', name: 'zn-registry-override',
+    title: 'Project settings move the registry zn-gate scan --package downloads from',
+    help: 'ZN_NPM_REGISTRY in the environment the agent passes to its tools sets the registry that zn-gate scan --package downloads a package from. The checksum comes from the same registry, so a package that the project chose serves passes the integrity check.',
+    fix: 'Remove the variable from the project settings. Set ZN_NPM_REGISTRY in your own shell or user settings if you need a private registry.',
     references: [],
   },
 ];
