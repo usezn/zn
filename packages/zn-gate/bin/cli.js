@@ -889,7 +889,7 @@ async function runScanPackage(args, options) {
     const extraSkipped = (pkg.notUnpacked || []).map((n) => ({ file: path.join(pkg.dir, ...n.path.split('/')), reason: 'could not be unpacked: ' + n.reason }));
     await handleScan(pkg.dir, {
       ...options, includeCode: true, include, noPrune: true, displayBase: pkg.dir, targetLabel: label, extraSkipped,
-      notes: describePackage(pkg.dir, auditReport.safeText),
+      notes: [...pkg.registryLines, ...describePackage(pkg.dir, auditReport.safeText)],
     });
     const scanCode = process.exitCode || 0;
     const audit = require('../lib/audit');

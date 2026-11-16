@@ -647,3 +647,36 @@ test('an extended header with a size or a link target is refused', () => {
   ]);
   assert.strictEqual(withPath.files, 1);
 });
+
+test('the report names the default registry and shows no warning', () => {
+  const { describeRegistry } = require('../lib/scan-package');
+  const d = describeRegistry('https://registry.npmjs.org');
+  assert.strictEqual(d.registry, 'https://registry.npmjs.org');
+  assert.strictEqual(d.customRegistry, false);
+  assert.strictEqual(d.lines.length, 1);
+  assert.match(d.lines[0], /Registry\s*: https:\/\/registry\.npmjs\.org \(default public npm registry\)/);
+  assert.ok(!/WARNING/.test(d.lines.join('\n')));
+});
+
+test('a custom registry from ZN_NPM_REGISTRY is named with a warning, in the report and in the result', async () => {
+  await withRegistry(async ({ base, box }) => {
+    const r = await runCli(['scan', '--package', 'zn-fixture-clean@1.0.0'], envFor(base, box));
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert.ok(r.stdout.includes('Registry      : ' + base), r.stdout);
+    assert.match(r.stdout, /WARNING: this package comes from http:\/\/127\.0\.0\.1:\d+, not from the public npm registry/);
+    assert.match(r.stdout, /checksum is only checked against that registry/);
+    const { fetchPackageForScan } = require('../lib/scan-package');
+    const pkg = await fetchPackageForScan('zn-fixture-clean@1.0.0', { registry: base, tmpBase: box.tmp });
+    try {
+      assert.strictEqual(pkg.registry, base);
+      assert.strictEqual(pkg.customRegistry, true);
+    } finally { pkg.cleanup(); }
+  });
+});
+
+test('registry credentials and query are never shown', () => {
+  const { describeRegistry } = require('../lib/scan-package');
+  const d = describeRegistry('https://user:secret@mirror.example.com/npm/?token=abc');
+  assert.strictEqual(d.registry, 'https://mirror.example.com/npm');
+  assert.ok(!/secret|token/.test(d.lines.join('\n')));
+});

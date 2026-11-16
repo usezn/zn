@@ -44,6 +44,23 @@ const HASH_ORDER = ['sha512', 'sha384', 'sha256', 'sha1'];
 
 class PackageError extends Error {}
 
+// The registry as it is shown in the report: scheme, host and path only (no credentials, query or fragment), and
+// whether it is the default public npm registry. A project can set ZN_NPM_REGISTRY (for example in an agent
+// settings env block), so the report always says where the package came from.
+function describeRegistry(base) {
+  let shown = String(base);
+  try {
+    const u = new URL(base);
+    shown = u.origin + u.pathname.replace(/\/+$/, '');
+  } catch (_) { /* shown as given */ }
+  const custom = shown !== DEFAULT_REGISTRY;
+  const lines = ['Registry      : ' + shown + (custom ? '' : ' (default public npm registry)')];
+  if (custom) {
+    lines.push('WARNING: this package comes from ' + shown + ', not from the public npm registry (' + DEFAULT_REGISTRY + '). The checksum is only checked against that registry, so it proves nothing about what the public npm registry serves. ZN_NPM_REGISTRY is set in this environment; check who set it before you trust this result.');
+  }
+  return { registry: shown, customRegistry: custom, lines };
+}
+
 function parsePackageSpec(spec) {
   const s = String(spec || '').trim();
   const at = s.lastIndexOf('@');
@@ -358,7 +375,8 @@ async function fetchPackageForScan(spec, opts = {}) {
     cleanup();
     throw err;
   }
-  return { name, version: doc.version, dir, cleanup, notUnpacked: unpacked.notUnpacked };
+  const where = describeRegistry(base);
+  return { name, version: doc.version, dir, cleanup, notUnpacked: unpacked.notUnpacked, registry: where.registry, customRegistry: where.customRegistry, registryLines: where.lines };
 }
 
 /**
@@ -417,4 +435,4 @@ function auditCoverageGaps(result) {
   return gaps;
 }
 
-module.exports = { auditCoverageGaps, PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage };
+module.exports = { auditCoverageGaps, PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage, describeRegistry };
