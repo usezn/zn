@@ -42,6 +42,10 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
 | [Exit codes](exit-codes.md) | The exit code of every command, on one page | Everyone |
 | [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
+| [First 5 minutes checklist](first-5-minutes-checklist.md) | A printable version of the numbered steps in First 5 minutes | Everyone |
+| [FAQ: update and remove](faq.md) | Short answers to common questions about updating and removing zn-gate | Everyone |
+| [Files and folders](files-and-folders.md) | The files and folders the commands read or write | Everyone |
+| [Examples](examples/README.md) | Worked examples, in alphabetical order, with made-up values | Everyone |
 
 ## Everyday use
 
@@ -65,6 +69,7 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
 | [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
+| [Install matrix](install-matrix.md) | Install methods by operating system, how to verify each one, and installing without internet | Everyone |
 
 ## Worked examples
 

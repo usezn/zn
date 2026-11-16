@@ -38,6 +38,21 @@ pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 /// First wait before retrying a failed export; it doubles on each further failure.
 pub const BACKOFF_BASE: Duration = Duration::from_secs(2);
+/// The endpoint as it may appear in a log line: scheme, host and port only. A URL can carry a
+/// user name and password or a token in its path or query, which must not reach stderr.
+fn endpoint_for_log(endpoint: &str) -> String {
+    match reqwest::Url::parse(endpoint) {
+        Ok(url) => match url.host_str() {
+            Some(host) => match url.port() {
+                Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+                None => format!("{}://{}", url.scheme(), host),
+            },
+            None => "(configured endpoint)".to_string(),
+        },
+        Err(_) => "(configured endpoint)".to_string(),
+    }
+}
+
 /// Longest wait between retries of a failing endpoint.
 pub const BACKOFF_MAX: Duration = Duration::from_secs(120);
 
@@ -320,7 +335,10 @@ impl SiemExporter {
             }
         };
 
-        info!("SIEM exporter active, sending to {}", endpoint);
+        info!(
+            "SIEM exporter active, sending to {}",
+            endpoint_for_log(&endpoint)
+        );
 
         let mut batch = Buffer::new(MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
         let (queue_tx, mut queue_rx) = mpsc::channel(QUEUE_CAPACITY);
@@ -431,6 +449,22 @@ impl SiemExporter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn endpoint_log_line_has_no_credentials_path_or_query() {
+        let shown = super::endpoint_for_log(
+            "https://user:pass@siem.example.com:8443/v1/events/abc123?token=secret",
+        );
+        assert_eq!(shown, "https://siem.example.com:8443");
+        assert_eq!(
+            super::endpoint_for_log("http://192.0.2.10/ingest?k=v"),
+            "http://192.0.2.10"
+        );
+        assert_eq!(
+            super::endpoint_for_log("not a url with secret"),
+            "(configured endpoint)"
+        );
+    }
+
     use super::*;
     use tokio::io::AsyncReadExt;
 

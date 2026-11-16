@@ -1,3 +1,4 @@
+# Self-test of the zn-gate GitHub Action and its audit mode, on pull requests, pushes to main or next, and daily.
 name: Action self-test
 
 # Runs the GitHub Action from this checkout (uses: ./) against fixtures.

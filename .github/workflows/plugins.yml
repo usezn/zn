@@ -1,3 +1,4 @@
+# Agent plugin checks across the OS and Node.js matrix, plus a release pin check; documentation-only pushes skip it.
 name: Agent plugins
 
 on:

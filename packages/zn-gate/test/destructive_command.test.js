@@ -19,7 +19,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const corpus = require('./fixtures/destructive_commands.json');
-const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
+const { budget, cpuBudget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 function preTool(tool_name, command, cwd) {
   return { session_id: 'abc123', cwd, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input: { command }, tool_use_id: 'toolu_01' };
@@ -227,7 +227,7 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     assert.ok(cmd.length < 200 * 1024);
     const t0 = cpuNow();
     const res = checkCommand(cmd);
-    assert.ok(cpuMsSince(t0) < budget(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
+    assert.ok(cpuMsSince(t0) < cpuBudget(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
     assert.equal(res.verdict, want, cmd.slice(0, 40));
   }
 });

@@ -3,6 +3,7 @@ import sys
 
 import pytest
 
+from zn_gate.shell_names import npx_name
 from zn_gate import cli
 
 
@@ -13,7 +14,7 @@ def test_npm_only_command_points_to_npm(monkeypatch, capsys, argv):
     out = capsys.readouterr()
     assert out.out == ""
     assert f"zn-gate {argv[0]} is in the npm package" in out.err
-    assert "npx -y zn-gate init" in out.err
+    assert npx_name() + " -y zn-gate init" in out.err
     assert "Traceback" not in out.err
 
 

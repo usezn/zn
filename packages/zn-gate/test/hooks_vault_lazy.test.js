@@ -18,7 +18,7 @@ const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const GHP = generateAll(5151, { perType: 1, piiPerType: 1 }).secrets.find((s) => s.type === 'github_pat_classic').value;
 
 // Preload that writes, at exit, whether the vault client module was loaded.
-const PROBE = "process.on('exit', () => { const hit = Object.keys(require.cache).some((k) => /[\\/]vault[\\/]client\.js$/.test(k)); require('fs').writeFileSync(process.env.ZN_TEST_PROBE, hit ? 'loaded' : 'not loaded'); });";
+const PROBE = "process.on('exit', () => { const hit = Object.keys(require.cache).some((k) => /[\\\\/]vault[\\\\/]client\.js$/.test(k)); require('fs').writeFileSync(process.env.ZN_TEST_PROBE, hit ? 'loaded' : 'not loaded'); });";
 
 function run(t, agent, event) {
   const dir = tempDir(t, 'zn-vault-lazy-');

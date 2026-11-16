@@ -1,5 +1,5 @@
 # cargo-deny configuration: licenses, bans and sources only.
-# Known vulnerabilities are already checked by `cargo audit` in rust.yml,
+# Known vulnerabilities are already checked by `cargo audit` in cargo-audit.yml,
 # so the advisories section is left out on purpose.
 #
 # The allowed licenses are the permissive ones the project accepts. They are
@@ -24,6 +24,37 @@ allow = [
     "Unicode-3.0",
     "Zlib",
 ]
+
+# Per-crate exceptions for licences that appear only on these crates in Cargo.lock.
+[[licenses.exceptions]]
+# Unicode data tables, AND-ed with (MIT OR Apache-2.0): needs Unicode-DFS-2016 too.
+name = "finl_unicode"
+version = "1.5.0"
+allow = ["Unicode-DFS-2016"]
+
+[[licenses.exceptions]]
+# Unicode bidi data, AND-ed with MIT: needs Unicode-DFS-2016 too.
+name = "wezterm-bidi"
+version = "0.2.3"
+allow = ["Unicode-DFS-2016"]
+
+[[licenses.exceptions]]
+# CC0-1.0 alone (no OR alternative): a public-domain dedication.
+name = "notify"
+version = "6.1.1"
+allow = ["CC0-1.0"]
+
+[[licenses.exceptions]]
+# WTFPL alone (no OR alternative): terminal capability data.
+name = "terminfo"
+version = "0.9.0"
+allow = ["WTFPL"]
+
+[[licenses.exceptions]]
+# CDLA-Permissive-2.0 alone: root certificate data.
+name = "webpki-root-certs"
+version = "1.0.10"
+allow = ["CDLA-Permissive-2.0"]
 
 [bans]
 # Two versions of one crate are common in a large tree: report, do not fail.

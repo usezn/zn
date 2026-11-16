@@ -86,7 +86,7 @@ Each pull request into `next` runs automated checks on GitHub. Eleven checks are
 - Public facts
 - build, test, clippy, fmt
 
-To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js, Python and Rust test checks report success at once without running. Add the label `full-ci` to your pull request to run them there; run the tests locally before you push. A pull request that changes only documentation skips most code checks, which also report success.
+To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js, Python and Rust test checks report success at once without running. Add the label `full-ci` to your pull request to run them there; run the tests locally before you push. `cargo audit` also runs on every pull request: it checks the Rust dependencies only when the pull request changes `Cargo.lock`, `Cargo.toml`, `.cargo/audit.toml` or its own workflow file, and passes at once otherwise. A pull request that changes only documentation skips most code checks, which also report success.
 
 Only `next` has a merge queue; `main` does not. When a maintainer adds an approved pull request to the queue, the queue builds it on top of the pull requests ahead of it, runs the required checks on that combined result, and merges up to five pull requests at a time, in order. If a required check fails there, the pull request leaves the queue. Fix the problem, push a commit, and ask a maintainer to queue it again.
 
@@ -166,6 +166,22 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
    ```
 
    CI also checks external links, but only reports them and never fails the pull request.
+
+### Check every command you add to the docs
+
+Every command in a docs page must be one that zn-gate has and that [docs/cli.md](docs/cli.md) documents. Before you open a pull request that adds or changes a command in a page:
+
+1. **Run it.** Run the command yourself, in a throwaway folder and with a throwaway home folder (set `HOME` to an empty folder, so your own `~/.zn` is not touched), and copy the output you really got. Do not write an output you did not see.
+2. **Compare it with `docs/cli.md`.** Find the command in the reference. Check that its name, each option you use and each value are written there as you wrote them. If the reference is wrong or lacks the option, fix the reference in the same pull request.
+3. **Run the command check.** The check `check-docs-examples-commands.mjs` reads every shell block in `docs/examples/*.md` and fails when a block runs a `zn`, `zn-gate` or `npx -y zn-gate` command whose name has no heading in `docs/cli.md`. From the repository root:
+
+   ```bash
+   node .github/scripts/check-docs-examples-commands.mjs
+   ```
+
+   It prints `docs examples OK` and the number of commands it checked, or it names the file and line that must be fixed. CI runs the same script in the Markdown lint steps of the Quick checks workflow. Its own test is `node --test .github/scripts/check-docs-examples-commands.test.mjs`.
+
+The script checks command names only, in the example pages only. It does not check options, and it does not read the other pages under `docs/`. So step 2 is your job for every page, and for every option.
 
 ### Check docs links before you push
 
@@ -257,9 +273,9 @@ Each rule layer has a version constant. A change to any file of a layer must com
 
 1. Make the change and bump the constant of every layer you touched. The version format is `YYYY-MM-DD.N`: a date and an integer, for example `2026-10-31.1`. The new value must be greater than the value on `origin/next`. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`.
 2. Set the same value in the Python twin: `rules.py` for `RULES_VERSION`, `destructive.py` for `COMMAND_RULES_VERSION`. The Node and Python values must match.
-3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
+3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It writes one entry per layer and version under `packages/zn-gate/test/fixtures/rules_snapshot/<layer>/<version>.json` (one rule id and one file hash per line, the newest five kept) and refuses to record a change whose version did not increase.
 4. From `packages/zn-gate`, run `npm run check:rules`. It runs only the snapshot test, in well under a second, so a missing bump or a stale snapshot shows up before the full test matrix. Run `npm test` before you push.
-5. Commit the updated snapshot with the change.
+5. Commit the new snapshot entries with the change. Because every version has its own file, two pull requests that bump different versions do not conflict in the snapshot; after you merge `next` into your branch, rerun step 3 if the check asks for it.
 
 The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps `rules.py` equal to `rules.js`; `mcp_secrets.py` is kept equal to `lib/mcp-secrets.js` by the shared samples in `test/fixtures/mcp_config_secret_samples.json`, which both test suites run.
 

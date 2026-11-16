@@ -559,7 +559,11 @@ test('lifecycle: idle expiry drops the session', async () => {
   const c = clientMod.createClient({});
   await c.status();
   c.close();
-  await sleep(900);
+  // Wait for the observable result (the daemon reports its exit reason after the
+  // final audit write and save), not for a fixed time: on a loaded runner the
+  // socket close, the timer and that save can take far longer than idleMs.
+  const deadline = Date.now() + 20000;
+  while (reason === null && Date.now() < deadline) await sleep(25);
   assert.strictEqual(reason, 'idle');
   assert.ok(!fs.existsSync(clientMod.endpoint({}).keyFile), 'session key must be removed');
   const c2 = clientMod.createClient({});

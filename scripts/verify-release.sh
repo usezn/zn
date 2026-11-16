@@ -301,12 +301,14 @@ fi
 
 # --- 4. npm provenance ------------------------------------------------------
 S4="4/5"
-N4="npm provenance"
+N4="npm provenance and tarball"
 if [ "$PRINT" -eq 1 ]; then
   echo "[$S4] $N4 (in a new empty project directory)"
   show npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ "zn-gate@${VERSION}"
   show npm audit signatures --registry=https://registry.npmjs.org/
   show npm view "zn-gate@${VERSION}" dist.attestations --registry=https://registry.npmjs.org/
+  show npm view "zn-gate@${VERSION}" dist.integrity --registry=https://registry.npmjs.org/
+  echo "  (then: the SHA-512 of $TGZ, as 'sha512-' plus its base64 form, must equal that integrity value; openssl dgst -sha512 -binary $TGZ | openssl base64 -A)"
 elif ! have npm; then
   cannot "$S4" "$N4" "npm missing"
 else
@@ -314,6 +316,7 @@ else
   mkdir -p -- "$NPM_DIR"
   printf '{"name":"zn-gate-verify","version":"0.0.0","private":true}\n' > "$NPM_DIR/package.json"
   npm_reason=""
+  npm_cannot=""
   if ! (cd "$NPM_DIR" && attempt npm npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ "zn-gate@${VERSION}"); then
     npm_reason="npm install of zn-gate@${VERSION} failed"
   elif ! grep -Fq "\"version\": \"${VERSION}\"" "$NPM_DIR/node_modules/zn-gate/package.json" 2> /dev/null; then
@@ -322,8 +325,44 @@ else
     npm_reason="npm audit signatures failed"
   elif ! (cd "$NPM_DIR" && npm view "zn-gate@${VERSION}" dist.attestations --registry=https://registry.npmjs.org/ > "$OUT" 2>&1) || ! grep -q '[^[:space:]]' "$OUT"; then
     npm_reason="npm shows no attestations for zn-gate@${VERSION}"
+  elif [ "$DOWNLOADED" -ne 1 ]; then
+    # The signed release tarball is what the registry tarball is compared with.
+    if [ "$DL_REASON" = "gh missing" ]; then
+      npm_cannot="gh missing"
+    else
+      npm_reason="the release tarball was not downloaded, so the npm package cannot be compared with it"
+    fi
+  else
+    # The registry tarball must be the file of the release that steps 1 to 3 verified.
+    npm_sri="$(cd "$NPM_DIR" && npm view "zn-gate@${VERSION}" dist.integrity --registry=https://registry.npmjs.org/ 2> /dev/null | tr -d '[:space:]' || true)"
+    local_b64=""
+    if have openssl; then
+      local_b64="$(openssl dgst -sha512 -binary "$WORK/$TGZ" 2> /dev/null | openssl base64 -A 2> /dev/null || true)"
+    elif have node; then
+      local_b64="$(node -e 'const c=require("crypto"),f=require("fs");process.stdout.write(c.createHash("sha512").update(f.readFileSync(process.argv[1])).digest("base64"))' "$WORK/$TGZ" 2> /dev/null || true)"
+    else
+      npm_cannot="openssl and node missing"
+    fi
+    if [ -z "$npm_cannot" ]; then
+      case "$npm_sri" in
+        sha512-?*) ;;
+        *) npm_reason="npm shows no sha512 integrity for zn-gate@${VERSION}" ;;
+      esac
+      if [ -z "$npm_reason" ] && [ -z "$local_b64" ]; then
+        npm_reason="could not compute the SHA-512 of ${TGZ}"
+      fi
+      if [ -z "$npm_reason" ] && [ "$npm_sri" != "sha512-${local_b64}" ]; then
+        npm_reason="the npm package is not the release file ${TGZ} (its integrity differs from the file that steps 1 to 3 verified)"
+      fi
+    fi
   fi
-  if [ -z "$npm_reason" ]; then pass "$S4" "$N4"; else fail "$S4" "$N4" "$npm_reason"; fi
+  if [ -n "$npm_reason" ]; then
+    fail "$S4" "$N4" "$npm_reason"
+  elif [ -n "$npm_cannot" ]; then
+    cannot "$S4" "$N4" "$npm_cannot"
+  else
+    pass "$S4" "$N4"
+  fi
 fi
 
 # --- 5. PyPI attestations ---------------------------------------------------
