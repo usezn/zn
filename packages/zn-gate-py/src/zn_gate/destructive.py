@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.24"
+COMMAND_RULES_VERSION = "2026-11-16.27"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -397,6 +397,8 @@ def _join_backticks(words: List[str]) -> List[str]:
 
 _OPEN_BLOCK = frozenset(("if", "while", "until", "for", "case", "select"))
 _CLOSE_BLOCK = frozenset(("fi", "done", "esac"))
+# Words after which a new command starts in the same segment.
+_CMD_LEADERS = frozenset(("then", "do", "else", "elif", "{", "!", "time", "if", "while", "until"))
 _OPENER_WORDS = frozenset(("then", "else", "elif", "do", "function"))
 # Words that can stand in front of an assignment without making it part of another command.
 _BEFORE_ASSIGN = frozenset(("if", "then", "else", "elif", "while", "until", "do", "!", "{", "time"))
@@ -528,15 +530,19 @@ class _Vars:
             self.has_multi = True
 
     def _track(self, words: List[str], sep: Optional[str], opens: int) -> None:
-        first = words[0] if words else ""
-        if first in _OPEN_BLOCK:
-            self.blocks += 1
-        elif first in _CLOSE_BLOCK:
-            self.blocks = max(0, self.blocks - 1)
-        if first == "case":
-            self.cases += 1
-        elif first == "esac":
-            self.cases = max(0, self.cases - 1)
+        # Every block word that starts a command counts: first in the segment, or after then/do/else/elif/{/!/time (a
+        # block nested as `then if b`, `do for j in 1`, `else case ...`), so its fi/done/esac closes the right block.
+        for i, w in enumerate(words):
+            if i > 0 and words[i - 1] not in _CMD_LEADERS:
+                continue
+            if w in _OPEN_BLOCK:
+                self.blocks += 1
+            elif w in _CLOSE_BLOCK:
+                self.blocks = max(0, self.blocks - 1)
+            if w == "case":
+                self.cases += 1
+            elif w == "esac":
+                self.cases = max(0, self.cases - 1)
         # Every { and } word of the segment counts, not only a leading one: a function body opens after f() or function f.
         for w in words:
             if w == "{":

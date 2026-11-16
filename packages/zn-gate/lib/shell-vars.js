@@ -102,6 +102,8 @@ function joinBackticks(words) {
 
 const OPEN_BLOCK = new Set(['if', 'while', 'until', 'for', 'case', 'select']);
 const CLOSE_BLOCK = new Set(['fi', 'done', 'esac']);
+// Words after which a new command starts in the same segment.
+const CMD_LEADERS = new Set(['then', 'do', 'else', 'elif', '{', '!', 'time', 'if', 'while', 'until']);
 const OPENER_WORDS = new Set(['then', 'else', 'elif', 'do', 'function']);
 // Words that can stand in front of an assignment without making it part of another command.
 const BEFORE_ASSIGN = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', 'time']);
@@ -136,11 +138,16 @@ function record(scope, name, values, conditional) {
 }
 
 function track(scope, words, sep, opens) {
-  const first = words.length ? words[0] : '';
-  if (OPEN_BLOCK.has(first)) scope.blocks++;
-  else if (CLOSE_BLOCK.has(first)) scope.blocks = Math.max(0, scope.blocks - 1);
-  if (first === 'case') scope.cases++;
-  else if (first === 'esac') scope.cases = Math.max(0, scope.cases - 1);
+  // Every block word that starts a command counts: first in the segment, or after then/do/else/elif/{/!/time (a block
+  // nested as `then if b`, `do for j in 1`, `else case ...`), so its fi/done/esac closes the right block.
+  for (let i = 0; i < words.length; i++) {
+    if (i > 0 && !CMD_LEADERS.has(words[i - 1])) continue;
+    const w = words[i];
+    if (OPEN_BLOCK.has(w)) scope.blocks++;
+    else if (CLOSE_BLOCK.has(w)) scope.blocks = Math.max(0, scope.blocks - 1);
+    if (w === 'case') scope.cases++;
+    else if (w === 'esac') scope.cases = Math.max(0, scope.cases - 1);
+  }
   // Every { and } word of the segment counts, not only a leading one: a function body opens after f() or function f.
   for (const w of words) {
     if (w === '{') scope.braces++;

@@ -152,6 +152,14 @@ MAY_DELETE = [
     "D=./a; E=/home/alice; [ -n \"$X\" ] && D=./b && E=./c; rm -rf \"$D\" \"$E\"",
     "A=/home/alice; [ -n \"$X\" ] && A=./a; B=$A; rm -rf \"$B\"",
     "D=./build; [ -n \"$X\" ] && D=/home/alice; echo hi | rm -rf $D",
+    "D=/home/alice; if [ -n \"$X\" ]; then if true; then :; fi; D=./build; fi; rm -rf \"$D\"",
+    "D=/home/alice; while [ -n \"$X\" ]; do for j in 1; do :; done; D=./build; done; rm -rf \"$D\"",
+    "D=/home/alice; if [ -n \"$X\" ]; then case $Y in a) :;; esac; D=./build; fi; rm -rf \"$D\"",
+    "D=/home/alice; if x; then if y; then if z; then :; fi; fi; D=./build; fi; rm -rf \"$D\"",
+    "D=/home/alice; if x; then :; else if y; then :; fi; D=./build; fi; rm -rf \"$D\"",
+    "D=/home/alice; { if y; then :; fi; D=./build; }; rm -rf \"$D\"",
+    "D=/home/alice; f() { if y; then :; fi; D=./build; }; rm -rf \"$D\"",
+    "D=/home/alice; function f { for i in 1; do :; done; echo; D=./build; }; rm -rf \"$D\"",
 ]
 
 ALL_VALUES_SAFE = [
@@ -165,6 +173,9 @@ ALL_VALUES_SAFE = [
     "D=./build; ( D=./dist ); rm -rf \"$D\"",
     "D=./build; f() { D=./dist; }; rm -rf \"$D\"",
     "D=/home/alice; [ -n \"$X\" ] && D=./build; D=./dist; rm -rf \"$D\"",
+    "D=/home/alice; if x; then if y; then :; fi; fi; D=./build; rm -rf \"$D\"",
+    "D=/home/alice; while x; do for j in 1; do :; done; done; D=./build; rm -rf \"$D\"",
+    "D=/home/alice; if x; then case $Y in a) :;; esac; fi; D=./build; rm -rf \"$D\"",
 ]
 
 
