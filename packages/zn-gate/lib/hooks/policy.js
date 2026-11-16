@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.1';
+const POLICY_RULES_VERSION = '2026-11-16.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -103,7 +103,12 @@ const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connec
 // prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
 const GPG_SECRET_EXPORT_RE = /^--export-se/i;
 const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
-function gpgSecretExportDenial(words) {
+// gpg-connect-agent also reads its commands from stdin (a pipe, <, << or <<<) and from a file (--run FILE, -r FILE).
+// zn cannot see those commands, so an EXPORT_KEY there could not be refused: such a call is refused as a whole.
+const GPG_AGENT_HIDDEN_INPUT_RE = /(?<!\|)\|(?!\|)\s*(?:\S*[\\/])?gpg-connect-agent(?:\.exe)?(?![\w.-])|(?:^|[\s;&|(\\/])gpg-connect-agent(?:\.exe)?(?![\w.-])[^|;&\n]*?(?:<|(?:^|\s)--run(?:[=\s]|$)|(?:^|\s)-r(?:\s|$))/i;
+const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent here reads its commands from stdin or a file, which zn cannot check for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
+function gpgSecretExportDenial(words, text) {
+  if (typeof text === 'string' && /gpg-connect-agent/i.test(text) && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
   for (const w of words) {
     const prog = programName(w.head || '');
     if (!GPG_PROGRAMS.has(prog)) continue;
@@ -2628,7 +2633,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (findDeny) return findDeny;
   }
   {
-    const gpgDeny = gpgSecretExportDenial(words);
+    const gpgDeny = gpgSecretExportDenial(words, text);
     if (gpgDeny) return gpgDeny;
   }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).

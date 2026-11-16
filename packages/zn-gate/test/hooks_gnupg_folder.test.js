@@ -104,3 +104,34 @@ test('public key export and the keyring listing stay allowed', () => {
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('gpg-connect-agent that reads its commands from stdin or a file is refused', () => {
+  const { opts } = fixture();
+  for (const c of [
+    "echo 'EXPORT_KEY 0000' | gpg-connect-agent",
+    'printf "EXPORT_KEY 0000\\n/bye\\n" | /usr/bin/gpg-connect-agent',
+    'gpg-connect-agent < cmds.txt',
+    'gpg-connect-agent <cmds.txt',
+    "gpg-connect-agent <<< 'EXPORT_KEY 0000'",
+    'gpg-connect-agent --run cmds.txt /bye',
+    'gpg-connect-agent --run=cmds.txt',
+    'gpg-connect-agent -r cmds.txt',
+  ]) {
+    const d = policy.bashDenial(c, opts);
+    assert.ok(d, c);
+    assert.match(d, /gpg-connect-agent|GnuPG secret key/, c);
+  }
+});
+
+test('gpg-connect-agent with its commands as arguments stays allowed', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg-connect-agent reloadagent /bye',
+    'gpg-connect-agent updatestartuptty /bye > agent.log',
+    'gpgconf --kill gpg-agent',
+    'echo done; gpg-connect-agent /bye',
+    'pgrep gpg-agent || gpg-connect-agent /bye',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});

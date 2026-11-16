@@ -16,8 +16,6 @@
  */
 
 const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const readline = require('readline');
 const policy = require('./policy');
 const { pendingCount } = require('./upload');
@@ -34,6 +32,8 @@ const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] [--rules] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
+// Largest export kept in memory before it is written to stdout (larger logs: --out FILE).
+const STDOUT_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
 const out = (s) => process.stdout.write(s + '\n');
@@ -360,24 +360,19 @@ async function runLogExport(args) {
       }
       err('Exported ' + res.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + res.sha256 + ').');
     } else {
-      // Nothing reaches stdout until the bytes are confirmed: the records go to a private temporary file first,
-      // then are copied out. A log that changed in between leaves stdout empty and the command fails.
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-export-'));
-      const tmp = path.join(dir, 'export.jsonl');
-      try {
-        const fd = fs.openSync(tmp, 'wx', 0o600);
-        try {
-          sameBytes(exportAuditStream(opts, (s) => fs.writeSync(fd, s)));
-        } finally { fs.closeSync(fd); }
-        const rd = fs.openSync(tmp, 'r');
-        try {
-          const buf = Buffer.alloc(65536);
-          let n;
-          while ((n = fs.readSync(rd, buf, 0, buf.length, null)) > 0) process.stdout.write(Buffer.from(buf.subarray(0, n)));
-        } finally { fs.closeSync(rd); }
-      } finally {
-        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e2) { /* gone */ }
-      }
+      // Nothing reaches stdout until the bytes are confirmed: the records are kept in memory (no copy of the audit
+      // on disk), then written out. A log that changed in between leaves stdout empty and the command fails. A log
+      // larger than STDOUT_EXPORT_MAX_BYTES is not buffered: --out FILE writes it to a private file instead.
+      const parts = [];
+      let size = 0;
+      sameBytes(exportAuditStream(opts, (s) => {
+        size += Buffer.byteLength(s);
+        if (size > STDOUT_EXPORT_MAX_BYTES) {
+          throw new Error('the audit log is larger than ' + (STDOUT_EXPORT_MAX_BYTES / 1048576) + ' MiB, too large to export to the terminal. Export it to a file with --out FILE.');
+        }
+        parts.push(s);
+      }));
+      for (const p of parts) process.stdout.write(p);
     }
     warn();
     return 0;
