@@ -22,6 +22,10 @@ const { parseJsonc, parseToml } = require('./parse');
 const MAX_FILE = 1024 * 1024;
 const MAX_HASHED = 8 * 1024 * 1024;
 const MAX_LISTED = 500;
+// Past MAX_LISTED files in one folder the rest is still hashed by content, all together, up to MAX_OVER_CAP more; past
+// that the folder gets a fixed over-limit entry (a documented limit). Folders below MAX_DEPTH levels are one entry.
+const MAX_OVER_CAP = 5000;
+const MAX_DEPTH = 8;
 const LIFECYCLE = ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'prepack', 'postpack'];
 const SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.json', '.codex/config.json', '.cursor/hooks.json', '.gemini/settings.json'];
 const MCP_FILES = [
@@ -31,11 +35,12 @@ const MCP_FILES = [
 const SCALAR_SETTINGS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'statusLine', 'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disableAllHooks', 'otelHeadersHelper'];
 const ENV_RE = /^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI)_.*(?:URL|ENDPOINT|HOST)|(?:HTTPS?|ALL)_PROXY|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+|CLAUDE_CODE_SHELL_PREFIX|PERL5OPT|BASH_ENV|ENV|PATH|PYTHONPATH|GIT_SSH_COMMAND|SSL_CERT_FILE|REQUESTS_CA_BUNDLE)$/i;
 // Code and text an agent loads from the project as it is: plugin code (OpenCode runs it) and the agent definitions and rules of Amazon Q.
-// [folder, picks a file name, how many folder levels below it are searched]. Amazon Q's `mcp.json` is read as MCP servers above, not here.
+// [folder, picks a file name, how many folder levels below it are searched (-1: none, the agent loads only the top level)].
+// Amazon Q's `mcp.json` is read as MCP servers above, not here.
 const WHOLE_FILES = [
-  ['.opencode/plugin', (n) => n.endsWith('.js'), 0], ['.opencode/plugins', (n) => n.endsWith('.js'), 0],
-  ['.amazonq/cli-agents', (n) => n.endsWith('.json'), 0], ['.amazonq/agents', (n) => n.endsWith('.json'), 0],
-  ['.amazonq/rules', (n) => n.endsWith('.md'), 3],
+  ['.opencode/plugin', (n) => n.endsWith('.js'), -1], ['.opencode/plugins', (n) => n.endsWith('.js'), -1],
+  ['.amazonq/cli-agents', (n) => n.endsWith('.json'), -1], ['.amazonq/agents', (n) => n.endsWith('.json'), -1],
+  ['.amazonq/rules', (n) => n.endsWith('.md'), MAX_DEPTH],
 ];
 const WHOLE_SINGLE = ['.amazonq/default.mcp.json'];
 const DEVCONTAINER_FILES = ['.devcontainer/devcontainer.json', '.devcontainer.json'];
@@ -125,13 +130,32 @@ function listFiles(root, realRoot, rel, pick, deep, out, bad) {
   list.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of list) {
     const r = rel + '/' + e.name;
-    if (e.isDirectory()) { if (deep > 0) listFiles(root, realRoot, r, pick, deep - 1, out, bad); continue; }
+    let isDir = e.isDirectory();
+    if (e.isSymbolicLink()) {
+      // A link to a folder inside the project is followed like a folder (it counts against the depth); one that
+      // leaves the project, or that cannot be resolved, is an entry of its own. A link to a file is left to readRaw.
+      let real = null;
+      try { real = fs.realpathSync.native(path.join(root, r)); } catch (_) { real = null; }
+      if (!real) {
+        if (pick(e.name)) { if (out.files.length < MAX_LISTED) out.files.push(r); else out.extra.push(r); }
+        continue;
+      }
+      let st = null;
+      try { st = fs.statSync(real); } catch (_) { st = null; }
+      // In a folder that is not searched below its top level, a link is left to readRaw like any file of that name.
+      if (st && st.isDirectory() && deep >= 0) {
+        if (!insideOf(realRoot, real)) { bad(r, sha(['link-outside-folder'])); continue; }
+        isDir = true;
+      }
+    }
+    if (isDir) {
+      if (deep > 0) listFiles(root, realRoot, r, pick, deep - 1, out, bad);
+      else if (deep === 0) bad(r, sha(['too-deep'])); // deeper than the search: recorded, not dropped
+      continue;
+    }
     if (!pick(e.name)) continue;
-    if (out.files.length < MAX_LISTED) { out.files.push(r); continue; }
-    // Past the cap a file is not hashed by content, but its name, size and time still count, so nothing is dropped.
-    let st = null;
-    try { st = fs.lstatSync(path.join(root, r)); } catch (_) { st = null; }
-    out.extra.push([r, st ? st.size : null, st ? Math.trunc(st.mtimeMs) : null]);
+    if (out.files.length < MAX_LISTED) out.files.push(r);
+    else out.extra.push(r);
   }
 }
 
@@ -189,7 +213,15 @@ function extractSurface(root) {
     const found = { files: [], extra: [] };
     listFiles(root, realRoot, dir, pick, deep, found, (rel, hash) => { out[rel + '#unreadable'] = hash; });
     listed.push(...found.files);
-    if (found.extra.length) out[dir + '#over-cap'] = sha(found.extra);
+    if (found.extra.length) {
+      // The files past the cap are hashed by content (like the listed ones), together, so a change in one is a change.
+      const parts = found.extra.slice(0, MAX_OVER_CAP).map((rel) => {
+        const c = readWhole(root, realRoot, rel);
+        return [rel, c.kind, c.hash || null];
+      });
+      if (found.extra.length > MAX_OVER_CAP) parts.push(['over-limit', found.extra.length]);
+      out[dir + '#over-cap'] = sha(parts);
+    }
   }
   for (const rel of [...WHOLE_SINGLE, ...listed]) {
     const c = readWhole(root, realRoot, rel);

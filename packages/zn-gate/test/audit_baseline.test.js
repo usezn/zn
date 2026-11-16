@@ -333,3 +333,36 @@ test('a plugin or rules folder that exists but cannot be listed is an entry of i
   const d = diffSurface(before, s);
   assert.ok(d.changed.length + d.added.length + d.removed.length > 0, 'and counts as a change');
 });
+
+test('rule files deep in .amazonq/rules are recorded; a folder below the search depth is an entry of its own', (t) => {
+  const deep5 = '.amazonq/rules/a/b/c/d/e/deep.md';
+  const deep10 = '.amazonq/rules/a/b/c/d/e/f/g/h/i/j/hidden.md';
+  const dir = project(t, { [deep5]: '# Deep\n', [deep10]: '# Hidden\n' });
+  const s = extractSurface(dir);
+  assert.ok(s[deep5 + '#file'], 'five levels down is recorded');
+  assert.ok(Object.keys(s).some((k) => k.startsWith('.amazonq/rules/a/b/c/d/e/f/g/h') && k.endsWith('#unreadable')), 'past the depth is recorded');
+});
+
+test('a symlinked rules subfolder is followed inside the project and recorded when it leaves it', { skip: process.platform === 'win32' }, (t) => {
+  const dir = project(t, { 'docs/rules/team.md': '# Team\n', '.amazonq/rules/own.md': '# Own\n' });
+  fs.symlinkSync(path.join(dir, 'docs/rules'), path.join(dir, '.amazonq/rules/linked'));
+  const outside = tempDir(t, 'zn-baseline-out-');
+  fs.writeFileSync(path.join(outside, 'x.md'), '# X\n');
+  fs.symlinkSync(outside, path.join(dir, '.amazonq/rules/away'));
+  const s = extractSurface(dir);
+  assert.ok(s['.amazonq/rules/linked/team.md#file'], 'a link inside the project is followed');
+  assert.ok(s['.amazonq/rules/away#unreadable'], 'a link leaving the project is recorded');
+  assert.ok(!Object.keys(s).some((k) => k.includes('x.md')), 'the outside folder is not listed');
+});
+
+test('past the cap a content change is found even with the same size and the old time', (t) => {
+  const files = {};
+  for (let i = 0; i < 501; i++) files['.opencode/plugin/p' + String(i).padStart(3, '0') + '.js'] = 'export const a = 1;\n';
+  const dir = project(t, files);
+  const last = path.join(dir, '.opencode/plugin/p500.js');
+  const st = fs.statSync(last);
+  const before = extractSurface(dir)['.opencode/plugin#over-cap'];
+  fs.writeFileSync(last, 'export const b = 2;\n'); // same length
+  fs.utimesSync(last, st.atime, st.mtime);
+  assert.notEqual(extractSurface(dir)['.opencode/plugin#over-cap'], before);
+});
