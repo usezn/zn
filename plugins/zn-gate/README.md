@@ -184,9 +184,19 @@ leave it, since nothing reads it.
 
 The plugin is pinned to zn-gate 1.15.0 and has no auto-update. A new zn-gate
 release comes with a new plugin release that pins it, with new file digests.
-Upgrade on purpose, after reading the release notes. In Claude Code,
-`claude plugin update zn-gate@usezn` installs the newly pinned zn-gate with
-the plugin. In other agents, install the release first:
+Upgrade on purpose, after reading the release notes. The marketplace is added
+at a release tag, so `claude plugin update zn-gate@usezn` does not bring a newer
+release. In Claude Code, move the tag and install the plugin again (use the tag
+of the release you want in place of `vX.Y.Z`):
+
+```bash
+claude plugin marketplace remove usezn
+claude plugin marketplace add usezn/zn#vX.Y.Z
+claude plugin install zn-gate@usezn
+```
+
+`zn-gate check` tells you when the plugin is older than your zn-gate. In other
+agents, install the release first:
 
 ```bash
 npm install -g zn-gate@X.Y.Z
@@ -198,9 +208,14 @@ npm audit signatures
 Claude Code, from a marketplace pinned to the release tag:
 
 ```bash
-claude plugin marketplace add usezn/zn@v1.15.0
+claude plugin marketplace add usezn/zn#v1.15.0
 claude plugin install zn-gate@usezn
 ```
+
+To confirm that the tag exists and which commit it points to, before you add
+the marketplace: `git ls-remote https://github.com/usezn/zn refs/tags/v1.15.0`.
+The files of the release carry build provenance attestations; see
+[Verifying a release](https://github.com/usezn/zn/blob/v1.15.0/docs/verify-release.md).
 
 Codex, Cursor (`zn hooks install cursor`, no plugin) and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.15.0/plugins/README.md).
 
