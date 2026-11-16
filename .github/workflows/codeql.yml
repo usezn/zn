@@ -40,8 +40,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Decides which languages to analyse. Pull requests into next analyse only the languages whose files changed
+  # (actions always); every other run (pull requests into main and release branches, pushes, the weekly run and
+  # manual runs) analyses all four. The scope scripts are the ones the other workflows use, and when one of them
+  # cannot tell, the language is analysed.
+  scope:
+    name: CodeQL scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Choose the languages
+        id: matrix
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          js_py=true
+          rust=true
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$BASE_REF" = "next" ]; then
+            # A script that fails or prints nothing leaves the language in.
+            out_js="$(bash .github/scripts/ci-scope.sh)" || out_js=""
+            out_rs="$(bash .github/scripts/rust-scope.sh)" || out_rs=""
+            echo "$out_js"
+            echo "$out_rs"
+            if grep -qx "run=false" <<< "$out_js"; then js_py=false; fi
+            if grep -qx "rust=false" <<< "$out_rs"; then rust=false; fi
+          fi
+          langs='"actions"'
+          if [ "$rust" = "true" ]; then langs="$langs"',"rust"'; fi
+          if [ "$js_py" = "true" ]; then langs="$langs"',"javascript-typescript","python"'; fi
+          echo "matrix={\"language\":[$langs]}" >> "$GITHUB_OUTPUT"
+          echo "languages: $langs"
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: scope
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -50,9 +92,9 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      matrix:
-        # The languages the default setup scans today (actions, javascript-typescript, python, rust).
-        language: [ actions, javascript-typescript, python, rust ]
+      # From the scope job: the four languages the default setup scanned (actions, javascript-typescript,
+      # python, rust), or fewer on a pull request into next that leaves some untouched.
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
