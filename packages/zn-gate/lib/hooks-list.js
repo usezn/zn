@@ -75,6 +75,8 @@ function jsonFileRows(spec, ctx, file, scope, text) {
       if (h.problem) {
         row.status = /starts powershell\.exe by name/i.test(h.problem) ? 'STALE' : 'BROKEN';
         row.reason = h.problem;
+        // Running the install again would write the same launcher: the repair is outside zn.
+        if (h.needsGitBash) row.fixText = h.fix;
       } else if (parsed.modified) {
         row.status = 'STALE';
         row.reason = 'its start guard is not the one this zn-gate writes';
@@ -175,7 +177,7 @@ function report({ agents, counts }, write) {
       // One explanation per distinct problem, not one per event.
       for (const r of why.values()) {
         w('  ' + r.status + ': ' + r.reason + '.\n');
-        w('    Fix: run `' + r.fix + '` in your own terminal.\n');
+        w(r.fixText ? '    Fix: ' + r.fixText + '.\n' : '    Fix: run `' + r.fix + '` in your own terminal.\n');
       }
     }
   }

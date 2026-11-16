@@ -460,7 +460,7 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
   }
 });
 
-test('plan on Windows without Git Bash: a plugin that cannot start there gets Git for Windows (or zn hooks) first, never the plugin install again', { skip: !WIN && 'Windows only' }, async (t) => {
+test('plan on Windows without Git Bash: a plugin that cannot start there gets Git for Windows first, never the plugin install again', { skip: !WIN && 'Windows only' }, async (t) => {
   // No CLAUDE_CODE_GIT_BASH_PATH and an empty PATH: Claude Code would run the plugin hook with Git Bash, and there is none.
   // Installing the plugin again cannot give it one.
   const m = machine(t, ['claude-code']);
@@ -470,7 +470,9 @@ test('plan on Windows without Git Bash: a plugin that cannot start there gets Gi
   assert.equal(cc.steps.length, 1);
   assert.equal(cc.steps[0].run, null);
   assert.equal(cc.steps[0].label, 'first do this yourself');
-  assert.match(cc.steps[0].manual, /^install Git for Windows \(or set CLAUDE_CODE_GIT_BASH_PATH to its bash\.exe\), or use zn's hooks instead/);
+  assert.match(cc.steps[0].manual, /^install Git for Windows \(or set CLAUDE_CODE_GIT_BASH_PATH to the full path of its bash\.exe\), then run `zn-gate check` again$/);
+  // zn's own hooks need Git Bash too: they are no way out.
+  assert.doesNotMatch(cc.steps[0].manual, /zn hooks install/);
   assert.doesNotMatch(cc.steps.map(line).join('\n'), /marketplace add|plugin install/);
 });
 

@@ -12,7 +12,9 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (
 | `audit.jsonl` | The vault audit log: what the vault did (which secret was used, unlock, reset). Never holds secret values. Next to the vault files. Check it with `zn vault verify`; read it with `zn vault log`. |
 | `evidence.jsonl` | The decision log: what zn-gate allowed or blocked. Check it with `zn-gate evidence --verify`. If it is damaged, you move it aside to `evidence.damaged.jsonl`, see [troubleshooting](troubleshooting.md#10-the-evidence-log--is-damaged). |
 | `~/.zn/vault-backup-<date>` | Encrypted copy of an old vault, made by `zn-gate vault reset`. |
-| `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts`. |
+| `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts` or with a recent npm that has not allowed the step ([upgrading](upgrading.md#the-short-version)). `hooks uninstall` leaves the launcher here; `zn-gate uninstall` removes it. |
+| `~/.zn/cache/compile` | Compiled copies of zn-gate's code, which make the hooks start faster. Safe to delete: zn-gate builds it again on the next hook call. |
+| `~/.zn/state` | Small files zn-gate keeps for its own use. |
 | `~/.zn/reach-last.json` | Written only by `reach --remember`. |
 
 More: [uninstall](uninstall.md#4-your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
@@ -40,7 +42,22 @@ More: [uninstall](uninstall.md), [CLI reference](cli.md).
 ## Hooks and settings of your agents
 
 - `zn-gate hooks install <agent>` adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings file is written first. With `--project`, it writes the shared files of the folder you are in.
-- `zn-gate hooks uninstall <agent>` removes them again and also writes a backup first. It leaves the launcher script under `~/.zn/hooks` in place.
+- `zn-gate hooks uninstall <agent>` removes them again and also writes a backup first. It leaves the launcher script under `~/.zn/hooks` in place (for example `~/.zn/hooks/zn-hook-claude-code.sh`), and a settings file that held nothing else stays as `{}` (Claude Code's `settings.json`, Codex CLI's `hooks.json`) or `"hooks": {}` (Cursor). Antigravity's and GitHub Copilot's files are deleted when nothing else is in them. See [what stays after uninstall](uninstall.md#what-stays-after-uninstall).
+
+The user file that `zn-gate hooks install <agent>` writes, for each agent. On Windows `~` is your user folder (`%USERPROFILE%`), so `~/.claude/settings.json` is `%USERPROFILE%\.claude\settings.json`.
+
+| Agent | File |
+| --- | --- |
+| Claude Code | `~/.claude/settings.json` (or the folder that `CLAUDE_CONFIG_DIR` names), plus the launcher `~/.zn/hooks/zn-hook-claude-code.sh` |
+| Codex CLI | `~/.codex/hooks.json` (or the folder that `CODEX_HOME` names) |
+| Cursor | `~/.cursor/hooks.json` |
+| OpenCode | `~/.config/opencode/plugins/zn-gate.js` |
+| Google Antigravity | `~/.gemini/config/hooks.json` |
+| ZCode desktop app | `~/.zcode/cli/config.json` |
+| GitHub Copilot | `~/.copilot/hooks/zn-gate.json` (or `$COPILOT_HOME/hooks/`) |
+| Gemini CLI (experimental) | `~/.gemini/settings.json` |
+
+On macOS and Linux, Codex CLI, Cursor, Antigravity and ZCode also get a launcher script in `~/.zn/hooks`; on Windows their hooks are written inline as a PowerShell command, and only Claude Code has a launcher there.
 - `zn-gate init --wrap-mcp` wraps MCP servers and saves a copy of each config first. `zn-gate init --revert` puts the saved copy back, and changes made to that file since are lost.
 
 More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).

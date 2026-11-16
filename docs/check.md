@@ -232,7 +232,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The hook reads only the files it loads, so a changed file that nothing has loaded yet does not stop it, but `zn-gate check` reads the whole list. A file added after the install is a note, not a block. A launcher written by an older zn-gate records only the runner; the check then adds a note that says so, and `zn hooks install <agent>` records the rest.
 
-  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts` or with bun (which skip it), or if you installed or updated with `sudo` (the step does not change your files then). Run `zn hooks install <agent>` again in your own terminal to record the new files.
+  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts` or with bun (which skip it), or with a recent npm that has not allowed the step (it prints `npm warn install-scripts ... not yet covered by allowScripts`), or if you installed or updated with `sudo` (the step does not change your files then). Run `zn hooks install <agent>` again in your own terminal to record the new files.
 
   pnpm also skips the install step but keeps the previous version's folder, so there the hooks keep running the previous version's runner (with its older rules) and the check stays **OK**, with a note on that agent's line:
 
@@ -385,16 +385,25 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   `installed_plugins.json` can name any folder, so `zn-gate check` starts nothing from the plugin until it knows the plugin is real: its folder must be inside `plugins` under your Claude Code configuration folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), or inside `CLAUDE_CODE_PLUGIN_CACHE_DIR` when that is set, and not inside the project you run the check in. Its `hooks/hooks.json` must have the PreToolUse hook the plugin ships, exactly: a "command" hook whose command is `/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code`, with `"shell": "bash"` and `"onFailure": "block"`, not turned off, not run in the background, and with a matcher that covers reading files. Any other command counts as no zn check, even one that runs another script of the plugin, because it may answer nothing and Claude Code would then run the call. The other forms of the PreToolUse line say that the hook is turned off, is not a "command" hook, does not ask for bash, or has a matcher that does not cover Read.
 
-  The live test then runs that command the way Claude Code runs it: `/bin/sh` with the plugin's `scripts/zn-node.sh` and `PreToolUse hook claude-code` (on Windows, Git Bash runs the command line, as Claude Code does), with `CLAUDE_PLUGIN_ROOT` set to the plugin folder, `CLAUDE_PROJECT_DIR` set to the project you run the check in (the root of its git repository when there is one, also from a subfolder), your `PATH`, and the hook's timeout (at most 15 seconds). The plugin counts as protected only when that command blocks the `.env` file and allows the ordinary file. A command that answers nothing (exit 0) or cannot start is reported as **NOT protected**. On Windows without Git Bash, the line says so and suggests Git for Windows or zn's own hooks. Before that, zn-gate also runs the plugin's own start-up check (`/bin/sh` with the same script and `SessionStart check claude-code`) only to show its message, for example about a Node.js the plugin does not support; it never makes the plugin count as protected.
+  The live test then runs that command the way Claude Code runs it: `/bin/sh` with the plugin's `scripts/zn-node.sh` and `PreToolUse hook claude-code` (on Windows, Git Bash runs the command line, as Claude Code does), with `CLAUDE_PLUGIN_ROOT` set to the plugin folder, `CLAUDE_PROJECT_DIR` set to the project you run the check in (the root of its git repository when there is one, also from a subfolder), your `PATH`, and the hook's timeout (at most 15 seconds). The plugin counts as protected only when that command blocks the `.env` file and allows the ordinary file. A command that answers nothing (exit 0) or cannot start is reported as **NOT protected**. On Windows without Git Bash, the line says so and suggests Git for Windows (zn's own hooks need Git Bash too, so they are no way out). Before that, zn-gate also runs the plugin's own start-up check (`/bin/sh` with the same script and `SessionStart check claude-code`) only to show its message, for example about a Node.js the plugin does not support; it never makes the plugin count as protected.
 
 - **Windows: Git Bash was not found.**
 
   ```text
   Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start
-  install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe), or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again
+  install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to the full path of its bash.exe), then run `zn-gate check` again
   ```
 
   zn-gate looks for Git Bash the way Claude Code is set up: `CLAUDE_CODE_GIT_BASH_PATH`, else the `bin\bash.exe` next to `git` on your `PATH`, else `bash` or `sh` on your `PATH`.
+
+- **Windows: zn's own hooks for Claude Code cannot start without Git Bash.**
+
+  ```text
+  its hook cannot start: Claude Code runs zn's hook launcher (C:/Users/<you>/.zn/hooks/zn-hook-claude-code.sh) with Git Bash on Windows, and Git Bash was not found
+  install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to the full path of its bash.exe), then run `zn-gate check` again
+  ```
+
+  `zn hooks install claude-code` writes a launcher script as the hook command, and Claude Code runs it with Git Bash, as it does the plugin's hooks. Without Git Bash the hooks never start, so the plain check, `check --json` (`"protected": false`) and `check --hooks` (each Claude Code hook **BROKEN**) all say so, and the check exits with code 1. Running `zn hooks install claude-code` again does not help: it writes the same launcher. `zn hooks install claude-code` also warns when it finds no Git Bash. Earlier releases reported this case as **OK**, with the note "the program that runs the hook was not found", and `check --hooks` as **STALE**.
 
 - **The plugin needs a newer Node.js.**
 

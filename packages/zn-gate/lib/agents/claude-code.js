@@ -500,6 +500,19 @@ function znOnPath(opts = {}) {
 }
 
 /**
+ * The warning for an install on Windows with no Git Bash, or ''. Claude Code runs every hook command with Git Bash there,
+ * and the hooks zn writes (the user launcher and the project start guard) are sh scripts, so without Git Bash they cannot
+ * start. A command given by the caller is the caller's own. opts: {platform, env, command}.
+ */
+function noGitBashWarning(opts = {}) {
+  if (opts.command || (opts.platform || process.platform) !== 'win32') return '';
+  let bash = null;
+  try { bash = require('../check')._internal.gitBash(opts.env || process.env); } catch (_) { return ''; }
+  if (bash) return '';
+  return 'Git Bash was not found: on Windows, Claude Code runs these hooks with Git Bash, so they cannot start and zn does not protect Claude Code until you install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to the full path of its bash.exe); then run `zn-gate check`';
+}
+
+/**
  * Write the hook configuration (and register the "secrets" MCP server).
  * opts: {scope: 'user'|'project', projectDir, home, env, nodePath, cliPath, command, mcp: false, claudeBin, znBin}
  */
@@ -516,6 +529,8 @@ function install(opts = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
   if (opts.mcp !== false) installMcp(opts, report);
+  const gitBashNote = noGitBashWarning(opts);
+  if (gitBashNote) report.warnings.push(gitBashNote);
   if (!opts.command && (opts.scope || 'user') === 'project' && !znOnPath(opts)) {
     report.warnings.push('`zn` is not on your PATH, and this project install runs `zn hook claude-code`' +
       ': until zn-gate is installed globally (npm i -g zn-gate, or pip install zn-gate), the hooks fail here and Claude Code may block every tool call or skip the secret checks. Everyone who uses this project needs zn on their PATH.');
@@ -854,4 +869,5 @@ module.exports = {
   configDir,
   hookCommand,
   ourHooks,
+  noGitBashWarning,
 };

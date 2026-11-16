@@ -963,7 +963,13 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 **What happened:** on Windows, Claude Code runs the hooks of the zn-gate plugin with Git Bash (`bash.exe`). `zn-gate check` found no Git Bash, so the plugin's hook cannot start. The full message is `Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start`.
 
-**What to do:** install Git for Windows, or set `CLAUDE_CODE_GIT_BASH_PATH` to the full path of its `bash.exe`, then run `zn-gate check` again. If you do not want Git Bash, use zn's own hooks instead, in your own terminal: `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`. The same steps are in [Check that it works](check.md).
+**What to do:** install Git for Windows, or set `CLAUDE_CODE_GIT_BASH_PATH` to the full path of its `bash.exe`, then run `zn-gate check` again. zn's own hooks (`zn hooks install claude-code`) are no way around it: Claude Code runs them with Git Bash too (see the next section). The same steps are in [Check that it works](check.md).
+
+#### "its hook cannot start: Claude Code runs zn's hook launcher (...) with Git Bash on Windows, and Git Bash was not found"
+
+**What happened:** on Windows, `zn hooks install claude-code` writes a launcher script (`%USERPROFILE%\.zn\hooks\zn-hook-claude-code.sh`) as the hook command, and Claude Code runs it with Git Bash. `zn-gate check` found no Git Bash, so the hooks cannot start and zn does not protect Claude Code. `zn-gate check --hooks` lists each Claude Code hook as **BROKEN** for the same reason.
+
+**What to do:** install Git for Windows, or set `CLAUDE_CODE_GIT_BASH_PATH` to the full path of its `bash.exe`, then run `zn-gate check` again. Running `zn hooks install claude-code` again does not help, because it writes the same launcher.
 
 #### Any other message that ends a command with an error
 
@@ -1419,7 +1425,18 @@ The steps for each agent are in [Install, verify and uninstall by agent](by-agen
 
 ### Hooks block everything: "zn-gate changed since the hooks were installed"
 
-The hook launcher keeps a fingerprint of zn-gate's hook runner and of every other zn-gate file the hook loads, and runs a file only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `zn-gate check` names the changed file. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+The hook launcher keeps a fingerprint of zn-gate's hook runner and of every other zn-gate file the hook loads, and runs a file only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `zn-gate check` names the changed file. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, with `sudo`, or with a recent npm that has not allowed the step (see the next section). In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+
+### npm warns "install scripts not yet covered by allowScripts"
+
+Recent npm versions (seen with npm 11.20) run a package's install scripts only when you allow them. `npm install -g zn-gate` then ends with:
+
+```text
+npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn install-scripts   zn-gate@<version> (postinstall: node lib/agents/refresh.js)
+```
+
+The install itself worked. The script it skipped only refreshes the hook launchers of an earlier install (it is declared in the package's `DISCLOSURE` file). On a first install there is nothing to refresh, so you can ignore the warning. After an update, the launchers still record the old files, so the hooks block until you either run `zn hooks install <agent>` again for each agent, or update with `npm install -g --allow-scripts=zn-gate zn-gate`. To allow it for every later update, run `npm config set allow-scripts=zn-gate --location=user` once. Then run `zn-gate check`.
 
 ### npm says EACCES when init installs zn-gate
 

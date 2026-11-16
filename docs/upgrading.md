@@ -33,6 +33,20 @@ what happens depends on how you installed zn-gate:
 - **bun** and `npm install --ignore-scripts` skip them too. The zn-gate files
   changed, so the hooks block tool calls and say so until you run
   `zn hooks install <agent>` again for each agent.
+- **npm with install scripts not allowed.** Recent npm versions (seen with npm
+  11.20) run a package's install scripts only when you allow them. Then
+  `npm install -g zn-gate` ends with this warning, and the launchers are not
+  refreshed, as with bun:
+
+  ```text
+  npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+  npm warn install-scripts   zn-gate@<version> (postinstall: node lib/agents/refresh.js)
+  ```
+
+  Update with `npm install -g --allow-scripts=zn-gate zn-gate`, or allow it once
+  for all global installs with `npm config set allow-scripts=zn-gate --location=user`,
+  or run `zn hooks install <agent>` again after the update. On a first install
+  the warning is harmless: there are no launchers to refresh yet.
 
 If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
 

@@ -154,6 +154,10 @@ async function plan(opts = {}) {
       if (r.rulesFault) {
         // zn's own rules let the test .env through: zn-gate itself needs repair, whatever runs the hooks.
         item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
+      } else if (r.needsGitBash && r.via === 'hooks') {
+        // zn's own hooks are installed, but Windows has no Git Bash to start their launcher with: installing them again
+        // would write the same launcher. Git for Windows (or CLAUDE_CODE_GIT_BASH_PATH) comes first.
+        item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
       } else if (!hooksVerb && r.pluginBroken) {
         // The plugin does not work next to zn's own hooks, which check found working: turn the plugin off and keep the hooks.
         item.steps.push(disablePlugin());
@@ -162,7 +166,7 @@ async function plan(opts = {}) {
         item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
       } else if (!hooksVerb && r.needsGitBash) {
         // The plugin is installed but Claude Code has no Git Bash to start its hook with (Windows): installing the plugin again
-        // cannot give it one. Git for Windows (or CLAUDE_CODE_GIT_BASH_PATH) comes first, or zn's own hooks instead; the fix says both.
+        // cannot give it one, and zn's own hooks need Git Bash too. Git for Windows (or CLAUDE_CODE_GIT_BASH_PATH) comes first.
         item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
       } else if (!hooksVerb && r.pluginOff) {
         // Installed but turned off: installing it again would not turn it on.

@@ -324,6 +324,18 @@ function gitBash(env) {
   return exe.findProgram('bash', env) || exe.findProgram('sh', env);
 }
 
+/*
+ * Whether a hook command is zn's sh launcher on Windows with no Git Bash to start it. Windows cannot run a .sh file by
+ * itself and Claude Code runs a hook command with Git Bash there, so without one the launcher never starts and zn does
+ * not protect the agent. `platform` is a parameter so that the Windows answer can be tested on any machine.
+ */
+function launcherNeedsMissingGitBash(cmd, env, platform = process.platform) {
+  return platform === 'win32' && Boolean(cmd && cmd.launcher && !cmd.winScript) && !gitBash(env || process.env);
+}
+
+/* How to repair a hook (or the plugin) that needs Git Bash on Windows: neither route of Claude Code starts without it. */
+const NEEDS_GIT_BASH_FIX = 'install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to the full path of its bash.exe), then run `zn-gate check` again';
+
 function decisionOf(stdout, status) {
   if (status === 2) return 'deny';
   const o = String(stdout || '');
@@ -891,6 +903,11 @@ function cliHooks(spec, ctx, userFile, given) {
     } else if (!recorded && !viaPath) {
       out.problem = 'its hook cannot start: its ' + (isFile(cmd.node) ? 'zn-gate files (' + cmd.runner + ')' : 'Node.js (' + cmd.node + ')') + ' is no longer there, so zn now blocks the tool calls and prompts instead of checking them';
       out.fix = REINSTALL(spec.id);
+    } else if (launcherNeedsMissingGitBash(cmd, ctx.env || process.env)) {
+      // The hook command is the sh launcher, and there is no Git Bash to run it: the agent cannot start the hook at all.
+      out.problem = 'its hook cannot start: ' + spec.name + ' runs zn\'s hook launcher (' + cmd.launcher + ') with Git Bash on Windows, and Git Bash was not found';
+      out.fix = NEEDS_GIT_BASH_FIX;
+      out.needsGitBash = true;
     } else {
       const older = recorded ? olderRunnerVersion(cmd.runner) : '';
       if (files && files.added.length) out.notes.push('zn-gate has files the launcher did not record when the hooks were installed (' + listFiles(files.added) + '): a hook that loads one is blocked. Run `zn hooks install ' + spec.id + '` to record them');
@@ -1101,7 +1118,8 @@ async function checkAgent(spec, ctx) {
           res.problem = 'Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start';
           // The plan must not offer to install the plugin again: that cannot give it a Git Bash.
           res.needsGitBash = true;
-          res.fix = 'install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe), or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
+          // zn's own hooks (`zn hooks install claude-code`) run a sh launcher, which needs Git Bash as well: no way out there.
+          res.fix = NEEDS_GIT_BASH_FIX;
           res.pluginFault = true;
         } else {
           // The plugin's SessionStart command, the same script with "check": only for the launcher's own message about
@@ -1183,7 +1201,7 @@ async function checkAgent(spec, ctx) {
     const h = cliHooks(spec, ctx, userFile);
     installed = h.installed;
     res.where = userFile;
-    if (installed) { res.fix = h.fix; res.via = 'hooks'; res.problem = h.problem; live = h.live; res.notes.push(...h.notes); }
+    if (installed) { res.fix = h.fix; res.via = 'hooks'; res.problem = h.problem; live = h.live; res.notes.push(...h.notes); if (h.needsGitBash) res.needsGitBash = true; }
   }
   // zn installed by the organization (managed settings, enterprise hooks.json, requirements.toml). Read-only.
   const managed = managedFor(spec.id, ctx);
@@ -1613,4 +1631,4 @@ function toJson({ results, removed, warnings }, opts = {}) {
   };
 }
 
-module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, launcherNeedsMissingGitBash, NEEDS_GIT_BASH_FIX, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
