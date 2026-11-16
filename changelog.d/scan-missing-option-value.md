@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate scan` and `zn-gate analyze` now exit `2` with a message naming the option when an option that takes a value (`--format`, `--include`, `--exclude`, `--key`, `--stage`, `--url`) is the last argument. Before, `scan --format` scanned the current folder and `scan DIR --include` exited `0` with the option ignored. `status` and `evidence` (`--key`, `--url`, `--stage`, `--format`, `--output`, `--port`, `--tail`) do the same.

@@ -1056,6 +1056,8 @@ function optionProblem(command, args) {
     if (tok !== name) {
       return takesValue ? '"' + shown + '": give the value as the next argument, as ' + name + ' VALUE.' : name + ' takes no value.';
     }
+    // --long-input and --package have their own messages where they are read.
+    if (takesValue && name !== '--long-input' && name !== '--package' && i + 1 >= args.length) return name + ' needs a value, as ' + name + ' VALUE.';
     if (takesValue) i++;
   }
   return null;
@@ -1118,7 +1120,10 @@ function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1)
     const tok = args[i];
     if (!tok.startsWith('-') || GLOBAL_OPTIONS.includes(tok)) continue;
     if (accepted.includes(tok)) {
-      if (valueOptions.includes(tok)) i++;
+      if (valueOptions.includes(tok)) {
+        if (i + 1 >= args.length) return tok + ' needs a value, as ' + tok + ' VALUE.';
+        i++;
+      }
       continue;
     }
     const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
