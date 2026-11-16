@@ -666,6 +666,17 @@ mod tests {
         assert!(validate_command("rm").is_err());
     }
 
+    #[test]
+    fn validate_command_matches_the_program_name_not_its_folder() {
+        // Current behaviour, pinned on purpose: only the file name is compared
+        // with the allow-list, so a path in any folder passes when it ends in
+        // an allowed name. A name that is not allowed fails in any folder.
+        assert!(validate_command("/opt/example/anything/node").is_ok());
+        assert!(validate_command("./python3").is_ok());
+        assert!(validate_command("/usr/bin/bash").is_err());
+        assert!(validate_command("/opt/example/node/bash").is_err());
+    }
+
     #[tokio::test]
     async fn upstream_normal_reply_passes_unchanged() {
         let mut r = BufReader::new(&b"{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\r\n"[..]);

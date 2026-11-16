@@ -235,3 +235,7 @@ When `kms.key_id` (or `ZN_KMS_KEY_ID`) is set, the gateway takes the audit datab
 To keep the old behaviour on purpose, set `kms.allow_config_fallback = true` (or `ZN_KMS_ALLOW_CONFIG_FALLBACK=true`). The gateway then starts with the config key and logs a warning on every start. The option is off by default. Without `kms.key_id`, nothing changes: the key from the config is used.
 
 The gateway reads at most 16 MiB per line, from its own input and from each upstream MCP server over stdio; a longer line is dropped and answered with a JSON-RPC error.
+
+## Which programs an MCP server may start
+
+The gateway starts an MCP server only when its `command` is on a short allow-list (`node`, `npx`, `python`, `python3`, `uvx`, `uv`, `cargo`, `deno`, `bun`). The check compares the program's file name, not the folder it lives in, so `/opt/example/tools/node` passes and `/usr/bin/bash` does not. A `.exe` or `.cmd` ending and letter case are ignored. The list tells you which programs are expected; it is not a sandbox, so only point `command` at folders you trust. A server that fails the check is skipped, and the tools that name it are refused with the reason.
