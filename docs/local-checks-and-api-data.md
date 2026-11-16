@@ -111,6 +111,8 @@ The cloud check receives only what is listed under [What the request contains](#
 | `zn-gate stats share on` | Off by default. Once on, each `zn-gate stats` run | One report per complete day (at most the last 3 days) to `api.usezn.com`: a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type. Never values, prompts, variable or secret names, paths, hosts or emails. `zn-gate stats share show` shows the report first. |
 | zn Team (`zn team join`) | Only on a machine you join to an organization | The audit log metadata. See [zn Team](team.md). |
 | Online package check | Only in online mode, which is off by default | The package name only, to `registry.npmjs.org` or `pypi.org`. See [Packages your agent installs](package-install-check.md). |
+| `zn-gate scan --package NAME` | Only when you run it yourself | Downloads that package from the npm registry (`registry.npmjs.org`, or the address in `ZN_NPM_REGISTRY`) to scan it. Nothing from your machine is uploaded. |
+| `zn-gate init` | Only when you run it yourself, and only for the steps you confirm | If you say yes to installing zn-gate for your user, it runs `npm install -g zn-gate`, which downloads the package from the npm registry. |
 | `zn run` egress and `secrets_http_request` | When the agent or you run a command that uses a secret | The request you allowed, to a host you allowed for that secret or command. Hosts that are not on the list are refused. See [Keep secrets out of your agent](secrets.md). |
 
 ## Keep everything local

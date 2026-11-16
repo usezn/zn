@@ -67,7 +67,7 @@ What goes where on your machine, and what can leave it:
 
 - The boxes: the agent, zn-gate (rules engine and secret redaction) and the tools and MCP servers (files, shell, web, databases), all inside "Your machine".
 - The arrows: tool calls and prompts go to zn-gate, allowed calls reach the tools with secrets masked, and tool output comes back through zn-gate as redacted output and verdicts.
-- The cloud arrow: nothing leaves the machine by default. Only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`.
+- The cloud arrow: nothing leaves the machine by default. Only after `zn-gate connect`, or with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`. A capped sample of tool output is sent only if you also turn on `cloudCheckToolOutput` (see [What runs locally and what goes to the API](local-checks-and-api-data.md)).
 
 ## Key Architectural Principles
 
