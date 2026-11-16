@@ -552,8 +552,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ed:
                 user_excluded.add(ed)
 
-    # Same selection as the npm package: prompts, docs and configs; --code (or --all) adds source files.
-    valid_exts = {".md", ".txt", ".prompt", ".json", ".yaml", ".yml", ".toml", ".env", ".pem", ".key"}
+    # Prompts, docs and configs, plus .py, .ts and .js, which the Python scan has always read (the npm package reads
+    # them only with --code). --code (or --all) adds the rest of the npm source set, so both read the same files then.
+    valid_exts = {".md", ".txt", ".prompt", ".json", ".yaml", ".yml", ".toml", ".env", ".pem", ".key",
+                  ".py", ".ts", ".js"}
     if getattr(args, "code", False):
         valid_exts |= {".js", ".ts", ".py", ".sh", ".html", ".go", ".rs"}
     if getattr(args, "include", None):

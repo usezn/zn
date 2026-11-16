@@ -1,5 +1,2 @@
 ### Added
-- `zn-gate scan --code` and `--all` in the Python package, with the same source file types as the npm package.
-
-### Changed
-- The Python `zn-gate scan` now reads `.py`, `.ts` and `.js` files only with `--code` or `--all`, like the npm package.
+- `zn-gate scan --code` and `--all` in the Python package. With either one the scan also reads `.sh`, `.html`, `.go` and `.rs` files, so it reads the same files as the npm package. Without them the Python scan still reads `.py`, `.ts` and `.js` files, as before.

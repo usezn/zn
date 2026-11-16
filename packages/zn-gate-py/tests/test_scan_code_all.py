@@ -1,8 +1,10 @@
-"""`zn-gate scan --code` and `--all` (same file selection as the npm package).
+"""`zn-gate scan --code` and `--all` in the Python package.
 
-A normal scan reads prompts, docs and configs. `--code` (or `--all`, the same
-option) adds source files: .js .ts .py .sh .html .go .rs. A file named on the
-command line is read whatever its extension.
+A normal scan reads prompts, docs and configs, and also .py, .ts and .js (as
+it always has; the npm package reads those only with --code). `--code` (or
+`--all`, the same option) adds .sh .html .go .rs, so with it both packages
+read the same files. A file named on the command line is read whatever its
+extension.
 """
 
 import json
@@ -15,7 +17,9 @@ import pytest
 from zn_gate import cli
 
 BASE = ["a.md", "b.txt", "c.prompt", "d.json", "e.yaml", "f.yml", "g.toml", "h.env", "i.pem", "j.key"]
-CODE = ["k.js", "l.ts", "m.py", "n.sh", "o.html", "p.go", "q.rs"]
+DEFAULT_CODE = ["k.js", "l.ts", "m.py"]
+MORE_CODE = ["n.sh", "o.html", "p.go", "q.rs"]
+CODE = DEFAULT_CODE + MORE_CODE
 OTHER = ["r.c", "s.java", "t.rb"]
 
 
@@ -38,9 +42,9 @@ def _scanned(capsys, tree, *flags):
     return code, json.loads(out)["total_files"]
 
 
-def test_default_scan_skips_source_files(tmp_path, capsys):
+def test_default_scan_keeps_py_ts_js_and_skips_other_source(tmp_path, capsys):
     code, n = _scanned(capsys, _tree(tmp_path))
-    assert (code, n) == (0, len(BASE))
+    assert (code, n) == (0, len(BASE) + len(DEFAULT_CODE))
 
 
 @pytest.mark.parametrize("flag", ["--code", "--all"])
@@ -49,8 +53,14 @@ def test_code_and_all_add_source_files(tmp_path, capsys, flag):
     assert (code, n) == (0, len(BASE) + len(CODE))
 
 
-def test_code_finds_secret_in_source_file(tmp_path, capsys):
+def test_secret_in_python_file_is_found_by_default(tmp_path, capsys):
     (tmp_path / "app.py").write_text('KEY = "AKIAIOSFODNN7EXAMPLE"\n')
+    code, out = _run(capsys, str(tmp_path), "--format", "json")
+    assert code == 1 and json.loads(out)["total_secrets"] == 1
+
+
+def test_code_finds_secret_in_shell_file(tmp_path, capsys):
+    (tmp_path / "deploy.sh").write_text('export KEY="AKIAIOSFODNN7EXAMPLE"\n')
     code, out = _run(capsys, str(tmp_path), "--format", "json")
     assert code == 3 and json.loads(out)["total_files"] == 0
     code, out = _run(capsys, str(tmp_path), "--format", "json", "--code")
@@ -74,8 +84,8 @@ def test_named_file_is_read_without_code(tmp_path, capsys):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-@pytest.mark.parametrize("flags", [[], ["--code"], ["--all"]])
-def test_same_file_count_as_npm(tmp_path, capsys, flags):
+@pytest.mark.parametrize("flags", [["--code"], ["--all"]])
+def test_same_file_count_as_npm_with_code(tmp_path, capsys, flags):
     cli_js = Path(__file__).resolve().parents[2] / "zn-gate" / "bin" / "cli.js"
     if not cli_js.exists():
         pytest.skip("npm package not in this checkout")
