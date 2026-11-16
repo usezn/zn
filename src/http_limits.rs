@@ -810,8 +810,9 @@ mod tests {
         };
         let addr = spawn(limits).await;
         let mut c = start_upload(addr).await;
-        // Two bytes every 150 ms: longer than the idle time in total, never idle for that long.
-        for chunk in [b"cd", b"ef"] {
+        // One byte every 150 ms: 600 ms in total, more than the 400 ms idle limit, but never idle that long.
+        // A total-body deadline of 400 ms would cut this upload; the idle timer lets it finish.
+        for chunk in [b"c", b"d", b"e", b"f"] {
             tokio::time::sleep(Duration::from_millis(150)).await;
             c.write_all(chunk).await.unwrap();
         }
