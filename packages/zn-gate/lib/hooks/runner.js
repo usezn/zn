@@ -55,7 +55,7 @@ const { znCommand, winCommandText } = require('../zn-command');
 const { unsafeKind } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
-const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
+const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource', 'bashoutput', 'taskoutput', 'task', 'agent', 'websearch', 'glob']);
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
@@ -1186,7 +1186,11 @@ async function decidePost(ev, d, agentId, opts = {}) {
       return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
     }
   }
-  if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
+  if (ev.output === undefined || ev.output === null) {
+    // PostToolUse cannot hold back an output that is not there to read. Say so, so a renamed or missing output
+    // field does not stop the check without anyone knowing. The call still ran, so this is a note, not a block.
+    return { decision: 'allow', message: 'zn: could not read the output of this tool call, so zn did not check it for secret values.', stats: { unreadable: 1 } };
+  }
   const posInt = (v, dflt) => (Number.isInteger(v) && v > 0 ? v : dflt);
   const deadlineAt = Date.now() + posInt(opts.postDeadlineMs, postDeadlineMs(agentId));
   let room = posInt(opts.postScanCap, POST_SCAN_CAP);

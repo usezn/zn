@@ -20,6 +20,6 @@ test('MCP tool calls are matched before and after they run', () => {
   for (const m of [PRE_MATCHER, POST_MATCHER]) {
     assert.ok(new RegExp(m).test('mcp__github__create_issue'), m);
     assert.ok(new RegExp(m).test('Bash'), m);
-    assert.ok(!new RegExp(m).test('Glob'), m);
+    assert.ok(!new RegExp(m).test('NotebookEditX'), m);
   }
 });

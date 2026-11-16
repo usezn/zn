@@ -15,7 +15,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*",
+        "matcher": "^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool|BashOutput|TaskOutput|Task|Agent|WebSearch|Glob)$|^mcp__.*",
         "hooks": [
           {
             "type": "command",

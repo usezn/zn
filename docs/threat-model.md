@@ -433,6 +433,20 @@ records, and the end-to-end runs (`bench/e2e/`) show what ends up there:
   at all. Values in files you let the agent read, or printed by commands, reach
   the model. Keep secrets in the vault and `.env` files shadowed.
 
+**The agent can read these records.** zn does not block reads of the agents'
+session histories (Claude Code's project transcripts and `history.jsonl`,
+Codex's `~/.codex/sessions`, and the equivalent files of other agents): the
+agent can open them with its read tool, `cat` or `grep`. For Claude Code the
+stored output is already scrubbed, but a prompt zn blocked and anything written
+before zn was installed are not. Codex keeps the original tool output there, so
+a value that zn replaced in what the model saw can still be read back from its
+log. zn's read checks for protected paths block; they do not ask. A block on
+session histories would stop ordinary work that reads them, and a question on
+every `cat` or `grep` of a large, changing file does not fit those checks, so
+this is a known limit and not a rule. To limit it, keep secrets out of what an
+agent prints, use the vault, and delete old session logs (`zn-gate reach
+--history` lists the kinds of secret still in them, never the values).
+
 ## Confirmation channel
 
 First use of a (secret, command) pair and policy changes that widen a secret

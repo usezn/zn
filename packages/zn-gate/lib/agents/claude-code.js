@@ -85,7 +85,7 @@ const id = 'claude-code';
 // commands like Bash; LSP reads files; the MCP tools are checked for secrets and personal data before they run.
 const PRE_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*';
 // A regex (it contains mcp__.*), anchored so it names exactly these tools.
-const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
+const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool|BashOutput|TaskOutput|Task|Agent|WebSearch|Glob)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
 // Older versions wrote the paths in double quotes; both forms are ours.
 // zn's launcher script (lib/agents/launcher.js) is ours too: '<dir>/zn-hook-claude-code.sh' <Event>

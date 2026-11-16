@@ -216,7 +216,7 @@ test('PostToolUse replaces secrets in Bash output and keeps its shape', async (t
   assert.match(out.additionalContext, /2 secret value/);
 });
 
-test('PostToolUse covers Read, Grep, WebFetch and MCP; ignores Glob; no output when clean', async (t) => {
+test('PostToolUse covers Read, Grep, WebFetch and MCP; ignores tools outside the list; no output when clean', async (t) => {
   const dir = tmpProject(t);
   const pwLine = 'DATABASE_URL=' + PG.value;
   const read = await run(postTool('Read', { file_path: '/p/.env' }, { type: 'text', file: { filePath: '/p/.env', content: pwLine, numLines: 1 } }, dir));
@@ -225,7 +225,7 @@ test('PostToolUse covers Read, Grep, WebFetch and MCP; ignores Glob; no output w
   assert.match(content, /^DATABASE_URL=postgres:\/\/app_rw:__ZN_DB_PASSWORD_1__@db\.internal:5432\/appdb$/, 'only the password is tokenized');
   const mcp = await run(postTool('mcp__github__get_file', {}, { content: [{ type: 'text', text: 'x ' + GHP }] }, dir));
   assert.ok(!JSON.stringify(mcp.output).includes(GHP));
-  const glob = await run(postTool('Glob', {}, { filenames: [AWS] }, dir));
+  const glob = await run(postTool('Write', {}, { filenames: [AWS] }, dir));
   assert.equal(glob.output, null);
   const clean = await run(postTool('Bash', { command: 'ls' }, { stdout: 'a\nb\n', stderr: '', interrupted: false, isImage: false }, dir));
   assert.equal(clean.output, null);
@@ -784,9 +784,38 @@ test('LSP and MCP resources are covered', async (t) => {
   const rp = await run(postTool('ReadMcpResourceTool', { server: 's', uri: 'file:///x' }, { contents: [{ uri: 'file:///x', text: 'token ' + GHP }] }, home));
   assert.ok(!JSON.stringify(rp.output).includes(GHP));
   const re = new RegExp(adapter.POST_MATCHER);
-  for (const t of ['Bash', 'PowerShell', 'Monitor', 'Read', 'Grep', 'LSP', 'WebFetch', 'ReadMcpResourceTool', 'mcp__github__get_file']) assert.ok(re.test(t), t);
-  for (const t of ['Glob', 'TaskOutput', 'Write', 'NotebookEdit']) assert.ok(!re.test(t), t);
+  for (const t of ['Bash', 'PowerShell', 'Monitor', 'Read', 'Grep', 'LSP', 'WebFetch', 'ReadMcpResourceTool', 'BashOutput', 'TaskOutput', 'Task', 'Agent', 'WebSearch', 'Glob', 'mcp__github__get_file']) assert.ok(re.test(t), t);
+  for (const t of ['Write', 'Edit', 'NotebookEdit', 'KillShell', 'xBashOutput']) assert.ok(!re.test(t), t);
   assert.deepEqual(adapter.PRE_MATCHER.split('|').filter((t) => ['PowerShell', 'Monitor', 'LSP'].includes(t)), ['PowerShell', 'Monitor', 'LSP']);
+});
+
+test('the output of background-shell reads, subagents, web search and glob is scrubbed', async (t) => {
+  const home = tempDir(t, 'zn-post-more-');
+  for (const [name, resp] of [
+    ['BashOutput', { stdout: 'token ' + GHP, stderr: '' }],
+    ['TaskOutput', { output: 'token ' + GHP }],
+    ['Task', { content: [{ type: 'text', text: 'token ' + GHP }] }],
+    ['Agent', 'token ' + GHP],
+    ['WebSearch', { results: [{ title: 't', snippet: 'token ' + GHP }] }],
+    ['Glob', { filenames: ['a/' + GHP + '.txt'] }],
+  ]) {
+    const r = await run(postTool(name, {}, resp, home), { home });
+    assert.ok(r.output && !JSON.stringify(r.output).includes(GHP), name);
+  }
+});
+
+test('a checked tool whose output cannot be read gets a visible note, not a silent pass', async (t) => {
+  const home = tempDir(t, 'zn-post-nooutput-');
+  for (const name of ['Bash', 'Read', 'BashOutput']) {
+    const raw = postTool(name, { command: 'echo hi' }, undefined, home);
+    delete raw.tool_response;
+    const r = await run(raw, { home });
+    assert.ok(r.output && /could not read the output of this tool call/.test(JSON.stringify(r.output)), name);
+  }
+  // A tool outside the list stays untouched.
+  const raw = postTool('Write', {}, undefined, home);
+  const w = await run(raw, { home });
+  assert.ok(!w.output);
 });
 
 test('UserPromptSubmit runs prepare() before scan(), so a vault value without a pattern is caught', async () => {
