@@ -102,7 +102,9 @@ test('scriptRisk: a group- or other-writable script is refused', { skip: !POSIX 
   assert.match(risk(g).deny, /group or others/);
 });
 
-test('scriptRisk: a group- or other-writable folder above the script is refused, a sticky one is not', { skip: !TIGHT_TMP }, (t) => {
+// As root the script belongs to the current user and scriptRisk has nothing to say about it (null, like a script in /usr/bin),
+// so there is no refusal to assert on; root also bypasses the file permission checks this test is about.
+test('scriptRisk: a group- or other-writable folder above the script is refused, a sticky one is not', { skip: !TIGHT_TMP || (!NOT_ROOT && 'runs as root: root owns the script, so scriptRisk reports nothing to refuse') }, (t) => {
   const dir = scratchTmp(t);
   const sub = path.join(dir, 'sub');
   fs.mkdirSync(sub);

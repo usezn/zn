@@ -1,0 +1,143 @@
+[
+ {
+  "eventId": "23484f7f-bfa7-4f29-8217-7f66d873757b",
+  "payload": {
+   "descriptor": {
+    "clientVisible": true,
+    "commandDisplay": "/bin/sh \"C:\\\\work\\\\home\\\\.zcode\\\\cli\\\\plugins\\\\cache\\\\usezn\\\\zn-gate\\\\1.14.1/scripts/zn-hook.sh\" UserPromptSubmit",
+    "executionMode": "foreground",
+    "executionType": "process",
+    "pluginId": "zn-gate@usezn",
+    "pluginName": "zn-gate",
+    "sourceKind": "plugin",
+    "sourcePath": "C:\\work\\home\\.zcode\\cli\\plugins\\cache\\usezn\\zn-gate\\1.14.1\\hooks\\hooks.json",
+    "statusMessage": "zn: checking for secrets",
+    "timeoutMs": 30000
+   },
+   "hookEventName": "UserPromptSubmit",
+   "hookIndex": 0,
+   "hookCount": 2,
+   "hookInvocationId": "36c3a666-c98d-4d98-92e0-aab38deca542",
+   "hookRunId": "169f8936-40d8-4652-9590-f518b49f7b87",
+   "hookSource": "plugin.zn-gate@usezn.UserPromptSubmit.0.0",
+   "startedAt": 1793352607867,
+   "durationMs": 573,
+   "errorCode": "TOOL_EXECUTION_FAILED",
+   "errorMessage": "spawn /bin/sh ENOENT",
+   "outcome": "failed",
+   "stderrPreview": "spawn /bin/sh ENOENT"
+  },
+  "seq": 4,
+  "sessionId": "sess_1a5cb958-4762-4e27-aae6-6106a5fd0333",
+  "timestamp": 1793352608441,
+  "traceId": "b6d28198-5006-4b36-aecd-8c6c904f341c",
+  "turnId": "turn_620a413c-a37c-4821-8a8c-cfda9993a60d",
+  "type": "session.updated"
+ },
+ {
+  "eventId": "d8c75d21-3207-43be-9aee-f6df62285789",
+  "payload": {
+   "descriptor": {
+    "clientVisible": true,
+    "commandDisplay": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -Command \"try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) 'UserPromptSubmit' } catch { [Console]::Error.WriteLine('zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'); exit 2 }; exit 2\"",
+    "executionMode": "foreground",
+    "executionType": "process",
+    "pluginId": "zn-gate@usezn",
+    "pluginName": "zn-gate",
+    "sourceKind": "plugin",
+    "sourcePath": "C:\\work\\home\\.zcode\\cli\\plugins\\cache\\usezn\\zn-gate\\1.14.1\\hooks\\hooks.json",
+    "statusMessage": "zn: checking for secrets",
+    "timeoutMs": 30000
+   },
+   "hookEventName": "UserPromptSubmit",
+   "hookIndex": 1,
+   "hookCount": 2,
+   "hookInvocationId": "36c3a666-c98d-4d98-92e0-aab38deca542",
+   "hookRunId": "62d25f3f-3158-4311-aae0-e2b116d85bbb",
+   "hookSource": "plugin.zn-gate@usezn.UserPromptSubmit.0.1",
+   "startedAt": 1793352608441,
+   "durationMs": 4692,
+   "outcome": "success"
+  },
+  "seq": 6,
+  "sessionId": "sess_1a5cb958-4762-4e27-aae6-6106a5fd0333",
+  "timestamp": 1793352613133,
+  "traceId": "b6d28198-5006-4b36-aecd-8c6c904f341c",
+  "turnId": "turn_620a413c-a37c-4821-8a8c-cfda9993a60d",
+  "type": "session.updated"
+ },
+ {
+  "eventId": "4bba451b-d8d4-498c-8a0e-74387a76bb41",
+  "payload": {
+   "descriptor": {
+    "clientVisible": true,
+    "commandDisplay": "/bin/sh \"C:\\\\work\\\\home\\\\.zcode\\\\cli\\\\plugins\\\\cache\\\\usezn\\\\zn-gate\\\\1.14.1/scripts/zn-hook.sh\" PreToolUse",
+    "executionMode": "foreground",
+    "executionType": "process",
+    "pluginId": "zn-gate@usezn",
+    "pluginName": "zn-gate",
+    "sourceKind": "plugin",
+    "sourcePath": "C:\\work\\home\\.zcode\\cli\\plugins\\cache\\usezn\\zn-gate\\1.14.1\\hooks\\hooks.json",
+    "statusMessage": "zn: checking for secrets",
+    "timeoutMs": 30000
+   },
+   "hookEventName": "PreToolUse",
+   "hookIndex": 0,
+   "hookCount": 2,
+   "hookInvocationId": "58bfcc8e-7cad-492d-aafe-b5302c3a6744",
+   "hookRunId": "831be6d3-6292-46fb-982d-9f6690cd3f0b",
+   "hookSource": "plugin.zn-gate@usezn.PreToolUse.0.0",
+   "matcher": "*",
+   "startedAt": 1793352613211,
+   "toolCallId": "call_fake_0",
+   "toolName": "Read",
+   "durationMs": 50,
+   "errorCode": "TOOL_EXECUTION_FAILED",
+   "errorMessage": "spawn /bin/sh ENOENT",
+   "outcome": "failed",
+   "stderrPreview": "spawn /bin/sh ENOENT"
+  },
+  "seq": 23,
+  "sessionId": "sess_1a5cb958-4762-4e27-aae6-6106a5fd0333",
+  "timestamp": 1793352613261,
+  "traceId": "b6d28198-5006-4b36-aecd-8c6c904f341c",
+  "turnId": "turn_620a413c-a37c-4821-8a8c-cfda9993a60d",
+  "type": "session.updated"
+ },
+ {
+  "eventId": "7429d44a-4432-4b03-b47d-0ef04e49a778",
+  "payload": {
+   "descriptor": {
+    "clientVisible": true,
+    "commandDisplay": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -Command \"try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) 'PreToolUse' } catch { [Console]::Error.WriteLine('zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'); exit 2 }; exit 2\"",
+    "executionMode": "foreground",
+    "executionType": "process",
+    "pluginId": "zn-gate@usezn",
+    "pluginName": "zn-gate",
+    "sourceKind": "plugin",
+    "sourcePath": "C:\\work\\home\\.zcode\\cli\\plugins\\cache\\usezn\\zn-gate\\1.14.1\\hooks\\hooks.json",
+    "statusMessage": "zn: checking for secrets",
+    "timeoutMs": 30000
+   },
+   "hookEventName": "PreToolUse",
+   "hookIndex": 1,
+   "hookCount": 2,
+   "hookInvocationId": "58bfcc8e-7cad-492d-aafe-b5302c3a6744",
+   "hookRunId": "300b2a5a-ab14-4dce-a89b-64dab7315689",
+   "hookSource": "plugin.zn-gate@usezn.PreToolUse.0.1",
+   "matcher": "*",
+   "startedAt": 1793352613261,
+   "toolCallId": "call_fake_0",
+   "toolName": "Read",
+   "durationMs": 780,
+   "outcome": "blocked",
+   "blockReason": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
+  },
+  "seq": 25,
+  "sessionId": "sess_1a5cb958-4762-4e27-aae6-6106a5fd0333",
+  "timestamp": 1793352614041,
+  "traceId": "b6d28198-5006-4b36-aecd-8c6c904f341c",
+  "turnId": "turn_620a413c-a37c-4821-8a8c-cfda9993a60d",
+  "type": "session.updated"
+ }
+]

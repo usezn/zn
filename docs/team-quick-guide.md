@@ -10,8 +10,8 @@ Each machine needs zn-gate installed and the vault unlocked.
 
 ```bash
 zn unlock
-JOIN_TOKEN='paste-your-join-token-here'
-zn team join "$JOIN_TOKEN"
+zn team join -
+# paste the join token and press Enter (it stays out of your shell history)
 zn team status
 ```
 
@@ -58,7 +58,7 @@ Things to know:
 
 - A policy is valid for 7 days. With no network it keeps applying, and audit records wait in `~/.zn/audit.jsonl` until they can be uploaded.
 - After that, strict mode applies: the restrictions stay, and anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so.
-- When an admin removes a machine, uploads stop and `zn team status` shows "removed from org".
+- When an admin removes a machine, uploads stop and `zn team status` shows "REMOVED FROM ORG".
 - While the vault is locked nothing is downloaded or uploaded, but the last accepted policy still applies.
 
 ## Run the hooks on every machine
@@ -77,9 +77,20 @@ zn team managed-config --agent claude-code --os macos
 zn vault log export --otlp --since 7d --out zn-audit.otlp.jsonl
 ```
 
-This writes the local audit log as OpenTelemetry logs. It needs no account.
+This writes the local vault audit log as OpenTelemetry logs. It needs no account.
 
 ## More
 
 - [zn Team on a developer machine](team.md): the full page, including what is sent to the server.
 - [Command line reference](cli.md): every command, option and exit code.
+
+## Where each step is explained
+
+| Section on this page | Full page |
+|---|---|
+| What each developer does | [Commands in team.md](team.md#commands), [`team join` in cli.md](cli.md#team-join) |
+| Commands your team will use | [Commands in team.md](team.md#commands), [zn Team in cli.md](cli.md#zn-team) |
+| Write a policy | [The organization policy in team.md](team.md#the-organization-policy) |
+| Offline and removal | [Offline, expiry and removal in team.md](team.md#offline-expiry-and-removal), [Remove zn-gate](uninstall.md) |
+| Run the hooks on every machine | [Deploy zn-gate's hooks to every machine](team.md#deploy-zn-gates-hooks-to-every-machine-managed-settings), [`team managed-config` in cli.md](cli.md#team-managed-config) |
+| Export the audit log | [Export the audit log to OpenTelemetry](team.md#export-the-audit-log-to-opentelemetry), [`vault log export` in cli.md](cli.md#vault-log-export) |

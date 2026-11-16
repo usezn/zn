@@ -1,4 +1,4 @@
-// Rules for markdownlint-cli2 (.github/workflows/markdownlint.yml). Structure rules only;
+// Rules for markdownlint-cli2 (the Markdown lint steps of .github/workflows/quick-checks.yml). Structure rules only;
 // every rule switched off below says why. Findings are fixed in the files, not silenced.
 {
   "default": true,

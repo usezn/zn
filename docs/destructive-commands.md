@@ -4,7 +4,7 @@ zn-gate can refuse a small set of shell commands that wipe a machine or run a do
 
 It is a guardrail against a model's mistake or a bad suggestion, not a sandbox. It reads the text of one command and blocks it only when the command has one of the shapes below.
 
-When a command is blocked, it does not run, and the agent is told why and to ask you to confirm before it runs the command. If you do want it, run it yourself in a terminal.
+When a command is blocked, it does not run, and the agent is told why, which rule blocked it (for example `rule: destructive:rm_root_home`) and to ask you to confirm before it runs the command. If you do want it, run it yourself in a terminal.
 
 ## Change the settings
 
@@ -45,27 +45,70 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 
 "Top-level system folder" means `/bin`, `/boot`, `/dev`, `/etc`, `/home`, `/lib`, `/opt`, `/root`, `/sbin`, `/srv`, `/sys`, `/usr`, `/var`, and on macOS `/Users`, `/System`, `/Library`, `/Applications`. A deeper path such as `/var/lib/apt/lists` or `/usr/local/lib/node_modules/x` is not blocked.
 
-The command is split the way the rest of zn-gate's hook policy splits it, so quotes, `&&`, `;`, pipes, `sudo`, `env`, `nohup` and similar wrappers are understood. The code of `sh -c`, `bash -lc`, `eval`, `pwsh -Command` and `cmd /c` is checked too, up to three levels deep. Text that only mentions a command inside quotes (`echo "rm -rf ~"`, a commit message) is not blocked.
+The command is split the way the rest of zn-gate's hook policy splits it, so quotes, `&&`, `;`, pipes, `sudo`, `env`, `nohup` and similar wrappers are understood. The code of `sh -c`, `bash -lc`, `eval`, `pwsh -Command` and `cmd /c` is checked too, up to three levels deep. Wrappers that only run another command are read through as well: the command after `coproc` (`coproc rm -rf ~`, `coproc NAME { rm -rf ~; }`) and the command line given to `env -S` or `env --split-string` (`env -S "rm -rf ~"`) are checked like the plain command. The body of a function defined on the same command line (`f() { rm -rf ~; }; f`, `function f { rm -rf ~; }`) is checked whether or not the line calls it, because defining a destructive function in an agent command is itself a red flag. Text that only mentions a command inside quotes (`echo "rm -rf ~"`, a commit message) is not blocked.
+
+A `cd` or `pushd` earlier in the same command line is followed: after `cd ~ && rm -rf .` or `cd / && find . -delete`, the `.` and any relative target are read as that folder, so these are blocked like `rm -rf ~`. A `cd` into any other folder (`cd build && rm -rf .`, `cd ~/projects/app && rm -rf .`) is allowed, and so is a delete of a named subfolder after it (`cd ~ && rm -rf .cache`). A `cd` inside a pipeline or a background command does not count, because it runs in a subshell. A folder change made by `env -C`, `env --chdir`, `sudo -D` or `sudo --chdir` is followed the same way (`env -C ~ rm -rf .` and `sudo -D / rm -rf .` are blocked, `env -C ~/projects/app rm -rf .` is allowed), and a nested shell (`sh -c`, `bash -lc`, `eval`) starts in the folder the command line has reached, so `cd ~/projects && sh -c "cd .. && rm -rf ."` is blocked like the same command without `sh -c`.
+
+A command that follows a shell keyword is read like any other: inside `{ ...; }`, after `then`, `do`, `else`, `elif`, `if`, `while`, `until` and `!`, and inside backticks. `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and ``echo `rm -rf ~` `` are blocked like `rm -rf ~`; the same commands on a project folder (`if true; then rm -rf ./build; fi`) are allowed.
+
+## Shapes the table does not show
+
+Three more shapes are blocked. The check reads each one the way the shell or the interpreter runs it.
+
+- **ANSI-C quoting.** Bash decodes the escapes inside `$'...'` before it runs the word. `$'\x72m' -rf $'\x7e'` runs as `rm -rf ~`, so the `rm_root_home` rule blocks it. `echo $'rm -rf ~'` only prints text and is allowed.
+- **Code given to an interpreter.** The check reads the code in `python3 -c`, `node -e`, `perl -e` and `ruby -e`, also behind `sudo` or `env`. These are blocked by `rm_root_home`: `python3 -c "import shutil; shutil.rmtree('/home/alice')"`, `sudo node -e "require('fs').rmSync('/home/alice', { recursive: true, force: true })"` and `ruby -e "require 'fileutils'; FileUtils.rm_rf('/usr')"`. These are allowed: `python3 -c "import shutil; shutil.rmtree('./build')"` and `node -e "console.log(1)"`.
+- **A PowerShell download piped to `Invoke-Expression` on the next line.** A line that starts with `| Invoke-Expression` continues the command on the line before it. So `Invoke-WebRequest https://example.com/install.ps1` followed by a new line `| Invoke-Expression` is read as one pipeline, and the `pipe_to_shell` rule blocks it. That rule is off by default: the agent hooks block this only when you turn it on. A call to `checkCommand` always applies all six rules. `iwr https://example.com/install.ps1 -OutFile install.ps1` is allowed.
 
 ## What it does not do
 
 The check reads command text only. These are **not** covered, and the check lets them through:
 
 - A path the command builds at run time: `rm -rf "$DIR"` with an empty `DIR`, `rm -rf *` in an unknown folder, or a target that comes from a pipe (`echo ~ | xargs rm -rf`).
-- A program or shell named by a variable set earlier on the same line (`C=curl; $C https://example.com/i.sh | sh`): the value is not followed. Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
+- A folder the check cannot see: a `cd` made by an earlier command (the agent's tool calls are separate, so `cd ~` in one call and `rm -rf .` in the next is not linked), a `cd` to a folder named by a variable or a command substitution (`cd "$TARGET" && rm -rf .`), `cd -`, `popd`, and a `cd` inside a script or function.
+- A variable that is not a plain assignment on the same line. A value assigned earlier on the line as a literal (`C=curl; $C https://example.com/i.sh | sh`, `S=sh; curl ... | $S`, `T=~/.bashrc; curl ... >> $T`, `export X=curl`) is filled in and read. An assignment inside a `( )` group or on a later statement of a function body or an `if` branch is read too (`(X=curl; $X https://example.com/i.sh | sh)`, `f() { echo; X=curl; $X https://example.com/i.sh | sh; }`), and the value stays set after the closing `)` (`(X=curl); $X https://example.com/i.sh | sh` is blocked). These are not read: an assignment written as the first word right after `{`, `then`, `do` or `else` (`{ X=curl; $X https://example.com/i.sh | sh; }`, `if true; then X=curl; $X https://example.com/i.sh | sh; fi`), an assignment followed by `&` (`X=curl & $X ...`), a value from `read`, `printf -v`, `eval` or a default such as `${S:-sh}`, a value made by a command substitution, and a variable set by an earlier tool call. Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
+- Substitutions are read only where they run a download: `sh -c "$(curl ...)"`, `eval "$(curl ...)"`, `bash < <(curl ...)` and `sh <<< "$(curl ...)"` are blocked (the downloader may be written `\curl`, `c\url`, `/usr/bin/curl` or `env curl`), but the output of a command that is not a downloader is not followed (`sh -c "$(some-tool)"`), and neither is a script file run with the download on its input (`bash script.sh <<< "$(curl ...)"`).
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
+- Some shell wrappers and constructs that run a command indirectly are not read.
 - Anything an agent does by writing a file and then running it.
+- A command that comes right after a shell keyword or a block opener. Commands after `{`, `then`, `else`, `do` and `!`, and commands inside backticks, are not read: `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and `` echo `rm -rf ~` `` pass, while the same command inside `( )`, `$( )`, after `time`, or after `case ... )` is read.
+- A change of folder. The check does not follow where the command runs, so a relative target such as `.` is judged without knowing the folder: `cd ~ && rm -rf .`, `env -C ~ rm -rf .`, `env --chdir=/ rm -rf .` and `sudo -D / rm -rf .` pass, also inside `sh -c "..."`.
+
+We are working on both gaps (the commands after keywords and the changes of folder); they are not fixed in the released versions yet.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
 
+Untrusted code should run in a sandbox, such as a container or a virtual machine, not on your own machine. This check does not contain code that you do not trust.
+
 ## How well it works
 
-The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 550 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
+The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 650 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses. The corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
 
 Cost: about 5 microseconds per command for the check itself, and a few microseconds more for a hook decision, which takes about 160 microseconds without it. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
+
+## How to read a blocked-command message
+
+A block tells you two things: the command did not run, and which rule matched. Use the rule name to find the matching row in [What it blocks](#what-it-blocks). The rule name appears with a `destructive:` prefix, for example `destructive:rm_root_home`.
+
+- `destructive:rm_root_home` for `rm -rf ~`: a recursive delete of the home folder. It is on by default.
+- `destructive:disk_overwrite` for `dd if=/dev/zero of=/dev/sda`: a write to a disk device. It is on by default.
+- `destructive:pipe_to_shell` for `curl https://example.com/install.sh | sh`: a download run without being read. It is only active if you turned it on.
+
+If the command was what you meant, the agent will ask you to confirm; run it yourself in a terminal. If the command was a mistake, tell the agent what you actually want. If a rule blocks work you do often, see [Change the settings](#change-the-settings). For commands the check does not cover, see [What it does not do](#what-it-does-not-do).
 
 ## If it blocks a command you want
 
 Run the command yourself in a terminal. The check applies to agents only. If a rule gets in your way often, turn that rule (or the whole check) off with the settings above.
+
+## Next steps
+
+- [API reference](api-reference.md): call the command check (`checkCommand`, `check_command`) from your own code.
+- [Troubleshooting](troubleshooting.md): find fixes when a block or a hook does not behave as you expect.
+
+## Related pages
+
+- [A command that wipes or damages the machine](troubleshooting.md#a-command-that-wipes-or-damages-the-machine): what the block message says, what each rule means and what to do.
+- [Change the settings](#change-the-settings): turn one rule, a list of rules or the whole check on or off in `~/.zn/config.json`. There is no per-command allow list: a rule that blocks your work is turned off here.
+- [If it blocks a command you want](#if-it-blocks-a-command-you-want): run the command yourself in your own terminal, where the agent hooks do not apply.
+- [Troubleshooting](troubleshooting.md): the other messages zn-gate prints, and how to fix them.

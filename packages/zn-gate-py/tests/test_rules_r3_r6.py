@@ -21,6 +21,10 @@ class RulesR3R6Tests(unittest.TestCase):
         for text in CASES["sensitive_file"]["benign"]:
             self.assertNotEqual(rules.evaluate(text).rule, "path:sensitive_file", text)
 
+    def test_example_environment_files_are_allowed(self):
+        for text in CASES["env_template_allow"]:
+            self.assertEqual(rules.evaluate(text).verdict, "allow", text)
+
     def test_hidden_tag_needs_a_really_hidden_element(self):
         for text in CASES["hidden_tag"]["positives"]:
             self.assertTrue(rules._test_hidden_tag(text), text)

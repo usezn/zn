@@ -1,0 +1,15 @@
+{
+ "steps": [
+  {
+   "tool": "bash",
+   "values": {
+    "command": "touch /work/proj/EXEC_MARK",
+    "description": "test",
+    "file_path": "/work/proj/a.txt",
+    "content": "ZN_WRITTEN",
+    "text": "hello"
+   }
+  }
+ ],
+ "final": "done"
+}

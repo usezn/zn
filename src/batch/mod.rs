@@ -365,4 +365,110 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].1.len(), 384);
     }
+
+    #[tokio::test]
+    async fn test_batch_item_with_callback_sets_callback() {
+        let item = BatchItem::new("x".to_string()).with_callback(Box::new(|_| {}));
+        assert!(item.callback.is_some());
+        assert!(BatchItem::new("y".to_string()).callback.is_none());
+    }
+
+    #[test]
+    fn test_batch_config_default_values() {
+        let c = BatchConfig::default();
+        assert_eq!(c.batch_size, 32);
+        assert_eq!(c.max_buffer_size, 1000);
+        assert_eq!(c.timeout_ms, 100);
+        assert_eq!(c.worker_count, 4);
+    }
+
+    #[tokio::test]
+    async fn test_process_batch_empty_buffer_returns_empty() {
+        let pipeline = BatchPipeline::new(BatchConfig::default(), None);
+        let results = pipeline.process_batch().await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_process_batch_drains_up_to_batch_size_without_embedder() {
+        let config = BatchConfig {
+            batch_size: 2,
+            ..BatchConfig::default()
+        };
+        let pipeline = BatchPipeline::new(config, None);
+        {
+            let mut buf = pipeline.buffer.lock().await;
+            for t in ["a", "b", "c"] {
+                buf.push_back(BatchItem::new(t.to_string()));
+            }
+        }
+        assert_eq!(pipeline.buffer_size().await, 3);
+        // No embedder: items are consumed but nothing is embedded.
+        let results = pipeline.process_batch().await.unwrap();
+        assert!(results.is_empty());
+        assert_eq!(pipeline.buffer_size().await, 1);
+        pipeline.process_batch().await.unwrap();
+        assert_eq!(pipeline.buffer_size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_batch_with_items_empty_and_no_embedder() {
+        let pipeline = BatchPipeline::new(BatchConfig::default(), None);
+        assert!(pipeline
+            .process_batch_with_items(Vec::new())
+            .await
+            .unwrap()
+            .is_empty());
+        let fired = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let f = fired.clone();
+        let item = BatchItem::new("hello".to_string()).with_callback(Box::new(move |_| {
+            f.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        let results = pipeline.process_batch_with_items(vec![item]).await.unwrap();
+        assert!(results.is_empty());
+        assert_eq!(fired.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_submit_queues_item_in_channel() {
+        let config = BatchConfig {
+            max_buffer_size: 1,
+            ..BatchConfig::default()
+        };
+        let pipeline = BatchPipeline::new(config, None);
+        pipeline
+            .submit(BatchItem::new("1".to_string()))
+            .await
+            .unwrap();
+        // Items sit in the channel until a worker moves them to the buffer.
+        assert_eq!(pipeline.buffer_size().await, 0);
+        assert_eq!(pipeline.receiver.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_start_worker_drains_the_channel() {
+        let config = BatchConfig {
+            batch_size: 2,
+            max_buffer_size: 10,
+            timeout_ms: 20,
+            worker_count: 1,
+        };
+        let pipeline = Arc::new(BatchPipeline::new(config, None));
+        for t in ["a", "b", "c"] {
+            pipeline
+                .submit(BatchItem::new(t.to_string()))
+                .await
+                .unwrap();
+        }
+        pipeline.clone().start_worker();
+        for _ in 0..200 {
+            if pipeline.receiver.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(pipeline.receiver.is_empty(), "worker consumed all items");
+        // Let the timeout flush the final partial batch.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

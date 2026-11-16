@@ -34,7 +34,7 @@
  * opened, approved or not.
  */
 
-const { INVISIBLE } = require('../vault/confirm');
+const { INVISIBLE_ANY_RE } = require('../vault/confirm');
 
 const RESTRICTIVE_MODE = 'proxy';
 const DEFAULT_ALLOW_IN = ['header'];
@@ -167,7 +167,7 @@ function pickOpening(pending, kind, matches) {
   return { kind, value: best.value, wildcard: /[*]/.test(best.value) };
 }
 
-const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
+const INVISIBLE_RE = INVISIBLE_ANY_RE;
 
 /**
  * The line shown to the user (and the agent) when a `warn` rule lets a
@@ -177,9 +177,10 @@ const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
  * 200 characters), quoted and labelled as a policy note. One line.
  */
 function warnNotice(name, reason) {
-  const why = typeof reason === 'string'
-    ? reason.replace(INVISIBLE_RE, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim().slice(0, 200).trim()
+  let why = typeof reason === 'string'
+    ? reason.replace(INVISIBLE_RE, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim()
     : '';
+  why = Array.from(why).slice(0, 200).join('').trim();
   return 'zn: your team policy would block ' + name + ' here' + (why ? ' (policy note: "' + why + '")' : '') +
     '. It was allowed and recorded for your organization.';
 }

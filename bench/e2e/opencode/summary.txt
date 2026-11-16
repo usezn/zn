@@ -9,14 +9,14 @@ step 2: read {"filePath":"<run>/proj/config/settings.yml"}
 step 3: write {"filePath":"<run>/proj/src/client.js","content":"const token = process.env.GITHUB_TOKEN; // stored as __ZN_GITHUB_TOKEN__\n"}
   result: Wrote file successfully.
 
-step 4: bash {"command":"ZN_AGENT=opencode \"/usr/bin/node\" \"<repo>/packages/zn-gate/lib/broker/run.js\" -- node -e \"console.log('db:', process.argv[1])\" __ZN_DB_PASSWORD__","description":"allowed command"}
+step 4: bash {"command":"zn run --secrets DB_PASSWORD -- node -e \"console.log('db:', process.env.DB_PASSWORD)\"","description":"allowed command"}
   result: zn run: first use of DB_PASSWORD with `node`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) db: __ZN_DB_PASSWORD__ 
 
-step 5: bash {"command":"ZN_AGENT=opencode \"/usr/bin/node\" \"<repo>/packages/zn-gate/lib/broker/run.js\" -- python3 -c \"import sys; print('db:', sys.argv[1])\" __ZN_DB_PASSWORD__","description":"command not approved"}
-  result: zn run: first use of DB_PASSWORD with `python3`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) zn run: [ZN_POLICY_DENIED] first use of DB_PASSWORD with `python3` was not approved (declined by the user) 
+step 5: bash {"command":"zn run --secrets DB_PASSWORD -- python3 -c \"import os; print('db:', os.environ['DB_PASSWORD'])\"","description":"command not approved"}
+  result: zn run: first use of DB_PASSWORD with `python3`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) zn run: Not allowed: first use of DB_PASSWORD with `python3` was not approved (declined by the user. Next step: nothing was changed. Do not retry the same request; finish the task another way.). Nothing was run or sent. Do not retry the same request; finish the task another way. 
 
 step 6: read {"filePath":"<run>/home/.aws/credentials"}
-  result: zn: reading AWS credentials file (<run>/home/.aws/credentials) is blocked so secret values never reach the model. If a command needs it, ask the user to add the value with `zn secret set <NAME>` and use the __ZN_<NAME>__ marker.
+  result: zn: <run>/home/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then run the command with `zn run --secrets NAME -- <command>` so the program gets it as an environment variable.
 
 step 7: bash {"command":"cat config/settings.yml","description":"read the config again"}
   result: region: eu-west-1 aws_access_key_id: __ZN_AWS_KEY_1__ aws_secret_access_key: __ZN_AWS_SECRET_1__ retries: 3 

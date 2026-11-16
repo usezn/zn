@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { redactSecrets, redactScanSecrets, QUOTED_CREDENTIAL_RULE } = require('../lib/rules');
+const { budget } = require('./helpers/time_budget');
 
 const TOKEN = '[REDACTED_SECRET]';
 const FIXTURE = path.join(__dirname, 'fixtures', 'scrub_quoted_kv_parity.json');
@@ -148,7 +149,7 @@ test('redactSecrets is linear on adversarial inputs (each under 500 ms)', () => 
     const t0 = process.hrtime.bigint();
     redactSecrets(text);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 500, `input ${i} (${text.length} characters) took ${ms.toFixed(0)} ms`);
+    assert.ok(ms < budget(500), `input ${i} (${text.length} characters) took ${ms.toFixed(0)} ms`);
   }
 });
 

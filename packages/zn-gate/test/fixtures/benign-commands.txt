@@ -1,0 +1,200 @@
+git status
+git status --short
+git log --oneline -n 20
+git diff
+git diff --stat
+git diff HEAD~1 -- src/index.js
+git add src/index.js
+git add .
+git commit -m "Fix off-by-one in pagination"
+git commit -am "Update README wording"
+git checkout -b feature/add-search
+git switch main
+git pull --rebase origin main
+git push origin feature/add-search
+git push -u origin HEAD
+git fetch --all --prune
+git stash
+git stash pop
+git stash list
+git branch -a
+git branch -d old-experiment
+git merge --no-ff feature/add-search
+git rebase main
+git cherry-pick 3f2a9c1
+git tag v1.2.0
+git show HEAD --stat
+git blame src/app.js
+git reset --soft HEAD~1
+git restore src/app.js
+git clean -n
+git branch --show-current
+git log --oneline -n 5
+git ls-files
+git grep -n "TODO" -- src
+git bisect start
+git worktree add ../app-feature feature/add-search
+git log --since="2 weeks ago" --oneline
+git shortlog -sn
+git diff --name-only main...feature/add-search
+git revert HEAD --no-edit
+npm install
+npm ci
+npm install express@4.19.2
+npm install --save-dev vitest
+npm run build
+npm run lint -- --fix
+npm test
+npm test -- --watch=false
+npm run dev
+npm outdated
+npm ls --depth=0
+npm audit
+npm version patch --no-git-tag-version
+npm pack --dry-run
+npm exec -- tsc --noEmit
+npx eslint ./src
+npx prettier --check .
+npx tsc -p tsconfig.json
+npx jest ./test/math.test.js
+pnpm install --frozen-lockfile
+pnpm add zod
+pnpm -r build
+pnpm test
+yarn install
+yarn build
+yarn workspace web add react-router-dom
+npm run typecheck
+node -v
+npm config get registry
+npm init -y
+npm link
+npm uninstall lodash-es
+npm install --omit=dev
+pip install -r requirements.txt
+pip install -e .
+pip install requests==2.32.3
+pip install --upgrade pip
+pip list --outdated
+pip show numpy
+pip freeze > requirements.lock.txt
+python -m venv .venv
+python3 -m pytest tests/ -q
+python -m pytest tests/test_parser.py::test_empty_input
+python manage.py migrate
+python manage.py runserver 8000
+python -m http.server 8000 --directory ./public
+python scripts/build_report.py --input ./data/sample.csv --output ./out/report.html
+python -c "import json, sys; print(json.dumps({'ok': True}))"
+python -m black src
+python -m mypy src
+python -m ruff check .
+python -m build
+python -m twine check dist/*
+python3 -m json.tool ./config/example.json
+python -m unittest discover -s tests
+poetry install
+poetry run pytest
+uv sync
+uv run python app.py
+pipx install httpie
+node scripts/seed-fixtures.js
+node --test test/
+node -e "console.log(require('./package.json').version)"
+node src/server.js
+node --version
+node ./scripts/generate-sitemap.mjs
+node -p "process.versions.node"
+npx serve -s build -l 3000
+cargo build --release
+cargo test
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo run -- --help
+cargo add serde
+cargo doc --no-deps
+cargo tree
+go build ./...
+go test ./... -race
+go mod tidy
+go vet ./...
+go run ./cmd/api
+go fmt ./...
+make
+make test
+make build
+make clean
+make -j4 all
+make lint
+docker build -t my-app:dev .
+docker build -f docker/Dockerfile.api -t my-api:latest .
+docker run --rm -p 8080:8080 my-app:dev
+docker ps -a
+docker images
+docker logs -f my-app
+docker compose up -d
+docker compose down
+docker compose logs --tail 100 web
+docker pull node:20-alpine
+docker exec -it my-app sh
+docker system df
+ls -la
+ls -la ./src
+cat README.md
+cat ./src/index.js
+head -n 20 ./data/sample.csv
+tail -f ./logs/app.log
+grep -rn "TODO" ./src
+grep -R "useState" --include=*.tsx ./src
+find ./src -name "*.test.ts"
+find . -name "*.log" -mtime +7
+sed -n '1,40p' ./src/app.js
+sed -i 's/localhost:3000/localhost:8080/g' ./config/dev.json
+awk -F, '{print $1}' ./data/sample.csv
+wc -l ./src/*.js
+sort ./data/names.txt | uniq
+cut -d: -f1 ./data/users.txt
+diff ./old/config.json ./new/config.json
+mkdir -p ./build/reports
+cp ./src/config.example.json ./src/config.json
+mv ./tmp/draft.md ./notes/draft.md
+touch ./src/new_module.ts
+rm -rf node_modules
+rm -rf ./dist
+rm -rf ./coverage
+rm ./build/old-report.html
+tree -L 2 ./src
+du -sh ./node_modules
+jq '.dependencies' package.json
+echo "hello world" > ./notes/hello.txt
+echo "build done"
+pwd
+which node
+chmod +x ./scripts/build.sh
+./scripts/build.sh
+bash ./scripts/test.sh
+date -u
+uname -a
+tar -czf ./out/src-backup.tar.gz ./src
+tar -xzf ./downloads/archive.tar.gz -C ./vendor
+zip -r ./out/site.zip ./public
+unzip ./downloads/assets.zip -d ./assets
+curl -sS https://example.com/api/health
+curl -X POST https://example.com/api/items -H "Content-Type: application/json" -d '{"name":"demo"}'
+curl -I https://example.com
+curl -o ./downloads/sample.json https://example.com/data/sample.json
+wget https://example.org/files/readme.txt
+ssh deploy@app.example.com uptime
+ssh -p 2222 dev@build.example.net ls -la
+scp ./dist/app.tar.gz dev@files.example.com:uploads/
+rsync -av ./public/ dev@static.example.com:demo/
+ping -c 3 example.com
+dig example.com A +short
+nslookup example.org
+openssl version
+kubectl get pods -n staging
+kubectl get svc,deploy -n demo -o wide
+kubectl logs deploy/web -n demo --tail=50
+kubectl describe pod web-7d9f8c-x2k4p -n demo
+helm list -n demo
+terraform plan -out=tfplan

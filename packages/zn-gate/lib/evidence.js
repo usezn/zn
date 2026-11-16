@@ -2,12 +2,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 // rules (with the scrubber engine behind it), term and http are loaded where they are used, so an
 // append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
-const ZN_DIR = path.join(os.homedir(), '.zn');
+// The same folder as stats, pins, the vault and the config: ~/.zn, or ZN_HOME when it is set.
+const ZN_DIR = require('./stats').znHome();
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
@@ -323,7 +323,10 @@ function readLastLine(filePath) {
   let fd;
   try {
     fd = fs.openSync(filePath, 'r');
-    const size = fs.fstatSync(fd).size;
+    const st = fs.fstatSync(fd);
+    // Windows opens a folder for reading without an error: a folder at the log path is unreadable, as elsewhere.
+    if (st.isDirectory()) { const e = new Error('is a directory'); e.code = 'EISDIR'; throw e; }
+    const size = st.size;
     let window = 65536;
     for (;;) {
       const start = Math.max(0, size - window);

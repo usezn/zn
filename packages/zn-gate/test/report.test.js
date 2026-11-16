@@ -37,7 +37,7 @@ function seed() {
   const dir = path.join(home, 'mcp-pins');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, '0123456789abcdef.json'), JSON.stringify({
-    command: 'node /home/maria/projects/secret-client/my-mcp.js --token ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+    command: 'node /home/maria/projects/secret-client/my-mcp.js --token ' + 'ghp_' + 'abcdefghijklmnopqrstuvwxyz' + '0123456789',
     pinnedAt: '2026-10-16T08:00:00.000Z', firstPinnedAt: '2026-10-16T08:00:00.000Z', tools: { a: 'h1' }, pending: { b: { hash: 'h2', seenAt: '2026-10-16T09:00:00Z' } },
   }));
   fs.writeFileSync(path.join(dir, 'fedcba9876543210.json'), JSON.stringify({ command: 'npx old-server', pinnedAt: '2026-10-16T00:00:00.000Z', firstPinnedAt: '2026-08-01T00:00:00.000Z', tools: {}, pending: {} }));

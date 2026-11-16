@@ -61,8 +61,10 @@ test('humanError: other errors return the plain message', () => {
   assert.strictEqual(humanError(notImplemented('x'), quiet), 'x is not implemented yet');
   assert.strictEqual(humanError(null, quiet), '');
   assert.strictEqual(humanError(undefined, quiet), '');
+  // A file system error is told in plain words (see fs_error_text.test.js); its own code shows only when verbose.
   const foreign = new Error('disk'); foreign.code = 'ENOENT';
-  assert.strictEqual(humanError(foreign, verbose), 'disk');
+  assert.strictEqual(humanError(foreign, quiet), 'a file does not exist, or a folder on its path is missing.');
+  assert.strictEqual(humanError(foreign, verbose), '[ENOENT] a file does not exist, or a folder on its path is missing.');
 });
 
 test('humanError: the code is shown only when verbose', () => {
@@ -86,4 +88,44 @@ test('messageWithUnlockHint leaves non-locked errors and plain values alone', ()
   assert.strictEqual(messageWithUnlockHint(znError(CODES.NOT_FOUND, 'gone')), 'gone');
   assert.strictEqual(messageWithUnlockHint(new Error('plain')), 'plain');
   assert.strictEqual(messageWithUnlockHint('text'), 'text');
+});
+
+test('every code gives a plain sentence with no stack text and no home path', () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-errors-'));
+  try {
+    const cases = Object.values(CODES).map((code) => {
+      const err = znError(code, 'something went wrong');
+      if (code === CODES.LOCKED) err.vaultNotRunning = true;
+      return err;
+    });
+    // The same codes with an empty detail, to cover the built-in defaults.
+    for (const code of Object.values(CODES)) {
+      const empty = znError(code);
+      empty.message = '';
+      cases.push(empty);
+    }
+    for (const err of cases) {
+      const outputs = [humanError(err, quiet), messageWithUnlockHint(err)];
+      for (const text of outputs) {
+        if (text === '' && err.code === CODES.NOT_IMPLEMENTED) continue; // empty detail passes through
+        assert.ok(text.length > 0, err.code + ' gives text');
+        assert.ok(!text.includes('\n'), 'one line: ' + text);
+        assert.ok(!/\bat .*\(.*:\d+:\d+\)/.test(text) && !/\bat \S+:\d+:\d+/.test(text), 'no stack frame: ' + text);
+        assert.ok(!/\bError:/.test(text), 'no error class prefix: ' + text);
+        assert.ok(!text.includes(home) && !text.includes(os.homedir()), 'no home path: ' + text);
+        assert.ok(!/(^|\s)(\/home\/|\/Users\/|[A-Za-z]:\\Users\\)/.test(text), 'no absolute home path: ' + text);
+      }
+      assert.ok(!humanError(err, quiet).includes(err.code), 'code hidden when not verbose');
+    }
+    for (const code of Object.values(CODES).filter((c) => c !== CODES.NOT_IMPLEMENTED)) {
+      const empty = znError(code);
+      empty.message = '';
+      assert.match(humanError(empty, quiet), /^[A-Za-z][^\n]*[a-z]$/, code + ' default reads as a sentence');
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

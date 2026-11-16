@@ -304,6 +304,18 @@ test('a stale lock (older than 10 minutes) is taken over and released afterwards
   assert.strictEqual(fs.existsSync(f.lockFile), false);
 });
 
+test('a lock dated in the future goes stale after the timeout (clock moved back)', async (t) => {
+  const f = setup(t);
+  const key = crypto.randomBytes(32);
+  fillLog(f.auditFile, key, 10);
+  fs.writeFileSync(f.lockFile, 'crashed run\n');
+  const srv = fakeServer(key);
+
+  const r = await uploadPending(opts(f, srv, { now: () => Date.now() - 11 * MINUTE }));
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(fs.existsSync(f.lockFile), false);
+});
+
 test('a local log rewritten with a different chain is diverged and nothing is sent', async (t) => {
   const f = setup(t);
   const keyA = crypto.randomBytes(32);
@@ -407,4 +419,48 @@ test('bad options throw a TypeError', async (t) => {
   const f = setup(t);
   await assert.rejects(() => uploadPending({ ...opts(f, fakeServer(crypto.randomBytes(32))), batchSize: 501 }), TypeError);
   await assert.rejects(() => uploadPending({ ...opts(f, fakeServer(crypto.randomBytes(32))), api: {} }), TypeError);
+});
+
+test('409 pointing before the join floor uploads nothing and says why', async (t) => {
+  const f = setup(t);
+  const key = crypto.randomBytes(32);
+  fillLog(f.auditFile, key, 1200);
+  const srv = fakeServer(key);
+  // The server knows a record from before this machine joined (seq 50, join floor 100).
+  srv.seed(readLines(f.auditFile), 50);
+
+  const r = await uploadPending(opts(f, srv, { startAfterSeq: 100 }));
+  assert.strictEqual(r.status, 'error');
+  assert.strictEqual(r.uploaded, 0);
+  assert.strictEqual(srv.calls, 1);
+  assert.strictEqual(srv.head.seq, 50);
+  const st = readState(f.stateFile);
+  assert.strictEqual(st.last_status, 'error');
+  assert.match(st.last_error, /before this machine joined/);
+  assert.ok(!st.head, 'no head was adopted');
+});
+
+test('409 pointing at or after the join floor still resyncs and never reads older records', async (t) => {
+  const f = setup(t);
+  const key = crypto.randomBytes(32);
+  fillLog(f.auditFile, key, 1200);
+  const srv = fakeServer(key);
+  srv.seed(readLines(f.auditFile), 800);
+
+  const r = await uploadPending(opts(f, srv, { startAfterSeq: 100 }));
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.uploaded, 400);
+  assert.strictEqual(srv.batches[0].events[0].seq, 101);
+  assert.strictEqual(srv.batches[1].events[0].seq, 801);
+  assert.strictEqual(readState(f.stateFile).head.seq, 1200);
+
+  // A server head exactly at the floor is the join point itself: allowed.
+  const g = setup(t);
+  fillLog(g.auditFile, key, 20);
+  const srv2 = fakeServer(key);
+  srv2.seed(readLines(g.auditFile), 10);
+  const r2 = await uploadPending(opts(g, srv2, { startAfterSeq: 10 }));
+  assert.strictEqual(r2.status, 'ok');
+  assert.strictEqual(srv2.head.seq, 20);
+  assert.ok(srv2.batches.every((b) => b.events.every((e) => e.seq > 10)));
 });

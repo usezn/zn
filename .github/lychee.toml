@@ -1,4 +1,4 @@
-# Settings for .github/workflows/link-check.yml.
+# Settings for the link check steps of .github/workflows/quick-checks.yml.
 # Network checks are patient and forgiving: they only report, they never fail a pull request.
 max_retries = 3
 retry_wait_time = 5

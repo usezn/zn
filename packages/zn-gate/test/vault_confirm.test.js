@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 const confirm = require('../lib/vault/confirm');
+const { winRe } = require('./helpers/wincmd');
 
 function ttyPair() {
   const input = new PassThrough();
@@ -53,7 +54,7 @@ test('render: plain messages are cleaned, structured ones keep warnings first an
 test('noneChannel refuses every request with a message that explains how to get a channel', async () => {
   const ch = confirm.noneChannel();
   assert.equal(ch.kind, 'none');
-  await assert.rejects(() => ch.confirm({ title: 't' }), (e) => e.code === 'ZN_POLICY_DENIED' && e.noChannel === true && /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock --foreground/.test(e.message));
+  await assert.rejects(() => ch.confirm({ title: 't' }), (e) => e.code === 'ZN_POLICY_DENIED' && e.noChannel === true && winRe(/(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock --foreground/).test(e.message));
 });
 
 test('ttyChannel: yes, YES and "y" allow; anything else denies', async (tc) => {

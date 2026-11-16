@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { blockMessage } = require('../lib/guard');
+const { budget } = require('./helpers/time_budget');
 
 test('a reason with trailing dots keeps one final dot', () => {
   const text = blockMessage({ reason: 'Bad input...', rule: 'r' }, 't');
@@ -26,5 +27,5 @@ test('a long run of dots before other text is handled in linear time', () => {
   const text = blockMessage({ reason: '.'.repeat(100000) + 'x', rule: 'r' }, 't');
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
   assert.ok(text.includes('x (rule: r).'));
-  assert.ok(ms < 200, `took ${ms} ms`);
+  assert.ok(ms < budget(200), `took ${ms} ms`);
 });

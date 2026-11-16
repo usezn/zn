@@ -23,12 +23,13 @@ const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
-const { realTargetOf } = require('../broker/files');
-const { znCommand } = require('../zn-command');
+const { targetsOf } = require('../broker/files');
+const { znCommand, cliName } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.42';
+const shellVars = require('../shell-vars');
+const POLICY_RULES_VERSION = '2026-11-13.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -38,8 +39,22 @@ const POLICY_RULES_VERSION = '2026-11-02.42';
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
 
+// A directory-stack entry other than the top (~1, ~+2, ~-1): zn does not know where it points.
+const DIR_STACK_RE = /(?:^|[\s=@<:,{])~[+-]?[1-9]\d*(?=$|[\\/\s,}])/;
+
 function expandHome(p, home) {
   if (p === '~') return home;
+  if (p.charCodeAt(0) === 126) {
+    // ~+ is $PWD: read as the working folder (a path relative to it), so ~+/.env is .env. ~- is $OLDPWD, which zn does not
+    // know, and ~-0 is the same entry: both are turned into $OLDPWD so they are refused exactly like the variable.
+    if (p === '~+') return '.';
+    if (/^~\+[\\/]/.test(p)) return '.' + p.slice(2);
+    if (/^~-(?:$|[\\/])/.test(p)) return '$OLDPWD' + p.slice(2);
+    if (/^~-0(?=$|[\\/])/.test(p)) return '$OLDPWD' + p.slice(3);
+    // ~0 and ~+0 are the top of the directory stack: the working folder. ~1, ~+2, ~-1 (deeper entries) are not known:
+    // they are left as written and refused where a file is sent (DIR_STACK_RE).
+    if (/^~\+?0(?=$|[\\/])/.test(p)) return '.' + p.replace(/^~\+?0/, '');
+  }
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
@@ -51,7 +66,7 @@ function slash(p) {
 }
 
 const DOTENV_BASENAME_RE = /^\.env(\.[A-Za-z0-9_.-]+)?$/;
-const DOTENV_SAFE_RE = /\.(example|sample|template|dist|defaults|schema)$/i;
+const DOTENV_SAFE_RE = /\.(example|sample|template)$/i;
 // Private keys kept outside ~/.ssh, for example in a project: an SSH key name is one wherever it is;
 // a key container (.p12, .pfx) holds one; a .pem or .key file may be a public certificate, so its content decides.
 const SSH_KEY_BASENAME_RE = /^id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?$/;
@@ -134,6 +149,18 @@ const keyOf = (s) => {
 // path segment is a stream (a drive letter stays). Elsewhere a colon is a valid name character, so only the
 // explicit `::$DATA` style suffix is dropped.
 const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
+// The text before the first colon that is not inside a cmd variable pair: %NAME:~0,5% and !NAME:old=new! keep their modifier, which is not a stream.
+function cutAtStream(seg) {
+  let pct = false;
+  let bang = false;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '%') pct = !pct;
+    else if (c === '!') bang = !bang;
+    else if (c === ':' && !pct && !bang) return seg.slice(0, i);
+  }
+  return seg;
+}
 function stripStreams(text) {
   if (typeof text !== 'string') return text;
   const win = process.platform === 'win32';
@@ -141,8 +168,8 @@ function stripStreams(text) {
   return text.split(/([\\/]+)/).map((seg, i) => {
     if (win) {
       if (/^[A-Za-z]:$/.test(seg)) return seg;
-      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(seg.slice(2).replace(/:.*$/, ''));
-      return dropTrailingDotsSpaces(seg.replace(/:.*$/, ''));
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(cutAtStream(seg.slice(2)));
+      return dropTrailingDotsSpaces(cutAtStream(seg));
     }
     return seg.replace(ADS_TYPE_RE, '');
   }).join('');
@@ -180,13 +207,20 @@ const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re
 // resolved here, so a path that uses them is treated as agent configuration.
 const AGENT_ENV = new Set(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'XDG_CONFIG_HOME']);
 
-/** $NAME, ${NAME}, $env:NAME and %NAME% from env. Unset credential or agent variables are reported by name. */
+// The same references plus !NAME!, which cmd.exe expands when delayed expansion is on (cmd /v:on).
+// cmd.exe also takes a modifier inside the pair (%NAME:~0,5%, %NAME:old=new%, !NAME:~0,5!): the value it gives cannot be read here.
+const PATH_REF_RE = new RegExp(ENV_REF_RE.source + '|!([A-Za-z_][A-Za-z0-9_]*)(?::[^%!\\r\\n]*)?!|%([A-Za-z_][A-Za-z0-9_]*):[^%!\\r\\n]*%', 'gi');
+// A variable reference that stands right before a .env name (%D%.env, !D!.env, $D.env): when the variable holds a
+// folder with its closing separator, the word names that folder's .env file.
+const VAR_BEFORE_DOTENV_RE = /(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$env:[A-Za-z_][A-Za-z0-9_]*|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!)\.env(?:\.[A-Za-z0-9_.-]+)?$/i;
+
+/** $NAME, ${NAME}, $env:NAME, %NAME% and !NAME! from env. Unset credential or agent variables are reported by name. */
 function expandEnv(p, env) {
   let credentialVar = null;
   let agentVar = null;
-  const text = p.replace(ENV_REF_RE, (m, a, b, c, d) => {
-    const name = a || b || c || d;
-    if (env[name]) return env[name];
+  const text = p.replace(PATH_REF_RE, (m, a, b, c, d, e, f) => {
+    const name = a || b || c || d || e || f;
+    if (env[name] && !/^[%!][^%!]*:/.test(m)) return env[name];
     if (CRED_ENV.includes(name.toUpperCase())) credentialVar = name.toUpperCase();
     if (AGENT_ENV.has(name.toUpperCase())) agentVar = name.toUpperCase();
     return m;
@@ -203,7 +237,7 @@ function credentialEnvPaths(env, home, cwd) {
     for (const raw of String(env[name]).split(path.delimiter)) {
       if (!raw.trim()) continue;
       const abs = path.resolve(cwd, expandHome(raw.trim(), home));
-      for (const p of new Set([abs, realTargetOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
+      for (const p of new Set([abs, ...targetsOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
     }
   }
   return { files, dirs: [...dirs] };
@@ -222,7 +256,7 @@ function projectRootOf(cwd) {
 
 /** Keys of a path as typed and where it really leads. */
 function keysOf(p) {
-  return [...new Set([keyOf(slash(p)), keyOf(slash(realTargetOf(p)))])];
+  return [...new Set([keyOf(slash(p)), ...targetsOf(p).map((t) => keyOf(slash(t)))])];
 }
 
 // The home folder and the project root are resolved once per process: a hook process checks one call, and the
@@ -297,7 +331,9 @@ function contextOf(opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
-  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
+  // zn's own folder when ZN_HOME moves it: protected like ~/.zn (the default folder is always protected as well).
+  const znHome = env.ZN_HOME ? path.resolve(env.ZN_HOME) : null;
+  return { home, cwd, env, znHome, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
 }
 
 /**
@@ -355,6 +391,15 @@ function classifyResolved(abs, ctx) {
   for (const h of homes) {
     const prefix = h.endsWith('/') ? h : h + '/';          // a home of "/" is its own prefix
     if (s === prefix + '.zn' || s.startsWith(prefix + '.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  }
+  // A ZN_HOME that moves zn's folder elsewhere. A value that is a home folder or a drive root is not taken: it would
+  // protect the whole home folder.
+  if (ctx.znHome) {
+    const zh = keyOf(slash(ctx.znHome)).replace(/\/+$/, '');
+    // Only the root of a file system (/, a drive such as C:/, a network share) is refused, so a short folder such as /zn is protected.
+    const fsRoot = keyOf(slash(path.parse(ctx.znHome).root)).replace(/\/+$/, '');
+    const wide = zh === '' || zh === fsRoot || homes.some((x) => x.replace(/\/+$/, '') === zh);
+    if (!wide && (s === zh || s.startsWith(zh + '/'))) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ZN_HOME' };
   }
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
   for (const h of homes) {
@@ -432,11 +477,14 @@ function classifyPath(p, opts = {}) {
     return { kind: 'agent_config', reason: 'the path comes from $' + expanded.agentVar + ', the agent configuration location' };
   }
   expanded.text = stripStreams(expanded.text);
+  // %D%.env, !D!.env, $D.env: a variable zn cannot expand right before the .env name (dotenvElsewhereOf refuses it).
+  const lastName = expanded.text.split(/[\\/]/).pop();
+  if (VAR_BEFORE_DOTENV_RE.test(lastName) && !ci(DOTENV_SAFE_RE).test(lastName)) return { kind: 'dotenv', reason: '.env file' };
   const abs = path.resolve(ctx.cwd, expanded.text);
-  const candidates = new Set([abs, realTargetOf(abs)]);
+  const candidates = new Set([abs, ...targetsOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
   const physical = physicalDotDot(expanded.text, ctx.cwd);
-  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
+  if (physical) { candidates.add(physical); for (const t of targetsOf(physical)) candidates.add(t); }
   for (const candidate of candidates) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
@@ -465,12 +513,13 @@ function expandBraces(s, limit = 64, depth = 0) {
   if (!m) return [s];
   if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
+  let seen = 0; // every alternative counts towards the limit, repeated ones too
   for (const alt of m[1].split(',')) {
     const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
-      out.push(x);
-      if (out.length > limit) return null;
+      if (++seen > limit) return null;
+      if (!out.includes(x)) out.push(x); // the outer list repeats its other alternatives for each inner one
     }
   }
   return out;
@@ -688,7 +737,7 @@ function globClass(word, opts = {}) {
     const hits = globOnDisk(abs, opts.budget);
     if (hits === 'too-broad' || hits === 'too-slow') return { kind: 'credential', reason: 'a pattern too broad to check' };
     for (const hit of hits || []) {
-      for (const cand of new Set([hit, realTargetOf(hit)])) {
+      for (const cand of new Set([hit, ...targetsOf(hit)])) {
         const c = classifyResolved(cand, ctx);
         // A key file match is judged by its content (keyFileGlobDenial); a protected file found later still wins.
         if (c && c.kind === 'keyfile') { keyHit = keyHit || c; continue; }
@@ -759,9 +808,14 @@ function readDenial(p, opts = {}) {
     // Not a regular file (a FIFO), or too big to check whole: refused rather than read.
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
-    if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
-      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+    const plain = text === null ? [] : dotenv.plainSecretNames(text);
+    if (text !== null && plain.length === 0) return null;
+    const left = plain.length
+      ? ' Still holding a value: ' + plain.slice(0, 10).join(', ') + (plain.length > 10 ? ' and ' + (plain.length - 10) + ' more' : '') + '.'
+      : '';
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv).' + left + ' Ask the user to run `' +
+      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.' +
+      (plain.length ? ' A value that is too short for that stays in the file: store it with `' + znCommand('secret set <NAME>') + '` and write __ZN_<NAME>__ in its place.' : '');
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
@@ -842,8 +896,19 @@ function keyFileGlobDenial(p, c, opts) {
 
 /* Reads of credential files: what was refused, why, and how to use a value instead. */
 function credentialDenial(p, c) {
+  // A wildcard is not a file: `ls *` in a folder that has a .env file names no secret, so saying that `*` "holds secrets" confuses the person
+  // reading it. For a pattern, say what the pattern would reach and what to do instead.
+  if (/[*?[{]/.test(p) || /^an? (brace )?pattern/.test(c.reason)) {
+    const broad = /too broad/.test(c.reason);
+    const why = broad ? 'it is too broad for zn to check that it matches no file that holds secrets'
+      : /\.env/.test(c.reason) ? 'it would also match a .env file, which holds secrets'
+        : 'it would also match a file that holds secrets (' + c.reason + ')';
+    return 'zn: the pattern ' + p + ' was not read because ' + why + ', and secret values never go to the AI model. ' +
+      'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
+  }
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable. ' +
+    'Agents may not read the file itself (rule: secret-file:credential).';
 }
 
 function agentConfigDenial(p, c) {
@@ -949,9 +1014,9 @@ function isInstructionPath(p, opts = {}) {
   // the same normalization as classifyPath, on the text, so it also holds for a file that does not exist yet.
   expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
-  const candidates = new Set([abs, realTargetOf(abs)]);
+  const candidates = new Set([abs, ...targetsOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
-  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
+  if (physical) { candidates.add(physical); for (const t of targetsOf(physical)) candidates.add(t); }
   for (const candidate of candidates) {
     if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate) || isInstructionUnderShortFolder(candidate, ctx)) return true;
   }
@@ -989,12 +1054,12 @@ const INSTRUCTION_WRAPPERS = new Map([
   ['doas', new Set(['-u', '-C'])],
   ['env', new Set(['-u', '-C', '-S'])],
   ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
-  ['nice', new Set(['-n'])],
-  ['time', new Set(['-f', '-o'])],
+  ['nice', new Set(['-n', '--adjustment'])],
+  ['time', new Set(['-f', '-o', '--format', '--output'])],
   ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()],
   ['timeout', new Set(['-k', '-s', '--kill-after', '--signal'])],
   ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
-  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'])],
+  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata', '--pid', '--pgid', '--uid'])],
   ['then', new Set()], ['do', new Set()], ['else', new Set()], ['if', new Set()], ['while', new Set()], ['until', new Set()],
   ['!', new Set()], ['{', new Set()],
 ]);
@@ -1003,7 +1068,7 @@ const INSTRUCTION_WRAPPERS = new Map([
 function commandWordAt(seg, progs) {
   let i = 0;
   while (i < progs.length) {
-    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
+    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(seg[i].text)) { i++; continue; }
     const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
     if (!takesValue) return i;
     const wrapper = progs[i];
@@ -1309,7 +1374,7 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, opAfter: scan.operator });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -1379,6 +1444,37 @@ const LINK_WRAPPERS = new Set(['env', 'sudo', 'doas', 'command', 'exec', 'nohup'
  * The options are read only from that command's own words. A link made some other way (an interpreter) is not seen here;
  * a link that already exists is followed instead (physicalDotDot, cdBasesOf).
  */
+
+/*
+ * The curl and @file checks live in curl-files.js, loaded on the first command that can need them. They only act on a word
+ * that names curl (programName lower-cases it, so a case-insensitive match is a superset), on a command with so many words
+ * that the program of a group cannot be told (programOfGroup gives up after 64), or on a word atFileWords can read
+ * something from.
+ */
+let curlFilesApi = null;
+function curlFilesOf() {
+  if (!curlFilesApi) {
+    curlFilesApi = require('./curl-files')({ ASSIGNMENT_RE, CD_CMDS, DIR_STACK_RE, GIT_WRAPPERS, REDIRECT_OP_WORD_RE, bareHead, expandHome, programName, skipWrapper, slash });
+  }
+  return curlFilesApi;
+}
+const CURL_WORD_RE = /curl/i;
+const CURL_GROUP_WORDS = 64;
+function mayRunCurl(words) {
+  return words.length >= CURL_GROUP_WORDS || words.some((w) => CURL_WORD_RE.test(String(w.text)));
+}
+// An upload option, an @file or < value, a variable or assignment, a {a,b} list, a space, a backslash escape: what
+// atFileWords reads a file name out of. A word with none of them, and none of curl's marks, adds nothing.
+const AT_FILE_WORD_RE = /[=$@<{\\\s]|upload-file/;
+function mayHaveAtFiles(words) {
+  return words.some((w) => {
+    if (w.curl || w.upload || w.expandOpt) return true;
+    const t = String(w.text);
+    // -T, the short upload option (a dash and a T), tested with includes so a long word costs one pass each.
+    return AT_FILE_WORD_RE.test(t) || (t.includes('T') && t.includes('-'));
+  });
+}
+
 function markLinkWords(readings) {
   for (const r of readings) {
     let i = 0;
@@ -1408,7 +1504,7 @@ function markLinkWords(readings) {
 }
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
-const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;   // NAME=value and NAME+=value
 
 /**
  * Commands with named markers. A marker in a command's arguments is never
@@ -1564,7 +1660,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -1582,10 +1678,50 @@ function npmExecInit(text) {
   return false;
 }
 
+/**
+ * The command as the shell reads its words: $'...' decoded, quotes and backslashes taken out, a backslash-newline joined (so
+ * `zn audit --appr''ove`, `zn "audit" --approve` and `zn a\udit --approve` read as the command they run). Only for recognising
+ * zn's own commands; an unbalanced quote leaves the rest as it was.
+ */
+function dequoteShell(text) {
+  const src = /\$['"]/.test(text) ? decodeAnsiC(text) : text;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      const nx = src[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\n') { i++; continue; }
+      if (nx === '\r' && src[i + 2] === '\n') { i += 2; continue; }
+      out += nx;
+      i++;
+    } else if (c === "'") {
+      const j = src.indexOf("'", i + 1);
+      if (j < 0) { out += src.slice(i + 1); break; }
+      out += src.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\' && '"\\$`'.includes(src[j + 1])) j++;
+        out += src[j];
+      }
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+// `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
+const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
 function adminCommand(cmd) {
   const text = String(cmd || '');
-  const m = ZN_ADMIN_RE.exec(text);
-  if (m) return m[4].replace(/\s+/g, ' ');
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const m = ZN_ADMIN_RE.exec(t);
+    if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
+    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
   return npmExecInit(text) ? 'init' : null;
 }
 
@@ -1594,13 +1730,27 @@ function adminCommand(cmd) {
 // longer than the agent waits for the hook, and a hook that times out lets the
 // command run unchecked.
 const SHELL_SCAN_CAP = 100 * 1024; // characters
+/* The folder named in the vault message: ~/.zn, or the ZN_HOME folder (with ~ for the home folder) when it moves zn's
+   folder and is protected, that is, it is not empty, a file system root or a home folder. */
+function vaultFolder(opts) {
+  const env = opts.env || process.env;
+  if (!env.ZN_HOME) return '~/.zn';
+  const home = opts.home || os.homedir();
+  const zh = path.resolve(env.ZN_HOME);
+  const same = (a, b) => keyOf(slash(a)).replace(/\/+$/, '') === keyOf(slash(b)).replace(/\/+$/, '');
+  if (same(zh, path.parse(zh).root) || same(zh, home)) return '~/.zn';
+  const rel = path.relative(home, zh);
+  const shown = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? '~/' + rel.split(path.sep).join('/') : slash(zh);
+  return shown + ' (set by ZN_HOME; ~/.zn is protected too)';
+}
 function vaultMessage(opts = {}) {
-  return 'zn blocked this: ~/.zn is where zn keeps your secrets, so agents may not read or change it. ' +
+  return 'zn blocked this: ' + vaultFolder(opts) + ' is where zn keeps your secrets, so agents may not read or change it. ' +
     'Next step: to use a secret in a command, run it with `' + znCommand('run --secrets NAME -- <command>', opts) + '` so the program gets the value as an environment variable; ' +
     'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';
 }
-const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';
+const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. ' +
+  'Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.';
 // The agent runs a command unchecked when the hook times out (15 s in Claude Code), so checking a command has its
 // own limits, well below that: a time budget and a number of looks on disk. Past either, the command is refused.
 const CHECK_BUDGET_MS = 3000;
@@ -2232,7 +2382,7 @@ function textOnlyCommand(text) {
   if (/[;&|\n\r`]|\$\(|<\(|>\(/.test(text)) return false;
   const toks = text.trim().split(/\s+/).map((x) => x.replace(/^['"]+|['"]+$/g, ''));
   let i = 0;
-  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || ['env', 'command', 'nohup', 'time'].includes(programBase(toks[i])))) i++;
+  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(toks[i]) || ['env', 'command', 'nohup', 'time'].includes(programBase(toks[i])))) i++;
   const prog = programBase(toks[i]);
   if (prog === 'echo' || prog === 'printf') return true;
   if (prog !== 'git') return false;
@@ -2331,7 +2481,7 @@ function shellAssignments(cmd, opts) {
     // The output of a command, or a variable zn cannot resolve, may be the home folder.
     if (/\$\(|`/.test(v)) { unknown.add(name); continue; }
     v = expandEnv(expandHome(v, home), { ...env, ...out }).text;
-    if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%/.test(v)) { unknown.add(name); continue; }
+    if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(v)) { unknown.add(name); continue; }
     out[name] = v;
   }
   return { env: Object.keys(out).length ? out : null, unknown };
@@ -2342,6 +2492,12 @@ function bashDenialOf(cmd, opts = {}) {
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
+  // $PWD is the folder the command runs in (not the hook's own); $OLDPWD is not known.
+  if (!opts.pwdSet) {
+    const env0 = { ...(opts.env || process.env), PWD: path.resolve(opts.cwd || process.cwd()) };
+    delete env0.OLDPWD;
+    opts = { ...opts, env: env0, pwdSet: true };
+  }
   // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
   const assigned = shellAssignments(cmd, opts);
   if (assigned.env || assigned.unknown.size) {
@@ -2373,6 +2529,54 @@ function bashDenialOf(cmd, opts = {}) {
   // Bash $'...' quoting spells characters as escapes ($'\x2eenv' is .env), and $"..." is a plain "...":
   // a fourth reading with them decoded.
   if (/\$['"]/.test(text)) readings.push(allWords(decodeAnsiC(text), true));
+  // And with the expansions that leave nothing (or a fixed word) taken out, the cmd variable units taken out, and cmd.exe's carets removed
+  // after that (cmd expands % before it reads carets). The first two do not depend on the environment the hook sees.
+  {
+    const variants = new Set([text]);
+    const add = (t) => { variants.add(t); };
+    add(dropEmptyExpansions(text, opts.env || process.env));
+    if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
+    // A case pattern inside $( ) can end the unit early in the readings above: fallback readings take each $( case ... up to each `esac )` after it (16 and 16 at most).
+    if (/\bcase\b/.test(text)) {
+      const opens = [...text.matchAll(/\$\(\s*case\s/g)].slice(0, 16);
+      for (const o of opens) {
+        const tail = /\besac\s*\)/g;
+        tail.lastIndex = o.index + o[0].length;
+        let m;
+        let n = 0;
+        while ((m = tail.exec(text)) !== null && n++ < 16) add(text.slice(0, o.index) + text.slice(m.index + m[0].length));
+      }
+    }
+    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVars(v)); add(stripCmdVarsPerCommand(v)); add(stripCmdVarsNarrow(v)); }
+    // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
+    const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
+    if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
+    if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
+    for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
+    if (/[$`%!]/.test(text)) {
+      // Every expansion read as any text: refused when a path segment could be a protected name.
+      const wild = wildText(text);
+      if (wild !== text) {
+        const wilds = [wild];
+        if (cmdCaretsApply(wild)) wilds.push(dropCmdCarets(wild.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3')));
+        for (const w of wilds) {
+          for (const r of [allWords(w, false), allWords(w, true)]) {
+            if (r.truncated) return TOO_MANY_MESSAGE;
+            for (const x of r) {
+              if (typeof x.text === 'string' && WILD_ANY_RE.test(x.text) && !x.redirectTarget && wildWordProtected(x.text)) {
+                return WILD_MESSAGE(x.text.replace(/[\u0001\u0002]/g, '*'));
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const v of [...variants]) {
+      if (!cmdCaretsApply(v)) continue;
+      const c = dropCmdCarets(v.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3'));
+      readings.push(allWords(c, false), allWords(c, true));
+    }
+  }
   // A reading that could not be split to the end is refused, not checked in part.
   if (readings.some((r) => r.truncated)) return TOO_MANY_MESSAGE;
   const words = readings.flat();
@@ -2404,6 +2608,44 @@ function bashDenialOf(cmd, opts = {}) {
   opts.cdBases = cdBasesOf(readings, opts);
   opts.elsewhere = new Map();
   markLinkWords(readings);
+  if (mayRunCurl(words)) {
+    const curlFiles = curlFilesOf();
+    curlFiles.markCurlWords(readings, opts, text);
+    if (words.some((x) => x.curlConfigUnreadable)) return curlFiles.CURL_CONFIG_UNREADABLE_MESSAGE;
+    if (words.some((x) => x.curlConfigExpansionWrite)) return curlFiles.CURL_CONFIG_EXPANSION_WRITE_MESSAGE;
+  }
+  // The content of a curl configuration file zn could read (-K file, ~/.curlrc) is read like a word of the command:
+  // its upload-file, -T, data @file and form lines name files that are sent.
+  for (const x of words.slice()) {
+    for (const c of x.curlConfigContents || []) {
+      words.push({ text: c.content, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true });
+      for (const it of c.items) {
+        words.push({
+          text: it.value, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true,
+          upload: it.name === 'upload-file', urlencode: curlFilesOf().CURL_NAME_AT_FILE_OPTS.has('--' + it.name),
+        });
+      }
+    }
+  }
+  {
+    // After a cd, $PWD is wherever the cd led: left as written, the path rules follow it there.
+    const atEnv = { ...(opts.env || process.env) };
+    if (opts.cdBases && opts.cdBases.moved) delete atEnv.PWD;
+    const atWords = mayHaveAtFiles(words) ? curlFilesOf().atFileWords(words, atEnv) : [];
+    if (atWords === null) return curlFilesOf().GLOB_TOO_LARGE_MESSAGE;
+    if (atWords.refuse) return atWords.refuse;
+    words.push(...atWords);
+  }
+  // ~1, ~+2, ~-1 (directory-stack entries other than the top): zn does not know which folder they are, so each is read
+  // in every folder the command may be in (the working folder and every place a cd or pushd leads to).
+  for (const x of words.slice()) {
+    if (String(x.text).charCodeAt(0) !== 126) continue;
+    const m = /^~[+-]?[1-9]\d*(?=$|[\\/])/.exec(String(x.text));
+    if (!m) continue;
+    const rest = String(x.text).slice(m[0].length).replace(/^[\\/]+/, '');
+    const dirs = new Set([path.resolve(opts.cwd || process.cwd()), ...((opts.cdBases && opts.cdBases.dirs) || []).map((d) => path.resolve(d))]);
+    for (const d of dirs) words.push({ text: path.join(d, rest), head: x.head, redirectTarget: x.redirectTarget, seq: x.seq });
+  }
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
@@ -2422,19 +2664,36 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of words) {
+  const listed = psListWords(words, opts, cmd);
+  // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
+  // or a joined path too long to judge: refused, not checked in part.
+  if (listed.over) return TOO_SLOW_MESSAGE;
+  for (const w of withEqualsReadings(listed)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
-    if (text.startsWith('-')) {
+    if (w.atFile) {
+      // A file named by @file and its kin (atFileWords): classified as it is.
+    } else if (text.startsWith('-')) {
       const eq = text.indexOf('=');
       // git log -L<range>:<file> names a file after the colon.
       const lineRange = w.git ? /^-L[^:]*:(.+)$/.exec(text) : null;
+      // curl -d@.env, -sd@.env, -Ff=@.env: the value is glued to the option letter.
+      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z0-9#:]*?[dFTH](.+)$/.exec(text) : null;
+      // PowerShell binds a value with a colon (gc -Path:.env, -LiteralPath:.env, -Lit:.env).
+      const psValue = w.git ? null : PS_COLON_PARAM_RE.exec(text);
       if (lineRange) text = lineRange[1];
+      else if (glued) text = glued[1];
+      else if (psValue) text = psValue[1];
       else if (eq < 0) continue;
       else text = text.slice(eq + 1);
     } else if (NAME_VALUE_RE.test(text)) {
       // name=value carries a path too (dd if=.env, ENV_FILE=.env).
       text = text.slice(text.indexOf('=') + 1);
+    }
+    // curl -d @.env, --json @.env, -F f=@.env, -F f=<.env: the file is sent as the body of the request.
+    if (w.curl && text && !w.atFile) {
+      const file = curlFilesOf().curlFileOf(text, w.urlencode === true);
+      if (file) text = file;
     }
     if (!text) continue;
     // A git pathspec with magic names the path after it.
@@ -2492,7 +2751,515 @@ function bashDenialOf(cmd, opts = {}) {
 }
 
 const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
+/**
+ * `-X:a=.env` is a PowerShell colon value ("a=.env") and also a --name=value word (".env"): the colon reading would hide the
+ * second one, so the text after the first '=' is judged as a word of its own as well.
+ */
+function withEqualsReadings(words) {
+  let extra = null;
+  for (const w of words) {
+    if (w.git || !w.text.startsWith('-')) continue;
+    const eq = w.text.indexOf('=');
+    if (eq > 0 && PS_COLON_PARAM_RE.test(w.text)) (extra || (extra = [])).push({ ...w, text: w.text.slice(eq + 1) });
+  }
+  return extra ? words.concat(extra) : words;
+}
+// -Name:value, a PowerShell parameter with its value attached.
+const PS_COLON_PARAM_RE = /^-[A-Za-z][A-Za-z0-9]{0,63}:(.+)$/s;
+
+/* PowerShell reads every path of a comma list (cat a,b  gc 'a','b'  type @('a','b')); in bash, a,b is one file name.
+   Readers that take such lists, and the ones that exist only in PowerShell (read as PowerShell in any tool). */
+const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'more', 'get-item',
+  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'cpi', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
+const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
+  'gci', 'copy-item', 'cpi', 'import-clixml']);
+// The operand of a .NET file read written as a PowerShell expression ([IO.File]::ReadAllText('.\.env')), or of a cmdlet that turns a
+// name into a path (Resolve-Path .\.env, as in gc (Resolve-Path .\.env)), is read as a PowerShell path too.
+const PS_DOTNET_FILE_READ_RE = /\]::(?:read|open|copy|append|get)\w*$/i;
+// A word with ${ }, $( ), @( ), a variable or a backtick can read a file or run a command, so it is judged with the slash reading too.
+const PS_EXPANDS_RE = /[${}()@`&;|<>]/;
+// A statement with a pipeline, chain, redirect, new line or expansion can bind a printed path to a reader (echo .\.env | gi | gc).
+const PS_COMPOUND_RE = /[$(){}@`&;|<>\r\n]/;
+const PS_PATH_HELPERS = new Set(['resolve-path', 'rvpa', 'convert-path', 'cvpa', 'join-path']);
+function psPathOperand(h) {
+  const head = String(h || '').toLowerCase();
+  return PS_DOTNET_FILE_READ_RE.test(head) || PS_PATH_HELPERS.has(head);
+}
+/*
+ * Join-Path splits a path across its operands (Join-Path ~\.aws credentials, Join-Path -Path ~ -ChildPath .kube -AdditionalChildPath config),
+ * so no single operand names the protected file. The joined path is judged as a word of its own, with a backslash and with a slash.
+ * Operands are the words after the cmdlet in the same simple command; named ones (-Path, -ChildPath, -AdditionalChildPath, also
+ * abbreviated or attached with a colon) take their own place, the others fill the free places in order. The operands in the order
+ * they are written are joined too.
+ */
+function psJoinedPaths(words) {
+  const out = [];
+  const seen = new Set();
+  // Set when a joined path is not judged (too many joins, or one too long): the caller then refuses the command.
+  out.over = false;
+  const add = (w, parts) => {
+    const clean = parts.filter((x) => typeof x === 'string' && x !== '');
+    if (clean.length < 2) return;
+    const joined = clean.join('\\');
+    if (seen.has(joined)) return;
+    // Each distinct joined path adds two entries (backslash and slash forms), so the 64-entry cap is 32 distinct joined paths.
+    if (joined.length > 4096 || out.length >= 64) { out.over = true; return; }
+    seen.add(joined);
+    out.push({ ...w, text: joined, head: 'join-path', redirectTarget: false }, { ...w, text: slash(joined), head: 'join-path', redirectTarget: false });
+  };
+  const slotOf = (name) => {
+    const n = name.toLowerCase();
+    if (n.length && 'path'.startsWith(n)) return 'path';
+    if (n.length && 'childpath'.startsWith(n)) return 'child';
+    if (n.length && 'additionalchildpath'.startsWith(n)) return 'extra';
+    return null;
+  };
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (typeof w.text !== 'string' || w.text.toLowerCase() !== 'join-path') continue;
+    const named = {};
+    const positional = [];
+    const written = [];
+    let pending = null;
+    for (let j = i + 1; j < words.length && words[j].seq === w.seq; j++) {
+      const t = words[j].text;
+      if (typeof t !== 'string') continue;
+      const flag = /^-([A-Za-z]+)(?::(.*))?$/.exec(t);
+      if (flag) {
+        const slot = slotOf(flag[1]);
+        if (flag[2] !== undefined && flag[2] !== '') { if (slot) named[slot] = flag[2]; written.push(flag[2]); pending = null; } else pending = slot;
+        continue;
+      }
+      written.push(t);
+      if (pending) { named[pending] = t; pending = null; } else positional.push(t);
+    }
+    const slots = { path: named.path, child: named.child, extra: named.extra };
+    for (const k of ['path', 'child', 'extra']) if (slots[k] === undefined && positional.length) slots[k] = positional.shift();
+    add(w, [slots.path, slots.child, ...String(slots.extra || '').split(',').map((x) => x.trim())]);
+    add(w, written.flatMap((x) => x.split(',')).map((x) => x.trim()));
+  }
+  return out;
+}
+/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. cmd is the whole command of this call. */
+function psListWords(words, opts, cmd) {
+  const out = [];
+  let prev = null;
+  const readerOf = (h) => {
+    const head = bareHead(h || '').toLowerCase().replace(/\.exe$/, '');
+    return PS_LIST_READERS.has(head) && (opts.powershell === true || PS_ONLY_READERS.has(head));
+  };
+  // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
+  // and the read would be let through; the same word with "/" is judged too.
+  // The commands (by sequence number) that name a reader somewhere, so the operand of `$x = gc .\.env` or of `gc (Resolve-Path .\.env)`
+  // is a path too.
+  const readerSeqs = new Set();
+  for (const w of words) if (typeof w.text === 'string' && readerOf(w.text)) readerSeqs.add(w.seq);
+  let lastWord = '';
+  const push = (x, head) => {
+    const backslash = typeof x.text === 'string' && x.text.indexOf('\\') >= 0;
+    const reads = readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord);
+    out.push(x);
+    const compound = opts.powershell === true && typeof cmd === 'string' && PS_COMPOUND_RE.test(cmd);
+    // A word that expands ("$PWD\.env"), or any word of a compound PowerShell statement, is judged with the slash reading too.
+    // A lone statement (Write-Output .\.env) has no such reading: it names the file only where a backslash is a separator.
+    if (backslash && x.text.length <= 4096 && (reads || compound || PS_EXPANDS_RE.test(x.text))) out.push({ ...x, text: slash(x.text) });
+  };
+  for (const w of words) {
+    push(w, w.head);
+    lastWord = w.text;
+    // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
+    const lead = prev && prev.text === '@' ? prev : w;
+    const before = prev;
+    prev = w;
+    if (typeof w.text !== 'string' || w.text.indexOf(',') < 0 || w.text.length > 4096) continue;
+    // gc ('a','b') and gc -Path ('a','b'): the bracket starts a new command too, so the word has itself as head and the
+    // reader is the word before it.
+    if (!readerOf(lead.head) && !(before && typeof before.text === 'string' && readerOf(before.head))) continue;
+    const inner = w.text.replace(/^@?\(/, '').replace(/\)$/, '');
+    const parts = inner.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    // A word that starts or ends with a comma is part of a list that goes on in the next or the previous word (gc a ,b).
+    const open = /^,|,$/.test(inner.trim());
+    if (parts.length < 2 && !open) continue;
+    for (const part of parts) push({ ...w, text: part }, w.head);
+  }
+  const joined = psJoinedPaths(words);
+  for (const j of joined) out.push(j);
+  if (joined.over) out.over = true;
+  return out;
+}
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
+
+/**
+ * Two more readings of a command, for words a shell or cmd.exe rewrites before the program sees them.
+ *  - cmd.exe: `^` escapes the next character outside double quotes, and a `^` at the end of a line joins it to the next one,
+ *    so `type .e^nv` opens `.env`. Read only where cmd.exe is in play (Windows, or the text names cmd or a batch file): in a
+ *    POSIX shell `^` is an ordinary character, and `grep ^.env notes.md` must stay allowed.
+ *  - Expansions that leave nothing: an unset or empty variable, `${VAR:0:0}`, `${VAR:-}`, `$@`, `$*` and an empty command
+ *    substitution, so `.en${EMPTY}v` and `.e${HOME:0:0}nv` open `.env`. The variable values are the ones the hook sees.
+ * The original text is still read as typed; these are extra readings, so a word protected in any of them is refused.
+ */
+// cmd /v:on (or /v), or setlocal enabledelayedexpansion.
+const DELAYED_EXPANSION_RE = /\/v(?::on)?(?=[\s"'\/]|$)|enabledelayedexpansion/i;
+const CMD_CONTEXT_RE = /(?:^|[;&|(\"'`])\s*(?:(?:sudo|env|call|start|exec|nohup|time|xargs|command|wine)\s+(?:-\S+\s+)*)*(?:\S*[\\/])?(?:cmd(?:\.exe)?|[^\s;&|()\"'`]*\.(?:bat|cmd))(?=\s|$|[\"'])/i;
+function cmdContext(text) {
+  return process.platform === 'win32' || CMD_CONTEXT_RE.test(text);
+}
+function cmdCaretsApply(text) {
+  return text.indexOf('^') >= 0 && cmdContext(text);
+}
+// A caret outside double quotes escapes the next character (an escaped quote does not open a quote); inside double quotes it is literal.
+function dropCmdCarets(text) {
+  let out = '';
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { inQuote = !inQuote; out += c; continue; }
+    if (c === '^' && !inQuote) {
+      const nx = text[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\r' && text[i + 2] === '\n') { i += 2; continue; }
+      if (nx === '\n') { i++; continue; }
+      out += nx;
+      i++;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+// Every cmd variable unit, with or without a modifier, taken out whole: its value is not known here (an undefined one is empty in a batch file).
+// A cmd variable name is anything up to the next % or ! or colon: ProgramFiles(x86), =ExitCode, A.B and A-B are names too.
+// Two readings, both judged: a name without spaces or cmd operators (the usual one: it cannot reach into the next command, so
+// `echo a! & type .e!X!nv` is read per command), and a name that may hold spaces (`%A B%`), which can pair a % or ! with one of a later command.
+const CMD_VAR_UNIT_RE = /%[^%!:\r\n]+(?::[^%!\r\n]*)?%|![^%!:\r\n]+(?::[^%!\r\n]*)?!/g;
+const CMD_VAR_UNIT_NARROW_RE = /%[^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?%|![^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?!/g;
+function stripCmdVars(text) {
+  return text.replace(CMD_VAR_UNIT_RE, '');
+}
+// cmd expands a variable inside one command: the wide reading (a name may hold a space or a ^) is applied to each command on its own,
+// split at & and | and at line breaks, so `echo a! & type .e!X Y!nv` reads `!X Y!` as one unit and not `! & type .e!`.
+function stripCmdVarsPerCommand(text) {
+  return text.split(/([&|\r\n]+)/).map((seg, i) => (i % 2 ? seg : stripCmdVars(seg))).join('');
+}
+function stripCmdVarsNarrow(text) {
+  return text.replace(CMD_VAR_UNIT_NARROW_RE, '');
+}
+const UNIT_DEPTH = 64;
+/** True when the word at `i` starts a command: at the start of the body or after ;  &  |  (  { or a line break (blanks skipped). */
+function commandStart(text, i, from) {
+  let j = i - 1;
+  while (j >= from && (text[j] === ' ' || text[j] === '\t')) j--;
+  return j < from || ';&|(\n{'.includes(text[j]);
+}
+/** The index after the esac that closes a case whose body starts at `from` (nested case counted), or -1. Quotes, comments and escapes hide words. */
+function caseEnd(text, from) {
+  let open = 1;
+  let i = from;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === "'" || c === '"') {
+      let k = i + 1;
+      while (k < n && text[k] !== c) k += c === '"' && text[k] === '\\' ? 2 : 1;
+      i = k + 1;
+      continue;
+    }
+    if (c === '#' && (i === from || /\s/.test(text[i - 1]))) {
+      const k = text.indexOf('\n', i);
+      if (k < 0) return -1;
+      i = k + 1;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c) && (i === 0 || !/[A-Za-z0-9_]/.test(text[i - 1]))) {
+      let k = i;
+      while (k < n && /[A-Za-z0-9_]/.test(text[k])) k++;
+      const word = text.slice(i, k);
+      // A reserved word only where a command starts: `my-esac` or `x esac` in an argument are words of the body.
+      if ((word === 'case' || word === 'esac') && commandStart(text, i, from)) {
+        if (word === 'case') open++;
+        else if (--open === 0) return k;
+      }
+      i = k;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+/**
+ * The index after the bracket that closes a ${...} or $(...) whose content starts at `from`, or -1 when there is none (or it is nested
+ * over UNIT_DEPTH levels). Bash honours quotes while it looks for the bracket: a `)` or `}` inside '...', "..." or after a backslash does
+ * not close the unit, and nested ${ }, $( ) and backticks are units of their own; inside $( ) a bare ( nests too.
+ */
+function unitEnd(text, from, closer, depth) {
+  if (depth > UNIT_DEPTH) return -1;
+  const n = text.length;
+  let j = from;
+  while (j < n) {
+    const ch = text[j];
+    if (ch === '\\') { j += 2; continue; }
+    if (ch === "'") {
+      const k = text.indexOf("'", j + 1);
+      if (k < 0) return -1;
+      j = k + 1;
+      continue;
+    }
+    if (ch === '`') {
+      const k = text.indexOf('`', j + 1);
+      if (k < 0) return -1;
+      j = k + 1;
+      continue;
+    }
+    if (ch === '"') {
+      j++;
+      for (;;) {
+        if (j >= n) return -1;
+        const q = text[j];
+        if (q === '\\') { j += 2; continue; }
+        if (q === '"') { j++; break; }
+        if (q === '`') {
+          const k = text.indexOf('`', j + 1);
+          if (k < 0) return -1;
+          j = k + 1;
+          continue;
+        }
+        if (q === '$' && (text[j + 1] === '{' || text[j + 1] === '(')) {
+          const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
+          if (e < 0) return -1;
+          j = e;
+          continue;
+        }
+        j++;
+      }
+      continue;
+    }
+    if (ch === '$' && (text[j + 1] === '{' || text[j + 1] === '(')) {
+      const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (closer === ')' && ch === 'c' && text.startsWith('case', j) && (j === from || /[\s;&|(]/.test(text[j - 1])) && /\s/.test(text[j + 4] || '')) {
+      // a case pattern ends in a bare ): skip the whole case ... esac (nested ones counted; quoted words are not keywords)
+      const e = caseEnd(text, j + 4);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (ch === '(' && closer === ')') {
+      const e = unitEnd(text, j + 1, ')', depth + 1);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (ch === closer) return j + 1;
+    j++;
+  }
+  return -1;
+}
+/**
+ * The text with every shell expansion unit taken out whole, whatever the environment holds (a variable the hook sees may differ from the
+ * agent's shell): balanced ${...} (any operator, nested), $NAME, $1, $@ $* $# $? $$ $!, balanced $(...) and backticks. With
+ * `useDefaults`, ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word} and ${NAME+word} become their word (quotes
+ * removed, nested units read the same way). An unbalanced unit leaves the rest of the text as it was.
+ */
+function stripExpansions(text, useDefaults, mark = '', quotedMark = mark) {
+  const n = text.length;
+  let out = '';
+  let i = 0;
+  let sq = false;
+  let dq = false;
+  while (i < n) {
+    const c = text[i];
+    if (quotedMark !== mark) {
+      // Track quoting so an expansion inside double quotes (no field splitting) gets its own mark.
+      if (c === "'" && !dq) sq = !sq;
+      else if (c === '"' && !sq) dq = !dq;
+      else if (c === '\\' && !sq && text[i + 1] === '"') { out += c + '"'; i += 2; continue; }
+    }
+    const mk = dq ? quotedMark : mark;
+    if (c === '`') {
+      const j = text.indexOf('`', i + 1);
+      if (j < 0) { out += text.slice(i); break; }
+      out += mk;
+      i = j + 1;
+      continue;
+    }
+    if (c !== '$' || i + 1 >= n) { out += c; i++; continue; }
+    const d = text[i + 1];
+    if (d === '{' || d === '(') {
+      const j = unitEnd(text, i + 2, d === '{' ? '}' : ')', 0);
+      if (j < 0) { out += text.slice(i); break; }
+      const content = text.slice(i + 2, j - 1);
+      if (d === '{' && useDefaults) {
+        const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])(:?[-=+])([\s\S]*)$/.exec(content);
+        if (m) out += stripExpansions(m[2], true).replace(/["']/g, '');
+        else out += mk;
+      } else out += mk;
+      i = j;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(d)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_]/.test(text[j])) j++;
+      out += mk;
+      i = j;
+      continue;
+    }
+    if (/[0-9@*#?$!]/.test(d)) { out += mk; i += 2; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+}
+// ${NAME}, ${NAME:-word}, ${NAME-word}, ${NAME:+word}, ${NAME+word}, ${NAME:off} and ${NAME:off:len} (offset and length without a sign: a
+// negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
+const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
+// cmd.exe: %NAME:~off,len% and %NAME:old=new% (and the !NAME...! forms of delayed expansion) give a piece of the value or a replaced one.
+const CMD_SLICE_RE = /%([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?%|!([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?!/g;
+const CMD_REPLACE_RE = /%([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
+function dropCmdExpansions(text, env) {
+  const val = (name) => {
+    const k = Object.keys(env).find((e) => e.toUpperCase() === name.toUpperCase());   // cmd variable names ignore case
+    return k !== undefined && env[k] != null ? String(env[k]) : '';
+  };
+  return text
+    .replace(CMD_SLICE_RE, (m, n1, o1, l1, n2, o2, l2) => {
+      const v = val(n1 || n2);
+      const off = Number(n1 ? o1 : o2);
+      const len = n1 ? l1 : l2;
+      return len === undefined ? v.slice(off) : v.substr(off, Number(len));
+    })
+    .replace(CMD_REPLACE_RE, (m, n1, a1, b1, n2, a2, b2) => {
+      const v = val(n1 || n2);
+      const from = n1 ? a1 : a2;
+      return v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), () => (n1 ? b1 : b2));
+    });
+}
+/**
+ * Expansions read as "any text". The value of `$X`, `${X}`, `$(cmd)`, a backtick substitution, `%X%` or `!X!` is not in the command: an
+ * earlier command, `read`, the program's output or an environment the hook does not see can set it to anything. So each unit is
+ * replaced by a mark, and a path segment that holds a mark and at least two literal characters of a protected name (.env, .env.*, an SSH
+ * private key name) in the right places is refused: `.e${X}v`, `${D}env`, `.e$(echo n)v` and `.e%X:~0,1%v` can all spell `.env`.
+ * It does not depend on the environment. What it cannot see is a name that is wholly inside the unit (`cat $(printf .env)` is read
+ * through the words of the substitution, `cat ${NAME}` with NAME=.env only through the assignments of the same command).
+ * A segment with fewer than two literal characters of the name (`${X}v`, `${CI_ENV}`, `config/${ENV}.json`) is allowed; so is
+ * `.example`, `.sample` and `.template` at its end.
+ */
+const WILD = '\u0001';
+// An expansion inside double quotes: bash does not split its value into words there.
+const WILDQ = '\u0002';
+const WILD_ANY_RE = /[\u0001\u0002]/;
+const WILD_NAMES = [
+  { name: '.env', tail: false, core: 4 }, { name: '.env.', tail: true, core: 4 },
+  ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => [{ name: 'id_' + k, tail: false, core: 3 + k.length }, { name: 'id_' + k + '_sk', tail: false, core: 6 + k.length }]),
+];
+const WILD_SAFE_END_RE = /\.(?:example|sample|template)$/;
+const WILD_SEGMENT_MAX = 512;
+// Can the segment (marks match any text) spell the name, with two or more of its literal characters inside the first `core` characters of the name?
+function wildSegmentMatches(seg, t) {
+  const n = seg.length;
+  const m = t.name.length;
+  const memo = new Map();
+  const f = (i, j, c) => {
+    const key = (i * (m + 1) + j) * 3 + c;
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+    let r;
+    if (i === n) r = j === m && c >= 2;
+    else if (seg[i] === WILD || seg[i] === WILDQ) r = f(i + 1, j, c) || (j < m && f(i, j + 1, c));
+    else if (j < m) r = seg[i] === t.name[j] && f(i + 1, j + 1, Math.min(2, c + (j < t.core ? 1 : 0)));
+    else r = t.tail && f(i + 1, j, c);
+    memo.set(key, r);
+    return r;
+  };
+  return f(0, 0, 0);
+}
+// Names a glob in a piece can match. The shell globs each word after it splits, so `.e*`, `.en?`, `.en[v]` and `?env` cut off by an
+// unquoted expansion can read `.env`. The glob engine is the one the words without expansions use (globRegExp); a mark is any text.
+// Like the literal reading, a piece needs two literal characters (a bracket expression counts as one), so `*` or `${X}*` alone is not refused.
+const WILD_GLOB_NAMES = ['.env', '.env.local', '.env.example', '.env.sample', '.env.template', ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => ['id_' + k, 'id_' + k + '_sk', 'id_' + k + '.pub'])];
+function wildPieceGlobMatches(piece) {
+  if (!/[*?[]/.test(piece)) return false;
+  const lits = piece.replace(/\[[^\]]*\]/g, 'x').replace(/[*?]/g, '').length;
+  if (lits < 2) return false;
+  let re;
+  try { re = globRegExp(piece.replace(/[]/g, '*')); } catch (e) { return true; }
+  if (re.impossible) return false;
+  return WILD_GLOB_NAMES.some((n) => re.test(n));
+}
+// Can some word the segment may become spell a protected name? An unquoted expansion splits its value into words when the value holds
+// spaces, so the segment is also read piece by piece: the start up to the first splitting mark, each piece between two of them, and the
+// rest after the last, each with "any text" kept on the cut side. The safe endings (.example ...) apply only to a piece that really ends
+// the word, never to the whole segment, because splitting happens before them.
+function wildSegmentProtected(seg) {
+  const check = (piece, safe) => {
+    if (safe && WILD_SAFE_END_RE.test(piece)) return false;
+    for (const t of WILD_NAMES) if (wildSegmentMatches(piece, t)) return true;
+    return wildPieceGlobMatches(piece);
+  };
+  if (check(seg, true)) return true;
+  if (seg.indexOf(WILD) < 0) return false;
+  const parts = seg.split(WILD);
+  const last = parts.length - 1;
+  for (let i = 0; i <= last; i++) {
+    if (parts[i] === '' ) continue;
+    const piece = (i > 0 ? WILD : '') + parts[i] + (i < last ? WILD : '');
+    if (check(piece, i === last)) return true;
+  }
+  return false;
+}
+function wildWordProtected(text) {
+  const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
+  for (const part of parts) {
+    let afterMark = false;
+    for (const raw of part.split(/[\\/]/)) {
+      if (!WILD_ANY_RE.test(raw)) {
+        // A glob in a later segment of a word that carries an expansion still reaches the file: `$PWD/.e*`, `${DIR}/.e*`.
+        if (afterMark && /[*?[]/.test(raw)) {
+          const later = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+          if (!WILD_SAFE_END_RE.test(later) && wildPieceGlobMatches(later)) return true;
+        }
+        continue;
+      }
+      afterMark = true;
+      const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+      if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
+      if (wildSegmentProtected(seg)) return true;
+    }
+  }
+  return false;
+}
+function wildText(text) {
+  let t = /[$`]/.test(text) ? stripExpansions(text, false, WILD, WILDQ) : text;
+  if (/[%!]/.test(t) && cmdContext(text)) t = t.replace(CMD_VAR_UNIT_RE, WILD);
+  return t;
+}
+// The text of a substitution that only prints a word: `$(printf .en)v` and `$(echo .en)v` read as `.env`.
+function substitutionOutputs(text) {
+  return text.replace(/\$\(([^()]*)\)|`([^`]*)`/g, (m, a, b) => {
+    const toks = (a !== undefined ? a : b).trim().split(/\s+/);
+    return toks[toks.length - 1].replace(/^["']|["']$/g, '');
+  });
+}
+const WILD_MESSAGE = (word) => 'zn: ' + word + ' was not read because a variable, a command substitution or a cmd variable makes up part of the name, ' +
+  'and what is left could spell a .env file or an SSH private key. Write the file name out in full, or ask the user to run the command.';
+function dropEmptyExpansions(text, env) {
+  if (/[%!]/.test(text) && cmdContext(text)) text = dropCmdExpansions(text, env);
+  if (!/[$`]/.test(text)) return text;
+  return text.replace(EMPTY_EXPANSION_RE, (m, name, op, word, off, len) => {
+    if (!name) return '';
+    const isSet = Object.prototype.hasOwnProperty.call(env, name) && env[name] != null;
+    const v = isSet ? String(env[name]) : '';
+    if (op) {
+      const set = op[0] === ':' ? v !== '' : isSet;
+      return op.endsWith('-') ? (set ? v : word) : (set ? word : '');
+    }
+    if (off === undefined) return v;
+    return len === undefined ? v.slice(Number(off)) : v.substr(Number(off), Number(len));
+  });
+}
 
 /* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */
 function decodeAnsiC(cmd) {
@@ -2528,36 +3295,79 @@ function isGit(head) {
 const GIT_WRAPPERS = {
   sudo: 'ugphCDrtUTR', doas: 'uC', env: 'uCS', command: '', nohup: '', time: 'fo', builtin: '', exec: 'a', nice: 'n', timeout: 'sk',
   xargs: 'IinLPdEsa', setsid: '', ionice: 'cnpPu', stdbuf: 'ioe', busybox: '',
-  chrt: '', taskset: 'c', chroot: 'ug', runuser: 'ugGsT', unbuffer: '', strace: 'eopsuEaOSbPIX', ltrace: 'eopsunal', nsenter: 'tSG', flock: 'wE',
+  chrt: 'TPD', taskset: 'c', chroot: 'ug', runuser: 'ugGsTw', unbuffer: '', strace: 'eopsuEaOSbPIX', ltrace: 'eopsunal', nsenter: 'tSG', flock: 'wE',
 };
 // Wrappers that take positional arguments before the command: chrt <priority>, taskset <mask> (not with -c), chroot <newroot>, flock <lock>.
 const WRAPPER_POSITIONAL = { chrt: 1, taskset: 1, chroot: 1, flock: 1 };
-const WRAPPER_LONG_VALUE = new Set(['--user', '--group', '--chdir', '--unset', '--max-args', '--max-procs', '--replace', '--delimiter',
-  '--arg-file', '--eof', '--signal', '--kill-after', '--split-string', '--cpu-list', '--host', '--prompt', '--close-from', '--role', '--type']);
+// Long options of each wrapper that take the next word as their value, from its own manual (--opt=value is one word either way).
+// Per wrapper: a name is read the way that tool reads it, and a long option not listed for the wrapper is a flag (so the chain is
+// unsure and the later words are read as commands too). sudo --shell and --login, nsenter --pid and --user are flags.
+const WRAPPER_LONG_VALUE = {
+  sudo: new Set(['--user', '--group', '--host', '--prompt', '--chdir', '--role', '--type', '--close-from', '--other-user', '--command-timeout', '--chroot']),
+  env: new Set(['--unset', '--chdir', '--split-string', '--argv0']),
+  time: new Set(['--format', '--output']),
+  nice: new Set(['--adjustment']),
+  timeout: new Set(['--signal', '--kill-after']),
+  xargs: new Set(['--max-args', '--max-procs', '--delimiter', '--arg-file', '--max-lines', '--max-chars', '--process-slot-var']),
+  ionice: new Set(['--class', '--classdata', '--pid', '--pgid', '--uid']),
+  stdbuf: new Set(['--input', '--output', '--error']),
+  chrt: new Set(['--sched-runtime', '--sched-period', '--sched-deadline']),
+  chroot: new Set(['--userspec', '--groups']),
+  runuser: new Set(['--user', '--group', '--supp-group', '--shell', '--command', '--whitelist-environment', '--session-command']),
+  flock: new Set(['--timeout', '--wait', '--conflict-exit-code', '--command']),
+  nsenter: new Set(['--target', '--setuid', '--setgid']),
+};
+const NO_LONG_VALUE = new Set();
+// A word taken as an option's value that names a program zn reads (rm, sh, find, curl ...) may really be the program, if the
+// option was guessed wrong: the chain is then unsure, so that word and the later ones are read as commands too.
+const SKIPPED_PROGRAM_RE = /^(?:rm|rmdir|del|erase|rd|ri|remove-item|shred|mkfs[a-z0-9.]*|mke2fs|mkswap|wipefs|blkdiscard|dd|find|chmod|chown|chgrp|sh|bash|zsh|dash|ksh|ash|mksh|rbash|su|eval|cmd|pwsh|powershell|python[0-9.]*|perl|ruby|node|curl|wget|iwr|irm|aria2c|fetch)$/i;
+const skippedIsProgram = (t) => SKIPPED_PROGRAM_RE.test(String(t).replace(/^\(+/, '').split(/[\\/]/).pop());
+// A word in command position that reads like an option value, not a program: a number or duration (10, +5, 1e3),
+// a one-letter mode (stdbuf L), a user:group, a list or a format (%e).
+const VALUE_LIKE_RE = /^[+-]?[0-9.]|^[A-Z]$|[:,%]/;
 
 function wordIsGit(text) {
   return isGit(String(text).replace(/^\(+/, '').split(/[\\/]/).pop().toLowerCase());
 }
 
-/* The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration. */
-function skipWrapper(words, k, name) {
+/*
+ * The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration.
+ * With `info`, info.unsure is set when the chain may not end on the program: an option was read as a flag (it may take a
+ * value zn does not know of, or be an abbreviation such as --adj, which GNU tools accept), or the word reached reads like an
+ * option value. Callers then also read the later words as possible commands, so an unknown option cannot hide one.
+ */
+function skipWrapper(words, k, name, info) {
   const valueOpts = GIT_WRAPPERS[name];
   let sawC = false;
+  let unsure = false;
+  const textAt = (j) => (typeof words[j] === 'string' ? words[j] : words[j].text);
   k++;
   while (k < words.length) {
-    const t = words[k].text;
+    const t = textAt(k);
     if (t === '--') { k++; break; }
-    if (t.startsWith('--') && t.length > 2) { k += !t.includes('=') && WRAPPER_LONG_VALUE.has(t) ? 2 : 1; continue; }
+    if (t.startsWith('--') && t.length > 2) {
+      const valued = !t.includes('=') && (WRAPPER_LONG_VALUE[name] || NO_LONG_VALUE).has(t);
+      if (!valued && !t.includes('=')) unsure = true;
+      if (valued && k + 1 < words.length && skippedIsProgram(textAt(k + 1))) unsure = true;
+      k += valued ? 2 : 1;
+      continue;
+    }
     if (t.startsWith('-') && t.length > 1) {
       if (t === '-c') sawC = true;
       // -n, -E, -En: flags; a cluster ending in an option that takes a value (sudo -u root) takes the next word.
-      k += /^-[A-Za-z]+$/.test(t) && valueOpts.includes(t[t.length - 1]) ? 2 : 1;
+      const valued = /^-[A-Za-z]+$/.test(t) && valueOpts.includes(t[t.length - 1]);
+      if (!valued) unsure = true;
+      if (valued && k + 1 < words.length && skippedIsProgram(textAt(k + 1))) unsure = true;
+      k += valued ? 2 : 1;
       continue;
     }
-    if (ASSIGNMENT_RE.test(t) || (name === 'timeout' && /^[0-9.]+[smhd]?$/.test(t))) { k++; continue; }
+    if (name !== 'timeout' && ASSIGNMENT_RE.test(t)) { k++; continue; }
     break;
   }
+  // timeout's first operand is the duration, whatever its spelling (5, 1.5m, inf, 1e3, +5, 0x10): GNU reads it with strtod.
+  if (name === 'timeout' && k < words.length) k++;
   if (WRAPPER_POSITIONAL[name] && k < words.length && !(name === 'taskset' && sawC)) k += WRAPPER_POSITIONAL[name];
+  if (info && (unsure || (k < words.length && VALUE_LIKE_RE.test(textAt(k))))) info.unsure = true;
   return k;
 }
 
@@ -2739,7 +3549,7 @@ function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
       'Give the path from the current folder instead, for example `cat app/.env`.';
   }
   // A key file is judged by its content where the cd leads; only a .env is refused for a path built while the command runs.
-  if (kind === 'dotenv' && (/[$`]|%[A-Za-z_][A-Za-z0-9_]*%/.test(expanded) || (missing && afterSubstitution))) {
+  if (kind === 'dotenv' && (/[$`]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(expanded) || (missing && afterSubstitution))) {
     return 'zn: this command builds the path of a .env file while it runs (' + text + '), so zn cannot check whether it holds secrets. ' +
       'Name the file directly, for example `cat app/.env`; if it holds values, ask the user to run `' + znCommand('env shadow .env', opts) + '` in that folder.';
   }
@@ -2786,12 +3596,16 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (/^audit/i.test(admin)) {
+    return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
+      'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
+  }
   if (/pins/i.test(admin)) {
-    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
+    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `' + cliName('zn-gate') + ' pins approve`. ' + run('pins approve');
   }
   if (/^init$/i.test(admin)) {
-    return 'zn blocked this: `zn-gate init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
-      'Next step: ask the user to run it in their own terminal (`npx -y zn-gate init`).';
+    return 'zn blocked this: `' + cliName('zn-gate') + ' init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
+      'Next step: ask the user to run it in their own terminal (`' + cliName('npx') + ' -y zn-gate init`).';
   }
   if (/^hooks/i.test(admin)) {
     return 'zn blocked this: `' + znCommand(admin, opts) + '` turns zn\'s protection on or off for a coding agent, which is the user\'s decision. ' + run(full);
@@ -2837,8 +3651,9 @@ const EGRESS_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const EGRESS_URL_LIKE_RE = /^(?:localhost|\$|\[|[\w${}-]+(?:\.[\w${}-]+)+|[\w.${}-]+:\d+)(?:[:/?#]|$)/i;
 const EGRESS_URLS_IN_TEXT_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi;
 const EGRESS_PROGRAMS = new Set(['curl', 'wget']);
-const EGRESS_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'stdbuf', 'xargs', 'builtin',
-  'ionice', 'setsid', 'then', 'do', 'else', '!', '{']);
+// Words that start a command without being one. The wrappers themselves are one list, GIT_WRAPPERS, that the
+// download-and-run rule (destructive.js) shares.
+const EGRESS_KEYWORDS = new Set(['then', 'do', 'else', '!', '{']);
 const EGRESS_INTERPRETER_RE = /^(?:python[0-9.]*|py|node|nodejs|deno|bun)$/;
 const EGRESS_CODE_NET_RE = /\b(?:requests|httpx|urllib[0-9]?|urlopen|aiohttp|pycurl|http\.client|https?\.(?:get|request)|axios|undici|node-fetch|XMLHttpRequest|WebClient|socket)\b|\bfetch\s*\(|\bhttps?:\/\//i;
 // Options that take a value, by tool. The kind says where the value goes; skip lists the others, so their value is not read as a URL.
@@ -2863,6 +3678,51 @@ const WGET_OPTIONS = {
     'default-page', 'method', 'config']),
   shortSkip: new Set('OPoaiBtTwQlARDIXe'.split('')),
 };
+
+/* The program a command word names, read as a shell would: 'curl', 'wget', an interpreter name, or '' when it is none
+   of them. A glob that can only mean curl or wget (/usr/bin/cu?l, c*l) counts. */
+function egressProgramOf(name) {
+  if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) return name;
+  if (name.length > 64 || !/[?*[]/.test(name) || name.replace(/[?*[\]]/g, '').length < 2) return '';
+  const g = globRegExp(name);
+  for (const p of EGRESS_PROGRAMS) if (g.test(p)) return p;
+  return '';
+}
+
+// $(echo curl) and `echo curl` name a program as plain text: the same text without the substitution.
+const EGRESS_ECHO_SUBST_RE = /\$\([ \t]{0,16}(?:echo|printf)[ \t]{1,16}(?:-[a-zA-Z]{1,3}[ \t]{1,16})?(?:(?:'%s'|"%s"|%s)[ \t]{1,16})?['"]?([A-Za-z0-9_.\/-]{1,64})['"]?[ \t]{0,16}\)|`[ \t]{0,16}(?:echo|printf)[ \t]{1,16}(?:-[a-zA-Z]{1,3}[ \t]{1,16})?(?:(?:'%s'|"%s"|%s)[ \t]{1,16})?['"]?([A-Za-z0-9_.\/-]{1,64})['"]?[ \t]{0,16}`/g;
+
+/* The bodies of the $(...) and `...` substitutions of a text, as command text (single-quoted text is data).
+   At most EGRESS_SUBST_MAX bodies; one pass. */
+const EGRESS_SUBST_MAX = 64;
+function egressSubstitutions(text) {
+  const bodies = [];
+  let quote = '';
+  for (let i = 0; i < text.length && bodies.length < EGRESS_SUBST_MAX; i++) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
+    if (ch === "'" && quote === '') { quote = "'"; continue; }
+    if (ch === '`') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== '`'; j++) if (text[j] === '\\') j++;
+      bodies.push(text.slice(i + 1, j));
+      i = j;
+    } else if (ch === '$' && text[i + 1] === '(' && text[i + 2] !== '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth > 0; j++) {
+        if (text[j] === '(') depth++;
+        else if (text[j] === ')') depth--;
+      }
+      bodies.push(text.slice(i + 2, depth === 0 ? j - 1 : j));
+      // The nested substitutions are read when the body is read as a command: do not walk it again here.
+      i = j - 1;
+    }
+  }
+  return bodies;
+}
 
 /** Text with the values read from the environment, and command substitutions, removed. */
 function egressStripEnv(text) {
@@ -2969,39 +3829,95 @@ function egressInterpreter(words, k, text, found) {
   found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
 }
 
-function egressCollect(raw, opts, depth) {
-  const found = [];
-  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+// One reading of the command text: the requests it makes go to `found`. `raw` is the command as written (for heredocs).
+function egressCollectText(raw, text, opts, depth, found) {
+  const vars = shellVars.newScope();
   egressPowerShell(text, opts.powershell === true, found);
   let rest = text;
   let guard = 0;
   while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
     const scan = scanFirstCommand(rest, false);
-    const words = scan.words;
+    let op = scan.operator;
+    if ((op === '&' || op === '|') && rest[scan.end + 1] === op) op += op;
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...).
+    let words = scan.words;
+    const filled = shellVars.applyWords(vars, words.map((w) => w.text), op);
+    if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
     let k = -1;
-    for (let i = 0; i < words.length; i++) {
+    let prog = '';
+    const chain = {};
+    let i = 0;
+    let chainAt = -1;
+    while (i < words.length) {
       const t = words[i].text;
-      const name = programName(t);
-      if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) { k = i; break; }
-      if (ASSIGNMENT_RE.test(t) || EGRESS_WRAPPERS.has(name) || t.startsWith('-') || /^\d+[smhd]?$/.test(t)) continue;
+      let name = programName(t);
+      // {curl,-H,x,URL} is the words curl -H x URL.
+      if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
+        const alts = expandBraces(t);
+        if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
+          words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
+          name = programName(alts[0]);
+        }
+      }
+      prog = egressProgramOf(name);
+      if (prog) { k = i; break; }
+      if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
+      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { if (chainAt < 0) chainAt = i; i = skipWrapper(words, i, name, chain); continue; }
       break;
     }
+    // The wrappers did not end on a plausible program (an option zn does not know may have taken the next word): the
+    // first later word that is a network program counts, so the request is not hidden behind the option.
+    // The words an option may have taken are read too (from the first wrapper on), so a wrong skip cannot hide the request.
+    if (k < 0 && chain.unsure) {
+      for (let j = Math.max(chainAt, 0); j < words.length; j++) {
+        prog = egressProgramOf(programName(words[j].text));
+        if (prog) { k = j; break; }
+      }
+    }
     if (k >= 0) {
-      const name = programName(words[k].text);
-      if (EGRESS_INTERPRETER_RE.test(name)) egressInterpreter(words, k, raw, found);
+      if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
       // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
       else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
-        const r = egressOptions(words.slice(k + 1).map((w) => w.text), name === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+        const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
         if (r.parts.length) found.push(r);
       }
     }
     rest = rest.slice(scan.end + 1);
   }
+  if (depth >= SHELL_CODE_DEPTH) return;
   // sh -c "curl ...": the code of a shell inside the command is a command of its own.
-  if (depth < SHELL_CODE_DEPTH && /\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
+  if (/\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
     for (const code of shellCodesOf(allWords(text, false))) found.push(...egressCollect(code, opts, depth + 1));
   }
-  return found;
+  // echo "$(curl ...)" and R=`curl ...`: a command substitution runs its text as commands, quoted or not.
+  if (text.indexOf('$(') >= 0 || text.indexOf('`') >= 0) {
+    for (const body of egressSubstitutions(text)) found.push(...egressCollect(body, opts, depth + 1));
+  }
+}
+
+// One shared amount of work for the whole egressCollect tree of a command (calls and text read): past it the
+// answer fails closed, a request to nowhere that is always reported.
+const EGRESS_WORK_MAX = 2000000;
+function egressCollect(raw, opts, depth) {
+  const found = [];
+  if (!opts._work) opts._work = { left: EGRESS_WORK_MAX, over: false };
+  const work = opts._work;
+  work.left -= raw.length + 64;
+  if (work.left < 0) {
+    if (!work.over) { work.over = true; found.push({ urls: [], parts: [{ where: 'code', text: 'a command too nested for zn to check' }] }); }
+    return found;
+  }
+  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+  // The text as written, with $'curl' read as bash does, and with $(echo curl) read as the plain word.
+  const readings = new Set([text]);
+  const decoded = text.indexOf("$'") >= 0 ? decodeAnsiC(text) : text;
+  readings.add(decoded);
+  if (decoded.indexOf('$(') >= 0 || decoded.indexOf('`') >= 0) readings.add(decoded.replace(EGRESS_ECHO_SUBST_RE, (m, a, b) => a || b));
+  for (const t of readings) egressCollectText(raw, t, opts, depth, found);
+  if (found.length < 2) return found;
+  // The readings and the substitution bodies overlap: one request is reported once.
+  const seen = new Set();
+  return found.filter((r) => { const key = JSON.stringify([r.urls, r.parts]); if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
 function egressResult(found, allowOrFn) {
@@ -3027,8 +3943,8 @@ function egressResult(found, allowOrFn) {
 function egressParts(cmd, opts = {}) {
   const raw = String(cmd || '');
   if (!raw || raw.length > SHELL_SCAN_CAP) return [];
-  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\//i.test(raw)) return [];
-  return egressResult(egressCollect(raw, opts, 0), opts.allow);
+  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\/|\$|`|[?*{]/i.test(raw)) return [];
+  return egressResult(egressCollect(raw, Object.assign({}, opts), 0), opts.allow);
 }
 
 /*
@@ -3161,6 +4077,9 @@ function egressLabel(part, start) {
 
 module.exports = {
   POLICY_RULES_VERSION,
+  WRAPPER_NAMES: new Set(Object.keys(GIT_WRAPPERS)),
+  skipWrapper,
+  gitStart,
   classifyPath,
   classifyWord,
   globClass,
@@ -3171,6 +4090,7 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,
   scanFirstCommand,

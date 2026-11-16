@@ -14,6 +14,8 @@ Sections: Added, Changed, Deprecated, Removed, Fixed, Security. A bullet can go 
 
 The `Changelog` check fails a pull request that changes shipped files (the packages, the plugin, the Action) without a fragment, or that edits `[Unreleased]` in `CHANGELOG.md` by hand. A change users do not notice can take the `no-changelog` label instead.
 
+When the check fails, its log and the job summary on the pull request page show this template again.
+
 Dependabot's dependency updates need no fragment; a security update gets one by hand.
 
 To see what the next release will say: `node .github/scripts/changelog.mjs preview`. The release branch runs `node .github/scripts/changelog.mjs assemble --version X.Y.Z --date YYYY-MM-DD`, which also moves the compare links at the bottom; the short introduction of a release is written by hand after that, never in a fragment.

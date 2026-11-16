@@ -1,0 +1,6 @@
+rc=0
+--stdout--
+
+--stderr--
+zn is NOT protecting this session: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself).
+

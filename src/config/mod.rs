@@ -125,6 +125,17 @@ pub struct ServerConfig {
     /// A larger frame closes the connection.
     #[serde(default = "default_ws_max_frame_bytes")]
     pub ws_max_frame_bytes: usize,
+
+    /// Seconds a management API connection may go without receiving a byte before it is closed
+    /// (default 900, 15 minutes; 0 means the default). It ends an SSE stream or WebSocket session
+    /// that nobody uses.
+    #[serde(default = "default_session_idle_timeout_secs")]
+    pub session_idle_timeout_secs: u64,
+
+    /// Seconds a write to a management API client may stay blocked (a client that does not read)
+    /// before the connection is closed (default 30; 0 means the default).
+    #[serde(default = "default_write_timeout_secs")]
+    pub write_timeout_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -135,6 +146,8 @@ impl Default for ServerConfig {
             channel_capacity: default_channel_capacity(),
             ws_max_message_bytes: default_ws_max_message_bytes(),
             ws_max_frame_bytes: default_ws_max_frame_bytes(),
+            session_idle_timeout_secs: default_session_idle_timeout_secs(),
+            write_timeout_secs: default_write_timeout_secs(),
         }
     }
 }
@@ -147,6 +160,12 @@ fn default_ws_max_message_bytes() -> usize {
 }
 fn default_ws_max_frame_bytes() -> usize {
     1024 * 1024
+}
+fn default_session_idle_timeout_secs() -> u64 {
+    900
+}
+fn default_write_timeout_secs() -> u64 {
+    30
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()
@@ -752,28 +771,65 @@ impl ZnConfig {
             .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
     }
 
-    /// Load configuration from file with environment variable overrides
+    /// Parse the text of a settings file. `file` is only used in the error
+    /// message, which names the file and, when it can, the setting.
+    pub fn parse_text(file: &str, content: &str) -> Result<Self> {
+        serde_json::from_str(content).map_err(|e| anyhow!(config_parse_problem(file, content, &e)))
+    }
+
+    fn read_settings_file(path: &Path) -> Result<String> {
+        std::fs::read_to_string(path).map_err(|e| {
+            anyhow!(
+                "zn could not read the settings file {}: {}. Check that the file exists and that this user can read it.",
+                crate::user_errors::display_path(path),
+                crate::user_errors::plain_text(&e.to_string())
+            )
+        })
+    }
+
+    /// Load configuration from file with environment variable overrides.
+    /// Warnings about settings that were ignored are dropped here; use
+    /// `load_with_notices` to show them.
     pub fn load(path: Option<&Path>) -> Result<Self> {
+        Self::load_with_notices(path).map(|(config, _)| config)
+    }
+
+    /// Like `load`, and also returns plain-English warnings for settings that
+    /// zn ignored: unknown keys in the file and an invalid `ZN_PORT`. An unknown key
+    /// inside `security` or `audit` is an error instead, because ignoring a misspelt
+    /// security setting would silently weaken it.
+    ///
+    /// An explicit `path` must exist and must be a `.json` file; otherwise the
+    /// call fails with a message that says what to do.
+    pub fn load_with_notices(path: Option<&Path>) -> Result<(Self, Vec<String>)> {
+        let mut notices = Vec::new();
         let mut config = if let Some(p) = path {
-            if p.exists() {
-                let content = std::fs::read_to_string(p)?;
-                if p.extension().map(|e| e == "json").unwrap_or(false) {
-                    serde_json::from_str(&content)?
-                } else {
-                    // Default to JSON if extension is unknown
-                    serde_json::from_str(&content).unwrap_or_default()
-                }
-            } else {
-                Self::default()
+            let shown = crate::user_errors::display_path(p);
+            let is_json = p
+                .extension()
+                .map(|e| e.eq_ignore_ascii_case("json"))
+                .unwrap_or(false);
+            if !is_json {
+                return Err(anyhow!(crate::user_errors::config_not_json(&shown)));
             }
+            if !p.exists() {
+                return Err(anyhow!(crate::user_errors::config_missing(&shown)));
+            }
+            let content = Self::read_settings_file(p)?;
+            let config = Self::parse_text(&shown, &content)?;
+            notices.extend(checked_setting_notices(&shown, &content)?);
+            config
         } else {
             // Try to load from default locations
             let config_options = ["zn.json", "zn.config.json", ".zn.json"];
             let mut found = None;
             for option in config_options {
-                if Path::new(option).exists() {
-                    let content = std::fs::read_to_string(option)?;
-                    found = Some(serde_json::from_str(&content)?);
+                let option_path = Path::new(option);
+                if option_path.exists() {
+                    let shown = crate::user_errors::display_path(option_path);
+                    let content = Self::read_settings_file(option_path)?;
+                    found = Some(Self::parse_text(&shown, &content)?);
+                    notices.extend(checked_setting_notices(&shown, &content)?);
                     break;
                 }
             }
@@ -781,20 +837,24 @@ impl ZnConfig {
         };
 
         // Override with environment variables
-        config.apply_env_overrides();
+        config.apply_env_overrides(&mut notices)?;
 
-        Ok(config)
+        Ok((config, notices))
     }
 
     /// Apply environment variable overrides
-    fn apply_env_overrides(&mut self) {
+    fn apply_env_overrides(&mut self, notices: &mut Vec<String>) -> Result<()> {
         if let Ok(env) = std::env::var("ZN_ENV") {
             self.environment = env;
         }
 
         if let Ok(port) = std::env::var("ZN_PORT") {
-            if let Ok(p) = port.parse() {
-                self.server.port = p;
+            match port.trim().parse() {
+                Ok(p) => self.server.port = p,
+                Err(_) => notices.push(crate::user_errors::invalid_port_env(
+                    &port,
+                    self.server.port,
+                )),
             }
         }
 
@@ -859,14 +919,6 @@ impl ZnConfig {
             self.audit.encryption_enabled = true;
         }
 
-        if let Ok(v) = std::env::var("ZN_AUDIT_STORE_PAYLOADS") {
-            self.audit.store_payloads = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
-        }
-
-        if let Ok(v) = std::env::var("ZN_AUDIT_REQUIRE_WRITE") {
-            self.audit.require_write = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
-        }
-
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
             self.siem.endpoint = Some(endpoint);
         }
@@ -898,14 +950,6 @@ impl ZnConfig {
             }
         }
 
-        if let Ok(active_blocking) = std::env::var("ZN_NEURAL_BLOCKING") {
-            self.neural.active_blocking = active_blocking.parse().unwrap_or(false);
-        }
-
-        if let Ok(alert_only) = std::env::var("ZN_GUARDRAILS_ALERT_ONLY") {
-            self.guardrails.alert_only = alert_only.parse().unwrap_or(true);
-        }
-
         if let Ok(paranoia) = std::env::var("ZN_PARANOIA_LEVEL") {
             if let Ok(lvl) = paranoia.parse::<u8>() {
                 self.guardrails.paranoia_level = lvl.clamp(1, 5);
@@ -927,6 +971,30 @@ impl ZnConfig {
         if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
             self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
         }
+
+        self.apply_security_flags(&|var| {
+            std::env::var_os(var).map(|v| v.to_string_lossy().into_owned())
+        })?;
+        Ok(())
+    }
+
+    /// The on/off environment settings that guard security behaviour. An unset or
+    /// empty variable keeps the current value; anything that is not a clear on/off
+    /// word is an error, so a typo can never leave a protection off.
+    fn apply_security_flags(&mut self, get: &dyn Fn(&str) -> Option<String>) -> Result<()> {
+        if let Some(v) = bool_env("ZN_AUDIT_STORE_PAYLOADS", get)? {
+            self.audit.store_payloads = v;
+        }
+        if let Some(v) = bool_env("ZN_AUDIT_REQUIRE_WRITE", get)? {
+            self.audit.require_write = v;
+        }
+        if let Some(v) = bool_env("ZN_NEURAL_BLOCKING", get)? {
+            self.neural.active_blocking = v;
+        }
+        if let Some(v) = bool_env("ZN_GUARDRAILS_ALERT_ONLY", get)? {
+            self.guardrails.alert_only = v;
+        }
+        Ok(())
     }
 
     /// Validate configuration
@@ -1011,6 +1079,310 @@ impl ZnConfig {
             5 => 0.3, // paranoid
             _ => 0.5,
         }
+    }
+}
+
+/// Reads a yes/no setting. `1`, `true`, `yes` and `on` mean on; `0`, `false`, `no`
+/// and `off` mean off (any capitalisation, spaces around the value ignored).
+/// `None` means keep the default: the value is empty or blank. Anything else is an
+/// error naming the variable.
+fn parse_bool_flag(var: &str, raw: &str) -> Result<Option<bool>> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(Some(true)),
+        "0" | "false" | "no" | "off" => Ok(Some(false)),
+        _ => Err(anyhow!(crate::user_errors::invalid_bool_env(var, value))),
+    }
+}
+
+fn bool_env(var: &str, get: &dyn Fn(&str) -> Option<String>) -> Result<Option<bool>> {
+    match get(var) {
+        Some(raw) => parse_bool_flag(var, &raw),
+        None => Ok(None),
+    }
+}
+
+/// Plain wording for a value of the wrong type: serde's `u16` becomes
+/// "a whole number from 0 to 65535" and so on.
+fn plain_expected(want: &str) -> String {
+    match want.trim() {
+        "u8" => "a whole number from 0 to 255".to_string(),
+        "u16" => "a whole number from 0 to 65535".to_string(),
+        "u32" | "u64" | "u128" | "usize" => "a whole number, 0 or more".to_string(),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => "a whole number".to_string(),
+        "f32" | "f64" => "a number".to_string(),
+        "a boolean" | "bool" => "true or false".to_string(),
+        "a string" | "String" => "text in quotes".to_string(),
+        "a sequence" => "a list in [ ]".to_string(),
+        "a map" | "struct" => "a group of settings in { }".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Plain wording for the value that was found ("the text \"eighty\"").
+fn plain_found(got: &str) -> String {
+    let got = got.trim();
+    if let Some(rest) = got.strip_prefix("string ") {
+        return format!("the text {rest}");
+    }
+    if let Some(rest) = got
+        .strip_prefix("integer ")
+        .or_else(|| got.strip_prefix("floating point "))
+    {
+        return format!("the number {}", rest.trim_matches('`'));
+    }
+    if let Some(rest) = got.strip_prefix("boolean ") {
+        return format!("the value {}", rest.trim_matches('`'));
+    }
+    match got {
+        "null" | "unit value" => "an empty value (null)".to_string(),
+        "sequence" => "a list".to_string(),
+        "map" => "a group of settings".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// What is wrong with a value, from serde's message about it.
+fn plain_data_problem(msg: &str) -> String {
+    // serde appends the position: " at line 1 column 30".
+    let msg = match msg.rfind(" at line ") {
+        Some(i) => &msg[..i],
+        None => msg,
+    };
+    for prefix in ["invalid type: ", "invalid value: "] {
+        if let Some(rest) = msg.strip_prefix(prefix) {
+            if let Some((got, want)) = rest.split_once(", expected ") {
+                return format!(
+                    "it must be {}, but it is {}",
+                    plain_expected(want),
+                    plain_found(got)
+                );
+            }
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("missing field `") {
+        return format!(
+            "the required setting `{}` is missing",
+            rest.trim_end_matches('`')
+        );
+    }
+    msg.to_string()
+}
+
+/// The setting that serde could not accept, as `section.key`, found by giving
+/// every setting of the file alone to the parser. None when it cannot be told.
+fn find_bad_setting(content: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(content).ok()?;
+    let top = value.as_object()?;
+    // The probe only means something when an empty file is a valid config.
+    serde_json::from_value::<ZnConfig>(serde_json::json!({})).ok()?;
+    let bad = |v: serde_json::Value| serde_json::from_value::<ZnConfig>(v).is_err();
+    for (key, val) in top {
+        if !bad(serde_json::json!({ key: val })) {
+            continue;
+        }
+        if let Some(inner) = val.as_object() {
+            for (key2, val2) in inner {
+                if bad(serde_json::json!({ key: { key2: val2 } })) {
+                    return Some(format!("{key}.{key2}"));
+                }
+            }
+        }
+        return Some(key.clone());
+    }
+    None
+}
+
+/// Every setting name zn knows, as dotted paths (`server.port`), taken from
+/// the default configuration so the list can never fall behind the structs.
+fn known_setting_paths() -> Vec<String> {
+    fn walk(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
+        if let Some(map) = value.as_object() {
+            for (key, inner) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                out.push(path.clone());
+                walk(&path, inner, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(value) = serde_json::to_value(ZnConfig::default()) {
+        walk("", &value, &mut out);
+    }
+    out
+}
+
+/// Settings in `content` that zn does not know, as dotted paths. Keys that
+/// start with `_` or `$` (comments, `$schema`) are not reported.
+pub fn unknown_settings(content: &str) -> Vec<String> {
+    fn walk(
+        prefix: &str,
+        file: &serde_json::Value,
+        known: &serde_json::Value,
+        out: &mut Vec<String>,
+    ) {
+        let (Some(file_map), Some(known_map)) = (file.as_object(), known.as_object()) else {
+            return;
+        };
+        for (key, inner) in file_map {
+            if key.starts_with('_') || key.starts_with('$') {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            match known_map.get(key) {
+                None => out.push(path),
+                Some(known_inner) => walk(&path, inner, known_inner, out),
+            }
+        }
+    }
+    let (Ok(file), Ok(known)) = (
+        serde_json::from_str::<serde_json::Value>(content),
+        serde_json::to_value(ZnConfig::default()),
+    ) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk("", &file, &known, &mut out);
+    out
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// The known setting that `unknown` was most likely meant to be: a name close
+/// to it in the same section, or else the same name in another section.
+fn suggest_setting(unknown: &str, known: &[String]) -> Option<String> {
+    let (section, last) = match unknown.rfind('.') {
+        Some(i) => (&unknown[..i], &unknown[i + 1..]),
+        None => ("", unknown),
+    };
+    let limit = if last.chars().count() <= 3 { 1 } else { 2 };
+    let mut best: Option<(usize, &String)> = None;
+    for k in known {
+        let (k_section, k_last) = match k.rfind('.') {
+            Some(i) => (&k[..i], &k[i + 1..]),
+            None => ("", k.as_str()),
+        };
+        if k_section != section {
+            continue;
+        }
+        let d = edit_distance(&last.to_lowercase(), &k_last.to_lowercase());
+        if d <= limit && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+            best = Some((d, k));
+        }
+    }
+    if let Some((_, k)) = best {
+        return Some(k.clone());
+    }
+    known
+        .iter()
+        .find(|k| k.rsplit('.').next() == Some(last))
+        .cloned()
+}
+
+/// One warning per unknown setting in `content`.
+fn unknown_setting_notices(file: &str, content: &str) -> Vec<String> {
+    let unknown = unknown_settings(content);
+    if unknown.is_empty() {
+        return Vec::new();
+    }
+    let known = known_setting_paths();
+    unknown
+        .iter()
+        .map(|u| {
+            crate::user_errors::unknown_setting(file, u, suggest_setting(u, &known).as_deref())
+        })
+        .collect()
+}
+
+/// True for a setting inside the `security` or `audit` sections.
+fn is_security_setting(path: &str) -> bool {
+    path.starts_with("security.") || path.starts_with("audit.")
+}
+
+/// Like `unknown_setting_notices`, but an unknown key inside `security` or `audit` is an
+/// error that names the key and the closest valid one. Other unknown keys stay warnings.
+fn checked_setting_notices(file: &str, content: &str) -> Result<Vec<String>> {
+    let unknown = unknown_settings(content);
+    if let Some(bad) = unknown.iter().find(|u| is_security_setting(u)) {
+        let known = known_setting_paths();
+        return Err(anyhow!(crate::user_errors::unknown_security_setting(
+            file,
+            bad,
+            suggest_setting(bad, &known).as_deref()
+        )));
+    }
+    Ok(unknown_setting_notices(file, content))
+}
+
+/// Plain-English text for a settings file that cannot be parsed: the file, the
+/// setting if it is known, the line, and what to do.
+pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let at = format!("line {}, column {}", err.line(), err.column());
+    let fix =
+        String::from("Fix the file, or move it away and run `zn init` to create a fresh zn.json.");
+    match err.classify() {
+        Category::Eof => format!(
+            "zn could not read the settings file {file}: the file ends too early ({at}). A closing }} or ] is probably missing. {fix}"
+        ),
+        Category::Syntax => format!(
+            "zn could not read the settings file {file}: it is not valid JSON at {at} ({}). Look for a missing comma or quote, or a comma after the last item. {fix}",
+            plain_serde_syntax(&err.to_string())
+        ),
+        Category::Data if err.to_string().starts_with("duplicate field `") => {
+            let msg = err.to_string();
+            let key = msg["duplicate field `".len()..]
+                .split('`')
+                .next()
+                .unwrap_or_default();
+            format!(
+                "zn could not use the settings file {file}: the setting \"{key}\" appears more than once ({at}). Keep only one \"{key}\" in that section. {fix}"
+            )
+        }
+        Category::Data => {
+            let what = plain_data_problem(&err.to_string());
+            match find_bad_setting(content) {
+                Some(setting) => format!(
+                    "zn could not use the settings file {file}: the setting \"{setting}\" has a wrong value ({what}). Correct that value ({at}). {fix}"
+                ),
+                None => format!(
+                    "zn could not use the settings file {file}: a setting has a wrong value ({what}) near {at}. Correct that value. {fix}"
+                ),
+            }
+        }
+        Category::Io => format!("zn could not read the settings file {file}: {err}"),
+    }
+}
+
+/// serde's syntax message without its position suffix.
+fn plain_serde_syntax(msg: &str) -> String {
+    match msg.rfind(" at line ") {
+        Some(i) => msg[..i].to_string(),
+        None => msg.to_string(),
     }
 }
 
@@ -1168,5 +1540,361 @@ mod audit_payload_tests {
         if let Err(e) = cfg.validate() {
             assert!(!e.to_string().contains("store_payloads"), "{e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod parse_message_tests {
+    use super::*;
+
+    fn problem(text: &str) -> String {
+        let err = serde_json::from_str::<ZnConfig>(text).expect_err("must not parse");
+        config_parse_problem("/work/zn.json", text, &err)
+    }
+
+    #[test]
+    fn truncated_file_names_the_file_and_the_next_step() {
+        let msg = problem("{\n");
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("ends too early"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+        assert!(!msg.contains("EOF while parsing"), "{msg}");
+    }
+
+    #[test]
+    fn wrong_type_names_the_setting_in_plain_words() {
+        let msg = problem(r#"{"server": {"port": "eighty"}}"#);
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("\"server.port\""), "{msg}");
+        assert!(msg.contains("whole number from 0 to 65535"), "{msg}");
+        assert!(msg.contains("the text \"eighty\""), "{msg}");
+        assert!(!msg.contains("u16"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn wrong_type_in_a_top_level_setting_is_named() {
+        let msg = problem(r#"{"environment": 5}"#);
+        assert!(msg.contains("\"environment\""), "{msg}");
+    }
+
+    #[test]
+    fn duplicate_key_is_rejected_and_named() {
+        let text = r#"{"server": {"port": 8080, "port": 9090}}"#;
+        let err = serde_json::from_str::<ZnConfig>(text).expect_err("duplicate key must not parse");
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        let msg = config_parse_problem("/work/zn.json", text, &err);
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("\"port\" appears more than once"), "{msg}");
+        assert!(msg.contains("line 1"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn duplicate_key_fails_to_load() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("dup.json");
+        std::fs::write(
+            &file,
+            r#"{"environment": "development", "environment": "production"}"#,
+        )
+        .expect("write");
+        let msg = ZnConfig::load(Some(&file))
+            .expect_err("a duplicate key must not load")
+            .to_string();
+        assert!(msg.contains("dup.json"), "{msg}");
+        assert!(
+            msg.contains("\"environment\" appears more than once"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn broken_syntax_points_at_the_line() {
+        let msg = problem("{\n  \"server\": {,}\n}");
+        assert!(msg.contains("not valid JSON at line 2"), "{msg}");
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+    }
+
+    #[test]
+    fn load_reports_the_file_that_failed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("bad.json");
+        std::fs::write(&file, "{\"server\": {\"port\": \"eighty\"}}").expect("write");
+        let err = ZnConfig::load(Some(&file)).expect_err("a bad file must not load");
+        let msg = err.to_string();
+        assert!(msg.contains("bad.json"), "{msg}");
+        assert!(msg.contains("server.port"), "{msg}");
+    }
+
+    #[test]
+    fn a_misspelled_setting_is_reported_with_a_suggestion() {
+        let notices = unknown_setting_notices("zn.json", "{\"server\": {\"prot\": 1}}");
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("\"server.prot\" was ignored"),
+            "{notices:?}"
+        );
+        assert!(
+            notices[0].contains("did you mean \"server.port\""),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn a_setting_in_the_wrong_section_points_to_the_right_one() {
+        let notices = unknown_setting_notices("zn.json", "{\"port\": 1}");
+        assert!(
+            notices[0].contains("did you mean \"server.port\""),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_setting_gets_no_guess() {
+        let notices = unknown_setting_notices("zn.json", "{\"flavour\": 1}");
+        assert!(
+            notices[0].contains("\"flavour\" was ignored"),
+            "{notices:?}"
+        );
+        assert!(!notices[0].contains("did you mean"), "{notices:?}");
+    }
+
+    #[test]
+    fn the_file_zn_init_writes_has_no_unknown_settings() {
+        let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
+        assert!(unknown_settings(&json).is_empty());
+    }
+
+    #[test]
+    fn an_unknown_key_in_security_or_audit_is_an_error() {
+        let err = checked_setting_notices("zn.json", "{\"security\": {\"block_unkown\": true}}")
+            .expect_err("a misspelt security key must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("security.block_unkown"), "{msg}");
+        let err = checked_setting_notices("zn.json", "{\"audit\": {\"encryption_enabld\": true}}")
+            .expect_err("a misspelt audit key must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("audit.encryption_enabld"), "{msg}");
+        assert!(
+            msg.contains("did you mean \"audit.encryption_enabled\""),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_in_another_section_is_still_a_warning() {
+        let notices = checked_setting_notices("zn.json", "{\"server\": {\"prot\": 1}}")
+            .expect("other sections only warn");
+        assert_eq!(notices.len(), 1, "{notices:?}");
+    }
+
+    #[test]
+    fn loading_a_file_with_a_misspelt_security_key_fails() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.json");
+        std::fs::write(&file, "{\"audit\": {\"encryption_enabld\": false}}").expect("write");
+        let err = ZnConfig::load_with_notices(Some(&file)).expect_err("must not load");
+        assert!(err.to_string().contains("audit.encryption_enabld"), "{err}");
+    }
+
+    #[test]
+    fn the_init_template_loads_without_notices_or_errors() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.json");
+        let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
+        std::fs::write(&file, json).expect("write");
+        let (_, notices) = ZnConfig::load_with_notices(Some(&file)).expect("template loads");
+        assert!(
+            notices.iter().all(|n| !n.contains("unknown")),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn comment_and_schema_keys_are_not_reported() {
+        assert!(unknown_settings("{\"$schema\": \"x\", \"_note\": \"y\"}").is_empty());
+    }
+
+    #[test]
+    fn a_missing_config_file_is_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let err = ZnConfig::load(Some(&dir.path().join("nope.json"))).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nope.json") && msg.contains("does not exist"),
+            "{msg}"
+        );
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn a_config_file_that_is_not_json_is_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.toml");
+        std::fs::write(&file, "port = 1").expect("write");
+        let err = ZnConfig::load(Some(&file)).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("zn.toml") && msg.contains("not a JSON file"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn an_invalid_port_variable_is_reported_and_the_port_is_kept() {
+        let mut config = ZnConfig::default();
+        config.server.port = 9090;
+        let mut notices = Vec::new();
+        std::env::set_var("ZN_PORT", "abc");
+        let applied = config.apply_env_overrides(&mut notices);
+        std::env::remove_var("ZN_PORT");
+        applied.expect("a bad port is only a notice");
+        assert_eq!(config.server.port, 9090);
+        assert_eq!(notices.len(), 1);
+        assert!(
+            notices[0].contains("ZN_PORT=\"abc\"") && notices[0].contains("9090"),
+            "{notices:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bool_flag_tests {
+    use super::*;
+
+    const FLAGS: [&str; 4] = [
+        "ZN_AUDIT_STORE_PAYLOADS",
+        "ZN_AUDIT_REQUIRE_WRITE",
+        "ZN_NEURAL_BLOCKING",
+        "ZN_GUARDRAILS_ALERT_ONLY",
+    ];
+
+    /// Applies the security flags with `var` set to `value` and every other one unset.
+    fn apply(var: &str, value: Option<&str>) -> Result<ZnConfig> {
+        let mut config = ZnConfig::default();
+        let value = value.map(str::to_string);
+        config.apply_security_flags(&|name| if name == var { value.clone() } else { None })?;
+        Ok(config)
+    }
+
+    fn read(config: &ZnConfig, var: &str) -> bool {
+        match var {
+            "ZN_AUDIT_STORE_PAYLOADS" => config.audit.store_payloads,
+            "ZN_AUDIT_REQUIRE_WRITE" => config.audit.require_write,
+            "ZN_NEURAL_BLOCKING" => config.neural.active_blocking,
+            "ZN_GUARDRAILS_ALERT_ONLY" => config.guardrails.alert_only,
+            _ => unreachable!("{var}"),
+        }
+    }
+
+    #[test]
+    fn every_accepted_spelling_parses() {
+        for on in [
+            "1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On", " on ", "\ttrue\n",
+        ] {
+            assert_eq!(parse_bool_flag("X", on).unwrap(), Some(true), "{on:?}");
+        }
+        for off in [
+            "0",
+            "false",
+            "FALSE",
+            "False",
+            "no",
+            "NO",
+            "No",
+            "off",
+            "OFF",
+            "Off",
+            " off ",
+            "\tfalse\n",
+        ] {
+            assert_eq!(parse_bool_flag("X", off).unwrap(), Some(false), "{off:?}");
+        }
+    }
+
+    #[test]
+    fn empty_and_blank_mean_unset() {
+        for blank in ["", " ", "   ", "\t", "\n", " \r\n"] {
+            assert_eq!(parse_bool_flag("X", blank).unwrap(), None, "{blank:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_values_are_an_error_naming_the_variable() {
+        for bad in [
+            "0n", "of", "y", "n", "2", "-1", "enabled", "truee", "on off", "\u{fffd}",
+        ] {
+            let err = parse_bool_flag("ZN_SOME_FLAG", bad)
+                .expect_err(bad)
+                .to_string();
+            assert!(err.contains("ZN_SOME_FLAG"), "{err}");
+            assert!(
+                err.contains("yes") && err.contains("off") && err.contains("unset or empty"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_variable_accepts_every_spelling() {
+        for var in FLAGS {
+            for on in [
+                "1", "true", "TRUE", "True", "yes", "YES", "on", "ON", " On ",
+            ] {
+                let config = apply(var, Some(on)).unwrap();
+                assert!(read(&config, var), "{var}={on:?}");
+            }
+            for off in [
+                "0", "false", "FALSE", "False", "no", "NO", "off", "OFF", " Off ",
+            ] {
+                let config = apply(var, Some(off)).unwrap();
+                assert!(!read(&config, var), "{var}={off:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_variable_rejects_an_invalid_value() {
+        for var in FLAGS {
+            for bad in ["0n", "ye", "maybe", "2", "tru"] {
+                let err = apply(var, Some(bad)).expect_err(bad).to_string();
+                assert!(err.contains(var) && err.contains(bad), "{err}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_variable_keeps_its_default_when_unset_or_empty() {
+        let defaults = ZnConfig::default();
+        for var in FLAGS {
+            for value in [None, Some(""), Some("  ")] {
+                let config = apply(var, value).unwrap();
+                assert_eq!(read(&config, var), read(&defaults, var), "{var} {value:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_from_the_config_file_survives_an_empty_variable() {
+        let mut config = ZnConfig::default();
+        config.audit.require_write = true;
+        config
+            .apply_security_flags(&|_| Some(String::new()))
+            .unwrap();
+        assert!(config.audit.require_write);
+    }
+
+    #[test]
+    fn a_bad_value_for_one_variable_stops_the_load() {
+        let mut config = ZnConfig::default();
+        let err = config
+            .apply_security_flags(&|name| match name {
+                "ZN_AUDIT_REQUIRE_WRITE" => Some("yes".to_string()),
+                "ZN_NEURAL_BLOCKING" => Some("0n".to_string()),
+                _ => None,
+            })
+            .expect_err("must fail");
+        assert!(err.to_string().contains("ZN_NEURAL_BLOCKING"), "{err}");
     }
 }

@@ -1,0 +1,7 @@
+$ /work/zcrt /opt/ZCode/resources/glm/zcode.cjs plugins enable zn-gate@usezn
+rc=0
+--stdout--
+Enabled plugin zn-gate@usezn in /work/home/.zcode/cli/config.json
+
+--stderr--
+

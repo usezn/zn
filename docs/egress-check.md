@@ -4,6 +4,19 @@ An agent that reads a web page, an issue or a file can be tricked into sending y
 
 It is on by default and it asks. It does not change anything else about the request.
 
+## At a glance
+
+| Request | Result |
+| --- | --- |
+| `curl -H "X-User: jane.doe@example.com" https://example.com/` | Flagged: an email address written in a header |
+| `curl "https://example.com/?email=jane.doe%40example.com"` | Flagged: a percent-encoded email address in the URL is read too |
+| `node -e "fetch('https://example.com', {body: 'jane.doe@example.com'})"` | Flagged: inline code that makes a request is read, including its body |
+| `curl -H "Authorization: Bearer $TOKEN" https://example.com/` | Not flagged: the value comes from an environment variable |
+| `curl -d '{"email":"jane.doe@example.com"}' http://localhost:8080/` | Not flagged: requests to your own machine are never checked |
+| `git commit -m "reply to a@example.com"` | Not flagged: the command only mentions an address, it is not a network request |
+
+The sections below list everything that is checked and everything that is not.
+
 ## What is checked
 
 | Where the request is written | Examples |
@@ -24,7 +37,7 @@ Percent-encoded values are read too: `jane.doe%40example.com` in a URL or a form
 
 It looks for the same things the zn-gate scrubber already finds:
 
-- **personal data:** email addresses, phone numbers, bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
+- **personal data:** email addresses, international phone numbers (see Limits), bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
 - **literal secrets:** API keys, tokens, private keys and passwords in URLs, plus any secret you stored in the zn vault.
 
 ## What it does not flag
@@ -93,6 +106,8 @@ This reads the text of a command, a URL or the arguments of an MCP call. It is a
 - the body of a file you upload with `@file`.
 
 It also depends on the scrubber: it reports what the scrubber can detect, so a name or an address that has no fixed format (a street, a first name) is not found, and neither is a bare password passed with `--user name:password` unless it looks like a credential the scrubber knows. MCP calls are checked in agents that send their arguments to the pre-tool check (see [Agent compatibility](compat.md)).
+
+Phone numbers are found only in the international form: a `+`, a country code and 8 to 15 digits in total, written together (`+34600123456`) or in groups separated by single spaces, dashes or dots (`+34 600 123 456`, `+1 202-555-0143`, `+44 20 7946 0958`). A number written without the `+` (`(202) 555-0143`, `020 7946 0958`) is not found: in agent traffic such digit groups are most often dates, ids, versions or prices, so reporting them would flag too much harmless text.
 
 The Python package (`zn-gate` on PyPI) does not install hooks and has no personal-data detector, so this check is part of the Node.js hooks only.
 

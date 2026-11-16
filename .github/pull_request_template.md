@@ -7,6 +7,7 @@
 ## Checklist
 
 - [ ] The pull request targets `next`.
+- [ ] I ran the required checks that apply (see "Run the required checks locally" in CONTRIBUTING.md).
 - [ ] Tests cover the change: `npm test` in `packages/zn-gate` and, if you touched the Python package, `python -m pytest tests/` in `packages/zn-gate-py`.
 - [ ] New or changed rules are in both `packages/zn-gate/lib/rules.js` and `packages/zn-gate-py/src/zn_gate/rules.py`, with positive and negative test cases and no new false positives.
 - [ ] I bumped the version of every rule layer I changed and ran `node packages/zn-gate/scripts/update-rules-snapshot.js`; I explain in this description any snapshot change without a version increase.

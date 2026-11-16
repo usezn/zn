@@ -119,3 +119,20 @@ def test_evidence_engine_export():
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_log_evidence_writes_only_to_the_given_file(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.setenv("ZN_HOME", str(tmp_path / "zn-home"))
+    target = tmp_path / "ledger" / "evidence.jsonl"
+    from zn_gate.evidence import log_evidence
+    log_evidence({"verdict": "ALLOW", "tool_name": "t", "payload": "x"}, file_path=str(target))
+    assert target.is_file()
+    assert not (fake_home / ".zn").exists()
+    assert not (tmp_path / "zn-home").exists()
+    for p in tmp_path.rglob("*"):
+        assert p == target or p == target.parent or p == fake_home or p.name.startswith(target.name) \
+            or p.parent == target.parent

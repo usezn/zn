@@ -205,7 +205,8 @@ function normalize(raw) {
   const { pathsOf } = require('./gemini');
   if (mcp) {
     const mp = pathsOf(args);
-    const ours = znMcpServerIsOurs(mcp[1]);
+    // Only an exact tool of zn's server counts (a server named secrets_ or secrets__x parses as server secrets).
+    const ours = require('../broker/secrets-tools').isSecretsToolName(mcp[2]) ? znMcpServerIsOurs(mcp[1]) : null;
     const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2], ...(ours ? { ours } : {}) }, input: { args: rawInput === undefined || rawInput === null ? {} : rawInput, paths: mp.paths, texts: [] } };
     if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
@@ -223,7 +224,7 @@ function normalize(raw) {
     const tooLong = text.length > PATCH_SCAN_CAP;
     const scan = tooLong ? { files: [], suspicious: false } : patchScan(text);
     const home = os.homedir();
-    const zn = scan.files.find((f) => path.resolve(cwd, f).replace(/\\/g, '/').startsWith(path.join(home, '.zn').replace(/\\/g, '/')));
+    const zn = require('./codex').znStateFile(scan.files, cwd, home);
     return {
       ...ev, tool: 'write', input: { paths: scan.files, path: zn || scan.files[0], tooLong, unparsed: !tooLong && (scan.files.length === 0 || scan.suspicious), texts: [] },
     };

@@ -132,7 +132,7 @@ test('claude-code: a fresh home gets the hooks; uninstall removes them and the h
   const r = claude.install(opts(h));
   assert.equal(r.settings, file);
   assert.equal(r.backup, null, 'nothing to back up in a fresh home');
-  assert.deepEqual(Object.keys(json(file).hooks).sort(), ['PostToolUse', 'PreToolUse', 'UserPromptExpansion', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(json(file).hooks).sort(), ['ConfigChange', 'InstructionsLoaded', 'PostToolUse', 'PreToolUse', 'UserPromptExpansion', 'UserPromptSubmit']);
   const u = claude.uninstall(opts(h));
   assert.equal(u.removed, 1);
   assert.equal(u.backup !== null, true);
@@ -186,7 +186,7 @@ test('claude-code: an empty settings file is treated as an empty one', (t) => {
   const file = path.join(h, '.claude', 'settings.json');
   write(file, '   ');
   claude.install(opts(h));
-  assert.equal(Object.keys(json(file).hooks).length, 4);
+  assert.equal(Object.keys(json(file).hooks).length, 6);
 });
 
 test('claude-code: uninstall when nothing is installed changes nothing and creates nothing', (t) => {

@@ -201,7 +201,7 @@ class TestValidatedSecretPatterns(unittest.TestCase):
         self.assertIn("secret:openai_key", [d["rule"] for d in found])
 
     def test_openai_pattern_skips_hyphenated_slugs(self):
-        slug = "/gdańsk-to-warsaw-train-schedule-2026-autumn-edition"
+        slug = "/gdańsk-to-warsaw-train-schedule-for-the-autumn-edition"
         self.assertEqual(R.redact_secrets(slug)[1], [])
         legacy = "sk-" + "A1" * 24
         self.assertIn("secret:openai_key", [d["rule"] for d in R.redact_secrets(legacy)[1]])

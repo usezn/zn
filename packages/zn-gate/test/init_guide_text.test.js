@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { guide, plan } = require('../lib/init-guide');
 const { tempDir } = require('./helpers/tmp');
+const { winCmdRe } = require('./helpers/wincmd');
 
 function machine(t, agents) {
   const home = tempDir(t, 'zn-guide-text-home-');
@@ -30,14 +31,14 @@ test('guide text: Claude Code gets the plugin commands to type', async (t) => {
   const { text } = await printed(machine(t, ['claude-code']));
   assert.match(text, /\/plugin marketplace add usezn\/zn/);
   assert.match(text, /\/plugin install zn-gate@usezn/);
-  assert.doesNotMatch(text, /zn hooks install claude-code/);
+  assert.doesNotMatch(text, winCmdRe(/zn hooks install claude-code/));
 });
 
 test('guide text: Codex CLI and Cursor get zn hooks install for their own id', async (t) => {
   const { text } = await printed(machine(t, ['codex', 'cursor']));
-  assert.match(text, /zn hooks install codex/);
-  assert.match(text, /zn hooks install cursor/);
-  assert.doesNotMatch(text, /zn hooks install opencode/);
+  assert.match(text, winCmdRe(/zn hooks install codex/));
+  assert.match(text, winCmdRe(/zn hooks install cursor/));
+  assert.doesNotMatch(text, winCmdRe(/zn hooks install opencode/));
 });
 
 test('guide text: an agent that is not found is listed as not found and gets no step', async (t) => {
@@ -48,7 +49,7 @@ test('guide text: an agent that is not found is listed as not found and gets no 
   assert.deepEqual(cursor.steps, []);
   const { text } = await printed(m);
   assert.match(text, /Cursor\s+not found on this machine/);
-  assert.doesNotMatch(text, /zn hooks install cursor/);
+  assert.doesNotMatch(text, winCmdRe(/zn hooks install cursor/));
 });
 
 test('guide text: an unknown agent is never offered; with no known agent nothing is changed', async (t) => {
@@ -60,7 +61,7 @@ test('guide text: an unknown agent is never offered; with no known agent nothing
   assert.equal(code, 1);
   assert.match(text, /No supported coding agent was found/);
   assert.match(text, /Nothing was changed\./);
-  assert.doesNotMatch(text, /zn hooks install/);
+  assert.doesNotMatch(text, winCmdRe(/zn hooks install/));
 });
 
 test('guide text: the output has no absolute path of the home, the working folder or the temp folder', async (t) => {

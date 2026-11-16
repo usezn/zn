@@ -42,11 +42,61 @@ function licenseOf(pkg) {
   return l.type ?? 'UNKNOWN';
 }
 
-// "(MIT OR Apache-2.0)" is fine when any alternative is allowed; "AND" needs all.
+class ParseError extends Error {}
+
+// "WITH" exceptions that do not change what the project may ship; the base
+// license still has to be allowed. Same list as license-check-py.py.
+const EXCEPTIONS = new Set(['LLVM-exception']);
+
+// SPDX expression: "AND" binds tighter than "OR", parentheses group.
+// An OR is allowed when any alternative is; an AND only when every part is.
+// Unknown ids and anything that does not parse are not allowed.
 function isAllowed(expr) {
-  const flat = expr.replace(/[()]/g, ' ').trim();
-  if (/\sAND\s/.test(flat)) return flat.split(/\s+AND\s+/).every((p) => isAllowed(p));
-  return flat.split(/\s+OR\s+/).some((p) => allowed.has(p.trim()));
+  const tokens = expr.match(/\(|\)|[^\s()]+/g) ?? [];
+  let pos = 0;
+  const atom = () => {
+    const tok = tokens[pos];
+    if (tok === undefined || tok === ')' || tok === 'AND' || tok === 'OR' || tok === 'WITH') throw new ParseError(expr);
+    pos += 1;
+    if (tok === '(') {
+      const value = orExpr();
+      if (tokens[pos] !== ')') throw new ParseError(expr);
+      pos += 1;
+      return value;
+    }
+    if (tokens[pos] === 'WITH') {
+      const exception = tokens[pos + 1];
+      if (exception === undefined || ['(', ')', 'AND', 'OR', 'WITH'].includes(exception)) throw new ParseError(expr);
+      pos += 2;
+      return allowed.has(tok) && EXCEPTIONS.has(exception);
+    }
+    return allowed.has(tok);
+  };
+  const andExpr = () => {
+    let value = atom();
+    while (tokens[pos] === 'AND') {
+      pos += 1;
+      const next = atom();
+      value = value && next;
+    }
+    return value;
+  };
+  const orExpr = () => {
+    let value = andExpr();
+    while (tokens[pos] === 'OR') {
+      pos += 1;
+      const next = andExpr();
+      value = value || next;
+    }
+    return value;
+  };
+  try {
+    const value = orExpr();
+    return pos === tokens.length && value;
+  } catch (err) {
+    if (err instanceof ParseError) return false;
+    throw err;
+  }
 }
 
 const rows = packageDirs(root)

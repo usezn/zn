@@ -15,6 +15,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from zn_gate.shell_names import npx_name
 from zn_gate import mcp_secrets as mcp
 from zn_gate.cli import cmd_scan
 
@@ -106,7 +107,8 @@ class TestMcpSecrets(_Base):
 
     def test_next_step_is_plain(self):
         env = mcp.mcp_next_step("environment variable", "BRAVE_API_KEY")
-        self.assertIn("npx -y zn-gate secret set BRAVE_API_KEY", env)
+        self.assertIn(npx_name() + " -y zn-gate secret set BRAVE_API_KEY", env)
+        self.assertIn("commands of the npm package, not of this Python package", env)
         self.assertIn("put run, --secrets, BRAVE_API_KEY, -- and the old command first in args", env)
         self.assertIn("environment variable BRAVE_API_KEY", env)
         self.assertNotIn("put __ZN_", env)
@@ -130,9 +132,11 @@ class TestMcpSecrets(_Base):
             "one huge value": '{ "A_TOKEN": "' + "x" * (2 * mb) + '" }',
         }
         for name, text in inputs.items():
-            t0 = time.time()
+            # CPU time of this process, not wall-clock: a busy machine must not fail a linear scan,
+            # while a quadratic one still takes far longer than the limit.
+            t0 = time.process_time()
             mcp.find_mcp_config_secrets(text)
-            self.assertLess(time.time() - t0, 30, name)
+            self.assertLess(time.process_time() - t0, 30, name)
 
 
 class TestScanMcpConfigs(_Base):

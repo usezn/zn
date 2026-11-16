@@ -1,0 +1,73 @@
+name: Coding agent on pull requests
+
+# A hardened layout for running a coding agent in CI. See docs/agents-in-ci.md.
+#
+# - It runs on pull_request, not pull_request_target. For a pull request from a
+#   fork, GitHub gives this trigger a read-only token and no secrets.
+# - The first job audits the agent configuration and holds no secret.
+# - The second job is the only one with a secret. It waits for the first job,
+#   runs only for branches of this repository, and uses an environment, so the
+#   secret is released only after a reviewer approves the run.
+# - Text anyone can write (title, description, branch name) is never put into
+#   a script or into the agent's prompt.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Nothing by default: each job asks for what it needs.
+permissions: {}
+
+# One run per pull request: a new push replaces the run that is still going.
+concurrency:
+  group: agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zn-gate:
+    name: Audit agent configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write   # only for the SARIF upload
+      actions: read            # private repositories only, for upload-sarif
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit agent configs and scan for secrets
+        id: zn
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
+        with:
+          version: '1.15.0'
+          mode: both
+          format: sarif
+          severity-threshold: medium
+      - name: Upload SARIF
+        if: ${{ !cancelled() && steps.zn.outputs.sarif-file != '' }}
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: ${{ steps.zn.outputs.sarif-file }}
+
+  agent:
+    name: Run the agent
+    needs: zn-gate
+    # Branches of this repository only: a pull request from a fork never reaches
+    # the secret. The environment below adds a human approval.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: coding-agent   # holds AGENT_API_KEY; set required reviewers on it
+    permissions:
+      contents: read            # raise to write only if the agent must push, and only here
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the agent
+        env:
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
+        # Replace with your agent's own action or command. Give it a fixed
+        # prompt and the checked-out files, not the pull request text.
+        run: ./ci/run-agent.sh

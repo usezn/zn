@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { restartIfOutdated, isOutdatedVault, unlockedLine, OLD_VAULT_STUCK } = require('../lib/vault/cli');
+const { winRe } = require('./helpers/wincmd');
 
 const fakeClient = (status) => () => ({ status: async () => { if (status instanceof Error) throw status; return status; }, close() {} });
 
@@ -38,7 +39,7 @@ test('zn vault status names the version and flags an outdated vault', () => {
   assert.equal(unlockedLine(meta, { expiresAt: 'T', features: ['resolve-policy', 'capabilities'], version: '1.8.0' }),
     'Vault: unlocked (backend passphrase, expires T, zn-gate 1.8.0)');
   assert.match(unlockedLine(meta, { expiresAt: 'T' }),
-    /^Vault: unlocked \(backend passphrase, expires T\), outdated: restart with `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) lock`, then `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`$/);
+    winRe(/^Vault: unlocked \(backend passphrase, expires T\), outdated: restart with `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) lock`, then `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`$/));
 });
 
 test('zn unlock does not go on while the old vault process is still alive', async () => {

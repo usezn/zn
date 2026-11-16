@@ -1,0 +1,76 @@
+name: zn-gate Node.js tests and benchmarks
+description: >
+  The steps of the "Node.js <version> tests & benchmarks" jobs of zn CI, shared by the matrix job and the
+  Node.js 18.x and 24.x jobs: decide what the change needs (ci-scope.sh), then install zn-gate and run its unit
+  tests, integration tests and benchmark verification. On Node.js 22.x the unit tests run under c8 and the
+  coverage report is uploaded. The job checks out the repository before it uses this action.
+
+inputs:
+  node-version:
+    description: The Node.js version to test, as setup-node takes it (for example 22.x).
+    required: true
+  full:
+    description: '"true" when the full matrix was asked for (ci-scope.sh then runs every step).'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Decide what this change needs
+      id: scope
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        FULL: ${{ inputs.full }}
+      run: bash .github/scripts/ci-scope.sh
+    - name: Use Node.js ${{ inputs.node-version }}
+      if: steps.scope.outputs.run == 'true'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        package-manager-cache: false
+        node-version: ${{ inputs.node-version }}
+        check-latest: true
+    - name: Install zn-gate dependencies
+      if: steps.scope.outputs.run == 'true'
+      shell: bash
+      working-directory: packages/zn-gate
+      run: npm ci --ignore-scripts
+    - name: Run zn-gate unit tests
+      if: steps.scope.outputs.run == 'true' && inputs.node-version != '22.x'
+      shell: bash
+      working-directory: packages/zn-gate
+      run: npm test
+    - name: Run zn-gate unit tests with a coverage report
+      # The same tests as `npm test`, run under c8 on one Node.js version. Report only, no threshold.
+      if: steps.scope.outputs.run == 'true' && inputs.node-version == '22.x'
+      shell: bash
+      working-directory: packages/zn-gate
+      run: |
+        set -o pipefail
+        npx --no-install c8 --reporter=lcov --reporter=text --reporter=text-summary \
+          --report-dir="$RUNNER_TEMP/coverage-node" --include='lib/**' --include='bin/**' \
+          node test/run-all.js 2>&1 | tee "$RUNNER_TEMP/coverage-node.log"
+        {
+          echo '### zn-gate (Node.js) coverage'
+          echo '```'
+          sed -n '/^=* Coverage summary =*/,/^=*$/p' "$RUNNER_TEMP/coverage-node.log" | grep -E '^(Statements|Branches|Functions|Lines)'
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: Upload Node.js coverage report
+      if: always() && steps.scope.outputs.run == 'true' && inputs.node-version == '22.x'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: coverage-node
+        path: ${{ runner.temp }}/coverage-node/lcov.info
+        if-no-files-found: ignore
+        retention-days: 14
+    - name: Run zn-gate integration tests
+      if: steps.scope.outputs.run == 'true'
+      shell: bash
+      working-directory: packages/zn-gate
+      run: node test/integration/test_agent_workflows.js
+    - name: Run benchmark verification
+      if: steps.scope.outputs.run == 'true'
+      shell: bash
+      run: node bench/bench_node.js

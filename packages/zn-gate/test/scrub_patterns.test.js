@@ -8,6 +8,7 @@ const path = require('path');
 const { test, run } = require('./_harness');
 const P = require('../lib/scrub/patterns');
 const { generateAll, mulberry32 } = require('./fixtures/fake_secrets');
+const { budget } = require('./helpers/time_budget');
 
 const rnd = mulberry32(424242);
 const pick = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[Math.floor(rnd() * chars.length)]; return s; };
@@ -182,13 +183,13 @@ test('HF letters-only check is linear on adversarial bodies', () => {
   let t0 = process.hrtime.bigint();
   P.findPatterns(many, {});
   let ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 50, 'twenty adversarial bodies took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(50), 'twenty adversarial bodies took ' + ms.toFixed(1) + ' ms');
   const long = Array.from({ length: 423 }, () => unit + ' ').join('');
   assert.ok(long.length >= 16000 && long.length < 17000, String(long.length));
   t0 = process.hrtime.bigint();
   P.findPatterns(long, {});
   ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 200, '16k-character text took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(200), '16k-character text took ' + ms.toFixed(1) + ' ms');
 });
 
 test('Azure AD client secret at the end of a sentence: the full stop is not part of the span', () => {
@@ -472,7 +473,7 @@ test('BEARER_TOKEN and URL_PASSWORD stay fast on 100 KB adversarial inputs', () 
     const t0 = process.hrtime.bigint();
     P.findPatterns(input, {});
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 500, 'findPatterns took ' + ms.toFixed(1) + ' ms on ' + JSON.stringify(input.slice(0, 16)));
+    assert.ok(ms < budget(500), 'findPatterns took ' + ms.toFixed(1) + ' ms on ' + JSON.stringify(input.slice(0, 16)));
   }
 });
 
@@ -552,5 +553,25 @@ test('AWS key ids ending in EXAMPLE are redacted for every prefix', () => {
   for (const prefix of ['AKIA', 'ASIA', 'ABIA', 'ACCA']) {
     const t = 'key ' + prefix + 'IOSFODNN7' + 'EXAMPLE' + ' here';
     assert.deepStrictEqual(types(t), ['AWS_KEY'], t);
+  }
+});
+
+test('phone numbers: international form with single separators is redacted', () => {
+  for (const t of ['+34 600 000 000', '+1 202-555-0143', '+44 20 7946 0958', '+44.20.7946.0958', '+1 202.555.0199', '+34600000000', '+33 1 23 45 67 89', '+34 600123456', '+44 7700900123', '+33 612345678', '+1 2025550143', '+49 15123456789']) {
+    assert.deepStrictEqual(P.findPii('call ' + t + ' now', {}).map((s) => s.type), ['PHONE'], t);
+    const spans = P.findPii('call ' + t + ' now', {});
+    assert.strictEqual(spans[0].end - spans[0].start, t.length, t);
+  }
+  const text = 'tel +44 20 7946 0958, alt +1 202-555-0143.';
+  const found = require('../lib/scrub/engine').scan(text);
+  assert.deepStrictEqual(found.map((s) => text.slice(s.start, s.end)), ['+44 20 7946 0958', '+1 202-555-0143']);
+});
+
+test('phone numbers: national formats and look-alikes stay unflagged', () => {
+  for (const t of ['(202) 555-0143', '202-555-0143', '020 7946 0958', '1.2.3-4', 'v1.2.3-4', '2026-10-30', '+2026-10-30 12:00', '+2026-10-30 1234',
+    '192.0.2.10', '+192.0.2.10', '+198.51.100.200', 'a = 1 + 2 - 3', '1+2-3', 'x+1 2 3', '^1.2.3 || >=2.0.0 <3.0.0', '~1.2.3 +build.5',
+    '550e8400-e29b-41d4-a716-446655440000', '+550e8400-e29b-41d4-a716-446655440000', 'deadbeefdeadbeefdeadbeefdeadbeef', '+1 2026-10-30',
+    '$1,234.56', '+$12.50 plus 3 - 4', 'total 1 200 300 400', '+44 20 79', '+44 7946', '+1.2.3.4.5.6.7.8', '+1 202 555', '++34 600 000 000', '+34 60012345', '+34 6001234567', '+34 600123456789', '+999 123456789', '+7 1234567890', '+2 1234567', 'x +1 2026', '+12 20261030', 'a +34 6001234567 b', '+34 0600123456']) {
+    assert.ok(!P.findPii(t, {}).some((s) => s.type === 'PHONE'), t);
   }
 });

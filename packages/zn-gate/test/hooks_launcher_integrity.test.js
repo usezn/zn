@@ -19,15 +19,15 @@ const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix } = require('./helpers/posix_sh');
 const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 const CHANGED = /zn-gate changed since the hooks were installed/;
-const AGAIN = /zn hooks install claude-code/;
+const AGAIN = /zn(?:\.cmd)? hooks install claude-code/;
 
 function setup(t, nodePath = process.execPath) {
-  const home = tempDir(t, 'zn-b1174-');
+  const home = tempDir(t, 'zn-launcher-integrity-');
   const env = { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
-  const runner = path.join(tempDir(t, 'zn-b1174-pkg-'), 'runner.js');
+  const runner = path.join(tempDir(t, 'zn-launcher-integrity-pkg-'), 'runner.js');
   fs.writeFileSync(runner, REAL);
   const install = (node = nodePath) => claude.install({ env, home, nodePath: node, runnerPath: runner, mcp: false });
   install();
@@ -49,6 +49,16 @@ test('integrity: the launcher records the SHA-256 of the runner', { skip: !posix
   const { file, runner } = setup(t);
   assert.match(fs.readFileSync(file, 'utf8'), new RegExp("^ZN_SHA='" + launcher.runnerSha(runner) + "'$", 'm'));
   assert.match(launcher.runnerSha(runner), /^[0-9a-f]{64}$/);
+});
+
+test('integrity: a launcher made with an empty digest (unreadable runner at install time) refuses to run the runner', { skip: !posix }, (t) => {
+  const { file, runner } = setup(t);
+  fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, runner, { runnerDigest: '' }), { mode: 0o755 });
+  assert.match(fs.readFileSync(file, 'utf8'), /^ZN_SHA=''$/m);
+  const r = run(file, 'PreToolUse');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, CHANGED);
+  assert.doesNotMatch(r.stdout, /REAL_RUNNER/);
 });
 
 test('integrity: a stub runner that exits 0 is blocked with the new reason, not passed through', { skip: !posix }, (t) => {
@@ -95,7 +105,7 @@ test('integrity: an updated package (a new runner) is blocked with the reinstall
 
 test('integrity: no hash tool is needed: the recorded Node.js checks the runner, also with an empty PATH', { skip: !posix }, (t) => {
   const { file } = setup(t);
-  const empty = tempDir(t, 'zn-b1174-empty-');
+  const empty = tempDir(t, 'zn-launcher-integrity-empty-');
   const r = run(file, 'PreToolUse', empty);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'REAL_RUNNER');
@@ -106,7 +116,7 @@ test('integrity: a hash tool in the project that prints the recorded digest cann
   const sha = /^ZN_SHA='([0-9a-f]{64})'$/m.exec(fs.readFileSync(file, 'utf8'))[1];
   const mark = path.join(home, 'changed-runner-ran');
   fs.writeFileSync(runner, "require('fs').writeFileSync(" + JSON.stringify(mark) + ", 'ran'); require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok');\n");
-  const project = tempDir(t, 'zn-b1174-proj-');
+  const project = tempDir(t, 'zn-launcher-integrity-proj-');
   const bin = path.join(project, 'bin');
   fs.mkdirSync(bin);
   // Every tool a shell launcher could ask answers with the recorded digest (sha256sum, shasum and openssl formats).
@@ -138,7 +148,7 @@ test('integrity: the deadline and other launcher options are kept with the diges
 
 test('integrity: a fake zn on an absolute PATH entry is not run when the recorded Node.js is gone', { skip: !posix }, (t) => {
   const { home, file } = setup(t, '/nonexistent/node-gone/bin/node');
-  const bin = tempDir(t, 'zn-b1174-bin-');
+  const bin = tempDir(t, 'zn-launcher-integrity-bin-');
   const mark = path.join(home, 'fake-zn-ran');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\ntouch ' + mark + '\nexit 0\n', { mode: 0o755 });
@@ -152,17 +162,17 @@ test('check: reports a launcher whose runner no longer matches the recorded SHA-
   // Give the check a runner that really answers, so that only the digest tells the difference.
   const real = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
   claude.install({ env, home, nodePath: process.execPath, runnerPath: real, mcp: false });
-  let r = (await check({ home, env, cwd: tempDir(t, 'zn-b1174-cwd-') })).results.find((x) => x.id === 'claude-code');
+  let r = (await check({ home, env, cwd: tempDir(t, 'zn-launcher-integrity-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'protected', r.problem);
   // The runner of that install changes (an update): same path, other bytes.
   const copy = path.join(path.dirname(runner), 'runner2.js');
   fs.writeFileSync(copy, fs.readFileSync(real));
   claude.install({ env, home, nodePath: process.execPath, runnerPath: copy, mcp: false });
   fs.appendFileSync(copy, '\n// changed after install\n');
-  r = (await check({ home, env, cwd: tempDir(t, 'zn-b1174-cwd-') })).results.find((x) => x.id === 'claude-code');
+  r = (await check({ home, env, cwd: tempDir(t, 'zn-launcher-integrity-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /zn-gate changed since the hooks were installed/);
-  assert.match(r.fix, /zn hooks install claude-code/);
+  assert.match(r.fix, /zn(?:\.cmd)? hooks install claude-code/);
 });
 
 test('integrity: a NODE_OPTIONS that makes -e an ES module does not break the hook', { skip: !posix }, (t) => {

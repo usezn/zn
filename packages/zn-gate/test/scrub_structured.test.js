@@ -9,6 +9,7 @@ const assert = require('assert');
 const { test, run } = require('./_harness');
 const P = require('../lib/scrub/patterns');
 const { mulberry32 } = require('./fixtures/fake_secrets');
+const { budget } = require('./helpers/time_budget');
 
 const rnd = mulberry32(5150);
 const pick = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[Math.floor(rnd() * chars.length)]; return s; };
@@ -243,7 +244,7 @@ test('64 KB worst-case inputs finish quickly (no super-linear backtracking)', ()
   };
   for (const [name, text] of Object.entries(inputs)) {
     const ms = timeMs(() => P.findPatterns(text, {}));
-    assert.ok(ms < 500, name + ' took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(500), name + ' took ' + ms.toFixed(1) + ' ms');
   }
 });
 

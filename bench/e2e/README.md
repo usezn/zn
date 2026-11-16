@@ -14,8 +14,8 @@ Each agent runs the same steps, using its own tools:
 1. Read the project's `.env` (shadowed: markers only).
 2. Read `config/settings.yml`, which holds plain-text fake AWS keys.
 3. Write `src/client.js` with a marker in it. The file is tracked by git, so the marker stays.
-4. Run an allowed command with a marker (`node -e "console.log(process.argv[1])" __ZN_DB_PASSWORD__`). It prints the value.
-5. Run a command the user does not approve (`python3 …` with the same marker).
+4. Run an allowed command that gets the secret as an environment variable (`zn run --secrets DB_PASSWORD -- node -e "console.log(process.env.DB_PASSWORD)"`). It prints the value, and zn masks it. A marker in a command's arguments is refused, never filled in, so the task does not use one (Codex also tries the refused form once).
+5. Run a command the user does not approve (`python3 …` with the same `zn run --secrets` form).
 6. Read `~/.aws/credentials`.
 7. Claude Code only: restore a detected token into a local command (`printf %s __ZN_AWS_KEY_1__ | wc -c`).
 8. In a second session, send a prompt with a fake secret pasted in it.
@@ -26,13 +26,13 @@ it approves first use by `node` and declines everything else.
 dialogs (`--permission-prompt-tool`): it approves, and logs what the dialog
 showed.
 
-## Results (2026-10-11, Ubuntu 26.04, Node 24.21)
+## Results (2026-10-31, Ubuntu 26.04, Node 24.22)
 
 | Agent | Version | Values sent to the provider | Notes |
 |---|---|---|---|
-| Claude Code | 2.1.296 | **0** | Outputs scrubbed before the model. The allowed command ran through `zn run` (output masked). The declined command exited 77. The credential read was denied. The pasted prompt was stopped before any request. |
-| Codex CLI | 0.162.1 | **0** | The marker command was denied with the `zn run -- …` line, and the agent's `zn run` call then worked. Output was replaced through "block". The pasted prompt was blocked. |
-| OpenCode | 1.19.0 | **0** | The command was wrapped in place, outputs and TUI previews scrubbed, the credential read blocked, the pasted prompt stopped (OpenCode reports it as a server error). |
+| Claude Code | 2.1.316 | **0** | Outputs scrubbed before the model. The allowed command ran through `zn run` (output masked). The declined command exited 77. The credential read was denied. The pasted prompt was stopped before any request. |
+| Codex CLI | 0.166.0 | **0** | The command with a marker in its arguments was denied with the guidance to use `zn run --secrets NAME`, and the agent's `zn run --secrets` call then worked. Output was replaced through "block". The pasted prompt was blocked. |
+| OpenCode | 1.19.5 | **0** | The agent's `zn run --secrets` command ran, outputs and TUI previews scrubbed, the credential read blocked, the pasted prompt stopped (OpenCode reports it as a server error). |
 | Cursor | — | not run | No Cursor CLI with hooks can be driven from a script. The adapter is covered by unit tests on the documented event shapes. |
 
 **Does Claude Code forward a rewritten command to the model?** No. When zn

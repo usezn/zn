@@ -39,7 +39,7 @@ def test_missing_or_corrupt_file(tmp_path, monkeypatch):
 
 def test_cli_stats_json(tmp_path, monkeypatch):
     monkeypatch.setenv("ZN_HOME", str(tmp_path))
-    today = datetime.datetime.utcnow().date().isoformat()
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
     write(tmp_path, {today: {"hook:claude-code": {"checked": 2, "blocked": 1, "warned": 0, "redacted": 0, "detections": {}}}})
     env = dict(os.environ, PYTHONPATH=str(SRC) + os.pathsep + os.environ.get("PYTHONPATH", ""))
     out = subprocess.run([sys.executable, "-m", "zn_gate.cli", "stats", "--json"], capture_output=True, text=True, check=True, env=env).stdout

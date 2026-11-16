@@ -1,0 +1,18 @@
+{
+ "rc": 0,
+ "dur_s": 5.3,
+ "requests": 2,
+ "tool_msgs": [
+  "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "success",
+  "failed",
+  "blocked",
+  "failed"
+ ]
+}

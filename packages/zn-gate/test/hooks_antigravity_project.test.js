@@ -1,5 +1,10 @@
 'use strict';
+// Bash reads the account ~/.bashrc when its stdin is a socket (Node's piped stdio is one) and SHLVL is unset,
+// which is how bash treats a shell started by a remote daemon such as sshd. That file may set PATH, so skip it
+// with --norc --noprofile to keep the guard cases hermetic.
 process.env.ZN_STATS = 'off';
+// Only bash needs the flags; dash and sh are spawned exactly as before.
+const shellArgs = (sh) => (/(^|\/)bash$/.test(sh) ? ['--norc', '--noprofile'] : []);
 
 // Antigravity project hook (`zn hooks install antigravity --project`): the shared .agents/hooks.json names `zn` on
 // the PATH, so it carries its own guard. Antigravity runs the command split on spaces with no shell; these tests run
@@ -176,10 +181,10 @@ test('it works the same with dash, bash and when a shell runs the whole line', s
     assert.equal(JSON.parse(ok.stdout).decision, 'allow', shell);
     // If Antigravity did hand the line to a shell, the script still gives the same answers.
     const bin = mkbin(t, { node: true, shell });
-    const viaShell = spawnSync(shell, ['-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin } });
+    const viaShell = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin } });
     assert.equal(JSON.parse(viaShell.stdout).decision, 'deny', shell + ' outer shell');
     const bin2 = mkbin(t, { node: true, shell, zn: ALLOW });
-    const viaShell2 = spawnSync(shell, ['-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin2 } });
+    const viaShell2 = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin2 } });
     assert.equal(JSON.parse(viaShell2.stdout).decision, 'allow', shell + ' outer shell');
   }
 });

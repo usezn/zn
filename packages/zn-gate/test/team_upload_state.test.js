@@ -577,3 +577,34 @@ test('pendingCount counts records after the saved head and ignores corrupt lines
   await uploadPending(opts(f, fakeApi(), { batchSize: 2, maxBatches: 1 }));
   assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile }), 4);
 });
+
+test('startAfterSeq: a stored head below the join floor is ignored, nothing before the floor is sent or counted', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 120);
+  const rec = lines(f.auditFile).map((l) => JSON.parse(l)).find((r) => r.seq === 50);
+  fs.mkdirSync(path.dirname(f.stateFile), { recursive: true });
+  fs.writeFileSync(f.stateFile, JSON.stringify({ head: { seq: 50, mac: rec.mac }, last_status: 'ok' }));
+  assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile, startAfterSeq: 100 }), 20);
+  const api = fakeApi();
+  const r = await uploadPending(opts(f, api, { startAfterSeq: 100 }));
+  assert.strictEqual(r.status, 'ok');
+  assert.ok(api.calls.length > 0);
+  for (const call of api.calls) {
+    for (const e of call.events) assert.ok(e.seq > 100, 'record ' + e.seq + ' is from before the join');
+  }
+  assert.deepStrictEqual(api.calls[0].events.map((e) => e.seq).slice(0, 2), [101, 102]);
+  assert.strictEqual(r.uploaded, 20);
+  assert.strictEqual(r.head.seq, 120);
+});
+
+test('startAfterSeq: a stored head at or above the floor still resumes from the head', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 120);
+  const rec = lines(f.auditFile).map((l) => JSON.parse(l)).find((r) => r.seq === 110);
+  fs.mkdirSync(path.dirname(f.stateFile), { recursive: true });
+  fs.writeFileSync(f.stateFile, JSON.stringify({ head: { seq: 110, mac: rec.mac }, last_status: 'ok' }));
+  assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile, startAfterSeq: 100 }), 10);
+  const api = fakeApi();
+  await uploadPending(opts(f, api, { startAfterSeq: 100 }));
+  assert.deepStrictEqual(api.calls[0].events.map((e) => e.seq), [111, 112, 113, 114, 115, 116, 117, 118, 119, 120]);
+});

@@ -24,6 +24,10 @@ test('sensitive files are matched with Windows and mixed separators', () => {
   }
 });
 
+test('example environment files are allowed, real ones are not', () => {
+  for (const text of CASES.env_template_allow) assert.equal(rules.evaluate(text).verdict, 'allow', text);
+});
+
 test('indirect:hidden_tag needs an element that is really hidden', () => {
   for (const text of CASES.hidden_tag.positives) assert.equal(hiddenRule.test(text), true, text);
   for (const text of CASES.hidden_tag.benign) assert.equal(hiddenRule.test(text), false, text);

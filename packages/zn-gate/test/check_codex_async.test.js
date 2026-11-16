@@ -11,6 +11,7 @@ const path = require('path');
 const { getAdapter } = require('../lib/agents');
 const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
+const { hookTimeoutMs } = require('./helpers/time_budget');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
@@ -21,7 +22,7 @@ function codexHome(t) {
   return { home, env, cwd: tempDir(t, 'zn-check-async-cwd-'), file: getAdapter('codex').hooksFile({ home, env }) };
 }
 
-const codexResult = async (ctx) => (await check({ home: ctx.home, env: ctx.env, cwd: ctx.cwd })).results.find((r) => r.id === 'codex');
+const codexResult = async (ctx) => (await check({ home: ctx.home, env: ctx.env, cwd: ctx.cwd, hookTimeoutMs: hookTimeoutMs() })).results.find((r) => r.id === 'codex');
 
 test('check: zn hooks that are not in the background are protected', async (t) => {
   const r = await codexResult(codexHome(t));

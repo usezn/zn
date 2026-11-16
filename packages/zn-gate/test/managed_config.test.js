@@ -78,7 +78,7 @@ test('every agent and OS matches its fixture, with the right path', () => {
 test('Claude Code: official settings shape, hooks are zn\'s, allowManagedHooksOnly only on request', () => {
   const plain = JSON.parse(mc.build({ agent: 'claude-code', os: 'linux' })[0].content);
   assert.deepEqual(Object.keys(plain), ['hooks']);
-  assert.deepEqual(Object.keys(plain.hooks).sort(), ['PostToolUse', 'PreToolUse', 'UserPromptExpansion', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(plain.hooks).sort(), ['ConfigChange', 'InstructionsLoaded', 'PostToolUse', 'PreToolUse', 'UserPromptExpansion', 'UserPromptSubmit']);
   for (const groups of Object.values(plain.hooks)) {
     for (const g of groups) {
       assert.ok(Array.isArray(g.hooks) && (g.matcher === undefined || typeof g.matcher === 'string'));

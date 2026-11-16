@@ -6,6 +6,8 @@
 //! ## Supported Patterns
 //! - Email addresses → `[EMAIL_REDACTED]`
 //! - API keys, secrets, passwords, tokens → `[SECRET_REDACTED]`
+//! - AWS access key ids (`AKIA`, `ASIA`, `ABIA` or `ACCA` + 16 capitals/digits) → `[SECRET_REDACTED]`
+//! - GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) and Stripe secret keys (`sk_`/`rk_` + `live`/`test`/`prod`) → `[SECRET_REDACTED]`
 //! - Credit card numbers (known network prefix and length, Luhn checksum) → `[CARD_REDACTED]`
 //! - Social Security Numbers (US, valid area/group/serial) → `[SSN_REDACTED]`
 //! - Phone numbers (E.164 `+<digits>`, or formatted NANP numbers) → `[PHONE_REDACTED]`
@@ -20,6 +22,33 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
+/// Writer for the gateway's own log lines: redacts each line with
+/// `Scrubber::redact_for_log` and writes it to stderr.
+#[derive(Clone, Copy, Default)]
+pub struct RedactingStderr;
+
+/// One redacting writer over any sink (stderr in production).
+pub struct RedactingWriter<W: std::io::Write>(pub W);
+
+impl<W: std::io::Write> std::io::Write for RedactingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        self.0
+            .write_all(Scrubber::redact_for_log(&text).as_bytes())?;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RedactingStderr {
+    type Writer = RedactingWriter<std::io::Stderr>;
+    fn make_writer(&'a self) -> Self::Writer {
+        RedactingWriter(std::io::stderr())
+    }
+}
+
 /// PII Scrubber for sanitizing sensitive data
 pub struct Scrubber;
 
@@ -31,6 +60,10 @@ static SSN_REGEX: OnceLock<Regex> = OnceLock::new();
 static E164_REGEX: OnceLock<Regex> = OnceLock::new();
 static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
+static AWS_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
+static GITHUB_TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
+static GITHUB_PAT_REGEX: OnceLock<Regex> = OnceLock::new();
+static STRIPE_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
 static QUOTED_OPEN_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -403,12 +436,7 @@ fn card_valid(raw: &str) -> bool {
     if raw.len() < 13 {
         return false;
     }
-    // One kind of separator only: "4111 1111-1111 1111" is not a card number.
-    let has_space = raw.contains(' ');
-    let has_dash = raw.contains('-');
-    if has_space && has_dash {
-        return false;
-    }
+    // Spaces and dashes may be mixed ("4111 1111-1111 1111"), as in the Node.js scrubber.
     // At most 19 digits: collect them on the stack (this runs for every
     // candidate start in long inputs).
     let mut buf = [0u8; 19];
@@ -432,7 +460,7 @@ fn card_valid(raw: &str) -> bool {
 /// US SSN: area 001-899 except 666, group 01-99, serial 0001-9999.
 fn ssn_valid(raw: &str) -> bool {
     let parts: Vec<&str> = raw.split('-').collect();
-    if parts.len() != 3 {
+    if parts.len() != 3 || parts[2].len() != 4 {
         return false;
     }
     let area: u32 = parts[0].parse().unwrap_or(0);
@@ -628,6 +656,109 @@ fn checked_spans(
     spans
 }
 
+fn aws_key_re() -> &'static Regex {
+    AWS_KEY_REGEX.get_or_init(|| Regex::new(r"(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}").unwrap())
+}
+
+/// AWS access key ids, same rule as the Node.js scrubber (`AWS_KEY`): a known
+/// prefix and 16 capitals or digits, not touching another ASCII letter or digit,
+/// and not 16 repeats of one character after the prefix.
+fn aws_key_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while pos < text.len() {
+        let Some(m) = aws_key_re().find_at(text, pos) else {
+            break;
+        };
+        let (s, e) = (m.start(), m.end());
+        let alnum = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric());
+        let tail = &text.as_bytes()[s + 4..e];
+        let repeated = tail.iter().all(|&b| b == tail[0]);
+        if !alnum(char_before(text, s)) && !alnum(char_after(text, e)) && !repeated {
+            spans.push((s, e));
+            pos = e;
+        } else {
+            pos = s + 1;
+        }
+    }
+    spans
+}
+
+fn github_token_re() -> &'static Regex {
+    GITHUB_TOKEN_REGEX.get_or_init(|| Regex::new(r"gh[pousr]_[A-Za-z0-9]{36,255}").unwrap())
+}
+
+fn github_pat_re() -> &'static Regex {
+    GITHUB_PAT_REGEX
+        .get_or_init(|| Regex::new(r"github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}").unwrap())
+}
+
+fn stripe_key_re() -> &'static Regex {
+    STRIPE_KEY_REGEX
+        .get_or_init(|| Regex::new(r"(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}").unwrap())
+}
+
+/// Shannon entropy in bits per character of an ASCII string.
+fn shannon_bits(s: &str) -> f64 {
+    let mut counts = [0usize; 256];
+    for b in s.bytes() {
+        counts[b as usize] += 1;
+    }
+    let n = s.len() as f64;
+    counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+/// Same check as the Node.js scrubber (`looksRandom`): at least two character
+/// classes (lower, upper, digit) and at least 3.5 bits of entropy per character.
+fn looks_random(body: &str) -> bool {
+    let b = body.as_bytes();
+    let classes = usize::from(b.iter().any(|c| c.is_ascii_lowercase()))
+        + usize::from(b.iter().any(|c| c.is_ascii_uppercase()))
+        + usize::from(b.iter().any(|c| c.is_ascii_digit()));
+    classes >= 2 && shannon_bits(body) >= 3.5
+}
+
+/// Spans of `re` matches that do not touch a token character (ASCII letter,
+/// digit, `_` or `-`) on either side, as the Node.js `NB`/`NA` boundaries do,
+/// and whose text passes `check`.
+fn token_spans(re: &Regex, text: &str, check: fn(&str) -> bool) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while pos < text.len() {
+        let Some(m) = re.find_at(text, pos) else {
+            break;
+        };
+        let (s, e) = (m.start(), m.end());
+        let tok =
+            |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !tok(char_before(text, s)) && !tok(char_after(text, e)) && check(m.as_str()) {
+            spans.push((s, e));
+            pos = e;
+        } else {
+            pos = s + 1;
+        }
+    }
+    spans
+}
+
+fn github_token_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = token_spans(github_token_re(), text, |v| looks_random(&v[4..]));
+    spans.extend(token_spans(github_pat_re(), text, |_| true));
+    spans.sort_unstable();
+    spans
+}
+
+fn stripe_key_spans(text: &str) -> Vec<(usize, usize)> {
+    token_spans(stripe_key_re(), text, |v| looks_random(&v[8..]))
+}
+
 fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
@@ -656,6 +787,66 @@ fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
     checked_spans(nanp_re(), text, nanp_lead, nanp_trail, formatted_nanp_valid)
 }
 
+/// Token shapes the gateway also keeps out of its own logs and audit rows:
+/// cloud, code-host, payment, AI-provider and chat credentials, webhook URLs,
+/// and private key blocks. Each match is replaced whole.
+fn token_re() -> &'static Regex {
+    static TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
+    TOKEN_REGEX.get_or_init(|| {
+        Regex::new(concat!(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)",
+            r"|(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}",
+            r"|(?i:(?:aws_?)?secret_?access_?key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[A-Za-z0-9/+=]{40}",
+            r"|AIza[0-9A-Za-z_-]{35}",
+            r"|glpat-[A-Za-z0-9_-]{20,}",
+            r"|github_pat_[A-Za-z0-9_]{22,255}",
+            r"|gh[pousr]_[A-Za-z0-9]{20,255}",
+            r"|sk-(?:proj|ant)-[A-Za-z0-9_-]{20,}",
+            r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}",
+            r"|whsec_[A-Za-z0-9]{16,}",
+            r"|xox[abprs]-[A-Za-z0-9-]{10,}",
+            r"|xapp-[A-Za-z0-9-]{10,}",
+            r"|hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+",
+            r"|discord(?:app)?\.com/api(?:/v[0-9]+)?/webhooks/[0-9]+/[A-Za-z0-9_-]+",
+        ))
+        .unwrap()
+    })
+}
+
+fn iban_re() -> &'static Regex {
+    static IBAN_REGEX: OnceLock<Regex> = OnceLock::new();
+    IBAN_REGEX.get_or_init(|| {
+        Regex::new(r"(?i-u)[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?").unwrap()
+    })
+}
+
+/// ISO 13616 mod-97 check on a candidate (spaces allowed).
+fn iban_valid(raw: &str) -> bool {
+    // Byte slicing below is only safe on ASCII; never trust the caller's input.
+    if !raw.is_ascii() {
+        return false;
+    }
+    let compact: String = raw
+        .chars()
+        .filter(|c| *c != ' ')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if !(15..=34).contains(&compact.len()) {
+        return false;
+    }
+    let rotated = format!("{}{}", &compact[4..], &compact[..4]);
+    let mut rem: u32 = 0;
+    for c in rotated.chars() {
+        let v = match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            'A'..='Z' => c as u32 - 'A' as u32 + 10,
+            _ => return false,
+        };
+        rem = if v >= 10 { rem * 100 + v } else { rem * 10 + v } % 97;
+    }
+    rem == 1
+}
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -680,6 +871,9 @@ impl Scrubber {
         output = email_re()
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
+        output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
+        output = replace_spans(&output, &github_token_spans(&output), "[SECRET_REDACTED]");
+        output = replace_spans(&output, &stripe_key_spans(&output), "[SECRET_REDACTED]");
         output = auth_re().replace_all(&output, redact_auth).to_string();
         output = redact_quoted_values(&output);
         output = api_re().replace_all(&output, redact_secret).to_string();
@@ -689,6 +883,28 @@ impl Scrubber {
         output = replace_spans(&output, &nanp_spans(&output), "[PHONE_REDACTED]");
 
         output
+    }
+
+    /// Redact text before it is written to a log or to the audit database.
+    ///
+    /// Everything `scrub` masks, plus the credential shapes `scrub` leaves in
+    /// place because the forwarded call must keep its arguments (cloud, code
+    /// host, payment and chat tokens, private key blocks, IBANs). This is for
+    /// what the gateway records about a call, never for what it forwards.
+    pub fn redact_for_log(input: &str) -> String {
+        let mut output = token_re()
+            .replace_all(input, "[SECRET_REDACTED]")
+            .to_string();
+        output = iban_re()
+            .replace_all(&output, |c: &regex::Captures| {
+                if iban_valid(&c[0]) {
+                    "[IBAN_REDACTED]".to_string()
+                } else {
+                    c[0].to_string()
+                }
+            })
+            .to_string();
+        Self::scrub(&output)
     }
 
     /// Check if a string contains any detectable PII
@@ -1050,9 +1266,10 @@ mod tests {
         let out = Scrubber::scrub(&long);
         assert_eq!(out.len(), long.len());
         let many = r#"password=""#.repeat(50_000);
-        let start = std::time::Instant::now();
-        let _ = Scrubber::scrub(&many);
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        let took = time_of(&|| {
+            let _ = Scrubber::scrub(&many);
+        });
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
         assert!(
             Scrubber::detect_pii_types(r#"{"password":"abcdefgh ijk lmn"}"#)
                 .contains(&"api_key_or_secret")
@@ -1303,28 +1520,97 @@ mod tests {
         assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
     }
 
-    /// Best of three runs of `work(size)`, so a scheduling hiccup on a busy
-    /// machine cannot inflate the measurement.
-    fn best_of_three(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
-        (0..3)
-            .map(|_| {
-                let start = std::time::Instant::now();
-                work(size);
-                start.elapsed()
-            })
-            .min()
-            .expect("three runs")
+    /// CPU time used by this thread. Tests run in parallel, so wall time also
+    /// counts the time this thread waits for a CPU; its own CPU time does not.
+    #[cfg(unix)]
+    fn thread_cpu_time() -> std::time::Duration {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: clock_gettime only writes the timespec it is given.
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        assert_eq!(rc, 0, "clock_gettime(CLOCK_THREAD_CPUTIME_ID)");
+        std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
     }
 
-    /// Time must grow about linearly: quadrupling the input may cost at most
-    /// 8x (a quadratic algorithm costs 16x), plus a small allowance for
-    /// noise. Relative, so the machine's speed does not matter.
+    /// CPU time used by this thread (kernel plus user), from GetThreadTimes.
+    #[cfg(windows)]
+    fn thread_cpu_time() -> std::time::Duration {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+        let zero = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: GetThreadTimes only writes the four FILETIMEs it is given; the
+        // pseudo-handle from GetCurrentThread needs no closing.
+        let ok = unsafe {
+            GetThreadTimes(
+                GetCurrentThread(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        assert_ne!(ok, 0, "GetThreadTimes");
+        let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+        // FILETIME counts 100 ns ticks.
+        std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+    }
+
+    /// How long `work` takes: this thread's CPU time on unix and Windows, wall
+    /// time on any other platform.
+    fn time_of(work: &dyn Fn()) -> std::time::Duration {
+        #[cfg(any(unix, windows))]
+        {
+            let start = thread_cpu_time();
+            work();
+            let used = thread_cpu_time().saturating_sub(start);
+            // GetThreadTimes only advances once per scheduler tick (about
+            // 15.6 ms), so a short run can read as 0 and the 16x bound would
+            // then fail on a linear algorithm. Adding one tick on Windows
+            // keeps the reading at or above the real CPU time; unix keeps the
+            // exact nanosecond clock and the check there is unchanged.
+            #[cfg(windows)]
+            let used = used + std::time::Duration::from_micros(15_625);
+            used
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let start = std::time::Instant::now();
+            work();
+            start.elapsed()
+        }
+    }
+
+    /// Best of five runs of `work(size)`, so a hiccup on a busy machine
+    /// cannot inflate the measurement.
+    fn best_of_five(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
+        (0..5)
+            .map(|_| time_of(&|| work(size)))
+            .min()
+            .expect("five runs")
+    }
+
+    /// The rule: 8x the input may cost at most 16x the time (a quadratic
+    /// algorithm costs 64x), plus 50 ms for noise on very short runs.
+    fn scales_linearly(small: std::time::Duration, large: std::time::Duration) -> bool {
+        large < small * 16 + std::time::Duration::from_millis(50)
+    }
+
+    /// Time must grow about linearly with the input. Relative, so the
+    /// machine's speed does not matter. One untimed run comes first, so the
+    /// first timing is not taken with cold caches.
     fn assert_scales_linearly(work: &dyn Fn(usize), size: usize) {
-        let small = best_of_three(work, size / 4);
-        let large = best_of_three(work, size);
+        work(size / 8);
+        let small = best_of_five(work, size / 8);
+        let large = best_of_five(work, size);
         assert!(
-            large < small * 8 + std::time::Duration::from_millis(50),
-            "4x the input took {large:?} against {small:?}"
+            scales_linearly(small, large),
+            "8x the input took {large:?} against {small:?}"
         );
         // Only a hang guard; the ratio above is the real check.
         assert!(large < std::time::Duration::from_secs(30), "{large:?}");
@@ -1351,20 +1637,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "4x the input took")]
     fn test_scaling_check_rejects_quadratic_time() {
-        // Proves the check above can fail: a deliberately quadratic loop.
-        let quadratic = |n: usize| {
-            let n = n / 32;
-            let mut acc = 0usize;
-            for i in 0..n {
-                for j in 0..n {
-                    acc = std::hint::black_box(acc.wrapping_add(i ^ j));
-                }
-            }
-            std::hint::black_box(acc);
-        };
-        assert_scales_linearly(&quadratic, 1 << 19);
+        // The rule above on fixed durations, so this cannot depend on load:
+        // linear growth passes, quadratic growth fails, and the 50 ms floor
+        // only matters for very short runs.
+        let ms = std::time::Duration::from_millis;
+        assert!(scales_linearly(ms(100), ms(800))); // 8x: linear
+        assert!(scales_linearly(ms(100), ms(1_600))); // 16x: at the edge, still linear
+        assert!(!scales_linearly(ms(100), ms(6_400))); // 64x: quadratic
+        assert!(!scales_linearly(ms(100), ms(1_700))); // past 16x + 50 ms
+        assert!(scales_linearly(ms(1), ms(60))); // tiny runs: within the floor
+        assert!(!scales_linearly(ms(1), ms(70))); // 16 ms + 50 ms is the limit
+        assert!(!scales_linearly(ms(0), ms(64))); // nothing measured for the small run
     }
 
     #[test]
@@ -1372,11 +1656,11 @@ mod tests {
         // One opener followed by a very long run of backslashes must cost about the same as the
         // same length of any other character: the run is counted only inside the scan window.
         let time = |input: &str| {
-            (0..3)
+            (0..5)
                 .map(|_| {
-                    let start = std::time::Instant::now();
-                    let _ = Scrubber::scrub(input);
-                    start.elapsed()
+                    time_of(&|| {
+                        let _ = Scrubber::scrub(input);
+                    })
                 })
                 .min()
                 .unwrap()
@@ -1398,11 +1682,159 @@ mod tests {
     }
 
     #[test]
+    fn test_aws_example_key_at_end_without_newline_is_masked() {
+        // AWS documentation example key, not a credential. The text ends right after the key.
+        let input = "config key AKIAIOSFODNN7EXAMPLE";
+        let out = Scrubber::scrub(input);
+        assert!(!out.contains("AKIAIOSFODNN7EXAMPLE"), "{out}");
+        assert_eq!(out, "config key [SECRET_REDACTED]");
+    }
+
+    #[test]
+    fn test_aws_key_mid_line_and_other_prefixes_are_masked() {
+        // AWS documentation example key and prefix variants, not credentials.
+        for input in [
+            "id AKIAIOSFODNN7EXAMPLE and more",
+            "id=ASIAIOSFODNN7EXAMPLE;",
+            "(ABIAIOSFODNN7EXAMPLE)",
+            "ACCAIOSFODNN7EXAMPLE\n",
+        ] {
+            let out = Scrubber::scrub(input);
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            assert!(!out.contains("IOSFODNN7EXAMPLE"), "{input} -> {out}");
+        }
+        assert_eq!(
+            Scrubber::scrub("a AKIAIOSFODNN7EXAMPLE b ASIAIOSFODNN7EXAMPLE c"),
+            "a [SECRET_REDACTED] b [SECRET_REDACTED] c"
+        );
+    }
+
+    #[test]
+    fn test_aws_key_look_alikes_are_unchanged() {
+        for input in [
+            "AKIA",
+            "akiaiosfodnn7example",
+            "AKIAIOSFODNN7EXAMPL",
+            "AKIAIOSFODNN7EXAMPLES",
+            "xAKIAIOSFODNN7EXAMPLE",
+            "AKIAIOSFODNN7EXAMPLE9",
+            "AKIAAAAAAAAAAAAAAAAA",
+            "AKIAIOSFODNN7exampleX",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input, "{input}");
+        }
+    }
+
+    // Fictional tokens built at runtime from a made-up body, not credentials.
+    const FAKE_BODY: &str = "aB3dE5fG7hI9jK1lM2nO4pQ6rS8tU0vW1xY2";
+
+    fn fake_pat() -> String {
+        format!(
+            "github_pat_{}_{}",
+            &FAKE_BODY[..22],
+            &FAKE_BODY.repeat(2)[..59]
+        )
+    }
+
+    #[test]
+    fn test_github_tokens_mid_line_and_at_end_are_masked() {
+        for prefix in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"] {
+            let tok = format!("{prefix}{FAKE_BODY}");
+            assert_eq!(
+                Scrubber::scrub(&format!("use {tok} here")),
+                "use [SECRET_REDACTED] here"
+            );
+            assert_eq!(
+                Scrubber::scrub(&format!("use {tok}")),
+                "use [SECRET_REDACTED]"
+            );
+        }
+        let pat = fake_pat();
+        assert_eq!(
+            Scrubber::scrub(&format!("a {pat} b")),
+            "a [SECRET_REDACTED] b"
+        );
+        assert_eq!(Scrubber::scrub(&format!("a {pat}")), "a [SECRET_REDACTED]");
+    }
+
+    #[test]
+    fn test_github_and_stripe_keys_in_json_with_neutral_key_are_masked() {
+        let gh = format!("ghp_{FAKE_BODY}");
+        let st = format!("sk_live_{}", &FAKE_BODY[..24]);
+        let input = format!("{{\"note\":\"{gh}\",\"ref\":\"{st}\"}}");
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(FAKE_BODY), "{out}");
+        assert!(!out.contains(&FAKE_BODY[..24]), "{out}");
+        assert!(out.contains("[SECRET_REDACTED]"), "{out}");
+    }
+
+    #[test]
+    fn test_stripe_keys_are_masked_including_in_minified_text() {
+        for prefix in ["sk_live_", "sk_test_", "rk_live_", "rk_test_", "sk_prod_"] {
+            let tok = format!("{prefix}{}", &FAKE_BODY[..24]);
+            assert_eq!(
+                Scrubber::scrub(&format!("k={tok};")),
+                "k=[SECRET_REDACTED];",
+                "{prefix}"
+            );
+            assert_eq!(
+                Scrubber::scrub(&format!("x {tok}")),
+                "x [SECRET_REDACTED]",
+                "{prefix}"
+            );
+        }
+        let tok = format!("sk_live_{}", &FAKE_BODY[..24]);
+        let filler = "var a=function(b){return b+1};".repeat(400);
+        let input = format!("{filler}const k=\"{tok}\";{filler}");
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(&FAKE_BODY[..24]), "key left in minified text");
+        assert!(out.contains("const k=\"[SECRET_REDACTED]\";"));
+    }
+
+    #[test]
+    fn test_github_and_stripe_look_alikes_are_unchanged() {
+        let short_gh = format!("ghp_{}", &FAKE_BODY[..35]);
+        let glued_gh = format!("xghp_{FAKE_BODY}");
+        let dash_gh = format!("a-ghp_{FAKE_BODY}");
+        let short_st = format!("sk_live_{}", &FAKE_BODY[..19]);
+        let glued_st = format!("Ask_live_{}", &FAKE_BODY[..24]);
+        let bad_env = format!("sk_dev_{}", &FAKE_BODY[..24]);
+        let repeated = format!("sk_live_{}", "a".repeat(24));
+        let short_pat = format!("github_pat_{}_{}", &FAKE_BODY[..22], &FAKE_BODY[..30]);
+        for input in [
+            "ghp_",
+            "github_pat_",
+            "sk_live_",
+            short_gh.as_str(),
+            glued_gh.as_str(),
+            dash_gh.as_str(),
+            short_st.as_str(),
+            glued_st.as_str(),
+            bad_env.as_str(),
+            repeated.as_str(),
+            short_pat.as_str(),
+        ] {
+            assert_eq!(Scrubber::scrub(input), input, "{input}");
+        }
+    }
+
+    #[test]
+    fn test_fifteen_digit_non_luhn_number_is_unchanged() {
+        // Fictional numbers. 123456789012345 has no card network prefix, so the
+        // network check alone rejects it. 378282246310006 has an Amex prefix and is
+        // the test number 378282246310005 with its last digit changed, so only the
+        // Luhn check rejects it.
+        for input in ["123456789012345", "378282246310006"] {
+            assert!(!luhn_valid(input), "{input} must fail Luhn");
+            assert_eq!(Scrubber::scrub(input), input);
+        }
+    }
+
+    #[test]
     fn test_card_needs_luhn_network_and_boundaries() {
         for input in [
             "Card: 4111-1111-1111-1112",  // fails Luhn
             "id 1234567812345670",        // passes Luhn, no card network
-            "Card: 4111 1111-1111 1111",  // mixed separators
             "order-4111111111111111",     // part of a longer token
             "x4111111111111111",          // part of a word
             "amount 4111111111111111.50", // decimal number
@@ -1531,5 +1963,208 @@ mod tests {
         assert!(!e164_valid("+0123456789"));
         assert!(ssn_valid("123-45-6789"));
         assert!(!ssn_valid("900-45-6789"));
+    }
+}
+
+/// The card, SSN and phone checks are claimed to be the Node.js scrubber's
+/// (packages/zn-gate/lib/scrub/patterns.js). The shared fixture holds the cases and the results of
+/// the Node.js validators; packages/zn-gate/test/rust_table_parity.test.js checks the Node.js side.
+#[cfg(test)]
+mod table_parity_tests {
+    use super::*;
+
+    fn cases() -> Vec<(String, String, bool)> {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/scrub_validator_cases.json"
+        ))
+        .unwrap();
+        f["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                (
+                    c["fn"].as_str().unwrap().to_string(),
+                    c["input"].as_str().unwrap().to_string(),
+                    c["valid"].as_bool().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// The cases of one validator that Rust answers differently from the fixture.
+    fn mismatches(name: &str, f: fn(&str) -> bool) -> Vec<String> {
+        let all = cases();
+        assert!(
+            all.iter().any(|c| c.0 == name),
+            "no {name} cases in the fixture"
+        );
+        all.into_iter()
+            .filter(|c| c.0 == name && f(&c.1) != c.2)
+            .map(|c| format!("{} {:?}: Node.js says {}", c.0, c.1, c.2))
+            .collect()
+    }
+
+    #[test]
+    fn luhn_equals_node() {
+        assert_eq!(mismatches("luhn", luhn_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn card_validator_equals_node() {
+        assert_eq!(mismatches("card", card_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn ssn_validator_equals_node() {
+        assert_eq!(mismatches("ssn", ssn_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn e164_validator_equals_node() {
+        assert_eq!(mismatches("e164", e164_valid), Vec::<String>::new());
+    }
+
+    // ---- redact_for_log -------------------------------------------------
+
+    // Built from pieces so no literal in the source looks like a real credential.
+    fn log_values() -> Vec<String> {
+        vec![
+            ["AKIA", "IOSFODNN7EXAMPLE"].concat(),
+            ["gh", "p_0123456789abcdefghijABCDEFGHIJ012345"].concat(),
+            ["sk_", "live_EXAMPLEEXAMPLE0123456789"].concat(),
+            ["xo", "xb-123456789012-example0123456789"].concat(),
+            "GB82 WEST 1234 5698 7654 32".to_string(),
+            "GB82WEST12345698765432".to_string(),
+            "gb82 west 1234 5698 7654 32".to_string(),
+            [
+                "aws_secret_",
+                "access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ]
+            .concat(),
+            // The JSON form of temporary credentials, with no aws prefix on the key.
+            [
+                "\"SecretAccess",
+                "Key\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
+            ]
+            .concat(),
+            ["AI", "zaSyA-0123456789abcdefghijklmnopqrstuv"].concat(),
+            ["gl", "pat-0123456789abcdefghij"].concat(),
+            ["xa", "pp-1-A0123456789-0123456789-abcdef0123"].concat(),
+            [
+                "https://hooks.",
+                "slack.com/services/T0EXAMPLE1/B0EXAMPLE1/abcdefghijklmnop0123",
+            ]
+            .concat(),
+            [
+                "https://disc",
+                "ord.com/api/webhooks/123456789012345678/abcdefghij_EXAMPLE-0123",
+            ]
+            .concat(),
+            ["sk-", "proj-EXAMPLEEXAMPLE0123456789"].concat(),
+            ["sk-", "ant-api03-EXAMPLEEXAMPLE0123456789"].concat(),
+            [
+                "-----BEGIN PGP PRIV",
+                "ATE KEY BLOCK-----\n",
+                "lQdGBFexampleexample\n",
+                "-----END PGP PRIV",
+                "ATE KEY BLOCK-----",
+            ]
+            .concat(),
+            [
+                "eyJhbGciOiJIUzI1NiJ9",
+                "eyJzdWIiOiJleGFtcGxlIn0",
+                "c2lnbmF0dXJl",
+            ]
+            .join("."),
+            "jane.doe@example.com".to_string(),
+            "4111 1111 1111 1111".to_string(),
+        ]
+    }
+
+    fn fake_ghp() -> String {
+        ["gh", "p_0123456789abcdefghijABCDEFGHIJ012345"].concat()
+    }
+
+    #[test]
+    fn redact_for_log_masks_every_known_secret_type() {
+        for v in &log_values() {
+            let out = Scrubber::redact_for_log(&format!("before {v} after"));
+            assert!(!out.contains(v.as_str()), "{v} left in {out}");
+            assert!(out.contains("before") && out.contains("after"), "{out}");
+        }
+        let out = Scrubber::redact_for_log("password = \"hunter2-example-not-real\"");
+        assert!(!out.contains("hunter2"), "{out}");
+        let key = "-----BEGIN PRIVATE KEY-----\nMIIEexampleexample\n-----END PRIVATE KEY-----";
+        let out = Scrubber::redact_for_log(&format!("k={key}!"));
+        assert!(!out.contains("MIIE"), "{out}");
+    }
+
+    #[test]
+    fn redact_for_log_keeps_plain_text_and_non_iban_codes() {
+        for text in [
+            "list_files in ./src",
+            "order GB12 ABCD 1234 5678 9012",
+            "build 2026-11-01",
+        ] {
+            assert_eq!(Scrubber::redact_for_log(text), text);
+        }
+    }
+
+    #[test]
+    fn iban_with_non_ascii_lookalike_letters_does_not_panic() {
+        // U+212A (Kelvin sign) and U+017F (long s) case-fold to ASCII letters.
+        for bad in [
+            "\u{212A}\u{212A}12ABCDABCDABCD",
+            "\u{017F}\u{017F}12ABCDABCDABCD",
+            "GB82WEST1234569876543\u{212A}",
+        ] {
+            assert!(!iban_valid(bad), "{bad}");
+            assert_eq!(Scrubber::redact_for_log(bad), bad);
+            let wrapped = format!("agent {bad} end");
+            assert_eq!(Scrubber::redact_for_log(&wrapped), wrapped);
+        }
+        assert!(iban_valid("GB82WEST12345698765432"));
+        assert_eq!(
+            Scrubber::redact_for_log("iban GB82WEST12345698765432 ok"),
+            "iban [IBAN_REDACTED] ok"
+        );
+    }
+
+    #[test]
+    fn scrub_itself_is_unchanged_so_forwarded_frames_do_not_change() {
+        // `scrub` is what is forwarded; only the log redactor knows the extra shapes
+        // (such as a spaced IBAN). Tokens that `scrub` already masks stay masked.
+        let text = "iban GB82 WEST 1234 5698 7654 32";
+        assert_eq!(Scrubber::scrub(text), text);
+    }
+
+    #[test]
+    fn redacting_writer_masks_what_it_writes() {
+        use std::io::Write;
+        let mut sink: Vec<u8> = Vec::new();
+        {
+            let mut w = RedactingWriter(&mut sink);
+            writeln!(w, "INFO Tool call detected: no_such_{}", fake_ghp()).unwrap();
+            w.flush().unwrap();
+        }
+        let out = String::from_utf8(sink).unwrap();
+        assert!(!out.contains(&fake_ghp()[..8]), "{out}");
+        assert!(out.contains("Tool call detected"), "{out}");
+    }
+
+    #[test]
+    fn test_github_token_in_json_string_is_masked_and_structure_kept() {
+        // Fake value, built at runtime so secret scanners do not flag the literal.
+        let token = format!("{}{}", "ghp_", "FAKE0123456789abcdefABCDEFghijklmnop");
+        let input = format!(r#"{{"id":1,"token":"{token}","n":[1,2]}}"#);
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(&token), "{out}");
+        assert!(out.contains("[SECRET_REDACTED]"), "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(v["id"], 1);
+        assert_eq!(v["n"], serde_json::json!([1, 2]));
+        assert_eq!(v["token"], "[SECRET_REDACTED]");
+        assert_eq!(v.as_object().unwrap().len(), 3);
     }
 }

@@ -18,7 +18,7 @@ const refresh = require('../lib/agents/refresh');
 const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix } = require('./helpers/posix_sh');
 const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 
 function setup(t) {
@@ -147,4 +147,56 @@ test('refresh: a project-local install does not repoint launchers at another cop
   const b2 = fs.readFileSync(ctx2.file);
   assert.equal(post(ctx2, { runnerPath: localRunner, global: false }), '');
   assert.deepEqual(fs.readFileSync(ctx2.file), b2);
+});
+
+function sudoRun(ctx, extra) {
+  let out = '';
+  let err = '';
+  refresh.main({ env: { ...ctx.env, ...(extra.env || {}) }, home: ctx.home, runnerPath: ctx.runner, out: (s) => { out += s; }, err: (s) => { err += s; }, ...(extra.uid !== undefined ? { uid: extra.uid } : {}) });
+  return { out, err };
+}
+
+test('refresh: as root through sudo with nothing refreshed, one line on stderr says to run the install as yourself', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  const empty = tempDir(t, 'zn-refresh-root-');
+  const r = sudoRun({ ...ctx, home: empty, env: { HOME: empty, ZN_HOME: path.join(empty, '.zn'), PATH: process.env.PATH } }, { uid: 0, env: { SUDO_USER: 'someone' } });
+  assert.equal(r.out, '');
+  assert.match(r.err, /^zn-gate: installed with sudo, so your hook launchers were not refreshed\. Run `zn hooks install <agent>` again as yourself \(without sudo\)/);
+  assert.equal(r.err.trim().split('\n').length, 1);
+  assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
+});
+
+test('refresh: the sudo notice needs root and a SUDO_USER that is a non-empty string other than root (fake env objects)', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  const empty = tempDir(t, 'zn-refresh-fakeenv-');
+  const bare = { ...ctx, home: empty, env: { HOME: empty, ZN_HOME: path.join(empty, '.zn'), PATH: process.env.PATH } };
+  const cases = [
+    [{ uid: 0, env: { SUDO_USER: 'someone' } }, true, 'root with SUDO_USER'],
+    [{ uid: 0, env: { SUDO_USER: 'a' } }, true, 'a one-letter user name'],
+    [{ uid: 0, env: { SUDO_USER: '' } }, false, 'an empty SUDO_USER'],
+    [{ uid: 0, env: { SUDO_USER: 'root' } }, false, 'SUDO_USER is root'],
+    [{ uid: 0, env: { SUDO_USER: 1000 } }, false, 'a SUDO_USER that is not a string'],
+    [{ uid: 0, env: { SUDO_USER: undefined } }, false, 'SUDO_USER present but undefined'],
+    [{ uid: 1, env: { SUDO_USER: 'someone' } }, false, 'uid 1'],
+    [{ uid: -1, env: { SUDO_USER: 'someone' } }, false, 'a negative uid'],
+    [{ uid: null, env: { SUDO_USER: 'someone' } }, false, 'no uid (a platform without getuid)'],
+    [{ uid: 0, env: { SUDO_UID: '1000', SUDO_GID: '1000' } }, false, 'only SUDO_UID and SUDO_GID'],
+  ];
+  for (const [extra, expected, why] of cases) {
+    const r = sudoRun(bare, extra);
+    assert.equal(r.err !== '', expected, why);
+    assert.equal(r.out, '', why + ': nothing on stdout');
+  }
+  assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
+});
+
+test('refresh: no sudo notice without root, without SUDO_USER, or when a launcher was refreshed', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  assert.equal(sudoRun(ctx, { uid: 1000, env: { SUDO_USER: 'someone' } }).err, '');
+  assert.equal(sudoRun(ctx, { uid: 0 }).err, '');
+  assert.equal(sudoRun(ctx, { uid: 0, env: { SUDO_USER: 'root' } }).err, '');
+  fs.writeFileSync(ctx.runner, REAL + '// v2\n');
+  const r = sudoRun(ctx, { uid: 0, env: { SUDO_USER: 'someone' } });
+  assert.match(r.out, /refreshed hook launchers for claude-code/);
+  assert.equal(r.err, '');
 });

@@ -96,7 +96,7 @@ test('Test 11: DLP & Secret Masking', () => {
 });
 
 test('Test 12: sanitizeToolResult tool output masking', () => {
-  const toolOut = sanitizeToolResult('github_fetch', 'User token: ghp_1234567890abcdefghijklmnopqrstuvwxyzAB');
+  const toolOut = sanitizeToolResult('github_fetch', 'User token: ' + 'ghp_' + '1234567890' + 'abcdefghijklmnopqrstuvwxyz' + 'AB');
   assert.strictEqual(toolOut.safe_to_ingest, true);
   assert.strictEqual(toolOut.secrets_redacted, 1);
   assert.ok(toolOut.sanitized_content.includes('[REDACTED_GITHUB_TOKEN]'));

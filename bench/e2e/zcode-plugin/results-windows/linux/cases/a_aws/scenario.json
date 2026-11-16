@@ -1,0 +1,15 @@
+{
+ "steps": [
+  {
+   "tool": "bash",
+   "values": {
+    "command": "cat ~/.aws/credentials",
+    "description": "test",
+    "file_path": "/work/proj/a.txt",
+    "content": "ZN_WRITTEN",
+    "text": "hello"
+   }
+  }
+ ],
+ "final": "done"
+}

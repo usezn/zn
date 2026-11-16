@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-24.1';
+const SCRUB_RULES_VERSION = '2026-11-11.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -213,6 +213,21 @@ function e164Valid(raw) {
     if (E164_LENGTHS[cc]) return E164_LENGTHS[cc].includes(digits.length - ccLen);
   }
   return digits.length >= 10 && digits.length <= 15;
+}
+
+// A phone number in the text: compact E.164 or with single separators. Separated forms that look like a date,
+// an IPv4 address or a dotted version are not phone numbers.
+function phoneValid(raw) {
+  if (/[ .-]/.test(raw)) {
+    if (/\d{4}-\d{2}-\d{2}/.test(raw)) return false;
+    if (/^\+\d{1,3}(?:\.\d{1,3}){3}$/.test(raw)) return false;
+    if (/^\+\d(?:[ .-]\d)+$/.test(raw)) return false;
+  }
+  // A country code, one space and a compact national number (+34 600123456): the country must be one whose
+  // national length is known, so a plus sign and two digit runs in a sum or a note is not a phone number.
+  const cc = /^\+(\d{1,3}) \d+$/.exec(raw);
+  if (cc && cc[1] !== '1' && !E164_LENGTHS[cc[1]]) return false;
+  return e164Valid(raw.replace(/[ .-]/g, ''));
 }
 
 function ipv4Public(raw) {
@@ -485,8 +500,14 @@ function findQuotedKv(text, out) {
 const PATTERNS = [
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA),
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
+  /* A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. The body
+   * must look random and hold a digit, so a lower-case hyphenated slug (a blog post title) is not a key. Case does
+   * not matter: sk-or-v1- plus hex and lower-case sk-/sk-proj- keys are real secrets. */
   { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
-    check: (v) => looksRandom(v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, ''), 2, 3.5) },
+    check: (v) => {
+      const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
+      return looksRandom(body, 2, 3.5) && /[0-9]/.test(body);
+    } },
   /* Legacy DeepSeek-style key: `sk-` + 32 hex digits. The length and charset
    * are not stated in the provider's docs (checked 2026-10-14); the shape
    * follows rules.js secret:openai_key, which already accepts it. */
@@ -526,6 +547,12 @@ const PATTERNS = [
    * upper; mixed case is not a SID). Same shape as gitleaks twilio-api-key. */
   { type: 'TWILIO_KEY', hints: ['SK', 'AC'], re: re('(?<![A-Za-z0-9])SK(?:[0-9a-f]{32}|[0-9A-F]{32})(?![A-Za-z0-9])'),
     check: (v) => /\d/.test(v.slice(2)) && /[a-fA-F]/.test(v.slice(2)) },
+  /* Twilio auth token: 32 hex digits under a TWILIO_AUTH_TOKEN or auth_token label (env, YAML or JSON, quoted or
+   * not; any case). The token has no prefix of its own, so an unlabelled 32-hex value (a hash, an id) is left
+   * alone. The account SID (`AC` + 32 hex) next to it is an identifier and stays visible. */
+  { type: 'TWILIO_AUTH_TOKEN', hints: null, prefilter: /auth_token/i,
+    re: re('(?<![A-Za-z0-9])(?:twilio_)?auth_token["\']?[ \t]*[=:][ \t]*["\']?([0-9a-f]{32})(?![A-Za-z0-9])', 'i'),
+    group: 1, check: (v) => /\d/.test(v) && /[a-f]/i.test(v) && !/^(.)\1+$/.test(v) },
   { type: 'MAILGUN_KEY', hints: ['key-'], re: re(NB + 'key-[0-9a-f]{32}' + NA),
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
   { type: 'SHOPIFY_TOKEN', hints: ['shpat_', 'shpca_', 'shppa_', 'shpss_'], re: re(NB + 'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + NA) },
@@ -685,12 +712,22 @@ const PATTERNS = [
     re: re('(Authorization[ \\t]*:[ \\t]*Bearer[ \\t]+)([A-Za-z0-9._~+/=-]{20,})', 'i'),
     group: 2, check: (v) => !isPlaceholder(v) && !/^__ZN_[A-Z0-9_]+__$/.test(v) &&
       !maskedBody(v.replace(/^(?:sk-ant-[a-z]+\d{2}-|xox[a-z]-|gh[a-z]_|sk-)/, '')) && !/^(.)\1+$/.test(v.replace(/-/g, '')) },
-  /* Generic assignment: sensitive key = quoted high-entropy value. */
+  /* Generic assignment: sensitive key = quoted high-entropy value. The key and
+   * the value quotes may carry a backslash (`export api_key=\"value\"` inside a
+   * JSON string, as tool-call arguments and logs show it). */
   { type: 'SECRET', hints: null, prefilter: /(?:pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)/i,
-    re: re('(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|credentials?)[A-Za-z0-9_]{0,64}["\']?\\s*(?:=|:|=>|:=)\\s*["\'`]([^"\'`\\s\\\\]{12,200})["\'`]', 'i'),
+    re: re('(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|credentials?)[A-Za-z0-9_]{0,64}(?:\\\\{0,2}["\'])?\\s*(?:=|:|=>|:=)\\s*\\\\{0,2}["\'`]([^"\'`\\s\\\\]{12,200})\\\\{0,2}["\'`]', 'i'),
     group: 1,
     check: (v) => !isPlaceholder(v) && looksRandom(v, 3, 3.7) && !/^[a-z]+(?:[_.-][a-z]+)+$/i.test(v) &&
       !/^(?:process\.env|os\.environ|\$|\{|%|<|https?:)/.test(v) && !/[()\[\]{};,]/.test(v) },
+  /* URL query parameter: `?api_key=value`, `&token=value`, same names as the
+   * assignment above. The value runs up to the next `&`, `#`, quote or
+   * whitespace; other parameters are left alone. */
+  { type: 'SECRET', hints: null, prefilter: /(?:pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)/i,
+    re: re('[?&](?:[A-Za-z0-9_.-]{0,64}[_.-])?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|credentials?)[A-Za-z0-9_]{0,64}=([^&#\\s"\'`\\\\]{12,})', 'i'),
+    group: 1,
+    check: (v) => !isPlaceholder(v) && looksRandom(v, 2, 3.0) && !/^[a-z]+(?:[_.-][a-z]+)+$/i.test(v) &&
+      !/^(?:\$|\{|%7B|%3C|<|https?:)/i.test(v) && !/__ZN_[A-Z0-9_]+__/.test(v) },
   /* Generic dotenv line: SENSITIVE_NAME=unquoted high-entropy value. */
   { type: 'SECRET', hints: null, prefilter: /(?:PASS|SECRET|TOKEN|KEY|CREDENTIAL|AUTH)/,
     re: re('^[ \\t]*(?:export[ \\t]+)?[A-Z][A-Z0-9_]{0,64}(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?|AUTH)[A-Z0-9_]{0,64}[ \\t]*=[ \\t]*([^\\s"\'`#]{16,200})[ \\t]*$', 'm'),
@@ -916,7 +953,9 @@ const PII = [
       if (/\.\./.test(v)) return false;
       return true;
     } },
-  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9]\\d{7,14}(?![0-9])'), check: (v) => e164Valid(v) },
+  // Compact E.164 (+34600123456), or + country code (1 to 3 digits) and digit groups split by single spaces, dashes
+  // or dots (+34 600 123 456, +1 202-555-0143). National formats without + are not matched on purpose.
+  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9](?:\\d{0,2}(?:[ .-]\\d{1,9}){2,6}|\\d{0,2} \\d{6,12}|\\d{7,14})(?![0-9])'), check: (v) => phoneValid(v) },
   { type: 'IBAN', key: 'iban', hints: null, prefilter: /[A-Z]{2}\d{2}/,
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },

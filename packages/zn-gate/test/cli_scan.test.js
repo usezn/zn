@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const FAKE_AWS = 'AKIA' + 'ZNTESTFAKE' + '000000';
@@ -78,7 +79,7 @@ test('many key blocks scan in linear time', () => {
   const t0 = Date.now();
   const r = scanText('keys.md', block.repeat(5000));
   assert.strictEqual(r.status, 1);
-  assert.ok(Date.now() - t0 < 20000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(20000), 'took ' + (Date.now() - t0) + ' ms');
   assert.strictEqual(r.stdout.split('\n').filter((l) => l.includes('secret:private_key')).length, 5000);
 });
 

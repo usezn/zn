@@ -57,11 +57,40 @@ On pull requests from forks, GitHub may not allow the SARIF upload. The audit st
 
 ## Which version runs
 
-The `version` input is the exact `zn-gate` version that gets installed; ranges and `latest` are refused. When you leave it out, you get the version that the pinned release of the Action sets as its default, so pinning the Action by SHA also pins what runs. Set `version` when you want to move the two separately. We recommend setting `version` in every workflow: from 1.13.0 on, each release of the Action defaults to its own `zn-gate` version, but the 1.12.0 release of the Action still defaults to 1.10.0. For a stronger check, set `package-sha256` (the hash of the PyPI wheel, used by `scan`) and `npm-integrity` (the `sha512-...` integrity of the npm tarball, used by `audit`): the install fails when the downloaded file differs.
+The `version` input is the exact `zn-gate` version that gets installed. Ranges and `latest` are refused.
+
+When you leave it out, you get the version that the pinned release of the Action sets as its default. So pinning the Action by SHA also pins what runs. Set `version` when you want to move the two separately.
+
+We recommend setting `version` in every workflow. From 1.13.0 on, each release of the Action defaults to its own `zn-gate` version. The 1.12.0 release of the Action still defaults to 1.10.0.
+
+For a stronger check, set one or both of these inputs. The install fails when the downloaded file differs.
+
+- `package-sha256`: the hash of the PyPI wheel, used by `scan`.
+- `npm-integrity`: the `sha512-...` integrity of the npm tarball, used by `audit`.
 
 `audit` needs `zn-gate` 1.6.0 or later. With an older version, `mode: both` runs the scan only and prints a warning, and `mode: audit` fails.
 
 ## Inputs
+
+### Inputs at a glance
+
+No input is required. Each one has a default, and an empty default means the input is off. The examples are fake values.
+
+| Input | Required | Default | Example |
+|---|---|---|---|
+| `mode` | No | `scan` | `audit` |
+| `version` | No | set by the release | `1.15.0` |
+| `path` | No | `.` | `docs` |
+| `fail-on-threat` | No | `true` | `'false'` |
+| `severity-threshold` | No | `high` | `medium` |
+| `fail-on` | No | empty | `high` |
+| `agents` | No | empty (all) | `claude,cursor` |
+| `format` | No | `github` | `sarif` |
+| `sarif-file` | No | empty | `results/zn-gate.sarif` |
+| `package-sha256` | No | empty | `0000...0000` (the 64-character hash of the wheel) |
+| `npm-integrity` | No | empty | `sha512-AAAA...` (the integrity of the tarball) |
+
+The full description of each input follows.
 
 | Input | Default | What it does |
 |---|---|---|
@@ -86,15 +115,77 @@ Outputs:
 | `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error, `3` no file was read, or a file or folder was not read and `allow-partial` is not `true` (zn-gate 1.14.0 and later); empty if it did not run. The step then fails with its own message and, with `format: sarif`, the report is still written. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
 
+## Reading the result
+
+The exit codes are the ones in the [CLI exit codes](cli.md#exit-codes). For the action step they mean:
+
+- `0`: done, nothing to report. For the scan, nothing was found and everything that matched was read. For the audit, nothing is at or above the threshold.
+- `1`: the command ran and found a problem. For the scan, something was found (or the path does not exist). For the audit, there are findings at or above the threshold. Findings win over skipped files: if both happen, the code is `1`.
+- `2`: the command was used wrongly, for example an option it does not know or a path that is not a folder (audit).
+- `3`: scan only. The result does not cover everything: no file was read, or a file or folder that should have been read was not, and `allow-partial` is not `true`.
+
+The same codes are available as the `scan-exit-code` and `audit-exit-code` outputs, described in the table above.
+
 ## What the scan does not read
 
-The scan lists what it leaves out, so a gap never goes unnoticed. Files it does not read (binary files, files of 2 MiB or more) and directories it does not enter (`build`, `dist`, `vendor`, `target`) appear as notices in the workflow run, as a count in the text output, and as `skipped` and `skipped_dirs` in the JSON output. Dependency stores and caches such as `node_modules`, `.git` and `.venv` are skipped without a notice. Test directories (`test`, `tests`, `__tests__`) are read, because fixtures there can hold real secrets. The Node and Python scans skip exactly the same directories. A directory named `target` is skipped only when a `Cargo.toml`, `pom.xml`, Gradle or sbt file sits next to it, and `vendor` only next to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`. The directory you pass to the scan is always read, whatever its name. A name you pass with `--exclude` is skipped everywhere and is not listed.
+The scan lists what it leaves out, so a gap never goes unnoticed.
+
+It does not read these files:
+
+- Binary files.
+- Files of 2 MiB or more.
+
+It does not enter these directories: `build`, `dist`, `vendor`, `target`.
+
+Skipped files and directories show up in three places: as notices in the workflow run, as a count in the text output, and as `skipped` and `skipped_dirs` in the JSON output.
+
+Dependency stores and caches such as `node_modules`, `.git` and `.venv` are skipped without a notice. Test directories (`test`, `tests`, `__tests__`) are read, because fixtures there can hold real secrets. The Node and Python scans skip exactly the same directories.
+
+Two directory names depend on the files next to them:
+
+- A directory named `target` is skipped only when a `Cargo.toml`, `pom.xml`, Gradle or sbt file sits next to it.
+- `vendor` is skipped only next to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`.
+
+The directory you pass to the scan is always read, whatever its name. A name you pass with `--exclude` is skipped everywhere and is not listed.
 
 ## Read the results in code scanning
 
 With `format: sarif` and the upload step, the findings appear in your repository under **Security** > **Code scanning**, one alert per finding, with the rule ID, the file and the line, and the evidence with any secret value hidden. On a pull request, GitHub also annotates the changed lines. The audit and the scan are separate runs (categories `zn-gate/audit/` and `zn-gate/scan/`), so you can filter by tool. [audit.md](audit.md) lists each audit rule and how to fix it.
 
 Code scanning needs a public repository, or GitHub Code Security on a private one. Without it, use `format: github` (the default): the findings show as annotations in the workflow run and on the pull request, and no `security-events` permission is needed.
+
+## Pull request example with common inputs
+
+This workflow checks every pull request with both the audit and the scan. It fails the step on audit findings of severity `high` or above, and on any scan finding. It uses only inputs that `action.yml` defines, and needs no code scanning permissions because `format: github` shows findings as annotations.
+
+```yaml
+name: zn-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  zn-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit agent configs and scan for secrets
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
+        with:
+          version: '1.15.0'
+          mode: both
+          path: '.'
+          format: github
+          fail-on-threat: 'true'
+          severity-threshold: 'high'
+```
+
+See [Inputs](#inputs) for every option.
 
 ## Warn without failing the build
 
@@ -117,9 +208,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit agent configs (report only)
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.13.1'
+          version: '1.15.0'
           mode: audit
           format: github
           fail-on-threat: 'false'
@@ -129,7 +220,7 @@ Always set `version` to the same release as the pinned Action. In the 1.12.0 Act
 
 Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
 
-Releases up to and including 1.13.1 do not have this check. It comes in a later release, so the example above, which pins 1.13.1, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
+Releases before 1.14.0 do not have this check: there, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules. From 1.14.0 on, which includes the 1.15.0 pinned in the example above, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`.
 
 Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
 
@@ -169,4 +260,5 @@ npx -y zn-gate audit .
 ## Related
 
 - [`zn audit`](audit.md): what it checks and every rule.
+- [CI step example](examples/ci-step-example.md): one job that runs the audit and reads its exit code.
 - [Action inputs in the README](../README.md#github-action).

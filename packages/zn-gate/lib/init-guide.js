@@ -115,7 +115,7 @@ async function plan(opts = {}) {
   const home = opts.home;
   const nodeVersion = opts.nodeVersion || process.versions.node;
   const nodeSt = pluginNodeStatus({ env, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode });
-  const res = await check({ home, env, cwd: opts.cwd, nodeVersion, pluginNode: nodeSt });
+  const res = await check({ home, env, cwd: opts.cwd, nodeVersion, pluginNode: nodeSt, hookTimeoutMs: opts.hookTimeoutMs });
   let temporary = opts.temporary !== undefined ? opts.temporary : fromTemporaryCopy();
   const glob = opts.global || globalInstall(env);
   if (opts.temporary === undefined && !temporary && glob.pkgDir && !samePath(PKG_ROOT, glob.pkgDir)) temporary = true;
@@ -141,8 +141,8 @@ async function plan(opts = {}) {
         const need = nodeSt.unknown ? 'zn-gate could not find or run the `node` that the hooks of the plugin start with (the first one on your PATH), and the plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later'
           : 'it needs Node.js ' + PLUGIN_NODE_MIN + ' or later (' + nodeSt.why + ')';
         item.note = dropPlugin
-          ? 'Claude Code plugin will be turned off: ' + need + '; zn\'s hooks will be used instead. Update Node.js to use the plugin.'
-          : 'Claude Code plugin skipped: ' + need + '. zn\'s hooks are set up instead; update Node.js to use the plugin.';
+          ? 'Claude Code plugin will be turned off: ' + need + '; zn\'s hooks will be used instead. To use the plugin, install Node.js 22 LTS from nodejs.org, then open a new terminal.'
+          : 'Claude Code plugin skipped: ' + need + '. zn\'s hooks are set up instead, and they protect Claude Code on this Node.js. To use the plugin, install Node.js 22 LTS from nodejs.org, then open a new terminal.';
       }
       const disablePlugin = () => {
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);
@@ -157,6 +157,10 @@ async function plan(opts = {}) {
         item.steps.push(disablePlugin());
       } else if (!hooksVerb && r.via === 'both') {
         // Something other than the plugin (a Claude Code setting that stops all hooks, zn's rules): neither set is touched.
+        item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
+      } else if (!hooksVerb && r.needsGitBash) {
+        // The plugin is installed but Claude Code has no Git Bash to start its hook with (Windows): installing the plugin again
+        // cannot give it one. Git for Windows (or CLAUDE_CODE_GIT_BASH_PATH) comes first, or zn's own hooks instead; the fix says both.
         item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
       } else if (!hooksVerb && r.pluginOff) {
         // Installed but turned off: installing it again would not turn it on.
@@ -195,7 +199,7 @@ async function plan(opts = {}) {
     if (glob.version && cmp(glob.version, VERSION) >= 0) {
       // A global install that is the same or newer is used as it is: never downgrade it.
     } else if (glob.npm) {
-      setup.push({ label: 'install zn-gate ' + VERSION + ' for your user' + (glob.version ? ' (you have ' + glob.version + ')' : ''), run: [glob.npm, ['install', '-g', ...NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]], timeout: NPM_INSTALL_TIMEOUT_MS, manual: 'npm install -g zn-gate@' + VERSION });
+      setup.push({ label: 'install zn-gate ' + VERSION + ' for your user' + (glob.version ? ' (you have ' + glob.version + ')' : ''), run: [glob.npm, ['install', '-g', ...NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]], timeout: NPM_INSTALL_TIMEOUT_MS, manual: 'npm install -g zn-gate@' + VERSION, shown: 'npm install -g ' + NPM_NETWORK_FLAGS.join(' ') + ' zn-gate@' + VERSION });
     } else {
       setup.push({ label: 'install zn-gate for your user', run: null, manual: 'npm install -g zn-gate' });
     }
@@ -239,8 +243,21 @@ function networkFailure(stderr, timedOut) {
 
 function networkAdvice(manual) {
   return [
-    '  that did not finish: no internet connection: npm could not reach the registry.',
-    '  Nothing was installed. Connect to the internet (check your VPN or proxy), then run it again:',
+    '  that did not finish. npm could not reach the registry.',
+    '  The cause may be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.',
+    '  Check your connection (and your VPN or proxy), then run it again:',
+    '    ' + manual,
+    ''
+  ].join(String.fromCharCode(10)) + String.fromCharCode(10);
+}
+
+/* The install ran past its time limit and was stopped: the network may only be slow, and the install may be half done. */
+function timeoutAdvice(manual, ms) {
+  return [
+    '  that was stopped: the install took longer than ' + Math.round((ms || NPM_INSTALL_TIMEOUT_MS) / 1000) + ' seconds.',
+    '  Your connection may just be slow. The install may be incomplete, so check what is there with:',
+    '    npm ls -g zn-gate',
+    '  Then run it again:',
     '    ' + manual,
     ''
   ].join(String.fromCharCode(10)) + String.fromCharCode(10);
@@ -267,7 +284,7 @@ function permissionAdvice({ prefix, env, todo, shell }) {
     '  Fix it without administrator rights, in your own terminal:',
     '    mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global',
     '    echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ' + profile,
-    '  Then open a new terminal and run: npx -y zn-gate init',
+    '  Then open a new terminal and run: ' + require('./zn-command').cliName('npx') + ' -y zn-gate init',
     '  Or install Node.js with a version manager such as nvm (https://github.com/nvm-sh/nvm), which needs no special permissions.',
     '  More: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally',
     ''
@@ -281,12 +298,16 @@ function permissionAdvice({ prefix, env, todo, shell }) {
  */
 async function guide(opts = {}) {
   const env = opts.env || process.env;
-  const w = opts.write || ((s) => process.stdout.write(s));
+  const { winCommandText, winManualText } = require('./zn-command');
+  const out = opts.write || ((s) => process.stdout.write(s));
+  const w = (s) => out(winCommandText(s));
   const tty = require('./broker/tty');
   const stdin = opts.stdin || process.stdin;
   const agent = tty.agentDetected(env, opts);
   const interactive = Boolean(stdin.isTTY) && !agent;
   const { items, setup } = await plan(opts);
+  // A step's manual text is a command line: on Windows it names the .cmd forms.
+  for (const st of [...setup, ...items.flatMap((i) => i.steps)]) if (st.manual) st.manual = winManualText(st.manual);
 
   w('\nzn-gate init: set up zn for the coding agents on this machine\n\n');
   const todo = items.filter((i) => i.steps.length);
@@ -325,10 +346,11 @@ async function guide(opts = {}) {
   let globalReady = !setup.length;
   for (const s of setup) {
     if (!s.run) { w(`First, ${s.label}: ${s.manual}\n`); skipped++; break; }
-    if (!(await ask(`${s.label}: run \`${s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
+    if (!(await ask(`${s.label}: run \`${s.shown || s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
     const res = run(s, env);
     if (!(res === true || (res && res.ok))) {
-      if (s.run && networkFailure(res && res.stderr, res && res.timedOut)) w(networkAdvice(s.manual));
+      if (s.run && res && res.timedOut) w(timeoutAdvice(s.manual, s.timeout));
+      else if (s.run && networkFailure(res && res.stderr, false)) w(networkAdvice(s.manual));
       else if (s.run && permissionFailure(res && res.stderr, globalPrefix(opts, s))) w(permissionAdvice({ prefix: globalPrefix(opts, s), env, todo, shell: opts.shell }));
       else w(`  that did not finish. Run it yourself: ${s.manual}\n`);
       skipped++; break;
@@ -365,4 +387,4 @@ async function guide(opts = {}) {
   return skipped ? 1 : code;
 }
 
-module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram, npmCli } };
+module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, timeoutAdvice, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram, npmCli } };

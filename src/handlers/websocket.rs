@@ -103,7 +103,7 @@ async fn handle_socket(socket: axum::extract::ws::WebSocket, _state: WsState, _n
             })
             .to_string();
 
-            if let Err(e) = sender.send(Message::Text(response)).await {
+            if let Err(e) = sender.send(Message::Text(response.into())).await {
                 tracing::error!("WS send error: {}", e);
                 break;
             }

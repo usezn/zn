@@ -26,9 +26,10 @@ def _run_cli(args, encoding):
     env["PYTHONUTF8"] = "0"
     env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
     env.pop("ZN_CLOUD", None)
-    # These cases check the symbol markers, so the child must not inherit a plain-text request.
+    # The child has no terminal, so it prints ASCII markers whatever the caller's environment says.
     env.pop("NO_COLOR", None)
     env.pop("TERM", None)
+    env.pop("CI", None)
     return subprocess.run(
         [sys.executable, "-m", "zn_gate.cli"] + args,
         capture_output=True, env=env, timeout=60,
@@ -81,12 +82,13 @@ class TestCliLegacyCodePage(unittest.TestCase):
         proc = _run_cli(["status"], "cp1252")
         self._assert_no_crash(proc, 0)
 
-    def test_utf8_output_keeps_the_emoji(self):
+    def test_utf8_pipe_output_uses_markers_and_keeps_the_snippet(self):
+        # A pipe gets ASCII markers (emoji only on a terminal); the quoted user text is kept.
         proc = _run_cli(["scan", self.path, "--format", "text"], "utf-8")
         self._assert_no_crash(proc, 1)
         out = proc.stdout.decode("utf-8")
-        self.assertIn("\U0001f6e1\ufe0f zn-gate Security Scanner", out)
-        self.assertIn("\U0001f6a8 Found 0 secrets and 2 threat vectors", out)
+        self.assertIn("[+] zn-gate Security Scanner", out)
+        self.assertIn("[!] Found 0 secrets and 2 threat vectors", out)
         self.assertIn("\u5ffd\u7565", out)
 
 

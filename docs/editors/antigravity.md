@@ -4,7 +4,7 @@ Set up zn-gate in Google Antigravity: install its hooks and add it as an MCP ser
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Antigravity.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Antigravity.
 2. At the top of the agent panel, open the **…** menu → **MCP Servers** → **Manage MCP Servers** → **View raw config**. (This is the file `~/.gemini/antigravity/mcp_config.json`, or `~/.gemini/config/mcp_config.json` in some versions, where `~` is your user folder, for example `C:\Users\you` on Windows.)
 3. Paste this:
 
@@ -43,6 +43,16 @@ zn hooks install antigravity
 ```
 
 This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--project` to write `.agents/hooks.json` in the current project instead; a project hook runs `zn` from your `PATH`, so everyone who opens the project in Antigravity needs zn-gate installed (without it the hook blocks the call with a message that says how to install it). The command is written for the kind of machine you ran it on (macOS and Linux, or Windows): a teammate on the other kind runs the same command in their own copy. zn-gate keeps a backup of a file it changes, and `zn hooks uninstall antigravity` removes the hook. `zn hooks install antigravity` also starts the hook once with a harmless test event and tells you if it does not answer with a valid decision. If it says `SELF-CHECK FAILED`, follow the next step it prints (usually `npm install -g zn-gate`, then install again) before you use Antigravity. Then run `npx -y zn-gate check`, which reports whether the Antigravity hook works.
+
+### Project or user install
+
+| | User install | Project install |
+| - | - | - |
+| Command | `zn hooks install antigravity` | `zn hooks install antigravity --project` |
+| Flag | none | `--project` |
+| Folder | `~/.gemini/config/hooks.json` | `.agents/hooks.json` in the current project |
+| Who is covered | You, in every project you open in Antigravity | Everyone who opens that project, if they have zn-gate installed |
+| Uninstall | `zn hooks uninstall antigravity` | `zn hooks uninstall antigravity --project`, run from the project's folder |
 
 ## What zn-gate protects in Antigravity, and what it does not
 
@@ -115,13 +125,18 @@ This checks the hooks. To check the MCP server too, restart Antigravity and ask 
 
 ## Uninstall
 
-In your own terminal:
+In your own terminal, in this order (the same order `npx -y zn-gate uninstall` uses):
 
-```bash
-zn hooks uninstall antigravity
-```
+1. If you ran `npx -y zn-gate init --wrap-mcp`, put back the MCP settings files first: `npx -y zn-gate init --revert`. Do this before the next step: a saved copy put back after the hooks are removed could bring the zn-gate server back.
+2. Remove the hooks:
 
-If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first. To remove the MCP server, delete the `zn-gate` entry from the MCP settings file you edited in Install. If you ran `npx -y zn-gate init --wrap-mcp`, `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved before wrapping. See [Remove zn-gate](../uninstall.md).
+   ```bash
+   zn hooks uninstall antigravity
+   ```
+
+   If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first.
+
+3. If you added the `zn-gate` MCP server by hand, delete its entry from the MCP settings file you edited in Install, then restart Antigravity. See [Remove zn-gate](../uninstall.md).
 
 ## Troubleshooting
 

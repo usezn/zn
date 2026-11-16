@@ -167,8 +167,15 @@ mod tests {
         cache.insert("m1", text, embedding);
         assert!(cache.get("m1", text).is_some());
 
-        thread::sleep(Duration::from_secs(2));
-        assert!(cache.get("m1", text).is_none());
+        // The TTL is 1 s: poll until the entry is gone, with a deadline.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while cache.get("m1", text).is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the entry never expired"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]

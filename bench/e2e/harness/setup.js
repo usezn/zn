@@ -76,14 +76,19 @@ const P = (...p) => path.join(proj, ...p);
 const PRINT_NODE = 'node -e "console.log(\'db:\', process.argv[1])" __ZN_DB_PASSWORD__';
 const PRINT_PY = 'python3 -c "import sys; print(\'db:\', sys.argv[1])" __ZN_DB_PASSWORD__';
 const RESTORE = 'printf %s __ZN_AWS_KEY_1__ | wc -c';
+// A secret marker in a command's arguments is refused (the value would show in the process list), so the
+// allowed and the declined command take the secret the supported way: as an environment variable of the
+// program, through zn run --secrets. The output still prints the value, and zn masks it back to the marker.
+const ENV_NODE = 'zn run --secrets DB_PASSWORD -- node -e "console.log(\'db:\', process.env.DB_PASSWORD)"';
+const ENV_PY = 'zn run --secrets DB_PASSWORD -- python3 -c "import os; print(\'db:\', os.environ[\'DB_PASSWORD\'])"';
 
 const scenarios = {
   'claude-code': [
     { tool: 'Read', input: { file_path: P('.env') } },
     { tool: 'Read', input: { file_path: P('config', 'settings.yml') } },
     { tool: 'Write', input: { file_path: P('src', 'client.js'), content: 'const token = process.env.GITHUB_TOKEN; // stored as __ZN_GITHUB_TOKEN__\n' } },
-    { tool: 'Bash', input: { command: PRINT_NODE, description: 'allowed command' } },
-    { tool: 'Bash', input: { command: PRINT_PY, description: 'command not approved' } },
+    { tool: 'Bash', input: { command: ENV_NODE, description: 'allowed command' } },
+    { tool: 'Bash', input: { command: ENV_PY, description: 'command not approved' } },
     { tool: 'Bash', input: { command: RESTORE, description: 'restore a detected value locally' } },
     { tool: 'Read', input: { file_path: path.join(home, '.aws', 'credentials') } },
     { tool: 'Bash', input: { command: 'cat config/settings.yml', description: 'read the config again' } },
@@ -92,16 +97,16 @@ const scenarios = {
     { tool: 'exec_command', input: { cmd: 'cat .env' } },
     { tool: 'exec_command', input: { cmd: 'cat config/settings.yml' } },
     { tool: 'exec_command', input: { cmd: PRINT_NODE } },
-    { tool: 'exec_command', input: { cmd: 'zn run -- ' + PRINT_NODE } },
-    { tool: 'exec_command', input: { cmd: 'zn run -- ' + PRINT_PY } },
+    { tool: 'exec_command', input: { cmd: ENV_NODE } },
+    { tool: 'exec_command', input: { cmd: ENV_PY } },
     { tool: 'exec_command', input: { cmd: 'cat ~/.aws/credentials' } },
   ],
   opencode: [
     { tool: 'read', input: { filePath: P('.env') } },
     { tool: 'read', input: { filePath: P('config', 'settings.yml') } },
     { tool: 'write', input: { filePath: P('src', 'client.js'), content: 'const token = process.env.GITHUB_TOKEN; // stored as __ZN_GITHUB_TOKEN__\n' } },
-    { tool: 'bash', input: { command: PRINT_NODE, description: 'allowed command' } },
-    { tool: 'bash', input: { command: PRINT_PY, description: 'command not approved' } },
+    { tool: 'bash', input: { command: ENV_NODE, description: 'allowed command' } },
+    { tool: 'bash', input: { command: ENV_PY, description: 'command not approved' } },
     { tool: 'read', input: { filePath: path.join(home, '.aws', 'credentials') } },
     { tool: 'bash', input: { command: 'cat config/settings.yml', description: 'read the config again' } },
   ],

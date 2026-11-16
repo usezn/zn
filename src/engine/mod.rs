@@ -490,7 +490,11 @@ impl ZnEngine {
             let policy_name = entry.key();
             let module = entry.value();
             if !self.check_tool_call(module, tool_name, arguments, agent_id.clone())? {
-                warn!("Policy '{}' DENIED tool call: {}", policy_name, tool_name);
+                warn!(
+                    "Policy '{}' DENIED tool call: {}",
+                    policy_name,
+                    crate::scrubber::Scrubber::redact_for_log(tool_name)
+                );
                 return Ok(false);
             }
         }
@@ -585,7 +589,9 @@ impl ZnEngine {
             if consumed > self.config.gas_limit / 2 {
                 warn!(
                     "High gas consumption for tool '{}': {} / {}",
-                    tool_name, consumed, self.config.gas_limit
+                    crate::scrubber::Scrubber::redact_for_log(tool_name),
+                    consumed,
+                    self.config.gas_limit
                 );
             }
         }
@@ -777,5 +783,456 @@ mod tests {
         assert!(std::fs::symlink_metadata(dir.join("dangling.wasm")).is_ok());
         assert_eq!(std::fs::read(root.join("outside.wasm")).unwrap(), b"keep");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- WASM policy engine tests (policies are written as WAT text) ----
+
+    const DEFAULT_ALLOC: &str = "(global $heap (mut i32) (i32.const 4096))
+        (func (export \"alloc\") (param $n i32) (result i32)
+          (local $p i32)
+          (local.set $p (global.get $heap))
+          (global.set $heap (i32.add (global.get $heap) (local.get $n)))
+          (local.get $p))";
+
+    fn policy_wat(alloc: &str, extra: &str, body: &str) -> String {
+        format!(
+            "(module
+              (import \"env\" \"zn_get_agent_id\" (func $aid (param i32 i32) (result i32)))
+              (import \"env\" \"zn_state_set\" (func $set (param i32 i32 i32 i32)))
+              (import \"env\" \"zn_state_get\" (func $get (param i32 i32 i32 i32) (result i32)))
+              (memory (export \"memory\") 1)
+              (data (i32.const 2048) \"kv\")
+              {extra}
+              {alloc}
+              (func (export \"dealloc\") (param i32 i32))
+              (func (export \"validate_tool_call\") (param i32 i32 i32 i32) (result i32)
+                {body}))"
+        )
+    }
+
+    fn simple_policy(body: &str) -> String {
+        policy_wat(DEFAULT_ALLOC, "", body)
+    }
+
+    fn engine_with(gas: u64, memory: u64, hashes: Vec<String>) -> ZnEngine {
+        ZnEngine::new(ZnEngineConfig {
+            gas_limit: gas,
+            memory_limit: memory,
+            timeout_ms: 5000,
+            allowed_hashes: hashes,
+            signing_public_key: None,
+        })
+        .unwrap()
+    }
+
+    fn engine() -> ZnEngine {
+        engine_with(1_000_000, 16 * 1024 * 1024, Vec::new())
+    }
+
+    fn module_of(e: &ZnEngine, wat: &str) -> Module {
+        e._load_policy_from_bytes(wat.as_bytes(), "test").unwrap()
+    }
+
+    #[test]
+    fn policy_that_returns_one_allows_and_zero_denies() {
+        let e = engine();
+        let allow = module_of(&e, &simple_policy("(i32.const 1)"));
+        let deny = module_of(&e, &simple_policy("(i32.const 0)"));
+        assert!(e.check_tool_call(&allow, "tool", "{}", None).unwrap());
+        assert!(!e.check_tool_call(&deny, "tool", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn policy_receives_the_tool_name_length() {
+        let e = engine();
+        let m = module_of(&e, &simple_policy("(i32.eq (local.get 1) (i32.const 4))"));
+        assert!(e.check_tool_call(&m, "bash", "{}", None).unwrap());
+        assert!(!e.check_tool_call(&m, "other", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn agent_id_host_function_returns_the_identity_length() {
+        let e = engine();
+        let m = module_of(
+            &e,
+            &simple_policy("(i32.eq (call $aid (i32.const 1024) (i32.const 16)) (i32.const 5))"),
+        );
+        assert!(e
+            .check_tool_call(&m, "t", "{}", Some("agent".to_string()))
+            .unwrap());
+        assert!(!e.check_tool_call(&m, "t", "{}", None).unwrap());
+        assert!(!e
+            .check_tool_call(&m, "t", "{}", Some("longer-agent".to_string()))
+            .unwrap());
+    }
+
+    #[test]
+    fn state_store_is_shared_between_policy_calls() {
+        let e = engine();
+        let setter = module_of(
+            &e,
+            &simple_policy(
+                "(call $set (i32.const 2048) (i32.const 1) (i32.const 2049) (i32.const 1))
+                 (i32.const 1)",
+            ),
+        );
+        let getter = module_of(
+            &e,
+            &simple_policy(
+                "(i32.eq (call $get (i32.const 2048) (i32.const 1) (i32.const 3000) (i32.const 8))
+                         (i32.const 1))",
+            ),
+        );
+        assert!(!e.check_tool_call(&getter, "t", "{}", None).unwrap());
+        assert!(e.check_tool_call(&setter, "t", "{}", None).unwrap());
+        assert!(e.check_tool_call(&getter, "t", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn state_host_functions_ignore_out_of_bounds_pointers() {
+        let e = engine();
+        let m = module_of(
+            &e,
+            &simple_policy(
+                "(call $set (i32.const 70000) (i32.const 1) (i32.const 70000) (i32.const 1))
+                 (i32.eq (call $get (i32.const 70000) (i32.const 1) (i32.const 0) (i32.const 1))
+                         (i32.const 0))",
+            ),
+        );
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn state_get_truncates_the_copy_to_the_buffer_size() {
+        let e = engine();
+        let m = module_of(
+            &e,
+            &simple_policy(
+                "(call $set (i32.const 2048) (i32.const 1) (i32.const 2048) (i32.const 2))
+                 (i32.eq (call $get (i32.const 2048) (i32.const 1) (i32.const 3000) (i32.const 1))
+                         (i32.const 2))",
+            ),
+        );
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn memory_growth_beyond_the_limit_is_refused() {
+        let wat = simple_policy("(i32.eq (memory.grow (i32.const 10)) (i32.const -1))");
+        let small = engine_with(1_000_000, 65536, Vec::new());
+        let m = module_of(&small, &wat);
+        assert!(small.check_tool_call(&m, "t", "{}", None).unwrap());
+        let large = engine();
+        let m = module_of(&large, &wat);
+        assert!(!large.check_tool_call(&m, "t", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn module_needing_more_memory_than_the_limit_fails_to_run() {
+        let e = engine_with(1_000_000, 1000, Vec::new());
+        let m = module_of(&e, &simple_policy("(i32.const 1)"));
+        assert!(e.check_tool_call(&m, "t", "{}", None).is_err());
+    }
+
+    #[test]
+    fn table_growth_beyond_the_limit_is_refused() {
+        let e = engine();
+        let wat = policy_wat(
+            DEFAULT_ALLOC,
+            "(table $t 1 funcref)",
+            "(i32.eq (table.grow $t (ref.null func) (i32.const 2000)) (i32.const -1))",
+        );
+        let m = module_of(&e, &wat);
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+        let wat = policy_wat(
+            DEFAULT_ALLOC,
+            "(table $t 1 funcref)",
+            "(i32.eq (table.grow $t (ref.null func) (i32.const 10)) (i32.const -1))",
+        );
+        let m = module_of(&e, &wat);
+        assert!(!e.check_tool_call(&m, "t", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn policy_that_runs_out_of_gas_is_an_error() {
+        let e = engine_with(10_000, 16 * 1024 * 1024, Vec::new());
+        let m = module_of(&e, &simple_policy("(loop $l (br $l)) (i32.const 1)"));
+        assert!(e.check_tool_call(&m, "t", "{}", None).is_err());
+    }
+
+    #[test]
+    fn policy_using_most_of_the_gas_still_returns_its_verdict() {
+        let e = engine_with(20_000, 16 * 1024 * 1024, Vec::new());
+        let m = module_of(
+            &e,
+            &simple_policy(
+                "(local $i i32)
+                 (loop $l
+                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                   (br_if $l (i32.lt_u (local.get $i) (i32.const 2000))))
+                 (i32.const 1)",
+            ),
+        );
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+    }
+
+    #[test]
+    fn policy_without_memory_export_is_an_error() {
+        let e = engine();
+        let wat = "(module
+          (memory 1)
+          (func (export \"alloc\") (param i32) (result i32) (i32.const 8))
+          (func (export \"dealloc\") (param i32 i32))
+          (func (export \"validate_tool_call\") (param i32 i32 i32 i32) (result i32) (i32.const 1)))";
+        let m = module_of(&e, wat);
+        let err = e.check_tool_call(&m, "t", "{}", None).unwrap_err();
+        assert!(err.to_string().contains("memory export"));
+    }
+
+    #[test]
+    fn policy_missing_an_export_is_an_error() {
+        let e = engine();
+        let wat = "(module
+          (memory (export \"memory\") 1)
+          (func (export \"alloc\") (param i32) (result i32) (i32.const 8)))";
+        let m = module_of(&e, wat);
+        assert!(e.check_tool_call(&m, "t", "{}", None).is_err());
+    }
+
+    #[test]
+    fn allocation_failure_for_the_tool_name_is_an_error() {
+        let e = engine();
+        let alloc = "(func (export \"alloc\") (param i32) (result i32) (i32.const 0))";
+        let m = module_of(&e, &policy_wat(alloc, "", "(i32.const 1)"));
+        let err = e.check_tool_call(&m, "t", "{}", None).unwrap_err();
+        assert!(err.to_string().contains("tool name"));
+    }
+
+    #[test]
+    fn allocation_failure_for_the_arguments_is_an_error() {
+        let e = engine();
+        let alloc = "(global $n (mut i32) (i32.const 0))
+            (func (export \"alloc\") (param i32) (result i32)
+              (global.set $n (i32.add (global.get $n) (i32.const 1)))
+              (if (result i32) (i32.eq (global.get $n) (i32.const 2))
+                (then (i32.const 0))
+                (else (i32.const 512))))";
+        let m = module_of(&e, &policy_wat(alloc, "", "(i32.const 1)"));
+        let err = e.check_tool_call(&m, "t", "{}", None).unwrap_err();
+        assert!(err.to_string().contains("arguments"));
+    }
+
+    #[test]
+    fn allocation_outside_memory_makes_the_write_fail() {
+        let e = engine();
+        let alloc = "(func (export \"alloc\") (param i32) (result i32) (i32.const 70000))";
+        let m = module_of(&e, &policy_wat(alloc, "", "(i32.const 1)"));
+        assert!(e.check_tool_call(&m, "t", "{}", None).is_err());
+    }
+
+    #[test]
+    fn check_tool_call_all_allows_without_policies_and_requires_every_policy() {
+        let e = engine();
+        assert!(e.check_tool_call_all("t", "{}", None).unwrap());
+
+        let dir = temp_dir("check-all");
+        std::fs::write(dir.join("allow.wasm"), simple_policy("(i32.const 1)")).unwrap();
+        e.load_all_policies(&dir).unwrap();
+        assert!(e.check_tool_call_all("t", "{}", None).unwrap());
+
+        std::fs::write(dir.join("deny.wasm"), simple_policy("(i32.const 0)")).unwrap();
+        e.load_all_policies(&dir).unwrap();
+        assert_eq!(e.policy_count(), 2);
+        assert!(!e.check_tool_call_all("t", "{}", None).unwrap());
+
+        e.unregister_policy("deny");
+        assert!(e.check_tool_call_all("t", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_tool_call_all_propagates_policy_errors() {
+        let e = engine_with(10_000, 16 * 1024 * 1024, Vec::new());
+        let dir = temp_dir("check-all-err");
+        std::fs::write(
+            dir.join("loop.wasm"),
+            simple_policy("(loop $l (br $l)) (i32.const 1)"),
+        )
+        .unwrap();
+        e.load_all_policies(&dir).unwrap();
+        assert!(e.check_tool_call_all("t", "{}", None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn register_policy_from_file_registers_by_file_stem() {
+        let e = engine();
+        let dir = temp_dir("register");
+        let path = dir.join("my-policy.wasm");
+        std::fs::write(&path, simple_policy("(i32.const 1)")).unwrap();
+        e.register_policy_from_file(&path).unwrap();
+        assert!(e._has_policy("my-policy"));
+        assert!(e._get_policy("my-policy").is_some());
+        assert!(e._get_policy("other").is_none());
+        assert_eq!(e.list_policies(), vec!["my-policy".to_string()]);
+        e.unregister_policy("my-policy");
+        e.unregister_policy("my-policy");
+        assert_eq!(e.policy_count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn register_policy_from_file_reports_missing_and_invalid_files() {
+        let e = engine();
+        let dir = temp_dir("register-bad");
+        let err = e
+            .register_policy_from_file(dir.join("missing.wasm"))
+            .unwrap_err();
+        assert!(err.to_string().contains("Failed to read policy file"));
+
+        let bad = dir.join("bad.wasm");
+        std::fs::write(&bad, b"not a wasm module").unwrap();
+        let err = e.register_policy_from_file(&bad).unwrap_err();
+        assert!(err.to_string().contains("Failed to compile WASM policy"));
+        assert_eq!(e.policy_count(), 0);
+
+        let err = e.register_policy_from_file(Path::new("/")).unwrap_err();
+        assert!(err.to_string().contains("Invalid policy filename"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn integrity_check_accepts_only_listed_hashes() {
+        let wat = simple_policy("(i32.const 1)");
+        let good = ZnEngine::compute_hash(wat.as_bytes());
+        let dir = temp_dir("integrity");
+        let path = dir.join("p.wasm");
+        std::fs::write(&path, &wat).unwrap();
+
+        let allowed = engine_with(1_000_000, 16 * 1024 * 1024, vec![good]);
+        allowed.register_policy_from_file(&path).unwrap();
+        assert!(allowed._has_policy("p"));
+        assert!(allowed._load_policy_from_bytes(wat.as_bytes(), "p").is_ok());
+
+        let strict = engine_with(1_000_000, 16 * 1024 * 1024, vec!["00".repeat(32)]);
+        let err = strict.register_policy_from_file(&path).unwrap_err();
+        assert!(err.to_string().contains("integrity check failed"));
+        assert!(!strict._has_policy("p"));
+        let err = strict
+            ._load_policy_from_bytes(wat.as_bytes(), "p")
+            .unwrap_err();
+        assert!(err.to_string().contains("integrity check failed"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_all_policies_creates_a_missing_directory() {
+        let e = engine();
+        let root = temp_dir("load-missing");
+        let dir = root.join("policies");
+        e.load_all_policies(&dir).unwrap();
+        assert!(dir.is_dir());
+        assert_eq!(e.policy_count(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_all_policies_skips_bad_blocked_and_non_wasm_files() {
+        let wat = simple_policy("(i32.const 1)");
+        let good = ZnEngine::compute_hash(wat.as_bytes());
+        let e = engine_with(1_000_000, 16 * 1024 * 1024, vec![good]);
+        let dir = temp_dir("load-mixed");
+        std::fs::write(dir.join("good.wasm"), &wat).unwrap();
+        std::fs::write(dir.join("blocked.wasm"), simple_policy("(i32.const 0)")).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"ignored").unwrap();
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        std::fs::write(
+            dir.join("nested").join("deep.wasm"),
+            simple_policy("(i32.const 1)"),
+        )
+        .unwrap();
+        e.load_all_policies(&dir).unwrap();
+        assert_eq!(e.list_policies(), vec!["good".to_string()]);
+
+        let open = engine();
+        std::fs::write(dir.join("broken.wasm"), b"garbage").unwrap();
+        open.load_all_policies(&dir).unwrap();
+        assert!(open._has_policy("good"));
+        assert!(open._has_policy("blocked"));
+        assert!(!open._has_policy("broken"));
+        assert!(!open._has_policy("deep"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_policy_writes_and_registers_a_valid_policy() {
+        let e = engine();
+        let dir = temp_dir("install");
+        let path = dir.join("fresh.wasm");
+        let wat = simple_policy("(i32.const 1)");
+        e.install_policy(&path, wat.as_bytes()).unwrap();
+        assert!(path.is_file());
+        assert!(e._has_policy("fresh"));
+        assert!(e.check_tool_call_all("t", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_policy_writes_nothing_when_a_check_fails() {
+        let dir = temp_dir("install-fail");
+        let wat = simple_policy("(i32.const 1)");
+
+        let strict = engine_with(1_000_000, 16 * 1024 * 1024, vec!["00".repeat(32)]);
+        let path = dir.join("blocked.wasm");
+        assert!(strict.install_policy(&path, wat.as_bytes()).is_err());
+        assert!(!path.exists());
+
+        let e = engine();
+        let path = dir.join("broken.wasm");
+        assert!(e.install_policy(&path, b"garbage").is_err());
+        assert!(!path.exists());
+        assert_eq!(e.policy_count(), 0);
+
+        let err = e
+            .install_policy(Path::new("/"), wat.as_bytes())
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid policy filename"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn engine_rejects_an_invalid_signing_key() {
+        let config = |key: &str| ZnEngineConfig {
+            gas_limit: 1000,
+            memory_limit: 65536,
+            timeout_ms: 1000,
+            allowed_hashes: Vec::new(),
+            signing_public_key: Some(key.to_string()),
+        };
+        assert!(ZnEngine::new(config("not-hex")).is_err());
+        assert!(ZnEngine::new(config("abcd")).is_err());
+    }
+
+    #[test]
+    fn signed_engine_refuses_a_policy_without_a_signature_file() {
+        let e = ZnEngine::new(ZnEngineConfig {
+            gas_limit: 1_000_000,
+            memory_limit: 16 * 1024 * 1024,
+            timeout_ms: 5000,
+            allowed_hashes: Vec::new(),
+            signing_public_key: Some(
+                "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c".to_string(),
+            ),
+        })
+        .unwrap();
+        let dir = temp_dir("unsigned");
+        let path = dir.join("p.wasm");
+        let wat = simple_policy("(i32.const 1)");
+        std::fs::write(&path, &wat).unwrap();
+        let err = e.register_policy_from_file(&path).unwrap_err();
+        assert!(err.to_string().contains("signature"));
+        assert!(e.install_policy(&path, wat.as_bytes()).is_err());
+        assert_eq!(e.policy_count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

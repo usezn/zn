@@ -9,6 +9,7 @@ const policy = require('../lib/hooks/policy');
 const exe = require('../lib/exe');
 const os = require('os');
 const path = require('path');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 // Real absolute paths for the platform: a POSIX-style home such as '/home/u' is not
 // absolute on Windows, so "~/..." would not resolve to a credential file there.
@@ -51,36 +52,36 @@ test('many "*" never make the match slow', () => {
   const targets = ['/home/u/.aws/credentials', '/home/u/project/' + 'a'.repeat(200), 'a'.repeat(255)];
   for (const w of words) {
     const m = policy.globRegExp(w);
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     for (const t of targets) m.test(t);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 1000, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    const ms = cpuMsSince(t0);
+    assert.ok(ms < budget(1000), w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
 test("a very long glob word is handled quickly", () => {
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   policy.classifyWord('*a'.repeat(30000) + 'b', OPTS);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 1000, 'took ' + ms.toFixed(1) + ' ms');
+  const ms = cpuMsSince(t0);
+  assert.ok(ms < budget(1000), 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('a bash command with a long glob is checked quickly, and still denied when it names a credential file', () => {
   const opts = OPTS;
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   policy.bashDenial('cat ' + '*'.repeat(20000) + 'a*a*a*b', opts);
   const deny = policy.bashDenial('cat ~/' + '*'.repeat(20000) + '/credentials', opts);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  const ms = cpuMsSince(t0);
   assert.ok(deny, 'a glob that names ~/.aws/credentials is denied');
-  assert.ok(ms < 1500, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(1500), 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('the program name of a very long command word is read fast, and short ones as before', () => {
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   exe.interpreterBase('python' + '1'.repeat(50000) + ' x.py');
   exe.interpreterBase('node' + '-1'.repeat(25000) + ' x.js');
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 100, 'took ' + ms.toFixed(1) + ' ms');
+  const ms = cpuMsSince(t0);
+  assert.ok(ms < budget(100), 'took ' + ms.toFixed(1) + ' ms');
   assert.equal(exe.interpreterBase('python3.12m script.py'), 'python');
   assert.equal(exe.interpreterBase('/usr/bin/node22 a.js'), 'node');
   assert.equal(exe.interpreterBase('C:\\Python\\pythonw.exe a.py'), 'pythonw');
@@ -132,12 +133,12 @@ test('a bracket expression never matches a separator', () => {
 test('a very long path is classified quickly', () => {
   const opts = OPTS;
   for (const w of ['a/'.repeat(25000) + 'x', '*/'.repeat(25000) + 'x', '/home/u/' + 'b/'.repeat(25000) + '.env']) {
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     policy.classifyWord(w, opts);
     policy.bashDenial('cat ' + w, opts);
     files.realTargetOf(w);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2000, w.slice(0, 10) + '... took ' + ms.toFixed(1) + ' ms');
+    const ms = cpuMsSince(t0);
+    assert.ok(ms < budget(2000), w.slice(0, 10) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -145,20 +146,20 @@ test('long legitimate commands with "?" are not refused', () => {
   const opts = OPTS;
   const text = 'Why does this fail? '.repeat(250);
   for (const cmd of ['git commit -m "' + text + '"', "printf '%s' '" + text + "' > notes.txt", "curl 'https://example.com/?q=" + 'x'.repeat(5000) + "'"]) {
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     const deny = policy.bashDenial(cmd, opts);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    const ms = cpuMsSince(t0);
     assert.equal(deny, null, cmd.slice(0, 30));
-    assert.ok(ms < 1500, cmd.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(1500), cmd.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
 test('a word with very many "[" is refused quickly', () => {
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   const c = policy.classifyWord('['.repeat(50000), OPTS);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  const ms = cpuMsSince(t0);
   assert.equal(c && c.kind, 'credential');
-  assert.ok(ms < 1000, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(1000), 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('realTargetOf keeps its result for existing and missing paths', () => {
@@ -183,11 +184,11 @@ test('bracket expressions are scanned once per pattern', () => {
   const words = ['[:'.repeat(1000) + 'a'.repeat(48000), braces + '[:'.repeat(300) + 'a'.repeat(20000),
     braces + '[:'.repeat(990) + 'a'.repeat(48000), '[' + '[:'.repeat(20000) + ']', '[!' + ':]['.repeat(15000)];
   for (const w of words) {
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     policy.classifyWord(w, opts);
     policy.bashDenial('cat ' + w, opts);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2000, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    const ms = cpuMsSince(t0);
+    assert.ok(ms < budget(2000), w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -222,11 +223,11 @@ test('brace patterns are read without backtracking, and very large ones are refu
   const braces = '{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}';
   const cases = [['{' + ','.repeat(50000), 500], ['{' + ','.repeat(50000) + '}', 500], [braces + '*/'.repeat(100000) + 'x', 2000]];
   for (const [w, limit] of cases) {
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     policy.classifyWord(w, opts);
     policy.bashDenial('cat ' + w, opts);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < limit, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    const ms = cpuMsSince(t0);
+    assert.ok(ms < budget(limit), w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
   const big = policy.classifyWord(braces + '*/'.repeat(100000) + 'x', opts);
   assert.equal(big && big.kind, 'credential');

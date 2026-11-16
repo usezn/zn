@@ -84,7 +84,7 @@ test('--json on an empty file has the documented shape with zero counts', async 
   assert.equal(r.code, 0);
   assert.ok(r.out.endsWith('\n'));
   const j = JSON.parse(r.out);
-  assert.deepEqual(Object.keys(j).sort(), ['byKey', 'days', 'detections', 'events', 'send_failed', 'sent_days', 'sharing', 'since', 'total']);
+  assert.deepEqual(Object.keys(j).sort(), ['byKey', 'days', 'detections', 'events', 'send_failed', 'sent_days', 'sharing', 'since', 'top_rules', 'top_rules_days', 'total']);
   assert.equal(j.days, 30);
   assert.equal(j.since, null);
   assert.deepEqual(j.total, { checked: 0, blocked: 0, warned: 0, redacted: 0 });

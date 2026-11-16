@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
+const { budget } = require('./helpers/time_budget');
 
 // programBase is not exported, so load lib/exe.js once more with it added to the exports.
 function loadProgramBase() {
@@ -54,5 +55,5 @@ test('programBase returns a name over 255 characters lowercased and untrimmed, q
   assert.equal(programBase(long), long.toLowerCase());
   const digits = '1-'.repeat(5000) + '!';
   assert.equal(programBase(digits), digits);
-  assert.ok(Date.now() - start < 1000);
+  assert.ok(Date.now() - start < budget(1000));
 });

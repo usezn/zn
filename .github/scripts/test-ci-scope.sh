@@ -38,12 +38,24 @@ scope ci-scope.sh false "docs-only change to a file no test reads skips" docs/gl
 scope ci-scope.sh false "Markdown at the repository root skips" README.md
 scope ci-scope.sh true  "docs/cli.md (read by a test) runs" docs/cli.md
 scope ci-scope.sh true  "docs/api-reference.md (read by a test) runs" docs/api-reference.md
+scope ci-scope.sh true  "docs/commands-cheatsheet.md (read by a test) runs" docs/commands-cheatsheet.md
 scope ci-scope.sh true  "docs/check.md (read by a test) runs" docs/check.md
 scope ci-scope.sh true  "docs/audit.md (read by a test) runs" docs/audit.md
 scope ci-scope.sh true  "docs file read by a test plus an unread one runs" docs/glossary.md docs/cli.md
 scope ci-scope.sh false "Rust-only change skips the Node and Python jobs" src/main.rs Cargo.lock
 scope ci-scope.sh true  "package change runs" packages/zn-gate/lib/x.js
 scope ci-scope.sh true  "workflow change runs" .github/workflows/ci.yml
+
+# SKIP_LEG=true skips even a code change (a matrix leg left to the merge queue)
+n=$((n + 1))
+r="$work/leg"; git init -q "$r"
+(
+  cd "$r"; git config user.email t@example.invalid; git config user.name t; git remote add origin "$r"
+  mkdir -p packages/zn-gate/lib; echo base > packages/zn-gate/lib/x.js; git add -A; git commit -q -m base
+  base="$(git rev-parse HEAD)"; echo changed >> packages/zn-gate/lib/x.js; git add -A; git commit -q -m change
+  got="$(EVENT_NAME=pull_request BASE_SHA="$base" FULL=false SKIP_LEG=true bash "$scripts/ci-scope.sh" | grep -E '^run=')"
+  if [ "$got" = "run=false" ]; then echo "ok   SKIP_LEG=true skips a code change"; else echo "FAIL SKIP_LEG: got $got"; exit 1; fi
+) || fails=$((fails + 1))
 
 # rust-scope.sh: the Rust gateway job
 scope rust-scope.sh true  "Rust-only change runs the Rust job" src/engine/watcher.rs
@@ -53,6 +65,15 @@ scope rust-scope.sh true  "benches/ change runs the Rust job" benches/b.rs
 scope rust-scope.sh true  "tests/ change runs the Rust job" tests/t.rs
 scope rust-scope.sh true  "rust-toolchain change runs the Rust job" rust-toolchain.toml
 scope rust-scope.sh true  "rust.yml change runs the Rust job" .github/workflows/rust.yml
+scope rust-scope.sh true  "protoc install action (used by the Rust jobs) runs the Rust job" .github/actions/setup-protoc/install.sh
+scope rust-scope.sh true  "invisible-character fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/invisible_chars.json
+scope rust-scope.sh true  "invisible.js (must match rules.rs) runs the Rust job" packages/zn-gate/lib/invisible.js
+scope rust-scope.sh true  "rules.js (override grammar, rule ids; must match prompt_guard) runs the Rust job" packages/zn-gate/lib/rules.js
+scope rust-scope.sh true  "scrub/patterns.js (card, SSN, phone checks; must match the Rust scrubber) runs the Rust job" packages/zn-gate/lib/scrub/patterns.js
+scope rust-scope.sh true  "prompt guard fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/prompt_guard_tables.json
+scope rust-scope.sh true  "scrub validator fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/scrub_validator_cases.json
+scope rust-scope.sh true  "benign phrase fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/benign_phrases.json
+scope rust-scope.sh true  "Rust rules change runs the Rust job, which holds the parity test" src/engine/rules.rs
 scope rust-scope.sh false "docs-only change skips the Rust job" docs/cli.md
 scope rust-scope.sh false "package-only change skips the Rust job" packages/zn-gate/lib/x.js
 SCOPE_EVENT=merge_group scope rust-scope.sh true  "merge queue group with a Rust change runs the Rust job" src/main.rs
@@ -82,6 +103,10 @@ while IFS= read -r p; do
     && EVENT_NAME=pull_request BASE_SHA="$base" FULL=false bash "$scripts/ci-scope.sh" | grep -E '^run=')"
   if [ "$got" = "run=true" ]; then echo "ok   $p is code (a test mentions it)"; else echo "FAIL $p is mentioned by a test but ci-scope.sh skips it: add it to ci-scope.sh (or to allow_unread if no test reads it)"; fails=$((fails + 1)); fi
 done < <(grep -rhoE 'docs/[A-Za-z0-9_-]+\.md' packages/*/test packages/zn-gate-py/tests 2>/dev/null | sort -u)
+
+# The cache-cleanup selection logic has its own tests.
+bash "$scripts/test-cache-superseded.sh" || fails=$((fails + 1))
+bash "$scripts/test-cache-deleted-branches.sh" || fails=$((fails + 1))
 
 echo "$n checks, $fails failed"
 [ "$fails" -eq 0 ]

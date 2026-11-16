@@ -1,6 +1,20 @@
 # Recipes
 
-Ten short recipes for the common jobs. Each one lists the steps and links to the full page. Run every command in your own terminal, not through an AI agent: several of them refuse to run under an agent. Every command is described in the [command line reference](cli.md).
+Eleven short recipes for the common jobs. Each one lists the steps and links to the full page. Run every command in your own terminal, not through an AI agent: several of them refuse to run under an agent. Every command is described in the [command line reference](cli.md).
+
+| Recipe | Main command | Own terminal needed | A file changes |
+| --- | --- | --- | --- |
+| [1. Try zn-gate without installing it](#1-try-zn-gate-without-installing-it) | `npx -y zn-gate check` | see the recipe | No setting changes; it uses a fake secret in a temporary folder |
+| [2. Install zn-gate](#2-install-zn-gate) | `npm install -g zn-gate` | see the recipe | see the recipe |
+| [3. Set up your coding agents](#3-set-up-your-coding-agents) | `zn-gate init` | Yes; without a terminal it only prints the steps | Yes, after it asks before each step |
+| [4. Check that you are protected](#4-check-that-you-are-protected) | `zn-gate check` | see the recipe | No |
+| [5. See what your agents can reach](#5-see-what-your-agents-can-reach) | `zn-gate reach` | see the recipe | No, it is read only |
+| [6. Protect one project](#6-protect-one-project) | `zn-gate hooks install claude-code --project` | Yes | Yes, the project settings (a backup is written first) |
+| [7. Turn on the optional cloud check](#7-turn-on-the-optional-cloud-check) | `zn-gate connect` | Yes | see the recipe |
+| [8. Read the weekly report](#8-read-the-weekly-report) | `zn-gate report` | see the recipe | see the recipe |
+| [9. Upgrade](#9-upgrade) | `npm install -g zn-gate` | see the recipe | see the recipe |
+| [10. Uninstall](#10-uninstall) | `zn-gate uninstall` | Yes; confirm in your terminal | Yes; `--dry-run` changes nothing |
+| [11. Pin an MCP server](#11-pin-an-mcp-server) | `zn-gate pins approve` | Yes; it refuses to run without a terminal | Yes, only zn-gate's record of approved servers |
 
 ## 1. Try zn-gate without installing it
 
@@ -88,3 +102,12 @@ Full page: [Upgrading](upgrading.md).
 3. Run `npm uninstall -g zn-gate` to remove the program itself.
 
 Full page: [Remove zn-gate](uninstall.md).
+
+## 11. Pin an MCP server
+
+1. Run `zn-gate pins` to list the MCP servers that `shield` has pinned and any tools that changed.
+2. Read the changed or new tools of each server before you accept them.
+3. In your own terminal, approve one server by the key that the list shows, for example `SERVER='docs-server'` and then `zn-gate pins approve "$SERVER"`. Use `zn-gate pins approve --all` to accept every server.
+4. Type the server key again when it asks (type `all` for `--all`). The command refuses to run under an AI agent or without a terminal, and exits `2` if the approval is not confirmed.
+
+Full page: [Protect MCP servers](shield.md#tool-pinning), and [`pins`](cli.md#pins) in the reference.

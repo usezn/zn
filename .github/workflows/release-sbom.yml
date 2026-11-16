@@ -1,3 +1,4 @@
+# Tests of the release SBOM and pack scripts, on pull requests and pushes that change them or the build-release workflow.
 name: Release SBOM scripts
 
 # The release build adds a serial number to each CycloneDX SBOM and checks it before signing.
@@ -8,6 +9,9 @@ on:
       - '.github/scripts/sbom-serial.js'
       - '.github/scripts/sbom-serial.test.mjs'
       - '.github/scripts/check-sbom.js'
+      - '.github/scripts/check-sbom.test.mjs'
+      - '.github/scripts/check-npm-pack.js'
+      - '.github/scripts/check-npm-pack.test.mjs'
       - '.github/workflows/build-release.yml'
       - '.github/workflows/release-sbom.yml'
   push:
@@ -16,15 +20,20 @@ on:
       - '.github/scripts/sbom-serial.js'
       - '.github/scripts/sbom-serial.test.mjs'
       - '.github/scripts/check-sbom.js'
+      - '.github/scripts/check-sbom.test.mjs'
+      - '.github/scripts/check-npm-pack.js'
+      - '.github/scripts/check-npm-pack.test.mjs'
       - '.github/workflows/build-release.yml'
       - '.github/workflows/release-sbom.yml'
 
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main always
+# complete (each has its own group).
 concurrency:
-  group: release-sbom-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: release-sbom-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
   sbom-scripts:
@@ -44,4 +53,4 @@ jobs:
         with:
           node-version: 22.x
       - name: Test the SBOM serial number and check scripts
-        run: node --test .github/scripts/sbom-serial.test.mjs
+        run: node --test .github/scripts/sbom-serial.test.mjs .github/scripts/check-sbom.test.mjs .github/scripts/check-npm-pack.test.mjs

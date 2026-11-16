@@ -1,3 +1,4 @@
+# Hook latency budget of zn-gate on Linux and Windows, on pushes to main and pull requests that touch the package.
 name: Hook latency
 
 # How long an agent waits for zn's hook on each tool call, by agent, event and output size
@@ -8,7 +9,7 @@ name: Hook latency
 # is kept as an artifact for 30 days.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main ]
     paths:
       - 'packages/zn-gate/lib/**'
       - 'packages/zn-gate/bin/**'
@@ -20,7 +21,7 @@ on:
   pull_request:
     branches: [ next, main, 'release/**' ]
     # ready_for_review: a draft that is marked ready runs the budget without another push.
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/**'
       - 'packages/zn-gate/bin/**'
@@ -29,14 +30,19 @@ on:
       - 'packages/zn-gate/test/fixtures/fake_secrets*'
       - 'bench/hook_latency*'
       - '.github/workflows/hook-latency.yml'
+  # Nightly run on next (a schedule runs on main; the checkout steps switch to next).
+  schedule:
+    - cron: '25 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run still going for it. Runs for main, the schedule and manual runs
+# always complete (each has its own group).
 concurrency:
-  group: hook-latency-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: hook-latency-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -51,7 +57,7 @@ jobs:
     name: Hook latency budget
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -59,6 +65,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -94,16 +101,19 @@ jobs:
   # measured on a Windows runner.
   latency-windows:
     name: Hook latency budget (Windows, not required)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Not in pull requests into next (they run the required checks and one Windows job); pushes to main, the nightly
+    # run on next, pull requests into main or release branches and the full-ci label measure Windows.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'pull_request' && github.base_ref == 'next' && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
     continue-on-error: true
-    timeout-minutes: 30
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -142,6 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
