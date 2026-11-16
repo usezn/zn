@@ -177,7 +177,7 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and each blocked test request is written to your local decision log (see [what check writes to the log](check.md#what-check-writes-to-the-decision-log)). The only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
@@ -348,7 +348,7 @@ The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, 
 zn-gate secret <set|list|rm|allow|approve|import|adopt|log> ...
 ```
 
-Groups the commands below. Run `zn-gate secret --help` for the short usage.
+Groups the commands below. `zn-gate secret --help` prints the general help of zn-gate, not a page about `secret`, so read this section instead. `zn-gate secret set --help` (and the same with `list`, `rm`, `allow`, `approve`, `import` or `adopt`) prints one short line that lists all the `secret` subcommands. Only `zn-gate secret log --help` has a usage of its own.
 
 Aliases: `secrets`.
 
@@ -436,9 +436,9 @@ Aliases: `secret reveal`.
 zn-gate env <shadow|unshadow> ...
 ```
 
-Groups the two commands below. Run `zn-gate env --help` for the short usage.
+Groups the two commands below. `zn-gate env --help` prints the general help of zn-gate, not a page about `env`, so read this section instead. `zn-gate env shadow --help` and `zn-gate env unshadow --help` each print their own usage.
 
-Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--help`; `env shadow --dry-run` also exits `0` once it has printed the preview), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed. This applies to `--dry-run` too: the preview also needs an interactive terminal, so without one it exits `77` and prints no preview.
 
 #### `env shadow`
 
@@ -446,7 +446,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move; it needs an interactive terminal like the real run. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `env unshadow`
 
@@ -618,10 +618,10 @@ Exit codes: it runs until its input is closed, then exits `0`.
 ### `shield`
 
 ```text
-zn-gate shield -- <command> [args...]
+zn-gate shield [--shadow] -- <command> [args...]
 ```
 
-Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
+Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Put `--shadow` before the `--` to run in shadow mode: the shield watches and records but blocks nothing (see [shadow mode](shield.md#shadow-mode-log-without-blocking)). Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
 
 Aliases: `mcp-shield`, `wrap`.
 
