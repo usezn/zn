@@ -24,6 +24,7 @@ test('zn-gate --help lists the vault, connect, unlock, hooks, run, team and env 
     '[--backend NAME]',
     '--reconnect',
     '[--project] [--no-mcp]',
+    'hooks uninstall <agent> [--project] [--no-mcp]',
     '-s is a short form of --secrets', '--agent ID',
     '--include-history', '--api URL',
     'env unshadow FILE --backup NAME',

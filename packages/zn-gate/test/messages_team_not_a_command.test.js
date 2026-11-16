@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { teamNotACommand } = require('../lib/messages');
 
-const COMMANDS = 'Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help';
+const COMMANDS = 'Commands: zn team join <token>, zn team status, zn team sync, zn team leave, zn team managed-config. All options: zn team --help';
 
 test('login has its own sentence that points to zn team join <token>', () => {
   const msg = teamNotACommand('login');
@@ -49,7 +49,7 @@ test('control characters in a short word are replaced by spaces', () => {
 test('an ordinary word is echoed in quotes with the list of real sub-commands', () => {
   const msg = teamNotACommand('frobnicate');
   assert.equal(msg, "'zn team frobnicate' is not a zn command. " + COMMANDS);
-  for (const sub of ['join', 'status', 'sync', 'leave']) {
+  for (const sub of ['join', 'status', 'sync', 'leave', 'managed-config']) {
     assert.ok(msg.includes('zn team ' + sub), 'lists zn team ' + sub);
   }
 });

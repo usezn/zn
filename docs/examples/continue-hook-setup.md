@@ -99,7 +99,7 @@ have zn-gate hooks, and Continue is not one of them. On a machine with none of
 those agents, the last line it prints is this, which is expected here:
 
 ```text
-No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), so there is nothing to check.
+No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, GitHub Copilot (VS Code, CLI), Gemini CLI (experimental), ZCode), so there is nothing to check.
 ```
 
 Use the agent step in section 3 to see the zn-gate tools in Continue.

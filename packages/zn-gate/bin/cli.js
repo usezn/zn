@@ -262,7 +262,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   hooks install <agent> [--project] [--no-mcp]
                       Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
-  hooks uninstall <agent> [--project]
+  hooks uninstall <agent> [--project] [--no-mcp]
                       Remove zn's hooks for that agent again
   uninstall           Remove zn-gate from this computer in one step: the Claude Code plugin, zn's
                       hooks, wrapped MCP servers. Shows the plan first; the vault is only deleted if

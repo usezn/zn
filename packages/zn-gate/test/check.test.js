@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { getAdapter } = require('../lib/agents');
-const { check: realCheck, report } = require('../lib/check');
+const { check: realCheck, report, AGENTS } = require('../lib/check');
 // These tests are about what they say whatever Node.js runs them: the plugin needs 20.19 or later, so one that
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const check = (opts) => realCheck({ nodeVersion: '22.0.0', ...opts });
@@ -118,6 +118,11 @@ test('check: no agent on the machine says so and offers no setup', async (t) => 
   const { s, code } = textOf(res);
   assert.equal(code, 1);
   assert.match(s, /No supported coding agent was found on this machine/);
+  // The list is built from AGENTS, the same list the per-agent lines use: all of them, Copilot and Gemini included.
+  assert.ok(s.includes('No supported coding agent was found on this machine (' + AGENTS.map((a) => a.name).join(', ') + '), so there is nothing to check.'), s);
+  for (const a of AGENTS) assert.ok(s.includes(a.name), a.name);
+  assert.ok(s.includes('GitHub Copilot'));
+  assert.ok(s.includes('Gemini CLI'));
   assert.match(s, winCmdRe(/Install one, then run `npx -y zn-gate init`/));
   assert.doesNotMatch(s, winCmdRe(/zn hooks install|plugin install/));
 });
