@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-16.21';
+const COMMAND_RULES_VERSION = '2026-11-16.25';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -452,9 +452,244 @@ function unwrapDir(args) {
 /* The words of a command after wrappers and shell keywords. */
 function unwrap(args) { return unwrapDir(args).args; }
 
+/* Globs (*, ?, [...]) in a path or a program name. The shell turns a glob into the names it matches, so a glob that can
+   match a protected folder, device or program is read as that folder, device or program, and a glob that cannot match
+   any of them stays allowed. A glob segment is read once into a short list of parts, and every protected name of a
+   table is followed at the same time as bits of one number, so the cost grows with the length of the glob, never with
+   how its parts nest. */
+const GLOB_RE = /[*?[]/;
+// More single-character parts than this: longer than any name of the tables, so only "some name" can match it.
+const GLOB_FIXED_MAX = 32;
+const ASCII_ALL = (1n << 128n) - 1n;
+
+/* The parts of one glob segment: { toks, glob, first }. toks is null when the segment has more single-character parts
+   than any table name (only anyGlobName() reads it then); glob says whether any part is a wildcard; first is the first
+   part. A part is { k: '*' }, { k: '?' }, { k: 'c', c: code } or { k: 'set', bits, other } (bits: the ASCII characters
+   the [...] class accepts; other: whether it accepts characters beyond ASCII). One pass: a [ whose class never closes is
+   a plain character, and so is every later [ of the segment. */
+function globTokens(seg) {
+  const toks = [];
+  let fixed = 0;
+  let glob = false;
+  let first = null;
+  let noClose = false;
+  const push = (t) => {
+    if (first === null) first = t;
+    if (t.k === '*') {
+      glob = true;
+      if (!toks.length || toks[toks.length - 1].k !== '*') toks.push(t);
+      return;
+    }
+    if (t.k !== 'c') glob = true;
+    if (++fixed > GLOB_FIXED_MAX) return;
+    toks.push(t);
+  };
+  for (let i = 0; i < seg.length; i++) {
+    const ch = seg[i];
+    if (ch === '*' || ch === '?') { push({ k: ch }); continue; }
+    if (ch === '[' && !noClose) {
+      const cls = globClass(seg, i);
+      if (cls) { push(cls.tok); i = cls.end; continue; }
+      noClose = true;
+    }
+    push({ k: 'c', c: seg.charCodeAt(i) });
+  }
+  return { toks: fixed > GLOB_FIXED_MAX ? null : toks, glob, first };
+}
+
+/* A [...] class starting at seg[i]: { tok, end } (end = index of its closing ]), or null when it never closes. A ! or ^
+   first negates it, a ] first is a member, a-z is a range, and a [:name:] class is taken to accept every character. */
+function globClass(seg, i) {
+  let j = i + 1;
+  let neg = false;
+  if (seg[j] === '!' || seg[j] === '^') { neg = true; j++; }
+  let bits = 0n;
+  let other = false;
+  let firstMember = true;
+  while (j < seg.length) {
+    const ch = seg[j];
+    if (ch === ']' && !firstMember) break;
+    firstMember = false;
+    if (ch === '[' && seg[j + 1] === ':') {
+      // Class names are short: the :] is looked for in the next few characters only, so the scan stays linear.
+      const close = seg.slice(j + 2, j + 12).indexOf(':]');
+      if (close >= 0) { bits = ASCII_ALL; other = true; j += close + 4; continue; }
+    }
+    let lo = seg.charCodeAt(j);
+    let hi = lo;
+    if (seg[j + 1] === '-' && j + 2 < seg.length && seg[j + 2] !== ']') { hi = seg.charCodeAt(j + 2); j += 3; } else j += 1;
+    if (hi > 127) other = true;
+    if (lo <= 127 && lo <= hi) bits |= ((1n << BigInt(Math.min(hi, 127) + 1)) - 1n) ^ ((1n << BigInt(lo)) - 1n);
+  }
+  if (j >= seg.length) return null;
+  if (neg) { bits = ~bits & ASCII_ALL; other = true; }
+  return { tok: { k: 'set', bits, other }, end: j };
+}
+
+/* Whether a glob segment can match some name that does not start with "." (a user folder, a device mapper name). */
+function anyGlobName(seg) {
+  if (!seg) return false;
+  const t = globTokens(seg).first;
+  if (t.k === '*' || t.k === '?') return true;
+  if (t.k === 'c') return t.c !== 46;
+  return t.other || (t.bits & ~(1n << 46n)) !== 0n;
+}
+
+/* A table of names that globs are compared with. Each name is a list of positions; a position is the string of the
+   characters it accepts. Name i holds bits off_i .. off_i + length_i of the state: bit off_i + j means "the glob so far
+   matches the first j characters". */
+function globTable(names) {
+  let off = 0n;
+  let start = 0n;
+  let all = 0n;
+  const keep = [0n, 0n, 0n, 0n, 0n];
+  const cm = new Map();
+  const ends = [];
+  for (const name of names) {
+    if (name.length > 31) throw new Error('glob table name too long');
+    start |= 1n << off;
+    name.forEach((chars, j) => {
+      const bit = 1n << (off + BigInt(j));
+      all |= bit;
+      for (const ch of chars) { const c = ch.charCodeAt(0); cm.set(c, (cm.get(c) || 0n) | bit); }
+    });
+    const n = name.length;
+    ends.push(1n << (off + BigInt(n)));
+    // keep[s]: the bits that a star may reach by moving 2**s positions on without leaving the name.
+    for (let s = 0; s < 5; s++) for (let p = 1 << s; p <= n; p++) keep[s] |= 1n << (off + BigInt(p));
+    off += BigInt(n + 1);
+  }
+  return { start, all, keep, cm, ends };
+}
+
+/* The indexes of the table names that the parts `toks` can match. */
+function globMatches(table, toks) {
+  let s = table.start;
+  for (const t of toks) {
+    if (t.k === '*') {
+      for (let k = 0; k < 5; k++) s |= (s << BigInt(1 << k)) & table.keep[k];
+      continue;
+    }
+    let m = 0n;
+    if (t.k === '?') m = table.all;
+    else if (t.k === 'c') m = table.cm.get(t.c) || 0n;
+    else for (const [c, bits] of table.cm) if ((t.bits >> BigInt(c)) & 1n) m |= bits;
+    s = (s & m) << 1n;
+    if (s === 0n) return [];
+  }
+  const out = [];
+  table.ends.forEach((e, i) => { if (s & e) out.push(i); });
+  return out;
+}
+
+const GLOB_LOWER = 'abcdefghijklmnopqrstuvwxyz';
+const GLOB_DIGITS = '0123456789';
+const globExact = (w) => [...w];
+const globNoCase = (w) => [...w].map((ch) => (ch.toLowerCase() === ch.toUpperCase() ? ch : ch.toLowerCase() + ch.toUpperCase()));
+const globRepeat = (chars, n) => Array(n).fill(chars);
+
+// One segment of a protected folder: the folders of SYSTEM_DIRS, a drive (C:) and the Windows folders, any case.
+const GLOB_WIN_DIRS = ['windows', 'users', 'program files', 'program files (x86)', 'programdata'];
+const GLOB_SEGMENTS = [...[...SYSTEM_DIRS].map((d) => 'u:' + d.slice(1)), 'drive', ...GLOB_WIN_DIRS.map((d) => 'w:' + d), 'w:system32'];
+const GLOB_SEGMENT_TABLE = globTable(GLOB_SEGMENTS.map((k) => (k === 'drive' ? [GLOB_LOWER + GLOB_LOWER.toUpperCase(), ':']
+  : k.startsWith('u:') ? globExact(k.slice(2)) : globNoCase(k.slice(2)))));
+
+// The programs these rules read whose name a glob may spell (/usr/bin/r? is rm).
+const GLOB_PROGRAMS = ['rm', 'find', 'chmod', 'chown', 'chgrp', 'dd', 'shred', 'wipefs', 'blkdiscard', 'mke2fs', 'mkswap', 'mkfs',
+  'mkfs.ext2', 'mkfs.ext3', 'mkfs.ext4', 'mkfs.xfs', 'mkfs.btrfs', 'mkfs.vfat', 'mkfs.fat', 'mkfs.msdos', 'mkfs.ntfs', 'mkfs.exfat', 'mkfs.f2fs'];
+const GLOB_PROGRAM_TABLE = globTable(GLOB_PROGRAMS.map(globExact));
+
+// Block device names of BLOCK_DEVICE_RE, with one or two letters or digits in each run (sda, sdab1, nvme0n1p2, md10).
+function globDeviceNames() {
+  const out = [];
+  for (const p of ['sd', 'hd', 'vd', 'xvd']) {
+    for (let a = 1; a <= 2; a++) for (let d = 0; d <= 2; d++) out.push([...globExact(p), ...globRepeat(GLOB_LOWER, a), ...globRepeat(GLOB_DIGITS, d)]);
+  }
+  for (let a = 1; a <= 2; a++) {
+    for (let b = 1; b <= 2; b++) {
+      const base = [...globExact('nvme'), ...globRepeat(GLOB_DIGITS, a), 'n', ...globRepeat(GLOB_DIGITS, b)];
+      out.push(base);
+      for (let c = 1; c <= 2; c++) out.push([...base, 'p', ...globRepeat(GLOB_DIGITS, c)]);
+    }
+  }
+  for (const [p, q] of [['mmcblk', 'p'], ['disk', 's'], ['rdisk', 's']]) {
+    for (let a = 1; a <= 2; a++) {
+      const base = [...globExact(p), ...globRepeat(GLOB_DIGITS, a)];
+      out.push(base);
+      for (let c = 1; c <= 2; c++) out.push([...base, q, ...globRepeat(GLOB_DIGITS, c)]);
+    }
+  }
+  for (const p of ['md', 'dm-']) for (let a = 1; a <= 2; a++) out.push([...globExact(p), ...globRepeat(GLOB_DIGITS, a)]);
+  return out;
+}
+const GLOB_DEVICE_TABLE = globTable(globDeviceNames());
+const GLOB_MAPPER_TABLE = globTable([globExact('mapper')]);
+
+/* The keys of GLOB_SEGMENTS that a path segment can match ('' matches nothing). */
+function globSegmentKeys(seg) {
+  if (!seg) return new Set();
+  const tk = globTokens(seg);
+  if (!tk.toks) return new Set();
+  return new Set(globMatches(GLOB_SEGMENT_TABLE, tk.toks).map((i) => GLOB_SEGMENTS[i]));
+}
+
+/* 'root', 'system' or 'home' when a glob path can match a protected folder, else ''. Only paths of up to three
+   segments are read: no protected folder is deeper. */
+function globPathKind(t) {
+  if (!GLOB_RE.test(t)) return '';
+  const parts = t.split('/');
+  if (parts.length > 4 || (parts[0] !== '' && parts.length > 3)) return '';
+  if (!parts.some((p) => globTokens(p).glob)) return '';
+  if (parts[0] === '') {
+    if (parts.length === 2 && [...globSegmentKeys(parts[1])].some((k) => k.startsWith('u:'))) return 'system';
+    if (parts.length === 3) {
+      const k = globSegmentKeys(parts[1]);
+      if ((k.has('u:home') || k.has('u:Users')) && anyGlobName(parts[2])) return 'home';
+    }
+    return '';
+  }
+  if (!globSegmentKeys(parts[0]).has('drive')) return '';
+  if (parts.length === 1) return 'root';
+  const k = globSegmentKeys(parts[1]);
+  if (parts.length === 2) return GLOB_WIN_DIRS.some((d) => k.has('w:' + d)) ? 'system' : '';
+  if (k.has('w:windows') && globSegmentKeys(parts[2]).has('w:system32')) return 'system';
+  if (k.has('w:users') && anyGlobName(parts[2])) return 'home';
+  return '';
+}
+
+/* The programs of GLOB_PROGRAMS that a command word spells with a glob in its name (/usr/bin/r?, /bin/c[h]mod): only a
+   word with a folder part, as a bare glob is matched against the files of the working folder, not the PATH. */
+function globProgramNames(word) {
+  const raw = String(word).replace(/^[\\@]+/, '');
+  const slash = raw.lastIndexOf('/');
+  if (slash < 0) return [];
+  const base = raw.slice(slash + 1);
+  if (!GLOB_RE.test(base)) return [];
+  const tk = globTokens(base);
+  if (!tk.glob || !tk.toks) return [];
+  return globMatches(GLOB_PROGRAM_TABLE, tk.toks).map((i) => GLOB_PROGRAMS[i]);
+}
+
+/* Whether a word names a block device: BLOCK_DEVICE_RE, or a glob under /dev that can match one (/dev/sd?, /dev/nvme*). */
+function blockDevice(w) {
+  if (BLOCK_DEVICE_RE.test(w)) return true;
+  if (!w.startsWith('/dev/') || !GLOB_RE.test(w)) return false;
+  const parts = w.slice(5).split('/');
+  if (!parts.some((p) => globTokens(p).glob)) return false;
+  if (parts.length === 1) {
+    const tk = globTokens(parts[0]);
+    return Boolean(tk.toks) && globMatches(GLOB_DEVICE_TABLE, tk.toks).length > 0;
+  }
+  if (parts.length !== 2) return false;
+  const tk = globTokens(parts[0]);
+  return Boolean(tk.toks) && globMatches(GLOB_MAPPER_TABLE, tk.toks).length > 0 && anyGlobName(parts[1]);
+}
+
 /* Resolves "." and ".." segments lexically (no filesystem) for a path that starts at a known point: "/", a drive, or a home word.
-   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder names its parent. Relative paths are left alone. */
-function resolveDots(t) {
+   A ".." above "/" or a drive root stays there. A ".." that steps out of the home folder goes on from the folder that
+   holds it, `homeParent` ("/home", "/Users" or "C:/Users"), and the rest of the path is read from there, so
+   ~/../alice/proj/build is /home/alice/proj/build and ~/../.. is /. Relative paths are left alone. */
+function resolveDots(t, homeParent = '/home') {
   if (!/(?:^|\/)\.\.?(?:\/|$)/.test(t)) return t;
   let anchor = '';
   let rest = t;
@@ -467,12 +702,17 @@ function resolveDots(t) {
     if (!HOME_WORDS.has(first.toLowerCase())) return t;
     anchor = first + '/'; rest = t.slice(first.length + 1); home = true;
   }
-  const out = [];
+  let out = [];
   for (const seg of rest.split('/')) {
     if (seg === '' || seg === '.') continue;
     if (seg !== '..') { out.push(seg); continue; }
     if (out.length) out.pop();
-    else if (home) return '/home';
+    else if (home) {
+      home = false;
+      const parts = homeParent.split('/');
+      anchor = parts[0] + '/';
+      out = parts.slice(1);
+    }
   }
   return anchor + out.join('/');
 }
@@ -483,13 +723,27 @@ function dangerousPath(word) {
   if (!t) return '';
   // \\?\C:\ and \\.\C:\ are the long-path spellings of C:\; %SystemDrive% and $env:SystemDrive name the drive.
   t = t.replace(/^\/[?.]\/(?=[A-Za-z]:)/, '').replace(DRIVE_VAR_RE, 'C:').replace(WINDIR_VAR_RE, 'C:/Windows');
-  t = resolveDots(t);
+  if (!t.includes('.')) return pathKind(t);
+  // A home word followed by ".." past the home folder is read with each place the home folder may sit in.
+  const first = resolveDots(t, '/home');
+  const kind = pathKind(first);
+  if (kind || !t.includes('..')) return kind;
+  const win = resolveDots(t, 'C:/Users');
+  if (win === first) return '';
+  return pathKind(win) || pathKind(resolveDots(t, '/Users'));
+}
+
+/* The kind of a path whose "." and ".." are resolved: 'root', 'home', 'system' or ''. */
+function pathKind(t) {
+  // The path before each trailing form is taken off: a glob in any of them is compared with the protected folders.
+  const forms = [t];
   // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.
   for (let n = 0; n < 4; n++) {
     let s = t.replace(/\/(?:\*|\.\*|\.|\{\*,\.\*\})?$/, '');
     if (s === t && t.length > 1 && t.endsWith('*')) s = t.slice(0, -1);
     if (s === t) break;
     t = s;
+    forms.push(t);
     if (t === '') return 'root';
   }
   if (t === '*') return '';
@@ -500,6 +754,10 @@ function dangerousPath(word) {
   if (/^[A-Za-z]:$/.test(t)) return 'root';
   if (/^[A-Za-z]:\/(?:windows|windows\/system32|users|program files|program files \(x86\)|programdata)$/i.test(t)) return 'system';
   if (/^[A-Za-z]:\/users\/[^/*]+$/i.test(t)) return 'home';
+  for (const f of GLOB_RE.test(forms[0]) ? forms : []) {
+    const g = globPathKind(f);
+    if (g) return g;
+  }
   return '';
 }
 
@@ -660,7 +918,7 @@ function headIsRead(name) {
 function checkLaterHeads(args, depth, known) {
   let n = 0;
   for (let j = 1; j < args.length; j++) {
-    if (!headIsRead(programName(args[j]))) continue;
+    if (!headIsRead(programName(args[j])) && !globProgramNames(args[j]).length) continue;
     if (++n > LATER_HEADS_MAX) return OVERFLOW;
     const hit = checkHead(args.slice(j), depth, known);
     if (hit) return hit;
@@ -687,6 +945,15 @@ function psPositionalCode(rest) {
 
 /* The rules for one simple command whose head is args[0]. */
 function checkHead(args, depth, known) {
+  // A glob in the program name (/usr/bin/r? -rf ...): the command is read as each program the glob can name.
+  const globbed = globProgramNames(args[0]);
+  if (globbed.length) {
+    for (const name of globbed) {
+      const hit = checkHead([name, ...args.slice(1)], depth, known);
+      if (hit) return hit;
+    }
+    return null;
+  }
   const head = programName(args[0]);
   const rest = args.slice(1);
 
@@ -759,9 +1026,9 @@ function checkHead(args, depth, known) {
     }
   }
   if (head === 'dd') {
-    if ((rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(w.slice(3)))) && on('disk_overwrite')) return 'disk_overwrite';
+    if ((rest.some((w) => w.startsWith('of=') && blockDevice(w.slice(3)))) && on('disk_overwrite')) return 'disk_overwrite';
   }
-  if ((DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) && on('disk_overwrite')) return 'disk_overwrite';
+  if ((DISK_TOOLS.test(head) && rest.some((w) => blockDevice(w))) && on('disk_overwrite')) return 'disk_overwrite';
   return null;
 }
 
@@ -1078,7 +1345,7 @@ function checkPipeline(pipe, known = null, fds = null) {
   }
   // A redirect to a block device, with or without a download.
   for (const s of pipe) {
-    for (const t of redirectTargets(s.words)) if ((BLOCK_DEVICE_RE.test(t)) && on('disk_overwrite')) return 'disk_overwrite';
+    for (const t of redirectTargets(s.words)) if ((blockDevice(t)) && on('disk_overwrite')) return 'disk_overwrite';
   }
   return null;
 }

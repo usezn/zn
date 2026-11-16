@@ -2,7 +2,9 @@
 form: ANSI-C quoting, default-value expansion, brace lists, PowerShell parameter, variable and call-operator forms,
 cmd.exe rd forms, a download written into a startup file through a glued redirect, a group or an exec descriptor, a
 download run from a group, eval or env -S, interpreters fed by a substitution, chmod modes with leading zeros or
-symbolic clauses, fork bomb variants, and text that echo, printf or a here-string feeds into a shell.
+symbolic clauses, fork bomb variants, text that echo, printf or a here-string feeds into a shell, globs that can
+name a protected folder, device or program (rm -rf /us?, /usr/bin/r? -rf ~, dd of=/dev/sd?), and paths that climb
+out of the home folder and back down into a project (~/../alice/proj/build stays allowed).
 
 The cases are shared with the Node tests: packages/zn-gate/test/fixtures/destructive_spelling_forms.json. Each case
 must get the rule in `expect`; the look-alikes that only touch a project folder must stay allowed. Only fake paths and
@@ -78,6 +80,16 @@ LONG = {
     "a long here-string": "sh <<< '" + "rm " * 7000 + "'",
     "many echo commands in a substitution": 'bash -c "$(' + "echo x; " * 3000 + ')"',
     "an unclosed substitution in sh -c": 'bash -c "$(' + "x" * 20000 + '"',
+    "a long glob in an rm path": "rm -rf /" + "*?" * 10000,
+    "many classes in an rm path": "rm -rf /" + "[a-z]" * 4000,
+    "many unclosed classes": "rm -rf /" + "[" * 20000,
+    "many class names in one class": "rm -rf /[" + "[:alpha:]" * 2200 + "]",
+    "many ranges in one class": "rm -rf /[" + "a-b" * 6600 + "]",
+    "many short globs": "rm -rf " + " ".join("/*" + format(i, "x") for i in range(3000)),
+    "many glob words with three segments": "chmod -R 777 " + " ".join("/h*/[a-z]%d" % i for i in range(2000)),
+    "a long glob program name": "/usr/bin/" + "*" * 20000 + " -rf /home/alice",
+    "a long glob device": "dd if=/dev/zero of=/dev/" + "[s]" * 6600,
+    "a long climb above the home folder": "rm -rf ~/" + "../" * 6600 + "x",
 }
 
 

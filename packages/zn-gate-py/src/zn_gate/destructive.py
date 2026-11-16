@@ -29,7 +29,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.21"
+COMMAND_RULES_VERSION = "2026-11-16.25"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -821,9 +821,304 @@ def _unwrap(args: List[str]) -> List[str]:
     return _unwrap_dir(args)[0]
 
 
-def _resolve_dots(t: str) -> str:
+# Globs (*, ?, [...]) in a path or a program name. The shell turns a glob into the names it matches, so a glob that can
+# match a protected folder, device or program is read as that folder, device or program, and a glob that cannot match
+# any of them stays allowed. A glob segment is read once into a short list of parts, and every protected name of a
+# table is followed at the same time as bits of one number, so the cost grows with the length of the glob, never with
+# how its parts nest.
+_GLOB_RE = re.compile(r"[*?\[]")
+# More single-character parts than this: longer than any name of the tables, so only "some name" can match it.
+_GLOB_FIXED_MAX = 32
+_ASCII_ALL = (1 << 128) - 1
+
+
+def _glob_class(seg: str, i: int):
+    """A [...] class starting at seg[i]: (token, index of its closing ]), or None when it never closes. A ! or ^ first
+    negates it, a ] first is a member, a-z is a range, and a [:name:] class is taken to accept every character."""
+    j = i + 1
+    n = len(seg)
+    neg = False
+    if j < n and seg[j] in "!^":
+        neg = True
+        j += 1
+    bits = 0
+    other = False
+    first_member = True
+    while j < n:
+        ch = seg[j]
+        if ch == "]" and not first_member:
+            break
+        first_member = False
+        if ch == "[" and j + 1 < n and seg[j + 1] == ":":
+            # Class names are short: the :] is looked for in the next few characters only, so the scan stays linear.
+            close = seg[j + 2:j + 12].find(":]")
+            if close >= 0:
+                bits = _ASCII_ALL
+                other = True
+                j += close + 4
+                continue
+        lo = ord(ch)
+        hi = lo
+        if j + 2 < n and seg[j + 1] == "-" and seg[j + 2] != "]":
+            hi = ord(seg[j + 2])
+            j += 3
+        else:
+            j += 1
+        if hi > 127:
+            other = True
+        if lo <= 127 and lo <= hi:
+            bits |= ((1 << (min(hi, 127) + 1)) - 1) ^ ((1 << lo) - 1)
+    if j >= n:
+        return None
+    if neg:
+        bits = ~bits & _ASCII_ALL
+        other = True
+    return ("set", bits, other), j
+
+
+def _glob_tokens(seg: str):
+    """The parts of one glob segment: (toks, glob, first). toks is None when the segment has more single-character parts
+    than any table name (only _any_glob_name() reads it then); glob says whether any part is a wildcard; first is the
+    first part. A part is ("*",), ("?",), ("c", code) or ("set", bits, other) (bits: the ASCII characters the [...] class
+    accepts; other: whether it accepts characters beyond ASCII). One pass: a [ whose class never closes is a plain
+    character, and so is every later [ of the segment."""
+    toks: list = []
+    fixed = 0
+    glob = False
+    first = None
+    no_close = False
+    i = 0
+    n = len(seg)
+    while i < n:
+        ch = seg[i]
+        tok = None
+        if ch in "*?":
+            tok = (ch,)
+        elif ch == "[" and not no_close:
+            cls = _glob_class(seg, i)
+            if cls:
+                tok, i = cls
+            else:
+                no_close = True
+        if tok is None:
+            tok = ("c", ord(ch))
+        i += 1
+        if first is None:
+            first = tok
+        if tok[0] == "*":
+            glob = True
+            if not toks or toks[-1][0] != "*":
+                toks.append(tok)
+            continue
+        if tok[0] != "c":
+            glob = True
+        fixed += 1
+        if fixed <= _GLOB_FIXED_MAX:
+            toks.append(tok)
+    return (None if fixed > _GLOB_FIXED_MAX else toks), glob, first
+
+
+def _any_glob_name(seg: str) -> bool:
+    """Whether a glob segment can match some name that does not start with "." (a user folder, a device mapper name)."""
+    if not seg:
+        return False
+    t = _glob_tokens(seg)[2]
+    if t[0] in ("*", "?"):
+        return True
+    if t[0] == "c":
+        return t[1] != 46
+    return t[2] or (t[1] & ~(1 << 46)) != 0
+
+
+class _GlobTable:
+    """A table of names that globs are compared with. Each name is a list of positions; a position is the string of the
+    characters it accepts. Name i holds bits off_i .. off_i + length_i of the state: bit off_i + j means "the glob so far
+    matches the first j characters"."""
+
+    def __init__(self, names):
+        off = 0
+        self.start = 0
+        self.all = 0
+        self.keep = [0] * 5
+        self.cm: dict = {}
+        self.ends = []
+        for name in names:
+            if len(name) > 31:
+                raise ValueError("glob table name too long")
+            self.start |= 1 << off
+            for j, chars in enumerate(name):
+                bit = 1 << (off + j)
+                self.all |= bit
+                for ch in chars:
+                    self.cm[ord(ch)] = self.cm.get(ord(ch), 0) | bit
+            n = len(name)
+            self.ends.append(1 << (off + n))
+            # keep[s]: the bits that a star may reach by moving 2**s positions on without leaving the name.
+            for s in range(5):
+                for p in range(1 << s, n + 1):
+                    self.keep[s] |= 1 << (off + p)
+            off += n + 1
+
+    def matches(self, toks) -> List[int]:
+        """The indexes of the names that the parts `toks` can match."""
+        s = self.start
+        for t in toks:
+            if t[0] == "*":
+                for k in range(5):
+                    s |= (s << (1 << k)) & self.keep[k]
+                continue
+            if t[0] == "?":
+                m = self.all
+            elif t[0] == "c":
+                m = self.cm.get(t[1], 0)
+            else:
+                m = 0
+                for c, bits in self.cm.items():
+                    if (t[1] >> c) & 1:
+                        m |= bits
+            s = (s & m) << 1
+            if not s:
+                return []
+        return [i for i, e in enumerate(self.ends) if s & e]
+
+
+_GLOB_LOWER = "abcdefghijklmnopqrstuvwxyz"
+_GLOB_DIGITS = "0123456789"
+
+
+def _glob_exact(w: str) -> List[str]:
+    return list(w)
+
+
+def _glob_no_case(w: str) -> List[str]:
+    return [ch if ch.lower() == ch.upper() else ch.lower() + ch.upper() for ch in w]
+
+
+# One segment of a protected folder: the folders of _SYSTEM_DIRS, a drive (C:) and the Windows folders, any case.
+_GLOB_WIN_DIRS = ["windows", "users", "program files", "program files (x86)", "programdata"]
+_GLOB_SEGMENTS = (["u:" + d[1:] for d in sorted(_SYSTEM_DIRS)] + ["drive"] + ["w:" + d for d in _GLOB_WIN_DIRS] + ["w:system32"])
+_GLOB_SEGMENT_TABLE = _GlobTable([
+    [_GLOB_LOWER + _GLOB_LOWER.upper(), ":"] if k == "drive" else _glob_exact(k[2:]) if k.startswith("u:") else _glob_no_case(k[2:])
+    for k in _GLOB_SEGMENTS
+])
+
+# The programs these rules read whose name a glob may spell (/usr/bin/r? is rm).
+_GLOB_PROGRAMS = ["rm", "find", "chmod", "chown", "chgrp", "dd", "shred", "wipefs", "blkdiscard", "mke2fs", "mkswap", "mkfs",
+                  "mkfs.ext2", "mkfs.ext3", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "mkfs.fat", "mkfs.msdos",
+                  "mkfs.ntfs", "mkfs.exfat", "mkfs.f2fs"]
+_GLOB_PROGRAM_TABLE = _GlobTable([_glob_exact(p) for p in _GLOB_PROGRAMS])
+
+
+def _glob_device_names() -> List[List[str]]:
+    """Block device names of _BLOCK_DEVICE_RE, with one or two letters or digits in each run (sda, sdab1, nvme0n1p2, md10)."""
+    out = []
+    for p in ("sd", "hd", "vd", "xvd"):
+        for a in (1, 2):
+            for d in (0, 1, 2):
+                out.append(_glob_exact(p) + [_GLOB_LOWER] * a + [_GLOB_DIGITS] * d)
+    for a in (1, 2):
+        for b in (1, 2):
+            base = _glob_exact("nvme") + [_GLOB_DIGITS] * a + ["n"] + [_GLOB_DIGITS] * b
+            out.append(base)
+            for c in (1, 2):
+                out.append(base + ["p"] + [_GLOB_DIGITS] * c)
+    for p, q in (("mmcblk", "p"), ("disk", "s"), ("rdisk", "s")):
+        for a in (1, 2):
+            base = _glob_exact(p) + [_GLOB_DIGITS] * a
+            out.append(base)
+            for c in (1, 2):
+                out.append(base + [q] + [_GLOB_DIGITS] * c)
+    for p in ("md", "dm-"):
+        for a in (1, 2):
+            out.append(_glob_exact(p) + [_GLOB_DIGITS] * a)
+    return out
+
+
+_GLOB_DEVICE_TABLE = _GlobTable(_glob_device_names())
+_GLOB_MAPPER_TABLE = _GlobTable([_glob_exact("mapper")])
+
+
+def _glob_segment_keys(seg: str) -> set:
+    """The keys of _GLOB_SEGMENTS that a path segment can match ('' matches nothing)."""
+    if not seg:
+        return set()
+    toks = _glob_tokens(seg)[0]
+    if toks is None:
+        return set()
+    return {_GLOB_SEGMENTS[i] for i in _GLOB_SEGMENT_TABLE.matches(toks)}
+
+
+def _glob_path_kind(t: str) -> str:
+    """'root', 'system' or 'home' when a glob path can match a protected folder, else ''. Only paths of up to three
+    segments are read: no protected folder is deeper."""
+    if not _GLOB_RE.search(t):
+        return ""
+    parts = t.split("/")
+    if len(parts) > 4 or (parts[0] != "" and len(parts) > 3):
+        return ""
+    if not any(_glob_tokens(p)[1] for p in parts):
+        return ""
+    if parts[0] == "":
+        if len(parts) == 2 and any(k.startswith("u:") for k in _glob_segment_keys(parts[1])):
+            return "system"
+        if len(parts) == 3:
+            k = _glob_segment_keys(parts[1])
+            if ("u:home" in k or "u:Users" in k) and _any_glob_name(parts[2]):
+                return "home"
+        return ""
+    if "drive" not in _glob_segment_keys(parts[0]):
+        return ""
+    if len(parts) == 1:
+        return "root"
+    k = _glob_segment_keys(parts[1])
+    if len(parts) == 2:
+        return "system" if any("w:" + d in k for d in _GLOB_WIN_DIRS) else ""
+    if "w:windows" in k and "w:system32" in _glob_segment_keys(parts[2]):
+        return "system"
+    if "w:users" in k and _any_glob_name(parts[2]):
+        return "home"
+    return ""
+
+
+def _glob_program_names(word: str) -> List[str]:
+    """The programs of _GLOB_PROGRAMS that a command word spells with a glob in its name (/usr/bin/r?, /bin/c[h]mod):
+    only a word with a folder part, as a bare glob is matched against the files of the working folder, not the PATH."""
+    raw = re.sub(r"^[\\@]+", "", str(word))
+    slash = raw.rfind("/")
+    if slash < 0:
+        return []
+    base = raw[slash + 1:]
+    if not _GLOB_RE.search(base):
+        return []
+    toks, glob, _first = _glob_tokens(base)
+    if not glob or toks is None:
+        return []
+    return [_GLOB_PROGRAMS[i] for i in _GLOB_PROGRAM_TABLE.matches(toks)]
+
+
+def _block_device(w: str) -> bool:
+    """Whether a word names a block device: _BLOCK_DEVICE_RE, or a glob under /dev that can match one (/dev/sd?, /dev/nvme*)."""
+    if _BLOCK_DEVICE_RE.match(w):
+        return True
+    if not w.startswith("/dev/") or not _GLOB_RE.search(w):
+        return False
+    parts = w[5:].split("/")
+    if not any(_glob_tokens(p)[1] for p in parts):
+        return False
+    if len(parts) == 1:
+        toks = _glob_tokens(parts[0])[0]
+        return toks is not None and bool(_GLOB_DEVICE_TABLE.matches(toks))
+    if len(parts) != 2:
+        return False
+    toks = _glob_tokens(parts[0])[0]
+    return toks is not None and bool(_GLOB_MAPPER_TABLE.matches(toks)) and _any_glob_name(parts[1])
+
+
+def _resolve_dots(t: str, home_parent: str = "/home") -> str:
     """Resolve "." and ".." lexically (no filesystem) for a path that starts at "/", a drive or a home word.
-    A ".." above "/" or a drive root stays there; a ".." out of the home folder names its parent. Relative paths are left alone."""
+    A ".." above "/" or a drive root stays there. A ".." that steps out of the home folder goes on from the folder that
+    holds it, `home_parent` ("/home", "/Users" or "C:/Users"), and the rest of the path is read from there, so
+    ~/../alice/proj/build is /home/alice/proj/build and ~/../.. is /. Relative paths are left alone."""
     if not re.search(r"(?:^|/)\.\.?(?:/|\Z)", t):
         return t
     home = False
@@ -837,7 +1132,7 @@ def _resolve_dots(t: str) -> str:
         if first.lower() not in _HOME_WORDS:
             return t
         anchor, rest, home = first + "/", t[len(first) + 1:], True
-    out = []
+    out: List[str] = []
     for seg in rest.split("/"):
         if seg in ("", "."):
             continue
@@ -846,7 +1141,9 @@ def _resolve_dots(t: str) -> str:
         elif out:
             out.pop()
         elif home:
-            return "/home"
+            home = False
+            parts = home_parent.split("/")
+            anchor, out = parts[0] + "/", parts[1:]
     return anchor + "/".join(out)
 
 
@@ -859,7 +1156,23 @@ def _dangerous_path(word: str) -> str:
     t = re.sub(r"^/[?.]/(?=[A-Za-z]:)", "", t)
     t = _DRIVE_VAR_RE.sub("C:", t)
     t = _WINDIR_VAR_RE.sub("C:/Windows", t)
-    t = _resolve_dots(t)
+    if "." not in t:
+        return _path_kind(t)
+    # A home word followed by ".." past the home folder is read with each place the home folder may sit in.
+    first = _resolve_dots(t, "/home")
+    kind = _path_kind(first)
+    if kind or ".." not in t:
+        return kind
+    win = _resolve_dots(t, "C:/Users")
+    if win == first:
+        return ""
+    return _path_kind(win) or _path_kind(_resolve_dots(t, "/Users"))
+
+
+def _path_kind(t: str) -> str:
+    """The kind of a path whose "." and ".." are resolved: 'root', 'home', 'system' or ''."""
+    # The path before each trailing form is taken off: a glob in any of them is compared with the protected folders.
+    forms = [t]
     for _ in range(4):
         s = re.sub(r"/(?:\*|\.\*|\.|\{\*,\.\*\})?\Z", "", t, count=1)
         if s == t and len(t) > 1 and t.endswith("*"):
@@ -867,6 +1180,7 @@ def _dangerous_path(word: str) -> str:
         if s == t:
             break
         t = s
+        forms.append(t)
         if t == "":
             return "root"
     if t == "*":
@@ -883,6 +1197,10 @@ def _dangerous_path(word: str) -> str:
         return "system"
     if re.match(r"^[A-Za-z]:/users/[^/*]+\Z", t, re.I):
         return "home"
+    for f in forms if ("*" in forms[0] or "?" in forms[0] or "[" in forms[0]) else ():
+        g = _glob_path_kind(f)
+        if g:
+            return g
     return ""
 
 
@@ -1402,7 +1720,7 @@ def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]
     the command."""
     n = 0
     for j in range(1, len(args)):
-        if not _head_is_read(_program_name(args[j])):
+        if not _head_is_read(_program_name(args[j])) and not _glob_program_names(args[j]):
             continue
         n += 1
         if n > _LATER_HEADS_MAX:
@@ -1436,6 +1754,14 @@ def _ps_positional_code(rest: List[str]) -> Optional[str]:
 
 def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
     """The rules for one simple command whose head is args[0]."""
+    # A glob in the program name (/usr/bin/r? -rf ...): the command is read as each program the glob can name.
+    globbed = _glob_program_names(args[0])
+    if globbed:
+        for name in globbed:
+            hit = _check_head([name] + list(args[1:]), depth, known)
+            if hit:
+                return hit
+        return None
     head = _program_name(args[0])
     rest = args[1:]
 
@@ -1530,9 +1856,9 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
             if head == "chmod" and "home" in targets and _world_writable(mode):
                 return "perm_root"
     if head == "dd":
-        if any(w.startswith("of=") and _BLOCK_DEVICE_RE.match(w[3:]) for w in rest):
+        if any(w.startswith("of=") and _block_device(w[3:]) for w in rest):
             return "disk_overwrite"
-    if _DISK_TOOLS.match(head) and any(_BLOCK_DEVICE_RE.match(w) for w in rest):
+    if _DISK_TOOLS.match(head) and any(_block_device(w) for w in rest):
         return "disk_overwrite"
     return None
 
@@ -1738,7 +2064,7 @@ def _check_pipeline(
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
-            if _BLOCK_DEVICE_RE.match(t):
+            if _block_device(t):
                 return "disk_overwrite"
     return None
 

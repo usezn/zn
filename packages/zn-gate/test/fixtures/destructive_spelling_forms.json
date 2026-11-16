@@ -1090,6 +1090,301 @@
    "family": "fed_look_alike",
    "cmd": "bash -c \"$(cat steps.txt)\"",
    "expect": "allow"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /us?",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /h*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /[u]sr",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /e[t]c/",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /us?/*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /home/al*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /*/*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /[[:alpha:]]*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf /[!a]sr",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf C:/Win*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf ?:/",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "rm -rf C:/Users/al*",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "cd / && rm -rf u?r",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "chmod -R 777 /e[t]c",
+   "expect": "perm_root"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "chmod -R 777 /us?",
+   "expect": "perm_root"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "chmod -R 777 /home/al*",
+   "expect": "perm_root"
+  },
+  {
+   "family": "glob_path",
+   "cmd": "chown -R nobody /[u]sr",
+   "expect": "perm_root"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/usr/bin/r? -rf /home/alice",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/bin/r* -rf /home/alice",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/usr/bin/r[m] -rf ~",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "sudo /usr/bin/r? -rf /home/alice",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/usr/bin/c[h]mod -R 777 /",
+   "expect": "perm_root"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/usr/bin/chow? -R alice /usr",
+   "expect": "perm_root"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/usr/bin/d[d] if=/dev/zero of=/dev/sda",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_program",
+   "cmd": "/sbin/mkfs.ext? /dev/sda1",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "dd if=/dev/zero of=/dev/sd?",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "dd if=/dev/zero of=/dev/nvme0n?",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "dd if=/dev/zero of=/dev/sd[c-z]",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "dd if=/dev/zero of=/dev/mapper/*",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "echo x > /dev/sd?",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "mkfs.ext4 /dev/sd?1",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "glob_device",
+   "cmd": "wipefs -a /dev/nvme*",
+   "expect": "disk_overwrite"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf ~/..",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf ~/../..",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf ~/../alice",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf $HOME/../alice",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "chmod -R 777 ~/..",
+   "expect": "perm_root"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "chmod -R 777 ~/../alice",
+   "expect": "perm_root"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf ~/../../etc",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf ~/../../Windows",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "home_parent",
+   "cmd": "rm -rf ~/../alice/proj/../..",
+   "expect": "rm_root_home"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf ./build/*",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf /home/alice/proj/*.o",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf /tmp/*",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf /tmp/build-?",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf /*.log",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf /t*",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "rm -rf /mnt/*",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "dd if=/dev/zero of=/dev/std*",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "dd if=/dev/zero of=./disk?.img",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "/usr/bin/l? -la /",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "/usr/bin/r? -rf /home/alice/proj/build",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "chmod -R 755 /home/al*",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "chmod -R 777 /home/alice/proj/b?ild",
+   "expect": "allow"
+  },
+  {
+   "family": "glob_look_alike",
+   "cmd": "chmod -R 777 /home/alice/proj/*",
+   "expect": "allow"
+  },
+  {
+   "family": "home_parent_look_alike",
+   "cmd": "rm -rf ~/../alice/proj/build",
+   "expect": "allow"
+  },
+  {
+   "family": "home_parent_look_alike",
+   "cmd": "chmod -R 777 ~/../alice/proj/build",
+   "expect": "allow"
+  },
+  {
+   "family": "home_parent_look_alike",
+   "cmd": "rm -rf $HOME/../alice/proj/build",
+   "expect": "allow"
+  },
+  {
+   "family": "home_parent_look_alike",
+   "cmd": "rm -rf ~/../alice/proj/build/../dist",
+   "expect": "allow"
   }
  ]
 }
