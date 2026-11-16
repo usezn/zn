@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-13.3';
+const COMMAND_RULES_VERSION = '2026-11-16.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -776,22 +776,45 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 // Most backtick substitutions read from a changed folder in one command line; past it the line is refused.
 const MAX_TICK_READS = 200;
 
+// Most combinations of readings checked for one pipeline; past it the line is refused.
+const MAX_PIPE_READINGS = 64;
+
+/* A pipeline whose commands each have several readings is checked once for every combination. */
+function checkPipelineReadings(pipe, known) {
+  let total = 1;
+  for (const r of pipe) {
+    total *= r.length;
+    if (total > MAX_PIPE_READINGS) return OVERFLOW;
+  }
+  const idx = pipe.map(() => 0);
+  for (let n = 0; n < total; n++) {
+    const hit = checkPipeline(pipe.map((r, i) => r[idx[i]]), known);
+    if (hit) return hit;
+    for (let i = idx.length - 1; i >= 0; i--) { if (++idx[i] < pipe[i].length) break; idx[i] = 0; }
+  }
+  return null;
+}
+
 /* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count. */
 function checkSegments(segs, depth, cwd0 = null) {
-  let pipe = [];
+  let pipe = []; // the commands of the current pipeline: for each, its readings (one per value its variables may hold)
   let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
   // A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
   const groups = [];
   let ticks = 0;
   const vars = shellVars.newScope();
   for (let seg of segs) {
-    // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
-    const words = shellVars.applyWords(vars, seg.words, seg.sep);
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh). A variable an assignment may not
+    // have changed (after &&, in an if, ...) holds each of its values, and every reading is checked.
+    const readings = shellVars.applyVariants(vars, seg.words, seg.sep, seg.opens || 0);
     if (vars.overflow) return OVERFLOW;
     if (seg.sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
-    if (words !== seg.words) seg = { ...seg, words };
-    const hit = checkSimple(seg.words, depth, known);
-    if (hit) return hit;
+    const segs1 = readings.map((words) => (words === seg.words ? seg : { ...seg, words }));
+    for (const s1 of segs1) {
+      const hit = checkSimple(s1.words, depth, known);
+      if (hit) return hit;
+    }
+    seg = segs1[0];
     // A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder is
     // still the one the line started in, the whole-line reading in analyze() has already covered it.
     if (seg.raw && known !== cwd0 && depth < MAX_DEPTH) {
@@ -801,13 +824,19 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (innerHit) return innerHit;
     }
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
-      const to = cdTarget(unwrap(seg.words), known);
-      if (to === CWD_OVERFLOW) return OVERFLOW;
+      // A cd whose target depends on which value a variable holds leaves the folder unknown (protected).
+      let to = NOT_CD;
+      for (const s1 of segs1) {
+        const t = cdTarget(unwrap(s1.words), known);
+        if (t === CWD_OVERFLOW) return OVERFLOW;
+        if (segs1.length === 1) to = t;
+        else if (t !== NOT_CD) to = CWD_LOST;
+      }
       if (to !== NOT_CD) known = to;
     }
-    pipe.push(seg);
+    pipe.push(segs1);
     if (!isPipe(seg.sep)) {
-      const hit2 = checkPipeline(pipe, known);
+      const hit2 = checkPipelineReadings(pipe, known);
       if (hit2) return hit2;
       pipe = [];
     }
@@ -815,7 +844,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     for (let i = 0; i < (seg.opens || 0) && groups.length < MAX_SEGMENTS; i++) groups.push(known);
     if (seg.sep === ')' && groups.length) known = groups.pop();
   }
-  return pipe.length ? checkPipeline(pipe, known) : null;
+  return pipe.length ? checkPipelineReadings(pipe, known) : null;
 }
 
 function analyze(cmd, depth = 0, known = null) {
