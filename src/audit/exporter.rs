@@ -1072,10 +1072,7 @@ mod tests {
     #[test]
     fn endpoint_log_line_handles_urls_without_a_host_and_ipv6_hosts() {
         assert_eq!(endpoint_for_log(""), "(configured endpoint)");
-        assert_eq!(
-            endpoint_for_log("file:///var/log/siem"),
-            "(configured endpoint)"
-        );
+        assert_eq!(endpoint_for_log("file:example"), "(configured endpoint)");
         assert_eq!(
             endpoint_for_log("mailto:ops@example.com"),
             "(configured endpoint)"
