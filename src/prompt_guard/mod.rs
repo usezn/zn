@@ -120,13 +120,29 @@ fn forget_instruction_base() -> String {
 fn forget_negated(before: &str) -> bool {
     let b = before.to_ascii_lowercase();
     // Contractions sit on a word by construction, so the bare suffix is the whole negation.
-    if b.ends_with("n't ") || b.ends_with("n\u{2019}t ") {
+    if ["n't ", "n\u{2019}t ", "n't ever ", "n\u{2019}t ever "]
+        .iter()
+        .any(|w| b.ends_with(w))
+    {
         return true;
     }
-    // The standalone words only: a longer word that merely ends in one of these
+    // The standalone negations only: a longer word that merely ends in one of these
     // ("however", "forever", "whenever", "cannot", "knot") is not a negation, so it
     // must not suppress the match. Require a non-word char (or start) before the word.
-    ["not ", "never ", "ever ", "dont "].iter().any(|w| {
+    // A bare "not" ("why not forget ...") and "ever" ("if you ever forget ...") are not
+    // negations of the request, so they do not count.
+    [
+        "do not ",
+        "does not ",
+        "did not ",
+        "will not ",
+        "must not ",
+        "should not ",
+        "never ",
+        "dont ",
+    ]
+    .iter()
+    .any(|w| {
         if !b.ends_with(w) {
             return false;
         }
