@@ -1509,6 +1509,8 @@ ${ruleLine(process.env, 60)}\n`);
       if (!res.total && res.valid) {
         process.stderr.write('Note: there are no evidence records yet, so the export is empty. Run a check first, for example: zn-gate test "some text", then export again.\n');
       }
+      // Like --verify: a ledger that is not valid is an error, even though the records read so far were written out above.
+      if (!res.valid) process.exitCode = 1;
       return;
     }
 
@@ -1544,6 +1546,7 @@ ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
     }
 
     const stats = getEvidenceStats();
+    if (!stats.valid) process.exitCode = 1;
     process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn Evidence Ledger Stats (${EVIDENCE_FILE})
 ${ruleLine(process.env, 51)}
@@ -1683,6 +1686,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     result.latency_ms = Math.round((performance.now() - startedAt) * 100) / 100;
     if (result.degraded) {
       process.stderr.write('[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.\n');
+    } else if (result.fallback) {
+      process.stderr.write('[zn-gate] Warning: the cloud call failed, so this verdict comes from the local rules on this machine, not from the cloud model.\n');
     }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     process.exit(isBlockVerdict(result.verdict) ? 2 : 0);

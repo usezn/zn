@@ -314,7 +314,7 @@ Exit codes: `0` done, `1` findings meet `--fail-on`, `2` wrong usage or a failur
 zn-gate analyze "<text>"
 ```
 
-Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Words given without quotes are joined with spaces. The answer includes `latency_ms`, the time this run took. Exit codes: `0` allowed, `2` blocked or no text given.
+Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Words given without quotes are joined with spaces. The answer includes `latency_ms`, the time this run took. Exit codes: `0` allowed, `2` blocked or no text given. If the cloud call fails and the local rules answer instead, the answer has `"fallback": true`, a warning goes to stderr and the exit code follows the local verdict.
 
 ### `pins`
 
@@ -640,7 +640,7 @@ Shows the local hash-chained log of what zn-gate decided. With no option it prin
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
 - `--ui`: open a local dashboard in your browser (default port 3100).
-- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. In the Python package it exits `1` when the chain was changed (the records are still written).
+- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. It exits `1` when the chain was changed (the records are still written). The counts (`zn-gate evidence` with no option) exit `1` then too.
 
 Aliases: `logs`, `export`.
 
@@ -801,7 +801,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
 | `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2`, as in the npm package. |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
-| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. Unlike npm, all three exit `1` when the chain was changed. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
+| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. All three exit `1` when the chain was changed. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 | `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |
