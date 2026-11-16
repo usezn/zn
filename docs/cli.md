@@ -438,7 +438,7 @@ zn-gate env <shadow|unshadow> ...
 
 Groups the two commands below. `zn-gate env --help` prints the general help of zn-gate, not a page about `env`, so read this section instead. `zn-gate env shadow --help` and `zn-gate env unshadow --help` each print their own usage.
 
-Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--help`; `env shadow --dry-run` also exits `0` once it has printed the preview), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed. This applies to `--dry-run` too: the preview also needs an interactive terminal, so without one it exits `77` and prints no preview.
 
 #### `env shadow`
 
@@ -446,7 +446,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move; it needs an interactive terminal like the real run. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `env unshadow`
 
@@ -618,10 +618,10 @@ Exit codes: it runs until its input is closed, then exits `0`.
 ### `shield`
 
 ```text
-zn-gate shield -- <command> [args...]
+zn-gate shield [--shadow] -- <command> [args...]
 ```
 
-Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
+Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Put `--shadow` before the `--` to run in shadow mode: the shield watches and records but blocks nothing (see [shadow mode](shield.md#shadow-mode-log-without-blocking)). Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
 
 Aliases: `mcp-shield`, `wrap`.
 
