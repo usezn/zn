@@ -733,15 +733,40 @@ function withEgress(res, eg) {
  * A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
  * output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
  * Used for a search tool and, when an adapter lists the folders a shell search covers, for that command.
+ *
+ * The walk covers the subfolders too, within bounds: at most SEARCH_WALK_DEPTH levels below the folder and
+ * SEARCH_WALK_ENTRIES names in all, never through a symlink, and without node_modules and .git. A folder the
+ * walk cannot finish within those bounds gets an ask too, because the part it did not read may hold a .env.
  */
+const SEARCH_WALK_DEPTH = 8;
+const SEARCH_WALK_ENTRIES = 10000;
+const SEARCH_WALK_SKIP = new Set(['node_modules', '.git']);
 function searchFolderAsk(dirs, pathOpts) {
-  for (const dir of Array.isArray(dirs) ? dirs : [dirs]) {
-    let names = [];
-    try { names = fs.readdirSync(dir).slice(0, 5000); } catch (_) { names = []; }
-    for (const n of names) {
-      if (policy.readDenial(path.join(dir, n), pathOpts)) {
-        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+  // The context is built once: classifying every name with a fresh one is what makes a walk slow.
+  const opts = { ...pathOpts, ctx: policy.contextOf(pathOpts) };
+  for (const root of Array.isArray(dirs) ? dirs : [dirs]) {
+    let seen = 0;
+    let capped = false;
+    const queue = [[root, 0]];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const [dir, depth] = queue[qi];
+      let ents = [];
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { continue; }
+      for (const e of ents) {
+        if (++seen > SEARCH_WALK_ENTRIES) { capped = true; break; }
+        const full = path.join(dir, e.name);
+        if (policy.readDenial(full, opts)) {
+          return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + e.name + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+        }
+        if (e.isDirectory() && !SEARCH_WALK_SKIP.has(e.name)) {
+          if (depth + 1 > SEARCH_WALK_DEPTH) capped = true;
+          else queue.push([full, depth + 1]);
+        }
       }
+      if (capped && seen > SEARCH_WALK_ENTRIES) break;
+    }
+    if (capped) {
+      return { decision: 'ask', message: 'zn: this search covers a folder with more than ' + SEARCH_WALK_ENTRIES + ' names or more than ' + SEARCH_WALK_DEPTH + ' levels of subfolders, which zn cannot check for a .env or a key file, and matching lines are not hidden in this agent. Approve only if the search must cover it, or name a narrower path.' };
     }
   }
   return null;

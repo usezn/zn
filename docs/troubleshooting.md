@@ -504,7 +504,7 @@ The message ends with `(rule: secret-file:credential)` and says that agents may 
 
 #### "zn: this search covers a folder that holds `<file>`, which has plain-text secrets"
 
-**What happened:** your agent started a search over a folder that contains a `.env` file or key file, and this agent cannot hide matching lines. zn asks you instead of blocking. A similar question appears when a recursive search names its folder through a variable, or after many folder changes, so zn cannot tell which folders it covers.
+**What happened:** your agent started a search over a folder that contains a `.env` file or key file, in the folder itself or in a subfolder up to 8 levels down, and this agent cannot hide matching lines. zn reads at most 10,000 names, skips `node_modules` and `.git`, and does not follow links; when a folder is larger or deeper than that, zn asks too, with a message that says it cannot check the folder. zn asks you instead of blocking. A similar question appears when a recursive search names its folder through a variable, or after many folder changes, so zn cannot tell which folders it covers.
 
 **Is it safe?** It is safe if you decline. If you approve, the matching lines, secrets included, can be shown to the model.
 

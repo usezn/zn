@@ -254,8 +254,8 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   the other agents get no note for tool output (the same limit as the local check above), so they send nothing.
 - **Codex CLI**:
   - `ask` is not supported, so a call zn would ask about (personal data in an
-    MCP call, a write to an instruction file, a search over a folder with a
-    plain-text `.env`) is denied, with the reason and the way to approve it.
+    MCP call, a write to an instruction file, a search over a folder that holds a
+    plain-text `.env` or key file, in the folder or in a subfolder up to 8 levels down, or one too large to check) is denied, with the reason and the way to approve it.
   - Rewriting a call (`updatedInput`) is only accepted together with `allow`,
     which would skip your approval policy, and `ask` is not supported. So zn
     denies a command that carries a `__ZN_<NAME>__` marker in its arguments and tells

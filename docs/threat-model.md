@@ -116,8 +116,9 @@ project). It adds a hook that runs before each tool call.
   or writing secret files (such as `.env` files and credential files) by path,
   and shell commands that handle secrets. For a command that uses a stored
   secret, it tells the agent to run it through `zn run`. A search over a folder
-  asks for confirmation when that folder itself holds a plain-text `.env` or
-  key file.
+  asks for confirmation when that folder, or a subfolder up to 8 levels down, holds a
+  plain-text `.env` or key file, and when the folder is too large to check (more than
+  10,000 names; `node_modules` and `.git` are skipped and links are not followed).
 - **What it does not cover:** Antigravity hooks cannot rewrite or redact what a
   tool returns. A value printed by a command, or found in a file the agent is
   allowed to read, still reaches the model, so keep secrets in the vault. A

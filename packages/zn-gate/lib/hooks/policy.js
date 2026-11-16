@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.23';
+const POLICY_RULES_VERSION = '2026-11-16.28';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -4160,6 +4160,7 @@ module.exports = {
   skipWrapper,
   gitStart,
   classifyPath,
+  contextOf,
   classifyWord,
   globClass,
   globRegExp,

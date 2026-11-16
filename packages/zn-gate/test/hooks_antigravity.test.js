@@ -440,7 +440,8 @@ test('a recursive shell search asks in every segment of the line, after a cd, be
     const r = await shell(line);
     assert.notEqual(r.decision, 'deny', line);
   }
-  assert.equal((await shell('grep -rE "AWS|KEY" .')).decision, 'allow');
+  // the search from the top folder reaches config/.env, so it asks too
+  assert.equal((await shell('grep -rE "AWS|KEY" .')).decision, 'force_ask');
   assert.equal((await shell('cd .. ; ls')).decision, 'allow');
 });
 
@@ -489,8 +490,9 @@ test('a recursive search reads one level of bash -c and asks on a path held in a
   for (const line of ['bash -c "ls config"', "sh -c 'echo hi'", 'bash -c "grep AWS a.txt"', 'D=config; ls $D']) {
     assert.equal((await shell(line)).decision, 'allow', line);
   }
-  // a cd inside bash -c does not move the outer shell
-  assert.equal((await shell('bash -c "cd config" && grep -r AWS .')).decision, 'allow');
+  // a cd inside bash -c does not move the outer shell; the outer search from the top folder still reaches config/.env
+  assert.equal((await shell('bash -c "cd config" && grep -r AWS .')).decision, 'force_ask');
+  assert.equal((await shell('bash -c "cd config" && ls')).decision, 'allow');
 });
 
 test('a very long line is not allowed unread, and an unknown cd folder or a ~ path is followed', async (t) => {
