@@ -370,7 +370,8 @@ function mcpNextStep(kind, name, opts = {}) {
   const platform = opts.platform || process.platform;
   const npx = cliName('npx', platform);
   const zn = cliName('zn', platform);
-  const through = `Next: run ${npx} -y zn-gate secret set ${use} to store the value in the local vault (it asks for the value, so it is never typed on a command line), run ${zn} secret allow ${use} --command <the server's command> so zn run may use it, take the value out of this file and start the server through zn run: set the server's command to zn and put run, --secrets, ${use}, -- and the old command first in args, so the server gets the value as the environment variable ${use}`;
+  const inFile = platform === 'win32' ? ' (written zn, not zn.cmd: this file is read by the agent, not typed in a terminal)' : '';
+  const through = `Next: in a terminal, run ${npx} -y zn-gate secret set ${use} to store the value in the local vault (it asks for the value, so it is never typed on a command line). Then run ${zn} secret allow ${use} --command <the server's command>, which lets the server receive the value through zn. Then take the value out of this file and start the server through zn: in this file, set the server's command to zn${inFile} and put run, --secrets, ${use}, -- and the old command first in args, so the server gets the value as the environment variable ${use}`;
   if (kind === 'environment variable') return `${through} (see docs/secrets.md), and rotate the value if the file was ever committed or shared.`;
   return `${through} (a server that only takes it as a flag or a setting needs an option to read it from the environment; a __ZN_${use}__ marker written in args is not filled in, because arguments are visible to other processes; see docs/secrets.md), and rotate the value if the file was ever committed or shared.`;
 }

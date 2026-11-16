@@ -329,8 +329,8 @@ class TestSecretHintNamesPerPlatform(unittest.TestCase):
 
     def _assert_win(self, msg):
         self.assertIn("run npx.cmd -y zn-gate secret set MCP_API_KEY ", msg)
-        self.assertIn("run zn.cmd secret allow MCP_API_KEY --command <the server's command> so zn run may use it", msg)
-        self.assertIn("set the server's command to zn and put run, --secrets, MCP_API_KEY,", msg)
+        self.assertIn("run zn.cmd secret allow MCP_API_KEY --command <the server's command>, which lets the server receive the value through zn.", msg)
+        self.assertIn("in this file, set the server's command to zn (written zn, not zn.cmd: this file is read by the agent, not typed in a terminal) and put run, --secrets, MCP_API_KEY,", msg)
         self.assertNotIn("run npx -y", msg)
         self.assertNotIn("run zn secret", msg)
         self.assertNotIn("npx.cmd -y zn-gate run", msg)
@@ -339,8 +339,9 @@ class TestSecretHintNamesPerPlatform(unittest.TestCase):
     def _assert_posix(self, msg):
         self.assertIn("run npx -y zn-gate secret set MCP_API_KEY ", msg)
         self.assertIn("run zn secret allow MCP_API_KEY ", msg)
-        self.assertIn("so zn run may use it", msg)
-        self.assertIn("set the server's command to zn and put run, --secrets, MCP_API_KEY,", msg)
+        self.assertIn("which lets the server receive the value through zn.", msg)
+        self.assertIn("in this file, set the server's command to zn and put run, --secrets, MCP_API_KEY,", msg)
+        self.assertNotIn("not zn.cmd", msg)
         self.assertNotIn("npx.cmd", msg)
 
     def test_python_win32_names_the_cmd_forms(self):
