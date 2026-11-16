@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.8"
+COMMAND_RULES_VERSION = "2026-11-16.10"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -392,6 +392,7 @@ def _join_backticks(words: List[str]) -> List[str]:
 
 _OPEN_BLOCK = frozenset(("if", "while", "until", "for", "case", "select"))
 _CLOSE_BLOCK = frozenset(("fi", "done", "esac"))
+_OPENER_WORDS = frozenset(("then", "else", "elif", "do", "function"))
 # Words that can stand in front of an assignment without making it part of another command.
 _BEFORE_ASSIGN = frozenset(("if", "then", "else", "elif", "while", "until", "do", "!", "{", "time"))
 
@@ -403,7 +404,7 @@ class _Vars:
     value, and every reading of a command that uses it is checked."""
 
     __slots__ = (
-        "vars", "assignments", "expanded", "overflow", "has_multi", "parens", "braces", "blocks", "after_and_or",
+        "vars", "assignments", "expanded", "overflow", "has_multi", "parens", "braces", "blocks", "after_and_or", "cases",
     )
 
     def __init__(self) -> None:
@@ -417,6 +418,7 @@ class _Vars:
         self.braces = 0
         self.blocks = 0
         self.after_and_or = False
+        self.cases = 0
 
     def substitute(self, word: str, chosen: Optional[Dict[str, Optional[str]]] = None) -> str:
         if not self.vars or "$" not in word:
@@ -526,6 +528,10 @@ class _Vars:
             self.blocks += 1
         elif first in _CLOSE_BLOCK:
             self.blocks = max(0, self.blocks - 1)
+        if first == "case":
+            self.cases += 1
+        elif first == "esac":
+            self.cases = max(0, self.cases - 1)
         elif first == "{":
             self.braces += 1
         elif first == "}":
@@ -533,7 +539,8 @@ class _Vars:
         if sep == "(":
             self.parens += 1
         self.parens += opens
-        if sep == ")":
+        # Inside a case block a ')' may close a pattern rather than a group: it never lowers the group count there.
+        if sep == ")" and self.cases == 0:
             self.parens = max(0, self.parens - 1)
         self.after_and_or = sep in ("&&", "||")
 
@@ -567,7 +574,10 @@ class _Vars:
         """The readings of one simple command with the known variables filled in (one word list for each value its
         variables may hold; the first is the one when every variable has a single value), and any assignment it makes
         recorded. An assignment in a pipe or a background command runs in a subshell and is not recorded."""
-        conditional = self.after_and_or or self.parens > 0 or self.braces > 0 or self.blocks > 0
+        # A group or block opened in this same segment (f() { D=x; }, { D=x; }, then D=x) makes it conditional too.
+        opens_here = any(w in ("{", "(") or w in _OPEN_BLOCK or w in _OPENER_WORDS or w.endswith("()") for w in words)
+        conditional = (self.after_and_or or self.parens > 0 or self.braces > 0 or self.blocks > 0 or opens_here
+                       or sep == "(" or opens > 0)
         try:
             return self._read_and_record(words, sep, conditional)
         finally:

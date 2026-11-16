@@ -25,7 +25,7 @@ function newScope() {
     vars: new Map(), assignments: 0, expanded: 0, overflow: false, hasMulti: false,
     // Where the line has got to: inside a ( ) group, a { } group or an if/while/for/case block, or right after && or ||.
     // An assignment there may not run, so it adds a possible value instead of replacing the old one.
-    parens: 0, braces: 0, blocks: 0, afterAndOr: false,
+    parens: 0, braces: 0, blocks: 0, afterAndOr: false, cases: 0,
   };
 }
 
@@ -102,6 +102,7 @@ function joinBackticks(words) {
 
 const OPEN_BLOCK = new Set(['if', 'while', 'until', 'for', 'case', 'select']);
 const CLOSE_BLOCK = new Set(['fi', 'done', 'esac']);
+const OPENER_WORDS = new Set(['then', 'else', 'elif', 'do', 'function']);
 // Words that can stand in front of an assignment without making it part of another command.
 const BEFORE_ASSIGN = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', 'time']);
 
@@ -138,11 +139,15 @@ function track(scope, words, sep, opens) {
   const first = words.length ? words[0] : '';
   if (OPEN_BLOCK.has(first)) scope.blocks++;
   else if (CLOSE_BLOCK.has(first)) scope.blocks = Math.max(0, scope.blocks - 1);
+  if (first === 'case') scope.cases++;
+  else if (first === 'esac') scope.cases = Math.max(0, scope.cases - 1);
   else if (first === '{') scope.braces++;
   else if (first === '}') scope.braces = Math.max(0, scope.braces - 1);
   if (sep === '(') scope.parens++;
   scope.parens += opens;
-  if (sep === ')') scope.parens = Math.max(0, scope.parens - 1);
+  // Inside a case block a ')' may close a pattern (a) ...) rather than a group: it never lowers the group count there,
+  // so the assignments after it stay conditional (fail-safe).
+  if (sep === ')' && scope.cases === 0) scope.parens = Math.max(0, scope.parens - 1);
   scope.afterAndOr = sep === '&&' || sep === '||';
 }
 
@@ -173,7 +178,9 @@ function readAndRecord(scope, words, sep, conditional) {
    instead: after && or ||, inside ( ), { }, if, while, until, for or case (a function body is a { } group), so the
    variable holds both and every reading is checked. */
 function applyVariants(scope, words, sep, opens = 0) {
-  const conditional = scope.afterAndOr || scope.parens > 0 || scope.braces > 0 || scope.blocks > 0;
+  // A group or block opened in this same segment (f() { D=x; }, { D=x; }, if ...; then D=x) makes it conditional too.
+  const opensHere = words.some((w) => w === '{' || w === '(' || OPEN_BLOCK.has(w) || OPENER_WORDS.has(w) || /\(\)$/.test(w));
+  const conditional = scope.afterAndOr || scope.parens > 0 || scope.braces > 0 || scope.blocks > 0 || opensHere || sep === '(' || opens > 0;
   try {
     return readAndRecord(scope, words, sep, conditional);
   } finally {
