@@ -13,6 +13,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from zn_gate.shell_names import npx_name
 from zn_gate.cli import _relative_to_cwd, cmd_scan
 
 SAMPLES_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "scan_secret_samples.json"
@@ -75,8 +76,8 @@ class TestSecretOutput(_ScanDir):
         self.assertEqual(code, 1)
         self.assertIn("Found 2 secrets and 0 threat vectors", out)
         self.assertIn("Secret found [secret:", out)
-        self.assertIn("Next: run npx -y zn-gate env shadow ", out)
-        self.assertIn("Next: run npx -y zn-gate secret set NAME to store the value in the local vault", out)
+        self.assertIn("Next: run " + npx_name() + " -y zn-gate env shadow ", out)
+        self.assertIn("Next: run " + npx_name() + " -y zn-gate secret set NAME to store the value in the local vault", out)
         self.assertNotIn("ZNTESTFAKE", out)
 
     def test_github_titles_and_summary(self):
@@ -134,7 +135,7 @@ class TestNextStepFileName(_ScanDir):
             if os.name == "nt" and any(c in name for c in '<>:"|?*'):
                 continue  # not a valid file name on Windows
             with self.subTest(name=name):
-                self.assertEqual(self._step(name), "Next: run npx -y zn-gate env shadow " + shown
+                self.assertEqual(self._step(name), "Next: run " + npx_name() + " -y zn-gate env shadow " + shown
                                  + " to move the values into the local vault, and rotate any value that was"
                                  " ever committed or shared.")
 

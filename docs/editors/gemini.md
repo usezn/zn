@@ -15,7 +15,7 @@ Support for Gemini CLI is experimental. It is listed apart from the seven suppor
    zn hooks install gemini
    ```
 
-   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). The hooks need zn-gate 1.14.0 or later, the release that added them. zn-gate adds its hook to `~/.gemini/settings.json`.
+   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). The hooks need zn-gate 1.14.0 or later, the release that added them. zn-gate adds its hook to `~/.gemini/settings.json`.
 
    To protect one project only, run `zn hooks install gemini --project` from that project's folder: the hook goes into `.gemini/settings.json` there. Gemini CLI treats a project hook as untrusted until you approve it in Gemini CLI, and it runs `zn` from your PATH, so every teammate who opens the project needs zn-gate installed.
 

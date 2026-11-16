@@ -58,8 +58,10 @@ test('a secret says "Secret found" and gives a next step, never the value', () =
   assert.match(text.stdout, /Secret found/);
   assert.match(text.stdout, /SECRET\(S\) FOUND/);
   assert.doesNotMatch(text.stdout, /THREAT\(S\) FOUND/);
-  assert.match(text.stdout, /Next: run npx -y zn-gate env shadow \.env to move the values into the local vault/);
-  assert.match(text.stdout, /Next: run npx -y zn-gate secret set NAME to store the value in the local vault/);
+  // Windows names the .cmd shim: PowerShell refuses the .ps1 one.
+  const npx = require('../lib/zn-command').cliName('npx');
+  assert.ok(text.stdout.includes('Next: run ' + npx + ' -y zn-gate env shadow .env to move the values into the local vault'), text.stdout);
+  assert.ok(text.stdout.includes('Next: run ' + npx + ' -y zn-gate secret set NAME to store the value in the local vault'), text.stdout);
   assert.ok(!text.stdout.includes('ZNTESTFAKE'));
 
   const gh = scanDir(files, ['--format', 'github']);
@@ -91,7 +93,7 @@ test('a file name is put in the suggested command only when it is plain', () => 
     const { data } = scanJson({ [name]: env });
     const steps = data.threats.filter((t) => t.type === 'secret_leak').map((t) => t.next_step);
     assert.equal(steps.length, 1, name);
-    assert.equal(steps[0], `Next: run npx -y zn-gate env shadow ${shown} to move the values into the local vault, and rotate any value that was ever committed or shared.`, name);
+    assert.equal(steps[0], `Next: run ${require('../lib/zn-command').cliName('npx')} -y zn-gate env shadow ${shown} to move the values into the local vault, and rotate any value that was ever committed or shared.`, name);
   }
   // In a subfolder the path is shown with forward slashes, also on Windows.
   const sub = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-sub-')));

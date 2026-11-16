@@ -3,6 +3,10 @@
 // pull requests never conflict on the same lines. A release collects them into its CHANGELOG.md section.
 //
 //   node .github/scripts/changelog.mjs check --base <ref>     pull request check (see checkPullRequest)
+//   node .github/scripts/changelog.mjs summary --base <ref>   list the fragments the pull request adds or changes
+//                                                             (printed, and appended to $GITHUB_STEP_SUMMARY when set)
+//   node .github/scripts/changelog.mjs warn-docs --base <ref>  a GitHub warning (exit 0) when the pull request changes only
+//                                                             documentation and adds no fragment
 //   node .github/scripts/changelog.mjs preview                print the section the next release would get
 //   node .github/scripts/changelog.mjs assemble --version X.Y.Z --date YYYY-MM-DD
 //                                                             write that section into CHANGELOG.md, delete the fragments
@@ -177,6 +181,21 @@ export function checkPullRequest(root, base, { skip = false, release = false } =
   return { errors, code, fragments };
 }
 
+// Documentation: docs/ and Markdown files. A pull request that changes only these needs no fragment.
+const DOCS_ONLY_RE = /^docs\/|\.md$/i;
+
+/* A pull request that changes only documentation (docs/ and Markdown files) and adds no fragment gets a warning, not a
+ * failure: a docs fix often needs no changelog entry, but a user who reads the release notes should not miss a change
+ * that has one. Release work and pull requests labelled no-changelog get none. Returns the warning text, or null. */
+export function docsFragmentWarning(root, base, { skip = false, release = false } = {}) {
+  if (skip || release) return null;
+  const changed = parseNameStatus(git(root, ['diff', '--name-status', '-z', `${base}...HEAD`]));
+  if (!changed.length || !changed.every((c) => DOCS_ONLY_RE.test(c.file))) return null;
+  const fragment = changed.some((c) => c.status !== 'D' && c.file.startsWith(FRAGMENT_DIR + '/') && c.file !== FRAGMENT_DIR + '/README.md');
+  if (fragment) return null;
+  return 'this pull request changes only documentation and adds no changelog.d/ fragment. Add one if users should read about it, or ignore this warning.';
+}
+
 /* How to fix a failed check, shown in the job log and in the job summary. It is plain text built from constants:
  * nothing from the pull request (title, branch name, file names) goes into it. */
 export function fragmentHint() {
@@ -192,6 +211,27 @@ export function fragmentHint() {
     'If users see no change, ask a maintainer to add the "no-changelog" label instead.',
     `More: ${FRAGMENT_DIR}/README.md. To check locally: node .github/scripts/changelog.mjs check --base <your base branch>`,
   ].join('\n');
+}
+
+/* The job summary of a pull request: one line per fragment it adds or changes, with the sections it holds.
+ * File names come from the pull request, so they go into code spans with backticks and line breaks replaced. */
+export function summaryMarkdown(root, base) {
+  const heading = '### Changelog fragments in this pull request';
+  const changed = parseNameStatus(git(root, ['diff', '--name-status', '-z', `${base}...HEAD`]));
+  const rows = [];
+  for (const c of changed) {
+    if (c.status === 'D' || !c.file.startsWith(FRAGMENT_DIR + '/') || c.file === FRAGMENT_DIR + '/README.md') continue;
+    const shown = '`' + c.file.replace(/[`\r\n\t]/g, '?') + '`';
+    const how = c.status === 'A' ? 'added' : 'changed';
+    let sections = 'not a valid fragment';
+    if (FRAGMENT_RE.test(c.file)) {
+      const found = parseFragment(fs.readFileSync(path.join(root, c.file), 'utf8'), c.file).sections;
+      sections = SECTIONS.filter((s) => found[s] && found[s].length).join(', ') || 'no sections';
+    }
+    rows.push(`- ${shown}: ${how}, sections: ${sections}`);
+  }
+  if (!rows.length) return `${heading}\n\nNo changelog fragment is added or changed.\n`;
+  return `${heading}\n\n${rows.join('\n')}\n`;
 }
 
 function main(argv) {
@@ -215,6 +255,23 @@ function main(argv) {
     console.log(`changelog OK: ${r.fragments.length} fragment(s), ${r.code.length} shipped file(s) changed`);
     return 0;
   }
+  if (cmd === 'warn-docs') {
+    const base = opt('--base');
+    if (!base) throw new Error('warn-docs needs --base <ref>');
+    const warning = docsFragmentWarning(root, base, { skip: process.env.CHANGELOG_SKIP === '1', release: process.env.CHANGELOG_RELEASE === '1' });
+    // A workflow command: the text is constant, so nothing from the pull request reaches the annotation.
+    if (warning) console.log(`::warning title=Changelog fragment::${warning}`);
+    else console.log('changelog docs check OK: no warning');
+    return 0;
+  }
+  if (cmd === 'summary') {
+    const base = opt('--base');
+    if (!base) throw new Error('summary needs --base <ref>');
+    const md = summaryMarkdown(root, base);
+    process.stdout.write(md);
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+    return 0;
+  }
   if (cmd === 'preview') {
     const fragments = readFragments(root);
     const bad = fragments.flatMap((f) => f.errors);
@@ -227,10 +284,10 @@ function main(argv) {
     console.log(`CHANGELOG.md: wrote ${opt('--version')} from ${r.fragments} fragment(s) and [Unreleased]; add the release introduction by hand`);
     return 0;
   }
-  console.error('usage: changelog.mjs check --base <ref> | preview | assemble --version X.Y.Z --date YYYY-MM-DD');
+  console.error('usage: changelog.mjs check --base <ref> | summary --base <ref> | warn-docs --base <ref> | preview | assemble --version X.Y.Z --date YYYY-MM-DD');
   return 2;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error('changelog: ' + e.message); process.exitCode = 1; }
 }

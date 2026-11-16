@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from zn_gate.shell_names import npx_name
 from zn_gate import cli, mcp_secrets
 from zn_gate.node_tools import node_available
 
@@ -49,9 +50,9 @@ def test_node_available_needs_both_node_and_npx(monkeypatch):
 def test_scan_step_with_node_keeps_the_npx_form(monkeypatch, real_check):
     monkeypatch.setattr(shutil, "which", _only("node", "npx"))
     step = cli._leak_next_step(".env", "secret:generic")
-    assert step.startswith("Next: run npx -y zn-gate env shadow .env to move the values into the local vault, ")
+    assert step.startswith("Next: run " + npx_name() + " -y zn-gate env shadow .env to move the values into the local vault, ")
     step = cli._leak_next_step("a.txt", "secret:generic")
-    assert step.startswith("Next: run npx -y zn-gate secret set NAME to store the value in the local vault")
+    assert step.startswith("Next: run " + npx_name() + " -y zn-gate secret set NAME to store the value in the local vault")
 
 
 @pytest.mark.parametrize("name, rule", [(".env", "secret:generic"), ("a.txt", "secret:generic"),
@@ -79,7 +80,7 @@ def test_scan_private_key_step_is_the_same_either_way(monkeypatch, real_check):
 def test_mcp_step_with_node_keeps_the_npx_form(monkeypatch, real_check):
     monkeypatch.setattr(shutil, "which", _only("node", "npx"))
     step = mcp_secrets.mcp_next_step("environment variable", "BRAVE_API_KEY")
-    assert "npx -y zn-gate secret set BRAVE_API_KEY" in step
+    assert npx_name() + " -y zn-gate secret set BRAVE_API_KEY" in step
 
 
 def test_mcp_step_without_node_has_no_npx(monkeypatch, real_check):
@@ -97,7 +98,7 @@ def test_npm_only_message_with_node_names_the_npx_init(monkeypatch, real_check):
     monkeypatch.setattr(shutil, "which", _only("node", "npx"))
     msg = cli.npm_only_message("report")
     assert msg.startswith("zn-gate report is in the npm package")
-    assert "  npx -y zn-gate init" in msg.splitlines()
+    assert "  " + npx_name() + " -y zn-gate init" in msg.splitlines()
 
 
 def test_npm_only_message_without_node_has_no_npx(monkeypatch, real_check):

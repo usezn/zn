@@ -1,3 +1,4 @@
+# Windows Python 3.12 tests of the zn-gate-py package on pull requests into next that change it, and on demand.
 name: Windows checks for the Python package
 
 # Python 3.12 on Windows for pull requests into next that touch the Python package, its benchmark or its test
@@ -9,7 +10,7 @@ name: Windows checks for the Python package
 on:
   pull_request:
     branches: [ next ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
     paths:
       - 'packages/zn-gate-py/**'
       - 'bench/bench_python.py'
@@ -23,8 +24,8 @@ permissions:
 
 # A new push to a pull request cancels the run still going for it.
 concurrency:
-  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

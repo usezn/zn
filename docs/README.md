@@ -42,6 +42,10 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
 | [Exit codes](exit-codes.md) | The exit code of every command, on one page | Everyone |
 | [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
+| [First 5 minutes checklist](first-5-minutes-checklist.md) | A printable version of the numbered steps in First 5 minutes | Everyone |
+| [FAQ: update and remove](faq.md) | Short answers to common questions about updating and removing zn-gate | Everyone |
+| [Files and folders](files-and-folders.md) | The files and folders the commands read or write | Everyone |
+| [Examples](examples/README.md) | Worked examples, in alphabetical order, with made-up values | Everyone |
 
 ## Everyday use
 
@@ -54,6 +58,7 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
+| [Code examples](../examples/README.md) | Index of the 20 runnable examples, with the command to run each one | Developers |
 | [Example: reading a scan finding](examples/reading-a-scan-finding.md) | What each field of a `zn-gate scan` finding means, with a fake finding | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [API quickstart](api-quickstart.md) | Send text to the analysis API from curl, Python or Node.js, with the key in an environment variable | Developers |
@@ -64,6 +69,7 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
 | [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
+| [Install matrix](install-matrix.md) | Install methods by operating system, how to verify each one, and installing without internet | Everyone |
 
 ## Worked examples
 
@@ -117,3 +123,14 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 ## Diagrams
 
 The diagrams used in the README and these guides are in [diagrams/](diagrams/), each with an editable `.excalidraw` source and a [notice](diagrams/NOTICE.md) for the fonts and icons they embed.
+
+## Where to ask for help
+
+| You have | Go to |
+|---|---|
+| A question about setup or use, or an idea | [GitHub Discussions](https://github.com/usezn/zn/discussions) |
+| A bug you can reproduce, or a concrete feature request | [GitHub issues](https://github.com/usezn/zn/issues) |
+| A message from zn-gate you do not understand | [Troubleshooting](troubleshooting.md) and [Why was this blocked?](why-was-this-blocked.md) |
+| A security vulnerability | Report it privately as described in [SECURITY.md](../SECURITY.md). Do not post it in Discussions or issues. |
+
+More about these channels is in [Community and support](../README.md#community-and-support). To contribute, see [CONTRIBUTING.md](../CONTRIBUTING.md).

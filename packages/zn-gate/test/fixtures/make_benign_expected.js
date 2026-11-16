@@ -22,8 +22,13 @@ const { checkCommand } = require('../../lib/destructive');
 const CORPUS = path.join(__dirname, 'benign-commands.txt');
 const OUT = path.join(__dirname, 'benign-commands.expected.json');
 
+// One command per non-empty line, with either line ending (a Windows checkout can turn LF into CRLF).
+function parseCommands(text) {
+  return text.split(/\r?\n/).filter((l) => l.trim() !== '');
+}
+
 function readCommands() {
-  return fs.readFileSync(CORPUS, 'utf8').split('\n').filter((l) => l.trim() !== '');
+  return parseCommands(fs.readFileSync(CORPUS, 'utf8'));
 }
 
 function build() {
@@ -56,4 +61,4 @@ if (require.main === module) {
   process.stdout.write(`wrote ${path.relative(process.cwd(), OUT)}\n`);
 }
 
-module.exports = { render, OUT };
+module.exports = { render, parseCommands, OUT };

@@ -422,3 +422,36 @@ test('scan with types keeps only those span types, before overlaps are resolved'
   const none = E.scan(text, { exact: false, pii: false, types: new Set(['GITHUB_TOKEN']) });
   assert.deepEqual(none, []);
 });
+
+test('scanAsync with a remote vault: a value split by quotes or percent-encoded is found, no throw', async () => {
+  const value = 'ghp_' + pick(36);
+  const vault = memoryVault({ named: { GITHUB_TOKEN: value } });
+  const split = value.slice(0, 12) + "''" + value.slice(12);
+  const pct = '%' + value.charCodeAt(0).toString(16) + value.slice(1);
+  for (const text of ['echo ' + split + ' tail', 'curl "?k=' + pct + '" tail']) {
+    const spans = await E.scanAsync(text, ctx(vault));
+    assert.ok(spans.some((s) => s.source === 'exact'), 'found in: ' + text.length);
+    const r = await E.tokenize(text, ctx(vault));
+    assert.ok(!r.text.includes(value.slice(12)) && !r.text.includes(value.slice(1)), r.text);
+  }
+  // a context warmed with the text already holds the answer for every view: scanAsync makes no further request
+  const warmed = await E.warm(await E.prepare(ctx(vault)), ['echo ' + split + ' tail']);
+  let again = 0;
+  const orig = vault.maskSpans;
+  vault.maskSpans = async (p, t, c) => { again++; return orig(p, t, c); };
+  assert.ok((await E.scanAsync('echo ' + split + ' tail', warmed)).some((s) => s.source === 'exact'));
+  assert.strictEqual(again, 0);
+});
+
+test('scanAsync with a remote vault: a text with no decoded view costs no extra fetch', async () => {
+  const value = 'ghp_' + pick(36);
+  const vault = memoryVault({ named: { GITHUB_TOKEN: value } });
+  const seen = [];
+  const orig = vault.maskSpans;
+  vault.maskSpans = async (p, texts, claim) => { seen.push(texts.length); return orig(p, texts, claim); };
+  await E.scanAsync('plain text with ' + value + ' inside', ctx(vault));
+  assert.deepStrictEqual(seen, [1]);
+  seen.length = 0;
+  await E.scanAsync('echo ' + value.slice(0, 12) + "''" + value.slice(12) + ' x', ctx(vault));
+  assert.deepStrictEqual(seen, [2]); // the text and its decoded view, one request
+});

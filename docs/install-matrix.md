@@ -1,5 +1,7 @@
 # Install matrix
 
+Last reviewed: 2026-11-11
+
 Install methods by operating system, with the command that verifies each one. Everything here is
 taken from [compat.md](compat.md) and [first-5-minutes.md](first-5-minutes.md); read those pages for the full
 details. Run every command in your own terminal, not through your agent.
@@ -30,8 +32,8 @@ Notation used in the tables:
 |---|---|---|
 | Guided setup (`init`) | `npx -y zn-gate init` | `npx -y zn-gate check`, then `npx -y zn-gate test` (exits with `0` when all built-in examples pass) |
 | Global program | `npm install -g zn-gate`, then `zn hooks install <agent>` | `zn-gate check` |
-| Python package | `pip install zn-gate` | `npx -y zn-gate check` |
-| Hooks for one agent | `zn hooks install claude-code`, `codex`, `cursor`, `opencode` or `antigravity` | `npx -y zn-gate check` |
+| Python package | `pip install zn-gate` | `zn-gate status` (prints the version, the Python version and whether the optional cloud check is on). The Python package sets up no agent coverage, so `check` belongs to the npm package. |
+| Hooks for one agent | `zn hooks install claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `copilot`, `zcode` or `gemini` (experimental) | `npx -y zn-gate check` |
 
 `init` ends with the `check` run. `check` makes a temporary folder with a fake key in a `.env` file, asks your
 agent's hook to read it, and deletes the folder. If it says `NOT protected`, see

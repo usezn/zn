@@ -6,13 +6,17 @@ import tempfile
 import unittest
 
 from zn_gate.cli import _leak_next_step
+from zn_gate.shell_names import npx_name
+
+# The CLI names the launcher as typed on this computer: npx.cmd on Windows, npx elsewhere.
+NPX = npx_name()
 
 FAKE_VALUE = "ZNTESTFAKE-not-a-real-value"
-ENV_STEP = ("Next: run npx -y zn-gate env shadow {arg} to move the values into the local vault, "
+ENV_STEP = ("Next: run " + NPX + " -y zn-gate env shadow {arg} to move the values into the local vault, "
             "and rotate any value that was ever committed or shared.")
 KEY_STEP = ("Next: move the key out of this file (for example to ~/.ssh or a secret manager) "
             "and replace it if the file was ever committed or shared.")
-OTHER_STEP = ("Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the "
+OTHER_STEP = ("Next: run " + NPX + " -y zn-gate secret set NAME to store the value in the local vault, use the "
               "__ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.")
 
 

@@ -13,7 +13,7 @@
 // never looked up and never reported as a look-alike), so a name that is not verified must not stay on it.
 // With --write the list is rewritten without those names and "how_it_was_made" records the run.
 // Tests (no network): node --test .github/scripts/check-package-names.test.mjs
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -187,6 +187,6 @@ async function main() {
   process.exitCode = counts.dropped ? 1 : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().catch((e) => { console.error(String((e && e.message) || e)); process.exit(2); });
 }
