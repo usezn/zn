@@ -1005,8 +1005,10 @@ def npm_help_message() -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     """The argument parser. Its sub-commands are the commands this package knows."""
+    # No shortened long options: `scan --all` must not silently mean `--allow-partial`.
     parser = argparse.ArgumentParser(
         prog="zn-gate",
+        allow_abbrev=False,
         description="zn deterministic guardrail engine for AI agents and LLM tool calling.",
         epilog="Also: reach --history  which secrets your coding agents kept in their session history "
                "(types and counts, never values) [--json] [--max-seconds N]",
@@ -1017,12 +1019,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(_subparsers=subparsers)
 
     # test command
-    test_parser = subparsers.add_parser("test", help="Test a single text payload against guardrail rules")
+    test_parser = subparsers.add_parser("test", allow_abbrev=False, help="Test a single text payload against guardrail rules")
     test_parser.add_argument("text", help="Prompt or tool argument string to test")
     test_parser.add_argument("--json", action="store_true", help="Output results as JSON")
 
     # analyze command
-    analyze_parser = subparsers.add_parser("analyze", help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
+    analyze_parser = subparsers.add_parser("analyze", allow_abbrev=False, help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
     analyze_parser.add_argument("text", help="Prompt or message to analyze")
     analyze_parser.add_argument("--key", help="API key for zn Cloud Gate")
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")
@@ -1032,7 +1034,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--json", action="store_true", help="Output as JSON (the only output format; accepted so existing scripts keep working)")
 
     # scan command
-    scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")
+    scan_parser = subparsers.add_parser("scan", allow_abbrev=False, help="Scan directory or files for injection traps & secret leaks")
     scan_parser.add_argument("path", default=".", nargs="?", help="File or directory path to scan (default: current directory)")
     scan_parser.add_argument("--format", choices=["text", "json", "github"], default="text", help="Output format")
     scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found or files were not read")
@@ -1042,23 +1044,23 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command
-    ev_parser = subparsers.add_parser("evidence", help="Audit cryptographic evidence ledger")
+    ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
     ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
     ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")
     ev_parser.add_argument("--output", help="Write export output to file")
 
     # status command
-    subparsers.add_parser("status", help="Show engine status and configuration")
+    subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")
 
     # stats command
-    st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
+    st_parser = subparsers.add_parser("stats", allow_abbrev=False, help="What zn-gate did on this machine (local counts only)")
     st_parser.add_argument("--days", type=int, default=30, action=_DaysGiven, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     # check command
     subparsers.add_parser(
-        "check",
+        "check", allow_abbrev=False,
         help="Prove the Python guard works on a fake secret (no Node.js, no network)",
         description="Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary "
                     "folder. Prints OK and exits 0 only if the secret is blocked or redacted and the harmless "
