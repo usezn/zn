@@ -4,6 +4,14 @@ This repository does not distribute the third-party models or datasets listed be
 
 ## Rust crate (`src/`)
 
+### rmcp and rmcp-macros (compiled into the gateway)
+
+- Crates: `rmcp` and `rmcp-macros` 3.9.0, the Rust SDK of the Model Context Protocol
+- Source: https://github.com/modelcontextprotocol/rust-sdk
+- License: the crate manifests declare Apache License 2.0. Their LICENSE file adds that the MCP project is moving from the MIT License to Apache-2.0: new contributions are Apache-2.0, and contributions whose authors have not agreed to relicense remain under the MIT License. The compiled gateway therefore contains Apache-2.0 code and possibly some MIT code from these crates. Both licences are allowed by `deny.toml`.
+- Copyright: Copyright (c) 2024-2025 Model Context Protocol a Series of LF Projects, LLC.
+- Use: the experimental Rust gateway in `src/` (not distributed) links these crates for its MCP client and server.
+
 ### all-MiniLM-L6-v2 (downloaded at runtime)
 
 - Model: `sentence-transformers/all-MiniLM-L6-v2`
