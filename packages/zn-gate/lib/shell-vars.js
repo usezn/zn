@@ -141,8 +141,11 @@ function track(scope, words, sep, opens) {
   else if (CLOSE_BLOCK.has(first)) scope.blocks = Math.max(0, scope.blocks - 1);
   if (first === 'case') scope.cases++;
   else if (first === 'esac') scope.cases = Math.max(0, scope.cases - 1);
-  else if (first === '{') scope.braces++;
-  else if (first === '}') scope.braces = Math.max(0, scope.braces - 1);
+  // Every { and } word of the segment counts, not only a leading one: a function body opens after f() or function f.
+  for (const w of words) {
+    if (w === '{') scope.braces++;
+    else if (w === '}') scope.braces = Math.max(0, scope.braces - 1);
+  }
   if (sep === '(') scope.parens++;
   scope.parens += opens;
   // Inside a case block a ')' may close a pattern (a) ...) rather than a group: it never lowers the group count there,

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.10"
+COMMAND_RULES_VERSION = "2026-11-16.15"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -532,10 +532,12 @@ class _Vars:
             self.cases += 1
         elif first == "esac":
             self.cases = max(0, self.cases - 1)
-        elif first == "{":
-            self.braces += 1
-        elif first == "}":
-            self.braces = max(0, self.braces - 1)
+        # Every { and } word of the segment counts, not only a leading one: a function body opens after f() or function f.
+        for w in words:
+            if w == "{":
+                self.braces += 1
+            elif w == "}":
+                self.braces = max(0, self.braces - 1)
         if sep == "(":
             self.parens += 1
         self.parens += opens
