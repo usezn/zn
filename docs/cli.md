@@ -141,15 +141,15 @@ zn-gate init --wrap-mcp [--dry-run] [--shadow] [--revert]
 
 Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, and the experimental Gemini CLI), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
 
-With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first.
+With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first. Without `--shadow`, a server already wrapped in shadow mode is switched to enforce (`switched from shadow to enforce: <server>`, counted as modified; with `--dry-run` it only prints the planned switch). A server already wrapped in enforce mode is left as it is (`already_shielded`).
 
 - `--dry-run`: show what would change, change nothing.
-- `--shadow`: wrap in shadow mode: problems are logged but nothing is dropped. A server that is already wrapped is skipped (`already_shielded`), so to switch from shadow mode to enforcing, run `init --revert` and then `init --wrap-mcp`.
+- `--shadow`: wrap in shadow mode: problems are logged but nothing is dropped. It never weakens a server that already enforces: if one is wrapped in enforce mode, the command names it, exits `2` and changes no file; run `init --revert` first to go back to shadow mode.
 - `--revert`: put back the MCP configs saved before zn wrapped them. It does not remove the Claude Code plugin, hooks or markers in `.env` files: for those run [`uninstall`](#uninstall).
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
-Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the guided steps were only printed (no terminal). `2` an argument it does not know. With `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert` the command exits `0` once it has finished: the line of each config says what was wrapped, skipped or failed.
+Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the guided steps were only printed (no terminal). `2` an argument it does not know, or `--shadow` while a server is wrapped in enforce mode (nothing is changed). With `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert` the command exits `0` once it has finished: the line of each config says what was wrapped, skipped or failed.
 
 ### `uninstall`
 

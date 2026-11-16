@@ -1306,15 +1306,27 @@ async function main() {
     process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate init - Zero-Touch MCP Auto-Discovery & Shielding
 ${ruleLine(process.env, 60)}\n`);
-    const { scanned, actions } = configureEnvironments({
+    const { scanned, actions, refused } = configureEnvironments({
       dryRun: options.dryRun,
       shadow: options.shadow,
       revert: options.revert
     });
 
+    if (refused) {
+      // --shadow on a server that already blocks would weaken it: nothing was changed.
+      const names = refused.servers.map((s) => `${s.server} (${s.env})`).join(', ');
+      process.stderr.write(`zn-gate init: --shadow would stop blocking on servers that already enforce: ${names}. zn did not change any file. To try shadow mode on them, run \`zn-gate init --revert\` first, then \`zn-gate init --shadow\`.\n`);
+      process.exitCode = 2;
+      return;
+    }
+
     for (const act of actions) {
       const mark = act.status === 'error' ? sym(process.env, '✖', col.red) : act.status === 'manual_required' || act.status === 'skipped_unsafe' ? sym(process.env, '!', col.yellow) : sym(process.env, '✔', col.green);
       process.stdout.write(`  ${mark}${act.env.padEnd(20)} [${act.status}] ${act.serversCount ? act.serversCount + ' servers' : ''}${act.shadow ? ' (shadow mode)' : ''}\n`);
+      for (const name of act.switched || []) {
+        const verb = options.dryRun ? 'would switch from shadow to enforce: ' : 'switched from shadow to enforce: ';
+        process.stdout.write(`    ${sym(process.env, '↳', col.green)}${verb}${name}\n`);
+      }
       if (act.backup) {
         process.stdout.write(`    ${sym(process.env, '↳', col.gray)}${col.gray('backup: ' + act.backup)}\n`);
       }
@@ -1336,7 +1348,7 @@ ${ruleLine(process.env, 60)}\n`);
       process.stdout.write(`  ${sym(process.env, '○', col.gray)}${nf.name.padEnd(20)} [Not installed/configured]\n`);
     }
 
-    const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
+    const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'switched_to_enforce' || a.status === 'reverted').length;
     const totalFailed = actions.filter(a => a.failed).length;
     if (totalFailed) {
       // Exit 1: at least one config could not be changed (see the line above it for the path and the next step).

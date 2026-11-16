@@ -88,6 +88,25 @@ function shieldArgv(originalArgv, options) {
   return argv;
 }
 
+// The mode of a server wrapped by zn-gate's own shield, from its full argv (command first): 'shadow' when --shadow
+// comes between "shield" and the "--" that starts the server command, 'enforce' when it does not, and null for any
+// other command (not wrapped, zn-mcp, or a wrapper written in a form zn does not rewrite).
+function wrapperMode(argv) {
+  const i = argv.indexOf('shield');
+  if (i < 0 || !argv.slice(0, i).some((a) => /\bzn-gate\b/.test(String(a)))) return null;
+  const end = argv.indexOf('--', i + 1);
+  if (end < 0) return null;
+  return argv.slice(i + 1, end).includes('--shadow') ? 'shadow' : 'enforce';
+}
+
+// The same wrapper without --shadow, so the shield blocks instead of only recording. The server command after "--"
+// is kept as it is.
+function enforceArgv(argv) {
+  const i = argv.indexOf('shield');
+  const end = argv.indexOf('--', i + 1);
+  return [...argv.slice(0, i + 1), ...argv.slice(i + 1, end).filter((a) => a !== '--shadow'), ...argv.slice(end)];
+}
+
 // ---------------------------------------------------------------------------
 // Adapter: { mcpServers: { name: { command, args } } }  (and custom `key`)
 // ---------------------------------------------------------------------------
@@ -98,22 +117,32 @@ const mcpServersJson = {
     return Object.entries(srvs).map(([name, cfg]) => {
       const command = (cfg && cfg.command) || '';
       const args = (cfg && cfg.args) || [];
-      return { name, command, args, shielded: isShieldedCommand(command, args), remote: !command };
+      const mode = command && Array.isArray(args) ? wrapperMode([command, ...args]) : null;
+      return { name, command, args, shielded: isShieldedCommand(command, args), mode, remote: !command };
     });
   },
   shield(raw, env, options) {
     const json = parseConfigJson(raw, env.filePath);
     const srvs = json[env.key || 'mcpServers'] || {};
-    let modified = false;
-    for (const cfg of Object.values(srvs)) {
+    let wrapped = 0;
+    const switched = [];
+    for (const [name, cfg] of Object.entries(srvs)) {
       if (!cfg || !cfg.command) continue; // remote/url servers: nothing to wrap
       const args = cfg.args || [];
-      if (isShieldedCommand(cfg.command, args)) continue;
+      if (isShieldedCommand(cfg.command, args)) {
+        if (!options.shadow && Array.isArray(args) && wrapperMode([cfg.command, ...args]) === 'shadow') {
+          const argv = enforceArgv([cfg.command, ...args]);
+          cfg.command = argv[0];
+          cfg.args = argv.slice(1);
+          switched.push(name);
+        }
+        continue;
+      }
       cfg.args = shieldArgv([cfg.command, ...args], options);
       cfg.command = 'npx';
-      modified = true;
+      wrapped++;
     }
-    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+    return { modified: wrapped > 0 || switched.length > 0, wrapped, switched, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
   },
 };
 
@@ -131,20 +160,28 @@ const opencodeJson = {
     return Object.entries(srvs).map(([name, cfg]) => {
       const argv = Array.isArray(cfg && cfg.command) ? cfg.command : [];
       const local = cfg && cfg.type === 'local' && argv.length > 0;
-      return { name, command: argv[0] || '', args: argv.slice(1), shielded: local && isShieldedCommand(argv[0], argv.slice(1)), remote: !local };
+      const shielded = local && isShieldedCommand(argv[0], argv.slice(1));
+      return { name, command: argv[0] || '', args: argv.slice(1), shielded, mode: local ? wrapperMode(argv) : null, remote: !local };
     });
   },
   shield(raw, env, options) {
     const json = parseStrictJson(raw, env.filePath);
     const srvs = json.mcp || {};
-    let modified = false;
-    for (const cfg of Object.values(srvs)) {
+    let wrapped = 0;
+    const switched = [];
+    for (const [name, cfg] of Object.entries(srvs)) {
       if (!cfg || cfg.type !== 'local' || !Array.isArray(cfg.command) || cfg.command.length === 0) continue;
-      if (isShieldedCommand(cfg.command[0], cfg.command.slice(1))) continue;
+      if (isShieldedCommand(cfg.command[0], cfg.command.slice(1))) {
+        if (!options.shadow && wrapperMode(cfg.command) === 'shadow') {
+          cfg.command = enforceArgv(cfg.command);
+          switched.push(name);
+        }
+        continue;
+      }
       cfg.command = ['npx', ...shieldArgv(cfg.command, options)];
-      modified = true;
+      wrapped++;
     }
-    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+    return { modified: wrapped > 0 || switched.length > 0, wrapped, switched, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
   },
 };
 
@@ -263,6 +300,7 @@ const codexToml = {
       command: s.command || '',
       args: s.args || [],
       shielded: Boolean(s.command) && isShieldedCommand(s.command, s.args || []),
+      mode: s.command && !s.unsupported ? wrapperMode([s.command, ...(s.args || [])]) : null,
       remote: !s.command,
     }));
   },
@@ -270,7 +308,8 @@ const codexToml = {
     const eol = raw.includes('\r\n') ? '\r\n' : '\n';
     const { lines, servers } = scanCodexToml(raw);
     const manual = [];
-    let modified = false;
+    let wrapped = 0;
+    const switched = [];
     // Process bottom-up so inserted lines don't shift later indices.
     for (const s of [...servers].sort((a, b) => b.headerLine - a.headerLine)) {
       if (!s.command) continue; // streamable-HTTP (url) servers: nothing to wrap
@@ -279,15 +318,25 @@ const codexToml = {
         continue;
       }
       const args = s.args || [];
-      if (isShieldedCommand(s.command, args)) continue;
+      if (isShieldedCommand(s.command, args)) {
+        // A shadow wrapper written by zn has its args on one line: only that line is rewritten.
+        if (!options.shadow && s.argsLine >= 0 && wrapperMode([s.command, ...args]) === 'shadow') {
+          const argv = enforceArgv([s.command, ...args]);
+          if (argv[0] === s.command) {
+            lines[s.argsLine] = `args = [${argv.slice(1).map(tomlStr).join(', ')}]`;
+            switched.unshift(s.name);
+          }
+        }
+        continue;
+      }
       const newArgs = shieldArgv([s.command, ...args], options);
       lines[s.commandLine] = `command = ${tomlStr('npx')}`;
       const argsLine = `args = [${newArgs.map(tomlStr).join(', ')}]`;
       if (s.argsLine >= 0) lines[s.argsLine] = argsLine;
       else lines.splice(s.commandLine + 1, 0, argsLine);
-      modified = true;
+      wrapped++;
     }
-    return { modified, content: lines.join(eol), manual };
+    return { modified: wrapped > 0 || switched.length > 0, wrapped, switched, content: lines.join(eol), manual };
   },
 };
 
@@ -617,6 +666,18 @@ function configureEnvironments(options = {}) {
   const envs = scanEnvironments(options.envList);
   const actions = [];
 
+  // --shadow never weakens a server that already blocks: when any server is wrapped in enforce mode, nothing is
+  // changed (dry run included) and the caller tells the user to run --revert first.
+  if (options.shadow && !options.revert) {
+    const enforced = [];
+    for (const env of envs) {
+      for (const s of env.servers || []) {
+        if (!s.error && s.mode === 'enforce') enforced.push({ env: env.name, server: s.name });
+      }
+    }
+    if (enforced.length) return { scanned: envs, actions, refused: { reason: 'enforced', servers: enforced } };
+  }
+
   for (const env of envs) {
     if (!env.exists) continue;
 
@@ -665,21 +726,28 @@ function configureEnvironments(options = {}) {
     try {
       const text = fs.readFileSync(env.filePath, 'utf8');
       const bom = text.charCodeAt(0) === 0xFEFF; // kept: the file is written back with the same first bytes
-      const { modified, content, manual } = adapterFor(env).shield(bom ? text.slice(1) : text, env, options);
+      const { modified, wrapped = 0, switched = [], content, manual } = adapterFor(env).shield(bom ? text.slice(1) : text, env, options);
 
       let backup;
       if (modified && !options.dryRun) {
-        backup = path.join(resolved.dir, `${path.basename(env.filePath)}.bak.${Date.now()}`);
-        createBackup(resolved.target, backup);
+        // Switching a shadow wrapper to enforce adds no backup when one is already there, so init --revert still puts
+        // back the config saved before zn first wrapped it, not the shadow-mode one.
+        const configPath = path.join(resolved.dir, path.basename(env.filePath));
+        if (wrapped > 0 || !latestBackup(configPath, env.scope)) {
+          backup = path.join(resolved.dir, `${path.basename(env.filePath)}.bak.${Date.now()}`);
+          createBackup(resolved.target, backup);
+        }
         atomicWrite(resolved.target, (bom ? '﻿' : '') + content);
       }
 
       if (modified) {
+        const status = wrapped > 0 ? 'shielded' : 'switched_to_enforce';
         actions.push({
           env: env.name,
-          status: options.dryRun ? 'would_shield' : 'shielded',
+          status: options.dryRun ? 'would_' + (wrapped > 0 ? 'shield' : 'switch_to_enforce') : status,
           serversCount: env.serverCount,
           shadow: Boolean(options.shadow),
+          ...(switched.length ? { switched } : {}),
           ...(backup ? { backup } : {}),
           ...(manual.length ? { manual } : {}),
         });
@@ -708,5 +776,5 @@ module.exports = {
   latestBackup,
   safeRestore,
   resolveConfig,
-  _internal: { scanCodexToml, parseTomlStringArray, parseTomlKeyPath },
+  _internal: { scanCodexToml, parseTomlStringArray, parseTomlKeyPath, wrapperMode, enforceArgv },
 };

@@ -1,0 +1,3 @@
+### Security
+
+- `zn-gate init --wrap-mcp` switches MCP servers wrapped in shadow mode to enforce, prints `switched from shadow to enforce: <server>` and counts the config as modified; `--dry-run` shows the planned switch and changes nothing. Before, after `zn-gate init --shadow` it reported `already_shielded` and left the servers in shadow mode, so nothing was blocked. `zn-gate init --shadow` now refuses, with exit 2 and no file changed, when a server is already wrapped in enforce mode, instead of leaving it as it was without saying so: run `zn-gate init --revert` first to go back to shadow mode.

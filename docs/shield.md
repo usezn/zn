@@ -48,7 +48,7 @@ npx -y zn-gate init --dry-run
 # Wrap in shadow mode first
 npx -y zn-gate init --shadow
 
-# Wrap and enforce (a server already wrapped, in shadow mode or not, is skipped: run `init --revert` first to change it)
+# Wrap and enforce (a server wrapped in shadow mode is switched to enforce)
 npx -y zn-gate init --wrap-mcp
 
 # Restore the original files from the backups
@@ -82,14 +82,15 @@ Review what the shield found with:
 npx -y zn-gate evidence --tail 20
 ```
 
-When the log looks right, switch to enforce. Running `init --wrap-mcp` right after `init --shadow` does not do it: it reports `already_shielded`, changes nothing, and the server stays in shadow mode. Run the two steps in this order:
+When the log looks right, switch to enforce:
 
 ```bash
-npx -y zn-gate init --revert
 npx -y zn-gate init --wrap-mcp
 ```
 
-`init --revert` puts the saved configs back, and `init --wrap-mcp` then wraps every local server again without `--shadow`. You can also remove `--shadow` from the wrapped command by hand. Check the result by reading the server entry in the config file: it must not contain `--shadow`. The reverse order does not work either: after `init --wrap-mcp`, `init --shadow` reports `already_shielded` and changes nothing.
+Each server wrapped in shadow mode is rewritten without `--shadow`, and the command prints `switched from shadow to enforce: <server>` for it and counts its config as modified. Servers it had not wrapped yet are wrapped in enforce mode. Add `--dry-run` to see the planned switch without changing anything. The switch writes no new backup when one is already there, so `init --revert` still puts back the config from before zn wrapped it. Running `init --wrap-mcp` again on enforced servers reports `already_shielded` and changes nothing.
+
+The other way round is refused: `init --shadow` never turns off blocking on a server that already enforces. When any server is wrapped in enforce mode, it exits `2`, names those servers, and changes no file (with `--dry-run` too). To go back to shadow mode, run `init --revert` first, then `init --shadow`.
 
 ## Tool pinning
 
