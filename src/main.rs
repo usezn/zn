@@ -2505,6 +2505,273 @@ mod audit_isolation_tests {
         assert!(!ok.contains("\"error\""), "{ok}");
     }
 
+    // ---- The order in which process_mcp_message decides -----------------------
+    // Stages, first to last: invalid JSON-RPC, skipped server, vision, banned
+    // agent, cache, fixed rules, loop breaker, consensus, neural. Each row
+    // sends a request that two adjacent stages would both act on, and pins
+    // which one answers.
+
+    const ORDER_AGENT: &str = "agent-example";
+    static ORDER_EMBEDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    struct CountingBackend;
+
+    impl zn::ai::ModelBackend for CountingBackend {
+        fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+            ORDER_EMBEDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![0.0; 8])
+        }
+        fn classify(&self, _vec: &[f32]) -> anyhow::Result<Option<f32>> {
+            Ok(None)
+        }
+        fn name(&self) -> &str {
+            "counting-example"
+        }
+        fn dim(&self) -> usize {
+            8
+        }
+    }
+
+    fn order_frame(jsonrpc: &str, tool: &str, arguments: serde_json::Value) -> String {
+        serde_json::json!({
+            "jsonrpc": jsonrpc,
+            "id": 41,
+            "method": "tools/call",
+            "agent_id": ORDER_AGENT,
+            "params": { "name": tool, "arguments": arguments }
+        })
+        .to_string()
+    }
+
+    /// Replace the configuration and rebuild the parts that are made from it.
+    fn reconfigure(state: &mut AppState, change: impl FnOnce(&mut zn::config::ZnConfig)) {
+        let mut config = state.config.as_ref().clone();
+        change(&mut config);
+        state.loop_breaker = Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
+            config.loop_breaker.clone(),
+        ));
+        state.cache = Arc::new(zn::engine::cache::ResultCache::new(config.caching.clone()));
+        state.consensus = Arc::new(zn::engine::consensus::ConsensusManager::new(
+            config.consensus.clone(),
+        ));
+        state.config = Arc::new(config);
+    }
+
+    fn ban_the_agent(state: &AppState) {
+        let key = reputation_key(
+            &resolve_namespace(None, None),
+            &bounded_agent_id(Some(ORDER_AGENT)),
+        );
+        state
+            .reputation
+            .record_violation(&key, "example violation", 1000);
+        assert!(state.reputation.check_agent_status(&key).is_err());
+    }
+
+    fn skip_server_bad(state: &mut AppState) {
+        let mut skipped = std::collections::HashMap::new();
+        skipped.insert("bad".to_string(), "not an allowed command".to_string());
+        state.pool = Arc::new(McpPool::new(std::collections::HashMap::new()).with_skipped(skipped));
+    }
+
+    fn images_on(state: &mut AppState) {
+        reconfigure(state, |c| c.managed_rules.visual_pii_redaction = true);
+    }
+
+    // A base64 string of the wrong length: the vision stage refuses it.
+    fn bad_image() -> serde_json::Value {
+        serde_json::json!({ "image": "data:image/png;base64,AAAAA" })
+    }
+
+    // The restricted-command rule matches the word "rm" in the arguments.
+    fn rule_hit() -> serde_json::Value {
+        serde_json::json!({ "cmd": "rm ./build" })
+    }
+
+    fn quiet() -> serde_json::Value {
+        serde_json::json!({ "query": "hello" })
+    }
+
+    fn cache_a_reply(state: &AppState, tool: &str, arguments: serde_json::Value, reply: &str) {
+        let frame = order_frame("2.0", tool, arguments);
+        let JsonRpcValidation::ToolCall { arguments, .. } =
+            validate_jsonrpc(&Scrubber::scrub(&frame))
+        else {
+            panic!("a tool call");
+        };
+        state.cache.set(
+            &bounded_agent_id(Some(ORDER_AGENT)),
+            tool,
+            &arguments,
+            reply.to_string(),
+        );
+    }
+
+    const CACHED: &str = r#"{"jsonrpc":"2.0","id":41,"result":"cached-example"}"#;
+
+    enum Answer {
+        Error(i64, &'static str),
+        Reply(&'static str),
+    }
+
+    struct Row {
+        name: &'static str,
+        setup: fn(&mut AppState),
+        frame: fn() -> String,
+        calls: usize,
+        answer: Answer,
+        /// Some(true): the neural embedding ran; Some(false): it did not.
+        neural_ran: Option<bool>,
+    }
+
+    #[tokio::test]
+    async fn the_verdict_order_of_process_mcp_message_is_pinned() {
+        let rows = [
+            Row {
+                name: "invalid JSON-RPC before a skipped server",
+                setup: skip_server_bad,
+                frame: || order_frame("1.0", "mcp__bad__run", quiet()),
+                calls: 1,
+                answer: Answer::Error(-32600, ""),
+                neural_ran: None,
+            },
+            Row {
+                name: "a skipped server before vision",
+                setup: |s| {
+                    skip_server_bad(s);
+                    images_on(s);
+                },
+                frame: || order_frame("2.0", "mcp__bad__run", bad_image()),
+                calls: 1,
+                answer: Answer::Error(-32000, "skipped"),
+                neural_ran: None,
+            },
+            Row {
+                name: "vision before a banned agent",
+                setup: |s| {
+                    images_on(s);
+                    ban_the_agent(s);
+                },
+                frame: || order_frame("2.0", "other_tool", bad_image()),
+                calls: 1,
+                answer: Answer::Error(-32001, "unsupported image format"),
+                neural_ran: None,
+            },
+            Row {
+                name: "a banned agent before the cache",
+                setup: |s| {
+                    reconfigure(s, |c| c.caching.enabled = true);
+                    cache_a_reply(s, "other_tool", quiet(), CACHED);
+                    ban_the_agent(s);
+                },
+                frame: || order_frame("2.0", "other_tool", quiet()),
+                calls: 1,
+                answer: Answer::Error(-32003, "BANNED"),
+                neural_ran: None,
+            },
+            Row {
+                name: "the cache before the fixed rules",
+                setup: |s| {
+                    reconfigure(s, |c| c.caching.enabled = true);
+                    cache_a_reply(s, "other_tool", rule_hit(), CACHED);
+                },
+                frame: || order_frame("2.0", "other_tool", rule_hit()),
+                calls: 1,
+                answer: Answer::Reply(CACHED),
+                neural_ran: None,
+            },
+            Row {
+                name: "the fixed rules before the loop breaker",
+                setup: |s| reconfigure(s, |c| c.loop_breaker.max_repeats = 1),
+                frame: || order_frame("2.0", "other_tool", rule_hit()),
+                calls: 3,
+                answer: Answer::Error(-32001, ""),
+                neural_ran: None,
+            },
+            Row {
+                name: "control: the loop breaker answers when no rule hits",
+                setup: |s| reconfigure(s, |c| c.loop_breaker.max_repeats = 1),
+                frame: || order_frame("2.0", "other_tool", quiet()),
+                calls: 2,
+                answer: Answer::Error(-32002, ""),
+                neural_ran: None,
+            },
+            Row {
+                name: "the loop breaker before consensus",
+                setup: |s| {
+                    reconfigure(s, |c| {
+                        c.loop_breaker.max_repeats = 1;
+                        c.consensus.enabled = true;
+                        c.consensus.critical_tools = vec!["critical_tool".to_string()];
+                    })
+                },
+                frame: || order_frame("2.0", "critical_tool", quiet()),
+                calls: 2,
+                answer: Answer::Error(-32002, ""),
+                neural_ran: None,
+            },
+            Row {
+                name: "consensus before the neural check",
+                setup: |s| {
+                    reconfigure(s, |c| {
+                        c.neural.enabled = true;
+                        c.consensus.enabled = true;
+                        c.consensus.critical_tools = vec!["critical_tool".to_string()];
+                    });
+                    s.canary = Arc::new(zn::ai::CanaryDeployer::new(Arc::new(CountingBackend)));
+                },
+                frame: || order_frame("2.0", "critical_tool", quiet()),
+                calls: 1,
+                answer: Answer::Error(-32004, "consensus"),
+                neural_ran: Some(false),
+            },
+            Row {
+                name: "control: the neural check runs when nothing earlier answers",
+                setup: |s| {
+                    reconfigure(s, |c| c.neural.enabled = true);
+                    s.canary = Arc::new(zn::ai::CanaryDeployer::new(Arc::new(CountingBackend)));
+                },
+                frame: || order_frame("2.0", "other_tool", quiet()),
+                calls: 1,
+                answer: Answer::Reply(""),
+                neural_ran: Some(true),
+            },
+        ];
+
+        for row in rows {
+            let (mut state, _dir) = test_state(None);
+            (row.setup)(&mut state);
+            ORDER_EMBEDS.store(0, std::sync::atomic::Ordering::SeqCst);
+            let mut last = String::new();
+            for _ in 0..row.calls {
+                last = process_mcp_message(&(row.frame)(), &state, None)
+                    .await
+                    .unwrap()
+                    .unwrap_or_default();
+            }
+            match row.answer {
+                Answer::Error(code, text) => {
+                    let v: serde_json::Value = serde_json::from_str(&last)
+                        .unwrap_or_else(|e| panic!("{}: {e}: {last}", row.name));
+                    assert_eq!(v["error"]["code"], code, "{}: {last}", row.name);
+                    let message = v["error"]["message"].as_str().unwrap_or("");
+                    assert!(message.contains(text), "{}: {last}", row.name);
+                    if row.name.starts_with("invalid") {
+                        assert!(!message.contains("skipped"), "{}: {last}", row.name);
+                    }
+                }
+                Answer::Reply(exact) if !exact.is_empty() => {
+                    assert_eq!(last, exact, "{}", row.name);
+                }
+                Answer::Reply(_) => {}
+            }
+            if let Some(ran) = row.neural_ran {
+                let embeds = ORDER_EMBEDS.load(std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(embeds > 0, ran, "{}: {embeds} embeddings", row.name);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_port_that_is_in_use_gives_a_plain_startup_error() {
         let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
