@@ -301,6 +301,12 @@ async fn start_proxy(args: Args) -> Result<()> {
     // Validate configuration
     zn_config.validate()?;
 
+    // Image scanning blocks every image it cannot read, so say so at startup
+    // when tesseract is missing.
+    if let Some(warning) = zn::engine::vision::startup_warning(&zn_config.managed_rules) {
+        log::warning(warning)?;
+    }
+
     // Initialize Prometheus metrics
     if let Err(e) = metrics::init() {
         log::warning(format!("Failed to initialize metrics: {}", e))?;

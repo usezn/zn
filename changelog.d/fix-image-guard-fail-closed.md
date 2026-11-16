@@ -1,0 +1,2 @@
+### Security
+- Rust gateway (built from source only): with `visual_pii_redaction` on, a tool call whose image cannot be read because `tesseract` is missing, fails or times out is now blocked instead of let through, and the gateway warns at startup when tesseract is not found. MCP image content blocks with bare base64 data (`{"type": "image", "data": ..., "mimeType": "image/png"}`) and image resource blobs are now scanned and stripped of metadata like `data:image/...;base64,` images. Nothing changes with image scanning off.
