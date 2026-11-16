@@ -465,11 +465,15 @@ for (const [mode, opts, edit] of MODES) {
 test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
-  const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
-  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp } });
+  // The TERM is sent once the hook is running: the launcher sets its TERM trap before it starts the hook, and a fixed wait
+  // sent the TERM too early on a slow runner (the launcher was then killed by it: 143 instead of the block, 2).
+  const ready = path.join(tempDir(t, 'zn-ov-planted-ready-'), 'ready');
+  const file = writeScript(t, 'claude-code', "require('fs').writeFileSync(process.env.ZN_TEST_READY, ''); process.stdin.resume(); setInterval(() => {}, 1000);\n", { deadlineS: 120 });
+  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp, ZN_TEST_READY: ready } });
   child.stdin.write('{');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  await new Promise((r) => setTimeout(r, 400));
+  for (let i = 0; i < 600 && !fs.existsSync(ready); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fs.existsSync(ready), 'the hook started');
   term();
   assert.equal(await exited, 2);
   assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '');
