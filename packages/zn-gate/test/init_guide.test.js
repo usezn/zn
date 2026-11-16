@@ -200,6 +200,9 @@ test('guide: nothing found, and everything already protected', async (t) => {
   const out = capture();
   assert.equal(await guide({ ...empty, stdin: tty, write: out.write }), 1);
   assert.match(out.text(), /No supported coding agent was found/);
+  const { AGENTS } = require('../lib/check');
+  assert.ok(out.text().includes('No supported coding agent was found (' + AGENTS.map((a) => a.name).join(', ') + '). Nothing was changed.'), out.text());
+  for (const a of AGENTS) assert.ok(out.text().includes(a.name), a.name);
   assert.match(out.text(), /Nothing was changed/);
   const m = machine(t, ['codex']);
   getAdapter('codex').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
