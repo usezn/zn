@@ -120,7 +120,7 @@ Outputs:
 The exit codes are the ones in the [CLI exit codes](cli.md#exit-codes). For the action step they mean:
 
 - `0`: done, nothing to report. For the scan, nothing was found and everything that matched was read. For the audit, nothing is at or above the threshold.
-- `1`: the command ran and found a problem. For the scan, something was found (or the path does not exist). For the audit, there are findings at or above the threshold. Findings win over skipped files: if both happen, the code is `1`.
+- `1`: the command ran and found a problem. For the scan, something was found (or the path does not exist). For the audit, there are findings at or above the threshold. Findings win over skipped files: if both happen in the scan, the code is `1`. With `mode: both`, an incomplete scan (`3`) wins over audit findings (`1`) for the step, and an error (`2`) wins over both; the two outputs still show each code.
 - `2`: the command was used wrongly, for example an option it does not know or a path that is not a folder (audit).
 - `3`: scan only. The result does not cover everything: no file was read, or a file or folder that should have been read was not, and `allow-partial` is not `true`.
 
