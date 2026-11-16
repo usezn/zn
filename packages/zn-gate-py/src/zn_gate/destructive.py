@@ -29,7 +29,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.18"
+COMMAND_RULES_VERSION = "2026-11-16.19"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -354,7 +354,8 @@ class _Segs(List[Any]):
 
 
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
-    rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
+    # Only the & changes, so the pattern starts at the last < or > before it: a long run of > stays linear.
+    rest = re.sub(r"([<>])&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
     if posix:
@@ -877,6 +878,9 @@ def _dangerous_path(word: str) -> str:
     return ""
 
 
+_CMD_OPTS_RE = re.compile(r"^(?:/[A-Za-z](?::[-A-Za-z]*)?)+\Z", _A)
+
+
 def _recursive_flag(w: str, head: str) -> bool:
     # PowerShell: a backtick inside a parameter name is dropped (-Rec`urse), and -Recurse:$true is -Recurse.
     if "`" in w:
@@ -886,7 +890,8 @@ def _recursive_flag(w: str, head: str) -> bool:
         if ps.group(2).lower() in ("$false", "false", "0", "$null"):
             return False
         w = ps.group(1)
-    if head in _CMD_HEADS and re.match(r"^(?:/[A-Za-z](?::[-A-Za-z]*)?)*/s(?:/[A-Za-z](?::[-A-Za-z]*)?)*\Z", w, re.I):
+    # cmd.exe options joined in one word (/s/q, /A:-h/S): one pass over the word, then a look for /s among them.
+    if head in _CMD_HEADS and _CMD_OPTS_RE.match(w) and any(o.lower() == "s" for o in w.split("/")):
         return True
     if re.match(r"^-[fiIrRdvx]*[rR][fiIrRdvx]*\Z", w) or w == "--recursive":
         return True

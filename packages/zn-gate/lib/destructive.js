@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-16.18';
+const COMMAND_RULES_VERSION = '2026-11-16.19';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -58,6 +58,8 @@ const DISK_TOOLS = /^(?:mkfs(?:\.[a-z0-9]+)?|mke2fs|mkswap|wipefs|shred|blkdisca
 const FIND_TESTS = /^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$/;
 // Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 const SHELL_KEYWORDS = new Set(['{', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!']);
+// Words of cmd.exe (call rd ...) and PowerShell (try { ... }) that only run the command after them.
+const RUN_NEXT_WORDS = new Set(['call', 'try']);
 const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', '-U', '-D', '-R', '--user', '--group', '--host', '--prompt',
   '--close-from', '--other-user', '--role', '--type', '--command-timeout', '--chroot']);
 // More words than this that could each be the command behind an unsure wrapper chain: the line is refused, not guessed at.
@@ -75,14 +77,27 @@ const FORK_BOMB_RE = /(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1
 // Unquoted command substitutions and process substitutions are not split into words by the tokenizer.
 // The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
 // /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
-const SUBST_DL_SRC = String.raw`(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*\/)*(?:c\\?u\\?r\\?l|w\\?g\\?e\\?t)\b`;
+// Up to three wrappers (sudo, doas, env, command, exec, nohup) with their option words may come before the downloader.
+const SUBST_DL_SRC = String.raw`(?:(?:sudo|doas|env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*){0,3}\\?(?:[\w.~-]*\/)*(?:c\\?u\\?r\\?l|w\\?g\\?e\\?t)\b`;
 const SUBST_SHELL_SRC = String.raw`(?:[\w.~-]*\/)*(?:ba|z|da|k)?sh`;
-const SHELL_RUNS_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])(?:eval|` + SUBST_SHELL_SRC + String.raw`\s+(?:-\w+\s+)*-\w*c)\s+["']?(?:\$\(|` + '`' + String.raw`)\s*` + SUBST_DL_SRC);
-const SOURCE_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])(?:source|\.|` + SUBST_SHELL_SRC + String.raw`)\s+(?:-\w+\s+)*<\(\s*` + SUBST_DL_SRC);
-// A shell that reads its program from a substitution on stdin: bash < <(curl URL), sh <<< "$(curl URL)".
-const SHELL_STDIN_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])` + SUBST_SHELL_SRC + String.raw`\s+(?:-\S*\s+)*(?:<\s*<\(|<<<\s*["']?(?:\$\(|` + '`' + String.raw`))\s*` + SUBST_DL_SRC);
-const PS_PIPE_RE = /\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*(?:iex|invoke-expression)\b|\bdownloadstring\([^)]{0,300}\)\s*\|\s*(?:iex|invoke-expression)\b/i;
-const PS_CALL_RE = /(?:^|[\s;&|(])(?:iex|invoke-expression)\b[\s($]*(?:\(\s*)*(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b/i;
+// An interpreter that runs a program given as a file, on stdin or as its code option: python3 <(curl URL),
+// python3 -c "$(curl URL)", node -e "$(curl URL)".
+const SUBST_INTERP_SRC = String.raw`(?:[\w.~-]*\/)*(?:python(?:[23](?:\.\d+)?)?|py|pypy3?|node(?:js)?|perl|ruby)`;
+const SUBST_RUNNER_SRC = '(?:' + SUBST_SHELL_SRC + '|' + SUBST_INTERP_SRC + ')';
+const SHELL_RUNS_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])(?:eval|` + SUBST_SHELL_SRC + String.raw`\s+(?:-\w+\s+)*-\w*c` +
+  '|' + SUBST_INTERP_SRC + String.raw`\s+(?:-\w+\s+)*?(?:-\w*[ceE]|-p|--eval|--print))` +
+  String.raw`\s+["']?(?:\$\(|` + '`' + String.raw`)\s*` + SUBST_DL_SRC);
+const SOURCE_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])(?:source|\.|` + SUBST_RUNNER_SRC + String.raw`)\s+(?:-\w+\s+)*<\(\s*` + SUBST_DL_SRC);
+// A shell or interpreter that reads its program from a substitution on stdin: bash < <(curl URL), sh <<< "$(curl URL)".
+const SHELL_STDIN_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])` + SUBST_RUNNER_SRC + String.raw`\s+(?:-\S*\s+)*(?:<\s*<\(|<<<\s*["']?(?:\$\(|` + '`' + String.raw`))\s*` + SUBST_DL_SRC);
+// The executor may be called with the call or dot-source operator, and named in quotes: | & iex, | . 'iex', & "irm" URL.
+const PS_EXEC_SRC = String.raw`(?:[&.]\s*)?['"]?(?:iex|invoke-expression)\b`;
+const PS_PIPE_RE = new RegExp(String.raw`\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*` + PS_EXEC_SRC +
+  String.raw`|\bdownloadstring\([^)]{0,300}\)\s*\|\s*` + PS_EXEC_SRC, 'i');
+// One run of blanks, ( and $ before the downloader, then an optional call operator: no two quantifiers can take the same
+// characters, so a long run of parentheses is read once (iex followed by 20000 "(" stays linear).
+const PS_CALL_RE = /(?:^|[\s;&|({])(?:iex|invoke-expression)\b[\s($]*(?:[&.]\s*)?['"]?(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b/i;
+const PS_QUOTED_NAME_RE = /([&.]\s*)(['"])(iex|invoke-expression|iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\2/gi;
 // PowerShell escapes a character with a backtick (i`wr, Invoke-`Expression). Only a backtick inside a word counts: in
 // POSIX shells a backtick starts a command substitution, so the text is never stripped for the other patterns.
 const PS_NEXT_PIPE_RE = /\r?\n[ \t]*\|/g;
@@ -120,8 +135,19 @@ function policyModule() {
   return policyCached;
 }
 
+// The drive of the system and of the home folder, as cmd.exe and PowerShell name them.
+const DRIVE_VARS_SRC = String.raw`%(?:systemdrive|homedrive)%|\$env:(?:systemdrive|homedrive)|\$\{env:(?:systemdrive|homedrive)\}`;
+const DRIVE_ROOT_WIN_RE = new RegExp(String.raw`(^|[\s"'=:\\])([A-Za-z]:|` + DRIVE_VARS_SRC + String.raw`)\\(?=[\s"');&|}]|$)`, 'gi');
+const DRIVE_VAR_RE = new RegExp('^(?:' + DRIVE_VARS_SRC + ')(?=/|$)', 'i');
+const WINDIR_VAR_RE = /^(?:%(?:windir|systemroot)%|\$env:(?:windir|systemroot)|\$\{env:(?:windir|systemroot)\})(?=\/|$)/i;
+const COMSPEC_WORDS = new Set(['%comspec%', '$env:comspec', '${env:comspec}']);
+
 function programName(text) {
-  return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+  // cmd.exe runs @rd like rd (the @ only hides the echo); PowerShell reads Rem`ove-Item as Remove-Item.
+  let name = String(text).replace(/^[\\@]+/, '');
+  if (name.includes('`')) name = name.replace(/`(?=[A-Za-z-])/g, '');
+  if (COMSPEC_WORDS.has(name.toLowerCase())) return 'cmd';
+  return name.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
 }
 
 /* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
@@ -129,7 +155,12 @@ function segmentsOf(cmd, posix = false) {
   const { scanFirstCommand } = policyModule();
   // 2>&1 and &> are redirections, not the control operator &.
   // A drive root C:\ before a space is a path, not an escaped space.
-  let rest = String(cmd).replace(/(\d*[<>]+)&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
+  // Only the & changes, so the pattern starts at the last < or > before it: a long run of > stays linear.
+  let rest = String(cmd).replace(/([<>])&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>');
+  // The Windows reading: cmd.exe and PowerShell have no backslash escapes, so C:\ (or %SystemDrive%\, the long path
+  // form \\?\C:\, -Path:C:\, D=C:\) also ends before a quote, a ) ; & | or }. The POSIX reading keeps the shell's own
+  // escapes, so text that only bash would read differently is still checked there.
+  rest = posix ? rest.replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/') : rest.replace(DRIVE_ROOT_WIN_RE, '$1$2/');
   const out = [];
   let guard = 0;
   for (; rest.length && guard < MAX_SEGMENTS; guard++) {
@@ -356,7 +387,7 @@ function unwrapDir(args) {
     // called or not) and coproc [NAME] { ...; } / coproc CMD (the command runs as a background job).
     while (i < args.length) {
       const w = args[i];
-      if (ASSIGN_RE.test(w) || SHELL_KEYWORDS.has(w)) i++;
+      if (ASSIGN_RE.test(w) || SHELL_KEYWORDS.has(w) || RUN_NEXT_WORDS.has(w.toLowerCase())) i++;
       else if (w === 'function' && i + 1 < args.length) i += 2;
       else if (w === 'coproc') i += i + 2 < args.length && SHELL_KEYWORDS.has(args[i + 2]) ? 2 : 1;
       else break;
@@ -366,7 +397,17 @@ function unwrapDir(args) {
     const name = programName(a);
     // The guard is used up and the next word is still a wrapper: the rest cannot be read, so the line is refused.
     if (guard >= 32) { overflow = WRAPPERS.has(name) || policyModule().WRAPPER_NAMES.has(name); break; }
-    if (first < 0 && (name === 'sudo' || name === 'doas' || name === 'env' || policyModule().WRAPPER_NAMES.has(name))) first = i;
+    if (first < 0 && (name === 'sudo' || name === 'doas' || name === 'env' || name === 'start' || policyModule().WRAPPER_NAMES.has(name))) first = i;
+    // cmd.exe's start [title] [/options] command: the options and an empty title are skipped. A title or an option
+    // value may also be taken for the program, so the chain is unsure and the later words are read as well.
+    if (name === 'start') {
+      i++;
+      while (i < args.length && (args[i] === '' || /^\/[A-Za-z]+$/.test(args[i]))) {
+        i += /^\/(?:d|affinity|node)$/i.test(args[i]) ? 2 : 1;
+      }
+      chain.unsure = true;
+      continue;
+    }
     if (name === 'sudo' || name === 'doas') {
       i++;
       while (i < args.length && args[i].startsWith('-')) {
@@ -434,6 +475,8 @@ function resolveDots(t) {
 function dangerousPath(word) {
   let t = String(word).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
   if (!t) return '';
+  // \\?\C:\ and \\.\C:\ are the long-path spellings of C:\; %SystemDrive% and $env:SystemDrive name the drive.
+  t = t.replace(/^\/[?.]\/(?=[A-Za-z]:)/, '').replace(DRIVE_VAR_RE, 'C:').replace(WINDIR_VAR_RE, 'C:/Windows');
   t = resolveDots(t);
   // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.
   for (let n = 0; n < 4; n++) {
@@ -454,14 +497,28 @@ function dangerousPath(word) {
   return '';
 }
 
+// cmd.exe options joined in one word (/s/q, /A:-h/S): one pass, each option is / and a letter with an optional :value.
+const CMD_OPTS_RE = /^(?:\/[A-Za-z](?::[-A-Za-z]*)?)+$/;
+
 function recursiveFlag(w, head) {
+  // PowerShell: a backtick inside a parameter name is dropped (-Rec`urse), and -Recurse:$true is -Recurse.
+  if (w.includes('`')) w = w.replace(/`/g, '');
+  const ps = /^(-[A-Za-z]+):(\S*)$/.exec(w);
+  if (ps) {
+    if (['$false', 'false', '0', '$null'].includes(ps[2].toLowerCase())) return false;
+    w = ps[1];
+  }
+  if (CMD_HEADS.has(head) && CMD_OPTS_RE.test(w) && w.split('/').some((o) => o.toLowerCase() === 's')) return true;
   // rm's own short flags only, so PowerShell's -Force is not read as a bundle with an r in it.
   if (/^-[fiIrRdvx]*[rR][fiIrRdvx]*$/.test(w) || w === '--recursive') return true;
-  if (/^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?$/i.test(w)) return true;
-  return CMD_HEADS.has(head) && /^\/s$/i.test(w);
+  return /^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?$/i.test(w);
 }
 
-function isCmdFlag(w, head) { return CMD_HEADS.has(head) && /^\/[sqfaA]$/i.test(w); }
+// cmd.exe options may be joined (/s/q) and written in either case (/S /Q); del takes /A:attributes.
+function isCmdFlag(w, head) { return CMD_HEADS.has(head) && /^(?:\/[sqfa](?::?[-A-Za-z]*)?)+$/i.test(w); }
+
+// PowerShell's -Path:C:\ and -LiteralPath:C:\ give the path in the same word as the parameter.
+const PS_PATH_PARAM_RE = /^-(?:path|literalpath|lp|pspath):(.+)$/is;
 
 /* Words after the command name that are not flags (everything after "--" counts). */
 function operands(args, head) {
@@ -469,7 +526,11 @@ function operands(args, head) {
   let rest = false;
   for (const w of args) {
     if (!rest && w === '--') { rest = true; continue; }
-    if (!rest && (w.startsWith('-') || isCmdFlag(w, head))) continue;
+    if (!rest && (w.startsWith('-') || isCmdFlag(w, head))) {
+      const m = RM_HEADS.has(head) ? PS_PATH_PARAM_RE.exec(w) : null;
+      if (m) out.push(m[1]);
+      continue;
+    }
     out.push(w);
   }
   return out;
@@ -584,6 +645,7 @@ function checkSimple(words, depth, known) {
 /* Whether the rules below read a command with this program name as its head. */
 function headIsRead(name) {
   return RM_HEADS.has(name) || DISK_TOOLS.test(name) || SHELLS.has(name) || POWERSHELLS.has(name) || name === 'su' || name === 'eval' ||
+    name === 'iex' || name === 'invoke-expression' ||
     name === 'cmd' || name === 'find' || name === 'chmod' || name === 'chown' || name === 'chgrp' || name === 'dd' || Boolean(interpreterKind(name));
 }
 
@@ -600,6 +662,23 @@ function checkLaterHeads(args, depth, known) {
   return null;
 }
 
+const PS_VALUE_OPTS = new Set(['-executionpolicy', '-ep', '-ex', '-windowstyle', '-w', '-win', '-inputformat', '-if', '-outputformat', '-of', '-o',
+  '-configurationname', '-workingdirectory', '-wd', '-settingsfile', '-version', '-v', '-psconsolefile', '-custompipename',
+  '-encodedarguments', '-ea']);
+
+/* powershell Remove-Item ...: Windows PowerShell runs the words after its options as a command when no -Command, -File or
+   -EncodedCommand is given. A first word that names a .ps1 file is a script, not code. */
+function psPositionalCode(rest) {
+  let j = 0;
+  while (j < rest.length && rest[j].startsWith('-')) {
+    const opt = rest[j].toLowerCase();
+    if (['-file', '-f', '-encodedcommand', '-enc', '-ec', '-e'].includes(opt)) return null;
+    j += PS_VALUE_OPTS.has(opt) ? 2 : 1;
+  }
+  if (j >= rest.length || rest[j].toLowerCase().endsWith('.ps1')) return null;
+  return rest.slice(j).join(' ');
+}
+
 /* The rules for one simple command whose head is args[0]. */
 function checkHead(args, depth, known) {
   const head = programName(args[0]);
@@ -610,11 +689,11 @@ function checkHead(args, depth, known) {
   if (SHELLS.has(head) || head === 'su') {
     const k = rest.findIndex((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w));
     if (k >= 0 && k + 1 < rest.length) code = rest[k + 1];
-  } else if (head === 'eval') {
+  } else if (head === 'eval' || head === 'iex' || head === 'invoke-expression') {
     code = rest.join(' ');
   } else if (POWERSHELLS.has(head)) {
     const k = rest.findIndex((w) => /^-c(?:ommand)?$/i.test(w));
-    if (k >= 0) code = rest.slice(k + 1).join(' ');
+    code = k >= 0 ? rest.slice(k + 1).join(' ') : psPositionalCode(rest);
   } else if (head === 'cmd') {
     const k = rest.findIndex((w) => /^\/[ck]$/i.test(w));
     if (k >= 0) code = rest.slice(k + 1).join(' ');
@@ -746,13 +825,43 @@ function pipeArgs(un) {
   return j > 0 ? a.slice(j) : a;
 }
 
-function checkPipeline(pipe, known = null) {
+/* A redirect written against the word before it (curl URL>> ~/.bashrc, curl URL>~/.bashrc) is a word of its own: the
+   shell ends a word at >. A word of digits only before > is a file descriptor (2>), so it stays as it is. */
+function splitGluedRedirects(words) {
+  if (!words.some((w) => w.includes('>'))) return words;
+  const out = [];
+  for (const w of words) {
+    const i = w.indexOf('>');
+    if (i > 0 && !/^\d+$/.test(w.slice(0, i)) && w[0] !== '<' && w[0] !== '>') out.push(w.slice(0, i), w.slice(i));
+    else out.push(w);
+  }
+  return out;
+}
+
+/* The words of a pipeline command from its program on, the program names it may be (brace lists), whether there are too
+   many of them, and its env -C / sudo -D folders. env -S 'curl URL' and eval curl URL run the words they are given. */
+function pipeHead(words) {
+  const un = unwrapDir(stripRedirects(words));
+  let a = un.args;
+  if (un.splits.length) a = un.splits.join(' ').split(/\s+/).filter(Boolean).concat(a);
+  if (a.length && programName(a[0]) === 'eval') a = a.slice(1).join(' ').split(/\s+/).filter(Boolean);
+  a = pipeArgs({ args: a, unsure: un.unsure });
+  const alts = a.length ? braceAlts(a[0]) : [''];
+  const names = (alts || [String(a[0])]).map(programName);
+  return { args: a, names, overflow: alts === null, dir: un.dir };
+}
+
+function runsDownload(words) {
+  const h = pipeHead(words);
+  return h.overflow || h.names.some((n) => DOWNLOADERS.has(n));
+}
+
+/* `fds` holds the files that exec opened earlier on the line (exec 3>> ~/.bashrc), by descriptor. */
+function checkPipeline(pipe, known = null, fds = null) {
+  pipe = pipe.map((s) => ({ words: splitGluedRedirects(s.words), sep: s.sep }));
   const heads = pipe.map((s) => {
-    const un = unwrapDir(stripRedirects(s.words));
-    const a = pipeArgs(un);
-    const alts = a.length ? braceAlts(a[0]) : [''];
-    const names = (alts || [String(a[0])]).map(programName);
-    return { args: a, head: names[0], names, overflow: alts === null, dir: segmentDir(known, un.dir) };
+    const h = pipeHead(s.words);
+    return { args: h.args, head: h.names[0], names: h.names, overflow: h.overflow, dir: segmentDir(known, h.dir) };
   });
   if (heads.some((h) => h.dir === CWD_OVERFLOW)) return OVERFLOW;
   const firstDl = heads.findIndex((h) => h.overflow || h.names.some((n) => DOWNLOADERS.has(n)));
@@ -780,8 +889,11 @@ function checkPipeline(pipe, known = null) {
         const w = words[i];
         const prev = i > 0 ? words[i - 1] : '';
         let target = null;
+        const dup = /^\d*>>?_(\d+)$/.exec(w);
         if (/^\d*>>?\|?$/.test(prev)) target = w;
-        else if (/^\d*>>?\|?.+$/.test(w)) target = w.replace(/^\d*>>?\|?/, '');
+        // >&3 writes to the file descriptor 3 that an earlier exec 3>> FILE opened.
+        else if (dup) target = fds && fds.has(dup[1]) ? fds.get(dup[1]) : null;
+        else if (/^\d*>>?\|?.+$/s.test(w)) target = w.replace(/^\d*>>?\|?/, '');
         else if (outFlag(prev)) target = w;
         else if (/^(?:--output|--output-document|-OutFile)[=:]/i.test(w)) target = w.replace(/^[^=:]*[=:]/, '');
         else if (/^-[A-Za-z]*?[oO][^\s]/.test(w)) target = w.replace(/^-[A-Za-z]*?[oO]/, ''); // curl -o$HOME/.bashrc
@@ -807,21 +919,234 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 const MAX_TICK_READS = 200;
 
 /* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count. */
+/* PowerShell ($D = 'C:\', $env:D = ...) and cmd.exe (set D=C:\) variables, kept next to the POSIX ones of shell-vars in
+   the same scope (same caps and counters); both ignore case. */
+const PS_ASSIGN_RE = /^\$\{?((?:env:)?[A-Za-z_][A-Za-z0-9_]*)\}?(=([\s\S]*))?$/i;
+const PS_REF_RE = /\$(?:\{((?:env:)?[A-Za-z_][A-Za-z0-9_]*)\}|((?:env:)?[A-Za-z_][A-Za-z0-9_]*))/gi;
+const CMD_REF_RE = /%([A-Za-z_][A-Za-z0-9_]*)%|!([A-Za-z_][A-Za-z0-9_]*)!/g;
+const VAR_ASSIGN_RE = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
+
+function newVarScope() {
+  const scope = shellVars.newScope();
+  scope.ps = new Map();
+  scope.cmd = new Map();
+  return scope;
+}
+
+function winValue(scope, v, whole) {
+  if (v === undefined) return whole;
+  scope.expanded += v.length;
+  return scope.expanded > shellVars.MAX_EXPANDED ? whole : v;
+}
+
+function winSubstitute(scope, word) {
+  if (scope.ps.size && word.includes('$')) word = word.replace(PS_REF_RE, (all, b, p) => winValue(scope, scope.ps.get((b || p).toLowerCase()), all));
+  if (scope.cmd.size && (word.includes('%') || word.includes('!'))) word = word.replace(CMD_REF_RE, (all, a, b) => winValue(scope, scope.cmd.get((a || b).toLowerCase()), all));
+  return word;
+}
+
+function winRecord(scope, table, name, value) {
+  if (++scope.assignments > shellVars.MAX_ASSIGNMENTS) scope.overflow = true;
+  else if (value.length > shellVars.MAX_VALUE) table.delete(name);
+  else table.set(name, value);
+}
+
+/* A PowerShell assignment ($D = 'C:\', $D='C:\', $env:D = ...) or a cmd.exe set D=C:\ line. Recorded even before a &
+   (in cmd.exe it only separates commands), which can only add blocks. */
+function winRecordWords(scope, out) {
+  if (!out.length) return;
+  if (out[0].startsWith('$')) {
+    const m = PS_ASSIGN_RE.exec(out[0]);
+    if (!m) return;
+    let value = null;
+    if (m[2] === undefined && out.length === 3 && out[1] === '=') value = out[2];
+    else if (m[2] !== undefined && m[3] && out.length === 1) value = m[3];
+    else if (m[2] !== undefined && !m[3] && out.length === 2) value = out[1];
+    if (value !== null) winRecord(scope, scope.ps, m[1].toLowerCase(), value);
+  } else if (out[0].toLowerCase() === 'set' && out.length === 2) {
+    const m = VAR_ASSIGN_RE.exec(out[1]);
+    if (m) winRecord(scope, scope.cmd, m[1].toLowerCase(), m[2]);
+  }
+}
+
+/* The words of one simple command with the known POSIX, PowerShell and cmd.exe variables filled in, and any assignment
+   it makes recorded. */
+function applyVars(scope, words, sep) {
+  let out = shellVars.applyWords(scope, words, sep);
+  if (scope.overflow) return out;
+  if (scope.ps.size || scope.cmd.size) out = out.map((w) => winSubstitute(scope, w));
+  if (sep !== '|' && sep !== '|&') winRecordWords(scope, out);
+  return out;
+}
+
+// ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word}, ${NAME+word} and ${NAME:?word} with no brace
+// inside (an inner one is read first, so nested defaults are followed from the inside out).
+const DEFAULT_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(:?[-=+?])([^{}]*)\}/;
+// Readings of one simple command (one per choice of default values); past it every alternative is still read once.
+const MAX_VARIANTS = 64;
+// Words one brace expansion may give (rm -rf build{1..99} is 99); past it the word is too many to follow.
+const BRACE_WORDS_MAX = 1024;
+// Words a simple command may have after brace expansion.
+const EXPANDED_WORDS_MAX = 4096;
+
+/* The words a word with default-value expansions may become: the variable's value when the line assigned it, else both
+   the variable (unknown) and the default word; null when there are more than MAX_VARIANTS. */
+function defaultAlts(word, scope) {
+  if (!word.includes('${') || !DEFAULT_RE.test(word)) return [word];
+  const out = [];
+  const work = [word];
+  let steps = 0;
+  while (work.length) {
+    const w = work.pop();
+    const m = DEFAULT_RE.exec(w);
+    if (!m) {
+      if (!out.includes(w)) out.push(w);
+      if (out.length > MAX_VARIANTS) return null;
+      continue;
+    }
+    if (++steps > MAX_VARIANTS * 8) return null;
+    const [, name, op, dflt] = m;
+    const known = scope.vars.get(name);
+    const colon = op.startsWith(':');
+    let choices;
+    if (op.endsWith('+')) choices = known === undefined ? ['', dflt] : (known || !colon) ? [dflt] : [''];
+    else if (op.endsWith('?')) choices = known === undefined ? ['$' + name] : [known];
+    else if (known === undefined) choices = ['$' + name, dflt];
+    else choices = colon && !known ? [dflt] : [known];
+    for (let c = choices.length - 1; c >= 0; c--) work.push(w.slice(0, m.index) + choices[c] + w.slice(m.index + m[0].length));
+  }
+  return out;
+}
+
+/* The words a word with brace lists becomes ({rm,-rf,/} is rm -rf /), or null when there are too many. */
+function braceWords(w) {
+  if (!w.includes('{') || (!w.includes(',') && !w.includes('..'))) return [w];
+  return policyModule().expandBraces(expandSequences(w), BRACE_WORDS_MAX);
+}
+
+/* The readings of one simple command after default-value and brace expansion: the first is the words as written; there
+   is one more for each choice of default values (or, past MAX_VARIANTS, enough for each alternative of each word to be
+   read once). null when a word expands to more words than can be followed and the command is one these rules read: the
+   caller refuses the line. */
+function wordReadings(words, scope) {
+  if (!words.some((w) => w.includes('{'))) return [words];
+  const perWord = [];
+  let total = 1;
+  let tooMany = false;
+  let prefix = true; // still in the assignment words before the command
+  for (const w of words) {
+    let alts = w.includes('${') ? defaultAlts(w, scope) : [w];
+    if (alts === null) { tooMany = true; alts = [w]; }
+    const group = [];
+    const assign = prefix && ASSIGN_RE.test(w);
+    prefix = assign;
+    for (const a of alts) {
+      // An assignment word before the command (X={a,b} cmd) is not brace-expanded by the shell.
+      if (assign) { group.push([a]); continue; }
+      let bw = braceWords(a);
+      if (bw === null) { tooMany = true; bw = [a]; }
+      group.push(bw);
+    }
+    perWord.push(group);
+    total = Math.min(total * group.length, MAX_VARIANTS + 1);
+  }
+  const anyRead = () => words.some((w) => headIsRead(programName(w)));
+  if (tooMany && anyRead()) return null;
+  let combos;
+  if (total <= MAX_VARIANTS) {
+    combos = [[]];
+    for (const g of perWord) {
+      const next = [];
+      for (const c of combos) for (const x of g) next.push(c.concat([x]));
+      combos = next;
+    }
+  } else {
+    const width = perWord.reduce((m, g) => Math.max(m, g.length), 1);
+    combos = [];
+    for (let k = 0; k < width; k++) combos.push(perWord.map((g) => g[Math.min(k, g.length - 1)]));
+  }
+  // The words as written come first: the pipeline rules read a brace list in a program name as alternatives
+  // (curl URL | s{h,} counts as a pipe into sh), which a split into words would lose.
+  const out = [words];
+  const seen = new Set([words.join('\0')]);
+  for (const combo of combos) {
+    let flat = combo.flat();
+    if (flat.length > EXPANDED_WORDS_MAX) {
+      if (anyRead()) return null;
+      flat = words;
+    }
+    const key = flat.join('\0');
+    if (!seen.has(key)) { seen.add(key); out.push(flat); }
+  }
+  return out;
+}
+
+/* Close the innermost group; a download inside it is also inside the group around it. */
+function closeGroup(dlGroups) {
+  const had = dlGroups.pop();
+  if (had && dlGroups.length) dlGroups[dlGroups.length - 1] = true;
+  return had;
+}
+
+/* The files an exec line opens for writing: exec 3>> FILE, exec 3>FILE. */
+function recordFds(words, fds) {
+  for (let i = 0; i < words.length; i++) {
+    const m = /^(\d+)>>?\|?(.*)$/s.exec(words[i]);
+    if (!m) continue;
+    const target = m[2] || (i + 1 < words.length ? words[i + 1] : '');
+    if (target && fds.size < shellVars.MAX_ASSIGNMENTS) fds.set(m[1], target);
+  }
+}
+
+/* The pipeline rules for each reading k: every command takes its own reading k (or its last one). */
+function checkPipelineReadings(pipe, readings, known, fds) {
+  const width = readings.reduce((m, r) => Math.max(m, r.length), 1);
+  if (width === 1 && readings.every((r, i) => r[0] === pipe[i].words)) return checkPipeline(pipe, known, fds);
+  for (let k = 0; k < width; k++) {
+    const hit = checkPipeline(pipe.map((s, i) => ({ words: readings[i][Math.min(k, readings[i].length - 1)], sep: s.sep })), known, fds);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function checkSegments(segs, depth, cwd0 = null) {
   let pipe = [];
+  // The readings of each command of the pipeline (default values and brace lists), see wordReadings.
+  let pipeReadings = [];
   let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
   // A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
   const groups = [];
   let ticks = 0;
-  const vars = shellVars.newScope();
-  for (let seg of segs) {
+  const vars = newVarScope();
+  // One entry per open { } or ( ) group: whether a download ran inside it. The output of the group is the output of that
+  // download, so the command that closes it ({ curl URL; } | sh, (curl URL) >> ~/.bashrc) is read as a download.
+  const dlGroups = [];
+  let closedDl = false; // the last ) closed a group with a download in it
+  const fds = new Map(); // files exec opened by descriptor (exec 3>> ~/.bashrc)
+  for (const seg of segs) {
+    const sep = seg.sep;
     // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
-    const words = shellVars.applyWords(vars, seg.words, seg.sep);
+    let words = applyVars(vars, seg.words, sep);
     if (vars.overflow) return OVERFLOW;
-    if (seg.sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
-    if (words !== seg.words) seg = { ...seg, words };
-    const hit = checkSimple(seg.words, depth, known);
-    if (hit) return hit;
+    if (sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
+    let readings = wordReadings(words, vars);
+    if (readings === null) return OVERFLOW;
+    for (const reading of readings) {
+      const hit = checkSimple(reading, depth, known);
+      if (hit) return hit;
+    }
+    // The group bookkeeping for downloads.
+    let groupDl = closedDl;
+    closedDl = false;
+    if (words[0] === '{' && dlGroups.length < MAX_SEGMENTS) dlGroups.push(false);
+    if (words[0] === '}' && dlGroups.length) groupDl = closeGroup(dlGroups) || groupDl;
+    if (dlGroups.length && !dlGroups[dlGroups.length - 1] && runsDownload(readings[0])) dlGroups[dlGroups.length - 1] = true;
+    if (words[0] === 'exec') recordFds(words, fds);
+    if (groupDl) {
+      // The command that receives the output of the group: read with a downloader in front of it.
+      words = ['curl'].concat(words[0] === '}' ? words.slice(1) : words);
+      readings = readings.map((r) => ['curl'].concat(r[0] === '}' ? r.slice(1) : r));
+    }
     // A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder is
     // still the one the line started in, the whole-line reading in analyze() has already covered it.
     if (seg.raw && known !== cwd0 && depth < MAX_DEPTH) {
@@ -830,22 +1155,54 @@ function checkSegments(segs, depth, cwd0 = null) {
       const innerHit = inner ? analyze(inner, depth + 1, known) : null;
       if (innerHit) return innerHit;
     }
-    if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
-      const to = cdTarget(unwrap(seg.words), known);
+    if (sep !== '|' && sep !== '|&' && sep !== '&') {
+      const to = cdTarget(unwrap(words), known);
       if (to === CWD_OVERFLOW) return OVERFLOW;
       if (to !== NOT_CD) known = to;
     }
-    pipe.push(seg);
-    if (!isPipe(seg.sep)) {
-      const hit2 = checkPipeline(pipe, known);
+    pipe.push({ words, sep });
+    pipeReadings.push(readings);
+    if (!isPipe(sep)) {
+      const hit2 = checkPipelineReadings(pipe, pipeReadings, known, fds);
       if (hit2) return hit2;
       pipe = [];
+      pipeReadings = [];
     }
     // A ( dropped after a pipe (curl URL | (sh)) opens a group of its own: save the folder so its ) pops that entry, not the enclosing one.
-    for (let i = 0; i < (seg.opens || 0) && groups.length < MAX_SEGMENTS; i++) groups.push(known);
-    if (seg.sep === ')' && groups.length) known = groups.pop();
+    for (let i = 0; i < (seg.opens || 0); i++) {
+      if (groups.length < MAX_SEGMENTS) groups.push(known);
+      if (dlGroups.length < MAX_SEGMENTS) dlGroups.push(false);
+    }
+    if (sep === '(' && dlGroups.length < MAX_SEGMENTS) dlGroups.push(false);
+    if (sep === ')') {
+      if (groups.length) known = groups.pop();
+      if (dlGroups.length) closedDl = closeGroup(dlGroups);
+    }
   }
-  return pipe.length ? checkPipeline(pipe, known) : null;
+  return pipe.length ? checkPipelineReadings(pipe, pipeReadings, known, fds) : null;
+}
+
+// The rules a second reading of the line (ANSI-C decoded, PowerShell script blocks) may report.
+const NAMED_RULES = new Set(['pipe_to_shell', 'rc_download', 'rm_root_home', 'perm_root', 'disk_overwrite']);
+const PS_BLOCK_RE = /(?:^|[\s;&|(=])\{\s*`?(?:remove-item|ri|rm|rd|rmdir|del|erase|iex|invoke-expression)\b/i;
+
+/* The text with each { and } that is not part of a ${...} or @{...} written as a word of its own. */
+function padScriptBlocks(text) {
+  let out = '';
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') {
+      const pad = !(i > 0 && (text[i - 1] === '$' || text[i - 1] === '@'));
+      if (stack.length < MAX_SEGMENTS) stack.push(pad);
+      out += pad ? ' { ' : ch;
+    } else if (ch === '}') {
+      out += (stack.length ? stack.pop() : true) ? ' } ' : ch;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 function analyze(cmd, depth = 0, known = null) {
@@ -854,7 +1211,9 @@ function analyze(cmd, depth = 0, known = null) {
   // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
   // again on its own below, so the patterns that do not need the quotes read the text without them.
   // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
-  const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
+  // PowerShell runs a command named in quotes after & or . (& 'iex', . "irm"): such a name is kept, not blanked.
+  const named = (text.includes("'") || text.includes('"')) && text.length <= QUOTE_SCAN_MAX ? text.replace(PS_QUOTED_NAME_RE, '$1$3') : text;
+  const bare = text.length > QUOTE_SCAN_MAX ? text : named.replace(QUOTED_RE, "''");
   if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
   // PowerShell reading: a backtick and a line break continue the line, and so does a next line that starts with a pipe
   // (PowerShell 7), so `iwr URL` + newline + `| iex` is `iwr URL | iex`.
@@ -883,7 +1242,13 @@ function analyze(cmd, depth = 0, known = null) {
   // $'.bash\x72c', $'\x72m' -rf $'\x7e').
   if (text.includes("$'")) {
     const ansiHit = checkSegments(segmentsOf(policyModule()._decodeAnsiC(text), true), depth, known);
-    if (ansiHit === 'pipe_to_shell' || ansiHit === 'rc_download' || ansiHit === 'rm_root_home') return ansiHit;
+    if (NAMED_RULES.has(ansiHit)) return ansiHit;
+  }
+  // PowerShell script blocks: & {Remove-Item -Recurse C:\} runs the command inside the braces. The braces are read as
+  // words of their own, only when one opens right before a delete command; as above, this reading only adds a block.
+  if (text.includes('{') && PS_BLOCK_RE.test(text)) {
+    const psHit = checkSegments(segmentsOf(padScriptBlocks(text)), depth, known);
+    if (NAMED_RULES.has(psHit)) return psHit;
   }
   // Fail closed: never allow a line whose tail was not read.
   return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;
