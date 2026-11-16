@@ -24,6 +24,10 @@ pub struct Signature {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizableAction {
     pub id: String,
+    /// Namespace of the connection that proposed the action: only a call from the same namespace can use
+    /// its approval.
+    #[serde(default)]
+    pub namespace: String,
     pub agent_id: String,
     pub tool_name: String,
     pub arguments_hash: String, // Ensure request hasn't changed
@@ -92,6 +96,7 @@ impl ConsensusManager {
     /// Check if a tool needs consensus and register it if so
     pub fn propose_action(
         &self,
+        namespace: &str,
         agent_id: &str,
         tool_name: &str,
         arguments: &str,
@@ -119,6 +124,7 @@ impl ConsensusManager {
         let action_id = Uuid::new_v4().to_string();
         let action = AuthorizableAction {
             id: action_id.clone(),
+            namespace: namespace.to_string(),
             agent_id: agent_id.to_string(),
             tool_name: tool_name.to_string(),
             arguments_hash: args_hash,
@@ -196,8 +202,15 @@ impl ConsensusManager {
         }
     }
 
-    /// Check if a specific action has been approved and matches the current request
-    pub fn check_approval(&self, agent_id: &str, tool_name: &str, arguments: &str) -> bool {
+    /// Check if a specific action has been approved and matches the current request. The namespace is the
+    /// one of the connection (never taken from the message), so an approval cannot be used from another one.
+    pub fn check_approval(
+        &self,
+        namespace: &str,
+        agent_id: &str,
+        tool_name: &str,
+        arguments: &str,
+    ) -> bool {
         self.purge_expired();
         let hash = self.compute_hash(arguments);
 
@@ -207,6 +220,7 @@ impl ConsensusManager {
         for entry in self.pending.iter() {
             let action = entry.value();
             if action.status == ActionStatus::Approved
+                && action.namespace == namespace
                 && action.agent_id == agent_id
                 && action.tool_name == tool_name
                 && action.arguments_hash == hash
@@ -248,12 +262,10 @@ impl ConsensusManager {
             .collect()
     }
 
+    /// SHA-256 of the arguments, so different arguments cannot share an approval through a hash collision.
     fn compute_hash(&self, arguments: &str) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        arguments.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(arguments.as_bytes()))
     }
 }
 
@@ -333,7 +345,7 @@ mod tests {
             .unwrap();
         assert_eq!(status, ActionStatus::Approved);
         advance(&now, 60);
-        assert!(!mgr.check_approval("agent-1", "delete_file", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "delete_file", "{}"));
     }
 
     #[test]
@@ -344,8 +356,8 @@ mod tests {
         mgr.sign_action(&id, WitnessType::HumanAdmin("alice".into()))
             .unwrap();
         advance(&now, 30);
-        assert!(mgr.check_approval("agent-1", "delete_file", "{}"));
-        assert!(!mgr.check_approval("agent-1", "delete_file", "{}"));
+        assert!(mgr.check_approval("ns-a", "agent-1", "delete_file", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "delete_file", "{}"));
     }
 
     #[test]
@@ -372,21 +384,25 @@ mod tests {
     }
 
     fn propose(mgr: &ConsensusManager, tool: &str, args: &str) -> String {
-        mgr.propose_action("agent-1", tool, args)
+        mgr.propose_action("ns-a", "agent-1", tool, args)
             .expect("critical tool should be registered")
     }
 
     #[test]
     fn disabled_config_never_registers_actions() {
         let mgr = manager(false, &["delete_file"], 2);
-        assert!(mgr.propose_action("agent-1", "delete_file", "{}").is_none());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "delete_file", "{}")
+            .is_none());
         assert!(mgr.list_pending().is_empty());
     }
 
     #[test]
     fn non_critical_tool_is_not_registered() {
         let mgr = manager(true, &["delete_file"], 2);
-        assert!(mgr.propose_action("agent-1", "read_file", "{}").is_none());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "read_file", "{}")
+            .is_none());
         assert!(mgr.list_pending().is_empty());
     }
 
@@ -406,27 +422,37 @@ mod tests {
     fn exact_pattern_does_not_match_longer_or_shorter_names() {
         let mgr = manager(true, &["delete_file"], 1);
         assert!(mgr
-            .propose_action("agent-1", "delete_file2", "{}")
+            .propose_action("ns-a", "agent-1", "delete_file2", "{}")
             .is_none());
-        assert!(mgr.propose_action("agent-1", "delete", "{}").is_none());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "delete", "{}")
+            .is_none());
     }
 
     #[test]
     fn trailing_wildcard_matches_by_prefix() {
         let mgr = manager(true, &["admin:*"], 1);
         assert!(mgr
-            .propose_action("agent-1", "admin:delete", "{}")
+            .propose_action("ns-a", "agent-1", "admin:delete", "{}")
             .is_some());
-        assert!(mgr.propose_action("agent-1", "admin:", "{}").is_some());
-        assert!(mgr.propose_action("agent-1", "admin", "{}").is_none());
-        assert!(mgr.propose_action("agent-1", "adminx", "{}").is_none());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "admin:", "{}")
+            .is_some());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "admin", "{}")
+            .is_none());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "adminx", "{}")
+            .is_none());
     }
 
     #[test]
     fn bare_wildcard_matches_every_tool() {
         let mgr = manager(true, &["*"], 1);
-        assert!(mgr.propose_action("agent-1", "anything", "{}").is_some());
-        assert!(mgr.propose_action("agent-1", "", "{}").is_some());
+        assert!(mgr
+            .propose_action("ns-a", "agent-1", "anything", "{}")
+            .is_some());
+        assert!(mgr.propose_action("ns-a", "agent-1", "", "{}").is_some());
     }
 
     #[test]
@@ -544,7 +570,7 @@ mod tests {
         let id = propose(&mgr, "x", "{}");
         mgr.deny_action(&id, "policy said no").unwrap();
         assert_eq!(mgr.get_status(&id), None);
-        assert!(!mgr.check_approval("agent-1", "x", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "x", "{}"));
         assert!(mgr.list_pending().is_empty());
     }
 
@@ -562,8 +588,8 @@ mod tests {
         let mgr = manager(true, &["x"], 1);
         let id = propose(&mgr, "x", r#"{"path":"/a"}"#);
         mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
-        assert!(mgr.check_approval("agent-1", "x", r#"{"path":"/a"}"#));
-        assert!(!mgr.check_approval("agent-1", "x", r#"{"path":"/a"}"#));
+        assert!(mgr.check_approval("ns-a", "agent-1", "x", r#"{"path":"/a"}"#));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "x", r#"{"path":"/a"}"#));
         assert_eq!(mgr.get_status(&id), None);
     }
 
@@ -572,18 +598,18 @@ mod tests {
         let mgr = manager(true, &["x"], 1);
         let id = propose(&mgr, "x", "{}");
         mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
-        assert!(!mgr.check_approval("agent-2", "x", "{}"));
-        assert!(!mgr.check_approval("agent-1", "y", "{}"));
-        assert!(!mgr.check_approval("agent-1", "x", "{ }"));
+        assert!(!mgr.check_approval("ns-a", "agent-2", "x", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "y", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "x", "{ }"));
         // Mismatched requests must not consume the approval.
-        assert!(mgr.check_approval("agent-1", "x", "{}"));
+        assert!(mgr.check_approval("ns-a", "agent-1", "x", "{}"));
     }
 
     #[test]
     fn pending_action_does_not_authorize_and_keeps_its_status() {
         let mgr = manager(true, &["x"], 2);
         let id = propose(&mgr, "x", "{}");
-        assert!(!mgr.check_approval("agent-1", "x", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "x", "{}"));
         assert_eq!(mgr.get_status(&id), Some(ActionStatus::Pending));
         assert_eq!(mgr.get_status("missing"), None);
     }
@@ -596,7 +622,7 @@ mod tests {
         let err = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap_err();
         assert_eq!(err, "Action not found or already processed");
         assert_eq!(mgr.get_status(&id), None);
-        assert!(!mgr.check_approval("agent-1", "x", "{}"));
+        assert!(!mgr.check_approval("ns-a", "agent-1", "x", "{}"));
     }
 
     #[test]
@@ -617,7 +643,7 @@ mod tests {
         mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
         assert!(mgr.deny_action(&id, "too late").is_err());
         assert_eq!(mgr.get_status(&id), Some(ActionStatus::Approved));
-        assert!(mgr.check_approval("agent-1", "x", "{}"));
+        assert!(mgr.check_approval("ns-a", "agent-1", "x", "{}"));
     }
 
     #[test]
@@ -655,7 +681,7 @@ mod tests {
         mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
         let granted = std::thread::scope(|s| {
             let handles: Vec<_> = (0..8)
-                .map(|_| s.spawn(|| mgr.check_approval("agent-1", "x", "{}")))
+                .map(|_| s.spawn(|| mgr.check_approval("ns-a", "agent-1", "x", "{}")))
                 .collect();
             handles
                 .into_iter()
@@ -664,5 +690,30 @@ mod tests {
                 .count()
         });
         assert_eq!(granted, 1);
+    }
+
+    #[test]
+    fn an_approval_is_bound_to_its_namespace() {
+        let mgr = manager(true, &["delete_file"], 1);
+        let id = mgr
+            .propose_action("ns-a", "agent-1", "delete_file", "{}")
+            .expect("critical tool should be registered");
+        mgr.sign_action(&id, WitnessType::HumanAdmin("alice".into()))
+            .unwrap();
+        assert!(!mgr.check_approval("ns-b", "agent-1", "delete_file", "{}"));
+        assert!(mgr.check_approval("ns-a", "agent-1", "delete_file", "{}"));
+    }
+
+    #[test]
+    fn the_arguments_hash_is_sha256() {
+        let mgr = manager(true, &["delete_file"], 1);
+        mgr.propose_action("ns-a", "agent-1", "delete_file", "abc")
+            .expect("critical tool should be registered");
+        let pending = mgr.list_pending();
+        assert_eq!(pending[0].namespace, "ns-a");
+        assert_eq!(
+            pending[0].arguments_hash,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

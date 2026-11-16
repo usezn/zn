@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-16.20';
+const COMMAND_RULES_VERSION = '2026-11-16.25';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -140,6 +140,15 @@ function segmentsOf(cmd, posix = false) {
     const scan = scanFirstCommand(rest, posix);
     let sep = scan.operator;
     let adv = scan.end + 1;
+    // An unquoted word that starts with # opens a comment: it and the rest of the line are not part of the command.
+    const cAt = scan.words.findIndex((w) => rest[w.start] === '#');
+    if (cAt >= 0) {
+      const nlAt = rest.indexOf('\n', scan.words[cAt].start);
+      scan.words.length = cAt;
+      scan.end = nlAt < 0 ? rest.length : nlAt;
+      sep = nlAt < 0 ? null : '\n';
+      adv = scan.end + 1;
+    }
     if (sep === '|' || sep === '&') {
       const next = rest[scan.end + 1];
       if (next === sep) { sep += sep; adv++; } else if (sep === '|' && next === '&') { sep = '|&'; adv++; }
