@@ -43,3 +43,6 @@ path = "fuzz_targets/policy_wasm.rs"
 test = false
 doc = false
 bench = false
+
+[patch.crates-io]
+paste = { path = "../tools/paste-shim" }
