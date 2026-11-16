@@ -48,7 +48,7 @@ npx -y zn-gate init --dry-run
 # Wrap in shadow mode first
 npx -y zn-gate init --shadow
 
-# Wrap and enforce
+# Wrap and enforce (a server already wrapped, in shadow mode or not, is skipped: run `init --revert` first to change it)
 npx -y zn-gate init --wrap-mcp
 
 # Restore the original files from the backups
@@ -82,7 +82,14 @@ Review what the shield found with:
 npx -y zn-gate evidence --tail 20
 ```
 
-When the log looks right, run `init --wrap-mcp` (or remove `--shadow` from the command) to enforce.
+When the log looks right, switch to enforce. Running `init --wrap-mcp` right after `init --shadow` does not do it: it reports `already_shielded`, changes nothing, and the server stays in shadow mode. Run the two steps in this order:
+
+```bash
+npx -y zn-gate init --revert
+npx -y zn-gate init --wrap-mcp
+```
+
+`init --revert` puts the saved configs back, and `init --wrap-mcp` then wraps every local server again without `--shadow`. You can also remove `--shadow` from the wrapped command by hand. Check the result by reading the server entry in the config file: it must not contain `--shadow`. The reverse order does not work either: after `init --wrap-mcp`, `init --shadow` reports `already_shielded` and changes nothing.
 
 ## Tool pinning
 

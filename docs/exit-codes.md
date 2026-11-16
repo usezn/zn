@@ -10,9 +10,9 @@ One row per exit code. The source column names the function in the code that ret
 
 | Code | Meaning | Commands that return it | Usual fix | Source |
 |---|---|---|---|---|
-| `0` | Done, or nothing to report. | `scan` with no findings; `check` and `doctor` when every agent that is set up is protected; `check --hooks` when every hook is OK; `hook` when the action is allowed; `analyze` when the text is allowed. | Nothing to fix. | `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js` |
+| `0` | Done, or nothing to report. | `scan` with no findings; `check` and `doctor` when every agent that is set up is protected; `check --hooks` when every hook is OK; `hook` when the action is allowed (also a Claude Code block, which is a JSON deny answer); `analyze` when the text is allowed. | Nothing to fix. | `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js` |
 | `1` | The command ran and found a problem, or it failed. | `scan` with findings, or with a path that does not exist; `check` and `doctor` when an agent is not protected or the project rules have errors; `check --hooks` when a hook is stale or broken; `evidence --verify` when the log chain is broken; `analyze` with no text; `hook` when the agent name is unknown; `uninstall` when you answer no or a step fails. | Read the message. Run `zn-gate check` in your own terminal to see which agent or rule needs a fix. | `handleScan` and `coverageExit` in `bin/cli.js`, `exitCodeOf` in `lib/check.js`, `report` in `lib/hooks-list.js`, `main` in `bin/cli.js` (`evidence`, `analyze`), `run` in `lib/uninstall.js`, `main` in `lib/hooks/runner.js` |
-| `2` | The command was used wrongly, or the action was blocked. | `scan` with an unknown `--format`; `reach` with a wrong option or a path that is not a folder; `analyze` when the text is blocked; `hook` when the action is blocked. | For a usage error, check the options in the [command line reference](cli.md) and run the command again. For a block, read the message and follow its next step in your own terminal. Do not look for a way around the block. | `handleScan` and `runReachCommand` in `bin/cli.js`, `main` in `bin/cli.js` (`analyze`), `main` in `lib/hooks/runner.js` |
+| `2` | The command was used wrongly, or the action was blocked. | `scan` with an unknown `--format`; `reach` with a wrong option or a path that is not a folder; `analyze` when the text is blocked; `hook` when the action is blocked for an agent that reads the exit code, or its input cannot be read. | For a usage error, check the options in the [command line reference](cli.md) and run the command again. For a block, read the message and follow its next step in your own terminal. Do not look for a way around the block. | `handleScan` and `runReachCommand` in `bin/cli.js`, `main` in `bin/cli.js` (`analyze`), `main` in `lib/hooks/runner.js` |
 | `3` | A scan read no file, or skipped a file or folder it should have read. | `scan` | Fix the access problem, or check the path. Use `--allow-partial` only when you accept the skipped items. | `coverageExit` in `bin/cli.js` |
 | `64` | Wrong usage for the run and secrets commands. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | Check the command name and options in the [command line reference](cli.md), then run it again. | `runBroker` in `lib/broker/run.js`, `dispatch` in `lib/broker/cli.js` |
 | `77` | zn refused on purpose: a value was not shown, or the action was not allowed or not approved. | `run`, `secret`, `env`, `hooks`, `vault log` (see [secrets and the vault](#secrets-and-the-vault)). | If the action is needed, the user runs it in their own terminal. | `runBroker` in `lib/broker/run.js`, `dispatch` in `lib/broker/cli.js` |
@@ -36,7 +36,7 @@ In a pipeline, branch on the exit code and not on the text a command prints. The
 
 | What you want to know | Exit code | Where |
 |---|---|---|
-| The action or the text was blocked | `2` | `hook` and `analyze` |
+| The action or the text was blocked | `2` for `analyze` and for `hook` with most agents; for Claude Code, `hook` answers with a JSON deny and exits `0` | `hook` and `analyze` |
 | zn refused on purpose, or the action was not allowed or not approved | `77` | `run`, `secret`, `env`, `hooks`, `vault log` (`secret get` always exits `77`) |
 | The command was used wrongly | `2`, or `64` for `run`, `secret`, `env`, `hooks` and `vault log` | most commands |
 | The command needs a person at a terminal | `77` for `uninstall`, `hooks install` and `hooks uninstall`, `2` for `pins` | a pipeline has no interactive terminal, so do not run these there |
@@ -98,7 +98,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `hook` | `0`, `1`, `2` | `0` the action is allowed; `2` it is blocked, or the event cannot be read; `1` unknown agent. |
+| `hook` | `0`, `1`, `2` | `0` the action is allowed, or Claude Code was answered with a JSON deny (the block is in the answer, not in the exit code), or the event is valid JSON that zn does not know (not checked); `2` the action is blocked for an agent that reads the exit code, or the input is not valid JSON or is empty; `1` unknown agent. |
 | `shield` | `1` | `1` when no command is given or the program cannot be started; otherwise it ends when the wrapped server ends. |
 | `mcp`, `secrets-mcp` | server | They exit when the server stops. |
 
@@ -106,7 +106,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `evidence --verify` | `1` | `1` when the SHA-256 chain was changed. |
+| `evidence` | `0`, `1`, `2` | `0` done; `1` with `--verify` when the SHA-256 chain was changed, with `--ui` when the port is busy or invalid, or when the `--output` folder does not exist; `2` an unknown option or a `--format` other than `jsonl` or `csv`. Stopping `--ui` with Ctrl+C exits `130`. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
 | `stats share on` | `1` | `1` when you do not confirm. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |

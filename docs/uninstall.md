@@ -68,12 +68,12 @@ This is a summary of the sections below. Each command is run in your own termina
 
 ## What stays after uninstall
 
-`zn-gate uninstall` removes the hooks, the plugin and the launcher scripts, and keeps the rest. These are what stays, and how to remove each one by hand:
+`zn-gate uninstall` removes the hooks, the plugin and the launcher scripts (the `~/.zn/hooks` folder goes with them), and keeps the rest. These are what stays, and how to remove each one by hand:
 
-- **Compile cache** (`~/.zn/cache/compile/`). Compiled copies of zn-gate's code, which make the hooks start faster. Safe to delete: zn-gate rebuilds it on the next hook call. Remove it with `rm -rf ~/.zn/cache/compile`.
+- **Compile cache** (`~/.zn/cache/compile/`). Compiled copies of zn-gate's code, which make the hooks start faster. It may not exist on your machine; if it does, it is safe to delete, and zn-gate rebuilds it on the next hook call. Remove it with `rm -rf ~/.zn/cache/compile`.
 - **Decision log** (`~/.zn/evidence.jsonl`). What zn-gate allowed or blocked. Kept on purpose. Remove it with `rm ~/.zn/evidence.jsonl` if you do not need that history; it cannot be recovered afterwards.
-- **Empty launcher folder** (`~/.zn/hooks`). The launcher scripts are removed, but the folder stays. Remove it with `rmdir ~/.zn/hooks`, which works only when the folder is empty.
-- **Empty hooks files.** Codex CLI keeps `~/.codex/hooks.json` (or the file in the folder that `CODEX_HOME` names), which holds `{}` when it had nothing else in it. Cursor keeps `~/.cursor/hooks.json` with an empty `"hooks": {}` entry. Google Antigravity deletes its file when nothing else is in it. Empty hooks files do nothing; delete them by hand if you want them gone.
+- **Internal state** (`~/.zn/state/`). Small files zn-gate keeps for its own use. Remove it with `rm -rf ~/.zn/state`.
+- **Empty hooks files.** Codex CLI keeps `~/.codex/hooks.json` (or the file in the folder that `CODEX_HOME` names), which holds `{}` when it had nothing else in it. Cursor keeps `~/.cursor/hooks.json` with an empty `"hooks": {}` entry. Google Antigravity deletes its file when nothing else is in it. Claude Code keeps `~/.claude/settings.json` and Gemini CLI keeps `~/.gemini/settings.json`, each holding `{}` when it had nothing else in it. Empty settings files do nothing; delete them by hand if you want them gone.
 - **Settings backups** (`*.bak-zn-<time>`, for example `hooks.json.bak-zn-20261111T101010`). A copy of each settings file, written in the same folder before uninstall changed it. Do not copy one back unless you want the hooks back, because it still has them. Remove them by hand when you no longer need them.
 
 To remove everything zn-gate keeps, delete the `.zn` folder in your home folder (or the folder that `ZN_HOME` names, if you set it): `rm -rf ~/.zn`. That deletes the decision log, the statistics, your settings (`config.json`), the `reach` and secret-request logs, and the vault. If the vault was kept, deleting the folder deletes your stored secrets for good. Put your `.env` values back first (see [Your `.env` files and the vault](#4-your-env-files-and-the-vault)), or answer yes to the vault question in `zn-gate uninstall`.

@@ -94,7 +94,7 @@ When the log looks right, switch to enforce:
 npx -y zn-gate init --wrap-mcp
 ```
 
-Or remove `--shadow` from the wrapped command yourself if you wrapped the server by hand. The shield then acts on what it finds:
+If you wrapped the servers with `init --shadow`, run `npx -y zn-gate init --revert` first: `init --wrap-mcp` skips a server that is already wrapped and leaves it in shadow mode. Or remove `--shadow` from the wrapped command yourself. The shield then acts on what it finds:
 
 - Tool and parameter descriptions that carry hidden instructions are neutralized before the agent reads them.
 - A tool call whose arguments carry an injection is refused and never reaches the server.

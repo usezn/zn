@@ -140,7 +140,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 
 Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command on this page in your own terminal, not through your agent.
 
-On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version`. Ubuntu 24.04 gives 18.19.1, which works but is end-of-life: every zn-gate command then prints a warning that Node.js 18.19.1 no longer gets security fixes. The warning is correct, and the fix is to install a supported Node.js (22 LTS) as below. If the version is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
 
 ```bash
 sudo apt-get install -y curl
@@ -201,7 +201,7 @@ To remove one part at a time, go in this order: wrapped MCP servers first, then 
 4. **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back (`npx -y zn-gate env unshadow .env --backup <name>`). Do that before you delete the vault.
 5. **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing the plugin, the hooks or the program leaves it there (`zn-gate uninstall` only deletes the launcher scripts in `~/.zn/hooks`). Delete it only after you have put your `.env` values back, because the vault holds them. The second question of `zn-gate uninstall` deletes the vault and what goes with it (its audit log, backups, token maps and session key); the rest of the folder, such as your settings and the decision log, stays. You can also delete the folder by hand.
 6. **The program itself**, last, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
-7. **The Python package**, after that, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
+7. **The Python package**, after that, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate` (in the virtual environment, or `pipx uninstall zn-gate` if you used pipx).
 
 Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 

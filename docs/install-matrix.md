@@ -32,7 +32,7 @@ Notation used in the tables:
 |---|---|---|
 | Guided setup (`init`) | `npx -y zn-gate init` | `npx -y zn-gate check`, then `npx -y zn-gate test` (exits with `0` when all built-in examples pass) |
 | Global program | `npm install -g zn-gate`, then `zn hooks install <agent>` | `zn-gate check` |
-| Python package | `pip install zn-gate` | `zn-gate status` (prints the version, the Python version and whether the optional cloud check is on). The Python package sets up no agent coverage, so `check` belongs to the npm package. |
+| Python package | `pip install zn-gate` (on Ubuntu 24.04, Debian 12 and other recent Linux systems use a virtual environment or pipx: see the note below) | `zn-gate status` (prints the version, the Python version and whether the optional cloud check is on). The Python package sets up no agent coverage, so `check` belongs to the npm package. |
 | Hooks for one agent | `zn hooks install claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `copilot`, `zcode` or `gemini` (experimental) | `npx -y zn-gate check` |
 
 `init` ends with the `check` run. `check` makes a temporary folder with a fake key in a `.env` file, asks your
@@ -45,7 +45,9 @@ agent's hook to read it, and deletes the folder. If it says `NOT protected`, see
 |---|---|---|
 | Windows | Documented per agent in the Windows row of [compat.md](compat.md). Claude Code is supported, including its PowerShell tool (2.1.299 or later). Codex CLI and OpenCode have one end-to-end run each on Windows Server 2022; Cursor is not tested; Antigravity is not verified by us. | `npx -y zn-gate check`. If PowerShell says "running scripts is disabled on this system", use `npx.cmd -y zn-gate check` |
 | macOS | No separate install steps. The same commands apply; compat.md mentions macOS only for managed settings paths and for how approved programs are started. | `npx -y zn-gate check` |
-| Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
+| Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version`: Ubuntu 24.04 gives 18.19.1, which works but is end-of-life, so every command prints an end-of-life warning (it is Node.js telling you it no longer gets security fixes, not a zn-gate fault). Install a supported Node.js (22 LTS) from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)), and do the same if it is older than 18 from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
+
+Python on recent Linux systems: Ubuntu 24.04 and Debian 12 refuse a bare `pip install zn-gate` with `externally-managed-environment` (PEP 668). Use a virtual environment (`python3 -m venv .venv && .venv/bin/pip install zn-gate`, which needs `sudo apt install python3-venv` first) or pipx (`pipx install zn-gate`, after `sudo apt install pipx`).
 
 Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. The npm package declares Node.js 18 or later in the `engines` field of its package.json. Using only the Python package (`pip install zn-gate`, without the hooks) does not need Node.js. Without `npx`, install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
 

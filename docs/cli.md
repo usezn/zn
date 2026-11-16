@@ -144,7 +144,7 @@ Without options, `init` is the guided setup: it finds the coding agents on this 
 With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first.
 
 - `--dry-run`: show what would change, change nothing.
-- `--shadow`: wrap in shadow mode: problems are logged but nothing is dropped.
+- `--shadow`: wrap in shadow mode: problems are logged but nothing is dropped. A server that is already wrapped is skipped (`already_shielded`), so to switch from shadow mode to enforcing, run `init --revert` and then `init --wrap-mcp`.
 - `--revert`: put back the MCP configs saved before zn wrapped them. It does not remove the Claude Code plugin, hooks or markers in `.env` files: for those run [`uninstall`](#uninstall).
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
@@ -157,7 +157,7 @@ Exit codes: `0` done, or every agent found is already protected. `1` no supporte
 zn-gate uninstall [--dry-run]
 ```
 
-Removes zn-gate from this computer in one step. It finds what is set up, prints the plan (each agent, with the file paths), and asks you to confirm in your own terminal, the same way `hooks install` does. Then it removes:
+Removes zn-gate from this computer in one step. It finds what is set up, prints the plan (each agent, with the file paths), and asks you to confirm in your own terminal (answer `y` to go on; any other answer changes nothing). `hooks install` and `hooks uninstall` do not ask: they also need an interactive terminal, but they make the change as soon as you run them. Then it removes:
 
 - the zn-gate plugin of Claude Code (with `claude plugin uninstall zn-gate@usezn`; without a `claude` command it prints the `/plugin` command to type);
 - zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
@@ -569,7 +569,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). Remove the hooks before you remove the program with `npm uninstall -g zn-gate`. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
+Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). Remove the hooks before you remove the program with `npm uninstall -g zn-gate`. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal, but it does not ask for a confirmation: it writes the change at once and prints the result. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
@@ -593,7 +593,7 @@ Removes them again. The small launcher script under `~/.zn/hooks` is shared by e
 zn-gate hook <agent>
 ```
 
-The entry point the agents call. It reads one event as JSON on standard input and answers on standard output. You do not run it yourself. Exit codes: `0` allowed, `2` blocked (or an event it cannot read), `1` unknown agent.
+The entry point the agents call. It reads one event as JSON on standard input and answers on standard output. You do not run it yourself. Exit codes: `0` allowed, `2` the input could not be read as JSON (or is empty), `1` unknown agent. A blocked action does not always exit `2`: Claude Code expects a deny as a JSON answer, so for Claude Code zn prints the JSON deny on standard output and exits `0`. The agents that read the exit code get `2` for a block. Valid JSON with an event that zn does not know is not checked: zn says so and exits `0`, so that action goes through.
 
 ### `secrets-mcp`
 
@@ -636,7 +636,7 @@ zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
-- `--ui`: open a local dashboard in your browser (default port 3100).
+- `--ui`: start a local dashboard and print its address, `http://127.0.0.1:3100` by default. It does not open a browser: open that address yourself. The dashboard listens on your own machine only (127.0.0.1), so other computers cannot reach it. It runs until you stop it with Ctrl+C. `--port N` picks another port. If you give a value that is not a number (for example `--port abc`), zn-gate ignores it and uses 3100. If the port is already in use, or is outside 0 to 65535, the command exits `1` with a Node.js error.
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 
 Aliases: `logs`, `export`.
