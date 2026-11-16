@@ -156,16 +156,24 @@ Claude Code builds that have these events use them.
 ## Skills, commands and @file in Claude Code
 
 - **Typed skills and commands**: `UserPromptSubmit` sees only what you typed, not
-  what a skill or command expands into. zn also registers a `UserPromptExpansion`
-  hook, which checks the expanded text with the same detectors as a typed prompt
-  and refuses the expansion when it contains a secret value, a private key or
-  the lines of a `.env` file. It says why and what to do next. If the hook
-  cannot run or takes too long, the expansion is blocked, like the other prompt
-  hook. Expanded text over 1 MB is blocked because it cannot be checked in time.
+  what a skill or command expands into.
+
+  zn also registers a `UserPromptExpansion` hook. It checks the expanded text with
+  the same detectors as a typed prompt. It refuses the expansion when it contains:
+
+  - a secret value,
+  - a private key, or
+  - the lines of a `.env` file.
+
+  It says why and what to do next. If the hook cannot run or takes too long, the
+  expansion is blocked, like the other prompt hook. Expanded text over 1 MB is
+  blocked because it cannot be checked in time.
+
   The hook needs a Claude Code version that has the `UserPromptExpansion` event
   (builds from about 2.1.141 on; 2.1.110 does not have it). With the plugin, an older
   Claude Code that does not know the event can ignore every hook in the plugin's
   `hooks.json`, so zn's plugin needs Claude Code 2.1.295 or later.
+
   The hook cannot rewrite the text, so there is no redaction here: the command
   is stopped and you remove the value or save it with `zn secret set`.
 - **`!` shell commands inside skills and commands**: Claude Code checks them
@@ -174,22 +182,33 @@ Claude Code builds that have these events use them.
   Claude Code settings (in managed settings for a team).
 - **MCP tool calls**: zn's `PreToolUse` hook runs for every MCP tool (matcher
   `^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*`) and
-  checks the call's arguments before it runs. A secret value (stored or recognised) or a `__ZN_`
-  marker is blocked with a reason that names the kind. Personal data (email address, phone number,
-  IBAN, card, national ID, and an IP address if you turned it on) is not blocked: Claude Code asks you to
-  approve the call, and the message names the kind and the server, so you can allow a CRM or a mail
-  server to receive it. A secret in the same call wins over personal data (blocked, not asked). Calls
-  to zn's own vault server (`secrets_http_request` with a `__ZN_` marker) are allowed only when it is
-  the user-scope `secrets` server that `zn hooks install claude-code` registers, started with a
-  Node.js and a zn-gate `bin/cli.js`, both by full path and outside the project once links are resolved
-  (the plugin, which runs its own copy of zn-gate, accepts the one registered from npm). Any other
-  server with the same name, such as
-  one in a project's `.mcp.json` or a local-scope entry, is checked like any other, also when its
-  command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
-  first). A project install (`--project`) adds no MCP server. The zn-gate plugin
-  registers no MCP server since version 1.14.0. Hooks installed by an earlier zn-gate keep the old
-  matcher, which skips MCP tools, until you run `zn hooks install claude-code` again. What counts as zn's own
-  server:
+  checks the call's arguments before it runs.
+
+  - A secret value (stored or recognised) or a `__ZN_` marker is blocked with a reason
+    that names the kind.
+  - Personal data (email address, phone number, IBAN, card, national ID, and an IP
+    address if you turned it on) is not blocked: Claude Code asks you to approve the
+    call, and the message names the kind and the server, so you can allow a CRM or a
+    mail server to receive it.
+  - A secret in the same call wins over personal data (blocked, not asked).
+
+  Calls to zn's own vault server (`secrets_http_request` with a `__ZN_` marker) are
+  allowed only when it is the user-scope `secrets` server that
+  `zn hooks install claude-code` registers, started with a Node.js and a zn-gate
+  `bin/cli.js`, both by full path and outside the project once links are resolved (the
+  plugin, which runs its own copy of zn-gate, accepts the one registered from npm).
+
+  Any other server with the same name, such as one in a project's `.mcp.json` or a
+  local-scope entry, is checked like any other. This is also true when its command is
+  `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can
+  come first).
+
+  A project install (`--project`) adds no MCP server. The zn-gate plugin registers no
+  MCP server since version 1.14.0. Hooks installed by an earlier zn-gate keep the old
+  matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
+
+  What counts as zn's own server:
+
   - A server with the same name in your organization's `managed-mcp.json`, or passed with
     `--mcp-config` (read on Linux only), counts like a project entry: it is checked like any other.
   - zn's own detector server (`analyze_prompt`, `check_tool_call`, `check_tool_result`) is the user-scope
@@ -239,19 +258,31 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   (`updatedToolOutput`), and `PreToolUse` can rewrite the input and ask the user
   (`ask` + `updatedInput`). zn never returns `allow`, so your own permission
   rules always apply.
+
   The output of web fetches, MCP tools and shell commands is also checked
-  with the local rules: when they flag text that reads like instructions to
+  with the local rules. When they flag text that reads like instructions to
   the agent, zn adds a note (`additionalContext`) telling the agent to treat
   it as data and to tell you. The output is not blocked for this. Turn it off
   with `{"hooks": {"checkToolOutputInstructions": false}}` in
   `~/.zn/config.json`. At most 64 KiB of each output are checked: the first 48 KiB and
   the last 16 KiB.
-  Off by default: after `zn-gate connect` and only if you add `{"hooks": {"cloudCheckToolOutput": true}}` to your own `~/.zn/config.json` (read from your operating-system account's home folder, so `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot enable this, because a project can set them), the same
-  outputs are also sent to zn's API, when the local check did not flag them: a sample of at most 16 KiB,
-  counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and card numbers) are replaced. The cloud
-  can only add the same note (also when its verdict is neither allow nor block); a failed call changes nothing. Remove the setting, or set it to
-  `false`, to turn this path off. Only the Claude Code hook does this today:
-  the other agents get no note for tool output (the same limit as the local check above), so they send nothing.
+
+  Off by default: the same outputs can also be sent to zn's API. This happens only
+  after `zn-gate connect` and only if you add `{"hooks": {"cloudCheckToolOutput": true}}`
+  to your own `~/.zn/config.json`. That file is read from your operating-system account's
+  home folder, so `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a
+  project's settings cannot enable this, because a project can set them.
+
+  - An output is sent when the local check did not flag it.
+  - What is sent is a sample of at most 16 KiB, counted in bytes of UTF-8 text (the first
+    12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and
+    card numbers) are replaced.
+  - The cloud can only add the same note (also when its verdict is neither allow nor
+    block); a failed call changes nothing.
+  - Remove the setting, or set it to `false`, to turn this path off.
+
+  Only the Claude Code hook does this today: the other agents get no note for tool output
+  (the same limit as the local check above), so they send nothing.
 - **Codex CLI**:
   - `ask` is not supported, so a call zn would ask about (personal data in an
     MCP call, a write to an instruction file, a search over a folder with a
@@ -300,18 +331,24 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     would deny it, the request is denied with zn's reason, so no Approve button is shown for it. zn never
     answers Allow there; for every other call it gives no answer, and the approval prompt stays. Installs
     made before this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
-  - Final answers (`Stop`): zn only warns, and the warning does not reach the model. To
-    have Codex ask the model to rewrite an answer that contains a secret value, set
+  - Final answers (`Stop`): zn only warns, and the warning does not reach the model.
+
+    To have Codex ask the model to rewrite an answer that contains a secret value, set
     `"stopReview": "block"` under `hooks` in `~/.zn/config.json`. zn blocks at most once
     per answer and never when the answer is already a continuation. Installs made before
     this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
+
     To tell whether a placeholder came from a tool, zn reads the session transcript in
-    pieces of 256 KB, counts every copy of the final answer (Codex writes it to the log three times) and finds out whether the placeholder
-    appears anywhere else. A transcript larger than 64 MB is not read, so
-    that check is skipped for it. A final answer with nothing to report prints nothing and
-    exits with code 0, which Codex reads as success. A problem inside zn while it checks an
-    answer also exits with code 0 and prints a warning, never code 2, because code 2 would
-    make Codex continue the answer.
+    pieces of 256 KB. It counts every copy of the final answer (Codex writes it to the log
+    three times) and finds out whether the placeholder appears anywhere else. A transcript
+    larger than 64 MB is not read, so that check is skipped for it.
+
+    Exit codes:
+
+    - A final answer with nothing to report prints nothing and exits with code 0, which
+      Codex reads as success.
+    - A problem inside zn while it checks an answer also exits with code 0 and prints a
+      warning, never code 2, because code 2 would make Codex continue the answer.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed
@@ -635,7 +672,26 @@ This usually happens after Node.js is upgraded, moved or removed (for example wi
 
 ## Antigravity when its hook cannot start
 
-Antigravity does not document what it does when a hook cannot run. What we observed in our own tests (Windows, Antigravity IDE and CLI, 2026-10-20): a PreToolUse hook that cannot start, prints nothing, prints text that is not JSON, or prints `{}` makes Antigravity deny every tool call, with an empty reason, so a broken zn hook stops the agent instead of letting calls run unchecked. Not tested: a hook that times out, and organization settings that turn hooks off (none is documented). zn fails closed too: it prints an explicit allow or deny for every event, an internal error becomes a deny with a plain reason, and a check that has not finished 5 seconds before the hook's timeout is answered with a deny. `zn hooks install antigravity` starts the hook once with a harmless test event and reports if it does not answer with a valid decision. Antigravity runs file searches through the shell, so zn checks them as commands (see [the Antigravity page](editors/antigravity.md)).
+Antigravity does not document what it does when a hook cannot run.
+
+What we observed in our own tests (Windows, Antigravity IDE and CLI, 2026-10-20): Antigravity denies every tool call, with an empty reason, when a PreToolUse hook:
+
+- cannot start,
+- prints nothing,
+- prints text that is not JSON, or
+- prints `{}`.
+
+So a broken zn hook stops the agent instead of letting calls run unchecked. Not tested: a hook that times out, and organization settings that turn hooks off (none is documented).
+
+zn fails closed too:
+
+- It prints an explicit allow or deny for every event.
+- An internal error becomes a deny with a plain reason.
+- A check that has not finished 5 seconds before the hook's timeout is answered with a deny.
+
+`zn hooks install antigravity` starts the hook once with a harmless test event and reports if it does not answer with a valid decision.
+
+Antigravity runs file searches through the shell, so zn checks them as commands (see [the Antigravity page](editors/antigravity.md)).
 
 Other hooks: Antigravity documents `allow` as "delegating to the next hook or default policy", but not in which order hooks run, which answer wins when they disagree, or how hooks from a CLI plugin (a plugin's own `hooks.json`) rank against yours. So zn cannot promise that its deny holds against another hook that runs for the same tool call. `zn-gate check` lists other enabled `PreToolUse` hooks in your hooks file and in the project's `.agents/hooks.json` as a note; it cannot see plugin hooks. In our tests Antigravity did not always run other plugins' hooks alongside zn's; zn's hooks always ran and its deny always applied.
 
