@@ -1108,6 +1108,8 @@ function expandEqualsOptions(command, args) {
 
 // Commands that take no options or a fixed set. An option they do not know is refused with exit 2: it is named and
 // the options the command takes are listed. -h, --help, -V and --version are handled by the general code, so they pass.
+// Arguments the init command takes (after "init"); see the check before the guided setup.
+const INIT_ARGUMENTS = ['--wrap-mcp', '--dry-run', '--shadow', '--revert'];
 const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
 const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
 const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
@@ -1287,16 +1289,21 @@ async function main() {
     process.exit(await runVaultCommand(args));
   }
 
-  if (command === 'init' && !(args.includes('--wrap-mcp') || options.dryRun || options.revert || options.shadow)) {
-    // Guided setup: one route per agent, run only by a person in a terminal, then zn-gate check.
-    // It takes no arguments: an unknown one (an option in capitals, or words the shell joined) is refused here, on the
-    // real argument list, instead of starting the guided setup.
-    if (args.length > 1) {
-      const shown = String(args[1]).replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
+  // init takes only these arguments. An unknown one (a misspelt --dry-run, an option in capitals, or words the shell
+  // joined) is refused here, on the real argument list, before the guided setup or --wrap-mcp reads or writes anything.
+  // Without this, "init --wrap-mcp --dryrun" would wrap the real MCP configs.
+  if (command === 'init') {
+    const unknownInit = args.slice(1).find((a) => !INIT_ARGUMENTS.includes(a));
+    if (unknownInit !== undefined) {
+      const shown = String(unknownInit).replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
       process.stderr.write('zn-gate init: unknown argument "' + shown + '". Run `zn-gate init` with no arguments for the guided setup, or `zn-gate init --wrap-mcp` (with --dry-run, --shadow or --revert) to wrap MCP servers.\n');
       process.exitCode = 2;
       return;
     }
+  }
+
+  if (command === 'init' && !(args.includes('--wrap-mcp') || options.dryRun || options.revert || options.shadow)) {
+    // Guided setup: one route per agent, run only by a person in a terminal, then zn-gate check.
     process.env.ZN_STATS = 'off';
     process.exitCode = await require('../lib/init-guide').guide({});
     return;
