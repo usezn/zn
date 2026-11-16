@@ -673,6 +673,27 @@ impl McpPool {
 mod tests {
     use super::*;
 
+    /// Serializes tests that read or change process-wide environment variables (PATH).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Restores PATH when dropped, also when the test panics.
+    #[cfg(windows)]
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    #[cfg(windows)]
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(old) => std::env::set_var("PATH", old),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
     #[test]
     fn test_validate_command_allowed() {
         assert!(validate_command("node").is_ok());
@@ -993,6 +1014,7 @@ Content-Length: 0
 
     #[test]
     fn skipped_servers_are_recorded_with_a_reason_and_matched_by_tool_name() {
+        let _env = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("mcp_servers.json");
         std::fs::write(
@@ -1022,6 +1044,7 @@ Content-Length: 0
 
     #[test]
     fn a_server_with_a_disallowed_command_is_skipped_with_a_notice() {
+        let _env = env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("mcp_servers.json");
         std::fs::write(
@@ -1040,6 +1063,7 @@ Content-Length: 0
 
     #[test]
     fn a_broken_servers_file_is_reported_not_hidden() {
+        let _env = env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("mcp_servers.json");
         std::fs::write(&file, "{").expect("write");
@@ -1057,7 +1081,9 @@ Content-Length: 0
     /// and must refuse an argument that cmd.exe would read as a command.
     #[cfg(windows)]
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn a_bare_npx_resolves_to_its_cmd_shim_and_starts() {
+        let _env = env_lock();
         let dir = std::env::temp_dir().join(format!("zn-npx-shim-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1066,8 +1092,13 @@ Content-Length: 0
             "@echo off\r\nset /p line=\r\necho {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"shim\":true}}\r\n",
         )
         .unwrap();
-        let old_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{};{}", dir.display(), old_path));
+        let old_path = std::env::var_os("PATH");
+        let _restore = PathGuard(old_path.clone());
+        let mut paths = vec![dir.clone()];
+        if let Some(old) = &old_path {
+            paths.extend(std::env::split_paths(old));
+        }
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
 
         let config = |args: Vec<String>| McpServerConfig {
             command: Some("npx".to_string()),
@@ -1081,7 +1112,6 @@ Content-Length: 0
         )
         .await;
         let refused = McpConnection::connect("shim", &config(vec!["a&calc".to_string()])).await;
-        std::env::set_var("PATH", old_path);
 
         let mut conn = started.expect("npx.cmd is found through PATH and PATHEXT");
         let answer = conn.send_request("{}").await.unwrap();
