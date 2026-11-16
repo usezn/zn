@@ -1,0 +1,4 @@
+### Security
+- `zn audit` reports a project settings file that sets `ZN_HOME`, `HOME` or `USERPROFILE` for the agent (new rule ZNA024, critical). That moves the folder where the zn hooks look for the vault, MCP server pins, evidence log and audit baselines.
+- Claude Code: the `ConfigChange` hook now also blocks a settings change that adds a hook sending tool events to a remote address (ZNA022, high), and it checks `.claude/settings.local.json` the same way as `.claude/settings.json`. Findings the file already had when the session began are still allowed.
+- Claude Code: a user-scope MCP server named `secrets`, `zn-gate` or `zn` counts as zn's own only when its `bin/cli.js` is an installed zn-gate (the copy running the hook, the global npm package of its Node.js, or the copy the hook launcher names). A folder that only ends in `zn-gate/bin/cli.js` no longer counts.

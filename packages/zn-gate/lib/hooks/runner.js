@@ -1370,11 +1370,21 @@ function readReportedFile(file) {
 }
 
 const SETTINGS_REL = '.claude/settings.json';
+const LOCAL_SETTINGS_REL = '.claude/settings.local.json';
+// The settings files a session is judged on: the project file and the local one next to it (both are read by Claude Code from the project).
+const SESSION_SETTINGS = [SETTINGS_REL, LOCAL_SETTINGS_REL];
+
+/** A finding that keeps a settings change from taking effect: any critical finding, a file that could not be checked (ZNA020),
+ *  and a hook that sends tool events to a remote address (ZNA022 at high; a local address is medium and stays allowed). */
+function isBlocking(f) {
+  return f.severity === 'critical' || f.id === 'ZNA020' || (f.id === 'ZNA022' && f.severity === 'high');
+}
+
 function criticalKeys(findings, rel, root) {
   // The folder is part of the key: a finding of a parent folder's settings is not the same finding in this one.
   const where = require('crypto').createHash('sha256').update(String(root || '')).digest('hex').slice(0, 8);
   // A settings file that could not be checked (a link out of the project, too large) counts as critical: it is not passed as clean.
-  return (findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel)
+  return (findings || []).filter((f) => isBlocking(f) && String(f.file || '').split(path.sep).join('/') === rel)
     .map((f) => String(f.id) + '|' + rel + '|' + where + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
 }
 
@@ -1429,11 +1439,11 @@ function recordConfigBaseline(ev, opts) {
     let keys = [];
     try {
       const root = settingsRoot(ev.cwd, opts);
-      keys = criticalKeys(auditSettings(root).findings, SETTINGS_REL, root);
+      for (const rel of SESSION_SETTINGS) keys = keys.concat(criticalKeys(auditSettings(root, rel).findings, rel, root));
     } catch (_) {
       keys = [];
     }
-    writeSeen(sf, ['file|' + SETTINGS_REL].concat(keys));
+    writeSeen(sf, SESSION_SETTINGS.map((rel) => 'file|' + rel).concat(keys));
   } catch (_) {
     /* no baseline: a critical finding blocks */
   }
@@ -1475,14 +1485,15 @@ const HIDDEN_TEXT_RE = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
 /**
  * ConfigChange (Claude Code): a settings or skill file changed during the session. The change is blocked, so the new file does not
  * take effect, when
- *  - a project or local settings file now has a critical audit finding (a download piped into a shell, a model endpoint moved to
- *    another server, ...): the same rules `zn audit` applies when a folder is opened, so an edit made during the session cannot do
- *    what the audit refuses at the start; or
+ *  - a project or local settings file (.claude/settings.json, .claude/settings.local.json) now has a critical audit finding (a
+ *    download piped into a shell, a model endpoint moved to another server, the zn folder moved, ...) or a hook that sends tool
+ *    events to a remote address (ZNA022, high): the same rules `zn audit` applies when a folder is opened, so an edit made during
+ *    the session cannot do what the audit refuses at the start; or
  *    Only a finding that is new since the baseline of the session is a reason to block (see recordConfigBaseline): a project file that
  *    already had one when the session began (the audit reported it then) can still be edited. A session with no baseline (no session id,
  *    or the hooks were installed after it began) blocks every critical finding, and the first ConfigChange it sees leaves an empty
  *    baseline, so a change blocked before the first prompt is never adopted as the starting point.
- *    Local settings (settings.local.json) are the user's own file and are never blocked; or
+ *    The local file is judged like the project file: an agent can write it as easily, and Claude Code loads it the same way; or
  *  - a skill file now holds text a person cannot see (Unicode tag characters, bidirectional overrides). A skill that quotes an
  *    injection example (a security guide, red-team notes) is allowed: the generic injection rules are not used here.
  * Policy settings cannot be blocked (Claude Code applies them anyway) and your own user settings are yours to edit: both are allowed.
@@ -1502,7 +1513,7 @@ function decideConfigChange(ev, opts) {
     }
     return { decision: 'allow' };
   }
-  if (source !== 'project_settings') return { decision: 'allow' };
+  if (source !== 'project_settings' && source !== 'local_settings') return { decision: 'allow' };
   if (typeof file !== 'string' || !path.isAbsolute(file) || !/(^|[\\/])\.claude[\\/][^\\/]+$/.test(file)) return { decision: 'allow' };
   const root = path.dirname(path.dirname(file));
   let result;
@@ -1516,7 +1527,7 @@ function decideConfigChange(ev, opts) {
       message: 'zn: this change to ' + rel + ' was not applied: zn could not check this settings change. Run `zn audit` to see the file, fix it if needed, and save it again.',
     };
   }
-  const critical = (result.findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel);
+  const critical = (result.findings || []).filter((f) => isBlocking(f) && String(f.file || '').split(path.sep).join('/') === rel);
   const sf = seenFile(ev, 'config-change', opts);
   const prev = readSeen(sf);
   if (sf && prev.length) touchSeen(sf);
@@ -1535,7 +1546,7 @@ function decideConfigChange(ev, opts) {
   return {
     decision: 'deny', kinds: ['config-change-' + String(first.id || 'audit').toLowerCase()],
     message: 'zn: this change to ' + rel + ' was not applied: ' + String(first.title || first.id).slice(0, 120) + ' (' + String(first.id) + ', line ' + (first.line || '?') + ')' +
-      (fresh.length > 1 ? ' and ' + (fresh.length - 1) + ' more critical finding(s)' : '') + '. Run `zn audit` to see it, fix the file, and save it again.',
+      (fresh.length > 1 ? ' and ' + (fresh.length - 1) + ' more blocking finding(s)' : '') + '. Run `zn audit` to see it, fix the file, and save it again.',
   };
 }
 

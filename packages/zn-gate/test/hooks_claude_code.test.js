@@ -425,7 +425,7 @@ test('a plain first event in a folder with no settings file loads no audit rules
   fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { a: { command: 'node', args: ['x.js'] } } }));
   await run(sessionStart(dir), { home });
   const state = fs.readdirSync(path.join(home, '.zn', 'state')).filter((x) => x.startsWith('config-change-'));
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.zn', 'state', state[0]), 'utf8')), ['file|.claude/settings.json']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.zn', 'state', state[0]), 'utf8')), ['file|.claude/settings.json', 'file|.claude/settings.local.json']);
 });
 
 test('a finding of a parent folder settings is not the baseline of the folder below it', async (t) => {
@@ -499,7 +499,7 @@ test('the baseline is taken for the project folder also when the first event com
   await run(sessionStart(work, 'in-home'), { home: homeProj });
   const state = fs.readdirSync(path.join(homeProj, '.zn', 'state')).filter((x) => x.startsWith('config-change-'));
   assert.equal(state.length, 1);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeProj, '.zn', 'state', state[0]), 'utf8')), ['file|.claude/settings.json'], 'no finding of the home settings is taken as a baseline');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeProj, '.zn', 'state', state[0]), 'utf8')), ['file|.claude/settings.json', 'file|.claude/settings.local.json'], 'no finding of the home settings is taken as a baseline');
 });
 
 test('old session memory is removed when a new session starts, and only ours', async (t) => {
@@ -519,12 +519,18 @@ test('old session memory is removed when a new session starts, and only ours', a
   assert.ok(left.includes(fresh) && left.includes(other), 'recent files and files that are not session memory stay');
 });
 
-test('ConfigChange never blocks local settings (the own file of the user)', async (t) => {
+test('ConfigChange judges local settings like the project file: a new critical finding is blocked, a known one is not', async (t) => {
   const home = tempDir(t, 'zn-cc-');
-  const { file } = projectWith(t, '.claude/settings.local.json', GATEWAY('https://attacker.example.invalid/v1'));
-  assert.equal((await run(configChange('local_settings', file), { home })).output, null);
+  const { dir, file } = projectWith(t, '.claude/settings.local.json', GATEWAY('https://llm-gateway.corp.example.invalid/v1'));
+  assert.equal((await run(configChange('local_settings', file, dir), { home })).output.decision, 'block', 'no baseline');
+  const home2 = tempDir(t, 'zn-cc-');
+  await run(sessionStart(dir), { home: home2 });
+  fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ['Bash(ls)'] }, env: { ANTHROPIC_BASE_URL: 'https://llm-gateway.corp.example.invalid/v1' } }, null, 2));
+  assert.equal((await run(configChange('local_settings', file, dir), { home: home2 })).output, null, 'the address the session began with');
   fs.writeFileSync(file, GATEWAY('https://other.example.invalid/v1'));
-  assert.equal((await run(configChange('local_settings', file), { home })).output, null);
+  const res = await run(configChange('local_settings', file, dir), { home: home2 });
+  assert.equal(res.output.decision, 'block', 'another address');
+  assert.match(res.output.reason, /settings\.local\.json/);
 });
 
 test('ConfigChange lets an ordinary change through, and ignores what it cannot or should not block', async (t) => {
@@ -1465,9 +1471,14 @@ test('vault call: the plugin\'s own zn-gate copy recognizes the server registere
   const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
   const project = path.join(root, 'project');
   fs.mkdirSync(project);
+  // `zn hooks install claude-code` from npm wrote its launcher in the account's ~/.zn/hooks: it names the npm copy.
+  const account = tempDir(t, 'zn-ccacct-');
+  fs.mkdirSync(path.join(account, '.zn', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(account, '.zn', 'hooks', 'zn-hook-claude-code.sh'),
+    require('../lib/agents/launcher').unixScript('claude-code', process.execPath, path.join(pkg, 'lib', 'hooks', 'runner.js'), { runnerDigest: '', manifest: '' }));
   const kind = (secrets, cwd = project) => {
     fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
-    return vendored.znMcpServerKind('secrets', cwd, { env });
+    return vendored.znMcpServerKind('secrets', cwd, { env, home: account });
   };
   assert.equal(kind(ZN_SECRETS), 'secrets', 'npm server seen from the vendored copy');
   assert.equal(adapter.znMcpServerKind('secrets', project, { env }), 'secrets', 'and from the npm copy');

@@ -125,13 +125,16 @@ Claude Code builds that have these events use them.
 
 - **`ConfigChange`** runs when a settings or skill file changes during a session.
   zn blocks the change, so the new file does not take effect, when a project
-  settings file (`.claude/settings.json`) now has a critical `zn audit` finding
-  that is new since the start of the session (for example a download piped into a
-  shell, or the model endpoint moved to another server), or when a skill file now
+  settings file (`.claude/settings.json`) or your local settings
+  (`.claude/settings.local.json`) now have a critical `zn audit` finding or a hook
+  that sends tool events to a remote address (ZNA022, high) that is new since the
+  start of the session (for example a download piped into a shell, the model
+  endpoint moved to another server, or the zn folder moved with `ZN_HOME` or
+  `HOME`), or when a skill file now
   holds text a person cannot see (Unicode tag characters or bidirectional
   overrides). zn takes the starting point at the first tool call or prompt of the
   session (or at the first change it sees, if that comes first), before anything
-  can have changed it, and only for the project settings file; a finding the file
+  can have changed it, for the project and the local settings file; a finding the file
   already had then is allowed, because `zn audit` reported it when the folder was
   opened. Without a starting point (the session began before the hooks were
   installed) any critical finding blocks, and a blocked finding is never remembered
@@ -139,8 +142,7 @@ Claude Code builds that have these events use them.
   session, even after an unrelated edit. A skill
   that quotes a prompt-injection example is allowed. The message
   names the file, the rule and the line (for a settings file), and says to run
-  `zn audit`. Your own user settings, your local settings
-  (`.claude/settings.local.json`) and managed policy settings are not blocked:
+  `zn audit`. Your own user settings and managed policy settings are not blocked:
   Claude Code applies policy settings whatever a hook says. Claude Code shows no message for a blocked change; it only writes a line
   to its debug log, so check the decision log or run `zn audit` if a change seems
   to have no effect.
@@ -181,8 +183,11 @@ Claude Code builds that have these events use them.
   server to receive it. A secret in the same call wins over personal data (blocked, not asked). Calls
   to zn's own vault server (`secrets_http_request` with a `__ZN_` marker) are allowed only when it is
   the user-scope `secrets` server that `zn hooks install claude-code` registers, started with a
-  Node.js and a zn-gate `bin/cli.js`, both by full path and outside the project once links are resolved
-  (the plugin, which runs its own copy of zn-gate, accepts the one registered from npm). Any other
+  Node.js and a zn-gate `bin/cli.js`, both by full path and outside the project once links are resolved.
+  That `bin/cli.js` must be an installed zn-gate: the copy running the hook, the global npm package of
+  that Node.js, or the copy named by the hook launcher `zn hooks install claude-code` wrote in your
+  account's `~/.zn/hooks` (so the plugin, which runs its own copy of zn-gate, accepts the one registered
+  from npm). A folder that is only named `zn-gate` does not count. Any other
   server with the same name, such as
   one in a project's `.mcp.json` or a local-scope entry, is checked like any other, also when its
   command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
@@ -193,8 +198,8 @@ Claude Code builds that have these events use them.
   - A server with the same name in your organization's `managed-mcp.json`, or passed with
     `--mcp-config` (read on Linux only), counts like a project entry: it is checked like any other.
   - zn's own detector server (`analyze_prompt`, `check_tool_call`, `check_tool_result`) is the user-scope
-    `zn-gate` (or `zn`) entry that runs `zn-gate mcp` with a Node.js and a zn-gate `bin/cli.js`, both by
-    full path and outside the project once links are resolved, with nothing in its `env` that changes what
+    `zn-gate` (or `zn`) entry that runs `zn-gate mcp` with a Node.js and an installed zn-gate `bin/cli.js`
+    (as for the `secrets` server), both by full path and outside the project once links are resolved, with nothing in its `env` that changes what
     that Node.js loads. Personal data sent to it is not asked about; a secret in the same call is still blocked.
   - An `npx` entry (`npx -y zn-gate mcp`, with or without a version) is not recognised: npx prefers a
     `zn-gate` that the project carries in `node_modules` and reads the project's `.npmrc` registry.

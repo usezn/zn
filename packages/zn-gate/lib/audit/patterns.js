@@ -274,6 +274,9 @@ const CODE_ENV = new Set([
 ]);
 // Variables that move where an agent reads its own configuration.
 const CONFIG_DIR_ENV = new Set(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'GEMINI_CLI_HOME']);
+// Variables that move the folder zn keeps its own state in (vault, MCP pins, evidence log, audit baselines, hook settings):
+// ZN_HOME names it, and HOME (USERPROFILE on Windows) is where ~/.zn is looked up.
+const STATE_HOME_ENV = new Set(['ZN_HOME', 'HOME', 'USERPROFILE']);
 
 function isPlaceholder(v) {
   const s = String(v == null ? '' : v).trim();
@@ -343,6 +346,7 @@ function classifyEnv(key, value) {
     return { kind: 'endpoint', host, loopback: isLoopback(host) };
   }
   const up = k.toUpperCase();
+  if (STATE_HOME_ENV.has(up)) return { kind: 'statehome' };
   if (CONFIG_DIR_ENV.has(up)) return { kind: 'confdir' };
   if (CODE_ENV.has(up)) {
     if (up === 'NODE_OPTIONS' && !/(?:^|\s)(?:-r|--require|--import|--loader|--experimental[-_]loader|--experimental[-_]policy)\b/.test(v)) return null;

@@ -138,11 +138,13 @@ test('ConfigChange: a project settings change whose audit cannot run is not appl
   assert.deepEqual(res.decision.kinds, ['config-change-unchecked']);
   assert.match(res.output.reason, /could not check this settings change/);
   assert.match(res.output.reason, /\.claude\/settings\.json/);
-  // Local settings stay the user's own file: never blocked, also when the audit fails.
+  // Local settings are judged the same way: an audit that fails does not let the change through.
   const local = path.join(dir, '.claude', 'settings.local.json');
   fs.writeFileSync(local, '{}');
   const res2 = await runner.handle(adapter, { ...ev, source: 'local_settings', file_path: local }, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home });
-  assert.equal(res2.output, null);
+  assert.equal(res2.output.decision, 'block');
+  assert.deepEqual(res2.decision.kinds, ['config-change-unchecked']);
+  assert.match(res2.output.reason, /settings\.local\.json/);
 });
 
 test('cloud sample of tool output: national ID numbers are replaced with [ID]', () => {

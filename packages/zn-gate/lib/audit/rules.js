@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-11-06.4';
+const AUDIT_RULES_VERSION = '2026-11-16.1';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -181,6 +181,13 @@ const RULES = [
     title: 'Executable agent configuration changed since you approved it',
     help: 'An MCP server, hook, endpoint override, permission list or install script differs from the version recorded by `zn audit --approve`. Only entry names are compared and reported; values are never printed. A removed hook, permission or setting is reported as medium, any other removed entry as low. A file that can no longer be read (too large, not valid, a link that leaves the project) counts as a change.',
     fix: 'Review the changed entry (git diff shows what changed). If the change is yours, run `zn audit --approve` again to record it.',
+    references: [],
+  },
+  {
+    id: 'ZNA024', severity: 'critical', name: 'zn-folder-override',
+    title: 'Project settings move the folder zn keeps its state in',
+    help: 'ZN_HOME, HOME or USERPROFILE in the environment the agent passes to its tools and hooks moves where zn looks for its vault, MCP server pins, evidence log and audit baselines. The zn hooks then see an empty folder: the vault looks locked, pinned servers look new and approved baselines are not found.',
+    fix: 'Remove the variable from the project settings. Set ZN_HOME in your own shell or user settings if you need another folder.',
     references: [],
   },
 ];

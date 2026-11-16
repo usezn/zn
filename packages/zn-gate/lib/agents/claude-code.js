@@ -792,8 +792,8 @@ function realOf(p) {
 
 /* The user-scope server `zn hooks install claude-code` registers: a Node.js and a zn-gate bin/cli.js, both by
  * absolute path, neither inside the project (the folder the hook runs in, its git work tree, CLAUDE_PROJECT_DIR).
- * Any zn-gate copy counts, not only the one running this hook: the plugin loads zn-gate from its own vendor folder
- * while the server was registered from the npm package. */
+ * The bin/cli.js must be, once links are resolved, one of the installed copies of zn-gate (installedZnClis): a folder
+ * that only ends in zn-gate/bin/cli.js is not enough. */
 function isInstalledSecretsServer(s, opts = {}) {
   return isInstalledZnServer(s, 'secrets-mcp', opts);
 }
@@ -810,7 +810,37 @@ function isInstalledZnServer(s, sub, opts = {}) {
   const win = process.platform === 'win32';
   if (!(win ? /^node\.exe$/ : /^node$/).test(path.basename(node))) return false;
   if (!cli.split(path.sep).join('/').endsWith('/zn-gate/bin/cli.js')) return false;
+  if (!installedZnClis(s.command, node, opts).includes(cli)) return false;
   return launcherEnvIsClean(s, opts, [node, cli]);
+}
+
+/* The real paths of the zn-gate bin/cli.js copies that count as installed:
+ *  - the copy running this hook;
+ *  - the global npm package of the server's Node.js (<prefix>/lib/node_modules on Linux and macOS, <prefix>/node_modules on
+ *    Windows, for the Node.js as written and once links are resolved); and
+ *  - the copy named by the claude-code hook launcher that `zn hooks install` wrote in the account's own ~/.zn/hooks (the home
+ *    folder of the operating-system account, not HOME or ZN_HOME, which a project can set for the agent). It covers the plugin,
+ *    which loads zn-gate from its own vendor folder while the server was registered from the npm package. */
+function installedZnClis(command, realNode, opts = {}) {
+  const win = process.platform === 'win32';
+  const out = [];
+  const add = (p) => { const r = p && realOf(p); if (r && !out.includes(r)) out.push(r); };
+  add(cliPath());
+  for (const n of [command, realNode]) {
+    const dir = path.dirname(n);
+    add(win ? path.join(dir, 'node_modules', 'zn-gate', 'bin', 'cli.js') : path.join(path.dirname(dir), 'lib', 'node_modules', 'zn-gate', 'bin', 'cli.js'));
+  }
+  const zn = opts.home ? path.join(path.resolve(opts.home), '.zn') : require('../stats').userHome();
+  if (zn) {
+    const file = path.join(zn, 'hooks', 'zn-hook-' + id + '.sh');
+    if (launcher.isOurLauncher(file)) {
+      let text = '';
+      try { text = fs.readFileSync(file, 'utf8'); } catch (_) { text = ''; }
+      const m = /^ZN_RUNNER='([^'\r\n]{1,4096})'$/m.exec(text);
+      if (m && /[\\/]lib[\\/]hooks[\\/]runner\.js$/.test(m[1])) add(path.join(path.dirname(path.dirname(path.dirname(m[1]))), 'bin', 'cli.js'));
+    }
+  }
+  return out;
 }
 
 /* None of `files` inside the project, and nothing in the entry changes what the launcher loads. */
