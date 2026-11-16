@@ -474,11 +474,13 @@ def mcp_next_step(kind: str, name: str) -> str:
                 "an option that reads it from the environment (the Python package has no local vault or zn run; those need Node.js). "
                 "Rotate the value if the file was ever committed or shared.")
     # Commands typed in a terminal name the .cmd shims on Windows; the server command put in the MCP config stays the installed `zn`.
-    through = (f"Next: {NPM_ONLY_NOTE}run {npx_name()} -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
-               f"so it is never typed on a command line), run {zn_name()} secret allow {use} --command <the server's command> so zn run "
-               "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
-               f"and put run, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "
-               f"environment variable {use}")
+    # The same test as the typed names, so the note and the .cmd forms always come together.
+    in_file = " (written zn, not zn.cmd: this file is read by the agent, not typed in a terminal)" if zn_name().endswith(".cmd") else ""
+    through = (f"Next: {NPM_ONLY_NOTE}in a terminal, run {npx_name()} -y zn-gate secret set {use} to store the value in the local vault "
+               f"(it asks for the value, so it is never typed on a command line). Then run {zn_name()} secret allow {use} --command "
+               "<the server's command>, which lets the server receive the value through zn. Then take the value out of this file and "
+               f"start the server through zn: in this file, set the server's command to zn{in_file} and put run, --secrets, {use}, -- "
+               f"and the old command first in args, so the server gets the value as the environment variable {use}")
     if kind == "environment variable":
         return f"{through} (see docs/secrets.md), and rotate the value if the file was ever committed or shared."
     return (f"{through} (a server that only takes it as a flag or a setting needs an option to read it from the environment; "
