@@ -636,7 +636,7 @@ test('an expired policy held in the vault is shown as expired, restricts, and is
   assert.strictEqual((await m.o.teamInfo()).policy.state, 'active');
 });
 
-test('a held policy that does not verify is reported as invalid and leaves local settings alone', async () => {
+test('a held policy that does not verify is reported as invalid and blocks every secret until a valid sync', async () => {
   const m = await joined();
   const t = m.secrets.team;
   cloud.publishPolicy({ rules: [{ secret: 'PROD_*', agents: ['*'], deny: true }] });
@@ -645,8 +645,21 @@ test('a held policy that does not verify is reported as invalid and leaves local
   const info = await m.o.teamInfo();
   assert.strictEqual(info.policy.state, 'invalid');
   assert.strictEqual(info.policy.error, 'bad signature');
-  const input = [{ name: 'PROD_DB', allowHosts: ['db.example.com'] }];
-  assert.strictEqual(await m.o.effectiveList(input, 'codex', true), input, 'the list is returned as it came');
+  // Strict mode: the tampered copy (its deny was removed) is not trusted; nothing is opened and all is blocked.
+  const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], 'codex', true);
+  for (const e of list) {
+    assert.strictEqual(e.deny, true);
+    assert.strictEqual(e.denyReason, 'policy:org_invalid');
+    assert.strictEqual(e.orgPending, undefined);
+    assert.strictEqual(e.orgPolicy.state, 'invalid');
+  }
+  assert.deepStrictEqual(list[0].allowHosts, ['db.example.com']);
+  // A valid policy from the server recovers the machine.
+  cloud.publishPolicy({ rules: [{ secret: 'PROD_*', agents: ['*'], deny: true }], version: 2 });
+  const s = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s.policy.status, 'updated');
+  const after = await m.o.effectiveList([{ name: 'DEV_DB' }], 'codex', true);
+  assert.strictEqual(after[0].deny, false);
 });
 
 test('effectiveList returns the list untouched when there is no organization or no policy yet', async () => {

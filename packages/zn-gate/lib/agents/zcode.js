@@ -51,6 +51,7 @@ const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { writeFileAtomic } = require('../broker/files');
+const { configParseError } = require('../config-parse');
 
 const id = 'zcode';
 
@@ -153,18 +154,33 @@ function firstString(obj, keys) {
 }
 
 /**
+ * Reads a ZCode JSON file for a read-only check, with the same plain-language message as the install paths
+ * (lib/config-parse.js). Returns { data } when it parses, { missing: true } when there is no file, { unreadable: true }
+ * on another read error, and { error } with the message when the text is not JSON. A leading BOM is dropped before
+ * parsing, as lib/agents/config-file.js does. Nothing is written.
+ */
+function readForCheck(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return err.code === 'ENOENT' ? { missing: true } : { unreadable: true };
+  }
+  try {
+    return { data: JSON.parse(text.replace(/^﻿/, '')) };
+  } catch (err) {
+    return { error: configParseError(file, text, err) };
+  }
+}
+
+/**
  * Whether the "secrets" MCP server a call goes to is zn's own: the user's config names it, and it is zn's
  * (`secrets-mcp` run through zn-gate's bin/cli.js, `zn` or `zn-gate`). ZCode lets the user's server win over a
  * project server of the same name (the official MCP documentation, https://zcode.z.ai/en/docs/mcp-services: to be verified on the desktop app), so a project cannot stand in for it. Anything unreadable gives null.
  */
 function znMcpServerIsOurs(server, opts = {}) {
   if (server !== MCP_SERVER_NAME) return null;
-  let data;
-  try {
-    data = JSON.parse(fs.readFileSync(configFile(opts), 'utf8').replace(/^﻿/, ''));
-  } catch (_) {
-    return null;
-  }
+  const data = readForCheck(configFile(opts)).data;
   const s = data && isObj(data.mcp) && isObj(data.mcp.servers) ? data.mcp.servers[MCP_SERVER_NAME] : undefined;
   if (!s || s.enabled === false) return null;
   return require('./claude-code').isZnSecretsServer(s) ? 'secrets' : null;
@@ -596,13 +612,16 @@ function uninstall(opts = {}) {
 function configWarnings(opts = {}) {
   const file = opts.file || configFile(opts);
   const out = { problems: [], notes: [], fix: 'run `zn hooks install zcode` in your own terminal (it turns the hooks back on), then run `zn-gate check` again' };
-  let data;
-  try {
-    data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
-  } catch (err) {
-    if (err.code !== 'ENOENT') out.notes.push('could not read ' + file + ' to see whether hooks are switched on');
+  const r = readForCheck(file);
+  if (r.error) {
+    out.notes.push(r.error);
     return out;
   }
+  if (r.unreadable) {
+    out.notes.push('could not read ' + file + ' to see whether hooks are switched on');
+    return out;
+  }
+  const data = r.data;
   if (!isObj(data)) return out;
   const hooks = isObj(data.hooks) ? data.hooks : {};
   if (hooks.enabled !== true) {
@@ -633,12 +652,8 @@ function configWarnings(opts = {}) {
 function pluginState(opts = {}) {
   const base = path.join(opts.home || os.homedir(), '.zcode', 'cli');
   const out = { root: null, id: null, version: null, enabled: false, pluginsOff: false, listed: false };
-  let list;
-  try {
-    list = JSON.parse(fs.readFileSync(path.join(base, 'plugins', 'installed_plugins.json'), 'utf8').replace(/^﻿/, ''));
-  } catch (_) {
-    return out;
-  }
+  const list = readForCheck(path.join(base, 'plugins', 'installed_plugins.json')).data;
+  if (!list) return out;
   const entries = list && Array.isArray(list.plugins) ? list.plugins : [];
   const mine = entries.find((p) => isObj(p) && typeof p.id === 'string' && /^zn-gate@/.test(p.id) && typeof p.installPath === 'string' &&
     fs.existsSync(path.join(p.installPath, '.zcode-plugin', 'plugin.json')) && fs.existsSync(path.join(p.installPath, 'scripts', 'zn-hook.sh')));
@@ -647,10 +662,7 @@ function pluginState(opts = {}) {
   out.root = mine.installPath;
   out.id = mine.id;
   out.version = typeof mine.version === 'string' ? mine.version : null;
-  let conf = {};
-  try {
-    conf = JSON.parse(fs.readFileSync(path.join(base, 'config.json'), 'utf8').replace(/^﻿/, ''));
-  } catch (_) { conf = {}; }
+  const conf = readForCheck(path.join(base, 'config.json')).data || {};
   const plugins = isObj(conf) && isObj(conf.plugins) ? conf.plugins : {};
   out.pluginsOff = plugins.enabled === false;
   const flags = isObj(plugins.enabledPlugins) ? plugins.enabledPlugins : {};

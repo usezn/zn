@@ -695,14 +695,14 @@ function makeTeamOps(ctx) {
      * effectiveList(list, agent, agentTrusted) -> list with the organization
      * policy applied: each entry gets the settings to enforce, `deny`,
      * `warn` (with the rule's `warnReason`, printable only) and
-     * `orgPending`. In a team, a policy that does not verify (or none yet)
-     * leaves the local settings: the vault copy cannot be edited from outside.
+     * `orgPending`. In a team, no policy yet leaves the local settings; a policy
+     * that does not verify blocks every secret (strict mode) until a sync brings a valid one.
      */
     async effectiveList(list, agent, agentTrusted) {
       const t = await team();
       if (!t) return list;
       const st = await policyState();
-      if (st.state !== 'active' && st.state !== 'expired') return list;
+      if (st.state === 'none') return list;
       const secrets = await state.loadSecrets();
       return list.map((entry) => {
         const eff = effective(entry.name, entry, { policy: st.policy, state: st.state, org: t.org, agent: agent || null, agentTrusted: agentTrusted === true, approvals: secrets.orgApprovals });

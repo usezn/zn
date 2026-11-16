@@ -186,10 +186,10 @@ test('status describes a policy that is missing or does not verify', async () =>
   assert.match(r.stdout, /Policy:       none received yet/);
   fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'invalid', error: 'bad signature' } });
   r = await capture(() => runTeamCommand(['team', 'status']));
-  assert.match(r.stdout, /cached copy does not verify \(bad signature\); run `zn team sync`/);
+  assert.match(r.stdout, /stored copy could not be verified \(bad signature\) -- INVALID: strict mode \(every secret is blocked, nothing is opened\) until a valid policy arrives; run `zn team sync`/);
   fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'invalid' } });
   r = await capture(() => runTeamCommand(['team', 'status']));
-  assert.match(r.stdout, /cached copy does not verify \(invalid\)/);
+  assert.match(r.stdout, /stored copy could not be verified \(invalid\)/);
   fake.teamInfo = async () => ({ ...JOINED, policy: null });
   r = await capture(() => runTeamCommand(['team', 'status']));
   assert.match(r.stdout, /Policy:       none received yet/);

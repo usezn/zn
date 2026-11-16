@@ -195,3 +195,49 @@ test('readClipboard ignores fake clipboard programs on PATH', linuxOnly, () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A clipboard tool that never answers: the real spawnSync runs a program that sleeps, so the timeout is what ends it.
+test('readClipboard passes a 5 second timeout and SIGKILL to each clipboard tool', linuxOnly, () => {
+  const seen = [];
+  const fresh = loadTtyWithSpawn((cmd, args, o) => { seen.push(o); return { status: 0, stdout: 'fake-value\n' }; });
+  assert.equal(fresh.readClipboard(), 'fake-value');
+  assert.equal(seen[0].timeout, 5000);
+  assert.equal(seen[0].killSignal, 'SIGKILL');
+});
+
+test('readClipboard kills a clipboard tool that does not answer and tries the next one', linuxOnly, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-clip-slow-'));
+  const sleeper = path.join(dir, 'sleep-tool');
+  fs.writeFileSync(sleeper, '#!/bin/sh\nexec /bin/sleep 30\n');
+  fs.chmodSync(sleeper, 0o755);
+  const realSpawnSync = childProcess.spawnSync;
+  try {
+    const fresh = loadTtyWithSpawn((cmd, args, o) => (cmd === '/usr/bin/wl-paste'
+      ? realSpawnSync(sleeper, [], o)
+      : { status: 0, stdout: 'fake-value\n' }));
+    const started = Date.now();
+    assert.equal(fresh.readClipboard({ timeoutMs: 300 }), 'fake-value');
+    assert.ok(Date.now() - started < 10000);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readClipboard names the clipboard tools that did not answer and says what to do', linuxOnly, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-clip-slow-'));
+  const sleeper = path.join(dir, 'sleep-tool');
+  fs.writeFileSync(sleeper, '#!/bin/sh\nexec /bin/sleep 30\n');
+  fs.chmodSync(sleeper, 0o755);
+  const realSpawnSync = childProcess.spawnSync;
+  try {
+    const fresh = loadTtyWithSpawn((cmd, args, o) => realSpawnSync(sleeper, [], o));
+    const started = Date.now();
+    assert.throws(
+      () => fresh.readClipboard({ timeoutMs: 200 }),
+      (e) => e.code === 'ZN_UNAVAILABLE' && /wl-paste, xclip, xsel did not answer within 0\.2 seconds/.test(e.message) && /without --clipboard/.test(e.message),
+    );
+    assert.ok(Date.now() - started < 10000);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
