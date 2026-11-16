@@ -186,10 +186,10 @@ test('status describes a policy that is missing or does not verify', async () =>
   assert.match(r.stdout, /Policy:       none received yet/);
   fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'invalid', error: 'bad signature' } });
   r = await capture(() => runTeamCommand(['team', 'status']));
-  assert.match(r.stdout, /cached copy does not verify \(bad signature\); run `zn team sync`/);
+  assert.match(r.stdout, /stored copy could not be verified \(bad signature\) -- INVALID: strict mode \(every secret is blocked, nothing is opened\) until a valid policy arrives; run `zn team sync`/);
   fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'invalid' } });
   r = await capture(() => runTeamCommand(['team', 'status']));
-  assert.match(r.stdout, /cached copy does not verify \(invalid\)/);
+  assert.match(r.stdout, /stored copy could not be verified \(invalid\)/);
   fake.teamInfo = async () => ({ ...JOINED, policy: null });
   r = await capture(() => runTeamCommand(['team', 'status']));
   assert.match(r.stdout, /Policy:       none received yet/);
@@ -437,6 +437,20 @@ test('log export writes OTLP lines to stdout, filtered by --since; no log at all
   assert.ok(r.stdout.length > 0 && r.stdout.length < all, 'the old record is filtered out');
 });
 
+test('log export to stdout over the in-memory cap prints nothing and points to --out', async () => {
+  writeAudit([rec(1, new Date().toISOString()), rec(2, new Date().toISOString())]);
+  const { _internal } = require('../lib/team/cli');
+  _internal.setStdoutExportMax(100);
+  try {
+    const r = await capture(() => runLogExport(['--unverified', '--otlp']));
+    assert.strictEqual(r.code, 1);
+    assert.strictEqual(r.stdout, '');
+    assert.match(r.stderr, /too large to export to the terminal\. Export it to a file with --out FILE\./);
+  } finally {
+    _internal.setStdoutExportMax(64 * 1024 * 1024);
+  }
+});
+
 test('log export to a file reports the count and hash on stderr and keeps the file private', async () => {
   writeAudit([rec(1, new Date().toISOString())]);
   const out = path.join(HOME, 'export.jsonl');
@@ -591,4 +605,21 @@ test('log export with an unlocked vault: the file must be the one that was verif
   assert.match(r.stderr, /changed after the vault verified it/);
   assert.ok(!fs.existsSync(out));
   assert.deepStrictEqual(fs.readdirSync(HOME).filter((n) => n.endsWith('.tmp')), []);
+});
+
+test('log export to stdout writes nothing when the log changed after it was verified, and fails', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  const auditFile = store.paths().auditFile;
+  const bytes = fs.readFileSync(auditFile);
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 1, sha256: sha, bytes: bytes.length });
+  let r = await capture(() => runLogExport(['--otlp']));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(r.stdout.length > 0);
+  fs.appendFileSync(auditFile, JSON.stringify(rec(2, new Date().toISOString())) + '\n');
+  r = await capture(() => runLogExport(['--otlp']));
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /changed after the vault verified it/);
 });

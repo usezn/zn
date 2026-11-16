@@ -22,7 +22,7 @@ One page with every `zn-gate` command, its most useful flags and one example. Ev
 | [`scan`](cli.md#scan) | `--format text\|json\|github`, `--all`, `--include`, `--exclude`, `--include-home`, `--allow-partial`, `--package` | `zn-gate scan ./docs --format json` |
 | [`audit`](cli.md#audit) | `--format text\|json\|sarif`, `--output`, `--fail-on`, `--agents`, `--include-home`, `--approve` | `zn-gate audit . --fail-on high --agents claude,cursor` |
 | [`reach`](cli.md#reach) | `--json`, `--sarif`, `--fail-on`, `--remember`, `--history`, `--max-seconds` | `zn-gate reach . --fail-on high` |
-| [`analyze`](cli.md#analyze) | none | `zn-gate analyze "Summarize this file"` |
+| [`analyze`](cli.md#analyze) | `--key`, `--stage`, `--url`, `--long-input`, `--local-only`, `--verbose`, `--json` | `zn-gate analyze "Summarize this file"` |
 | [`pins`](cli.md#pins) | `approve <server>`, `approve --all` | `zn-gate pins` |
 | [`pins approve`](cli.md#pins-approve) | `--all` | `zn-gate pins approve --all` |
 
@@ -65,7 +65,7 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | [`hook`](cli.md#hook) | none (the agents call it, you do not) | `zn-gate hook <agent>` |
 | [`secrets-mcp`](cli.md#secrets-mcp) | `--agent` | `zn-gate secrets-mcp --agent claude-code` |
 | [`mcp`](cli.md#mcp) | none | `zn-gate mcp` |
-| [`shield`](cli.md#shield) | `-- <command> [args...]` (aliases `mcp-shield`, `wrap`) | `zn-gate shield -- uvx mcp-server-fetch` |
+| [`shield`](cli.md#shield) | `[--shadow] -- <command> [args...]` (aliases `mcp-shield`, `wrap`) | `zn-gate shield -- uvx mcp-server-fetch` |
 
 ## Logs and reports
 

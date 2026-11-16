@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
-from .rules import RULES_VERSION, evaluate, mask_token_runs
+from .rules import RULES_VERSION, evaluate, mask_pii_preview, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
@@ -211,7 +211,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     t0 = time.perf_counter()
     assessment = evaluate(text)
     clean_text, findings = _dlp_redact(text)
-    clean_text = mask_token_runs(clean_text)
+    clean_text = mask_pii_preview(mask_token_runs(clean_text))
     latency_us = (time.perf_counter() - t0) * 1_000_000
 
     if args.json:
@@ -552,7 +552,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ed:
                 user_excluded.add(ed)
 
-    valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
+    # Prompts, docs and configs, plus .py, .ts and .js, which the Python scan has always read (the npm package reads
+    # them only with --code). --code (or --all) adds the rest of the npm source set, so both read the same files then.
+    valid_exts = {".md", ".txt", ".prompt", ".json", ".yaml", ".yml", ".toml", ".env", ".pem", ".key",
+                  ".py", ".ts", ".js"}
+    if getattr(args, "code", False):
+        valid_exts |= {".js", ".ts", ".py", ".sh", ".html", ".go", ".rs"}
     if getattr(args, "include", None):
         for ie in args.include.split(","):
             ie = ie.strip().lower()
@@ -755,6 +760,11 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
             return 0
         else:
+            if res.get("truncated_tail"):
+                print(f"\n{_lead(ALERT, sys.stderr)}Integrity: LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)", file=sys.stderr)
+                print(f"Details: {res.get('error')}", file=sys.stderr)
+                print(f"The first {res.get('verified', 0)} records verified; the last line is incomplete (cut off by a crash, or removed by someone). {recovery_hint()}\n", file=sys.stderr)
+                return 1
             print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
             print(f"{recovery_hint()}\n", file=sys.stderr)
             return 1
@@ -774,7 +784,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
                 return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
-            print(out_content)
+            # The content already ends with a newline (or is empty when the
+            # ledger has no records); print() would add a blank line, which
+            # Node's process.stdout.write does not.
+            sys.stdout.write(out_content)
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
@@ -997,8 +1010,10 @@ def npm_help_message() -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     """The argument parser. Its sub-commands are the commands this package knows."""
+    # No shortened long options: `scan --all` must not silently mean `--allow-partial`.
     parser = argparse.ArgumentParser(
         prog="zn-gate",
+        allow_abbrev=False,
         description="zn deterministic guardrail engine for AI agents and LLM tool calling.",
         epilog="Also: reach --history  which secrets your coding agents kept in their session history "
                "(types and counts, never values) [--json] [--max-seconds N]",
@@ -1009,12 +1024,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(_subparsers=subparsers)
 
     # test command
-    test_parser = subparsers.add_parser("test", help="Test a single text payload against guardrail rules")
+    test_parser = subparsers.add_parser("test", allow_abbrev=False, help="Test a single text payload against guardrail rules")
     test_parser.add_argument("text", help="Prompt or tool argument string to test")
     test_parser.add_argument("--json", action="store_true", help="Output results as JSON")
 
     # analyze command
-    analyze_parser = subparsers.add_parser("analyze", help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
+    analyze_parser = subparsers.add_parser("analyze", allow_abbrev=False, help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
     analyze_parser.add_argument("text", help="Prompt or message to analyze")
     analyze_parser.add_argument("--key", help="API key for zn Cloud Gate")
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")
@@ -1024,33 +1039,34 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--json", action="store_true", help="Output as JSON (the only output format; accepted so existing scripts keep working)")
 
     # scan command
-    scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")
+    scan_parser = subparsers.add_parser("scan", allow_abbrev=False, help="Scan directory or files for injection traps & secret leaks")
     scan_parser.add_argument("path", default=".", nargs="?", help="File or directory path to scan (default: current directory)")
     scan_parser.add_argument("--format", choices=["text", "json", "github"], default="text", help="Output format")
     scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found or files were not read")
     scan_parser.add_argument("--include", help="Comma-separated custom extensions to include (e.g. .custom,.xml)")
     scan_parser.add_argument("--exclude", help="Comma-separated directory names to exclude")
     scan_parser.add_argument("--allow-partial", action="store_true", help="Exit 0 even when some files or folders were not read (they are still listed). Reading no file at all stays an error (exit 3)")
+    scan_parser.add_argument("--code", "--all", dest="code", action="store_true", help="Include source code files in the scan (.js, .ts, .py, .sh, .html, .go, .rs)")
     scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command
-    ev_parser = subparsers.add_parser("evidence", help="Audit cryptographic evidence ledger")
+    ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
     ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
     ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")
     ev_parser.add_argument("--output", help="Write export output to file")
 
     # status command
-    subparsers.add_parser("status", help="Show engine status and configuration")
+    subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")
 
     # stats command
-    st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
+    st_parser = subparsers.add_parser("stats", allow_abbrev=False, help="What zn-gate did on this machine (local counts only)")
     st_parser.add_argument("--days", type=int, default=30, action=_DaysGiven, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     # check command
     subparsers.add_parser(
-        "check",
+        "check", allow_abbrev=False,
         help="Prove the Python guard works on a fake secret (no Node.js, no network)",
         description="Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary "
                     "folder. Prints OK and exits 0 only if the secret is blocked or redacted and the harmless "

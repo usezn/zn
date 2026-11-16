@@ -177,7 +177,7 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and each blocked test request is written to your local decision log (see [what check writes to the log](check.md#what-check-writes-to-the-decision-log)). The only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
@@ -256,7 +256,7 @@ zn-gate scan --package <name>[@version]
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
-- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
+- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; in the npm package, `zn-gate audit --format sarif` covers agent configs and `zn-gate reach --sarif` covers what an agent can reach. Any other value exits `2`.
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
@@ -311,7 +311,7 @@ Exit codes: `0` done, `1` findings meet `--fail-on`, `2` wrong usage or a failur
 zn-gate analyze "<text>"
 ```
 
-Checks a piece of text for prompt injection and prints the answer as JSON. It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
+Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
 
 ### `pins`
 
@@ -348,7 +348,7 @@ The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, 
 zn-gate secret <set|list|rm|allow|approve|import|adopt|log> ...
 ```
 
-Groups the commands below. Run `zn-gate secret --help` for the short usage.
+Groups the commands below. `zn-gate secret --help` prints the general help of zn-gate, not a page about `secret`, so read this section instead. `zn-gate secret set --help` (and the same with `list`, `rm`, `allow`, `approve`, `import` or `adopt`) prints one short line that lists all the `secret` subcommands. Only `zn-gate secret log --help` has a usage of its own.
 
 Aliases: `secrets`.
 
@@ -436,9 +436,9 @@ Aliases: `secret reveal`.
 zn-gate env <shadow|unshadow> ...
 ```
 
-Groups the two commands below. Run `zn-gate env --help` for the short usage.
+Groups the two commands below. `zn-gate env --help` prints the general help of zn-gate, not a page about `env`, so read this section instead. `zn-gate env shadow --help` and `zn-gate env unshadow --help` each print their own usage.
 
-Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--help`; `env shadow --dry-run` also exits `0` once it has printed the preview), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed. This applies to `--dry-run` too: the preview also needs an interactive terminal, so without one it exits `77` and prints no preview.
 
 #### `env shadow`
 
@@ -446,7 +446,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move; it needs an interactive terminal like the real run. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `env unshadow`
 
@@ -618,10 +618,10 @@ Exit codes: it runs until its input is closed, then exits `0`.
 ### `shield`
 
 ```text
-zn-gate shield -- <command> [args...]
+zn-gate shield [--shadow] -- <command> [args...]
 ```
 
-Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
+Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Put `--shadow` before the `--` to run in shadow mode: the shield watches and records but blocks nothing (see [shadow mode](shield.md#shadow-mode-log-without-blocking)). Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
 
 Aliases: `mcp-shield`, `wrap`.
 
@@ -797,10 +797,22 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
 | `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
-| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
+| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--code`, `--all`, `--include-home` | Like `scan` in the npm package, with the same `--all` and `--code` options. One difference: without them the Python scan also reads `.py`, `.ts` and `.js` files, which the npm package reads only with `--code`. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 | `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |
 
 The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+
+## JSON output
+
+When a command prints JSON, the npm and the Python package print the same fields, except for the ones in this table. Read the fields you need by name in scripts. Do not compare whole outputs byte for byte, because some values change on every run.
+
+| Package | Command | Field or behavior | Why it differs |
+|---|---|---|---|
+| Python | `analyze` | `latency_ms` on every answer, and `latency_us` on blocked texts | It is the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. The npm package does not print timings. |
+| Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command runs its self-test instead and prints no JSON. |
+| npm | `stats --json` | `sharing`, `sent_days`, `send_failed` | Sharing pseudonymous counts is an npm-only feature (`stats share`), so only the npm output reports whether sharing is on and which days were sent. |
+
+`analyze --json` is accepted by both packages and changes nothing. Key order can differ between the two packages. `scan --format json` has the same keys in both.

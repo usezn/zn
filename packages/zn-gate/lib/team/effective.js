@@ -32,6 +32,11 @@
  * When the cached policy expired (offline for longer than its lifetime), the
  * strict mode keeps what restricts and withdraws what the organization had
  * opened, approved or not.
+ *
+ * When the stored policy does not verify, its content is not trusted at all
+ * (a copy that fails the signature check may have lost its denies), so the
+ * strict mode blocks every secret until `zn team sync` brings a valid policy.
+ * Nothing is opened and nothing is guessed from the unverified copy.
  */
 
 const { INVISIBLE_ANY_RE } = require('../vault/confirm');
@@ -40,6 +45,8 @@ const RESTRICTIVE_MODE = 'proxy';
 const DEFAULT_ALLOW_IN = ['header'];
 /** Audit reason of a use that a `warn` rule let through. */
 const WARN_REASON = 'policy:warn';
+/** Audit reason of a use blocked because the stored policy does not verify. */
+const INVALID_REASON = 'policy:org_invalid';
 
 function secretMatches(pattern, name) {
   if (pattern === '*') return true;
@@ -72,7 +79,8 @@ const approvalKey = (org, secret, kind, value) => [org, secret, kind, value].joi
  *   {meta, deny, warn, reason?, rule?, warnRule?, warnReason?, pending: [{kind, value}], org?}
  *
  * local: the secret's local settings ({mode, allowHosts, allowCommands, allowIn, ...}).
- * state: 'active' | 'expired' (anything else: the policy is ignored).
+ * state: 'active' | 'expired' | 'invalid' (does not verify: every secret is blocked) | anything else (no
+ *   policy yet: ignored).
  * agent / agentTrusted: which agent is asking, and whether the id comes from
  *   an MCP configuration zn wrote. They only decide which hosts can be offered
  *   for approval; they never lift a restriction.
@@ -87,6 +95,15 @@ function effective(name, local, opts) {
     allowIn: (local && Array.isArray(local.allowIn) && local.allowIn.length) ? local.allowIn : DEFAULT_ALLOW_IN,
   });
   const out = { meta, deny: false, warn: false, pending: [] };
+  // The stored policy does not verify (it was edited, or the pinned key changed): its content cannot be
+  // trusted, not even its denies, and nothing the organization opened may stay open. Rules are unknown, so
+  // every secret is blocked (strict mode) until a valid policy arrives with `zn team sync`.
+  if (o.state === 'invalid') {
+    out.org = o.org;
+    out.deny = true;
+    out.reason = INVALID_REASON;
+    return out;
+  }
   if (!o.policy || (o.state !== 'active' && o.state !== 'expired')) return out;
   out.org = o.org || o.policy.org;
   const all = rulesOf(o.policy);
@@ -194,4 +211,4 @@ function detectorsOf(st) {
   return Array.isArray(st.policy.detectors) ? st.policy.detectors : [];
 }
 
-module.exports = { effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches, warnNotice, WARN_REASON };
+module.exports = { effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches, warnNotice, WARN_REASON, INVALID_REASON };

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.1"
+COMMAND_RULES_VERSION = "2026-11-16.26"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -254,6 +254,11 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
             if cur is None:
                 cur = []
             i += 1
+            continue
+        if ch == "#" and cur is None:
+            # An unquoted word that starts with # opens a comment: the rest of the line is not part of the command.
+            j = s.find("\n", i)
+            i = n if j < 0 else j
             continue
         if ch == "`" or (ch == "$" and i + 1 < n and s[i + 1] == "("):
             if cur is None:
@@ -588,7 +593,7 @@ def _add_dir(dirs: List[str], w: Optional[str]) -> None:
 _WRAPPER_CAP_NAMES = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
 
 
-def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool, List[str]]:
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str], bool, List[str], List[str]]:
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
     keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
     followed were met (the line is then refused), the strings of env -S / --split-string, and whether the chain may not
@@ -597,6 +602,9 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
     guard = 0
     chdir: List[str] = []
     splits: List[str] = []
+    # Where the words after the last -S value start: the string is read in place of the option, so what follows it
+    # (options env had taken, such as the -rf of env -S "-S rm" -rf DIR) belongs to the command the string names.
+    split_end = -1
     overflow = False
     chain = {"unsure": False}
     # Where the first wrapper starts: when the chain is unsure, the words it skipped as option values are read as commands too.
@@ -655,14 +663,17 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str],
                 i += 1
                 if not f.startswith("-"):
                     continue
+                before = len(splits)
                 i = _env_option(f, args, i, chdir, splits)
+                if len(splits) > before:
+                    split_end = i
             continue
         # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
         if name in _WRAPPERS:
             i = _skip_wrapper(args, i, name, chain)
             continue
         break
-    return args[i:], chdir, overflow, splits, chain["unsure"], (args[first:] if first >= 0 else args)
+    return args[i:], chdir, overflow, splits, chain["unsure"], (args[first:] if first >= 0 else args), (args[split_end:] if split_end >= 0 else [])
 
 
 _ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
@@ -1031,7 +1042,7 @@ def _from_cwd(cwd: Any, word: str) -> str:
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
-    args, chdir, overflow, splits, unsure, chain_words = _unwrap_dir(words)
+    args, chdir, overflow, splits, unsure, chain_words, split_tail = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
     if chdir:
@@ -1040,8 +1051,12 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             return _OVERFLOW
     # env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by
     # the words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
-    if splits and depth < _MAX_DEPTH:
-        tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in args)
+    # Strings inside strings (env -S "env -S 'rm -rf /home/alice'", env -S "-S rm -rf /home/alice") are read again the same
+    # way, up to _MAX_DEPTH levels; a deeper one is refused, not skipped.
+    if splits and depth >= _MAX_DEPTH:
+        return _OVERFLOW
+    if splits:
+        tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in split_tail)
         # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
         text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
         hit = _analyze("env " + text + " " + tail, depth + 1, known)
@@ -1122,19 +1137,36 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
-        for w in rest:
+        # GNU find takes -P, -L, -H, -O<level> and -D <options> before the starting paths; they do not end the list of paths.
+        first = 0
+        while first < len(rest):
+            if re.match(r"^-(?:[PLH]|O\d*)\Z", rest[first]):
+                first += 1
+            elif rest[first] == "-D":
+                first += 2
+            else:
+                break
+        for w in rest[first:]:
             if w.startswith("-") or w == "(" or w == "!":
                 break
             paths.append(w)
         # After a cd to a protected folder, a find with no path starts at ".".
         if known and not paths:
             paths.append(".")
+        # -execdir, -ok and -okdir run the program like -exec does (in the folder of each file, or after a prompt).
         delete = "-delete" in rest or any(
-            w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
+            re.match(r"^-(?:exec|execdir|ok|okdir)\Z", w)
+            and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
+        # From the filesystem root even a filtered delete is refused: a test does not make that safe.
         filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
+        from_root = any(_dangerous_path(_from_cwd(known, w)) == "root" for w in paths)
+        if delete and (not filtered or from_root) and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
+            return "rm_root_home"
+        # -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
+        # over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
+        if delete and "-files0-from" in rest:
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
@@ -1264,7 +1296,7 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf, _spl, unsure, _all = _unwrap_dir(_strip_redirects(words))
+        a, d, _ovf, _spl, unsure, _all, _tail = _unwrap_dir(_strip_redirects(words))
         a = _pipe_args(a, unsure)
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]

@@ -50,10 +50,18 @@ function shownPath(p) {
   return m ? path.join(path.dirname(s), m[1]) : s;
 }
 
+/* Node has no name for errno 122 (EDQUOT) on Linux: a full quota comes back as code 'UNKNOWN' with errno -122. */
+function fsCodeOf(err, platform) {
+  const code = err && typeof err.code === 'string' ? err.code : '';
+  const edquot = require('os').constants.errno.EDQUOT;
+  if (code === 'UNKNOWN' && platform === 'linux' && typeof edquot === 'number' && err.errno === -edquot) return 'EDQUOT';
+  return code;
+}
+
 /* The plain text of a file system error (EACCES, ENOENT, ENOSPC...), or null for any other error. `file` names the
  * path when the error does not carry one. The code is added only with ZN_VERBOSE=1 or DEBUG=zn. */
 function fsErrorText(err, file, env = process.env, platform = process.platform) {
-  let code = err && typeof err.code === 'string' ? err.code : '';
+  let code = fsCodeOf(err, platform);
   const shown = shownPath((err && err.path) || file || 'a file');
   // Windows answers a path of 260 characters or more with "not found" or "invalid argument", not with ENAMETOOLONG.
   if (platform === 'win32' && shown.length >= 260 && ['ENOENT', 'EINVAL'].includes(code)) code = 'ENAMETOOLONG';
