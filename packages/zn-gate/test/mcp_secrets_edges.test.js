@@ -154,3 +154,43 @@ test('offsets count UTF-16 code units, so an emoji before a credential counts as
   const [sp] = mcp.findMcpConfigSecretSpans(text);
   assert.equal(text.slice(sp.start, sp.end), FAKE);
 });
+
+
+test('an argument longer than 4096 characters is still checked', () => {
+  const long = 'sk-test-FAKE' + FAKE.repeat(400);
+  const flag = '{"args": ["--api-key=' + long + '"]}';
+  assert.deepEqual(kinds(flag), [[1, 'argument', 'api-key']]);
+  const [sp] = mcp.findMcpConfigSecretSpans(flag);
+  assert.equal(flag.slice(sp.start, sp.end), long);
+  for (const arg of ['Authorization: Bearer ' + long, '--header=Authorization: Bearer ' + long, 'X-Api-Key: ' + long]) {
+    const text = '{"args": ["' + arg + '"]}';
+    assert.deepEqual(kinds(text).map((k) => k[1]), ['header'], arg.slice(0, 30));
+    assert.ok(!mcp.maskMcpValues(text, mcp.findMcpConfigSecretSpans(text)).includes(FAKE));
+  }
+  for (const arg of ['--verbose=' + 'x'.repeat(6000), '--name=' + 'word '.repeat(2000), 'Authorization: ${TOKEN}' + ' '.repeat(6000), 'a'.repeat(9000)]) {
+    assert.deepEqual(kinds('{"args": ["' + arg + '"]}'), [], arg.slice(0, 20));
+  }
+});
+
+test('crafted arguments of 200k characters finish in under a second', () => {
+  const n = 200000;
+  const args = {
+    'flag value': '--api-key=' + 'a'.repeat(n),
+    'flag then equals': '--x' + '='.repeat(n),
+    dashes: '--' + '-'.repeat(n),
+    'spaces after header name': 'authorization' + ' '.repeat(n) + 'x',
+    colons: 'cookie:' + ' :'.repeat(n / 2),
+    'tabs after colon': 'x-api-key:' + '\t'.repeat(n),
+    'url params': 'https://h.example.com/?' + '&token='.repeat(Math.floor(n / 7)),
+  };
+  for (const [name, arg] of Object.entries(args)) {
+    const text = JSON.stringify({ args: [arg] });
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t0 = process.hrtime.bigint();
+      mcp.findMcpConfigSecretSpans(text);
+      best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e9);
+    }
+    assert.ok(best < 1, `${name}: ${best.toFixed(3)} s`);
+  }
+});

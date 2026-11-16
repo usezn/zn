@@ -321,8 +321,9 @@ function pair(name, value, at, add, ownLogin) {
 }
 
 function argument(s, at, add, setPending) {
-  const small = s.length <= 4096;
-  const eq = small ? FLAG_EQ.exec(s) : null;
+  // Every argument is checked, however long: the patterns are anchored at the
+  // start with bounded repeats, so their cost grows with the length only once.
+  const eq = FLAG_EQ.exec(s);
   if (eq) {
     const valueAt = at + eq[1].length + 1;
     if (isSecretName(normalizeName(eq[1]))) {
@@ -341,7 +342,7 @@ function argument(s, at, add, setPending) {
     if (isSecretName(normalizeName(s))) setPending(s.replace(/^-+/, ''));
     return;
   }
-  const h = small ? HEADER_ARG.exec(s) : null;
+  const h = HEADER_ARG.exec(s);
   if (h) {
     if (holdsCredential(h[2], true)) add('header', h[1], at + s.length - h[2].length, at + s.length);
     return;

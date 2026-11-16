@@ -418,8 +418,9 @@ def _pair(name: str, value: str, at: int, add: _AddFn, own_login: bool) -> None:
 
 
 def _argument(s: str, at: int, add: _AddFn, set_pending: Callable[[str], None]) -> None:
-    short = len(s) <= 4096
-    eq = _FLAG_EQ.fullmatch(s) if short else None
+    # Every argument is checked, however long: the patterns are anchored at the
+    # start with bounded repeats, so their cost grows with the length only once.
+    eq = _FLAG_EQ.fullmatch(s)
     if eq:
         value_at = at + len(eq.group(1)) + 1
         if is_secret_name(normalize_name(eq.group(1))):
@@ -435,7 +436,7 @@ def _argument(s: str, at: int, add: _AddFn, set_pending: Callable[[str], None]) 
         if is_secret_name(normalize_name(s)):
             set_pending(s.lstrip("-"))
         return
-    h = _HEADER_ARG.fullmatch(s) if short else None
+    h = _HEADER_ARG.fullmatch(s)
     if h:
         if _holds_credential(h.group(2), True):
             add("header", h.group(1), at + len(s) - len(h.group(2)), at + len(s))

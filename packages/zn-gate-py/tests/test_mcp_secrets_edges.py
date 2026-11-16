@@ -259,6 +259,7 @@ def _parity_corpus() -> List[Dict[str, Any]]:
         "empty value and equals": '{"A_TOKEN": "", "B_TOKEN" == "%s", "C_TOKEN": = "%s"}' % (v, v),
         "long bare word": "a" * 200 + ' = "%s"' % v,
         "long arg": '{"args": ["--token=' + "x" * 5000 + '"]}',
+        "long header arg": '{"args": ["Authorization: Bearer %s", "--api-key=%s"]}' % (v * 500, v * 500),
     }
     files = ["", ".claude.json", "C:\\Users\\Ana María\\.claude.json", "/home/u/My Dir/.mcp.json", "/home/u/日本/.codex/config.toml"]
     cases = [{"name": n, "text": t, "file": f} for n, t in texts.items() for f in files]
@@ -271,6 +272,56 @@ def _parity_corpus() -> List[Dict[str, Any]]:
 def _without_npm_note(text):
     """The Python hint adds one note that says the vault commands are npm-only; the Node.js hint has no such note."""
     return text.replace(mcp.NPM_ONLY_NOTE, "")
+
+
+class TestLongArguments(unittest.TestCase):
+    """An argument longer than 4096 characters is still checked, and crafted long
+    arguments take linear time."""
+
+    LONG = "sk-test-FAKE" + FAKE * 400  # about 8,000 characters
+
+    def test_a_long_flag_value_is_reported(self):
+        text = '{"args": ["--api-key=%s"]}' % self.LONG
+        self.assertEqual(_kinds(text), [(1, "argument", "api-key")])
+        sp = mcp.find_mcp_config_secret_spans(text)[0]
+        self.assertEqual(text[sp["start"]:sp["end"]], self.LONG)
+
+    def test_a_long_header_argument_is_reported(self):
+        for arg in ("Authorization: Bearer " + self.LONG, "--header=Authorization: Bearer " + self.LONG, "X-Api-Key: " + self.LONG):
+            with self.subTest(arg=arg[:30]):
+                text = '{"args": ["%s"]}' % arg
+                self.assertEqual([k for _, k, _ in _kinds(text)], ["header"])
+                masked = mcp.mask_mcp_values(text, mcp.find_mcp_config_secret_spans(text))
+                self.assertNotIn(FAKE, masked)
+
+    def test_long_arguments_that_hold_no_credential_report_nothing(self):
+        for arg in ("--verbose=" + "x" * 6000, "--name=" + "word " * 2000, "Authorization: ${TOKEN}" + " " * 6000, "a" * 9000):
+            with self.subTest(arg=arg[:20]):
+                self.assertEqual(_kinds('{"args": ["%s"]}' % arg), [])
+
+    def test_crafted_arguments_of_200k_characters_finish_in_under_a_second(self):
+        n = 200_000
+        args = {
+            "flag value": "--api-key=" + "a" * n,
+            "flag then equals": "--x" + "=" * n,
+            "dashes": "--" + "-" * n,
+            "spaces after header name": "authorization" + " " * n + "x",
+            "colons": "cookie:" + " :" * (n // 2),
+            "tabs after colon": "x-api-key:" + "\t" * n,
+            "url params": "https://h.example.com/?" + "&token=" * (n // 7),
+        }
+        for name, arg in args.items():
+            text = json.dumps({"args": [arg]})
+            with self.subTest(case=name):
+                best = min(_elapsed(lambda: mcp.find_mcp_config_secret_spans(text)) for _ in range(3))
+                self.assertLess(best, 1.0)
+
+
+def _elapsed(fn):
+    import time
+    start = time.perf_counter()
+    fn()
+    return time.perf_counter() - start
 
 
 class TestNodeParity(unittest.TestCase):
