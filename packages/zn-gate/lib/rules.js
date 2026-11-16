@@ -8,7 +8,7 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-16.14
+ * RULES_VERSION: 2026-11-16.20
  */
 
 const RULES_VERSION = '2026-11-16.20';
