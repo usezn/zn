@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.30';
+const POLICY_RULES_VERSION = '2026-11-16.32';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1120,6 +1120,20 @@ const TOO_MANY_TARGETS_NOTICE = {
   deny: 'zn: this command names too many files to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to split the command or run it themselves.',
 };
 
+// Interpreter code that zn cannot read in full (over the scan cap, or a target built with escapes) gets the same decision.
+const UNREADABLE_CODE_NOTICES = {
+  long: {
+    file: 'code too long',
+    ask: 'zn: the code in this command is too long for zn to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+    deny: 'zn: the code in this command is too long for zn to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to split the command or run it themselves.',
+  },
+  name: {
+    file: 'unreadable file name',
+    ask: 'zn: this command writes to a file whose name zn cannot read from the code, so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+    deny: 'zn: this command writes to a file whose name zn cannot read from the code, so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to spell the file name plainly.',
+  },
+};
+
 // Words that run the next command: the command word is the first one after them (and their options).
 // Each maps to the options that take a value.
 const INSTRUCTION_WRAPPERS = new Map([
@@ -1189,7 +1203,8 @@ function downloadTargets(name, rest) {
 // file name given straight to a write call counts; a name held in a variable is not followed. Every quantifier is
 // bounded, so the scan is linear in the code (at most ONELINER_CODE_MAX characters of it).
 const ONELINER_CODE_MAX = 20000;
-const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([^'"\\\r\n]{1,300})\1`;
+// The name may hold backslashes (a Windows path: r'.\AGENTS.md', 'C:\\proj\\CLAUDE.md'); they are read as separators.
+const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([^'"\r\n]{1,300})\1`;
 // open('NAME', 'w') and io.open(...): a write only when the mode is a literal holding w, a, x or +.
 const ONELINER_PY_OPEN_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])open\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g');
 // Path('NAME').open('w'), also pathlib.Path(...).
@@ -1210,10 +1225,24 @@ function pythonModeWrites(tail, firstRe) {
   return /[wax+]/.test(mode);
 }
 
-/** The quoted file names that python -c or node -e code writes to (a read, or a name that is not quoted, is left out). */
+// Backslash escapes that spell other characters (\x41, \u0041, \N{...}, octal): the name they build cannot be read without running the code.
+const ONELINER_NAME_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f{]|U[0-9A-Fa-f]|N\{|[0-7]{3})/;
+
+/** A quoted name from one-liner code as a path: Windows separators (single or doubled) become slashes. */
+function oneLinerNamePath(name) {
+  return name.replace(/\\+/g, '/');
+}
+
+/**
+ * The quoted file names that python -c or node -e code writes to (a read, or a name that is not quoted, is left out).
+ * `.undecidable` is set to 'long' when the code is longer than the scan covers, or to 'name' when a quoted target
+ * is spelled with escapes that build another name: neither can be shown to leave the instruction files alone.
+ */
 function oneLinerWriteTargets(kind, code) {
-  const text = String(code).slice(0, ONELINER_CODE_MAX);
+  const whole = String(code);
+  const text = whole.slice(0, ONELINER_CODE_MAX);
   const out = [];
+  if (whole.length > ONELINER_CODE_MAX) out.undecidable = 'long';
   const full = () => out.length >= INSTRUCTION_CHECKS_MAX;
   if (kind === 'node') {
     for (const m of text.matchAll(ONELINER_NODE_RE)) { out.push(m[2]); if (full()) break; }
@@ -1227,6 +1256,10 @@ function oneLinerWriteTargets(kind, code) {
       if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_FIRST_RE)) out.push(m[2]);
       if (full()) break;
     }
+  }
+  for (let i = 0; i < out.length; i++) {
+    if (ONELINER_NAME_ESCAPE_RE.test(out[i]) && !out.undecidable) out.undecidable = 'name';
+    out[i] = oneLinerNamePath(out[i]);
   }
   return out;
 }
@@ -1287,7 +1320,16 @@ function instructionWriteInWords(readings, opts) {
       const oneLiner = at >= 0 && /^(?:py|python|pypy|node)/.test(progs[at]) ? require('../destructive').interpreterKind(progs[at]) : '';
       if (oneLiner === 'py' || oneLiner === 'node') {
         // python -c / node -e: a quoted instruction file name given to a write call in the code.
-        for (const code of require('../destructive').interpreterCode(oneLiner, seg.slice(at + 1).map((x) => x.text))) candidates.push(...oneLinerWriteTargets(oneLiner, code));
+        for (const code of require('../destructive').interpreterCode(oneLiner, seg.slice(at + 1).map((x) => x.text))) {
+          const found = oneLinerWriteTargets(oneLiner, code);
+          // A real instruction file named in the code is reported first; code zn cannot read in full is asked about after it.
+          for (const t of found) {
+            const n = instructionWriteNotice(t, opts);
+            if (n) return n;
+          }
+          if (found.undecidable) return UNREADABLE_CODE_NOTICES[found.undecidable];
+          candidates.push(...found);
+        }
       } else if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
         candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
       } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {

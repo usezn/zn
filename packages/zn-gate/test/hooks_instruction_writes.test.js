@@ -294,3 +294,60 @@ test('python -c and node -e code that only reads, or writes another file, is all
     assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
   }
 });
+
+test('one-liner code over the scan cap asks (denies in strict mode), also when padded before the write; benign code under the cap is allowed', async (t) => {
+  const env = setup(t);
+  const strict = setup(t, { hooks: { agentInstructionWrites: 'deny' } });
+  const write = `open('AGENTS.md','w').write('Example')`;
+  const padded = `python3 -c "${' '.repeat(20001)}${write}"`;
+  const direct = `python3 -c "${write}"`;
+  assert.equal((await decide(env, 'Bash', { command: direct })).decision, 'ask');
+  const r = await decide(env, 'Bash', { command: padded });
+  assert.equal(r.decision, 'ask');
+  assert.match(r.reason, /too long for zn to check/);
+  const s = await decide(strict, 'Bash', { command: padded });
+  assert.equal(s.decision, 'deny');
+  assert.match(s.reason, /too long for zn to check/);
+  const nodePadded = `node -e "${' '.repeat(20001)}require('fs').writeFileSync('AGENTS.md','Example')"`;
+  assert.equal((await decide(env, 'Bash', { command: nodePadded })).decision, 'ask');
+  // Benign long code with no instruction file name, under the cap: allowed.
+  const under = `python3 -c "${'x=1;'.repeat(4000)}print(x)"`;
+  assert.equal((await decide(env, 'Bash', { command: under })).decision, 'allow');
+  // Benign code over the cap cannot be checked in full, so it asks too (documented fail-closed behaviour).
+  const over = `python3 -c "${'x=1;'.repeat(6000)}print(x)"`;
+  assert.equal((await decide(env, 'Bash', { command: over })).decision, 'ask');
+  assert.equal((await decide(strict, 'Bash', { command: over })).decision, 'deny');
+  const off = setup(t, { hooks: { agentInstructionWrites: 'off' } });
+  assert.equal((await decide(off, 'Bash', { command: over })).decision, 'allow');
+});
+
+test('one-liner writes to a quoted Windows path (raw or escaped backslashes) ask; other Windows names and unreadable escapes are handled', async (t) => {
+  const env = setup(t);
+  const strict = setup(t, { hooks: { agentInstructionWrites: 'deny' } });
+  const asks = [
+    String.raw`python3 -c 'open(r".\AGENTS.md","w")'`,
+    String.raw`python3 -c "open(r'.\AGENTS.md','w')"`,
+    String.raw`python3 -c 'open("C:\\proj\\CLAUDE.md","w")'`,
+    String.raw`python3 -c 'open(r"C:\proj\sub\CLAUDE.md","a")'`,
+    String.raw`python3 -c 'from pathlib import Path; Path(r"..\GEMINI.md").write_text("Example")'`,
+    String.raw`python3 -c 'open(r".cursor\rules\x.mdc","w")'`,
+    String.raw`node -e 'require("fs").writeFileSync("C:\\proj\\AGENTS.md","Example")'`,
+    String.raw`node -e 'require("fs").appendFileSync(".\\CLAUDE.md","Example")'`,
+    // A name spelled with escapes cannot be read without running the code: ask.
+    String.raw`python3 -c 'open("AGENT\x53.md","w")'`,
+    String.raw`node -e 'require("fs").writeFileSync("AGENT\u0053.md","Example")'`,
+  ];
+  for (const command of asks) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'ask', command);
+    assert.equal((await decide(strict, 'Bash', { command })).decision, 'deny', command);
+  }
+  const allows = [
+    String.raw`python3 -c 'open("C:\\proj\\notes.txt","w")'`,
+    String.raw`python3 -c 'open(r".\docs\CLAUDE.md.txt","w")'`,
+    String.raw`python3 -c 'print(open(r".\AGENTS.md").read())'`,
+    String.raw`node -e 'require("fs").writeFileSync("C:\\proj\\notes.txt","Example")'`,
+  ];
+  for (const command of allows) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
