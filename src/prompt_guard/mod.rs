@@ -119,13 +119,32 @@ fn forget_instruction_base() -> String {
 /// True when the text before a "forget ..." match ends with a negation word.
 fn forget_negated(before: &str) -> bool {
     let b = before.to_ascii_lowercase();
-    if ["n't ", "n\u{2019}t "].iter().any(|w| b.ends_with(w)) {
+    if ["n't ", "n\u{2019}t ", "n't ever ", "n\u{2019}t ever "]
+        .iter()
+        .any(|w| b.ends_with(w))
+    {
         return true;
     }
-    // A negation word counts only as a whole word: "however forget ..." and "knot forget ..." are not negated.
-    ["not ", "never ", "ever ", "dont "].iter().any(|w| {
+    // A negation counts only as whole words: "however forget ..." and "knot forget ..." are not negated.
+    // A bare "not" ("why not forget ...") and "ever" ("if you ever forget ...") are not negations of the
+    // request, so they do not count.
+    [
+        "do not ",
+        "does not ",
+        "did not ",
+        "will not ",
+        "must not ",
+        "should not ",
+        "never ",
+        "dont ",
+    ]
+    .iter()
+    .any(|w| {
         b.strip_suffix(w).is_some_and(|rest| {
-            !rest.chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            !rest
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
         })
     })
 }
