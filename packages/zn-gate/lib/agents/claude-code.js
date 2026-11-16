@@ -797,8 +797,9 @@ function isInstalledZnServer(s, sub, opts = {}) {
 function launcherEnvIsClean(s, opts, files) {
   const win = process.platform === 'win32';
   const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
+  const exe = require('../exe');
   const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
-  if (files.some((f) => places.some((d) => inside(realOf(f) || path.resolve(f), d)))) return false;
+  if (files.some((f) => exe.inPlaces(f, places) || places.some((d) => inside(realOf(f) || path.resolve(f), d)))) return false;
   // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, no LD_PRELOAD, LD_AUDIT, LD_LIBRARY_PATH, DYLD_* or OPENSSL_CONF (they load code into any program), and no folder to run in
   // that is inside the project.
   const env = s.env && typeof s.env === 'object' ? Object.keys(s.env) : [];
@@ -806,7 +807,7 @@ function launcherEnvIsClean(s, opts, files) {
   if (s.cwd !== undefined) {
     if (typeof s.cwd !== 'string' || !path.isAbsolute(s.cwd)) return false;
     const where = realOf(s.cwd) || (win ? path.resolve(s.cwd).toLowerCase() : path.resolve(s.cwd));
-    if (places.some((d) => inside(where, d))) return false;
+    if (exe.inPlaces(where, places)) return false;
   }
   return true;
 }

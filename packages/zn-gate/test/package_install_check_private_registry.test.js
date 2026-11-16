@@ -187,3 +187,118 @@ test('an inline assignment of any variable makes the line not plain: offline nam
   assert.deepEqual(await askedFor('FOO=bar pip install requests'), []);
   assert.deepEqual(pc.installsOf('FOO=bar pip install requests').map((i) => i.name), ['requests']);
 });
+
+// uv index tables and the Windows uv.toml locations (opt-in online mode only, no network).
+const fs = require('node:fs');
+const os = require('node:os');
+const pathMod = require('node:path');
+function tmpDir(files) {
+  const dir = fs.mkdtempSync(pathMod.join(process.env.TMPDIR || os.tmpdir(), 'zn-uv-'));
+  for (const [name, text] of Object.entries(files || {})) {
+    const f = pathMod.join(dir, name);
+    fs.mkdirSync(pathMod.dirname(f), { recursive: true });
+    fs.writeFileSync(f, text);
+  }
+  return dir;
+}
+const NOWHERE = tmpDir({});
+const priv = (opts) => reg.privateRegistry('pypi', Object.assign({ home: NOWHERE, cwd: NOWHERE, env: {} }, opts));
+
+test('uv.toml [[index]] table with a private url is private', () => {
+  const cwd = tmpDir({ 'uv.toml': '[[index]]\nname = "corp"\nurl = "' + P + '"\ndefault = true\n' });
+  assert.equal(priv({ cwd }), true);
+  const explicit = tmpDir({ 'uv.toml': '[[index]]\nname = "corp"\nexplicit = true\nurl = "' + P + '"\n' });
+  assert.equal(priv({ cwd: explicit }), true);
+});
+
+test('uv.toml [[index]] pointing only at pypi.org is not private', () => {
+  const cwd = tmpDir({ 'uv.toml': '# comment\n[[index]]\nname = "pypi-mirror"\nurl = "https://pypi.org/simple"\n' });
+  assert.equal(priv({ cwd }), false);
+});
+
+test('uv.toml [[index]] with a pypi table and a private table is private', () => {
+  const cwd = tmpDir({ 'uv.toml': '[[index]]\nurl = "https://pypi.org/simple"\n\n[[index]]\nurl = "' + P + '"\n' });
+  assert.equal(priv({ cwd }), true);
+});
+
+test('pyproject [[tool.uv.index]] with a private url is private; pypi only is not', () => {
+  const cwd = tmpDir({ 'pyproject.toml': '[project]\nname = "x"\n\n[[tool.uv.index]]\nname = "corp"\nurl = "' + P + '"\n' });
+  assert.equal(priv({ cwd }), true);
+  const pub = tmpDir({ 'pyproject.toml': '[project]\nname = "x"\nurl = "https://example.invalid"\n\n[[tool.uv.index]]\nurl = "https://pypi.org/simple"\n' });
+  assert.equal(priv({ cwd: pub }), false);
+});
+
+test('pyproject [tool.uv] index-url and extra-index-url are private', () => {
+  const a = tmpDir({ 'pyproject.toml': '[tool.uv]\nindex-url = "' + P + '"\n' });
+  assert.equal(priv({ cwd: a }), true);
+  const b = tmpDir({ 'pyproject.toml': '[tool.uv]\nextra-index-url = ["' + P + '"]\n' });
+  assert.equal(priv({ cwd: b }), true);
+});
+
+test('Windows uv.toml under APPDATA and ProgramData is found', () => {
+  const body = '[[index]]\nurl = "' + P + '"\n';
+  const appdata = tmpDir({ 'uv/uv.toml': body });
+  assert.equal(priv({ env: { APPDATA: appdata } }), true, 'APPDATA uv.toml');
+  const programData = tmpDir({ 'uv/uv.toml': body });
+  assert.equal(priv({ env: { ProgramData: programData } }), true, 'ProgramData uv.toml');
+  assert.equal(priv({ env: { APPDATA: tmpDir({ 'uv/uv.toml': '[[index]]\nurl = "https://pypi.org/simple"\n' }) } }), false);
+});
+
+test('UV_CONFIG_FILE with an index table, and UV_INDEX env names, are private', () => {
+  const dir = tmpDir({ 'custom.toml': '[[index]]\nurl = "' + P + '"\n' });
+  assert.equal(priv({ env: { UV_CONFIG_FILE: pathMod.join(dir, 'custom.toml') } }), true);
+  assert.equal(priv({ env: { UV_INDEX: P } }), true);
+  assert.equal(priv({ env: { UV_INDEX_CORP: P } }), true);
+  assert.equal(priv({ env: { UV_DEFAULT_INDEX: P } }), true);
+  assert.equal(priv({ env: { UV_EXTRA_INDEX_URL: P } }), true);
+});
+
+test('pyproject poetry and pdm sources, and bare index keys outside tool.uv, are private', () => {
+  const poetry = tmpDir({ 'pyproject.toml': '[[tool.poetry.source]]\nname = "corp"\nurl = "' + P + '"\npriority = "primary"\n' });
+  assert.equal(priv({ cwd: poetry }), true, 'poetry source');
+  const pdm = tmpDir({ 'pyproject.toml': '[[tool.pdm.source]]\nname = "corp"\nurl = "' + P + '"\n' });
+  assert.equal(priv({ cwd: pdm }), true, 'pdm array source');
+  const pdmTable = tmpDir({ 'pyproject.toml': '[tool.pdm.source]\nname = "corp"\nurl = "' + P + '"\n' });
+  assert.equal(priv({ cwd: pdmTable }), true, 'pdm table source');
+  const bare = tmpDir({ 'pyproject.toml': '[tool.other]\nindex-url = "' + P + '"\n' });
+  assert.equal(priv({ cwd: bare }), true, 'bare index-url outside tool.uv');
+  const pub = tmpDir({ 'pyproject.toml': '[[tool.poetry.source]]\nname = "pypi"\nurl = "https://pypi.org/simple"\n\n[[tool.uv.index]]\nurl = "https://pypi.org/simple"\n' });
+  assert.equal(priv({ cwd: pub }), false, 'pypi only');
+});
+
+test('npm global config under the Windows default prefix (APPDATA npm) is found', () => {
+  const appdata = tmpDir({ 'npm/etc/npmrc': 'registry=' + N + '\n' });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: NOWHERE, env: { APPDATA: appdata } }), true);
+  const clean = tmpDir({ 'npm/etc/npmrc': 'registry=https://registry.npmjs.org/\n' });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: NOWHERE, env: { APPDATA: clean } }), false);
+});
+
+test('a deep folder tree is walked to the git root, and an unbounded walk fails closed', () => {
+  const top = tmpDir({ '.git/HEAD': 'ref: x\n', '.npmrc': 'registry=' + N + '\n' });
+  let deep = top;
+  for (let i = 0; i < 30; i++) deep = pathMod.join(deep, 'd' + i);
+  fs.mkdirSync(deep, { recursive: true });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: deep, env: {} }), true, 'private .npmrc 30 levels up');
+  const plain = tmpDir({ '.git/HEAD': 'ref: x\n' });
+  let deep2 = plain;
+  for (let i = 0; i < 30; i++) deep2 = pathMod.join(deep2, 'd' + i);
+  fs.mkdirSync(deep2, { recursive: true });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: deep2, env: {} }), false, 'clean tree, boundary reached');
+  let endless = tmpDir({});
+  for (let i = 0; i < 70; i++) endless = pathMod.join(endless, 'e' + i);
+  fs.mkdirSync(endless, { recursive: true });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: endless, env: {} }), true, 'bound hit without a boundary');
+  assert.equal(reg.privateRegistry('pypi', { home: NOWHERE, cwd: endless, env: {} }), true, 'same for pypi');
+});
+
+test('a settings file larger than the read limit counts as private', () => {
+  const pad = '# ' + 'x'.repeat(70000) + '\n';
+  const npm = tmpDir({ '.git/HEAD': 'x', '.npmrc': pad + 'registry=' + N + '\n' });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: npm, env: {} }), true, 'npmrc');
+  const pip = tmpDir({ '.git/HEAD': 'x', 'pip.conf': pad + '[global]\nindex-url = ' + P + '\n' });
+  assert.equal(reg.privateRegistry('pypi', { home: NOWHERE, cwd: pip, env: {} }), true, 'pip.conf');
+  const toml = tmpDir({ '.git/HEAD': 'x', 'pyproject.toml': pad + '[[tool.uv.index]]\nurl = "' + P + '"\n' });
+  assert.equal(reg.privateRegistry('pypi', { home: NOWHERE, cwd: toml, env: {} }), true, 'pyproject');
+  const small = tmpDir({ '.git/HEAD': 'x', '.npmrc': '# small\n' });
+  assert.equal(reg.privateRegistry('npm', { home: NOWHERE, cwd: small, env: {} }), false, 'small clean file');
+});

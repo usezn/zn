@@ -15,7 +15,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
-const SKIP = { skip: process.platform === 'win32' };
+const SKIP = { skip: process.platform === 'win32' && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' };
 
 function setup(t, agents) {
   const home = tempDir(t, 'zn-hooks-sum-home-');

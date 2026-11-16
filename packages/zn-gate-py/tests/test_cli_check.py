@@ -6,6 +6,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from zn_gate import cli
+from zn_gate.shell_names import npx_name
 
 FAKE = "AKIA" + "ZNTESTFAKE" + "000000"
 
@@ -22,7 +23,7 @@ class TestCheckCommand(unittest.TestCase):
         code, text = run_check()
         self.assertEqual(code, 0, text)
         self.assertTrue(any(l.startswith("OK:") for l in text.splitlines()), text)
-        self.assertIn("npx -y zn-gate check", text)
+        self.assertIn(npx_name() + " -y zn-gate check", text)
         self.assertIn("REDACTED", text)
 
     def test_output_never_has_the_full_fake_secret(self):
@@ -102,9 +103,9 @@ class TestCheckCommand(unittest.TestCase):
 
     def test_help_points_to_npm_for_agent_hooks(self):
         sub = cli.build_parser().get_default("_subparsers").choices["check"]
-        text = " ".join(sub.format_help().split())
+        text = " ".join(sub.format_help().split()).replace("zn- gate", "zn-gate")  # argparse may wrap at the hyphen
         self.assertIn("Python guard only", text)
-        self.assertIn("npx -y zn-gate check", text)
+        self.assertIn(npx_name() + " -y zn-gate check", text)
 
 
 if __name__ == "__main__":

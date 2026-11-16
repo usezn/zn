@@ -713,8 +713,8 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
         print(f"{_lead(ALERT)}Found {leak_count} secrets and {other_count} threat vectors:\n")
         for v in all_violations:
             label = "Secret found" if v.get("type") == "secret_leak" else "Threat"
-            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}")
-            print(f"    Snippet: {v['content']}")
+            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {_safe_text(v['reason'])}")
+            print(f"    Snippet: {_safe_text(v['content'])}")
             if v.get("next_step"):
                 print(f"    {v['next_step']}")
             print()
@@ -909,7 +909,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"{_lead(ALERT)}FAIL  the check could not run: {type(exc).__name__}")
     if ok:
         print("OK: the Python guard works. Nothing was sent and nothing was written outside a temporary folder.")
-        print("This covers the Python guard only. For agent hooks (Claude Code, Codex, Cursor...) run: npx -y zn-gate check")
+        print(f"This covers the Python guard only. For agent hooks (Claude Code, Codex, Cursor...) run: {npx_name()} -y zn-gate check")
         return 0
     print("NOT OK: the Python guard did not behave as expected.")
     return 1
@@ -1055,7 +1055,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary "
                     "folder. Prints OK and exits 0 only if the secret is blocked or redacted and the harmless "
                     "text passes. Nothing is sent. This covers the Python guard only: for agent hooks "
-                    "(Claude Code, Codex, Cursor...) run npx -y zn-gate check.",
+                    f"(Claude Code, Codex, Cursor...) run {npx_name()} -y zn-gate check.",
     )
 
     return parser
