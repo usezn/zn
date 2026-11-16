@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.32';
+const POLICY_RULES_VERSION = '2026-11-16.33';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1132,6 +1132,11 @@ const UNREADABLE_CODE_NOTICES = {
     ask: 'zn: this command writes to a file whose name zn cannot read from the code, so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
     deny: 'zn: this command writes to a file whose name zn cannot read from the code, so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to spell the file name plainly.',
   },
+  target: {
+    file: 'unclear file target',
+    ask: 'zn: this code writes to a file that zn cannot tell from the code (the name is held in a variable or built at run time), so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+    deny: 'zn: this code writes to a file that zn cannot tell from the code (the name is held in a variable or built at run time), so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to name the file plainly in the code.',
+  },
 };
 
 // Words that run the next command: the command word is the first one after them (and their options).
@@ -1206,13 +1211,25 @@ const ONELINER_CODE_MAX = 20000;
 // The name may hold backslashes (a Windows path: r'.\AGENTS.md', 'C:\\proj\\CLAUDE.md'); they are read as separators.
 const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([^'"\r\n]{1,300})\1`;
 // open('NAME', 'w') and io.open(...): a write only when the mode is a literal holding w, a, x or +.
-const ONELINER_PY_OPEN_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])open\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g');
 // Path('NAME').open('w'), also pathlib.Path(...).
-const ONELINER_PY_PATH_OPEN_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}open\s{0,20}\(`, 'g');
 // Path('NAME').write_text(...) and .write_bytes(...).
-const ONELINER_PY_WRITE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}write_(?:text|bytes)\b`, 'g');
 // fs.writeFileSync / writeFile / appendFile(Sync) / createWriteStream, also fs.promises.* and fsp.*.
-const ONELINER_NODE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g');
+let oneLinerPatterns = null;
+/** The python -c / node -e write-call patterns, compiled on first use so a hook that checks no one-liner never builds them. */
+function oneLinerRes() {
+  if (!oneLinerPatterns) {
+    oneLinerPatterns = {
+      ONELINER_PY_OPEN_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])open\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
+      ONELINER_PY_PATH_OPEN_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}open\s{0,20}\(`, 'g'),
+      ONELINER_PY_WRITE_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}write_(?:text|bytes)\b`, 'g'),
+      PY_OPEN_HEAD: /(?<![A-Za-z0-9_])open\s{0,20}\(/g,
+      PY_METHOD_HEAD: /\.\s{0,20}(?:open|write_text|write_bytes)\s{0,20}\(/g,
+      NODE_HEAD: /(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(/g,
+      ONELINER_NODE_RE: new RegExp(String.raw`(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
+    };
+  }
+  return oneLinerPatterns;
+}
 const ONELINER_MODE_AFTER_NAME_RE = /^\s{0,20},\s{0,20}(?:mode\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1/;
 const ONELINER_MODE_FIRST_RE = /^\s{0,20}(?:mode\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1/;
 const ONELINER_MODE_KW_RE = /\bmode\s{0,20}=\s{0,20}(['"])([A-Za-z+]{1,6})\1/;
@@ -1233,30 +1250,104 @@ function oneLinerNamePath(name) {
   return name.replace(/\\+/g, '/');
 }
 
+// A call's first argument is a plain quoted string (an optional file= keyword and string prefix allowed).
+const ONELINER_LITERAL_ARG_RE = /^\s{0,20}(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\1\s{0,20}[,)]/;
+
+/** The top-level arguments of the call whose "(" just ended at `at` (at most 400 characters read; quotes are not parsed). */
+function callArguments(text, at) {
+  const end = Math.min(text.length, at + 400);
+  const args = [];
+  let depth = 0;
+  let from = at;
+  let closed = at;
+  for (let i = at; i < end; i++) {
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      if (depth === 0) { args.push(text.slice(from, i)); closed = i + 1; return { args, end: closed }; }
+      depth--;
+    } else if (ch === ',' && depth === 0) { args.push(text.slice(from, i)); from = i + 1; }
+  }
+  args.push(text.slice(from, end));
+  return { args, end };
+}
+
+/** Whether a Python open call's arguments give a literal mode that writes (w, a, x or +); `skip` is how many positional arguments come before the mode. */
+function callModeWrites(args, skip) {
+  let mode = '';
+  for (let i = 0; i < args.length; i++) {
+    const kw = /^\s{0,20}mode\s{0,20}=\s{0,20}[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1\s{0,20}$/.exec(args[i]);
+    if (kw) { mode = kw[2]; break; }
+  }
+  if (!mode && args.length > skip) {
+    const pos = /^\s{0,20}[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1\s{0,20}$/.exec(args[skip]);
+    if (pos) mode = pos[2];
+  }
+  return /[wax+]/.test(mode);
+}
+
+/**
+ * Whether the code calls a recognised write (open with a writing mode, write_text, write_bytes, fs.writeFile and
+ * relatives) on a target that is not a quoted string, so the file it writes cannot be told without running it.
+ */
+function hasUnquotedWriteTarget(kind, text) {
+  const res = oneLinerRes();
+  if (kind === 'node') {
+    for (const m of text.matchAll(res.NODE_HEAD)) {
+      if (!ONELINER_LITERAL_ARG_RE.test(text.slice(m.index + m[0].length, m.index + m[0].length + 340))) return true;
+    }
+    return false;
+  }
+  for (const m of text.matchAll(res.PY_OPEN_HEAD)) {
+    const at = m.index + m[0].length;
+    if (m.index > 0 && text[m.index - 1] === '.') continue; // a method call: handled below
+    const { args } = callArguments(text, at);
+    if (callModeWrites(args, 1) && !ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+  }
+  for (const m of text.matchAll(res.PY_METHOD_HEAD)) {
+    const at = m.index + m[0].length;
+    const name = /(open|write_text|write_bytes)/.exec(m[0])[1];
+    // open as io.open or codecs.open takes the file first; other receivers (Path(...).open, a variable) give the mode first.
+    const before = text.slice(Math.max(0, m.index - 12), m.index);
+    const fileFirst = name === 'open' && /(?:^|[^A-Za-z0-9_])(?:io|codecs|builtins)$/.test(before);
+    if (name === 'open' && !callModeWrites(callArguments(text, at).args, fileFirst ? 1 : 0)) continue;
+    if (fileFirst) {
+      if (!ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+    } else if (!/Path\s{0,20}\(\s{0,20}[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\1\s{0,20}\)\s{0,20}$/.test(text.slice(Math.max(0, m.index - 340), m.index))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The quoted file names that python -c or node -e code writes to (a read, or a name that is not quoted, is left out).
- * `.undecidable` is set to 'long' when the code is longer than the scan covers, or to 'name' when a quoted target
- * is spelled with escapes that build another name: neither can be shown to leave the instruction files alone.
+ * `.undecidable` is set to 'long' when the code is longer than the scan covers, to 'name' when a quoted target is
+ * spelled with escapes that build another name, or to 'target' when a write call names its file in a variable or
+ * expression: none of these can be shown to leave the instruction files alone.
  */
 function oneLinerWriteTargets(kind, code) {
   const whole = String(code);
   const text = whole.slice(0, ONELINER_CODE_MAX);
   const out = [];
   if (whole.length > ONELINER_CODE_MAX) out.undecidable = 'long';
-  const full = () => out.length >= INSTRUCTION_CHECKS_MAX;
+  // One more than the check budget is collected, so a scan the cap cut short reads as over budget downstream.
+  const full = () => out.length > INSTRUCTION_CHECKS_MAX;
+  const res = oneLinerRes();
   if (kind === 'node') {
-    for (const m of text.matchAll(ONELINER_NODE_RE)) { out.push(m[2]); if (full()) break; }
+    for (const m of text.matchAll(res.ONELINER_NODE_RE)) { out.push(m[2]); if (full()) break; }
   } else if (kind === 'py') {
-    for (const m of text.matchAll(ONELINER_PY_WRITE_RE)) { out.push(m[2]); if (full()) break; }
-    for (const m of text.matchAll(ONELINER_PY_OPEN_RE)) {
+    for (const m of text.matchAll(res.ONELINER_PY_WRITE_RE)) { out.push(m[2]); if (full()) break; }
+    for (const m of text.matchAll(res.ONELINER_PY_OPEN_RE)) {
       if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_AFTER_NAME_RE)) out.push(m[2]);
       if (full()) break;
     }
-    for (const m of text.matchAll(ONELINER_PY_PATH_OPEN_RE)) {
+    for (const m of text.matchAll(res.ONELINER_PY_PATH_OPEN_RE)) {
       if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_FIRST_RE)) out.push(m[2]);
       if (full()) break;
     }
   }
+  if (!out.undecidable && (kind === 'node' || kind === 'py') && hasUnquotedWriteTarget(kind, text)) out.undecidable = 'target';
   for (let i = 0; i < out.length; i++) {
     if (ONELINER_NAME_ESCAPE_RE.test(out[i]) && !out.undecidable) out.undecidable = 'name';
     out[i] = oneLinerNamePath(out[i]);

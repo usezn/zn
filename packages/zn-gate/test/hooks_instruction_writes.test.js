@@ -276,7 +276,10 @@ test('python -c and node -e code that only reads, or writes another file, is all
     `python3 -c "print(open('CLAUDE.md', mode='r').read())"`,
     `python3 -c "open('notes.txt','w').write('Example')"`,
     `python3 -c "open('docs/CLAUDE.md.txt','w')"`,
-    `python3 -c "name='CLAUDE.md'; open(name,'w')"`,
+    `python3 -c "name='CLAUDE.md'; print(open(name).read())"`,
+    `python3 -c "name='CLAUDE.md'; print(open(name,'r').read())"`,
+    `python3 -c "from pathlib import Path; p=Path('CLAUDE.md'); print(p.read_text())"`,
+    `python3 -c "p='CLAUDE.md'; open(p)"`,
     `python3 -c "from pathlib import Path; print(Path('CLAUDE.md').read_text())"`,
     `python3 -c "from pathlib import Path; Path('notes.txt').write_text('Example')"`,
     `python3 -c "from pathlib import Path; print(Path('AGENTS.md').open('r').read())"`,
@@ -285,7 +288,7 @@ test('python -c and node -e code that only reads, or writes another file, is all
     `python3 script.py "open('CLAUDE.md','w')"`,
     `node -e "console.log(require('fs').readFileSync('CLAUDE.md','utf8'))"`,
     `node -e "require('fs').writeFileSync('notes.txt','Example')"`,
-    `node -e "require('fs').writeFileSync(process.argv[1],'Example')"`,
+    `node -e "const fs=require('fs'); console.log(fs.readFileSync(process.argv[1],'utf8'))"`,
     `node -e "require('fs').createReadStream('CLAUDE.md').pipe(process.stdout)"`,
     `node -e "console.log(require('fs').existsSync('AGENTS.md'))"`,
     `node script.js "fs.writeFileSync('CLAUDE.md','x')"`,
@@ -350,4 +353,36 @@ test('one-liner writes to a quoted Windows path (raw or escaped backslashes) ask
   for (const command of allows) {
     assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
   }
+});
+
+test('python -c and node -e code that writes to a file named by a variable or expression asks (denies in strict mode)', async (t) => {
+  const env = setup(t);
+  const strict = setup(t, { hooks: { agentInstructionWrites: 'deny' } });
+  const asks = [
+    `python3 -c "p='CLAUDE.md'; open(p,'w').write('x')"`,
+    `python3 -c "p='CLAUDE.md'; open(p, mode='a')"`,
+    `python3 -c "import os; open(os.path.join('a','b'),'w')"`,
+    `python3 -c "p='CLAUDE.md'; open(file=p, mode='w')"`,
+    `python3 -c "import io; p='CLAUDE.md'; io.open(p,'w')"`,
+    `python3 -c "from pathlib import Path; p='CLAUDE.md'; Path(p).write_text('x')"`,
+    `python3 -c "from pathlib import Path; p=Path('CLAUDE.md'); p.write_text('x')"`,
+    `python3 -c "from pathlib import Path; p=Path('CLAUDE.md'); p.write_bytes(b'x')"`,
+    `python3 -c "from pathlib import Path; p=Path('CLAUDE.md'); p.open('w')"`,
+    `node -e "const p='CLAUDE.md'; require('fs').writeFileSync(p,'x')"`,
+    `node -e "const p='CLAUDE.md'; require('fs').appendFileSync(p,'x')"`,
+    `node -e "require('fs').writeFileSync(process.argv[1],'x')"`,
+    `node -e "const p='CLAUDE.md'; require('fs').promises.writeFile(p,'x')"`,
+    `node -e "const p='CLAUDE.md'; require('fs').createWriteStream(p)"`,
+  ];
+  for (const command of asks) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /cannot tell/, command);
+    assert.equal((await decide(strict, 'Bash', { command })).decision, 'deny', command);
+  }
+  // A named instruction file in the same code is still reported by its name.
+  const named = await decide(env, 'Bash', { command: `python3 -c "p='x'; open(p,'w'); open('CLAUDE.md','w')"` });
+  assert.equal(named.decision, 'ask');
+  assert.match(named.reason, /CLAUDE\.md/);
+  assert.equal((await decide(setup(t, { hooks: { agentInstructionWrites: 'off' } }), 'Bash', { command: asks[0] })).decision, 'allow');
 });
