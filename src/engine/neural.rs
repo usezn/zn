@@ -204,6 +204,7 @@ mod tests {
 
     #[test]
     fn neural_disabled_config_yields_no_engine_and_pure_rules_decision() {
+        let _home = crate::test_env::HomeGuard::read();
         let cfg = FusionConfig {
             enabled: false,
             ..FusionConfig::default()
@@ -217,6 +218,7 @@ mod tests {
 
     #[test]
     fn neural_missing_model_files_degrade_to_rules_gate() {
+        let _home = crate::test_env::HomeGuard::read();
         let cfg = FusionConfig {
             enabled: true,
             model_path: "/nonexistent/zn-fusion-model".into(),

@@ -104,6 +104,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 [dev-dependencies]
 # Property tests for the scrubber (tests/scrubber_properties.rs). Test-only: the shipped binary does not depend on it.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Paused clock for the WebSocket back-off test. Test-only.
+tokio = { version = "1.35", features = ["test-util"] }
 
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,

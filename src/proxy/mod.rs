@@ -1044,47 +1044,11 @@ mod retry_and_discovery_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::net::TcpListener;
+    use tokio::time::Instant;
 
-    /// `auto_discover` reads HOME, which is process-wide: these tests take turns.
-    static HOME_LOCK: StdMutex<()> = StdMutex::new(());
-
-    struct HomeGuard {
-        home: Option<std::ffi::OsString>,
-        profile: Option<std::ffi::OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl HomeGuard {
-        fn set(home: Option<&Path>) -> Self {
-            let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let guard = HomeGuard {
-                home: std::env::var_os("HOME"),
-                profile: std::env::var_os("USERPROFILE"),
-                _lock: lock,
-            };
-            std::env::remove_var("USERPROFILE");
-            match home {
-                Some(p) => std::env::set_var("HOME", p),
-                None => std::env::remove_var("HOME"),
-            }
-            guard
-        }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            match &self.home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match &self.profile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
-    }
+    use crate::test_env::HomeGuard;
 
     fn url_config(url: String) -> McpServerConfig {
         McpServerConfig {
@@ -1111,7 +1075,8 @@ mod retry_and_discovery_tests {
         (addr, arrivals)
     }
 
-    #[tokio::test]
+    // Paused clock: the waits between attempts are virtual, so the test is instant.
+    #[tokio::test(start_paused = true)]
     async fn websocket_connect_backs_off_by_doubling_and_stops_after_five_attempts() {
         let (addr, arrivals) = refusing_server().await;
         let config = url_config(format!("ws://{addr}"));

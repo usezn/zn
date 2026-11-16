@@ -743,6 +743,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn remove_policy_file_reports_a_folder_that_cannot_be_resolved() {
+        let root = temp_dir("remove-unresolvable");
+        std::fs::write(root.join("not-a-folder"), b"x").unwrap();
+        // A file where a folder should be: not "missing", so it is an error.
+        let dir = root.join("not-a-folder").join("policies");
+        let err = remove_policy_file(&dir, "pii").unwrap_err().to_string();
+        assert!(err.contains("Failed to resolve policy directory"), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn remove_policy_file_rejects_names_with_path_separators() {
         let root = temp_dir("remove-names");

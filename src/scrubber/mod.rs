@@ -2153,6 +2153,41 @@ mod table_parity_tests {
         assert!(out.contains("Tool call detected"), "{out}");
     }
 
+    struct FailingSink;
+
+    impl std::io::Write for FailingSink {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("sink closed"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("flush failed"))
+        }
+    }
+
+    #[test]
+    fn redacting_writer_passes_a_sink_error_on_to_the_caller() {
+        use std::io::Write;
+        let mut w = RedactingWriter(FailingSink);
+        let err = w.write(b"INFO plain line\n").unwrap_err();
+        assert!(err.to_string().contains("sink closed"), "{err}");
+        let err = w.flush().unwrap_err();
+        assert!(err.to_string().contains("flush failed"), "{err}");
+    }
+
+    #[test]
+    fn card_and_ssn_validators_refuse_the_wrong_shape() {
+        // More digits than any card has, even when the start would pass.
+        assert!(!card_valid("4111 1111 1111 1111 1111"));
+        assert!(!card_valid("12"));
+        // SSN: wrong number of parts, short serial, zero group or serial, area 666.
+        assert!(!ssn_valid("123-45"));
+        assert!(!ssn_valid("123-45-678"));
+        assert!(!ssn_valid("123-00-6789"));
+        assert!(!ssn_valid("123-45-0000"));
+        assert!(!ssn_valid("666-45-6789"));
+        assert!(!ssn_valid("abc-45-6789"));
+    }
+
     #[test]
     fn test_github_token_in_json_string_is_masked_and_structure_kept() {
         // Fake value, built at runtime so secret scanners do not flag the literal.

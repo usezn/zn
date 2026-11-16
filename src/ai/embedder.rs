@@ -301,6 +301,18 @@ fn normalize_l2(v: &Tensor) -> candle_core::Result<Tensor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expand_tilde_uses_userprofile_then_home_and_leaves_other_paths_alone() {
+        let home = tempfile::TempDir::new().unwrap();
+        let profile = tempfile::TempDir::new().unwrap();
+        let guard = crate::test_env::HomeGuard::set(Some(home.path()));
+        assert_eq!(expand_tilde("~/m/x"), home.path().join("m/x"));
+        guard.set_profile(profile.path());
+        assert_eq!(expand_tilde("~/m/x"), profile.path().join("m/x"));
+        assert_eq!(expand_tilde("/abs/m"), PathBuf::from("/abs/m"));
+        assert_eq!(expand_tilde("~other/m"), PathBuf::from("~other/m"));
+    }
     use std::sync::OnceLock;
 
     static EMBEDDER: OnceLock<Embedder> = OnceLock::new();

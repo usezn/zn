@@ -1598,6 +1598,64 @@ mod tests {
     }
 
     #[test]
+    fn a_vault_from_an_older_schema_gains_the_missing_columns() {
+        let path = temp_db_path();
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE audit_logs (
+                    id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    policy_match TEXT,
+                    payload TEXT,
+                    agent_id TEXT,
+                    namespace TEXT,
+                    anomaly_score REAL
+                )",
+                [],
+            )
+            .unwrap();
+        }
+        let vault = AuditVault::new(&path, None).expect("an older vault opens");
+        assert_eq!(vault.count().unwrap(), 0);
+        drop(vault);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        for column in ["nearest_neighbor", "fusion"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name = ?1",
+                    [column],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "column {column} was added");
+        }
+        drop(conn);
+        fs::remove_file(&path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_database_file_gets_a_plain_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_db_path();
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        // A user who can write anyway (root) cannot show the error.
+        if fs::OpenOptions::new().append(true).open(&path).is_err() {
+            let err = AuditVault::new(&path, None).err().expect("cannot write");
+            let msg = err.to_string();
+            assert!(msg.contains("read-only"), "{msg}");
+            assert!(msg.contains("--db-path"), "{msg}");
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn migration_is_idempotent() {
         let path = temp_db_path();
         let rows = legacy_db(&path, 3);
