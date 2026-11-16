@@ -663,10 +663,28 @@ async fn start_proxy(args: Args) -> Result<()> {
     )?;
     note("Ready", "Listening for JSON-RPC on stdin...")?;
 
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    let mut reader = BufReader::new(stdin);
+    run_stdio_loop(BufReader::new(io::stdin()), io::stdout(), &state).await
+}
 
+/// The JSON-RPC reply for a message whose processing failed. The id is taken
+/// from the request when it can be read (null otherwise), so the client is
+/// answered instead of waiting forever. The error text stays in the logs.
+fn internal_error_reply(line: &str, err: &anyhow::Error) -> String {
+    tracing::error!("stdio processing error: {err}");
+    let id = serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|v| v.get("id").cloned())
+        .filter(|id| id.is_string() || id.is_number());
+    jsonrpc_error_response(id, -32603, "Internal error")
+}
+
+/// Read newline-delimited JSON-RPC from `reader`, write one reply line per
+/// answerable message to `writer`, until end of input.
+async fn run_stdio_loop<R, W>(mut reader: R, mut writer: W, state: &AppState) -> Result<()>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
     // A line is read with a size limit: one without a newline cannot make the gateway buffer forever.
     loop {
         let response = match zn::bounded_line::read_line_bounded(
@@ -681,13 +699,16 @@ async fn start_proxy(args: Args) -> Result<()> {
                     .to_string(),
             ),
             zn::bounded_line::BoundedLine::Line(line) => {
-                process_mcp_message(&line, &state, None).await.ok().flatten()
+                match process_mcp_message(&line, state, None).await {
+                    Ok(reply) => reply,
+                    Err(e) => Some(internal_error_reply(&line, &e)),
+                }
             }
         };
         if let Some(response) = response {
-            stdout.write_all(response.as_bytes()).await?;
-            stdout.write_all(b"\n").await?;
-            stdout.flush().await?;
+            writer.write_all(response.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await?;
         }
     }
 
@@ -2503,6 +2524,54 @@ mod audit_isolation_tests {
             .unwrap()
             .unwrap();
         assert!(!ok.contains("\"error\""), "{ok}");
+    }
+
+    #[test]
+    fn a_failed_message_is_answered_with_the_same_id() {
+        let err = anyhow::anyhow!("secret internal detail");
+        for (line, id) in [
+            (
+                r#"{"jsonrpc":"2.0","id":7,"method":"x"}"#,
+                serde_json::json!(7),
+            ),
+            (
+                r#"{"jsonrpc":"2.0","id":"abc","method":"x"}"#,
+                serde_json::json!("abc"),
+            ),
+            (r#"{"jsonrpc":"2.0","id":{"a":1}}"#, serde_json::Value::Null),
+            ("not json", serde_json::Value::Null),
+        ] {
+            let out = internal_error_reply(line, &err);
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(v["id"], id, "{line}");
+            assert_eq!(v["error"]["code"], -32603);
+            assert!(!out.contains("secret"), "{out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_stdio_loop_writes_one_reply_line_per_answerable_message() {
+        let (state, _dir) = test_state(None);
+        let input = format!(
+            "{}\nnot json\n{}\n",
+            frame("other_tool"),
+            frame("another_tool")
+        );
+        let mut out: Vec<u8> = Vec::new();
+        run_stdio_loop(
+            tokio::io::BufReader::new(input.as_bytes()),
+            &mut out,
+            &state,
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.len() >= 2, "{text}");
+        for l in &lines {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            assert_eq!(v["jsonrpc"], "2.0");
+        }
     }
 
     #[tokio::test]
