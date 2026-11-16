@@ -106,7 +106,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `evidence` | `0`, `1`, `2` | `0` done; `1` with `--verify` when the SHA-256 chain was changed, with `--ui` when the port is busy or invalid, or when the `--output` folder does not exist; `2` an unknown option or a `--format` other than `jsonl` or `csv`. Stopping `--ui` with Ctrl+C exits `130`. |
+| `evidence` | `0`, `1`, `2` | `0` done; `1` with `--verify` when the SHA-256 chain was changed, with `--ui` when the port is busy, or when the `--output` folder does not exist; `2` an unknown option, a `--format` other than `jsonl` or `csv`, a `--port` that is not a whole number from 1 to 65535, or a `--tail` that is not a positive whole number. Stopping `--ui` with Ctrl+C exits `130`. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
 | `stats share on` | `1` | `1` when you do not confirm. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |

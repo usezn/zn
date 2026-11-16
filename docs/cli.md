@@ -633,10 +633,10 @@ Aliases: `mcp-shield`, `wrap`.
 zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] [--output file]] [--tail 20]
 ```
 
-Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
+Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20; `N` must be a positive whole number, otherwise the command prints one line and exits `2`).
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
-- `--ui`: start a local dashboard and print its address, `http://127.0.0.1:3100` by default. It does not open a browser: open that address yourself. The dashboard listens on your own machine only (127.0.0.1), so other computers cannot reach it. It runs until you stop it with Ctrl+C. `--port N` picks another port. If you give a value that is not a number (for example `--port abc`), zn-gate ignores it and uses 3100. If the port is already in use, or is outside 0 to 65535, the command exits `1` with a Node.js error.
+- `--ui`: start a local dashboard and print its address, `http://127.0.0.1:3100` by default. It does not open a browser: open that address yourself. The dashboard listens on your own machine only (127.0.0.1), so other computers cannot reach it. It runs until you stop it with Ctrl+C. `--port N` (or `--port=N`) picks another port; it must be a whole number from 1 to 65535. A value that is not (for example `--port abc` or `--port 99999`) prints one line and exits `2`. If the port is already in use, it prints `port N is in use; choose another with --port` and exits `1`.
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 
 Aliases: `logs`, `export`.

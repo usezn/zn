@@ -1113,6 +1113,49 @@ const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'
 const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
 const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
 
+// evidence takes --port and --tail as --name value or --name=value; the second form is split into the first.
+function expandEvidenceEquals(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '--') {
+      out.push(...args.slice(i));
+      break;
+    }
+    const eq = tok.indexOf('=');
+    if (tok.startsWith('--') && eq !== -1 && EVIDENCE_VALUE_OPTIONS.includes(tok.slice(0, eq))) {
+      out.push(tok.slice(0, eq), tok.slice(eq + 1));
+      continue;
+    }
+    out.push(tok);
+    // The value after --name is left alone, whatever it looks like.
+    if (EVIDENCE_VALUE_OPTIONS.includes(tok) && i + 1 < args.length) out.push(args[++i]);
+  }
+  return out;
+}
+
+// The problem with the --port or --tail of evidence (whole numbers only), or null.
+function evidenceNumberProblem(args) {
+  const rules = {
+    '--port': { what: 'a whole number from 1 to 65535', ok: (n) => n >= 1 && n <= 65535 },
+    '--tail': { what: 'a positive whole number', ok: (n) => n >= 1 },
+  };
+  for (let i = 1; i < args.length; i++) {
+    const rule = rules[args[i]];
+    if (!rule) {
+      if (EVIDENCE_VALUE_OPTIONS.includes(args[i])) i++;
+      continue;
+    }
+    const raw = args[i + 1];
+    const shown = String(raw === undefined ? '' : raw).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    if (raw === undefined || !/^[0-9]{1,15}$/.test(raw) || !rule.ok(Number(raw))) {
+      return args[i] + ' needs ' + rule.what + (raw === undefined ? '' : ', not "' + shown + '"') + '.';
+    }
+    i++;
+  }
+  return null;
+}
+
 function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
   for (let i = start; i < args.length; i++) {
     const tok = args[i];
@@ -1145,7 +1188,7 @@ function fixedOptionsProblem(args) {
   if (command === 'version' || command === '-v') return fixedOptionProblem('version', args, []);
   if (command === 'test') return fixedOptionProblem(command, args, []);
   if (command === 'evidence' || command === 'logs' || command === 'export') {
-    return fixedOptionProblem(command, args, EVIDENCE_OPTIONS, EVIDENCE_VALUE_OPTIONS);
+    return fixedOptionProblem(command, args, EVIDENCE_OPTIONS, EVIDENCE_VALUE_OPTIONS) || evidenceNumberProblem(args);
   }
   if (command === 'team' && args[1] === 'status') return fixedOptionProblem('team status', args, ['--json', '--rules'], [], 2);
   return null;
@@ -1154,7 +1197,9 @@ function fixedOptionsProblem(args) {
 async function main() {
   const rawArgs = process.argv.slice(2);
   // scan and analyze accept --opt=value: it is split into --opt value before the parser reads the arguments.
-  const args = (rawArgs[0] === 'scan' || rawArgs[0] === 'analyze') ? expandEqualsOptions(rawArgs[0], rawArgs) : rawArgs;
+  const args = (rawArgs[0] === 'scan' || rawArgs[0] === 'analyze') ? expandEqualsOptions(rawArgs[0], rawArgs)
+    : (rawArgs[0] === 'evidence' || rawArgs[0] === 'logs' || rawArgs[0] === 'export') ? expandEvidenceEquals(rawArgs)
+    : rawArgs;
   const fixedProblem = fixedOptionsProblem(args);
   if (fixedProblem) {
     process.stderr.write('zn-gate: ' + fixedProblem + '\n');
@@ -1384,7 +1429,15 @@ ${ruleLine(process.env, 60)}\n`);
     }
 
     if (options.ui) {
-      startEvidenceUi(options.port);
+      const server = startEvidenceUi(options.port);
+      server.on('error', (err) => {
+        const busy = err && err.code === 'EADDRINUSE';
+        const denied = err && (err.code === 'EACCES' || err.code === 'EPERM');
+        process.stderr.write('zn-gate: ' + (busy ? 'port ' + options.port + ' is in use; choose another with --port'
+          : denied ? 'port ' + options.port + ' cannot be used (permission denied); choose another with --port'
+          : 'cannot start the dashboard: ' + String((err && err.message) || err).replace(/[^\x20-\x7e]/g, '?').slice(0, 200)) + '\n');
+        process.exitCode = 1;
+      });
       return;
     }
 
