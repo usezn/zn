@@ -400,4 +400,109 @@ mod tests {
             .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), MESSAGE);
     }
+
+    // ── Small error branches ────────────────────────────────────────
+
+    fn error_of(result: anyhow::Result<PolicyVerifier>) -> String {
+        result.err().expect("must fail").to_string()
+    }
+
+    #[test]
+    fn key_errors_name_the_problem() {
+        assert!(error_of(PolicyVerifier::with_keys(Some("zz"), None))
+            .contains("Invalid public key hex"));
+        assert!(error_of(PolicyVerifier::with_keys(Some("00"), None)).contains("32 bytes"));
+        assert!(error_of(PolicyVerifier::with_keys(None, Some("zz")))
+            .contains("Invalid PQ public key hex"));
+        let msg = error_of(PolicyVerifier::with_keys(None, Some("00")));
+        assert!(msg.contains("ML-DSA-65") && msg.contains("got 1"), "{msg}");
+    }
+
+    #[test]
+    fn a_verifier_without_keys_accepts_unsigned_policies() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), None);
+        PolicyVerifier::with_keys(None, None)
+            .unwrap()
+            .verify(MESSAGE, &wasm)
+            .expect("no key configured means nothing to verify");
+    }
+
+    #[test]
+    fn classic_signature_problems_are_reported_distinctly() {
+        let verifier = PolicyVerifier::with_keys(Some(PUBLIC_KEY_HEX), None).unwrap();
+        let message_of = |dir: &Path, wasm: &Path, body: &[u8]| {
+            let _ = dir;
+            verifier.verify(body, wasm).unwrap_err().to_string()
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), None);
+        assert!(message_of(dir.path(), &wasm, MESSAGE).contains("Missing required signature file"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some("***not base64***"));
+        assert!(message_of(dir.path(), &wasm, MESSAGE).contains("Invalid signature base64"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some("AAAA"));
+        assert!(message_of(dir.path(), &wasm, MESSAGE).contains("Invalid signature format"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some(SIGNATURE_B64));
+        assert!(message_of(dir.path(), &wasm, &[0x73]).contains("Classic signature mismatch"));
+
+        // A signature path that cannot be read as a file (here a directory).
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), None);
+        std::fs::create_dir(dir.path().join("policy.wasm.sig")).unwrap();
+        assert!(message_of(dir.path(), &wasm, MESSAGE).contains("Failed to read signature file"));
+    }
+
+    #[test]
+    fn post_quantum_signature_problems_are_reported_distinctly() {
+        let sk = ml_dsa_key();
+        let verifier = ml_dsa_verifier(&sk);
+
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = pq_policy(dir.path(), MESSAGE, None);
+        let msg = verifier.verify(MESSAGE, &wasm).unwrap_err().to_string();
+        assert!(msg.contains("REQUIRED but missing"), "{msg}");
+
+        std::fs::write(dir.path().join("policy.wasm.pqs"), "***not base64***").unwrap();
+        let msg = verifier.verify(MESSAGE, &wasm).unwrap_err().to_string();
+        assert!(msg.contains("Invalid PQ signature base64"), "{msg}");
+
+        let wasm = pq_policy(dir.path(), MESSAGE, Some(&[1u8, 2, 3]));
+        let msg = verifier.verify(MESSAGE, &wasm).unwrap_err().to_string();
+        assert!(msg.contains("Invalid PQ signature format"), "{msg}");
+
+        let good = ml_dsa_sign(&sk, MESSAGE);
+        let wasm = pq_policy(dir.path(), MESSAGE, Some(&good));
+        verifier.verify(MESSAGE, &wasm).unwrap();
+        let msg = verifier.verify(&[0x73], &wasm).unwrap_err().to_string();
+        assert!(msg.contains("Post-Quantum signature mismatch"), "{msg}");
+
+        std::fs::remove_file(dir.path().join("policy.wasm.pqs")).unwrap();
+        std::fs::create_dir(dir.path().join("policy.wasm.pqs")).unwrap();
+        let msg = verifier.verify(MESSAGE, &wasm).unwrap_err().to_string();
+        assert!(msg.contains("Failed to read PQ signature file"), "{msg}");
+    }
+
+    #[test]
+    fn verify_then_write_stops_at_a_failing_check_and_keeps_the_old_file() {
+        let sk = ed_key();
+        let verifier = ed_verifier(&sk);
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = dir.path().join("p.wasm");
+        std::fs::write(&wasm, b"old policy").unwrap();
+        write_ed_sig(dir.path(), &sk, b"new policy");
+        let err = verifier
+            .verify_then_write(b"new policy", &wasm, |_| {
+                Err(anyhow::anyhow!("compile failed"))
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("compile failed"));
+        assert_eq!(std::fs::read(&wasm).unwrap(), b"old policy");
+    }
 }

@@ -2457,4 +2457,103 @@ mod tests {
             )
             .unwrap()
     }
+
+    // ── Query edges ─────────────────────────────────────────────────
+
+    fn scratch_vault() -> (tempfile::TempDir, AuditVault) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.db");
+        let vault = AuditVault::new(path.to_str().unwrap(), None).unwrap();
+        (dir, vault)
+    }
+
+    #[test]
+    fn an_empty_vault_answers_every_query_with_empty_results() {
+        let (_dir, vault) = scratch_vault();
+        assert!(vault.get_recent(10).unwrap().is_empty());
+        assert!(vault
+            .get_recent_by_namespace("tenant_a", 10)
+            .unwrap()
+            .is_empty());
+        let stats = vault.stats().unwrap();
+        assert_eq!((stats.total, stats.allowed, stats.denied), (0, 0, 0));
+        let stats = vault.stats_by_namespace("tenant_a").unwrap();
+        assert_eq!((stats.total, stats.allowed, stats.denied), (0, 0, 0));
+    }
+
+    #[test]
+    fn the_limit_caps_the_results_and_newest_come_first() {
+        let (_dir, vault) = scratch_vault();
+        for (i, tool) in ["first", "second", "third"].iter().enumerate() {
+            let mut entry = AuditEntry::new("TOOL_CALL", *tool, "ALLOWED");
+            entry.timestamp = format!("2026-11-16T00:00:0{i}Z");
+            vault.log(entry).unwrap();
+        }
+        assert!(vault.get_recent(0).unwrap().is_empty());
+        let two = vault.get_recent(2).unwrap();
+        assert_eq!(
+            two.iter().map(|e| e.tool_name.as_str()).collect::<Vec<_>>(),
+            ["third", "second"]
+        );
+        assert_eq!(vault.get_recent(100).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn namespace_queries_ignore_other_namespaces_and_entries_without_one() {
+        let (_dir, vault) = scratch_vault();
+        let mut a = AuditEntry::new("TOOL_CALL", "read_file", "ALLOWED");
+        a.namespace = Some("tenant_a".to_string());
+        vault.log(a).unwrap();
+        vault
+            .log(AuditEntry::new("TOOL_CALL", "no_namespace", "DENIED"))
+            .unwrap();
+
+        assert!(vault
+            .get_recent_by_namespace("tenant_b", 10)
+            .unwrap()
+            .is_empty());
+        assert!(vault.get_recent_by_namespace("", 10).unwrap().is_empty());
+        let only_a = vault.stats_by_namespace("tenant_a").unwrap();
+        assert_eq!((only_a.total, only_a.allowed, only_a.denied), (1, 1, 0));
+        let all = vault.stats().unwrap();
+        assert_eq!((all.total, all.allowed, all.denied), (2, 1, 1));
+    }
+
+    #[test]
+    fn status_values_other_than_allowed_and_denied_count_only_in_the_total() {
+        let (_dir, vault) = scratch_vault();
+        vault
+            .log(AuditEntry::new("TOOL_CALL", "tool", "WARNED"))
+            .unwrap();
+        let stats = vault.stats().unwrap();
+        assert_eq!((stats.total, stats.allowed, stats.denied), (1, 0, 0));
+        assert_eq!(vault.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn the_path_and_the_shared_connection_point_at_the_same_database() {
+        let (dir, vault) = scratch_vault();
+        assert!(vault.db_path().ends_with("audit.db"));
+        assert!(dir.path().join("audit.db").exists());
+        vault
+            .log(AuditEntry::new("TOOL_CALL", "tool", "ALLOWED"))
+            .unwrap();
+        let conn = vault.get_connection();
+        let rows: usize = conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM audit_logs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn opening_a_vault_in_a_missing_directory_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-such-dir").join("audit.db");
+        let err = AuditVault::new(path.to_str().unwrap(), None)
+            .err()
+            .expect("the folder does not exist");
+        assert!(!err.to_string().is_empty());
+    }
 }
