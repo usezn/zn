@@ -386,3 +386,86 @@ test('python -c and node -e code that writes to a file named by a variable or ex
   assert.match(named.reason, /CLAUDE\.md/);
   assert.equal((await decide(setup(t, { hooks: { agentInstructionWrites: 'off' } }), 'Bash', { command: asks[0] })).decision, 'allow');
 });
+
+test('python -c and node -e calls on an instruction file with a mode or flags zn cannot read ask (denies in strict mode)', async (t) => {
+  const env = setup(t);
+  const strict = setup(t, { hooks: { agentInstructionWrites: 'deny' } });
+  const asks = [
+    `python3 -c "m='w'; open('CLAUDE.md', m)"`,
+    `python3 -c "m='w'; open('CLAUDE.md', mode=m)"`,
+    `python3 -c "m='w'; open(file='CLAUDE.md', mode=m)"`,
+    `python3 -c "m='w'; open('CLAUDE.md', 'w' if m else 'r')"`,
+    `python3 -c "a=('w',); open('CLAUDE.md', *a)"`,
+    `python3 -c "k={'mode':'w'}; open('CLAUDE.md', **k)"`,
+    `python3 -c "import io; m='w'; io.open('CLAUDE.md', m)"`,
+    `python3 -c "import codecs; m='w'; codecs.open('CLAUDE.md', m)"`,
+    `python3 -c "from pathlib import Path; m='w'; Path('CLAUDE.md').open(m)"`,
+    `python3 -c "from pathlib import Path; m='w'; Path('CLAUDE.md').open(mode=m)"`,
+    `node -e "const f='w'; require('fs').openSync('CLAUDE.md', f)"`,
+    `node -e "const fs=require('fs'); const f='w'; fs.openSync('CLAUDE.md', f)"`,
+    `node -e "const f='w'; require('fs').open('AGENTS.md', f, ()=>{})"`,
+    `node -e "const f='w'; require('fs').promises.open('CLAUDE.md', f)"`,
+    `node -e "require('fs').openSync('CLAUDE.md', 'w')"`,
+    `node -e "require('fs').openSync('CLAUDE.md', 'a+')"`,
+  ];
+  for (const command of asks) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /CLAUDE\.md|AGENTS\.md/, command);
+    assert.equal((await decide(strict, 'Bash', { command })).decision, 'deny', command);
+  }
+  // A target that is not a literal, with flags that are not a literal either, cannot be told.
+  for (const command of [
+    `node -e "const p='CLAUDE.md', f='w'; require('fs').openSync(p, f)"`,
+    `python3 -c "p='CLAUDE.md'; m='w'; open(p, m)"`,
+  ]) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /cannot tell/, command);
+  }
+  // Reads, and other files, are left alone.
+  for (const command of [
+    `python3 -c "print(open('CLAUDE.md').read())"`,
+    `python3 -c "open('CLAUDE.md', 'r')"`,
+    `python3 -c "open('CLAUDE.md', encoding='utf-8')"`,
+    `python3 -c "open('CLAUDE.md', 'rb', 0)"`,
+    `python3 -c "m='w'; open('notes.txt', m)"`,
+    `python3 -c "from pathlib import Path; m='w'; Path('notes.txt').open(m)"`,
+    `node -e "require('fs').openSync('CLAUDE.md', 'r')"`,
+    `node -e "require('fs').openSync('CLAUDE.md')"`,
+    `node -e "const f='w'; require('fs').openSync('notes.txt', f)"`,
+  ]) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
+
+test('python -c f-strings and node template literals with a replacement field are not literal write targets', async (t) => {
+  const env = setup(t);
+  const strict = setup(t, { hooks: { agentInstructionWrites: 'deny' } });
+  const asks = [
+    `python3 -c "from pathlib import Path; name='CLAUDE.md'; Path(f'{name}').write_text('x')"`,
+    `python3 -c "from pathlib import Path; name='CLAUDE'; Path(f'{name}.md').write_bytes(b'x')"`,
+    `python3 -c "from pathlib import Path; name='CLAUDE.md'; Path(rf'{name}').write_text('x')"`,
+    `python3 -c "from pathlib import Path; name='CLAUDE.md'; Path(fr'{name}').write_text('x')"`,
+    `python3 -c "from pathlib import Path; name='CLAUDE.md'; Path(F'{name}').write_text('x')"`,
+    `python3 -c "name='CLAUDE.md'; open(f'{name}', 'w')"`,
+    `python3 -c "name='CLAUDE.md'; open(file=f'{name}', mode='w')"`,
+    `python3 -c "import io; name='CLAUDE.md'; io.open(f'{name}', 'w')"`,
+    `python3 -c "from pathlib import Path; name='CLAUDE.md'; Path(f'{name}').open('w')"`,
+    `node -e "const name='CLAUDE.md'; require('fs').writeFileSync(\`\${name}\`,'x')"`,
+    `node -e "const name='CLAUDE'; require('fs').appendFileSync(\`\${name}.md\`,'x')"`,
+  ];
+  for (const command of asks) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /cannot tell/, command);
+    assert.equal((await decide(strict, 'Bash', { command })).decision, 'deny', command);
+  }
+  // An f-string without a replacement field is a literal name, and reads stay allowed.
+  const plain = await decide(env, 'Bash', { command: `python3 -c "from pathlib import Path; Path(f'CLAUDE.md').write_text('x')"` });
+  assert.equal(plain.decision, 'ask');
+  assert.match(plain.reason, /CLAUDE\.md/);
+  assert.doesNotMatch(plain.reason, /cannot tell/);
+  assert.equal((await decide(env, 'Bash', { command: `python3 -c "name='CLAUDE.md'; print(open(f'{name}').read())"` })).decision, 'allow');
+  assert.equal((await decide(env, 'Bash', { command: `python3 -c "from pathlib import Path; n='x'; Path(f'{n}.txt').write_text('x')"` })).decision, 'ask');
+});

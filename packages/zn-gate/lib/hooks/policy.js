@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.33';
+const POLICY_RULES_VERSION = '2026-11-16.35';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1209,7 +1209,13 @@ function downloadTargets(name, rest) {
 // bounded, so the scan is linear in the code (at most ONELINER_CODE_MAX characters of it).
 const ONELINER_CODE_MAX = 20000;
 // The name may hold backslashes (a Windows path: r'.\AGENTS.md', 'C:\\proj\\CLAUDE.md'); they are read as separators.
-const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([^'"\r\n]{1,300})\1`;
+// Groups: 1 the string prefix, 2 the quote, 3 the name.
+const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?([rRbBuUfF]{0,2})(['"])([^'"\r\n]{1,300})\2`;
+// A Python f-string with a replacement field ({...}) builds its text when the code runs: it is not a literal name.
+const ONELINER_FSTRING_PREFIX_RE = /^[rR]?[fF][rR]?$/;
+function oneLinerInterpolated(prefix, body) {
+  return ONELINER_FSTRING_PREFIX_RE.test(prefix) && body.includes('{');
+}
 // open('NAME', 'w') and io.open(...): a write only when the mode is a literal holding w, a, x or +.
 // Path('NAME').open('w'), also pathlib.Path(...).
 // Path('NAME').write_text(...) and .write_bytes(...).
@@ -1224,24 +1230,14 @@ function oneLinerRes() {
       ONELINER_PY_WRITE_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}write_(?:text|bytes)\b`, 'g'),
       PY_OPEN_HEAD: /(?<![A-Za-z0-9_])open\s{0,20}\(/g,
       PY_METHOD_HEAD: /\.\s{0,20}(?:open|write_text|write_bytes)\s{0,20}\(/g,
+      NODE_OPEN_HEAD: /(?<![A-Za-z0-9_$])openSync\s{0,20}\(|(?:(?<![A-Za-z0-9_$])(?:fs|fsp|promises)|\))\s{0,20}\.\s{0,20}open\s{0,20}\(/g,
+      ONELINER_NODE_OPEN_RE: new RegExp(String.raw`(?:(?<![A-Za-z0-9_$])openSync|(?:(?<![A-Za-z0-9_$])(?:fs|fsp|promises)|\))\s{0,20}\.\s{0,20}open)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
       NODE_HEAD: /(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(/g,
       ONELINER_NODE_RE: new RegExp(String.raw`(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
     };
   }
   return oneLinerPatterns;
 }
-const ONELINER_MODE_AFTER_NAME_RE = /^\s{0,20},\s{0,20}(?:mode\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1/;
-const ONELINER_MODE_FIRST_RE = /^\s{0,20}(?:mode\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1/;
-const ONELINER_MODE_KW_RE = /\bmode\s{0,20}=\s{0,20}(['"])([A-Za-z+]{1,6})\1/;
-
-/** Whether the arguments that follow a Python open call give a literal mode that writes (w, a, x or +). */
-function pythonModeWrites(tail, firstRe) {
-  const lead = firstRe.exec(tail);
-  const kw = lead ? null : ONELINER_MODE_KW_RE.exec(tail.slice(0, 200).split(')')[0]);
-  const mode = lead ? lead[2] : (kw ? kw[2] : '');
-  return /[wax+]/.test(mode);
-}
-
 // Backslash escapes that spell other characters (\x41, \u0041, \N{...}, octal): the name they build cannot be read without running the code.
 const ONELINER_NAME_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f{]|U[0-9A-Fa-f]|N\{|[0-7]{3})/;
 
@@ -1251,7 +1247,8 @@ function oneLinerNamePath(name) {
 }
 
 // A call's first argument is a plain quoted string (an optional file= keyword and string prefix allowed).
-const ONELINER_LITERAL_ARG_RE = /^\s{0,20}(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\1\s{0,20}[,)]/;
+// An f-string with a replacement field is not one.
+const ONELINER_LITERAL_ARG_RE = /^\s{0,20}(?:file\s{0,20}=\s{0,20})?(?![rR]?[fF][rR]?(['"])[^'"\r\n]{0,300}\{)[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\2\s{0,20}[,)]/;
 
 /** The top-level arguments of the call whose "(" just ended at `at` (at most 400 characters read; quotes are not parsed). */
 function callArguments(text, at) {
@@ -1272,18 +1269,43 @@ function callArguments(text, at) {
   return { args, end };
 }
 
-/** Whether a Python open call's arguments give a literal mode that writes (w, a, x or +); `skip` is how many positional arguments come before the mode. */
-function callModeWrites(args, skip) {
-  let mode = '';
-  for (let i = 0; i < args.length; i++) {
-    const kw = /^\s{0,20}mode\s{0,20}=\s{0,20}[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1\s{0,20}$/.exec(args[i]);
-    if (kw) { mode = kw[2]; break; }
+/**
+ * What a Python open call's arguments say about writing: 'write' (a literal mode with w, a, x or +), 'read' (no
+ * mode, or a literal one without them) or 'unknown' (a mode held in a variable or an expression, an unpacked
+ * argument, or a literal that is not a mode). `skip` is how many positional arguments come before the mode.
+ */
+function callModeState(args, skip) {
+  const literal = /^\s{0,20}[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1\s{0,20}$/;
+  let mode = null;
+  let unknown = false;
+  for (const a of args) {
+    if (/^\s{0,20}\*/.test(a)) { unknown = true; continue; }
+    const kw = /^\s{0,20}mode\s{0,20}=(?!=)([\s\S]*)$/.exec(a);
+    if (kw) {
+      const lit = literal.exec(kw[1]);
+      if (lit) mode = lit[2]; else unknown = true;
+    }
   }
-  if (!mode && args.length > skip) {
-    const pos = /^\s{0,20}[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1\s{0,20}$/.exec(args[skip]);
-    if (pos) mode = pos[2];
+  if (mode === null && !unknown && args.length > skip) {
+    const a = args[skip];
+    if (/^\s*$/.test(a) || /^\s{0,20}[A-Za-z_][A-Za-z0-9_]{0,40}\s{0,20}=(?!=)/.test(a)) {
+      // no mode given (a keyword such as encoding= is not the mode)
+    } else {
+      const lit = literal.exec(a);
+      if (lit) mode = lit[2]; else unknown = true;
+    }
   }
-  return /[wax+]/.test(mode);
+  if (mode !== null && /[wax+]/.test(mode)) return 'write';
+  return unknown ? 'unknown' : 'read';
+}
+
+/** The same for fs.openSync / fs.open: the flags are the second argument ('r' when absent). */
+function nodeFlagsState(args) {
+  if (args.some((a) => /^\s{0,20}\.\.\./.test(a))) return 'unknown';
+  if (args.length < 2 || /^\s*$/.test(args[1])) return 'read';
+  const lit = /^\s{0,20}(['"])([A-Za-z+]{1,3})\1\s{0,20}$/.exec(args[1]);
+  if (!lit) return 'unknown';
+  return /[wax+]/.test(lit[2]) ? 'write' : 'read';
 }
 
 /**
@@ -1296,13 +1318,17 @@ function hasUnquotedWriteTarget(kind, text) {
     for (const m of text.matchAll(res.NODE_HEAD)) {
       if (!ONELINER_LITERAL_ARG_RE.test(text.slice(m.index + m[0].length, m.index + m[0].length + 340))) return true;
     }
+    for (const m of text.matchAll(res.NODE_OPEN_HEAD)) {
+      const at = m.index + m[0].length;
+      if (nodeFlagsState(callArguments(text, at).args) !== 'read' && !ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+    }
     return false;
   }
   for (const m of text.matchAll(res.PY_OPEN_HEAD)) {
     const at = m.index + m[0].length;
     if (m.index > 0 && text[m.index - 1] === '.') continue; // a method call: handled below
     const { args } = callArguments(text, at);
-    if (callModeWrites(args, 1) && !ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+    if (callModeState(args, 1) !== 'read' && !ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
   }
   for (const m of text.matchAll(res.PY_METHOD_HEAD)) {
     const at = m.index + m[0].length;
@@ -1310,10 +1336,10 @@ function hasUnquotedWriteTarget(kind, text) {
     // open as io.open or codecs.open takes the file first; other receivers (Path(...).open, a variable) give the mode first.
     const before = text.slice(Math.max(0, m.index - 12), m.index);
     const fileFirst = name === 'open' && /(?:^|[^A-Za-z0-9_])(?:io|codecs|builtins)$/.test(before);
-    if (name === 'open' && !callModeWrites(callArguments(text, at).args, fileFirst ? 1 : 0)) continue;
+    if (name === 'open' && callModeState(callArguments(text, at).args, fileFirst ? 1 : 0) === 'read') continue;
     if (fileFirst) {
       if (!ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
-    } else if (!/Path\s{0,20}\(\s{0,20}[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\1\s{0,20}\)\s{0,20}$/.test(text.slice(Math.max(0, m.index - 340), m.index))) {
+    } else if (!/Path\s{0,20}\(\s{0,20}(?![rR]?[fF][rR]?(['"])[^'"\r\n]{0,300}\{)[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\2\s{0,20}\)\s{0,20}$/.test(text.slice(Math.max(0, m.index - 340), m.index))) {
       return true;
     }
   }
@@ -1335,15 +1361,24 @@ function oneLinerWriteTargets(kind, code) {
   const full = () => out.length > INSTRUCTION_CHECKS_MAX;
   const res = oneLinerRes();
   if (kind === 'node') {
-    for (const m of text.matchAll(res.ONELINER_NODE_RE)) { out.push(m[2]); if (full()) break; }
+    for (const m of text.matchAll(res.ONELINER_NODE_RE)) { out.push(m[3]); if (full()) break; }
+    // fs.openSync(NAME, flags): flags that are not a literal are as unknown as a mode in a variable.
+    for (const m of text.matchAll(res.ONELINER_NODE_OPEN_RE)) {
+      if (nodeFlagsState(callArguments(text, m.index + m[0].indexOf('(') + 1).args) !== 'read') out.push(m[3]);
+      if (full()) break;
+    }
   } else if (kind === 'py') {
-    for (const m of text.matchAll(res.ONELINER_PY_WRITE_RE)) { out.push(m[2]); if (full()) break; }
+    // An f-string with a replacement field is left out here: hasUnquotedWriteTarget reads it as a target it cannot tell.
+    for (const m of text.matchAll(res.ONELINER_PY_WRITE_RE)) {
+      if (!oneLinerInterpolated(m[1], m[3])) out.push(m[3]);
+      if (full()) break;
+    }
     for (const m of text.matchAll(res.ONELINER_PY_OPEN_RE)) {
-      if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_AFTER_NAME_RE)) out.push(m[2]);
+      if (callModeState(callArguments(text, m.index + m[0].indexOf('(') + 1).args, 1) !== 'read' && !oneLinerInterpolated(m[1], m[3])) out.push(m[3]);
       if (full()) break;
     }
     for (const m of text.matchAll(res.ONELINER_PY_PATH_OPEN_RE)) {
-      if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_FIRST_RE)) out.push(m[2]);
+      if (callModeState(callArguments(text, m.index + m[0].length).args, 0) !== 'read' && !oneLinerInterpolated(m[1], m[3])) out.push(m[3]);
       if (full()) break;
     }
   }
