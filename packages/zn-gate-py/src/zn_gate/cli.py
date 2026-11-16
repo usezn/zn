@@ -756,9 +756,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             return 0
         else:
             if res.get("truncated_tail"):
-                print(f"\n{_lead(ALERT, sys.stderr)}Integrity: LAST RECORD INCOMPLETE (NOT VERIFIED)", file=sys.stderr)
+                print(f"\n{_lead(ALERT, sys.stderr)}Integrity: LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)", file=sys.stderr)
                 print(f"Details: {res.get('error')}", file=sys.stderr)
-                print(f"The first {res.get('verified', 0)} records verified; the last line was cut off. {recovery_hint()}\n", file=sys.stderr)
+                print(f"The first {res.get('verified', 0)} records verified; the last line is incomplete (cut off by a crash, or removed by someone). {recovery_hint()}\n", file=sys.stderr)
                 return 1
             print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
             print(f"{recovery_hint()}\n", file=sys.stderr)

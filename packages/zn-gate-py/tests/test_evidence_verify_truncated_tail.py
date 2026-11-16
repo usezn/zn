@@ -10,7 +10,7 @@ from unittest import mock
 from zn_gate import cli
 from zn_gate.evidence import log_evidence, verify_evidence_ledger
 
-INCOMPLETE = "Last record is incomplete (the write was cut off, for example by a crash or a full disk)"
+INCOMPLETE = "Last record is incomplete: the write was cut off (for example by a crash or a full disk) or the end of the file was removed, so it cannot be verified"
 
 
 def _ledger(tmp_path, n=3):
@@ -83,9 +83,9 @@ def test_cli_prints_the_incomplete_explanation_and_exits_1(capsys):
     with mock.patch.object(cli, "verify_evidence_ledger", return_value=res):
         assert cli.cmd_evidence(argparse.Namespace(verify=True)) == 1
     err = capsys.readouterr().err
-    assert "LAST RECORD INCOMPLETE (NOT VERIFIED)" in err
+    assert "LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)" in err
     assert "Tamper" not in err
-    assert "The first 2 records verified; the last line was cut off." in err
+    assert "The first 2 records verified; the last line is incomplete (cut off by a crash, or removed by someone)." in err
     assert "move it aside" in err
 
 

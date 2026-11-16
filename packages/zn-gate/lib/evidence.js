@@ -589,7 +589,7 @@ function endsWithNewline(filePath) {
 function isCutTail(filePath, line) {
   return line.startsWith(RECORD_START) && !endsWithNewline(filePath);
 }
-const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete (the write was cut off, for example by a crash or a full disk)';
+const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete: the write was cut off (for example by a crash or a full disk) or the end of the file was removed, so it cannot be verified';
 function truncatedTailResult(total, index) {
   return {
     valid: false,
@@ -1041,7 +1041,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
           badge.textContent = '● SHA-256 Chain Verified (Tamper-Free)';
         } else {
           badge.className = 'status-badge badge-invalid';
-          badge.textContent = v.truncated_tail ? '✖ LAST RECORD INCOMPLETE (not verified)' : '✖ TAMPER DETECTED at record ' + v.broken_index;
+          badge.textContent = v.truncated_tail ? '✖ LAST RECORD INCOMPLETE: cut off or removed (not verified)' : '✖ TAMPER DETECTED at record ' + v.broken_index;
         }
 
         const tbody = document.getElementById('audit-table');

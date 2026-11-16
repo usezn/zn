@@ -588,7 +588,7 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
 # The last line of a ledger that is not JSON is most likely a write cut off by a crash or a full
 # disk. It is still reported as not verified (valid: False), but with truncated_tail: True so the
 # output can say so and explain how to continue. Any other problem stays a tamper report.
-TRUNCATED_TAIL_MESSAGE = "Last record is incomplete (the write was cut off, for example by a crash or a full disk)"
+TRUNCATED_TAIL_MESSAGE = "Last record is incomplete: the write was cut off (for example by a crash or a full disk) or the end of the file was removed, so it cannot be verified"
 
 
 # A last line that is not JSON counts as a write cut off by a crash or a full disk only if it is
