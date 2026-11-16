@@ -18,6 +18,8 @@ sandbox.**
 - [Local copies, per agent](#local-copies-per-agent)
 - [Confirmation channel](#confirmation-channel)
 - [The saved API key (`zn-gate connect`)](#the-saved-api-key-zn-gate-connect)
+- [Malicious MCP servers](#malicious-mcp-servers)
+- [Protecting zn's own configuration](#protecting-zns-own-configuration)
 - [Failure behaviour](#failure-behaviour)
 - [Design decisions and known limits](#design-decisions-and-known-limits)
 - [Next steps](#next-steps)
@@ -452,6 +454,26 @@ stop malware running as the same user (see above).
 
 - **What zn does:** the hooks refuse the direct ways for an agent to read the key: keychain queries for zn's own entries (by service, account or label) and `security dump-keychain`, interpreter code that names zn's entries with a keyring library or loads zn's own modules, and anything under `~/.zn`. The hooks also treat `zn-gate connect` and `zn-gate disconnect` as commands only the user may run. The vault does not give the zn-gate key to the hooks, the secrets broker or `zn run`. Like any secret in the vault or the system keychain, a program running as you can still read it, or use zn-gate's own code to send requests with it. With the key, such a program can analyze text on your quota or revoke the key; revoking it turns the cloud check off and zn-gate goes back to local rules. The key cannot read usage or manage other keys, and you can revoke it at usezn.com/api-keys. As one more cheap barrier, the hooks also refuse a command that loads zn-gate's own client or key modules, named by their `zn-gate/lib/client` path, to ask for the key. It does not look at a project's own `lib/client` or at a relative `./lib/client` inside zn-gate itself. It is only a barrier, and a command built from pieces at run time gets around it. The scrubber hides the key's format in what the agent sees. The marker in `~/.zn/config.json` holds no key and is not enough on its own: it records the last four characters of the key `connect` stored, and zn-gate uses the cloud only with a stored key that ends the same way, so a marker written by hand (without a stored key) leaves everything local. When the marker is what turned the cloud on, zn-gate uses only that stored key: a key in `ZN_API_KEY` or `--key` is used only together with `ZN_CLOUD=1`, as documented. The saved key is only ever sent to `https://api.usezn.com`, whatever `--url` or `ZN_API_URL` say. It is also held back while the environment could weaken the TLS check: `NODE_TLS_REJECT_UNAUTHORIZED=0`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` (Node can then print the request headers, key included; any value counts), or `NODE_OPTIONS` (also with underscores in the option name, which Node accepts, such as `--tls_keylog`) with `--require`, `--import`, `-r`, `--use-openssl-ca`, `--tls-keylog` or `--inspect` (zn-gate then uses its local rules and says why). A key you give with `--key` or `ZN_API_KEY` is your own choice and is not held back. Certificates are not pinned, because the API's certificate rotates.
 - **What it does not stop:** like the vault key, the entry sits in the keychain under your user. A program the agent runs as you can still load it, through zn's own code or an OS keyring library written in a way the hook does not recognise (for example a command built from pieces at run time), as it can for any keychain entry (see above). `connect` only accepts a key limited to analyzing text (it cannot read usage or manage keys, and a full-access key is refused), so a copy can do little, and it can be revoked at usezn.com/api-keys.
+
+## Malicious MCP servers
+
+The [MCP shield](shield.md) checks what a server sends to the agent and pins its tool definitions. It does not make an untrusted server safe:
+
+- **Only servers the shield starts are wrapped.** A server that runs at a URL (a remote server) is left as it is, because the shield can only wrap a program it starts. Its tools and output are not checked by the shield.
+- **The first tool list is trusted.** Pinning is trust on first use: what a server shows the first time is approved as it is. A changed command line (a new package version, for example) is a new server, and its first list is trusted again.
+- **Tool shadowing is a warning, not a block.** When a tool has the same or a look-alike name as an approved tool of another server, or its text names one, the shield writes a warning to standard error and to the decision log. The call is not stopped, and the agent app may not show standard error to you.
+- **Pins cover tool definitions, not server code.** A server can keep the same tool list and change what its code does, or behave differently after you approved it. The output checks still run on every call, but they look for hidden instructions and secrets, not for a server that quietly does something else.
+
+Run servers you do not trust in a sandbox or a container, and review a server before you approve its tools.
+
+## Protecting zn's own configuration
+
+zn tries to stop the agent from turning zn off, but the boundary is your operating-system user:
+
+- **Hook files.** The hooks refuse agent writes to `~/.zn` and to the agents' own hook and plugin settings (see [What zn does not protect against](#what-zn-does-not-protect-against)). The hook launcher in `~/.zn/hooks` also checks a SHA-256 list of the installed package files (the code and JSON under `lib/`, `package.json` and `bin/cli.js`) as the hook loads them. The list does not cover the launcher itself, the Node.js binary, files the package reads as data or loads with `import()`, or the inline PowerShell hooks on Windows, and if the list could not be made at install time only the main hook file is checked. Any program running as your user that can write to `~/.zn` can change all of this.
+- **Settings that change during a session (Claude Code).** The `ConfigChange` hook blocks a change to the project settings file when it adds a critical `zn audit` finding, and a skill file that now holds hidden text. A change with a finding below critical (for example a hook that sends each event to a remote address), a change to your local or user settings, a skill file over 1 MiB and `.mcp.json` are not blocked. See [compat.md](compat.md#settings-skills-and-instruction-files-that-change-in-claude-code).
+- **Instruction files.** The `InstructionsLoaded` hook cannot hold a `CLAUDE.md` or rules file back. It only records a notice in the decision log when the file holds text trying to instruct the agent.
+- **The audit baseline.** `zn audit --approve` records the project's executable configuration (MCP servers, hooks, endpoints, permissions, install scripts) and asks a person to confirm it. Later runs report any change as `ZNA023`. The baseline is checked only when someone runs `zn audit`, and it lives in the zn folder, so an environment that points zn at another folder does not find it.
 
 ## Failure behaviour
 
