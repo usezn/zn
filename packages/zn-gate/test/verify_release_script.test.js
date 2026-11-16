@@ -63,6 +63,17 @@ echo "pypi-attestations $*" >> "$FAKE_LOG"
 case ",$FAKE_FAIL," in *,pypi,*) echo "no attestation" >&2; exit 1;; esac
 exit 0
 `,
+  openssl: `#!/bin/bash
+echo "openssl $*" >> "$FAKE_LOG"
+case "$1" in
+  dgst) echo "digest-bytes"; exit 0;;
+  base64)
+    cat > /dev/null
+    case ",$FAKE_FAIL," in *,npm_integrity,*) printf 'OTHER';; *) printf 'FAKE';; esac
+    exit 0;;
+esac
+exit 0
+`,
   npm: `#!/bin/bash
 echo "npm $*" >> "$FAKE_LOG"
 case "$1" in
@@ -77,6 +88,7 @@ case "$1" in
     case ",$FAKE_FAIL," in *,npm_audit,*) echo "invalid signature" >&2; exit 1;; esac
     exit 0;;
   view)
+    case "$*" in *dist.integrity*) echo "sha512-FAKE"; exit 0;; esac
     case ",$FAKE_FAIL," in *,npm_att,*) exit 0;; esac
     echo "{ url: 'https://registry.npmjs.org/-/npm/v1/attestations/zn-gate@$FAKE_VERSION' }"
     exit 0;;
@@ -148,7 +160,7 @@ test('every npm command is pinned to the public registry', { skip }, () => {
   try {
     assert.strictEqual(r.status, 0, r.out);
     const npmCalls = r.calls.split('\n').filter((l) => l.startsWith('npm '));
-    assert.strictEqual(npmCalls.length, 3, r.calls);
+    assert.strictEqual(npmCalls.length, 4, r.calls);
     for (const l of npmCalls) assert.match(l, /--registry=https:\/\/registry\.npmjs\.org\//, l);
   } finally { cleanup(r); }
 });
@@ -158,7 +170,7 @@ test('--print shows the registry on every npm command', { skip }, () => {
   try {
     assert.strictEqual(r.status, 0, r.out);
     const lines = r.out.split('\n').filter((l) => /\bnpm (install|audit|view)\b/.test(l));
-    assert.strictEqual(lines.length, 3, r.out);
+    assert.strictEqual(lines.length, 4, r.out);
     for (const l of lines) assert.match(l, /--registry=https:\/\/registry\.npmjs\.org\//, l);
   } finally { cleanup(r); }
 });
@@ -197,6 +209,7 @@ const STEP_FAILURES = [
   ['3/5', 'sig'],
   ['4/5', 'npm_audit'],
   ['4/5', 'npm_att'],
+  ['4/5', 'npm_integrity'],
   ['4/5', 'npm_install'],
   ['4/5', 'npm_version'],
   ['5/5', 'pypi'],
@@ -234,6 +247,7 @@ test('a failed download and a SHA256SUMS without the files are failures', { skip
 const MISSING = [
   [['gh'], ['1/5', '2/5', '3/5'], 'gh missing'],
   [['npm'], ['4/5'], 'npm missing'],
+  [['openssl'], ['4/5'], 'openssl and node missing'],
   [['sha256sum'], ['1/5'], 'sha256sum or shasum missing'],
   [['cosign'], ['3/5'], 'cosign and sigstore-python missing'],
   [['pypi-attestations'], ['5/5'], 'pypi-attestations missing'],

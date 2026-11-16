@@ -1,7 +1,7 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease } from './check-public-facts.mjs';
+import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions } from './check-public-facts.mjs';
 
 const FACTS = {
   version: {
@@ -372,4 +372,83 @@ test('a short description is checked word for word on each surface', () => {
   const errors = check(facts, Object.keys(files), read);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /short description \(MCP Registry\) is Local layer\. Sends nothing/);
+});
+
+const LIB = {
+  'packages/zn-gate/lib/rules.js': "const RULES_VERSION = '2026-11-11.2';\n",
+  'packages/zn-gate/lib/scrub/patterns.js': "const SCRUB_RULES_VERSION = '2026-11-11.1';\n",
+  'packages/zn-gate/lib/audit/rules.js': "const AUDIT_RULES_VERSION = '2026-11-06.4';\n",
+};
+const readFrom = (extra) => (f) => {
+  const all = { ...LIB, ...extra };
+  if (!(f in all)) throw new Error('missing ' + f);
+  return all[f];
+};
+
+test('the rule versions are read from the three constants in the code', () => {
+  const errors = [];
+  assert.deepEqual(codeRuleVersions(readFrom({}), errors), { rules: '2026-11-11.2', scrub: '2026-11-11.1', audit: '2026-11-06.4' });
+  assert.deepEqual(errors, []);
+});
+
+test('a status sample with the versions of the code passes', () => {
+  const doc = { 'docs/a.md': 'text\n  Rules Version   : 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)\n' };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(doc)), []);
+});
+
+test('an old status sample is reported with its file, line and both versions', () => {
+  const doc = { 'docs/a.md': 'one\ntwo\n  Rules Version   : 2026-11-07.1 (scrub 2026-10-31.1, audit 2026-11-06.3)\n' };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(doc)), [
+    'docs/a.md:3: the zn-gate status sample shows rules 2026-11-07.1 (scrub 2026-10-31.1, audit 2026-11-06.3); the code has 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)',
+  ]);
+});
+
+test('only Markdown files are read, and a file without a sample is fine', () => {
+  const doc = { 'docs/a.txt': '  Rules Version   : 1 (scrub 2, audit 3)\n', 'docs/b.md': 'no sample here\n' };
+  assert.deepEqual(checkStatusSamples(['docs/a.txt', 'docs/b.md'], readFrom(doc)), []);
+});
+
+test('a missing version constant is reported instead of passing', () => {
+  const read = (f) => { if (f === 'packages/zn-gate/lib/audit/rules.js') return '// moved\n'; return LIB[f]; };
+  const errors = checkStatusSamples([], read);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /AUDIT_RULES_VERSION not found/);
+});
+
+const TAG = {
+  'packages/zn-gate/lib/rules.js': "const RULES_VERSION = '2026-10-28.1';\n",
+  'packages/zn-gate/lib/scrub/patterns.js': "const SCRUB_RULES_VERSION = '2026-10-24.1';\n",
+  'packages/zn-gate/lib/audit/rules.js': "const AUDIT_RULES_VERSION = '2026-10-23.8';\n",
+};
+const readAt = (version) => (version === '1.15.0' ? (f) => TAG[f] : null);
+const sample = (pkg, rules) => `\`\`\`text\n[+]  zn-gate Status:\n  Package Version : ${pkg}\n  Rules Version   : ${rules}\n\`\`\`\n`;
+
+test('a sample that names a released version is compared with that release, not with the code', () => {
+  const ok = { 'docs/a.md': sample('1.15.0', '2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)') };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(ok), readAt), []);
+  const head = { 'docs/a.md': sample('1.15.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(head), readAt), [
+    'docs/a.md:4: the zn-gate status sample shows rules 2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4); zn-gate 1.15.0 has 2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)',
+  ]);
+});
+
+test('a sample for a version that has no tag yet (a release being prepared) is compared with the code', () => {
+  const doc = { 'docs/a.md': sample('1.16.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
+  assert.deepEqual(checkStatusSamples(['docs/a.md'], readFrom(doc), readAt), []);
+});
+
+test('a clone without release tags is reported instead of comparing with the code', () => {
+  const doc = { 'docs/a.md': sample('1.15.0', '2026-10-28.1 (scrub 2026-10-24.1, audit 2026-10-23.8)') };
+  const noTags = () => { throw new Error('this clone has no release tags'); };
+  const errors = checkStatusSamples(['docs/a.md'], readFrom(doc), noTags);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /no release tags/);
+});
+
+test('a release tag where a version constant cannot be read is reported, not replaced by the code', () => {
+  const doc = { 'docs/a.md': sample('1.15.0', '2026-11-11.2 (scrub 2026-11-11.1, audit 2026-11-06.4)') };
+  const broken = (version) => (version === '1.15.0' ? (f) => (f.endsWith('audit/rules.js') ? '// moved\n' : TAG[f]) : null);
+  const errors = checkStatusSamples(['docs/a.md'], readFrom(doc), broken);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^v1\.15\.0: .*AUDIT_RULES_VERSION not found/);
 });

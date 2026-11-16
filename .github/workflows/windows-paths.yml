@@ -5,10 +5,15 @@ name: Windows checks for Windows-specific code
 # workflow that runs it on Windows (Node.js 22):
 # - on every push to main and to a release branch, so a release commit is never tagged without it
 #   (.github/release-required-checks.txt names this job);
-# - on pull requests into next, main and release branches that touch code with Windows-specific paths
-#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
+# - on pull requests into main and release branches that touch code with Windows-specific paths
+#   (command quoting, launching programs, the keychain, the broker, agent setup). A pull request that changes
+#   only tests does not run it; the push to main and the nightly run on next cover those;
 # - every night on next (nightly-next.yml starts a manual run there), and on other manual runs.
 # The merge queue runs only the required checks, so it does not run this workflow.
+#
+# Pull requests into next do not run it. The Windows checks run on pull requests into main and release branches
+# and every night on next, which keeps the cost of a Windows runner off the pull requests that merge most often.
+# To run it on pull requests into next again, add `next` to the branches list of pull_request below.
 #
 # The tests of the hook launchers (shell scripts that Claude Code starts with Git Bash) run here too: the job links
 # Git for Windows' usr/bin as C:\bin and puts it on the PATH, so /bin/sh and sh start. On a Windows machine
@@ -18,7 +23,7 @@ on:
   push:
     branches: [ main, 'release/**' ]
   pull_request:
-    branches: [ next, main, 'release/**' ]
+    branches: [ main, 'release/**' ]
     types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/exe.js'
@@ -29,7 +34,6 @@ on:
       - 'packages/zn-gate/lib/agents/**'
       - 'packages/zn-gate/lib/init.js'
       - 'packages/zn-gate/bin/**'
-      - 'packages/zn-gate/test/**'
       - 'plugins/tools/**'
       - 'plugins/zcode/scripts/**'
       - 'plugins/zn-gate/scripts/**'
@@ -40,11 +44,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
-# the merge queue and the schedule always complete (each has its own group).
+# A new push to a pull request cancels the run still going for it. Other runs always complete (each has its own
+# group).
 concurrency:
-  group: windows-paths-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: windows-paths-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

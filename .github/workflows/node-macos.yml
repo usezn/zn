@@ -6,7 +6,7 @@ name: zn-gate Node.js on macOS
 # are the scarcest ones, so pull requests that change nothing there skip it), not in the merge queue (which runs
 # only the required checks), and on pushes to main and release branches that change
 # code with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
-# system scans and links, the CLI), every day and on manual runs.
+# system scans and links, the CLI), every day and on manual runs (the nightly run on next is one).
 on:
   pull_request:
     branches: [ next, main, 'release/**' ]
@@ -55,10 +55,10 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Other runs always complete.
+# A new push to a pull request cancels the run still going for it. Other runs always complete.
 concurrency:
-  group: node-macos-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: node-macos-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

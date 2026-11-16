@@ -11,7 +11,8 @@ name: Cache cleanup
 # deleted only by a manual run with dry_run unchecked. It also deletes
 # the superseded caches of main (see .github/scripts/cache-superseded.sh): a Rust build cache is
 # 1 to 1.5 GB and a new one is saved whenever Cargo.lock changes, so the old one would otherwise sit
-# in the 10 GB limit until it is evicted, and push live caches out first. It runs every six hours and on demand.
+# in the 10 GB limit until it is evicted, and push live caches out first. It runs every six hours and on demand;
+# a manual run always covers the whole repository, never a single pull request.
 # It deliberately has no pull_request trigger: that event runs the workflow file as
 # the pull request has it, so a same-repository branch could use this job's actions: write token.
 on:
@@ -53,8 +54,6 @@ jobs:
           REPO: ${{ github.repository }}
           # Scheduled runs have no inputs and delete; manual runs delete only when dry_run is unchecked.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
-          # Empty on scheduled and manual runs; kept so a single pull request can be targeted.
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           list="$RUNNER_TEMP/caches.tsv"
@@ -83,10 +82,6 @@ jobs:
 
           # Only refs of the exact form refs/pull/<number>/merge are considered.
           numbers=$(cut -f2 "$list" | grep -E '^refs/pull/[0-9]+/merge$' | cut -d/ -f3 | sort -un || true)
-          if [ -n "${PR_NUMBER:-}" ]; then
-            case "$PR_NUMBER" in *[!0-9]*) echo "::error::Unexpected pull request number."; exit 1 ;; esac
-            numbers=$(printf '%s\n' "$numbers" | grep -x "$PR_NUMBER" || true)
-          fi
           for number in $numbers; do
             if ! state=$(gh api "repos/$REPO/pulls/$number" --jq '.state'); then
               echo "::warning::Could not read the state of pull request #$number; its caches are kept."
@@ -111,9 +106,6 @@ jobs:
           # their caches. A branch that still exists is a run in progress and keeps its caches. If the
           # branches cannot be listed, nothing of the queue is deleted.
           queue_refs=$(cut -f2 "$list" | grep -E '^refs/heads/gh-readonly-queue/[A-Za-z0-9._/-]+$' | sort -u || true)
-          if [ -n "${PR_NUMBER:-}" ]; then
-            queue_refs=$(printf '%s\n' "$queue_refs" | grep -E "/pr-${PR_NUMBER}-[0-9a-f]+$" || true)
-          fi
           if [ -n "$queue_refs" ]; then
             live="$RUNNER_TEMP/queue-branches.txt"
             if gh api --paginate "repos/$REPO/git/matching-refs/heads/gh-readonly-queue/" --jq '.[].ref' > "$live"; then
@@ -137,19 +129,16 @@ jobs:
           fi
 
           # Superseded caches of main: an older Cargo.lock or CodeQL base commit of the same family.
-          # Skipped when a single pull request is targeted.
           superseded=0; superseded_bytes=0
-          if [ -z "${PR_NUMBER:-}" ]; then
-            gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
-              --jq '.actions_caches[] | [.id, .key, .ref, .size_in_bytes, .created_at] | @tsv' > "$RUNNER_TEMP/full.tsv"
-            bash .github/scripts/cache-superseded.sh < "$RUNNER_TEMP/full.tsv" > "$RUNNER_TEMP/superseded.tsv"
-            while IFS=$'\t' read -r id key size; do
-              case "$id" in ''|*[!0-9]*) continue ;; esac
-              case "$size" in ''|*[!0-9]*) size=0 ;; esac
-              delete_cache "$id" "$size" "superseded ${key:0:60}" || continue
-              superseded=$((superseded + 1)); superseded_bytes=$((superseded_bytes + size))
-            done < "$RUNNER_TEMP/superseded.tsv"
-          fi
+          gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | [.id, .key, .ref, .size_in_bytes, .created_at] | @tsv' > "$RUNNER_TEMP/full.tsv"
+          bash .github/scripts/cache-superseded.sh < "$RUNNER_TEMP/full.tsv" > "$RUNNER_TEMP/superseded.tsv"
+          while IFS=$'\t' read -r id key size; do
+            case "$id" in ''|*[!0-9]*) continue ;; esac
+            case "$size" in ''|*[!0-9]*) size=0 ;; esac
+            delete_cache "$id" "$size" "superseded ${key:0:60}" || continue
+            superseded=$((superseded + 1)); superseded_bytes=$((superseded_bytes + size))
+          done < "$RUNNER_TEMP/superseded.tsv"
 
           {
             if [ "$DRY_RUN" = "true" ]; then

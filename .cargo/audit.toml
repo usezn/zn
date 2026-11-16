@@ -1,17 +1,10 @@
 # cargo-audit configuration for the legacy Rust gateway in src/.
 # Run locally:  cargo audit
-# CI: .github/workflows/rust.yml (audit job, also weekly).
+# CI: .github/workflows/cargo-audit.yml (every day, on demand, and as a required check of pull requests and the
+# merge queue when they change the Rust dependencies).
 #
-# Policy: every entry below is a dependency that CANNOT be updated today.
-# Each entry lists the pulling crate(s) and why an update or fix is not
-# currently possible. Revisit on every major dependency bump.
+# Policy: no advisory is ignored. If one cannot be fixed by an update, replace the crate or
+# patch it (see [patch.crates-io] in Cargo.toml) rather than adding an entry here.
 
 [advisories]
-ignore = [
-    # --- Unmaintained / unsound, transitive, no drop-in replacement available ---
-    # paste is a proc-macro used at build time only; via gemm <- candle-core.
-    "RUSTSEC-2024-0436", # paste unmaintained (proc-macro, build-time only)
-
-    # number_prefix via indicatif <- cliclack/hf-hub (progress-bar formatting).
-    "RUSTSEC-2025-0119", # number_prefix unmaintained; cosmetic CLI progress formatting only
-]
+ignore = []

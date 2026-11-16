@@ -14,6 +14,12 @@ You have never used a terminal agent, or you have just started. This page explai
 - The **terminal** is the window where you type commands. Run zn-gate's setup commands in your own terminal, not through an agent.
 - A **secret** is a value that gives access to something, such as an API key, a token or a password.
 
+> **Plain-words definitions**
+>
+> - **Hook**: a small check that your agent runs before or after it reads a file, runs a command or gets your prompt. zn-gate uses hooks to block or redact. ([Glossary](glossary.md))
+> - **Vault**: an encrypted store on your machine where zn-gate keeps the real values of your secrets. Your agent sees only a stand-in marker. ([Glossary](glossary.md))
+> - **Ledger**: the local record of what zn-gate allowed or blocked, also called the decision log or evidence log. It is a file on your machine, `~/.zn/evidence.jsonl`, and `zn-gate evidence --verify` checks that nobody changed it by accident. ([Glossary](glossary.md))
+
 ## What zn-gate is
 
 zn-gate is a small checkpoint on your own machine. It sits between your agent and everything the agent does not control: your prompts, the files it reads, web pages, and the tools and MCP servers it calls. It runs locally, needs no account, and sends nothing off your machine by default.

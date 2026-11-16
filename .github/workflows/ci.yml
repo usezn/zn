@@ -8,16 +8,16 @@ name: zn CI
 # scrubber + vault, Public facts, and build, test, clippy, fmt) come from other workflows. The Python 3.14
 # warnings job is not required. The full matrix (Node.js 18.x, 20.x, 22.x, 24.x and 26.x; Python 3.10 to 3.14,
 # Windows and macOS) runs on pull requests into main and release branches, on pushes to main and release
-# branches, on the daily schedule, on manual runs, and on any pull request labelled full-ci. A push to next runs
-# only the matrix entries the merge queue did not run (Node.js 20.x and 26.x; Python 3.10, 3.11, 3.13, 3.14,
-# Windows and macOS). The only macOS job is Python 3.12. The merge queue is enabled for next only; if one is
-# enabled for main or a release branch, it runs the full matrix.
+# branches, on the daily schedule, on manual runs, and on any pull request labelled full-ci. Pushes to next do not
+# run this workflow: next gets the full matrix once a night (nightly-next.yml starts a manual run on it). The only
+# macOS job is Python 3.12. The merge queue is enabled for next only; if one is enabled for main or a release
+# branch, it runs the full matrix.
 on:
   push:
     # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
     # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
     # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
-    branches: [ main, next, 'release/**' ]
+    branches: [ main, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
@@ -36,11 +36,10 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main always complete.
+# A new push to a pull request cancels the run still going for it. Other runs always complete.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -109,9 +108,10 @@ jobs:
     # this exact name, as skipped, and a skipped job counts as passed for a required check. A matrix job skipped
     # this way would report under its unexpanded name and leave the required check pending.
     # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge), on
-    # draft pull requests, and on a push to next (the merge queue already ran it on that commit). It runs in the
-    # merge queue, on pull requests into main and release branches, on pushes to main and release branches, on
-    # the daily schedule, on manual runs and on pull requests labelled full-ci.
+    # draft pull requests. A push to next does not start this workflow (the guard below stays as a safety net).
+    # It runs in the merge queue, on pull requests into main and release branches, on pushes to main and release
+    # branches, on the daily schedule, on manual runs (including the nightly run on next) and on pull requests
+    # labelled full-ci.
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -134,9 +134,10 @@ jobs:
     # this exact name, as skipped, and a skipped job counts as passed for a required check. A matrix job skipped
     # this way would report under its unexpanded name and leave the required check pending.
     # Skipped on pull requests into next without the full-ci label (the merge queue runs it before the merge), on
-    # draft pull requests, and on a push to next (the merge queue already ran it on that commit). It runs in the
-    # merge queue, on pull requests into main and release branches, on pushes to main and release branches, on
-    # the daily schedule, on manual runs and on pull requests labelled full-ci.
+    # draft pull requests. A push to next does not start this workflow (the guard below stays as a safety net).
+    # It runs in the merge queue, on pull requests into main and release branches, on pushes to main and release
+    # branches, on the daily schedule, on manual runs (including the nightly run on next) and on pull requests
+    # labelled full-ci.
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -155,7 +156,7 @@ jobs:
 
   # Pull requests into next run no Python tests unless they carry the full-ci label; the merge queue runs the
   # required Python 3.12 on Ubuntu before the merge. Older and newer Python versions, Windows and
-  # macOS run on the push to next, on pull requests into main and release branches, on a merge queue for main
+  # macOS run in the nightly run on next, on pull requests into main and release branches, on a merge queue for main
   # or a release branch if one is enabled, and on pull requests labelled full-ci (so they run before the merge).
   test-python-312:
     name: Python 3.12 tests & benchmarks (ubuntu-latest)
@@ -300,14 +301,15 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
-  # The Python package on the newest Python with deprecation and resource warnings as errors, in pull requests
-  # too: a call that a future Python removes, or a file or socket left open, fails here instead of in a user's
-  # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
+  # The Python package on the newest Python with deprecation and resource warnings as errors: a call that a
+  # future Python removes, or a file or socket left open, fails here instead of in a user's upgrade. No -X dev:
+  # its debug checks multiply the run time and break the linear-time tests.
   python-warnings:
     name: Python 3.14 tests with warnings as errors (ubuntu-latest)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it. Not a required check,
-    # so the merge queue leaves it out: it runs in pull requests and on the push to next.
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Not a required check, so the merge queue leaves it out. A pull request runs it only with the full-ci label
+    # (and not as a draft); every other run covers it: pushes to main and release branches, the nightly run on
+    # next (nightly-next.yml starts a manual run of this workflow there), and manual runs.
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'full-ci')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -348,8 +350,8 @@ jobs:
 
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
-  # report upload never delay a merge. Runs on pushes (main, next and release branches), on the daily schedule and on
-  # manual runs; it is not a required check. Report only, no threshold.
+  # report upload never delay a merge. Runs on pushes to main and release branches, on the daily schedule and on
+  # manual runs (the nightly run on next is one); it is not a required check. Report only, no threshold.
   python-coverage:
     name: Python 3.12 coverage report (ubuntu-latest)
     # Not in pull requests or the merge queue: it is a report, not a required check.
@@ -404,9 +406,7 @@ jobs:
   lint:
     name: Lint (eslint, ruff, mypy)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -485,9 +485,7 @@ jobs:
   pack-node:
     name: npm package (pack, inspect, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -567,9 +565,7 @@ jobs:
   build-python:
     name: Python package (build, twine check, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
-    # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
