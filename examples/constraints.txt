@@ -1,0 +1,7 @@
+# Version floors for transitive dependencies of the Python examples, used by CI only
+# (.github/workflows/examples-smoke.yml sets PIP_CONSTRAINT to this file). Each floor is the
+# first release without a published advisory. A floor only applies when an example's framework
+# already pulls the package in; it never adds one. Readers can ignore this file:
+# `pip install -r requirements.txt` works without it.
+filelock>=4.2.1
+werkzeug>=3.1.9
