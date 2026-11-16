@@ -107,6 +107,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 | Command | Codes | Meaning |
 |---|---|---|
 | `evidence --verify` | `1` | `1` when the SHA-256 chain was changed. |
+| `evidence --export`, `evidence` (Python package) | `1` | `1` when the SHA-256 chain was changed. The export is still written, so you can inspect it. The npm package exits `0` in this case. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
 | `stats share on` | `1` | `1` when you do not confirm. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |
@@ -125,9 +126,9 @@ The Python package (`pip install zn-gate`) has a smaller command line than the n
 | Command | Codes | Meaning |
 |---|---|---|
 | `test "<text>"` | `0`, `1` | `0` nothing was flagged; `1` the text was blocked or contains a secret. It does not run the self-test that `test` runs in the npm package. |
-| `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked, or no text is given (as in the npm package). |
+| `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked, or no text is given (as in the npm package). When the cloud call fails and the local rules answer instead, it still exits `0` for an allow, and prints a warning on stderr. |
 | `scan [path]` | `0`, `1`, `3` | `0` nothing found; `1` something was found or the path does not exist; `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
-| `evidence` | `0`, `1` | `0` done; `1` `--verify` found a changed SHA-256 chain, or the export was not saved. |
+| `evidence` | `0`, `1` | `0` done; `1` the SHA-256 chain was changed (`--verify`, `--export` and the counts in the Python package; the npm package only for `--verify`), or the export was not saved. |
 | `status` | `0` | Always `0`. |
 | `stats` | `0`, `2` | `0` done; `2` `--days` is out of range (1 to 90). |
 | The other commands on this page | `2` | They exist only in the npm package: the Python package prints a short note that points to it, then exits `2`. `help` does the same. |

@@ -468,7 +468,7 @@ def test_cmd_evidence_export_to_stdout_and_file(tmp_path, capsys):
 def test_cmd_evidence_stats(capsys):
     st = {"total": 5, "blocks": 2, "allows": 3, "valid": False}
     with mock.patch.object(cli, "get_evidence_stats", return_value=st):
-        assert cli.cmd_evidence(argparse.Namespace()) == 0
+        assert cli.cmd_evidence(argparse.Namespace()) == 1
     out = capsys.readouterr().out
     assert "Total Events   : 5" in out and "CORRUPTED" in out
 

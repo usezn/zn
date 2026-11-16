@@ -262,6 +262,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if res.get("degraded"):
         print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.",
               file=sys.stderr)
+    elif res.get("fallback"):
+        print("[zn-gate] Warning: the cloud call failed, so this verdict comes from the local rules on this machine, not from the cloud model.",
+              file=sys.stderr)
     print(json.dumps(res, indent=2))
 
     return 2 if res.get("verdict") == "block" else 0
@@ -785,7 +788,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
-        return 0
+        # Like --verify: a ledger that is not valid is an error, even though the
+        # records read so far were written out above.
+        return 0 if res.get("valid") else 1
 
     stats = get_evidence_stats()
     print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
@@ -797,7 +802,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         print(f"  Details        : {stats.get('error')}")
         print(f"  Recovery       : {recovery_hint()}")
     print()
-    return 0
+    return 0 if stats.get("valid") else 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:
