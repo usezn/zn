@@ -1112,6 +1112,13 @@ const INSTRUCTION_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'rsync', 'ln'
 const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'copy', 'move', 'copy-item', 'move-item', 'ren', 'rename-item']);
 const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
 const INSTRUCTION_CHECKS_MAX = 64;
+// A command that names more files than are checked (or runs the check out of budget) cannot be shown to leave the
+// instruction files alone, so it gets the same decision as a write to one: ask, and a deny in strict mode.
+const TOO_MANY_TARGETS_NOTICE = {
+  file: 'too many files',
+  ask: 'zn: this command names too many files to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+  deny: 'zn: this command names too many files to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to split the command or run it themselves.',
+};
 
 // Words that run the next command: the command word is the first one after them (and their options).
 // Each maps to the options that take a value.
@@ -1263,7 +1270,7 @@ function instructionWriteInWords(readings, opts) {
       for (const text of candidates) {
         if (!text || seen.has(text)) continue;
         seen.add(text);
-        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
+        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return TOO_MANY_TARGETS_NOTICE;
         const n = instructionWriteNotice(text, opts);
         if (n) return n;
       }
