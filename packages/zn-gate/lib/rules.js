@@ -11,7 +11,7 @@ const { envFlag } = require('./env-flag');
  * RULES_VERSION: 2026-11-16.14
  */
 
-const RULES_VERSION = '2026-11-16.15';
+const RULES_VERSION = '2026-11-16.16';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such

@@ -259,6 +259,9 @@ def _parity_corpus() -> List[Dict[str, Any]]:
         "empty value and equals": '{"A_TOKEN": "", "B_TOKEN" == "%s", "C_TOKEN": = "%s"}' % (v, v),
         "long bare word": "a" * 200 + ' = "%s"' % v,
         "long arg": '{"args": ["--token=' + "x" * 5000 + '"]}',
+        "deep nesting": '{"API_TOKEN": ' + '{"x": ' * 10 + '{"value": "%s"}' % v + "}" * 11 + ', "k": ' + "[" * 80 + '"%s"' % v + "]" * 80,
+        "arrays of arrays": '{"api_key": [["%s"], [["a", "%s"]]], "auth": {"s": [["%s"]]}}' % (v, v, v),
+        "long block": '{"API_TOKEN": {' + "\n" * 250 + '"value": "%s"}}' % v,
         "long header arg": '{"args": ["Authorization: Bearer %s", "--api-key=%s"]}' % (v * 500, v * 500),
     }
     files = ["", ".claude.json", "C:\\Users\\Ana María\\.claude.json", "/home/u/My Dir/.mcp.json", "/home/u/日本/.codex/config.toml"]
@@ -491,12 +494,58 @@ class TestNestedSecretValues(unittest.TestCase):
         self.assertEqual(_kinds('{"API_TOKEN": {"description": "%s"}}' % FAKE), [])
         self.assertEqual(_kinds('{"API_TOKEN": {"a": {"b": ["%s"]}}, "LOG": {"value": "%s"}}' % (FAKE, FAKE)), [])
 
-    def test_nesting_is_bounded_and_broken_input_does_not_raise(self):
-        deep = '{"API_TOKEN": ' + '{"x": ' * 10 + '{"value": "%s"}' % FAKE + "}" * 11
-        self.assertEqual(_kinds(deep), [])
-        for text in ('{"API_TOKEN": {"value": ', '{"API_TOKEN": [[[[[[[[[[["%s"' % FAKE,
-                     '"API_TOKEN": {' + "\n" * 300 + '"value": "%s"' % FAKE):
+    def test_broken_input_does_not_raise(self):
+        for text in ('{"API_TOKEN": {"value": ', '{"API_TOKEN": [[[[[[[[[[["%s"' % FAKE, '{"API_TOKEN": ' + "]}" * 50,
+                     '{"API_TOKEN": ' + "[" * 100 + "]" * 200 + '"%s"' % FAKE):
             mcp.find_mcp_config_secrets(text)
+
+
+class TestNestingLimitsDoNotHideCredentials(unittest.TestCase):
+    """Deep objects, long blocks and arrays of arrays under a secret-named key are
+    followed to their end: no limit drops the key and lets its value through."""
+
+    def test_a_value_deep_in_objects_under_the_key_is_reported(self):
+        deep = '{"API_TOKEN": ' + '{"x": ' * 10 + '{"value": "%s"}' % FAKE + "}" * 11
+        self.assertEqual(_kinds(deep), [(1, "environment variable", "API_TOKEN")])
+
+    def test_a_value_hundreds_of_lines_into_the_block_is_reported(self):
+        text = '{"API_TOKEN": {' + "\n" * 300 + '"value": "%s"\n}}' % FAKE
+        self.assertEqual(_kinds(text), [(301, "environment variable", "API_TOKEN")])
+        lines = ['{"api_key": {'] + ['  "note%d": "text",' % i for i in range(500)] + ['  "value": "%s"' % FAKE, "}}"]
+        self.assertEqual(_kinds("\n".join(lines)), [(502, "setting", "api_key")])
+
+    def test_arrays_of_arrays_under_the_key_are_reported(self):
+        self.assertEqual(_kinds('{"api_key": [["%s"]]}' % FAKE), [(1, "setting", "api_key")])
+        self.assertEqual(_kinds('{"api_key": [[["name", "%s"]]]}' % FAKE), [(1, "setting", "api_key")])
+        self.assertEqual(_kinds('{"api_key": [\n [\n  "%s"\n ]\n]}' % FAKE), [(3, "setting", "api_key")])
+
+    def test_values_past_the_depth_kept_are_reported(self):
+        for name, text in (
+                ("arrays", '{"API_TOKEN": ' + "[" * 100 + '"%s"' % FAKE + "]" * 100 + "}"),
+                ("objects", '{"API_TOKEN": ' + '{"x": ' * 100 + '"%s"' % FAKE + "}" * 100 + "}"),
+                ("after a deep part", '{"API_TOKEN": {"a": ' + "[" * 100 + "]" * 100 + ', "value": "%s"}}' % FAKE)):
+            with self.subTest(case=name):
+                self.assertEqual(_kinds(text), [(1, "environment variable", "API_TOKEN")])
+                self.assertNotIn(FAKE, mcp.mask_mcp_values(text, mcp.find_mcp_config_secret_spans(text)))
+
+    def test_what_was_not_a_credential_still_is_not(self):
+        self.assertEqual(_kinds('{"API_TOKEN": {"a": {"b": ["%s"]}}, "LOG": {"value": "%s"}}' % (FAKE, FAKE)), [])
+        self.assertEqual(_kinds('{"auth": {"scopes": [["read", "write"]], "type": "oauth"}}'), [])
+        self.assertEqual(_kinds('{"API_TOKEN": ' + "[" * 100 + '"${API_TOKEN}", "<key>"' + "]" * 100 + "}"), [])
+        self.assertEqual(_kinds('{"API_TOKEN": {"value": "${A}"}}\n' + '{"other": {"value": "%s"}}' % FAKE), [])
+
+    def test_crafted_nesting_finishes_in_under_a_second(self):
+        cases = {
+            "200k open brackets": '{"API_TOKEN": ' + "[" * 200_000,
+            "200k open braces": '{"API_TOKEN": ' + '{"x":' * 40_000,
+            "open and close": '{"API_TOKEN": ' + "[]" * 100_000 + "}",
+            "20k lines in a block": '{"API_TOKEN": {\n' + '"a": [["x"]],\n' * 20_000 + "}}",
+            "deep strings": '{"API_TOKEN": ' + "[" * 100 + '"a",' * 40_000,
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                best = min(_elapsed(lambda: mcp.find_mcp_config_secret_spans(text)) for _ in range(3))
+                self.assertLess(best, 1.0)
 
     def test_toml_inline_table(self):
         text = 'env = { API_TOKEN = { value = "%s" } }' % FAKE

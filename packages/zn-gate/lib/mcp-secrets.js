@@ -68,9 +68,11 @@ const MIN_VALUE = 6;
 // ({"API_TOKEN": {"value": "..."}}): the strings under these keys, and the
 // items of the array itself, are reported under the name of that key.
 const NEST_LEAF_KEYS = new Set(['value', 'default', 'string', 'literal', 'plain', 'plaintext']);
-const NEST_MAX_LEAF_DEPTH = 4;
-const NEST_MAX_STACK = 8;
-const NEST_MAX_LINES = 200;
+// The block is followed to its end however many lines it takes; past
+// NEST_MAX_STACK open brackets only their number is kept, and every string in
+// that part is checked as a value of the key (so deep nesting never hides a
+// credential).
+const NEST_MAX_STACK = 64;
 
 function isSecretName(norm) {
   if (!norm) return false;
@@ -171,18 +173,18 @@ function safeName(name) {
 }
 
 // Follows the braces and brackets of an object or array under a secret-named key
-// across lines. Fills `ctx` (index -> { top, depth, name }) for what sits inside it on
-// this line; `nest` is { name, stack, lines } and lives across lines.
+// across lines. Fills `ctx` (index -> { top, onlyArrays, name }; top is '' past
+// NEST_MAX_STACK) for what sits inside it on this line; `nest` is
+// { name, stack, objects, deep } and lives across lines.
 function followNest(line, toks, nest, ctx) {
   const opens = new Map();
   for (const t of toks) if (t.sep && t.valueAt !== undefined && isSecretName(normalizeName(t.text))) opens.set(t.valueAt, t.text);
-  if (nest.stack.length > 0 && ++nest.lines > NEST_MAX_LINES) nest.stack = [];
   const n = line.length;
   let i = 0;
   while (i < n) {
     const c = line[i];
     const active = nest.stack.length > 0;
-    if (active) ctx[i] = { top: nest.stack[nest.stack.length - 1], depth: nest.stack.length, name: nest.name };
+    if (active) ctx[i] = { top: nest.deep ? '' : nest.stack[nest.stack.length - 1], onlyArrays: nest.objects === 0, name: nest.name };
     if (c === '"' || c === "'") {
       let j = i + 1;
       while (j < n && line[j] !== c) j += (c === '"' && line[j] === '\\') ? 2 : 1;
@@ -193,15 +195,20 @@ function followNest(line, toks, nest, ctx) {
     if (c === '#' || (c === '/' && line[i + 1] === '/')) break;
     if (c === '{' || c === '[') {
       if (active) {
-        if (nest.stack.length >= NEST_MAX_STACK) nest.stack = [];
-        else nest.stack.push(c);
+        if (nest.deep || nest.stack.length >= NEST_MAX_STACK) nest.deep++;
+        else {
+          nest.stack.push(c);
+          if (c === '{') nest.objects++;
+        }
       } else if (opens.has(i)) {
         nest.name = opens.get(i);
         nest.stack = [c];
-        nest.lines = 0;
+        nest.objects = c === '{' ? 1 : 0;
+        nest.deep = 0;
       }
     } else if ((c === '}' || c === ']') && active) {
-      nest.stack.pop();
+      if (nest.deep) nest.deep--;
+      else if (nest.stack.pop() === '{') nest.objects--;
     }
     i++;
   }
@@ -233,7 +240,7 @@ function findMcpConfigSecretSpans(text, options) {
     found.push(f);
   };
   let pending = null; // a credential flag whose value is the next string
-  const nest = { name: '', stack: [], lines: 0 };
+  const nest = { name: '', stack: [], objects: 0, deep: 0 };
   for (let i = 0; i < lines.length; lineStart += lines[i].length + 1, i++) {
     ln = i + 1;
     const line = lines[i].replace(/\r$/, '');
@@ -248,15 +255,16 @@ function findMcpConfigSecretSpans(text, options) {
       const next = toks[t + 1];
       const inNest = ctx[tok.start];
       if (inNest) {
-        // Inside an object or array under a secret-named key: a string under a value-like key, or an item of that array.
+        // Inside an object or array under a secret-named key: a string under a value-like key,
+        // an item of that array or of arrays in it, or any value past the depth kept.
         if (tok.sep) {
           if (next && next.str && next.start === tok.valueAt && !isSecretName(normalizeName(tok.text))
-              && inNest.top === '{' && inNest.depth <= NEST_MAX_LEAF_DEPTH && NEST_LEAF_KEYS.has(tok.text.toLowerCase())) {
+              && (inNest.top === '' || (inNest.top === '{' && NEST_LEAF_KEYS.has(tok.text.toLowerCase())))) {
             pair(inNest.name, next.text, next.start + 1, add, ownLogin);
             t++;
             continue;
           }
-        } else if (tok.str && inNest.top === '[' && inNest.depth === 1 && pending === null) {
+        } else if (tok.str && (inNest.top === '' || (inNest.top === '[' && inNest.onlyArrays)) && pending === null) {
           pair(inNest.name, tok.text, tok.start + 1, add, ownLogin);
         }
       }

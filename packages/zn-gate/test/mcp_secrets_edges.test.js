@@ -138,14 +138,15 @@ test('a nested value is found across lines, masked, and arrays under a secret ke
   assert.deepEqual(kinds('{"A_TOKEN": ["' + FAKE + '"], "B_TOKEN": ["--x", "' + FAKE + '"]}').map((k) => k[2]), ['A_TOKEN', 'B_TOKEN']);
 });
 
-test('references, placeholders, empty values, other keys and deep nesting are not reported under a secret key', () => {
+test('references, placeholders, empty values and other keys are not reported under a secret key', () => {
   for (const v of ['${API_TOKEN}', '<key>', 'YOUR_KEY', '__ZN_API_TOKEN__', '$API_TOKEN', '', 'true']) {
     assert.deepEqual(kinds('{"API_TOKEN": {"value": "' + v + '", "default": "' + v + '"}}'), [], v);
   }
   assert.deepEqual(kinds('{"auth": {"client_id": "' + FAKE + '", "type": "oauth"}}'), []);
   assert.deepEqual(kinds('{"API_TOKEN": {"description": "' + FAKE + '"}}'), []);
   assert.deepEqual(kinds('{"API_TOKEN": {"a": {"b": ["' + FAKE + '"]}}, "LOG": {"value": "' + FAKE + '"}}'), []);
-  assert.deepEqual(kinds('{"API_TOKEN": ' + '{"x": '.repeat(10) + '{"value": "' + FAKE + '"}' + '}'.repeat(11)), []);
+  assert.deepEqual(kinds('{"auth": {"scopes": [["read", "write"]], "type": "oauth"}}'), []);
+  assert.deepEqual(kinds('{"API_TOKEN": ' + '['.repeat(100) + '"${API_TOKEN}", "<key>"' + ']'.repeat(100) + '}'), []);
   for (const t of ['{"API_TOKEN": {"value": ', '{"API_TOKEN": [[[[[[[[[[["' + FAKE + '"']) mcp.findMcpConfigSecrets(t);
 });
 
@@ -185,6 +186,48 @@ test('crafted arguments of 200k characters finish in under a second', () => {
   };
   for (const [name, arg] of Object.entries(args)) {
     const text = JSON.stringify({ args: [arg] });
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t0 = process.hrtime.bigint();
+      mcp.findMcpConfigSecretSpans(text);
+      best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e9);
+    }
+    assert.ok(best < 1, `${name}: ${best.toFixed(3)} s`);
+  }
+});
+
+test('deep objects, long blocks and arrays of arrays under a secret key are followed to their end', () => {
+  const deep = '{"API_TOKEN": ' + '{"x": '.repeat(10) + '{"value": "' + FAKE + '"}' + '}'.repeat(11);
+  assert.deepEqual(kinds(deep), [[1, 'environment variable', 'API_TOKEN']]);
+  assert.deepEqual(kinds('{"API_TOKEN": {' + '\n'.repeat(300) + '"value": "' + FAKE + '"\n}}'), [[301, 'environment variable', 'API_TOKEN']]);
+  const lines = ['{"api_key": {'];
+  for (let i = 0; i < 500; i++) lines.push(`  "note${i}": "text",`);
+  lines.push('  "value": "' + FAKE + '"', '}}');
+  assert.deepEqual(kinds(lines.join('\n')), [[502, 'setting', 'api_key']]);
+  assert.deepEqual(kinds('{"api_key": [["' + FAKE + '"]]}'), [[1, 'setting', 'api_key']]);
+  assert.deepEqual(kinds('{"api_key": [[["name", "' + FAKE + '"]]]}'), [[1, 'setting', 'api_key']]);
+  assert.deepEqual(kinds('{"api_key": [\n [\n  "' + FAKE + '"\n ]\n]}'), [[3, 'setting', 'api_key']]);
+  for (const text of [
+    '{"API_TOKEN": ' + '['.repeat(100) + '"' + FAKE + '"' + ']'.repeat(100) + '}',
+    '{"API_TOKEN": ' + '{"x": '.repeat(100) + '"' + FAKE + '"' + '}'.repeat(100) + '}',
+    '{"API_TOKEN": {"a": ' + '['.repeat(100) + ']'.repeat(100) + ', "value": "' + FAKE + '"}}',
+  ]) {
+    assert.deepEqual(kinds(text), [[1, 'environment variable', 'API_TOKEN']], text.slice(0, 40));
+    assert.ok(!mcp.maskMcpValues(text, mcp.findMcpConfigSecretSpans(text)).includes(FAKE));
+  }
+  assert.deepEqual(kinds('{"API_TOKEN": {"value": "${A}"}}\n{"other": {"value": "' + FAKE + '"}}'), []);
+  for (const t of ['{"API_TOKEN": ' + ']}'.repeat(50), '{"API_TOKEN": ' + '['.repeat(100) + ']'.repeat(200) + '"' + FAKE + '"']) mcp.findMcpConfigSecrets(t);
+});
+
+test('crafted nesting under a secret key finishes in under a second', () => {
+  const cases = {
+    '200k open brackets': '{"API_TOKEN": ' + '['.repeat(200000),
+    '200k open braces': '{"API_TOKEN": ' + '{"x":'.repeat(40000),
+    'open and close': '{"API_TOKEN": ' + '[]'.repeat(100000) + '}',
+    '20k lines in a block': '{"API_TOKEN": {\n' + '"a": [["x"]],\n'.repeat(20000) + '}}',
+    'deep strings': '{"API_TOKEN": ' + '['.repeat(100) + '"a",'.repeat(40000),
+  };
+  for (const [name, text] of Object.entries(cases)) {
     let best = Infinity;
     for (let i = 0; i < 3; i++) {
       const t0 = process.hrtime.bigint();

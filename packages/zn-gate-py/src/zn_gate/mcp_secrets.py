@@ -187,40 +187,42 @@ def _safe_name(name: str) -> str:
 
 # A credential can sit in an object or array under a secret-named key
 # ({"API_TOKEN": {"value": "..."}}): the strings under these keys, and the items
-# of the array itself, are reported under the name of that key.
+# of the array itself, are reported under the name of that key. The block is
+# followed to its end however many lines it takes; past _NEST_MAX_STACK open
+# brackets only their number is kept, and every string in that part is checked
+# as a value of the key (so deep nesting never hides a credential).
 _NEST_LEAF_KEYS = {"value", "default", "string", "literal", "plain", "plaintext"}
-_NEST_MAX_LEAF_DEPTH = 4
-_NEST_MAX_STACK = 8
-_NEST_MAX_LINES = 200
+_NEST_MAX_STACK = 64
 
 
 class _Nest:
-    __slots__ = ("name", "stack", "lines")
+    __slots__ = ("name", "stack", "objects", "deep")
 
     def __init__(self) -> None:
         self.name = ""
         self.stack: List[str] = []
-        self.lines = 0
+        self.objects = 0  # "{" in stack
+        self.deep = 0  # open brackets past _NEST_MAX_STACK
 
 
-def _follow_nest(line: str, toks: List[_Token], nest: _Nest, ctx: Dict[int, Tuple[str, int, str]]) -> None:
+# ctx: index -> (top, only arrays from the key down, name); top is "" past _NEST_MAX_STACK.
+_NestCtx = Tuple[str, bool, str]
+
+
+def _follow_nest(line: str, toks: List[_Token], nest: _Nest, ctx: Dict[int, _NestCtx]) -> None:
     """Follows the braces and brackets of an object or array under a secret-named key
-    across lines. Fills ``ctx`` (index -> (top, depth, name)) for what sits inside it on this line."""
+    across lines. Fills ``ctx`` for what sits inside it on this line."""
     opens: Dict[int, str] = {}
     for t in toks:
         if t.sep and t.value_at >= 0 and is_secret_name(normalize_name(t.text)):
             opens[t.value_at] = t.text
-    if nest.stack:
-        nest.lines += 1
-        if nest.lines > _NEST_MAX_LINES:
-            nest.stack = []
     n = len(line)
     i = 0
     while i < n:
         c = line[i]
         active = bool(nest.stack)
         if active:
-            ctx[i] = (nest.stack[-1], len(nest.stack), nest.name)
+            ctx[i] = ("" if nest.deep else nest.stack[-1], nest.objects == 0, nest.name)
         if c == '"' or c == "'":
             j = i + 1
             while j < n and line[j] != c:
@@ -233,16 +235,21 @@ def _follow_nest(line: str, toks: List[_Token], nest: _Nest, ctx: Dict[int, Tupl
             break
         if c in "{[":
             if active:
-                if len(nest.stack) >= _NEST_MAX_STACK:
-                    nest.stack = []
+                if nest.deep or len(nest.stack) >= _NEST_MAX_STACK:
+                    nest.deep += 1
                 else:
                     nest.stack.append(c)
+                    nest.objects += c == "{"
             elif i in opens:
                 nest.name = opens[i]
                 nest.stack = [c]
-                nest.lines = 0
+                nest.objects = int(c == "{")
+                nest.deep = 0
         elif c in "}]" and active:
-            nest.stack.pop()
+            if nest.deep:
+                nest.deep -= 1
+            else:
+                nest.objects -= nest.stack.pop() == "{"
         i += 1
 
 
@@ -317,7 +324,7 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[McpSpan]:
         toks = _tokenize(line)
         had_pending = pending[0] is not None
         used_pending = False
-        ctx: Dict[int, Tuple[str, int, str]] = {}
+        ctx: Dict[int, _NestCtx] = {}
         _follow_nest(line, toks, nest, ctx)
         t = 0
         while t < len(toks):
@@ -327,16 +334,16 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[McpSpan]:
             in_nest = ctx.get(tok.start)
             if in_nest is not None:
                 # Inside an object or array under a secret-named key: a string under a value-like
-                # key, or an item of that array.
-                top, depth, nest_name = in_nest
+                # key, an item of that array or of arrays in it, or any value past the depth kept.
+                top, only_arrays, nest_name = in_nest
                 if tok.sep:
                     if (nxt is not None and nxt.is_str and nxt.start == tok.value_at
                             and not is_secret_name(normalize_name(tok.text))
-                            and top == "{" and depth <= _NEST_MAX_LEAF_DEPTH and tok.text.lower() in _NEST_LEAF_KEYS):
+                            and (top == "" or (top == "{" and tok.text.lower() in _NEST_LEAF_KEYS))):
                         _pair(nest_name, nxt.text, nxt.start + 1, add, own_login)
                         t += 1
                         continue
-                elif tok.is_str and top == "[" and depth == 1 and pending[0] is None:
+                elif tok.is_str and (top == "" or (top == "[" and only_arrays)) and pending[0] is None:
                     _pair(nest_name, tok.text, tok.start + 1, add, own_login)
             if tok.sep:
                 # A key. Its value is the string that follows it.
