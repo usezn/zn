@@ -366,3 +366,16 @@ test('past the cap a content change is found even with the same size and the old
   fs.utimesSync(last, st.atime, st.mtime);
   assert.notEqual(extractSurface(dir)['.opencode/plugin#over-cap'], before);
 });
+
+test('links back to a folder already walked are recorded once and not walked again', { skip: process.platform === 'win32' }, (t) => {
+  const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
+  const rules = path.join(dir, '.amazonq/rules');
+  for (let i = 0; i < 10; i++) fs.symlinkSync(rules, path.join(rules, 'loop' + i));
+  fs.symlinkSync(path.join(dir, '.amazonq'), path.join(rules, 'team', 'up'));
+  const started = Date.now();
+  const s = extractSurface(dir);
+  assert.ok(Date.now() - started < 5000, 'the walk stays fast');
+  assert.ok(s['.amazonq/rules/team/style.md#file']);
+  for (let i = 0; i < 10; i++) assert.ok(s['.amazonq/rules/loop' + i + '#unreadable'], 'loop' + i + ' is recorded');
+  assert.ok(Object.keys(s).length < 40, 'each folder is read once: ' + Object.keys(s).length + ' entries');
+});

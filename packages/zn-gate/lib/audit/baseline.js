@@ -26,6 +26,8 @@ const MAX_LISTED = 500;
 // that the folder gets a fixed over-limit entry (a documented limit). Folders below MAX_DEPTH levels are one entry.
 const MAX_OVER_CAP = 5000;
 const MAX_DEPTH = 8;
+// At most this many folders are read in one walk (links can make a small tree look huge); past it, one entry.
+const MAX_FOLDERS = 2000;
 const LIFECYCLE = ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'prepack', 'postpack'];
 const SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.json', '.codex/config.json', '.cursor/hooks.json', '.gemini/settings.json'];
 const MCP_FILES = [
@@ -114,6 +116,14 @@ function readWhole(root, realRoot, rel) {
  * The files of a folder that an agent loads as they are, as project-relative names in a fixed order. A folder that is a link leaving the
  * project is not listed (it is one entry of its own); a link to a file is left to readRaw. `pick` chooses the files; `deep` goes into folders.
  */
+// A file found by the walk: the first MAX_LISTED are listed, the next MAX_OVER_CAP are hashed together, and past that
+// only their number is kept (memory stays bounded whatever the folder holds).
+function keep(out, r) {
+  if (out.files.length < MAX_LISTED) out.files.push(r);
+  else if (out.extra.length < MAX_OVER_CAP) out.extra.push(r);
+  else out.overLimit++;
+}
+
 function listFiles(root, realRoot, rel, pick, deep, out, bad) {
   const dir = path.join(root, rel);
   let lst;
@@ -124,6 +134,12 @@ function listFiles(root, realRoot, rel, pick, deep, out, bad) {
     if (!insideOf(realRoot, real)) { bad(rel, sha(['link-outside-folder'])); return; }
   }
   if (!lst.isDirectory() && !lst.isSymbolicLink()) { bad(rel, sha(['not-a-folder'])); return; }
+  // Each real folder is read once per walk: a link back to a folder already seen (a loop) is one entry of its own.
+  let realDir;
+  try { realDir = fs.realpathSync.native(dir); } catch (_) { realDir = path.resolve(dir); }
+  if (out.seen.has(realDir)) { bad(rel, sha(['folder-seen-before'])); return; }
+  out.seen.add(realDir);
+  if (out.seen.size > MAX_FOLDERS) { bad(rel, sha(['too-many-folders'])); return; }
   let list;
   // A folder that exists but cannot be listed counts as a change, like a file that cannot be read.
   try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { bad(rel, sha(['unreadable-folder', e && e.code])); return; }
@@ -137,7 +153,7 @@ function listFiles(root, realRoot, rel, pick, deep, out, bad) {
       let real = null;
       try { real = fs.realpathSync.native(path.join(root, r)); } catch (_) { real = null; }
       if (!real) {
-        if (pick(e.name)) { if (out.files.length < MAX_LISTED) out.files.push(r); else out.extra.push(r); }
+        if (pick(e.name)) keep(out, r);
         continue;
       }
       let st = null;
@@ -154,8 +170,7 @@ function listFiles(root, realRoot, rel, pick, deep, out, bad) {
       continue;
     }
     if (!pick(e.name)) continue;
-    if (out.files.length < MAX_LISTED) out.files.push(r);
-    else out.extra.push(r);
+    keep(out, r);
   }
 }
 
@@ -210,16 +225,16 @@ function extractSurface(root) {
   const listed = [];
   // The cap is per folder: files in one folder cannot push another folder's files out of the baseline.
   for (const [dir, pick, deep] of WHOLE_FILES) {
-    const found = { files: [], extra: [] };
+    const found = { files: [], extra: [], overLimit: 0, seen: new Set() };
     listFiles(root, realRoot, dir, pick, deep, found, (rel, hash) => { out[rel + '#unreadable'] = hash; });
     listed.push(...found.files);
-    if (found.extra.length) {
+    if (found.extra.length || found.overLimit) {
       // The files past the cap are hashed by content (like the listed ones), together, so a change in one is a change.
-      const parts = found.extra.slice(0, MAX_OVER_CAP).map((rel) => {
+      const parts = found.extra.map((rel) => {
         const c = readWhole(root, realRoot, rel);
         return [rel, c.kind, c.hash || null];
       });
-      if (found.extra.length > MAX_OVER_CAP) parts.push(['over-limit', found.extra.length]);
+      if (found.overLimit) parts.push(['over-limit', found.overLimit]);
       out[dir + '#over-cap'] = sha(parts);
     }
   }
