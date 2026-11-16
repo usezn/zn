@@ -2,7 +2,7 @@
 
 A short list of steps, in order, for installing zn-gate on Windows and checking that it works. Each step is explained in [First 5 minutes](../first-5-minutes.md). Run every command in your own terminal, not through your AI agent.
 
-> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it. More in [troubleshooting](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
 ## Steps
 
@@ -28,7 +28,7 @@ Windows PowerShell blocks the script that starts `npm` and `npx` by default. Not
 
 - Use the `.cmd` versions: `npx.cmd -y zn-gate init`, then `npx.cmd -y zn-gate check`.
 - Run the same commands in Command Prompt instead of PowerShell.
-- Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+- Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This relaxes a PowerShell protection for your user account: scripts downloaded from the internet must be signed, and local scripts run. Using the `.cmd` forms (`npx.cmd`, `zn.cmd`) avoids changing it.
 
 ## Other messages
 

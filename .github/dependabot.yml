@@ -78,6 +78,10 @@ updates:
     ignore:
       # Build backend floor, kept low on purpose for older pip and build tools.
       - dependency-name: "setuptools"
+      # Optional LangChain integration, a test-only dependency. Its floor is the oldest version the
+      # integration supports and the CI job "oldest supported langchain-core" tests it, so a newer
+      # release must not raise it.
+      - dependency-name: "langchain-core"
     groups:
       pip:
         patterns: ["*"]

@@ -296,3 +296,9 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 If you are updating from a version older than 1.8.0, go through the rows of every
 release in between. Older releases are in the [changelog](../CHANGELOG.md).
+
+## Next steps
+
+- [Example: upgrade checklist](examples/upgrade-checklist.md) is a one-screen version of this page, with the steps to run before, during and after the update.
+- [Verifying a zn-gate release](verify-release.md) shows how to check the checksums, the signatures and the provenance of the zn-gate release you installed.
+- [Remove zn-gate](uninstall.md) explains how to remove zn-gate in one step, or piece by piece, if an update does not work out.

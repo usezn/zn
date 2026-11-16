@@ -1,3 +1,4 @@
+# Tests of the release SBOM and pack scripts, on pull requests and pushes that change them or the build-release workflow.
 name: Release SBOM scripts
 
 # The release build adds a serial number to each CycloneDX SBOM and checks it before signing.

@@ -19,7 +19,7 @@ const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
-const { budget } = require('./helpers/time_budget');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const FAKE = generateAll(4242, { perType: 1, piiPerType: 1 });
 const fake = (type) => FAKE.secrets.find((s) => s.type === type);
@@ -1018,9 +1018,11 @@ test('OpenCode plugin: a hook that fails or times out blocks the call and the me
   assert.match(src, /action: "error", message: "timeout"/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this call was blocked\. " \+ REPAIR\)/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this message was not sent\. " \+ REPAIR\)/);
-  assert.match(src, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode\.";/);
+  const { cliName } = require('../lib/zn-command');
+  const repair = (tail) => 'const REPAIR = "Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode' + tail + '.";';
+  assert.ok(src.includes(repair('')), src);
   const proj = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
-  assert.match(proj, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode --project\.";/);
+  assert.ok(proj.includes(repair(' --project')), proj);
 });
 
 test('OpenCode plugin: a hook that cannot start is explained in plain words with the repair step', async (t) => {
@@ -1030,7 +1032,8 @@ test('OpenCode plugin: a hook that cannot start is explained in plain words with
   const mod = await import(require('url').pathToFileURL(file).href);
   const plugin = await (mod.default || Object.values(mod)[0])({});
   await assert.rejects(() => plugin['tool.execute.before']({ tool: 'bash' }, { args: { command: 'echo hi' } }), (e) => {
-    assert.match(e.message, /^zn: the secret scrubber is not working \(the Node\.js it was installed with was not found\), so this call was blocked\. Run zn-gate check in a terminal, then zn hooks install opencode\.$/);
+    const { cliName } = require('../lib/zn-command');
+    assert.equal(e.message, 'zn: the secret scrubber is not working (the Node.js it was installed with was not found), so this call was blocked. Run ' + cliName('zn-gate') + ' check in a terminal, then ' + cliName('zn') + ' hooks install opencode.');
     assert.doesNotMatch(e.message, /ENOENT|spawn/);
     return true;
   });
@@ -1140,9 +1143,11 @@ test('Bash, PowerShell and Monitor commands over 100 KB are blocked before they 
   const cap = policy.SHELL_SCAN_CAP;
   const long = 'echo ' + 'a'.repeat(cap + 1 - 5);
   for (const tool of ['Bash', 'PowerShell', 'Monitor']) {
-    const start = process.hrtime.bigint();
+    // CPU time, not wall time: a busy shared runner can pause this process in the middle of a correct run, and a
+    // check that scanned the text would still burn the CPU.
+    const start = cpuNow();
     const r = await run(preTool(tool, { command: long, description: 'x' }, dir), { nodePath: '/usr/bin/node' });
-    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    const ms = cpuMsSince(start);
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /too long for zn to check \(over 100 KB\)/, tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /do not resend it in parts/, tool);

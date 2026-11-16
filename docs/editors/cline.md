@@ -113,4 +113,4 @@ All messages: [Troubleshooting](../troubleshooting.md).
 
 ## Cline documentation
 
-- Adding MCP servers in Cline: <https://docs.cline.bot/mcp/adding-and-configuring-servers>
+- Adding MCP servers in Cline: <https://docs.cline.bot/mcp/mcp-overview>

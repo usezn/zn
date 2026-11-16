@@ -1,8 +1,9 @@
 # FAQ: update and remove zn-gate
 
-Short answers to common questions about updating and removing zn-gate. Each
-answer points to the page that has the details: [upgrading.md](upgrading.md) and
-[uninstall.md](uninstall.md).
+Short answers to common questions about updating, running and removing
+zn-gate. Each answer points to the page that has the details:
+[upgrading.md](upgrading.md), [uninstall.md](uninstall.md),
+[performance.md](performance.md) and [install-matrix.md](install-matrix.md).
 
 Run every command in your own terminal, not through an AI agent. zn-gate refuses
 to uninstall when an agent or a script runs it, and zn's hooks refuse
@@ -24,7 +25,7 @@ Each question links to its answer further down this page.
 | [Can I see what uninstall would do without changing anything?](#8-can-i-see-what-uninstall-would-do-without-changing-anything) | Yes. Add `--dry-run`. |
 | [Does uninstall delete my vault or change my `.env` files?](#9-does-uninstall-delete-my-vault-or-change-my-env-files) | No. It keeps your vault unless you say yes, and it never edits `.env` files. |
 | [Can I remove only one part?](#10-can-i-remove-only-one-part) | Yes. Remove the plugin, one agent's hooks, or the MCP wrapping. |
-| [Where is my data?](#12-where-is-my-data) | On your computer. Only the optional cloud check sends text, and only when you turn it on. |
+| [Where is my data?](#14-where-is-my-data) | On your computer. Only the optional cloud check sends text, and only when you turn it on. |
 
 ## Update
 
@@ -115,9 +116,31 @@ Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own 
 
 If you remove the program first, the hooks stay in your agent's settings. The agent can then be blocked from running commands, because part of zn-gate is missing. If that happens, run `npm install -g zn-gate` to put the program back, then run `npx -y zn-gate uninstall`. To remove only one part, see [Piece by piece](uninstall.md#piece-by-piece).
 
+### 12. How do I remove zn-gate from one agent only?
+
+Run `npx -y zn-gate hooks uninstall <agent>` in your own terminal: it removes
+the hooks of that agent only. When it changes the settings file, it writes a backup
+copy of that file first.
+The Uninstall column of [the table by agent](by-agent.md) has the name and the
+command for each of them, for example `claude-code`, `cursor`, `opencode` or
+`gemini`. For Claude Code installed as a plugin, remove the plugin instead:
+`claude plugin uninstall zn-gate@usezn`. Then run `npx -y zn-gate check`: the agent
+is listed as not set up, with the command to set it up again. Details are in
+[Piece by piece](uninstall.md#piece-by-piece).
+
+## Performance
+
+### 13. Does zn-gate slow my agent down?
+
+The hooks run once before and once after each tool call, and the agent waits
+for them. On the reference run in [performance.md](performance.md), the median
+hook took 53 to 83 ms, and starting Node.js alone took 24 ms of that. The page has
+the times for each agent and input size, and the script to measure them on your
+own machine. `npx -y zn-gate check` also shows the decision time on your machine.
+
 ## Your data
 
-### 12. Where is my data?
+### 14. Where is my data?
 
 The check runs locally on your machine unless you turn on the optional cloud check. With it on, the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. Tool output is sent only if you ran `zn-gate connect` and also set `hooks.cloudCheckToolOutput: true` in your own `~/.zn/config.json`. That setting is off by default, also for users who already connected; otherwise nothing from tool output is sent. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
 
@@ -136,15 +159,28 @@ Other commands are not listed here. `stats` is left out because, if you turn on
 sharing, it can send daily counts. The cloud check is also left out. For the full
 picture, see [Example: running offline and with the cloud check off](examples/offline-and-local-only.md#the-default-nothing-leaves-your-machine).
 
+### 15. Does zn-gate work without internet?
+
+The protection does: the hooks and `zn-gate analyze` with the local check,
+which is the default, run on your machine and need no connection. What needs
+internet is the optional cloud check of `zn-gate analyze`, `zn-gate connect`
+and the team commands that join or sync with a zn organization. On a computer
+without internet, leave the cloud check off: with it off, the hooks and
+`zn-gate analyze` send nothing to usezn.com. Two other opt-in features send data
+there: `zn-gate stats share on`, which sends daily counts (off by default), and
+`zn team join`, which uploads audit metadata. See
+[Install on a machine without internet](install-matrix.md#install-on-a-machine-without-internet)
+for the full list and the offline install steps.
+
 ## Hooks
 
-### 13. What do zn-gate's hooks do, and where do they live?
+### 16. What do zn-gate's hooks do, and where do they live?
 
 A hook is an entry that your coding agent runs at fixed points: when you send a prompt, before a tool call, and after a tool returns its output. zn-gate's hook passes that event to zn-gate, which checks it and can block it. Each agent keeps its hook entries in its own settings file: your user settings, or, with `--project`, the settings of one project folder.
 
 To see every zn hook, the file it is in and whether it works, run `npx -y zn-gate check --hooks`. It only reads files. The small launcher script that runs the hooks is in `~/.zn/hooks`. For the command, see [`hooks`](cli.md#hooks).
 
-### 14. How do I turn the hooks off for one project, or for a while?
+### 17. How do I turn the hooks off for one project, or for a while?
 
 For one project, go to that project's folder and run `npx -y zn-gate hooks uninstall <agent> --project`, with the agent's name, for example `claude-code`. Your user hooks stay in place.
 
@@ -154,7 +190,7 @@ Run these commands in your own terminal: zn-gate refuses to change hooks when an
 
 ## Logs and blocks
 
-### 15. Where do I see what was blocked?
+### 18. Where do I see what was blocked?
 
 Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
 

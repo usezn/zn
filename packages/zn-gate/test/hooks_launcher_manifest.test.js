@@ -71,7 +71,7 @@ function tinyPackage(t, { manifest } = {}) {
   return { base, pkg, runner, file, home, env, run, p: (f) => path.join(pkg, f) };
 }
 
-test('manifest: the launcher records the list of the package files, and the intact package runs', { skip: !posix }, (t) => {
+test('manifest: the launcher records the list of the package files, and the intact package runs', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = realPackage(t);
   const text = fs.readFileSync(s.file, 'utf8');
   const m = /^ZN_FILES='([^']+)'$/m.exec(text);
@@ -106,7 +106,7 @@ for (const [label, change] of [
     fs.symlinkSync(copy, s.p('lib/hooks/policy.js'));
   }],
 ]) {
-  test('manifest: ' + label + ' blocks the hook before it runs', { skip: !posix }, (t) => {
+  test('manifest: ' + label + ' blocks the hook before it runs', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
     const s = realPackage(t);
     assert.equal(s.run().status, 0);
     change(s);
@@ -125,7 +125,7 @@ const FAKE_PAT = generateAll(5151, { perType: 1, piiPerType: 1 }).secrets.find((
 const REDACT_EVENT = (home) => JSON.stringify({ session_id: 's1', cwd: home, tool_use_id: 't1', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat notes.txt' }, tool_response: { stdout: 'token: ' + FAKE_PAT + '\nok\n', stderr: '', interrupted: false, isImage: false } });
 
 for (const file of ['lib/vault/store.js', 'lib/vault/client.js']) {
-  test('manifest: an edited ' + file + ' blocks a call that loads the vault', { skip: !posix }, (t) => {
+  test('manifest: an edited ' + file + ' blocks a call that loads the vault', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
     const s = realPackage(t);
     const env = { PATH: process.env.PATH, HOME: s.home, ZN_HOME: s.env.ZN_HOME, ZN_KEYCHAIN_BACKEND: 'passphrase' };
     const call = () => spawnSync('/bin/sh', [s.file, 'PostToolUse'], { input: REDACT_EVENT(s.home), encoding: 'utf8', env });
@@ -141,7 +141,7 @@ for (const file of ['lib/vault/store.js', 'lib/vault/client.js']) {
   });
 }
 
-test('manifest: an ordinary call with an edited vault file is blocked although it does not need the vault', { skip: !posix }, (t) => {
+test('manifest: an ordinary call with an edited vault file is blocked although it does not need the vault', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = realPackage(t);
   assert.equal(s.run().status, 0);
   fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n');
@@ -152,14 +152,14 @@ test('manifest: an ordinary call with an edited vault file is blocked although i
   assert.equal(r.stdout, '');
 });
 
-test('manifest: a deleted module the runner needs blocks the hook', { skip: !posix }, (t) => {
+test('manifest: a deleted module the runner needs blocks the hook', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = realPackage(t);
   fs.rmSync(s.p('lib/hooks/policy.js'));
   const r = s.run();
   assert.equal(r.status, 2, r.stdout + r.stderr);
 });
 
-test('manifest: a module that is not in the list blocks the hook when it is required', { skip: !posix }, (t) => {
+test('manifest: a module that is not in the list blocks the hook when it is required', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const real = fs.realpathSync(tempDir(t, 'zn-manifest-listed-'));
   const pkg = path.join(real, 'pkg');
   fs.mkdirSync(pkg);
@@ -176,7 +176,7 @@ test('manifest: a module that is not in the list blocks the hook when it is requ
   assert.match(r.stderr, CHANGED);
 });
 
-test('manifest: only loaded files are read: an edited file nothing requires does not stop the hook', { skip: !posix }, (t) => {
+test('manifest: only loaded files are read: an edited file nothing requires does not stop the hook', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = tinyPackage(t);
   assert.equal(s.run().stdout, 'OK A1 D1\n');
   fs.appendFileSync(s.p('lib/unused.js'), '// edited\n');
@@ -187,7 +187,7 @@ test('manifest: only loaded files are read: an edited file nothing requires does
   assert.notEqual(launcher.treeManifest(s.runner), /^ZN_FILES='([^']+)'$/m.exec(fs.readFileSync(s.file, 'utf8'))[1]);
 });
 
-test('manifest: a module edited after install blocks the hook; without a manifest only the runner is checked and it would run', { skip: !posix }, (t) => {
+test('manifest: a module edited after install blocks the hook; without a manifest only the runner is checked and it would run', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const withList = tinyPackage(t);
   fs.writeFileSync(withList.p('lib/a.js'), "module.exports = { v: 'EVIL' };\n");
   const blocked = withList.run();
@@ -200,7 +200,7 @@ test('manifest: a module edited after install blocks the hook; without a manifes
   assert.equal(runnerOnly.run().stdout, 'OK EVIL D1\n', 'the runner-only check does not see a module change');
 });
 
-test('manifest: data files the runner requires are covered too', { skip: !posix }, (t) => {
+test('manifest: data files the runner requires are covered too', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = tinyPackage(t);
   fs.writeFileSync(s.p('lib/data.json'), '{"d":"EVIL"}\n');
   const r = s.run();
@@ -208,7 +208,7 @@ test('manifest: data files the runner requires are covered too', { skip: !posix 
   assert.match(r.stderr, CHANGED);
 });
 
-test('manifest: a module swapped on disk while the runner starts is compared with the list when it is read', { skip: !posix }, (t) => {
+test('manifest: a module swapped on disk while the runner starts is compared with the list when it is read', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   // The runner rewrites lib/a.js before it requires it: the bytes read are hashed and compiled together, so there is no moment
   // between the check and the use in which the file can change unseen.
   const s = tinyPackage(t);
@@ -221,7 +221,7 @@ test('manifest: a module swapped on disk while the runner starts is compared wit
   assert.ok(!r.stdout.includes('SWAPPED'));
 });
 
-test('manifest: a package whose runner is not at lib/hooks/runner.js is checked by its runner digest only', { skip: !posix }, (t) => {
+test('manifest: a package whose runner is not at lib/hooks/runner.js is checked by its runner digest only', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const base = fs.realpathSync(tempDir(t, 'zn-manifest-flat-'));
   const runner = path.join(base, 'runner.js');
   fs.writeFileSync(runner, ACK + "process.stdout.write('FLAT\\n'); process.exit(0);\n");
@@ -234,7 +234,7 @@ test('manifest: a package whose runner is not at lib/hooks/runner.js is checked 
   assert.equal(r.stdout, 'FLAT\n');
 });
 
-test('manifest: a link or an odd name in lib/ gives no manifest (the runner digest alone is used)', { skip: !posix }, (t) => {
+test('manifest: a link or an odd name in lib/ gives no manifest (the runner digest alone is used)', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = tinyPackage(t);
   assert.ok(launcher.treeManifest(s.runner));
   fs.symlinkSync(s.p('lib/a.js'), s.p('lib/link.js'));
@@ -254,7 +254,7 @@ test('manifest: parseManifest accepts only a valid list, and a launcher is not w
   assert.throws(() => launcher.writeLauncher('claude-code', process.execPath, __filename, { env: { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH }, home, manifest: 'lib/a.js=short' }), /bad manifest/);
 });
 
-test('manifest: after an update the install step rewrites the list, and the hook runs again', { skip: !posix }, (t) => {
+test('manifest: after an update the install step rewrites the list, and the hook runs again', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, (t) => {
   const s = realPackage(t);
   fs.appendFileSync(s.p('lib/hooks/policy.js'), '// the new version of the package\n');
   assert.equal(s.run().status, 2, 'blocked until the launcher is refreshed');
@@ -275,14 +275,14 @@ async function claudeResult(t, s) {
   return (await check({ home: s.home, env: s.env, cwd })).results.find((x) => x.id === 'claude-code');
 }
 
-test('check: the intact package is protected and has nothing to say about its files', { skip: !posix }, async (t) => {
+test('check: the intact package is protected and has nothing to say about its files', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, async (t) => {
   const s = realPackage(t);
   const r = await claudeResult(t, s);
   assert.equal(r.state, 'protected', r.problem);
   assert.ok(!r.notes.some((n) => /files|launcher records/.test(n)), r.notes.join('\n'));
 });
 
-test('check: a changed file nothing has loaded yet is reported, with the file name and the repair', { skip: !posix }, async (t) => {
+test('check: a changed file nothing has loaded yet is reported, with the file name and the repair', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, async (t) => {
   const s = realPackage(t);
   fs.appendFileSync(s.p('lib/team/cli.js'), '// edited\n');
   assert.equal(s.run().status, 0, 'the hook itself does not load that file');
@@ -292,7 +292,7 @@ test('check: a changed file nothing has loaded yet is reported, with the file na
   assert.match(r.fix, /zn hooks install claude-code/);
 });
 
-test('check: a deleted file and a package that is no longer a plain list are reported', { skip: !posix }, async (t) => {
+test('check: a deleted file and a package that is no longer a plain list are reported', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, async (t) => {
   const s = realPackage(t);
   fs.rmSync(s.p('lib/team/cli.js'));
   let r = await claudeResult(t, s);
@@ -305,7 +305,7 @@ test('check: a deleted file and a package that is no longer a plain list are rep
   assert.match(r.problem, /\(files\)/);
 });
 
-test('check: a file added since install is a note, not a block', { skip: !posix }, async (t) => {
+test('check: a file added since install is a note, not a block', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, async (t) => {
   const s = realPackage(t);
   fs.writeFileSync(s.p('lib/extra.js'), 'module.exports = 1;\n');
   const r = await claudeResult(t, s);
@@ -313,7 +313,7 @@ test('check: a file added since install is a note, not a block', { skip: !posix 
   assert.ok(r.notes.some((n) => /lib\/extra\.js/.test(n) && /zn hooks install claude-code/.test(n)), r.notes.join('\n'));
 });
 
-test('check: a launcher that records only the runner says so when the package could have been listed', { skip: !posix }, async (t) => {
+test('check: a launcher that records only the runner says so when the package could have been listed', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, async (t) => {
   const s = realPackage(t);
   // Written with no list, as for a package whose files could not be listed then.
   launcher.writeLauncher('claude-code', process.execPath, s.runner, { env: s.env, home: s.home, manifest: '' });
@@ -327,7 +327,7 @@ test('check: a launcher that records only the runner says so when the package co
   assert.ok(r.notes.some((n) => /records the zn-gate runner but not the other files/.test(n)), r.notes.join('\n'));
 });
 
-test('check: a package that cannot be listed at all (runner elsewhere) is not nagged about it', { skip: !posix }, async (t) => {
+test('check: a package that cannot be listed at all (runner elsewhere) is not nagged about it', { skip: !posix && 'a Windows install has no sh launcher (its PowerShell hook is covered by the windows tests)' }, async (t) => {
   const base = fs.realpathSync(tempDir(t, 'zn-manifest-flat-check-'));
   const runner = path.join(base, 'runner.js');
   fs.writeFileSync(runner, ACK + "process.stdout.write('{}'); process.exit(0);\n");

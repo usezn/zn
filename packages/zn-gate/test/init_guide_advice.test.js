@@ -55,7 +55,7 @@ test('permissionAdvice: names the folder and never suggests sudo', () => {
   const text = permissionAdvice({ prefix: '/example/prefix', env: {}, todo: [], shell: '/bin/bash' });
   assert.ok(text.includes('global folder (/example/prefix).'));
   assert.ok(!/sudo/.test(text));
-  assert.ok(text.includes('npx -y zn-gate init'));
+  assert.ok(text.includes(require('../lib/zn-command').cliName('npx') + ' -y zn-gate init'));
 });
 
 test('permissionAdvice: without a folder, no parentheses', () => {

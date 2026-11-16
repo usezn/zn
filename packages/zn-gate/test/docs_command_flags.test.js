@@ -197,3 +197,43 @@ test('docs command lines use subcommands and options that the CLI has', { skip: 
   assert.ok(checked > 50, 'found command lines in the docs');
   assert.deepEqual(bad, []);
 });
+
+test('every long option the CLI help prints is named in docs/cli.md', { skip: !present }, () => {
+  const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  const { HELP } = require('../lib/vault/help');
+  const printed = r.stdout + '\n' + Object.values(HELP).flat().join('\n');
+  const cliDoc = fs.readFileSync(path.join(repo, 'docs', 'cli.md'), 'utf8');
+  const missing = [...optionsOf(printed)].filter((o) => !cliDoc.includes(o));
+  assert.deepEqual(missing, [], 'options printed by the help but not named in docs/cli.md');
+});
+
+test('the unlock defaults in docs/cli.md are the ones the vault uses', { skip: !present }, () => {
+  const { DEFAULT_TTL_MS, DEFAULT_IDLE_MS } = require('../lib/vault/daemon');
+  const cliDoc = fs.readFileSync(path.join(repo, 'docs', 'cli.md'), 'utf8');
+  const sentence = 'The defaults are `--ttl ' + DEFAULT_TTL_MS / 3600000 + 'h` and `--idle ' + DEFAULT_IDLE_MS / 60000 + 'm`.';
+  assert.ok(cliDoc.includes(sentence), 'docs/cli.md should say: ' + sentence);
+});
+
+test('the env shadow --mode default in the help is the mode the command stores', { skip: !present }, async (t) => {
+  process.env.ZN_STATS = 'off';
+  const { HELP } = require('../lib/vault/help');
+  const broker = require('../lib/broker/cli');
+  const { createFakeVault } = require('./helpers/fake_vault');
+  const { tempDir } = require('./helpers/tmp');
+  const { Writable } = require('node:stream');
+  const line = HELP['env shadow'].find((l) => /^\s+--mode\s/.test(l)) || '';
+  const m = /\(default ([a-z]+)/.exec(line);
+  assert.ok(m, 'the help names the default of --mode: ' + line);
+  for (const extra of [[], ['--host', 'api.example.com'], ['--command', 'psql']]) {
+    const dir = tempDir(t, 'zn-help-default-');
+    fs.writeFileSync(path.join(dir, '.env'), 'SERVICE_TOKEN=zz_fake_0000000000000000000000\n');
+    const vault = createFakeVault();
+    const sink = () => new Writable({ write(_c, _e, cb) { cb(); } });
+    const io = { cwd: dir, home: dir, vault, stdout: sink(), stderr: sink(), human: true, confirm: async () => true };
+    assert.equal(await broker.dispatch('env', ['shadow', ...extra], io), 0, 'env shadow ' + extra.join(' '));
+    const stored = (await vault.listSecrets()).find((s) => s.name === 'SERVICE_TOKEN');
+    assert.ok(stored, 'SERVICE_TOKEN was moved with ' + (extra.join(' ') || 'no flags'));
+    assert.equal(stored.mode, m[1], 'stored mode with ' + (extra.join(' ') || 'no flags') + ' matches the help default');
+  }
+});
