@@ -27,7 +27,7 @@ function fakeProgram(dir, name, marker) {
 
 const list = (s) => s.split(':').filter(Boolean);
 
-test('a home folder that is a git work tree (dotfiles): its tools stay trusted, a project in it is still found', { skip: !POSIX }, (t) => {
+test('a home folder that is a git work tree (dotfiles): its tools stay trusted, a project in it is still found', { skip: !POSIX && 'POSIX PATH layout (: separator, /usr/bin) and fake sh programs' }, (t) => {
   const home = tempDir(t, 'zn-edge-home-');
   const marker = path.join(tempDir(t, 'zn-edge-mark-'), 'ran.txt');
   gitInit(home);
@@ -54,7 +54,7 @@ test('a home folder that is a git work tree (dotfiles): its tools stay trusted, 
   assert.equal(fs.existsSync(marker), false);
 });
 
-test('a home folder that is not a git work tree stays trusted as a whole', { skip: !POSIX }, (t) => {
+test('a home folder that is not a git work tree stays trusted as a whole', { skip: !POSIX && 'POSIX PATH layout (: separator, /usr/bin) and fake sh programs' }, (t) => {
   const home = tempDir(t, 'zn-edge-plainhome-');
   const tools = path.join(home, 'tools', 'bin');
   fs.mkdirSync(tools, { recursive: true });
@@ -62,7 +62,7 @@ test('a home folder that is not a git work tree stays trusted as a whole', { ski
   assert.ok(!exe.projectPlaces(home, { HOME: home }, false).includes(fs.realpathSync(home)));
 });
 
-test('a project without .git: CLAUDE_PROJECT_DIR, or the nearest folder with a project file, covers the folders above the cwd', { skip: !POSIX }, (t) => {
+test('a project without .git: CLAUDE_PROJECT_DIR, or the nearest folder with a project file, covers the folders above the cwd', { skip: !POSIX && 'POSIX PATH layout (: separator, /usr/bin) and fake sh programs' }, (t) => {
   const home = tempDir(t, 'zn-edge-home-');
   const proj = tempDir(t, 'zn-edge-nogit-');
   const other = tempDir(t, 'zn-edge-other-');
@@ -85,7 +85,7 @@ test('a project without .git: CLAUDE_PROJECT_DIR, or the nearest folder with a p
   assert.equal(fs.existsSync(marker), false);
 });
 
-test('a project without .git and without any marker: only the folder zn runs in is known (documented limit)', { skip: !POSIX }, (t) => {
+test('a project without .git and without any marker: only the folder zn runs in is known (documented limit)', { skip: !POSIX && 'POSIX PATH layout (: separator, /usr/bin) and fake sh programs' }, (t) => {
   const home = tempDir(t, 'zn-edge-home-');
   const proj = tempDir(t, 'zn-edge-bare-');
   fs.mkdirSync(path.join(proj, 'src'), { recursive: true });
@@ -94,7 +94,7 @@ test('a project without .git and without any marker: only the folder zn runs in 
   assert.deepEqual(list(exe.trustedPath(path.join(proj, 'bin') + ':' + cwd, cwd, { HOME: home })), [path.join(proj, 'bin')]);
 });
 
-test('a repository inside another one: the outer work tree is a project too, up to the home folder', { skip: !POSIX }, (t) => {
+test('a repository inside another one: the outer work tree is a project too, up to the home folder', { skip: !POSIX && 'POSIX PATH layout (: separator, /usr/bin) and fake sh programs' }, (t) => {
   const home = tempDir(t, 'zn-edge-home-');
   const outer = tempDir(t, 'zn-edge-outer-');
   const inner = path.join(outer, 'packages', 'inner');
@@ -111,7 +111,7 @@ test('a repository inside another one: the outer work tree is a project too, up 
   assert.equal(fs.existsSync(marker), false);
 });
 
-test('nested repositories never reach the home folder or above, and the climb is bounded', { skip: !POSIX }, (t) => {
+test('nested repositories never reach the home folder or above, and the climb is bounded', { skip: !POSIX && 'POSIX PATH layout (: separator, /usr/bin) and fake sh programs' }, (t) => {
   // A repository that holds the home (dotfiles) around a project does not make the home a project.
   const home = tempDir(t, 'zn-edge-home-');
   gitInit(home);

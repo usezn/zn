@@ -1435,8 +1435,16 @@ async fn process_mcp_message(
             // The event stream carries metadata only, never a payload (even
             // when `audit.store_payloads` keeps one in the database): the
             // scrubber cannot know every secret field.
+            // It carries the same redacted text as the database row (`AuditVault::log`): the agent id
+            // and the policy name come from the message, so a token in them must not leave through the
+            // SSE stream or the SIEM exporter either.
             let mut streamed = entry.clone();
             streamed.payload = None;
+            streamed.agent_id = streamed.agent_id.as_deref().map(Scrubber::redact_for_log);
+            streamed.policy_match = streamed
+                .policy_match
+                .as_deref()
+                .map(Scrubber::redact_for_log);
             let _ = state.tx.send(streamed);
 
             if status == "ALLOWED" {
@@ -2771,6 +2779,44 @@ mod audit_metadata_tests {
             files_containing(dir.path(), MARKER).is_empty(),
             "call content reached a file: {:?}",
             files_containing(dir.path(), MARKER)
+        );
+    }
+
+    #[tokio::test]
+    async fn event_stream_carries_the_redacted_agent_id_like_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path(), false);
+        let mut rx = state.tx.subscribe();
+        let secret = ["xo", "xb-123456789012-example0123456789"].concat();
+        let frame = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "agent_id": format!("agent-{secret}"),
+            "params": {"name": "read_note", "arguments": {"text": "hello"}}
+        })
+        .to_string();
+        process_mcp_message(&frame, &state, None).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(!events.is_empty(), "the call must reach the event stream");
+        let streamed = serde_json::to_string(&events).unwrap();
+        assert!(
+            !streamed.contains(&secret),
+            "token left in the event stream: {streamed}"
+        );
+        assert!(
+            events.iter().any(|e| e
+                .agent_id
+                .as_deref()
+                .is_some_and(|a| a.starts_with("agent-"))),
+            "the agent id is still reported: {streamed}"
+        );
+        let rows = serde_json::to_string(&state.vault.get_recent(100).unwrap()).unwrap();
+        assert!(
+            !rows.contains(&secret),
+            "token left in the database: {rows}"
         );
     }
 

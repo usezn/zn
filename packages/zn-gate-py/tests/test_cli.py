@@ -190,7 +190,8 @@ class TestCliScanCommand(unittest.TestCase):
 
     def test_many_key_blocks_scan_in_linear_time(self):
         block = self.BEGIN + "\n" + self.BODY + "\n" + self.END + "\n"
-        # CPU time of this process: a busy runner (other test processes on the same cores) does not count.
+        # CPU time of this process (the scan runs in it), not wall time: a busy shared runner can pause the test
+        # in the middle of a correct run, while a scan that went back over earlier blocks would still burn the CPU.
         start = time.process_time()
         code, out = self._scan_text(block * 15000)  # under the 2 MiB file limit
         self.assertEqual(code, 1)

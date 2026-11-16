@@ -250,18 +250,19 @@ async function run(args, io) {
       }
     }
     const { getAdapter } = require('./agents');
+    // Agents whose hooks (user or project) could not be removed: their launcher stays, a hook may still call it.
     const failedHooks = new Set();
     for (const a of p.agents) {
       const adapter = getAdapter(a.id);
       for (const scope of ['user', 'project']) {
         if (!(scope === 'user' ? a.userHooks : a.projectHooks)) continue;
         try {
-          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: true });
+          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: false });
           out(io, '  ' + a.name + ': removed zn\'s hooks (' + scope + ') in ' + rep.settings + (rep.backup ? ' (copy saved: ' + rep.backup + ')' : ''));
         } catch (err) {
           out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));
           failed++;
-          if (scope === 'user') failedHooks.add(a.id);
+          failedHooks.add(a.id);
         }
       }
       if (a.plugin) {
@@ -271,10 +272,60 @@ async function run(args, io) {
         else { out(io, '  ' + a.name + ': the plugin was not removed. Run it yourself: ' + s.manual); failed++; }
       }
     }
-    // Launcher scripts last, once the hooks that call them are gone. One whose hooks could not be removed stays.
+    // Launcher scripts last, once the hooks that call them are gone. One whose hooks could not be removed stays, and so
+    // does one that a hooks file (the user's, or this folder's) still names. zn keeps no list of the other projects of
+    // this machine; the hooks zn writes into a project call `zn` from the PATH, not this script.
     const launcher = require('./agents/launcher');
+    const { AGENTS } = require('./check');
     for (const l of p.launchers) {
-      if (failedHooks.has(l.id)) continue;
+      const spec = AGENTS.find((x) => x.id === l.id);
+      const base = path.basename(l.file);
+      // Three answers: true (names the launcher), false (does not: the file is absent or has no mention) and null (cannot
+      // tell: any other read error). Only a clear false lets the launcher go; null keeps it (fail closed).
+      // ENOTDIR (a folder on the path is really a file) means "does not exist" only when the parent is confirmed not to be
+      // a folder; if that cannot be confirmed either, it stays "cannot tell".
+      const notAFolder = (f) => {
+        try { return !fs.statSync(path.dirname(f)).isDirectory(); } catch (_) { return false; }
+      };
+      const names = (f) => {
+        try { return fs.readFileSync(f, 'utf8').includes(base); } catch (e) {
+          if (e && e.code === 'ENOENT') return false;
+          if (e && e.code === 'ENOTDIR' && notAFolder(f)) return false;
+          return null;
+        }
+      };
+      let keep = failedHooks.has(l.id);
+      let why = 'a hooks file may still use it';
+      if (!keep && spec) {
+        // Every AGENTS entry has file() and project(); a missing or failing one keeps the launcher (fail safe).
+        let files;
+        try {
+          files = [spec.file(getAdapter(l.id), { home: io.home, env: io.env }), spec.project(io.cwd)];
+        } catch (_) {
+          files = null;
+        }
+        if (!files) { keep = true; files = []; }
+        if (l.id === 'claude-code') {
+          const profiles = claudeProfileSettings(io.home);
+          files.push(...profiles.files);
+          if (profiles.unknown) { keep = true; why = 'a Claude Code profile could not be checked'; }
+        }
+        if (!keep) {
+          const answers = files.map(names);
+          if (answers.includes(null)) { keep = true; why = 'a hooks file could not be read'; }
+          else keep = answers.includes(true);
+        }
+      }
+      // The Claude Code launcher is shared by every profile (every CLAUDE_CONFIG_DIR). With a profile folder set, zn
+      // cannot see the other profiles, so it keeps the launcher rather than break their hooks.
+      if (!keep && l.id === 'claude-code' && io.env && io.env.CLAUDE_CONFIG_DIR) {
+        keep = true;
+        why = 'other Claude Code profiles may still use it';
+      }
+      if (keep) {
+        out(io, '  launcher script kept (' + why + '): ' + l.file + '. Once nothing uses it, delete that file yourself.');
+        continue;
+      }
       launcher.removeLauncher(l.id, { home: io.home, env: io.env });
       if (fs.existsSync(l.file)) { out(io, '  launcher script not removed: ' + l.file); failed++; }
       else out(io, '  launcher script removed: ' + l.file);
@@ -303,6 +354,30 @@ async function run(args, io) {
   if (failed) out(io, 'Not everything was removed: ' + failed + (failed === 1 ? ' step' : ' steps') + ' did not finish (see above). Exit code 1.');
   out(io, 'Last step, to remove the program itself: npm uninstall -g zn-gate');
   return failed ? 1 : 0;
+}
+
+
+/* The settings files of the Claude Code profiles in the home folder: ~/.claude and every ~/.claude* folder (for
+   example one per CLAUDE_CONFIG_DIR). Only folders are profiles: ~/.claude.json and its backups are plain files that
+   Claude Code keeps next to them. A link to a folder is a profile; a link that cannot be followed is not known to be
+   anything, so (like a home folder that cannot be listed) it makes `unknown` true: the caller must not assume there are
+   no other profiles. */
+function claudeProfileSettings(home) {
+  const files = [];
+  let entries;
+  try { entries = fs.readdirSync(home, { withFileTypes: true }); } catch (_) { return { files, unknown: true }; }
+  let unknown = false;
+  for (const e of entries) {
+    const n = e.name;
+    if (!/^\.claude/.test(n)) continue;
+    let isDir = e.isDirectory();
+    if (!isDir && !e.isFile()) {
+      // A link (or an entry whose type the listing did not give): follow it to see what it is.
+      try { isDir = fs.statSync(path.join(home, n)).isDirectory(); } catch (_) { unknown = true; continue; }
+    }
+    if (isDir) files.push(path.join(home, n, 'settings.json'));
+  }
+  return { files, unknown };
 }
 
 module.exports = { run, plan, printPlan, USAGE };

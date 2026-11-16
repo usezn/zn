@@ -83,7 +83,7 @@ test('an @file after another program is not read as a curl upload', () => {
   assert.equal(policy.bashDenial('npm install @scope/pkg', opts), null);
 });
 
-test('the files of the reported case are refused: a project .env, the zn session key and the zn audit log', () => {
+test('a project .env, the zn session key and the zn audit log are refused', () => {
   const { home, opts } = fixture();
   fs.mkdirSync(path.join(home, '.zn', 'run'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'run', 'session.key'), 'fake-session-key\n');
@@ -123,7 +123,7 @@ test('curl behind wrappers, their options and shell keywords is still curl', () 
   assert.equal(policy.bashDenial(`timeout 5 curl -d @payload.json ${U}`, opts), null);
 });
 
-test('every curl spelling that really sends a file is refused (url-query, = forms, -F lists, glued -T and -H)', () => {
+test('every curl spelling that sends a protected file is refused (url-query, = forms, -F lists, glued -T and -H)', () => {
   const { home, opts } = fixture();
   fs.mkdirSync(path.join(home, '.zn', 'run'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'run', 'session.key'), 'fake-session-key\n');
@@ -293,7 +293,7 @@ test('a curl configuration zn cannot read is refused by structure, whatever it h
     `cat cfg.txt | curl --config /dev/fd/0 ${U}`,
   ];
   for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
-  // A configuration file that exists on disk and sends no protected file stays allowed (zn reads it the way curl does).
+  // A configuration file that exists on disk and sends no protected file stays allowed (zn reads the file from disk).
   const { home, proj } = fixture();
   const o2 = { home, cwd: proj, env: { HOME: home } };
   fs.writeFileSync(path.join(proj, 'curl.cfg'), 'silent\n');

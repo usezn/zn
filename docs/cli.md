@@ -116,7 +116,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
 | `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
 | `ZN_BLOCK_DESTRUCTIVE=1` | Two rules on (`rm_root_home`, `disk_overwrite`) | `1` turns on all six destructive-command rules. | npm |
-| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` (or in `$ZN_HOME/config.json` when `ZN_HOME` is set). | npm |
+| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` in your operating-system account's home folder. A `config.json` in the folder `ZN_HOME` (or `HOME`) points to can only add protection: settings that turn a check off or turn on a network lookup are not read from there. | npm |
 | `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
 | `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. `1` does the same. The environment can only add offline mode: `online` is read as offline. | npm |
 | `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
@@ -149,7 +149,7 @@ With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
-Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed. `2` an argument it does not know.
+Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the guided steps were only printed (no terminal). `2` an argument it does not know. With `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert` the command exits `0` once it has finished: the line of each config says what was wrapped, skipped or failed.
 
 ### `uninstall`
 
@@ -177,11 +177,11 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and the only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--json`) exits with `2`, names it and lists the option that `check` takes (`--hooks`).
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
 
 ```bash
 zn-gate check --hooks
@@ -277,7 +277,7 @@ A scan never reports a clean result for something it could not read. A folder it
 ### `audit`
 
 ```bash
-zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home]
+zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home] [--approve]
 ```
 
 Reviews the agent configs of a folder before you open it: hooks, MCP servers, endpoint overrides, permissions, instructions and planted programs. It runs nothing. [What it finds](audit.md).
@@ -287,6 +287,7 @@ Reviews the agent configs of a folder before you open it: hooks, MCP servers, en
 - `--fail-on`: `low`, `medium`, `high` (default), `critical` or `none`.
 - `--agents`: a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all` (default).
 - `--include-home`: also review your own agent configs in your home folder.
+- `--approve`: record the executable configuration of the project (MCP servers, hooks, permissions, helper commands and similar) as approved, then exit. Later audits report an entry that changed, was added or was removed since. It runs only at a terminal, not when an agent started it. Only entry names and hashes are stored, never a value. [Details](audit.md).
 
 Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2` wrong usage or a path that is not a folder.
 
@@ -357,7 +358,7 @@ Aliases: `secrets`.
 zn-gate secret set NAME [--clipboard] [--force] [--mode proxy|env|file] [--host api.example.com] [--command psql] [--in header|query|body]
 ```
 
-Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in.
+Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in. `--mode` defaults to `env` when `--command` is given and to `proxy` otherwise.
 
 #### `secret list`
 
@@ -401,7 +402,7 @@ Approves the first use of a secret by a command that is already allowed. It is c
 zn-gate secret import [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force]
 ```
 
-Copies the secret values of a `.env` file (default `.env`) into the vault. The file is not changed.
+Copies the secret values of a `.env` file (default `.env`) into the vault. The file is not changed. `--mode proxy|env|file` sets how the values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `secret adopt`
 
@@ -445,7 +446,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move. `--mode proxy|env|file` sets how the moved values may be used (default `env`); `--host` and `--command` allow those hosts or commands to use them.
 
 #### `env unshadow`
 
@@ -458,10 +459,14 @@ Puts the original values back into the file from the encrypted copy that `env sh
 ### `run`
 
 ```text
-zn-gate run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]
+zn-gate run [--secrets NAME[,NAME...]] [--agent ID] [--egress-allow HOST[:PORT],...] -- <command> [args...]
 ```
 
 Runs a command with markers replaced by real values, only for commands you allowed, and masks the values in its output. Everything after `--` belongs to your command. `-s` is short for `--secrets`.
+
+`--agent` names the agent that runs the command, and that name is written to the [`vault log`](#vault-log) with each use; without the option, zn takes the name from the `ZN_AGENT` environment variable. The caller reports this name itself, so it is not proof of who runs the command.
+
+- `--egress-allow HOST[:PORT],...`: off by default. The command can reach only those hosts over HTTP(S), through a local proxy that zn starts for the command. Other requests are refused and the refused host is logged, never the body. An entry without a port allows every port of that host. [Details and limits](secrets.md#egress-allowlist-for-zn-run).
 
 Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not allowed or not approved), `127` the program was not found, `1` another error.
 
@@ -471,7 +476,7 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). The defaults are `--ttl 8h` and `--idle 30m`. `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
 
 If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
 
@@ -507,7 +512,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the vault audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
+Shows the vault audit log of secret use: every record, unless `--since` limits it. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
 
 #### `vault log export`
 

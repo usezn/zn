@@ -78,7 +78,7 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
             "events": dict(data.get("events") or {})}
 
 
-_CONTROL_RE = re.compile("[\u0000-\u001f\u007f-\u009f  ‪-‮⁦-⁩]")
+_CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
 _ESCAPE_RE = re.compile("\x1b\\[[0-9;?]*[ -/]*[@-~]")
 
 

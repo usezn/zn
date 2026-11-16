@@ -51,9 +51,9 @@ const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
 const { invisibleView } = require('../rules');
-// normalize.js is loaded on first use. A text with no %XX and no doubled quote has no decoded view (normalisedView
-// returns null for it), so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE in
-// normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
+// normalize.js is loaded on first use. A text with no candidate (a %XX, '' or "") has no decoded view, which is what
+// normalisedView returns for it, so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE
+// in normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
 const NORM_CANDIDATE = /%[0-9A-Fa-f]{2}|''|""/;
 let normalizeModule = null;
 function normalisedView(text) {

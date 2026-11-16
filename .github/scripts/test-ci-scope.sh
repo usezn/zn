@@ -65,6 +65,7 @@ scope rust-scope.sh true  "benches/ change runs the Rust job" benches/b.rs
 scope rust-scope.sh true  "tests/ change runs the Rust job" tests/t.rs
 scope rust-scope.sh true  "rust-toolchain change runs the Rust job" rust-toolchain.toml
 scope rust-scope.sh true  "rust.yml change runs the Rust job" .github/workflows/rust.yml
+scope rust-scope.sh true  "protoc install action (used by the Rust jobs) runs the Rust job" .github/actions/setup-protoc/install.sh
 scope rust-scope.sh true  "invisible-character fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/invisible_chars.json
 scope rust-scope.sh true  "invisible.js (must match rules.rs) runs the Rust job" packages/zn-gate/lib/invisible.js
 scope rust-scope.sh true  "rules.js (override grammar, rule ids; must match prompt_guard) runs the Rust job" packages/zn-gate/lib/rules.js
