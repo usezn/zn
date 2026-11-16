@@ -589,13 +589,14 @@ mod tests {
 
     #[test]
     fn benign_values_under_several_keys_are_kept_without_change() {
-        let params = r#"{"name":"t","arguments":{"path":"/home/user/example.txt"},"args":[1,2],"input":"hello"}"#;
+        let params =
+            r#"{"name":"t","arguments":{"path":"docs/example.txt"},"args":[1,2],"input":"hello"}"#;
         let (_, _, args, _, source) = call(validate_jsonrpc(&multi_frame(params)));
         assert_eq!(source, ArgSource::Multiple);
         let parsed: serde_json::Value = serde_json::from_str(&args).unwrap();
         assert_eq!(
             parsed,
-            json!({"arguments":{"path":"/home/user/example.txt"},"args":[1,2],"input":"hello"})
+            json!({"arguments":{"path":"docs/example.txt"},"args":[1,2],"input":"hello"})
         );
     }
 
