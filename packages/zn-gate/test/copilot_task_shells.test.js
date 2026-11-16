@@ -50,6 +50,17 @@ test('a known shell with another shell\'s flags is blocked', (t) => {
   for (const shell of bad) assert.equal(scan(shell, ws).bad, true, JSON.stringify(shell));
 });
 
+test('a shell given as a path must be in a system folder: a workspace or temporary file named like a shell is blocked', (t) => {
+  const ws = tempDir(t, 'zn-task-shell-');
+  for (const executable of ['./bash', 'bin/sh', '/tmp/x/sh', '/home/alice/project/bash', 'C:\\Users\\alice\\bash.exe', '..\\cmd.exe']) {
+    assert.equal(scan({ executable, args: ['-c'] }, ws).bad, true, executable);
+  }
+  for (const executable of ['/bin/bash', '/usr/bin/zsh', '/usr/local/bin/fish', '/opt/homebrew/bin/bash', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe']) {
+    const args = /pwsh/.test(executable) ? ['-NoProfile', '-Command'] : ['-c'];
+    assert.equal(scan({ executable, args }, ws).bad, false, executable);
+  }
+});
+
 test('the home folder is resolved with HOME unset (os, path and fs are imported)', (t) => {
   const savedHome = process.env.HOME;
   const savedProfile = process.env.USERPROFILE;

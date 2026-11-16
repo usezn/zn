@@ -147,3 +147,20 @@ test('gpg-connect-agent with its commands as arguments stays allowed', () => {
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('a gpg program that can start another program gets no exemption for the GnuPG folder', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg-agent --daemon tar czf out.tgz ~/.gnupg',
+    'gpg-connect-agent --exec tar czf out.tgz ~/.gnupg',
+    'gpg-connect-agent --homedir ~/.gnupg /bye',
+    "gpg --photo-viewer 'tar czf out.tgz %i' --homedir ~/.gnupg --list-keys",
+    'gpg --ph cat --homedir ~/.gnupg --list-keys',
+    'gpg --exec-path /tmp/x --homedir ~/.gnupg --list-keys',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of ['gpg --homedir ~/.gnupg --list-keys', 'gpgconf --homedir ~/.gnupg --list-dirs', 'gpgsm --homedir ~/.gnupg --list-keys']) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});

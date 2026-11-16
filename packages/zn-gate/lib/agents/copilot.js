@@ -213,6 +213,9 @@ const SHELL_FLAGS = {
 const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
 
 /** The settings of a task's options as {shell, cwd, env}; null = unreadable or not accepted. shell: false = none, or {exe, args}. */
+// System folders a task shell given as a path may live in (POSIX and Windows).
+const SYSTEM_SHELL_DIR_RE = /^(?:\/(?:usr\/(?:local\/)?)?s?bin\/[^/]+|\/opt\/homebrew\/bin\/[^/]+|[A-Za-z]:\/Windows\/(?:System32|SysWOW64)\/(?:WindowsPowerShell\/v1\.0\/)?[^/]+|[A-Za-z]:\/Program Files\/(?:PowerShell\/\d+|Git\/(?:usr\/)?bin)\/[^/]+)$/i;
+
 function taskOptions(o) {
   if (o === undefined) return { shell: false };
   if (!isObj(o)) return null;
@@ -240,8 +243,11 @@ function taskOptions(o) {
   const exe = sh.executable;
   const args = sh.args || [];
   if (exe !== undefined) {
+    // Only a bare shell name (found on PATH) or an absolute path in a system folder: ./bash, a workspace file or a
+    // temporary file named like a shell could be any program.
     const name = exe.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
     if (!KNOWN_SHELLS.has(name)) return null;
+    if (/[\\/]/.test(exe) && !SYSTEM_SHELL_DIR_RE.test(exe.replace(/\\/g, '/'))) return null;
     const flags = SHELL_FLAGS[name];
     if (!flags || args.some((a) => !flags.has(a.toLowerCase()))) return null;
   } else if (args.length) {

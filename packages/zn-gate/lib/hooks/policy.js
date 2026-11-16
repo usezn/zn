@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.3';
+const POLICY_RULES_VERSION = '2026-11-16.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -98,6 +98,11 @@ const CREDENTIAL_RES = [
 const GNUPG_DIR_RE = /(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/?$/i;
 const GNUPG_DIR_REASON = 'GnuPG keyring folder';
 const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connect-agent', 'gpgsm', 'gpgv']);
+// The gpg programs that may name their own home folder. gpg-agent (--daemon PROGRAM) and gpg-connect-agent (--exec)
+// can start another program, so they get no exemption; neither does a gpg call with an option that runs a program
+// (--photo-viewer, --exec-path; GnuPG accepts unique prefixes, so any option starting with --ph or --exec counts).
+const GPG_FOLDER_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpgsm', 'gpgv']);
+const GPG_LAUNCH_OPTION_RE = /^--(?:ph|exec)/i;
 // Exporting a secret key prints or writes the private key, whatever folder gpg uses: --export-secret-keys,
 // --export-secret-subkeys and gpgsm's --export-secret-key-p12/-p8/-raw, also abbreviated (gpg takes any unique
 // prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
@@ -2777,7 +2782,8 @@ function bashDenialOf(cmd, opts = {}) {
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
-    if (c.reason === GNUPG_DIR_REASON && GPG_PROGRAMS.has(programName(w.head))) continue;
+    if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) &&
+      !listed.some((x) => x.head === w.head && x.seq === w.seq && GPG_LAUNCH_OPTION_RE.test(String(x.text)))) continue;
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }

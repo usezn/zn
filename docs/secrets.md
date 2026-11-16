@@ -117,8 +117,10 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.gnupg`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked. For GnuPG, the files in `~/.gnupg` (`%APPDATA%\gnupg` on Windows) and the folder itself are
 blocked: a command that names the folder, such as `tar`, `cp -r`, `grep -r` or `ls`, is refused,
-while the `gpg` programs (`gpg`, `gpg2`, `gpgconf`, `gpg-agent`, `gpg-connect-agent`, `gpgsm`,
-`gpgv`) can still use their own keyring. Exporting a secret key is refused with any keyring:
+while `gpg`, `gpg2`, `gpgconf`, `gpgsm` and `gpgv` can still name their own keyring folder. `gpg-agent`
+and `gpg-connect-agent` can start another program (`--daemon PROGRAM`, `--exec`), so a command line that
+names the folder through them is refused, and so is a `gpg` call with an option that runs a program
+(`--photo-viewer`, `--exec-path`). Exporting a secret key is refused with any keyring:
 `gpg --export-secret-keys` and `--export-secret-subkeys` (also abbreviated), the
 `--export-secret-key-*` options of `gpgsm` and the agent's `EXPORT_KEY`. `gpg-connect-agent` is allowed only with its commands written out as arguments: a command line that runs it with a pipe, an input redirection (`<`, `<<`, `<<<`), a `$` or backtick expansion, or an option starting with `-r` or `--r` (such as `--run FILE`) is refused, because zn cannot see the commands it would read. `gpg --export`, which
 exports a public key, is not affected.
