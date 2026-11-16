@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.16.0] - 2026-11-17
+## [1.16.0] - 2026-11-16
 
 zn-gate 1.16.0 is a large release: it adds ways to see what zn-gate and your agents are doing, and it closes many gaps in the checks. `zn why` explains the last block in plain words. `zn-gate check --json` and `zn-gate check --hooks` show the protection state of each agent and the health of each installed hook. `zn-gate reach --history` shows whether your coding agents kept secrets in their local session history. `zn-gate scan --package` audits an npm MCP server or skill before you add it, and `zn audit --approve` records the executable configuration of a project so that later changes to it are reported. Two new checks are off by default: `zn run --egress-allow` limits the hosts a command can reach, and an optional check of the packages your agent installs by name.
 
