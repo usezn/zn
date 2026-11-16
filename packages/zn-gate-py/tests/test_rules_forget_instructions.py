@@ -1,6 +1,7 @@
 """Forget-the-instructions phrases block as pi:forget; the benign twins stay allowed.
 The cases are shared with the Node.js and Rust tests (packages/zn-gate/test/fixtures/forget_instruction_cases.json)."""
 import json
+import os
 import unittest
 from pathlib import Path
 
@@ -9,9 +10,14 @@ from zn_gate import rules as R
 CASES_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "forget_instruction_cases.json"
 
 
-@unittest.skipUnless(CASES_FILE.exists(), "needs the monorepo checkout")
 class TestForgetInstructions(unittest.TestCase):
     def setUp(self):
+        if not CASES_FILE.exists():
+            # A source distribution has no Node.js package next to it, so the shared cases are skipped there. In the
+            # repository's CI the file must exist: a wrong path fails instead of passing the parity check as skipped.
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                self.fail("the shared cases file is missing: " + str(CASES_FILE))
+            self.skipTest("needs the monorepo checkout")
         self.cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
 
     def test_attacks_block(self):

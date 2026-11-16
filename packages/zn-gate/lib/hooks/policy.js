@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.9';
+const POLICY_RULES_VERSION = '2026-11-16.17';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -38,6 +38,8 @@ const POLICY_RULES_VERSION = '2026-11-16.9';
 // are classified like their literal paths.
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
+// The Windows roaming application data folder, where GnuPG keeps its home folder.
+const APPDATA_VAR_RE = /^(?:\$\{?APPDATA\}?|\$env:APPDATA|%APPDATA%)(?=$|[\\/])/i;
 
 // A directory-stack entry other than the top (~1, ~+2, ~-1): zn does not know where it points.
 const DIR_STACK_RE = /(?:^|[\s=@<:,{])~[+-]?[1-9]\d*(?=$|[\\/\s,}])/;
@@ -58,6 +60,7 @@ function expandHome(p, home) {
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
+  if (APPDATA_VAR_RE.test(p)) return path.join(home, 'AppData', 'Roaming', p.replace(APPDATA_VAR_RE, '').replace(/^[\\/]+/, ''));
   return p;
 }
 
@@ -88,7 +91,69 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/, 'Google Cloud credentials'],
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
   [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
+  [/(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/.+$/i, 'GnuPG keyring'],
 ];
+// The GnuPG home folder itself: archiving, copying or searching it as a whole reads every key in it. Only the gpg
+// programs, which use their own home folder, may name it.
+const GNUPG_DIR_RE = /(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/?$/i;
+const GNUPG_DIR_REASON = 'GnuPG keyring folder';
+const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connect-agent', 'gpgsm', 'gpgv']);
+// The gpg programs that may name their own home folder, and only with read-only options spelled out in full (a
+// closed list: GnuPG has many options that start a helper program, such as --agent-program, --dirmngr-program or
+// --photo-viewer, and accepts abbreviations, so any option not on the list withdraws the exemption). gpg-agent and
+// gpg-connect-agent can start another program (--daemon PROGRAM, --exec) and get no exemption at all.
+const GPG_FOLDER_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpgsm', 'gpgv']);
+const GPG_READONLY_OPTIONS = new Set(['--homedir', '--list-keys', '-k', '--list-public-keys', '--list-secret-keys', '-K',
+  '--list-sigs', '--check-sigs', '--fingerprint', '--with-colons', '--with-fingerprint', '--with-subkey-fingerprint',
+  '--keyid-format', '--batch', '--no-tty', '--quiet', '-q', '--verbose', '-v', '--list-dirs', '--list-components',
+  '--list-options', '--verify', '--version', '--armor', '-a', '--export', '--export-ssh-key']);
+function gpgReadOnlyCall(listed, w) {
+  for (const x of listed) {
+    if (x.head !== w.head || x.seq !== w.seq) continue;
+    const t = String(x.text);
+    if (!t.startsWith('-')) continue;
+    if (!GPG_READONLY_OPTIONS.has(t.split('=')[0])) return false;
+  }
+  return true;
+}
+// Exporting a secret key prints or writes the private key, whatever folder gpg uses: --export-secret-keys,
+// --export-secret-subkeys and gpgsm's --export-secret-key-p12/-p8/-raw, also abbreviated (gpg takes any unique
+// prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
+const GPG_SECRET_EXPORT_RE = /^--export-se/i;
+const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
+// gpg-connect-agent also reads its commands from stdin, from a file (--run FILE, -r FILE, or its own /run FILE
+// control command), and a shell can build them from a variable or a command substitution. zn cannot see such
+// commands, so an EXPORT_KEY there could not be refused. Fail closed, with closed lists:
+// - a command line that runs gpg-connect-agent and has a pipe, an input redirection, or a $ or backtick expansion;
+// - an option of gpg-connect-agent that starts with --r (GnuPG accepts prefixes of long options) or a short option
+//   group that contains r (-r FILE, -rFILE, -vr);
+// - a control command other than /bye and /echo (/run, /definqfile and the others read or send files).
+const GPG_AGENT_WORD_RE = /(?:^|[^\w.-])gpg-connect-agent(?:\.exe)?(?![\w.-])/i;
+const GPG_AGENT_HIDDEN_INPUT_RE = /[|<`$]/;
+const GPG_AGENT_RUN_OPTION_RE = /^(?:--r|-[A-Za-z]*r)/;
+const GPG_AGENT_SAFE_CONTROL = new Set(['/bye', '/echo']);
+const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent is allowed only with its commands written out as arguments: this command line could feed it commands zn cannot check (from stdin, a file, a variable or a command substitution) for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
+function gpgSecretExportDenial(words, text) {
+  // The program is found on the words as the shell reads them (quotes and escapes removed: gpg-connect-"agent"),
+  // and in the raw text as well.
+  const runsAgent = words.some((w) => programName(w.head || '') === 'gpg-connect-agent') ||
+    (typeof text === 'string' && GPG_AGENT_WORD_RE.test(text));
+  if (runsAgent && typeof text === 'string' && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+  for (const w of words) {
+    const prog = programName(w.head || '');
+    if (!GPG_PROGRAMS.has(prog)) continue;
+    if (prog === 'gpg-connect-agent') {
+      const t = String(w.text).trim();
+      if (programName(t) === 'gpg-connect-agent') continue; // the program word itself, with or without a path
+      if (GPG_AGENT_RUN_OPTION_RE.test(t)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+      const first = t.split(/\s+/)[0].toLowerCase();
+      if (first.startsWith('/') && !GPG_AGENT_SAFE_CONTROL.has(first)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+    }
+    if (GPG_SECRET_EXPORT_RE.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+    if (prog === 'gpg-connect-agent' && /(^|[^A-Za-z_])export_key([^A-Za-z_]|$)/i.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+  }
+  return null;
+}
 
 // Credential-file variables. A path given through one of them, or equal to
 // its value, is a credential path. Directory variables cover everything below.
@@ -420,6 +485,7 @@ function classifyResolved(abs, ctx) {
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
   for (const [re, reason] of CREDENTIAL_RES) if (ci(re).test(s)) return { kind: 'credential', reason };
+  if (ci(GNUPG_DIR_RE).test(s)) return { kind: 'credential', reason: GNUPG_DIR_REASON };
   if (s === h + '/.npmrc' || s === h + '/.pypirc') return { kind: 'credential', reason: 'package registry token' };
   // With "\" a separator too, so a Windows spelling names the same file on every platform.
   const base = path.basename(s);
@@ -2603,6 +2669,10 @@ function bashDenialOf(cmd, opts = {}) {
     const findDeny = findDeleteDenial(readings[0], opts);
     if (findDeny) return findDeny;
   }
+  {
+    const gpgDeny = gpgSecretExportDenial(words, text);
+    if (gpgDeny) return gpgDeny;
+  }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
@@ -2739,6 +2809,8 @@ function bashDenialOf(cmd, opts = {}) {
       continue; // reading the settings is allowed
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
+    // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
+    if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) && gpgReadOnlyCall(listed, w)) continue;
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }
