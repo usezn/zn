@@ -119,15 +119,18 @@ fn forget_instruction_base() -> String {
 /// True when the text before a "forget ..." match ends with a negation word.
 fn forget_negated(before: &str) -> bool {
     let b = before.to_ascii_lowercase();
+    // Contractions sit on a word by construction, so the bare suffix is the whole negation.
     if ["n't ", "n\u{2019}t ", "n't ever ", "n\u{2019}t ever "]
         .iter()
         .any(|w| b.ends_with(w))
     {
         return true;
     }
-    // A negation counts only as whole words: "however forget ..." and "knot forget ..." are not negated.
-    // A bare "not" ("why not forget ...") and "ever" ("if you ever forget ...") are not negations of the
-    // request, so they do not count.
+    // The standalone negations only: a longer word that merely ends in one of these
+    // ("however", "forever", "whenever", "cannot", "knot") is not a negation, so it
+    // must not suppress the match. Require a non-word char (or start) before the word.
+    // A bare "not" ("why not forget ...") and "ever" ("if you ever forget ...") are not
+    // negations of the request, so they do not count.
     [
         "do not ",
         "does not ",
@@ -140,12 +143,15 @@ fn forget_negated(before: &str) -> bool {
     ]
     .iter()
     .any(|w| {
-        b.strip_suffix(w).is_some_and(|rest| {
-            !rest
+        if !b.ends_with(w) {
+            return false;
+        }
+        let start = b.len() - w.len();
+        start == 0
+            || !b[..start]
                 .chars()
                 .next_back()
                 .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
     })
 }
 

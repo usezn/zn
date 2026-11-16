@@ -849,3 +849,14 @@ test('a client batch with a bare value answers each request in it and the bare v
     await s.stop();
   }
 });
+
+test('the deferred-string separator (newline, ESC, newline) survives input normalization', () => {
+  // A lone ESC is not an ANSI sequence and is not an invisible character, so normalization keeps it, and the
+  // newline rejoin never glues the strings on each side of it into one word.
+  const { normalizeInput } = require('../lib/rules');
+  for (const [a, b] of [['sys', 'tem'], ['ign', 'ore previous instructions'], ['[', 'x'], [']', 'x']]) {
+    const { stripped, normalized } = normalizeInput(a + '\n\u001b\n' + b);
+    assert.ok(stripped.includes('\n\u001b\n'), JSON.stringify(stripped));
+    assert.ok(!normalized.includes(a + b), JSON.stringify(normalized));
+  }
+});
