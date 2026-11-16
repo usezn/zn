@@ -1138,8 +1138,8 @@ mod retry_and_discovery_tests {
             g[3] > g[0],
             "the wait grows from the first retry to the last"
         );
-        // No sleep after the final failure: the total stays near 7.5 s.
-        assert!(total < Duration::from_secs(30), "took {total:?}");
+        // No sleep after the final failure: the four waits add up to 7.5 s, and one more (8 s) would pass 15 s.
+        assert!(total < Duration::from_secs(12), "took {total:?}");
         let msg = err.to_string();
         assert!(msg.contains("flaky"), "{msg}");
         assert!(msg.contains('5'), "{msg}");
@@ -1279,6 +1279,11 @@ mod retry_and_discovery_tests {
         let _home = HomeGuard::set(Some(dir.path()));
         let pool = McpPool::auto_discover().unwrap();
         assert_eq!(pool.list_mcps(), vec!["second".to_string()]);
+        assert_eq!(
+            pool.notices().len(),
+            1,
+            "the broken first file is still reported"
+        );
     }
 
     #[test]
