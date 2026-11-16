@@ -178,11 +178,12 @@ class _Walk:
     """State shared by one walk: containers read in full (kept so their ids are not
     reused during the walk) and a count of parts left out."""
 
-    __slots__ = ("done", "skipped")
+    __slots__ = ("done", "skipped", "unreadable")
 
     def __init__(self) -> None:
         self.done: Dict[int, Any] = {}
         self.skipped = 0
+        self.unreadable = 0
 
 
 def _is_data_object(value: Any) -> bool:
@@ -275,6 +276,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                 children = list(data)
         except Exception:
             if lenient:
+                seen.unreadable += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
     elif isinstance(data, os.PathLike):
@@ -322,6 +324,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         except Exception:
             if lenient or (not is_model and lenient_objects):
                 seen.skipped += 1
+                seen.unreadable += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
@@ -362,11 +365,17 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
 
 def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
                       lenient_depth: Optional[int] = None,
-                      best_effort_budget: bool = False) -> Tuple[List[str], Optional[Assessment]]:
-    """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
+                      best_effort_budget: bool = False,
+                      block_unreadable: bool = False) -> Tuple[List[str], Optional[Assessment]]:
+    """_extract_strings, or a block Assessment when the payload cannot be checked in full.
+    With block_unreadable, an object that raised while it was read is a block too, not a part left out."""
     try:
-        return _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
-                                best_effort_budget=best_effort_budget), None
+        walk = _Walk()
+        found = _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
+                                 best_effort_budget=best_effort_budget, _seen=walk)
+        if block_unreadable and walk.unreadable:
+            raise _Unscannable("type:unscannable", "An object could not be read to check it")
+        return found, None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -432,7 +441,8 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
                   lenient_depth: Optional[int] = None, best_effort_budget: bool = False) -> Assessment:
     strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects,
                                                   lenient_depth=lenient_depth,
-                                                  best_effort_budget=best_effort_budget)
+                                                  best_effort_budget=best_effort_budget,
+                                                  block_unreadable=what != "Arguments")
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -1046,7 +1056,8 @@ class _ResultPolicy:
                         if caught is not None:
                             yield policy.handle_error(caught)
                             return None
-                        return result
+                        # The value the generator returns reaches the consumer (yield from, send): check and mask it too.
+                        return policy.value(result) if result is not None else result
                     pieces, tail, done = policy._chunk(chunk, tail, masker)
                     if not pieces:
                         # Nothing to pass on yet: an empty chunk keeps one output per input chunk,

@@ -155,11 +155,11 @@ def test_branch_is_allowed(cmd):
     assert check_command(cmd).verdict == "allow", cmd
 
 
-def test_nesting_depth_is_limited():
-    cmd = "rm -rf /"
+def test_nesting_depth_is_not_a_way_around_the_check():
+    cmd = "dd if=/dev/zero of=/dev/sda"
     for _ in range(4):
         cmd = "sh -c " + "'" + cmd.replace("'", "'\\''") + "'"
-    assert check_command(cmd).verdict == "allow"
+    assert check_command(cmd).verdict == "block"
 
 
 def test_non_string_is_allowed():

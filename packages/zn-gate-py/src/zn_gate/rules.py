@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-16.14
+RULES_VERSION: 2026-11-16.20
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import binascii
 import bisect
+import copy
 from array import array
 import json
 import math
@@ -24,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-16.14"
+RULES_VERSION = "2026-11-16.20"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2413,6 +2414,47 @@ class SanitizeLimitError(ValueError):
         self.reason = reason
 
 
+def _is_opaque_object(val: Any) -> bool:
+    """True for a value that is not text, a number, a container or a plain scalar type: an instance of some class."""
+    import datetime
+    import decimal
+    import enum
+    import inspect
+    import pathlib
+    import types
+    import uuid
+    return not (
+        val is None
+        or isinstance(val, (str, bytes, bytearray, memoryview, bool, int, float, complex, type, types.ModuleType,
+                            enum.Enum, decimal.Decimal, datetime.date, datetime.time, datetime.timedelta, uuid.UUID,
+                            pathlib.PurePath))
+        or inspect.isroutine(val)
+    )
+
+
+def _object_names(val: Any) -> List[str]:
+    """The attribute names of an instance of a class (__dict__ and __slots__), [] for anything else."""
+    if not _is_opaque_object(val):
+        return []
+    names: List[str] = []
+    try:
+        d = getattr(val, "__dict__", None)
+        if isinstance(d, dict):
+            names.extend(str(k) for k in d)
+        for klass in type(val).__mro__:
+            slots = klass.__dict__.get("__slots__", ())
+            for n in ((slots,) if isinstance(slots, str) else slots):
+                if n in ("__dict__", "__weakref__"):
+                    continue
+                if n.startswith("__") and not n.endswith("__"):
+                    n = "_" + klass.__name__.lstrip("_") + n
+                if n not in names and hasattr(val, n):
+                    names.append(n)
+    except Exception:
+        return []
+    return names
+
+
 @overload
 def sanitize_tool_result(
     tool_or_result: Any,
@@ -2463,6 +2505,8 @@ def sanitize_tool_result(
     """
     if content is not None:
         tool_name = str(tool_or_result)
+        if isinstance(content, (bytes, bytearray, memoryview)):
+            content = bytes(content).decode("utf-8", errors="replace")
         if isinstance(content, str):
             text_content = content
             assessment = scan_windows(text_content, strict=strict)
@@ -2555,25 +2599,50 @@ def sanitize_tool_result(
     path: set[int] = set()
     budget = [SANITIZE_MAX_ITEMS]
 
-    def _enter(val: Any) -> None:
+    def _enter(val: Any, size: Optional[int] = None) -> None:
         """Take one level for the container `val`, or raise SanitizeLimitError."""
         if id(val) in path:
             raise SanitizeLimitError("size:nesting", "The data contains itself")
         if len(path) >= SANITIZE_MAX_DEPTH:
             raise SanitizeLimitError("size:nesting", "The data is nested too deeply to mask")
-        budget[0] -= len(val) * 2 if isinstance(val, dict) else len(val)
+        budget[0] -= size if size is not None else (len(val) * 2 if isinstance(val, dict) else len(val))
         if budget[0] < 0:
             raise SanitizeLimitError("size:items", "The data holds too many values to mask")
         path.add(id(val))
 
     def _sanitize(val: Any) -> Any:
         if not isinstance(val, (dict, list, tuple, set, frozenset)):
-            return _sanitize_value(val)
+            names = _object_names(val)
+            if not names:
+                return _sanitize_value(val)
+            _enter(val, len(names))
+            try:
+                return _sanitize_object(val, names)
+            finally:
+                path.discard(id(val))
         _enter(val)
         try:
             return _sanitize_value(val)
         finally:
             path.discard(id(val))
+
+    def _sanitize_object(val: Any, names: List[str]) -> Any:
+        """Mask the attributes of an object that is not a container, in a copy; the original is left as it was."""
+        try:
+            attrs = {n: getattr(val, n) for n in names}
+        except Exception:
+            raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
+        before = len(detections)
+        clean = {n: _sanitize(v) for n, v in attrs.items()}
+        if len(detections) == before:
+            return val
+        try:
+            twin = copy.copy(val)
+            for n, v in clean.items():
+                object.__setattr__(twin, n, v)
+            return twin
+        except Exception:
+            return clean
 
     def _sanitize_value(val: Any) -> Any:
         if isinstance(val, str):
@@ -2599,6 +2668,24 @@ def sanitize_tool_result(
             return frozenset(_sanitize_members(val))
         elif isinstance(val, set):
             return set(_sanitize_members(val))
+        elif isinstance(val, (bytes, bytearray, memoryview)):
+            text = bytes(val).decode("utf-8", errors="replace")
+            clean_text, det = redact_secrets(text)
+            if not det:
+                return val
+            detections.extend(det)
+            out = clean_text.encode("utf-8")
+            return bytearray(out) if isinstance(val, bytearray) else out
+        elif _is_opaque_object(val):
+            # An object with no attributes to walk: what its text form shows is masked, as a string.
+            try:
+                text = str(val)
+            except Exception:
+                return val
+            clean_text, det = redact_secrets(text)
+            if det:
+                detections.extend(det)
+                return clean_text
         return val
 
     sanitized = _sanitize(tool_or_result)
@@ -2611,6 +2698,16 @@ _EVAL_CACHE_MAX = 2048
 EVAL_CACHE_MAX_INPUT = 8 * 1024
 _eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
+
+
+def text_input(value: Any, what: str) -> Any:
+    """The text to check: a str as it is, bytes read as UTF-8 (invalid bytes replaced), None as it is (empty input);
+    any other type raises TypeError, because input that is not text is never allowed unread."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", errors="replace")
+    raise TypeError(f"{what} takes text (str or bytes), not {type(value).__name__}")
 
 
 # Marks an argument that was not passed, so evaluate(None) keeps its old answer.
@@ -2631,8 +2728,9 @@ def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
         text = input_text
     elif text is _NOT_GIVEN:
         raise TypeError("evaluate() missing the text to check")
-    # None is not a str but keeps its old answer (the check below handles it).
-    input_text = cast(str, text)
+    # None is not a str but keeps its old answer (the check below handles it); bytes are read as UTF-8;
+    # any other type raises TypeError instead of being allowed unread.
+    input_text = cast(str, text_input(text, "evaluate()"))
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)

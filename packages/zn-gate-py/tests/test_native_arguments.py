@@ -77,9 +77,10 @@ class TestArgumentsPassedToTheCheck(unittest.TestCase):
         args = {"q": "weather"}
         self.assertEqual(self._seen(args), args)
 
-    def test_none_gives_no_arguments(self):
-        self.assertIsNone(self._seen(None))
-
+    def test_none_is_not_checked_as_no_arguments(self):
+        # A missing field is blocked before the check runs; it is never handed over as "no arguments".
+        gin = _input_guardrail()
+        self.assertEqual(gin(_data(None)).kind, "reject")
     def test_json_text_that_is_not_an_object_is_decoded(self):
         self.assertEqual(self._seen("[1, 2]"), [1, 2])
 
@@ -108,7 +109,7 @@ class TestBlockedInput(unittest.TestCase):
 
     def test_clean_inputs_are_allowed(self):
         gin = _input_guardrail()
-        for arguments in ('{"q": "weather"}', "weather", {"q": "weather"}, None):
+        for arguments in ('{"q": "weather"}', "weather", {"q": "weather"}, "{}"):
             self.assertEqual(gin(_data(arguments)).kind, "allow")
 
     def test_missing_tool_name_uses_a_default(self):

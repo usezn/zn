@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..rules import Assessment
 from ..guard import (GuardBlockError, _is_framework_context, _mask_value, _secret_masked, block_message, check_tool_call,
                      check_tool_result, validate_on_block)
 
@@ -162,7 +163,13 @@ def openai_agents_tool_guardrails(
 
     def zn_gate_tool_input(data: Any) -> Any:
         name = getattr(data.context, "tool_name", None) or "tool"
-        blocked = policy.input_assessment(name, _arguments(getattr(data.context, "tool_arguments", None)))
+        raw = getattr(data.context, "tool_arguments", None)
+        if raw is None or not isinstance(raw, (str, bytes, dict, list, tuple)):
+            # An absent field is not "no arguments": a tool that takes none gets "{}". Never allow a call unread.
+            blocked: Any = Assessment(verdict="block", confidence=1.0, rule="type:unscannable",
+                                      reason="The tool arguments were missing or unreadable, so they could not be checked")
+        else:
+            blocked = policy.input_assessment(name, _arguments(raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw))
         if blocked is None:
             return ToolGuardrailFunctionOutput.allow()
         info = {"rule": blocked.rule}
