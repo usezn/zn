@@ -147,12 +147,12 @@ function track(scope, words, sep, opens) {
     else if (CLOSE_BLOCK.has(w)) scope.blocks = Math.max(0, scope.blocks - 1);
     if (w === 'case') scope.cases++;
     else if (w === 'esac') scope.cases = Math.max(0, scope.cases - 1);
+    // A } closes a group only in command position; elsewhere it is a plain argument (echo }, echo '}').
+    if (w === '}') scope.braces = Math.max(0, scope.braces - 1);
   }
-  // Every { and } word of the segment counts, not only a leading one: a function body opens after f() or function f.
-  for (const w of words) {
-    if (w === '{') scope.braces++;
-    else if (w === '}') scope.braces = Math.max(0, scope.braces - 1);
-  }
+  // Every { word of the segment counts, not only a leading one (a function body opens after f() or function f): an
+  // extra { only keeps later assignments conditional, which fails closed.
+  for (const w of words) if (w === '{') scope.braces++;
   if (sep === '(') scope.parens++;
   scope.parens += opens;
   // Inside a case block a ')' may close a pattern (a) ...) rather than a group: it never lowers the group count there,

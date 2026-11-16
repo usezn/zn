@@ -160,6 +160,10 @@ MAY_DELETE = [
     "D=/home/alice; { if y; then :; fi; D=./build; }; rm -rf \"$D\"",
     "D=/home/alice; f() { if y; then :; fi; D=./build; }; rm -rf \"$D\"",
     "D=/home/alice; function f { for i in 1; do :; done; echo; D=./build; }; rm -rf \"$D\"",
+    "D=/home/alice; f() { echo }; D=./build; }; rm -rf \"$D\"",
+    "D=/home/alice; f() { echo '}'; D=./build; }; rm -rf \"$D\"",
+    "D=/home/alice; f() { echo \"}\"; D=./build; }; rm -rf \"$D\"",
+    "D=/home/alice; { echo }; D=./build; }; rm -rf \"$D\"",
 ]
 
 ALL_VALUES_SAFE = [
@@ -176,6 +180,8 @@ ALL_VALUES_SAFE = [
     "D=/home/alice; if x; then if y; then :; fi; fi; D=./build; rm -rf \"$D\"",
     "D=/home/alice; while x; do for j in 1; do :; done; done; D=./build; rm -rf \"$D\"",
     "D=/home/alice; if x; then case $Y in a) :;; esac; fi; D=./build; rm -rf \"$D\"",
+    "D=/home/alice; f() { echo; }; D=./build; rm -rf \"$D\"",
+    "D=/home/alice; { echo; }; D=./build; rm -rf \"$D\"",
 ]
 
 
