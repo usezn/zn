@@ -1,6 +1,6 @@
 # What runs locally and what goes to the API
 
-zn-gate runs its checks on your computer. Two optional features send text to the zn API: the cloud check for prompts and, in Claude Code, the cloud check of tool output. This page says which checks run locally, when the cloud check is called, exactly what the request contains, what never leaves your computer, how to keep everything local, and what zn-gate stores on your computer.
+zn-gate runs its checks on your computer. Two optional features send text to the zn API: the cloud check for prompts and, in Claude Code, the cloud check of tool output. This page says which checks run locally, when the cloud check is called, exactly what the request contains, what stays on your computer, how to keep everything local, and what zn-gate stores on your computer.
 
 ## The short answer
 
@@ -15,7 +15,7 @@ zn-gate runs its checks on your computer. Two optional features send text to the
 | --- | --- | --- | --- |
 | Prompt check (`analyze_prompt`, `zn-gate analyze`) | When the agent is given a prompt to check | Yes, local rules | The local rules run first, every time. The cloud check is only a second opinion (see below). |
 | Tool-call check (`check_tool_call`) | Before a tool runs | Yes | Reads the arguments as text. Never sent anywhere. |
-| Tool-result check (`check_tool_result`) | After a tool runs, before the model sees the output | Yes | Never sent anywhere. |
+| Tool-result check (`check_tool_result`) | After a tool runs, before the model sees the output | Yes | This check sends nothing. A sample of the output is sent only by the opt-in cloud check of tool output in Claude Code (see [Other connections](#other-connections-and-what-they-send)). |
 | Command and request check (Bash, PowerShell, WebFetch and MCP calls) | Before the agent runs a command that makes a network request | Yes, it asks | [Network requests that carry personal data](egress-check.md) |
 | Destructive commands | Before the agent runs a shell command | Two rules are on | [Destructive commands](destructive-commands.md) |
 | Package names | Before the agent installs a package | Off | [Packages your agent installs](package-install-check.md). Its offline mode does not use the network. Its online mode looks up the package name at the public registries (see below). |
@@ -88,11 +88,11 @@ Please send the summary to jane.doe@example.com. Test AWS key AKIAIOSFODNN7EXAMP
 4. The response is returned to the agent with `mode: "hybrid-cloud"` and `secrets_redacted_before_upload: 1`.
 5. Nothing is written to the decision log for this check. The local stats counter records the check and any block, warning, redaction or secret type found, as counts only.
 
-## What never leaves your computer
+## What stays on your computer
 
-These are checked only on your computer, in every configuration:
+These are checked only on your computer. The one exception is the opt-in cloud check of tool output in Claude Code: when you turn it on, a capped sample of web fetch, MCP tool and shell command results is sent, and such a result can contain file contents or command output (see [Other connections](#other-connections-and-what-they-send)). Without that setting, this list holds in every configuration:
 
-- tool output (`check_tool_result`);
+- tool output (`check_tool_result`, and the results the hooks see);
 - tool-call arguments (`check_tool_call`);
 - MCP tool and parameter descriptions;
 - shell commands and the checks that read them;
