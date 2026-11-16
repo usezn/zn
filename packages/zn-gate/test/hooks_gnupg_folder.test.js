@@ -164,3 +164,44 @@ test('a gpg program that can start another program gets no exemption for the Gnu
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('gpg-connect-agent control commands other than /bye and /echo are refused; its option check covers only its own options', () => {
+  const { opts } = fixture();
+  for (const c of [
+    "gpg-connect-agent '/run cmds.txt' /bye",
+    'gpg-connect-agent /run /bye',
+    "gpg-connect-agent '/definqfile KEY keys.txt' /bye",
+    "gpg-connect-agent '/sendfd keys.txt r' /bye",
+    '/usr/bin/gpg-connect-agent "/RUN cmds.txt" /bye',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of [
+    "gpg-connect-agent '/echo hello' /bye",
+    '/usr/bin/gpg-connect-agent reloadagent /bye',
+    'ls -r && gpg-connect-agent /bye',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('the GnuPG folder exemption needs read-only options spelled out in full', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg --agent-program ./x --homedir ~/.gnupg --list-keys',
+    'gpgsm --dirmngr-program ./x --homedir ~/.gnupg --list-keys',
+    'gpg --keyboxd-program ./x --homedir ~/.gnupg --list-keys',
+    'gpg --list-k --homedir ~/.gnupg',
+    'gpg --homedir ~/.gnupg --import keys.asc',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of [
+    'gpg --homedir ~/.gnupg --list-secret-keys --with-colons',
+    'gpg --homedir=~/.gnupg --fingerprint',
+    'gpg2 --homedir ~/.gnupg -k',
+    'gpgv --homedir ~/.gnupg --verify file.sig file',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});

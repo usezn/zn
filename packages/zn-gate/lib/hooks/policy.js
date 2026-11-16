@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.4';
+const POLICY_RULES_VERSION = '2026-11-16.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -98,29 +98,53 @@ const CREDENTIAL_RES = [
 const GNUPG_DIR_RE = /(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/?$/i;
 const GNUPG_DIR_REASON = 'GnuPG keyring folder';
 const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connect-agent', 'gpgsm', 'gpgv']);
-// The gpg programs that may name their own home folder. gpg-agent (--daemon PROGRAM) and gpg-connect-agent (--exec)
-// can start another program, so they get no exemption; neither does a gpg call with an option that runs a program
-// (--photo-viewer, --exec-path; GnuPG accepts unique prefixes, so any option starting with --ph or --exec counts).
+// The gpg programs that may name their own home folder, and only with read-only options spelled out in full (a
+// closed list: GnuPG has many options that start a helper program, such as --agent-program, --dirmngr-program or
+// --photo-viewer, and accepts abbreviations, so any option not on the list withdraws the exemption). gpg-agent and
+// gpg-connect-agent can start another program (--daemon PROGRAM, --exec) and get no exemption at all.
 const GPG_FOLDER_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpgsm', 'gpgv']);
-const GPG_LAUNCH_OPTION_RE = /^--(?:ph|exec)/i;
+const GPG_READONLY_OPTIONS = new Set(['--homedir', '--list-keys', '-k', '--list-public-keys', '--list-secret-keys', '-K',
+  '--list-sigs', '--check-sigs', '--fingerprint', '--with-colons', '--with-fingerprint', '--with-subkey-fingerprint',
+  '--keyid-format', '--batch', '--no-tty', '--quiet', '-q', '--verbose', '-v', '--list-dirs', '--list-components',
+  '--list-options', '--verify', '--version', '--armor', '-a', '--export', '--export-ssh-key']);
+function gpgReadOnlyCall(listed, w) {
+  for (const x of listed) {
+    if (x.head !== w.head || x.seq !== w.seq) continue;
+    const t = String(x.text);
+    if (!t.startsWith('-')) continue;
+    if (!GPG_READONLY_OPTIONS.has(t.split('=')[0])) return false;
+  }
+  return true;
+}
 // Exporting a secret key prints or writes the private key, whatever folder gpg uses: --export-secret-keys,
 // --export-secret-subkeys and gpgsm's --export-secret-key-p12/-p8/-raw, also abbreviated (gpg takes any unique
 // prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
 const GPG_SECRET_EXPORT_RE = /^--export-se/i;
 const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
-// gpg-connect-agent also reads its commands from stdin and from a file (--run FILE, -r FILE), and a shell can build
-// them from a variable or a command substitution. zn cannot see such commands, so an EXPORT_KEY there could not be
-// refused. Fail closed: a command line that runs gpg-connect-agent is allowed only when it has no pipe, no input
-// redirection, no $ or backtick expansion, and no option of gpg-connect-agent that starts with -r or --r (GnuPG
-// accepts unique prefixes of long options, and -rFILE attaches the file to the option).
+// gpg-connect-agent also reads its commands from stdin, from a file (--run FILE, -r FILE, or its own /run FILE
+// control command), and a shell can build them from a variable or a command substitution. zn cannot see such
+// commands, so an EXPORT_KEY there could not be refused. Fail closed, with closed lists:
+// - a command line that runs gpg-connect-agent and has a pipe, an input redirection, or a $ or backtick expansion;
+// - an option of gpg-connect-agent that starts with --r (GnuPG accepts prefixes of long options) or a short option
+//   group that contains r (-r FILE, -rFILE, -vr);
+// - a control command other than /bye and /echo (/run, /definqfile and the others read or send files).
 const GPG_AGENT_WORD_RE = /(?:^|[^\w.-])gpg-connect-agent(?:\.exe)?(?![\w.-])/i;
-const GPG_AGENT_HIDDEN_INPUT_RE = /[|<`$]|(?:^|\s)-(?:-r|r|[A-Za-z]*r)\S*/;
+const GPG_AGENT_HIDDEN_INPUT_RE = /[|<`$]/;
+const GPG_AGENT_RUN_OPTION_RE = /^(?:--r|-[A-Za-z]*r)/;
+const GPG_AGENT_SAFE_CONTROL = new Set(['/bye', '/echo']);
 const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent is allowed only with its commands written out as arguments: this command line could feed it commands zn cannot check (from stdin, a file, a variable or a command substitution) for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
 function gpgSecretExportDenial(words, text) {
   if (typeof text === 'string' && GPG_AGENT_WORD_RE.test(text) && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
   for (const w of words) {
     const prog = programName(w.head || '');
     if (!GPG_PROGRAMS.has(prog)) continue;
+    if (prog === 'gpg-connect-agent') {
+      const t = String(w.text).trim();
+      if (programName(t) === 'gpg-connect-agent') continue; // the program word itself, with or without a path
+      if (GPG_AGENT_RUN_OPTION_RE.test(t)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+      const first = t.split(/\s+/)[0].toLowerCase();
+      if (first.startsWith('/') && !GPG_AGENT_SAFE_CONTROL.has(first)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+    }
     if (GPG_SECRET_EXPORT_RE.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
     if (prog === 'gpg-connect-agent' && /(^|[^A-Za-z_])export_key([^A-Za-z_]|$)/i.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
   }
@@ -2782,8 +2806,7 @@ function bashDenialOf(cmd, opts = {}) {
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
-    if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) &&
-      !listed.some((x) => x.head === w.head && x.seq === w.seq && GPG_LAUNCH_OPTION_RE.test(String(x.text)))) continue;
+    if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) && gpgReadOnlyCall(listed, w)) continue;
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }
