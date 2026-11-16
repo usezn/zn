@@ -58,6 +58,12 @@ class TestInvisibleCap(unittest.TestCase):
         self.assertLess(time.perf_counter() - t, 5.0)
         self.assertTrue(R.too_invisible([("x" * 99 + ZW) * 200001]))
 
+    def test_c0_control_characters_count_like_node(self):
+        self.assertTrue(R.too_invisible(["\u0000" * 100000]))
+        self.assertTrue(R.too_invisible([("x" * 99 + "\u0001") * 200001]))
+        self.assertFalse(R.too_invisible(["\u0001abc" * 30000]))
+        self.assertFalse(R.too_invisible(["\u001b[0mok\r\n\t" * 20000]))
+
 
 if __name__ == "__main__":
     unittest.main()
