@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.5';
+const POLICY_RULES_VERSION = '2026-11-16.11';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -134,7 +134,11 @@ const GPG_AGENT_RUN_OPTION_RE = /^(?:--r|-[A-Za-z]*r)/;
 const GPG_AGENT_SAFE_CONTROL = new Set(['/bye', '/echo']);
 const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent is allowed only with its commands written out as arguments: this command line could feed it commands zn cannot check (from stdin, a file, a variable or a command substitution) for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
 function gpgSecretExportDenial(words, text) {
-  if (typeof text === 'string' && GPG_AGENT_WORD_RE.test(text) && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+  // The program is found on the words as the shell reads them (quotes and escapes removed: gpg-connect-"agent"),
+  // and in the raw text as well.
+  const runsAgent = words.some((w) => programName(w.head || '') === 'gpg-connect-agent') ||
+    (typeof text === 'string' && GPG_AGENT_WORD_RE.test(text));
+  if (runsAgent && typeof text === 'string' && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
   for (const w of words) {
     const prog = programName(w.head || '');
     if (!GPG_PROGRAMS.has(prog)) continue;

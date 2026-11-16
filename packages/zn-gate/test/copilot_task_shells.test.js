@@ -52,10 +52,11 @@ test('a known shell with another shell\'s flags is blocked', (t) => {
 
 test('a shell given as a path must be in a system folder: a workspace or temporary file named like a shell is blocked', (t) => {
   const ws = tempDir(t, 'zn-task-shell-');
-  for (const executable of ['./bash', 'bin/sh', '/tmp/x/sh', '/home/alice/project/bash', 'C:\\Users\\alice\\bash.exe', '..\\cmd.exe']) {
+  for (const executable of ['./bash', 'bin/sh', '/tmp/x/sh', '/home/alice/project/bash', 'C:\\Users\\alice\\bash.exe', '..\\cmd.exe',
+    '/usr/local/bin/fish', '/opt/homebrew/bin/bash']) {
     assert.equal(scan({ executable, args: ['-c'] }, ws).bad, true, executable);
   }
-  for (const executable of ['/bin/bash', '/usr/bin/zsh', '/usr/local/bin/fish', '/opt/homebrew/bin/bash', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe']) {
+  for (const executable of ['/bin/bash', '/usr/bin/zsh', '/bin/sh', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe']) {
     const args = /pwsh/.test(executable) ? ['-NoProfile', '-Command'] : ['-c'];
     assert.equal(scan({ executable, args }, ws).bad, false, executable);
   }

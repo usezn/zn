@@ -213,8 +213,10 @@ const SHELL_FLAGS = {
 const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
 
 /** The settings of a task's options as {shell, cwd, env}; null = unreadable or not accepted. shell: false = none, or {exe, args}. */
-// System folders a task shell given as a path may live in (POSIX and Windows).
-const SYSTEM_SHELL_DIR_RE = /^(?:\/(?:usr\/(?:local\/)?)?s?bin\/[^/]+|\/opt\/homebrew\/bin\/[^/]+|[A-Za-z]:\/Windows\/(?:System32|SysWOW64)\/(?:WindowsPowerShell\/v1\.0\/)?[^/]+|[A-Za-z]:\/Program Files\/(?:PowerShell\/\d+|Git\/(?:usr\/)?bin)\/[^/]+)$/i;
+// System folders a task shell given as a path may live in (POSIX and Windows): only folders an ordinary user
+// cannot write to. /usr/local/bin and /opt/homebrew/bin are left out, because the user owns them on many Macs;
+// a shell there is named bare (found on PATH) instead.
+const SYSTEM_SHELL_DIR_RE = /^(?:\/(?:usr\/)?s?bin\/[^/]+|[A-Za-z]:\/Windows\/(?:System32|SysWOW64)\/(?:WindowsPowerShell\/v1\.0\/)?[^/]+|[A-Za-z]:\/Program Files\/(?:PowerShell\/\d+|Git\/(?:usr\/)?bin)\/[^/]+)$/i;
 
 function taskOptions(o) {
   if (o === undefined) return { shell: false };

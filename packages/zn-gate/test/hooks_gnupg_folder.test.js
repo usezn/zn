@@ -205,3 +205,15 @@ test('the GnuPG folder exemption needs read-only options spelled out in full', (
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('gpg-connect-agent hidden input is refused when the program name is quoted or escaped', () => {
+  const { opts } = fixture();
+  for (const c of [
+    "echo 'EXPORT_KEY 0000' | gpg-connect-\"agent\"",
+    "echo 'EXPORT_KEY 0000' | 'gpg-connect-agent'",
+    'gpg-connect-agen\\t < cmds.txt',
+    '"gpg-connect-agent" <<< \'EXPORT_KEY 0000\'',
+  ]) {
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+});
