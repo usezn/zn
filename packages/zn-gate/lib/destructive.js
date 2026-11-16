@@ -18,7 +18,7 @@
  *   pipe_to_shell    a download that is run as a script (or by python, node, perl or ruby) without being read
  *   disk_overwrite   dd, mkfs, wipefs ... on a block device, or a redirect to one
  *   perm_root        chmod -R 777 or chown -R on the root or a system folder
- *   fork_bomb        the classic shell fork bomb
+ *   fork_bomb        a shell function that starts itself twice per call in the background (the classic fork bomb)
  *   rc_download     a download written into a shell startup file
  *
  * A cd or pushd earlier in the same command line is followed: after `cd ~ && find . -delete` the "." is the home folder.
@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-16.19';
+const COMMAND_RULES_VERSION = '2026-11-16.21';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -73,7 +73,13 @@ const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|z
 const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
 
 const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
-const FORK_BOMB_RE = /(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)/;
+// A shell function definition, f() { ... } or function f { ... }, with a body that has no brace. Each body scan stops at
+// the next brace, and a name starts only after a character that cannot be part of one, so the scan is linear.
+const FUNC_DEF_RE = /(?<![\w:])(?:function\s+([A-Za-z_:][\w:]*)(?:\s*\(\s*\))?|([A-Za-z_:][\w:]*)\s*\(\s*\))\s*\{([^{}]*)\}/g;
+// The words of a function body: line breaks, the control operators, ( and ), other words and blanks.
+const BODY_TOKEN_RE = /\n|&&|\|\||[;&|()]|[^\s;&|()]+|[^\S\n]+/g;
+// Words after which the next word is still a command.
+const BODY_LEAD_WORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', 'time']);
 // Unquoted command substitutions and process substitutions are not split into words by the tokenizer.
 // The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
 // /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
@@ -704,6 +710,14 @@ function checkHead(args, depth, known) {
     const hit = analyze(code, depth + 1, known);
     if (hit) return hit;
   }
+  // The text echo or printf prints into the shell: sh -c "$(echo 'rm -rf ~')", eval "$(printf ...)", sh <<< 'rm -rf ~'.
+  if ((SHELLS.has(head) || head === 'su' || head === 'eval') && depth < MAX_DEPTH) {
+    const fed = code !== null ? fedText(code) : SHELLS.has(head) ? hereStringProgram(rest) : null;
+    if (fed !== null && fed !== code) {
+      const hit = analyze(fed, depth + 1, known);
+      if (hit) return hit;
+    }
+  }
 
   // Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
   const kind = interpreterKind(head);
@@ -751,10 +765,168 @@ function checkHead(args, depth, known) {
   return null;
 }
 
+/* Whether a chmod mode gives others write access: an octal mode (any number of leading zeros) whose last digit has the
+   write bit, or a comma list of symbolic clauses (u=rwx,g=rwx,o=rwx, a+w, o=u) whose last say on the write bit of
+   others sets it. A clause with no who (+w, =rwx) is taken to reach others too. */
 function worldWritable(mode) {
-  if (/^0?[0-7]{2}[2367]$/.test(mode) || /^[0-7]{4}$/.test(mode) && /[2367]$/.test(mode)) return true;
-  const m = /^([ugoa]*)[+=][rwxXst]*w[rwxXst]*$/.exec(mode);
-  return Boolean(m && (m[1] === '' || /[ao]/.test(m[1])));
+  const n = /^0*([0-7]{1,4})$/.exec(mode);
+  if (n) return /[2367]$/.test(n[1]);
+  let others = false;
+  for (const clause of mode.split(',')) {
+    const m = /^([ugoa]*)((?:[-+=](?:[ugo]|[rwxXst]*))+)$/.exec(clause);
+    if (!m) return false;
+    if (m[1] !== '' && !/[ao]/.test(m[1])) continue;
+    for (const op of m[2].matchAll(/([-+=])([ugo]|[rwxXst]*)/g)) {
+      // o=u and o+g copy the bits of the owner or the group, which have write access in the usual case.
+      const w = /w|^[ugo]$/.test(op[2]);
+      if (op[1] === '=') others = w;
+      else if (w) others = op[1] === '+';
+    }
+  }
+  return others;
+}
+
+/* True when a function body runs `name` at least twice per call and at least once in the background (f|f&, f&f&,
+   f|cat|f&): each call then starts two copies of itself that do not wait, which is a fork bomb. A recursive function
+   that calls itself once, or only in the foreground, is not one. */
+function spawnsItself(body, name) {
+  let calls = 0;
+  let background = false;
+  let atCommand = true;
+  let inPipeline = false; // the current pipeline runs `name`
+  for (const m of body.matchAll(BODY_TOKEN_RE)) {
+    const t = m[0];
+    if (t === '&') {
+      if (inPipeline) background = true;
+      inPipeline = false;
+      atCommand = true;
+    } else if (t === '\n' || t === ';' || t === '&&' || t === '||') {
+      inPipeline = false;
+      atCommand = true;
+    } else if (t === '|' || t === '(') {
+      atCommand = true;
+    } else if (t === ')' || /^\s+$/.test(t)) {
+      // a group closes or a blank: the state stays
+    } else if (atCommand) {
+      if (t === name) { calls++; inPipeline = true; }
+      atCommand = BODY_LEAD_WORDS.has(t);
+    }
+  }
+  return calls >= 2 && background;
+}
+
+/* A fork bomb: a function that starts itself twice per call, at least once in the background, followed by a call to it
+   after any command separator (:(){ :|:& };:, function f { f|f& }; f, f(){ f&f& };f, :(){ : | : & } && :). */
+function forkBomb(text) {
+  if (!text.includes('{')) return false;
+  for (const m of text.matchAll(FUNC_DEF_RE)) {
+    const name = m[1] || m[2];
+    if (!spawnsItself(m[3], name)) continue;
+    let i = m.index + m[0].length;
+    while (i < text.length && /[\s;&|]/.test(text[i])) i++;
+    if (text.startsWith(name, i) && !/[\w:]/.test(text[i + name.length] || '')) return true;
+  }
+  return false;
+}
+
+// A printf conversion (%s, %b, %-10s, %05d ...) or a literal %%. The width cannot start with 0, so the flags and the
+// width never take the same characters and a long run of zeros is read once.
+const PRINTF_CONV_RE = /%(?:%|[-+ #0]*(?:[1-9]\d*)?(?:\.\d*)?[sbqdiouxXcfeEgGaA])/g;
+
+/* The text echo or printf prints, read literally (no variable is evaluated): echo joins its words with blanks; printf
+   fills each conversion of the format with the next argument and repeats the format while arguments are left.
+   \n and \t print as a line break and a tab. null when the command is neither. Past MAX_CHARS the text is cut, and the
+   caller refuses it (analyze returns OVERFLOW for a longer text). */
+function printedText(words) {
+  const name = words.length ? programName(words[0]) : '';
+  let out;
+  if (name === 'echo') {
+    let i = 1;
+    while (i < words.length && /^-[neE]+$/.test(words[i])) i++;
+    out = words.slice(i).join(' ');
+  } else if (name === 'printf') {
+    let i = 1;
+    if (words[i] === '--') i++;
+    if (i >= words.length) return null;
+    const format = words[i];
+    const args = words.slice(i + 1);
+    let k = 0;
+    out = '';
+    do {
+      let used = false;
+      out += format.replace(PRINTF_CONV_RE, (c) => {
+        if (c === '%%') return '%';
+        used = true;
+        return k < args.length ? args[k++] : '';
+      });
+      if (!used) break;
+    } while (k < args.length && out.length <= MAX_CHARS);
+  } else {
+    return null;
+  }
+  return out.replace(/\\n/g, '\n').replace(/\\t/g, '\t').slice(0, MAX_CHARS + 1);
+}
+
+/* The program text a shell gets from one word given as its stdin or -c code: the text that echo or printf prints when
+   the word is a command substitution of them ("$(echo 'rm -rf ~')", "`printf ...`", one or more echo/printf commands);
+   otherwise the word itself. */
+function fedText(word) {
+  const m = /^\s*(?:\$\(([\s\S]*)\)|`([\s\S]*)`)\s*$/.exec(word);
+  if (!m) return word;
+  const inner = m[1] !== undefined ? m[1] : m[2];
+  const segs = segmentsOf(inner);
+  if (segs.truncated || !segs.length) return word;
+  const parts = [];
+  for (const s of segs) {
+    if (!s.words.length) continue;
+    if (s.sep !== null && s.sep !== ';' && s.sep !== '\n' && s.sep !== '&&') return word;
+    const t = printedText(s.words);
+    if (t === null) return word;
+    parts.push(t);
+  }
+  return parts.length ? parts.join('\n') : word;
+}
+
+/* Whether a shell command reads its program from stdin: no -c or -n option and no script file, or -s / - given. */
+function shellReadsStdin(rest) {
+  if (rest.some((w) => /^-[A-Za-z]*[cn][A-Za-z]*$/.test(w))) return false;
+  const files = rest.filter((w) => !w.startsWith('-'));
+  return !files.length || rest.includes('-s') || rest.includes('-');
+}
+
+/* The text a here-string gives a shell (sh <<< 'rm -rf ~', bash <<<"$(echo ...)") when the shell reads its program from
+   stdin, or null. */
+function hereStringProgram(rest) {
+  let text = null;
+  const others = [];
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    const m = /^0?<<<([\s\S]*)$/.exec(w);
+    if (m) {
+      if (m[1] !== '') text = m[1];
+      else if (i + 1 < rest.length) text = rest[++i];
+      continue;
+    }
+    others.push(w);
+  }
+  if (text === null || !shellReadsStdin(stripRedirects(others))) return null;
+  return fedText(text);
+}
+
+/* A pipeline whose shell reads its program from the output of echo or printf (echo 'rm -rf ~' | sh): the printed text is
+   read as code, like a heredoc or a sh -c string. */
+function checkFedPipe(pipe, depth, known) {
+  if (pipe.length < 2 || depth >= MAX_DEPTH) return null;
+  for (let j = 1; j < pipe.length; j++) {
+    const h = pipeHead(pipe[j].words);
+    if (h.overflow || !h.names.some((n) => SHELLS.has(n)) || !shellReadsStdin(h.args.slice(1))) continue;
+    const feeder = pipeHead(pipe[j - 1].words);
+    const text = feeder.overflow ? null : printedText(feeder.args);
+    if (text === null) continue;
+    const hit = analyze(text, depth + 1, known);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function isRcPath(w) {
@@ -1163,6 +1335,8 @@ function checkSegments(segs, depth, cwd0 = null) {
     pipe.push({ words, sep });
     pipeReadings.push(readings);
     if (!isPipe(sep)) {
+      const fedHit = checkFedPipe(pipe, depth, known);
+      if (fedHit) return fedHit;
       const hit2 = checkPipelineReadings(pipe, pipeReadings, known, fds);
       if (hit2) return hit2;
       pipe = [];
@@ -1179,7 +1353,8 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (dlGroups.length) closedDl = closeGroup(dlGroups);
     }
   }
-  return pipe.length ? checkPipelineReadings(pipe, pipeReadings, known, fds) : null;
+  if (!pipe.length) return null;
+  return checkFedPipe(pipe, depth, known) || checkPipelineReadings(pipe, pipeReadings, known, fds);
 }
 
 // The rules a second reading of the line (ANSI-C decoded, PowerShell script blocks) may report.
@@ -1214,7 +1389,7 @@ function analyze(cmd, depth = 0, known = null) {
   // PowerShell runs a command named in quotes after & or . (& 'iex', . "irm"): such a name is kept, not blanked.
   const named = (text.includes("'") || text.includes('"')) && text.length <= QUOTE_SCAN_MAX ? text.replace(PS_QUOTED_NAME_RE, '$1$3') : text;
   const bare = text.length > QUOTE_SCAN_MAX ? text : named.replace(QUOTED_RE, "''");
-  if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
+  if ((forkBomb(bare)) && on('fork_bomb')) return 'fork_bomb';
   // PowerShell reading: a backtick and a line break continue the line, and so does a next line that starts with a pipe
   // (PowerShell 7), so `iwr URL` + newline + `| iex` is `iwr URL | iex`.
   const psBare = bare.includes('`') || bare.includes('\n')

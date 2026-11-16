@@ -9,7 +9,7 @@ blocks only a few narrow shapes:
   pipe_to_shell    a download that is run as a script (or by python, node, perl or ruby) without being read
   disk_overwrite   dd, mkfs, wipefs ... on a block device, or a redirect to one
   perm_root        chmod -R 777 or chown -R on the root or a system folder
-  fork_bomb        the classic shell fork bomb
+  fork_bomb        a shell function that starts itself twice per call in the background (the classic fork bomb)
   rc_download      a download written into a shell startup file
 
 It is a guardrail against a model's mistake or a bad suggestion, not a sandbox: a
@@ -29,7 +29,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.19"
+COMMAND_RULES_VERSION = "2026-11-16.21"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -85,7 +85,15 @@ _RC_UNIX_RE = re.compile(
 _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1\Z", _AI)
 
 _QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
-_FORK_BOMB_RE = re.compile(r"(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)", _A)
+# A shell function definition, f() { ... } or function f { ... }, with a body that has no brace. Each body scan stops at
+# the next brace, and a name starts only after a character that cannot be part of one, so the scan is linear.
+_FUNC_DEF_RE = re.compile(
+    r"(?<![\w:])(?:function\s+([A-Za-z_:][\w:]*)(?:\s*\(\s*\))?|([A-Za-z_:][\w:]*)\s*\(\s*\))\s*\{([^{}]*)\}", _A
+)
+# The words of a function body: line breaks, the control operators, ( and ), other words and blanks.
+_BODY_TOKEN_RE = re.compile(r"\n|&&|\|\||[;&|()]|[^\s;&|()]+|[^\S\n]+", _A)
+# Words after which the next word is still a command.
+_BODY_LEAD_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "time"}
 # The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
 # /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
 # Up to three wrappers (sudo, doas, env, command, exec, nohup) with their option words may come before the downloader.
@@ -939,10 +947,201 @@ def _redirect_targets(words: List[str]) -> List[str]:
 
 
 def _world_writable(mode: str) -> bool:
-    if re.match(r"^0?[0-7]{2}[2367]\Z", mode) or (re.match(r"^[0-7]{4}\Z", mode) and mode[-1] in "2367"):
-        return True
-    m = re.match(r"^([ugoa]*)[+=][rwxXst]*w[rwxXst]*\Z", mode)
-    return bool(m and (m.group(1) == "" or re.search(r"[ao]", m.group(1))))
+    """Whether a chmod mode gives others write access: an octal mode (any number of leading zeros) whose last digit has
+    the write bit, or a comma list of symbolic clauses (u=rwx,g=rwx,o=rwx, a+w, o=u) whose last say on the write bit of
+    others sets it. A clause with no who (+w, =rwx) is taken to reach others too."""
+    n = re.match(r"^0*([0-7]{1,4})\Z", mode)
+    if n:
+        return n.group(1)[-1] in "2367"
+    others = False
+    for clause in mode.split(","):
+        m = re.match(r"^([ugoa]*)((?:[-+=](?:[ugo]|[rwxXst]*))+)\Z", clause)
+        if not m:
+            return False
+        if m.group(1) != "" and not re.search(r"[ao]", m.group(1)):
+            continue
+        for op in re.finditer(r"([-+=])([ugo]|[rwxXst]*)", m.group(2)):
+            # o=u and o+g copy the bits of the owner or the group, which have write access in the usual case.
+            w = "w" in op.group(2) or op.group(2) in ("u", "g", "o")
+            if op.group(1) == "=":
+                others = w
+            elif w:
+                others = op.group(1) == "+"
+    return others
+
+
+def _spawns_itself(body: str, name: str) -> bool:
+    """True when a function body runs `name` at least twice per call and at least once in the background (f|f&, f&f&,
+    f|cat|f&): each call then starts two copies of itself that do not wait, which is a fork bomb. A recursive function
+    that calls itself once, or only in the foreground, is not one."""
+    calls = 0
+    background = False
+    at_command = True
+    in_pipeline = False  # the current pipeline runs `name`
+    for m in _BODY_TOKEN_RE.finditer(body):
+        t = m.group(0)
+        if t == "&":
+            if in_pipeline:
+                background = True
+            in_pipeline = False
+            at_command = True
+        elif t in ("\n", ";", "&&", "||"):
+            in_pipeline = False
+            at_command = True
+        elif t in ("|", "("):
+            at_command = True
+        elif t == ")" or t.isspace():
+            pass  # a group closes or a blank: the state stays
+        elif at_command:
+            if t == name:
+                calls += 1
+                in_pipeline = True
+            at_command = t in _BODY_LEAD_WORDS
+    return calls >= 2 and background
+
+
+def _fork_bomb(text: str) -> bool:
+    """A fork bomb: a function that starts itself twice per call, at least once in the background, followed by a call to
+    it after any command separator (:(){ :|:& };:, function f { f|f& }; f, f(){ f&f& };f, :(){ : | : & } && :)."""
+    if "{" not in text:
+        return False
+    for m in _FUNC_DEF_RE.finditer(text):
+        name = m.group(1) or m.group(2)
+        if not _spawns_itself(m.group(3), name):
+            continue
+        i = m.end()
+        while i < len(text) and text[i] in " \t\n\r\f\v;&|":
+            i += 1
+        nxt = text[i + len(name)] if i + len(name) < len(text) else ""
+        if text.startswith(name, i) and not (nxt == ":" or nxt == "_" or (nxt.isascii() and nxt.isalnum())):
+            return True
+    return False
+
+
+# A printf conversion (%s, %b, %-10s, %05d ...) or a literal %%. The width cannot start with 0, so the flags and the
+# width never take the same characters and a long run of zeros is read once.
+_PRINTF_CONV_RE = re.compile(r"%(?:%|[-+ #0]*(?:[1-9]\d*)?(?:\.\d*)?[sbqdiouxXcfeEgGaA])", _A)
+
+
+def _printed_text(words: List[str]) -> Optional[str]:
+    """The text echo or printf prints, read literally (no variable is evaluated): echo joins its words with blanks;
+    printf fills each conversion of the format with the next argument and repeats the format while arguments are left.
+    \\n and \\t print as a line break and a tab. None when the command is neither. Past _MAX_CHARS the text is cut, and
+    the caller refuses it (_analyze returns _OVERFLOW for a longer text)."""
+    name = _program_name(words[0]) if words else ""
+    if name == "echo":
+        i = 1
+        while i < len(words) and re.match(r"^-[neE]+\Z", words[i]):
+            i += 1
+        out = " ".join(words[i:])
+    elif name == "printf":
+        i = 1
+        if i < len(words) and words[i] == "--":
+            i += 1
+        if i >= len(words):
+            return None
+        fmt = words[i]
+        args = words[i + 1:]
+        k = 0
+        parts: List[str] = []
+        size = 0
+        while True:
+            used = False
+
+            def fill(c: "re.Match[str]") -> str:
+                nonlocal k, used
+                if c.group(0) == "%%":
+                    return "%"
+                used = True
+                if k < len(args):
+                    k += 1
+                    return args[k - 1]
+                return ""
+
+            piece = _PRINTF_CONV_RE.sub(fill, fmt)
+            parts.append(piece)
+            size += len(piece)
+            if not used or k >= len(args) or size > _MAX_CHARS:
+                break
+        out = "".join(parts)
+    else:
+        return None
+    return out.replace("\\n", "\n").replace("\\t", "\t")[: _MAX_CHARS + 1]
+
+
+def _fed_text(word: str) -> str:
+    """The program text a shell gets from one word given as its stdin or -c code: the text that echo or printf prints
+    when the word is a command substitution of them ("$(echo 'rm -rf ~')", "`printf ...`", one or more echo/printf
+    commands); otherwise the word itself."""
+    m = re.match(r"^\s*(?:\$\(([\s\S]*)\)|`([\s\S]*)`)\s*\Z", word)
+    if not m:
+        return word
+    inner = m.group(1) if m.group(1) is not None else m.group(2)
+    segs, truncated = _segments_of(inner)
+    if truncated or not segs:
+        return word
+    parts: List[str] = []
+    for words, sep in segs:
+        if not words:
+            continue
+        if sep is not None and sep not in (";", "\n", "&&"):
+            return word
+        t = _printed_text(words)
+        if t is None:
+            return word
+        parts.append(t)
+    return "\n".join(parts) if parts else word
+
+
+def _shell_reads_stdin(rest: List[str]) -> bool:
+    """Whether a shell command reads its program from stdin: no -c or -n option and no script file, or -s / - given."""
+    if any(re.match(r"^-[A-Za-z]*[cn][A-Za-z]*\Z", w) for w in rest):
+        return False
+    files = [w for w in rest if not w.startswith("-")]
+    return not files or "-s" in rest or "-" in rest
+
+
+def _here_string_program(rest: List[str]) -> Optional[str]:
+    """The text a here-string gives a shell (sh <<< 'rm -rf ~', bash <<<"$(echo ...)") when the shell reads its program
+    from stdin, or None."""
+    text: Optional[str] = None
+    others: List[str] = []
+    i = 0
+    while i < len(rest):
+        w = rest[i]
+        m = re.match(r"^0?<<<([\s\S]*)\Z", w)
+        if m:
+            if m.group(1) != "":
+                text = m.group(1)
+            elif i + 1 < len(rest):
+                i += 1
+                text = rest[i]
+            i += 1
+            continue
+        others.append(w)
+        i += 1
+    if text is None or not _shell_reads_stdin(_strip_redirects(others)):
+        return None
+    return _fed_text(text)
+
+
+def _check_fed_pipe(pipe: List[Tuple[List[str], Optional[str]]], depth: int, known: Any) -> Optional[str]:
+    """A pipeline whose shell reads its program from the output of echo or printf (echo 'rm -rf ~' | sh): the printed
+    text is read as code, like a heredoc or a sh -c string."""
+    if len(pipe) < 2 or depth >= _MAX_DEPTH:
+        return None
+    for j in range(1, len(pipe)):
+        a, names, overflow, _d = _pipe_head(pipe[j][0])
+        if overflow or not any(n in _SHELLS for n in names) or not _shell_reads_stdin(a[1:]):
+            continue
+        fa, _fn, f_overflow, _fd = _pipe_head(pipe[j - 1][0])
+        text = None if f_overflow else _printed_text(fa)
+        if text is None:
+            continue
+        hit = _analyze(text, depth + 1, known)
+        if hit:
+            return hit
+    return None
 
 
 def _interpreter_kind(head: str) -> str:
@@ -1269,6 +1468,16 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
         hit = _analyze(code, depth + 1, known)
         if hit:
             return hit
+    # The text echo or printf prints into the shell: sh -c "$(echo 'rm -rf ~')", eval "$(printf ...)", sh <<< 'rm -rf ~'.
+    if (head in _SHELLS or head in ("su", "eval")) and depth < _MAX_DEPTH:
+        if code is not None:
+            fed: Optional[str] = _fed_text(code)
+        else:
+            fed = _here_string_program(rest) if head in _SHELLS else None
+        if fed is not None and fed != code:
+            hit = _analyze(fed, depth + 1, known)
+            if hit:
+                return hit
 
     # Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
     kind = _interpreter_kind(head)
@@ -1714,6 +1923,9 @@ def _check_segments(
         pipe.append((words, sep))
         pipe_readings.append(readings)
         if not _is_pipe(sep):
+            fed_hit = _check_fed_pipe(pipe, depth, known)
+            if fed_hit:
+                return fed_hit
             hit2 = _check_pipeline_readings(pipe, pipe_readings, known, fds)
             if hit2:
                 return hit2
@@ -1733,7 +1945,9 @@ def _check_segments(
                 known = groups.pop()
             if dl_groups:
                 closed_dl = _close_group(dl_groups)
-    return _check_pipeline_readings(pipe, pipe_readings, known, fds) if pipe else None
+    if not pipe:
+        return None
+    return _check_fed_pipe(pipe, depth, known) or _check_pipeline_readings(pipe, pipe_readings, known, fds)
 
 
 def _close_group(dl_groups: List[bool]) -> bool:
@@ -1800,7 +2014,7 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     # PowerShell runs a command named in quotes after & or . (& 'iex', . "irm"): such a name is kept, not blanked.
     named = _PS_QUOTED_NAME_RE.sub(r"\1\3", text) if ("'" in text or '"' in text) and len(text) <= _QUOTE_SCAN_MAX else text
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", named)
-    if _FORK_BOMB_RE.search(bare):
+    if _fork_bomb(bare):
         return "fork_bomb"
     # PowerShell reading: a backtick and a line break continue the line, and so does a next line that starts with a pipe
     # (PowerShell 7), so `iwr URL` + newline + `| iex` is `iwr URL | iex`.
