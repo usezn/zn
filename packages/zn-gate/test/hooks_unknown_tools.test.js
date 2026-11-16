@@ -340,3 +340,10 @@ taskCases('benign twins: a task folder inside the workspace, harmless env and a 
   { type: 'shell', command: 'echo hi', options: { shell: { executable: 'C:/Windows/System32/cmd.exe', args: ['/d', '/c'] } } },
   { type: 'shell', command: 'echo hi', options: { shell: { executable: 'pwsh', args: ['-NoProfile', '-Command'] } } },
 ], bothAllowed);
+
+test('an unknown tool with a top-level type process still has its raw command judged', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const input = { command: 'cat ' + AWS, type: 'process' };
+  assert.ok(denied(await run(pre('run_shell_tool', input, dir))), 'claude-code');
+  assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'run_shell_tool', toolArgs: input })), 'copilot');
+});

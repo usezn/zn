@@ -269,7 +269,19 @@ function taskCwd(c, workspace) {
 
 /** Whether a folder is the workspace or inside it, links followed. A task folder outside it is refused: its relative names cannot be judged. */
 function insideFolder(dir, workspace) {
-  const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+  // A folder that does not exist yet keeps the links of its nearest existing parent (on macOS the temporary folder
+  // /var is a link to /private/var), so ${workspaceFolder}/new stays inside a linked workspace.
+  const real = (p) => {
+    let cur = path.resolve(p);
+    const rest = [];
+    for (;;) {
+      try { return path.join(fs.realpathSync(cur), ...rest); } catch (_) { /* go up */ }
+      const up = path.dirname(cur);
+      if (up === cur) return path.resolve(p);
+      rest.unshift(path.basename(cur));
+      cur = up;
+    }
+  };
   const rel = path.relative(real(workspace), real(dir));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
@@ -379,6 +391,10 @@ function commandScan(args, workspace) {
     }
   };
   walk(args, 0);
+  // The raw top-level command string is always judged as written too: a top-level `type: process` must not narrow
+  // the check of an unknown tool to the quoted process form.
+  const raw = isObj(args) ? firstString(args, COMMAND_KEYS) : undefined;
+  if (typeof raw === 'string' && raw && !commands.includes(raw)) commands.unshift(raw);
   return { command: commands.length ? commands.join('\n') : undefined, bad, truncated };
 }
 

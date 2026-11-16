@@ -83,3 +83,14 @@ test('an error while checking a task blocks it', () => {
   const input = { task: { label: 'x', type: 'shell', command: 'echo hello', options: { cwd: '.' } } };
   assert.equal(copilot.commandScan(input, 42).bad, true);
 });
+
+test('a task folder that does not exist yet stays inside a workspace reached through a link', { skip: process.platform === 'win32' }, (t) => {
+  const real = tempDir(t, 'zn-task-real-');
+  const linkParent = tempDir(t, 'zn-task-link-');
+  const ws = require('path').join(linkParent, 'ws');
+  require('fs').symlinkSync(real, ws);
+  const r = copilot.commandScan({ task: { label: 'x', type: 'shell', command: 'echo hello', options: { cwd: '${workspaceFolder}/new/sub' } } }, ws);
+  assert.equal(r.bad, false);
+  const out = copilot.commandScan({ task: { label: 'x', type: 'shell', command: 'echo hello', options: { cwd: '${workspaceFolder}/../elsewhere' } } }, ws);
+  assert.equal(out.bad, true);
+});
