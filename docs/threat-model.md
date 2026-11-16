@@ -20,6 +20,7 @@ sandbox.**
 - [The saved API key (`zn-gate connect`)](#the-saved-api-key-zn-gate-connect)
 - [Malicious MCP servers](#malicious-mcp-servers)
 - [Protecting zn's own configuration](#protecting-zns-own-configuration)
+- [Opt-in features that send data or limit traffic](#opt-in-features-that-send-data-or-limit-traffic)
 - [Failure behaviour](#failure-behaviour)
 - [Design decisions and known limits](#design-decisions-and-known-limits)
 - [Next steps](#next-steps)
@@ -474,6 +475,14 @@ zn tries to stop the agent from turning zn off, but the boundary is your operati
 - **Settings that change during a session (Claude Code).** The `ConfigChange` hook blocks a change to the project settings file when it adds a critical `zn audit` finding, and a skill file that now holds hidden text. A change with a finding below critical (for example a hook that sends each event to a remote address), a change to your local or user settings, a skill file over 1 MiB and `.mcp.json` are not blocked. See [compat.md](compat.md#settings-skills-and-instruction-files-that-change-in-claude-code).
 - **Instruction files.** The `InstructionsLoaded` hook cannot hold a `CLAUDE.md` or rules file back. It only records a notice in the decision log when the file holds text trying to instruct the agent.
 - **The audit baseline.** `zn audit --approve` records the project's executable configuration (MCP servers, hooks, endpoints, permissions, install scripts) and asks a person to confirm it. Later runs report any change as `ZNA023`. The baseline is checked only when someone runs `zn audit`, and it lives in the zn folder, so an environment that points zn at another folder does not find it.
+
+## Opt-in features that send data or limit traffic
+
+Three features are off by default. Each one helps in a narrow case and has limits worth knowing before you turn it on:
+
+- **Cloud check of tool output (Claude Code).** After `zn-gate connect` and `hooks.cloudCheckToolOutput: true` in your own `~/.zn/config.json`, a sample of each web, MCP and shell result (at most 16 KiB: the first 12 KiB and the last 4 KiB) goes to `api.usezn.com` to look for hidden instructions aimed at the agent. It protects against instructions the local rules miss. It does not see the middle of a long result, it never blocks or changes the output (it only adds a note), and a failed call adds nothing. Secrets zn-gate detects and listed personal data are replaced before sending, but names, postal addresses, IP addresses, usernames and secrets it does not recognize are sent as written. See [What runs locally and what goes to the API](local-checks-and-api-data.md).
+- **Online package check.** In online mode, zn-gate asks the public registry whether a package name exists and when it was first published, so it can flag a made-up name or a very new package. It sends only the package name, and only for a plain install command. It does not look inside the package, a name that exists and is older than the limit passes, and an install it cannot read as a plain install is not looked up. See [Packages your agent installs](package-install-check.md).
+- **`zn run --egress-allow`.** The command can reach only the listed hosts over HTTP(S), through a local proxy. It covers tools that honour the proxy variables. Programs that ignore them, raw sockets, DNS lookups by the program and a command that unsets the variables are not covered, and an allowed host is trusted with whatever is sent to it. See [Keep secrets out of your agent](secrets.md#egress-allowlist-for-zn-run).
 
 ## Failure behaviour
 
