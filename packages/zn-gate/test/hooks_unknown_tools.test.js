@@ -347,3 +347,11 @@ test('an unknown tool with a top-level type process still has its raw command ju
   assert.ok(denied(await run(pre('run_shell_tool', input, dir))), 'claude-code');
   assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'run_shell_tool', toolArgs: input })), 'copilot');
 });
+
+test('an unknown Copilot tool with a command and a protected file path is checked on both', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const both = { command: 'echo hi', file_path: AWS };
+  assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'run_shell_tool', toolArgs: both })), 'copilot');
+  const benign = { command: 'echo hi', file_path: path.join(dir, 'README.md') };
+  assert.equal((await runCopilot({ cwd: dir, toolName: 'run_shell_tool', toolArgs: benign })).output, null);
+});

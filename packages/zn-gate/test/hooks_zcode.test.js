@@ -229,6 +229,13 @@ test('unknown tools that name a file get the read and write checks on every path
   assert.equal((await run(pre('Mystery', { q: 1 }))).output, null);
 });
 
+test('an unknown tool with a command and a protected file path is checked on both', async () => {
+  const cred = path.join(HOME, '.aws', 'credentials');
+  assert.equal((await run(pre('FutureRunner', { command: 'echo hi', file_path: cred }))).output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await run(pre('FutureRunner', { command: 'echo hi', file_path: '/work/proj/README.md' }))).output, null);
+  assert.equal((await run(pre('FutureRunner', { command: 'cat ' + cred, file_path: '/work/proj/README.md' }))).output.hookSpecificOutput.permissionDecision, 'deny');
+});
+
 test('an MCP call is checked before it runs: secret placeholders and credential paths are blocked', async () => {
   assert.equal((await run(pre('mcp__web__post', { auth: '__ZN_TOKEN__' }))).output.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal((await run(pre('mcp__fs__read', { path: path.join(HOME, '.ssh', 'id_rsa') }))).output.hookSpecificOutput.permissionDecision, 'deny');
