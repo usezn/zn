@@ -465,11 +465,15 @@ for (const [mode, opts, edit] of MODES) {
 test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
-  const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
+  const started = path.join(tempDir(t, 'zn-ov-planted-started-'), 'started');
+  const file = writeScript(t, 'claude-code', 'require("fs").writeFileSync(' + JSON.stringify(started) + ', ""); process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
   const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp } });
   child.stdin.write('{');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  await new Promise((r) => setTimeout(r, 400));
+  // The launcher sets its TERM handler before it starts the hook, so the TERM goes out once the hook has started. A fixed
+  // 400 ms wait raced a busy Windows runner: the TERM reached the shell before its handler was set and it ended with 143.
+  for (let i = 0; i < 200 && !fs.existsSync(started); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fs.existsSync(started), 'the hook started');
   term();
   assert.equal(await exited, 2);
   assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '');
