@@ -499,7 +499,8 @@ Runnable examples are in [`examples/`](examples/), with the command to run each 
 
 **Can zn-gate block keys in tool output?** Yes. When a tool returns a secret value (an AWS, OpenAI or Anthropic key, a GitHub token, a JWT, a private key or a password in a database URL), zn-gate replaces each value it recognises with a marker or redacts it before the model sees it. "Block" here means that rewrite of the output; the tool call itself is not stopped. What is covered depends on the agent (the full table is in [docs/compat.md](docs/compat.md)):
 
-- **Claude Code and OpenCode:** every tool, including shell commands, file reads, search and MCP.
+- **Claude Code:** the output of shell commands (also read later from a background shell), file reads, search, web fetch and web search, sub-agents and MCP tools. See [docs/compat.md](docs/compat.md) for the exact list.
+- **OpenCode:** every tool, including shell commands, file reads, search and MCP.
 - **Codex CLI:** the result is replaced by its scrubbed text, so the model gets text instead of the structured result. Codex's own session log keeps the original output.
 - **Cursor:** MCP tool output only. Cursor's hooks cannot rewrite shell or file-read output.
 - **ZCode:** `zn hooks install zcode` blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one. It cannot rewrite what a tool returns, so a value a command prints still reaches the model (zn adds a notice). ZCode ignores the hooks of a project. Details: [docs/editors/zcode.md](docs/editors/zcode.md).
