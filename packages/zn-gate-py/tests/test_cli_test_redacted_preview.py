@@ -64,3 +64,35 @@ def test_mask_pii_preview_keeps_text_without_personal_values():
 def test_mask_pii_preview_keeps_numbers_that_fail_their_checksum():
     text = "order 4111111111111112 and IBAN DE00370400440532013000"
     assert mask_pii_preview(text) == text
+
+
+MULTI_WORD = "My Secret Phrase"
+MULTI_TEXT = f'password="{MULTI_WORD}" and pwd=\'{MULTI_WORD} Two\' and key {FAKE_AWS}'
+MULTI_PARTS = ["My", "Secret", "Phrase", "Two"]
+
+
+def test_text_output_masks_a_whole_quoted_password(capsys):
+    code = cli.cmd_test(argparse.Namespace(text=MULTI_TEXT, json=False))
+    out = capsys.readouterr().out
+    assert code == 1
+    for part in MULTI_PARTS:
+        assert part not in out
+    assert out.count("[REDACTED_PASSWORD]") == 2
+
+
+def test_json_output_masks_a_whole_quoted_password(capsys):
+    code = cli.cmd_test(argparse.Namespace(text=MULTI_TEXT, json=True))
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert code == 1
+    for part in MULTI_PARTS:
+        assert part not in out
+    assert data["redacted_preview"].count("[REDACTED_PASSWORD]") == 2
+
+
+def test_mask_pii_preview_password_value_forms():
+    assert mask_pii_preview('password="My Secret Phrase" next') == "password=[REDACTED_PASSWORD] next"
+    assert mask_pii_preview("passwd: 'My Secret Phrase' next") == "passwd: [REDACTED_PASSWORD] next"
+    assert mask_pii_preview('password="a \\"b\\" c" next') == "password=[REDACTED_PASSWORD] next"
+    # Unquoted: to the end of the token only.
+    assert mask_pii_preview("pwd=hunter two") == "pwd=[REDACTED_PASSWORD] two"

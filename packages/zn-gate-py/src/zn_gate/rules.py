@@ -2064,7 +2064,8 @@ def mask_token_runs(text: str) -> str:
 # the same corpus (test/fixtures/pii_parity_cases.json). Left out on purpose: IPv4 (off by default in
 # Node.js) and the keyed fields (person name, postal address, username), which Node.js finds only next to an
 # explicit header or form key with a Unicode-aware state machine.
-_PREVIEW_PASSWORD_RE = _rc(r"(?i)\b(password|passwd|pwd)(\s*[:=]\s*)(\S+)")
+# The value is the whole quoted string (single or double quotes, with backslash escapes), or, unquoted, the rest of the token.
+_PREVIEW_PASSWORD_RE = _rc(r"""(?i)\b(password|passwd|pwd)(\s*[:=]\s*)("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\S+)""")
 _PII_EMAIL_DOMAIN_RE = _rc(r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])", re.ASCII)
 _PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:[ .-]\d{1,9}){2,6}|\d{0,2} \d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
 _PII_IBAN_RE = _rc(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])", re.ASCII)

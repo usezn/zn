@@ -271,8 +271,6 @@ function releaseLock(lockPath, token) {
 // writes 0.00001. New records use the plain JavaScript form (the Python package writes the same
 // text); verification also accepts the ASCII-escaped form and the Python number form, so a log
 // written by either package (or by an older version) verifies in both.
-const CONF_MARK = '@@zn-confidence@@';
-
 // The text Python's repr gives for a finite non-integer float (what json.dumps writes).
 function pythonNumber(x) {
   const [mant, expText] = x.toExponential().split('e');
@@ -293,7 +291,13 @@ function pythonNumber(x) {
 function serialize(record, { ascii = false, pyNumbers = false } = {}) {
   let text;
   if (pyNumbers && typeof record.confidence === 'number' && Number.isFinite(record.confidence) && !Number.isInteger(record.confidence)) {
-    text = JSON.stringify({ ...record, confidence: CONF_MARK }).replace('"' + CONF_MARK + '"', pythonNumber(record.confidence));
+    // The confidence is written on its own and joined in place, so no other text of the record (a preview, say) can be
+    // taken for it.
+    const keys = Object.keys(record);
+    const at = keys.indexOf('confidence');
+    const part = (ks) => JSON.stringify(Object.fromEntries(ks.map((k) => [k, record[k]]))).slice(1, -1);
+    text = '{' + [part(keys.slice(0, at)), '"confidence":' + pythonNumber(record.confidence), part(keys.slice(at + 1))]
+      .filter(Boolean).join(',') + '}';
   } else {
     text = JSON.stringify(record);
   }
@@ -585,7 +589,7 @@ function endsWithNewline(filePath) {
 function isCutTail(filePath, line) {
   return line.startsWith(RECORD_START) && !endsWithNewline(filePath);
 }
-const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete (the write was cut off, for example by a crash or a full disk)';
+const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete: the write was cut off (for example by a crash or a full disk) or the end of the file was removed, so it cannot be verified';
 function truncatedTailResult(total, index) {
   return {
     valid: false,
@@ -1037,7 +1041,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
           badge.textContent = '● SHA-256 Chain Verified (Tamper-Free)';
         } else {
           badge.className = 'status-badge badge-invalid';
-          badge.textContent = v.truncated_tail ? '✖ LAST RECORD INCOMPLETE (not verified)' : '✖ TAMPER DETECTED at record ' + v.broken_index;
+          badge.textContent = v.truncated_tail ? '✖ LAST RECORD INCOMPLETE: cut off or removed (not verified)' : '✖ TAMPER DETECTED at record ' + v.broken_index;
         }
 
         const tbody = document.getElementById('audit-table');

@@ -256,7 +256,7 @@ zn-gate scan --package <name>[@version]
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
-- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; `zn-gate audit --format sarif` (npm package) covers agent configs instead. Any other value exits `2`.
+- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; in the npm package, `zn-gate audit --format sarif` covers agent configs and `zn-gate reach --sarif` covers what an agent can reach. Any other value exits `2`.
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
@@ -814,6 +814,5 @@ When a command prints JSON, the npm and the Python package print the same fields
 | Python | `analyze` | `latency_ms` on every answer, and `latency_us` on blocked texts | It is the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. The npm package does not print timings. |
 | Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command runs its self-test instead and prints no JSON. |
 | npm | `stats --json` | `sharing`, `sent_days`, `send_failed` | Sharing pseudonymous counts is an npm-only feature (`stats share`), so only the npm output reports whether sharing is on and which days were sent. |
-
 
 `analyze --json` is accepted by both packages and changes nothing. Key order can differ between the two packages. `scan --format json` has the same keys in both.

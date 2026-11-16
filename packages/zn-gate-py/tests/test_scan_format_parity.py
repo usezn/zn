@@ -26,7 +26,7 @@ REJECTED = ("sarif", "csv")
 
 # Fake values only. The Stripe-style key is split so the source file does not
 # look like a live key to secret scanners.
-FAKE_STRIPE = "sk_" + "live_" + "Qa7Zt3Lm9Pw2Ny5Rb8Vx1Cd4"
+FAKE_STRIPE = "sk_" + "live_" + "FakeKeyForTests0123456789"
 FAKE_GH = "ghp_" + "ZNFAKE" * 6
 FAKE_PW = "Tr0ub4" + "dor-xq9"
 FIXTURE = {

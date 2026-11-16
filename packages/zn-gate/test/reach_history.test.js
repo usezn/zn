@@ -315,13 +315,25 @@ test('a deadline in the middle of a file reports time-limit with partial results
   assert.ok(engine.calls > 0 && engine.calls < 30000);
 });
 
-test('one very long line stops within a bounded amount after the deadline', (t) => {
+test('one very long line stops at the first slice boundary past the deadline', () => {
+  // scanLine is called directly, so no chunk check can stop the read first: only the deadline check between slices
+  // is under test. The line is cut into several slices of SLICE_CHARS.
+  const { _internal: I } = require('../lib/reach/history');
+  const text = 'filler words '.repeat(1000000); // about 13 MB
+  const slices = I.cuts(text).length - 1;
+  assert.ok(slices >= 3, 'slices = ' + slices);
+  // Never past the deadline: every slice is scanned (slice 1 once, every later slice and its overlap twice).
+  const all = stubEngine();
+  I.scanLine(all, text, {}, () => false);
+  assert.equal(all.calls, 1 + 2 * (slices - 1));
+  // The first boundary check says "in time", the second says "past it": slices 1 and 2 are scanned, then it stops.
   const engine = stubEngine();
-  const text = 'filler words '.repeat(500000) + '\n'; // about 6.5 MB, more than one slice
-  const r = scanWith(t, text, fakeNow(2), engine); // chunk check ok, first slice boundary ok, the next is past it
-  assert.equal(r.complete, false);
-  assert.equal(r.reason, 'time-limit');
-  assert.ok(engine.calls <= 3); // slice 1, then slice 2 and the overlap it shares with slice 1
+  let checks = 0;
+  const counts = {};
+  assert.throws(() => I.scanLine(engine, text, counts, () => ++checks > 1), (e) => e && e.constructor && e.constructor.name === 'TimeUp');
+  assert.equal(checks, 2);
+  assert.equal(engine.calls, 3); // slice 1, then slice 2 and the overlap it shares with slice 1
+  assert.ok((counts.AWS_KEY || 0) > 0, 'what was scanned before the deadline is still counted');
 });
 
 // Long lines with the real engine. The filler has no space or line break, so the first cut falls exactly at

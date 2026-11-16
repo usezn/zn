@@ -12,7 +12,7 @@ const { spawnSync } = require('child_process');
 const { logEvidence, verifyEvidenceLedger } = require('../lib/evidence');
 
 const CLI = path.resolve(__dirname, '..', 'bin', 'cli.js');
-const INCOMPLETE = /Last record is incomplete \(the write was cut off, for example by a crash or a full disk\)/;
+const INCOMPLETE = /Last record is incomplete: the write was cut off \(for example by a crash or a full disk\) or the end of the file was removed, so it cannot be verified/;
 
 function tmpLedger(n = 3) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-verify-tail-'));
@@ -94,9 +94,9 @@ test('evidence --verify prints the incomplete-record explanation and exits 1', (
       env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, NO_COLOR: '1', ZN_STATS: 'off', ZN_LOCAL_ONLY: 'true' }),
     });
     assert.equal(r.status, 1);
-    assert.match(r.stdout, /LAST RECORD INCOMPLETE \(NOT VERIFIED\)/);
+    assert.match(r.stdout, /LAST RECORD INCOMPLETE: CUT OFF OR REMOVED \(NOT VERIFIED\)/);
     assert.doesNotMatch(r.stdout, /TAMPER DETECTED/);
-    assert.match(r.stdout, /The first 2 records verified; the last line was cut off\./);
+    assert.match(r.stdout, /The first 2 records verified; the last line is incomplete \(cut off by a crash, or removed by someone\)\./);
     assert.match(r.stdout, /move it aside/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

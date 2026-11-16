@@ -1394,7 +1394,7 @@ ${ruleLine(process.env, 60)}\n`);
       if (verification.valid) {
         integrity = sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)');
       } else if (verification.truncated_tail) {
-        integrity = sym(process.env, '✖', col.red) + col.red('LAST RECORD INCOMPLETE (NOT VERIFIED)');
+        integrity = sym(process.env, '✖', col.red) + col.red('LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)');
       } else {
         integrity = sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index);
       }
@@ -1406,7 +1406,7 @@ ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
 \n`);
       if (!verification.valid) {
         const next = verification.truncated_tail
-          ? `The first ${verification.verified} records verified; the last line was cut off. ${recoveryHint()}`
+          ? `The first ${verification.verified} records verified; the last line is incomplete (cut off by a crash, or removed by someone). ${recoveryHint()}`
           : recoveryHint();
         process.stdout.write(`  Details: ${verification.error}\n  ${next}\n\n`);
         process.exit(1);

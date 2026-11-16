@@ -409,9 +409,6 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 _HASH_RE = re.compile(r"[0-9a-f]{64}")
 
 
-_CONF_MARK = "@@zn-confidence@@"
-
-
 def _js_number(x: float) -> str:
     """The text JavaScript's Number toString gives for a finite non-integer float."""
     from decimal import Decimal
@@ -436,10 +433,21 @@ def _js_number(x: float) -> str:
 def _serialize(record: Dict[str, Any], ascii_only: bool = False, js_numbers: bool = False) -> str:
     conf = record.get("confidence")
     swap = js_numbers and isinstance(conf, float) and math.isfinite(conf) and not conf.is_integer()
-    text = json.dumps({**record, "confidence": _CONF_MARK} if swap else record,
-                      separators=(",", ":"), ensure_ascii=ascii_only)
     if swap and isinstance(conf, float):
-        text = text.replace('"' + _CONF_MARK + '"', _js_number(conf), 1)
+        # Serialize the confidence on its own and join the parts, so no text elsewhere in the
+        # record (a preview that holds a marker, say) can be rewritten as the number.
+        rest = {k: v for k, v in record.items() if k != "confidence"}
+        keys = list(record.keys())
+        at = keys.index("confidence")
+        before = {k: rest[k] for k in keys[:at]}
+        after = {k: rest[k] for k in keys[at + 1:]}
+        def dump(d: Dict[str, Any]) -> str:
+            return json.dumps(d, separators=(",", ":"), ensure_ascii=ascii_only)
+
+        parts = [dump(before)[1:-1], '"confidence":' + _js_number(conf), dump(after)[1:-1]]
+        text = "{" + ",".join(x for x in parts if x) + "}"
+    else:
+        text = json.dumps(record, separators=(",", ":"), ensure_ascii=ascii_only)
     return text if ascii_only else _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
 
 
@@ -580,7 +588,7 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
 # The last line of a ledger that is not JSON is most likely a write cut off by a crash or a full
 # disk. It is still reported as not verified (valid: False), but with truncated_tail: True so the
 # output can say so and explain how to continue. Any other problem stays a tamper report.
-TRUNCATED_TAIL_MESSAGE = "Last record is incomplete (the write was cut off, for example by a crash or a full disk)"
+TRUNCATED_TAIL_MESSAGE = "Last record is incomplete: the write was cut off (for example by a crash or a full disk) or the end of the file was removed, so it cannot be verified"
 
 
 # A last line that is not JSON counts as a write cut off by a crash or a full disk only if it is
