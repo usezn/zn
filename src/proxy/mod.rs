@@ -413,7 +413,12 @@ impl McpPool {
             if path_obj.exists() {
                 info!("Found MCP config at: {}", path);
                 match Self::from_config_file(path) {
-                    Ok(pool) => return Ok(pool),
+                    Ok(mut pool) => {
+                        // A broken config at an earlier location is still reported.
+                        notices.append(&mut pool.notices);
+                        pool.notices = notices;
+                        return Ok(pool);
+                    }
                     Err(e) => {
                         warn!("Failed to load MCP config from {}: {}", path, e);
                         notices.push(e.to_string());
@@ -1277,7 +1282,6 @@ mod retry_and_discovery_tests {
     }
 
     #[test]
-    #[ignore = "real bug: the notice about the broken first file is dropped when the second file loads"]
     fn auto_discover_keeps_the_notice_of_a_broken_first_config() {
         let dir = tempfile::tempdir().unwrap();
         write_servers(dir.path(), ".claude/mcp_servers.json", "{");
