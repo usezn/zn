@@ -267,6 +267,24 @@ test('python -c and node -e code that writes a quoted instruction file name asks
   assert.equal((await decide(off, 'Bash', { command: asks[0] })).decision, 'allow');
 });
 
+test('a closing bracket inside a quoted path does not end the call early', async (t) => {
+  const env = setup(t);
+  fs.mkdirSync(path.join(env.proj, 'foo)'));
+  const asks = [
+    `python3 -c "open('foo)/../CLAUDE.md','w')"`,
+    `python3 -c "open('foo)/../CLAUDE.md', mode='a')"`,
+    `python3 -c "open('foo]/../AGENTS.md','w')"`,
+    `python3 -c "open('it\\'s)/../CLAUDE.md','w')"`,
+    `node -e "require('fs').openSync('foo)/../CLAUDE.md','w')"`,
+  ];
+  for (const command of asks) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+  }
+  const r = await decide(env, 'Bash', { command: `python3 -c "print(open('foo)/../CLAUDE.md').read())"` });
+  assert.equal(r.decision, 'allow');
+});
+
 test('python -c and node -e code that only reads, or writes another file, is allowed', async (t) => {
   const env = setup(t);
   const allows = [

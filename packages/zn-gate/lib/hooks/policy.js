@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.36';
+const POLICY_RULES_VERSION = '2026-11-16.37';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1250,16 +1250,28 @@ function oneLinerNamePath(name) {
 // An f-string with a replacement field is not one.
 const ONELINER_LITERAL_ARG_RE = /^\s{0,20}(?:file\s{0,20}=\s{0,20})?(?![rR]?[fF][rR]?(['"])[^'"\r\n]{0,300}\{)[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\2\s{0,20}[,)]/;
 
-/** The top-level arguments of the call whose "(" just ended at `at` (at most 400 characters read; quotes are not parsed). */
+/**
+ * The top-level arguments of the call whose "(" just ended at `at` (at most 400 characters read). Brackets inside
+ * quoted strings ('...', "...", `...`, with backslash escapes) do not count, so a path such as 'foo)/x' stays one
+ * argument. A string still open at the end of the window leaves the last argument unfinished, which the callers
+ * read as an unknown mode.
+ */
 function callArguments(text, at) {
   const end = Math.min(text.length, at + 400);
   const args = [];
   let depth = 0;
   let from = at;
   let closed = at;
+  let quote = null;
   for (let i = at; i < end; i++) {
     const ch = text[i];
-    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    if (quote !== null) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '(' || ch === '[' || ch === '{') depth++;
     else if (ch === ')' || ch === ']' || ch === '}') {
       if (depth === 0) { args.push(text.slice(from, i)); closed = i + 1; return { args, end: closed }; }
       depth--;
