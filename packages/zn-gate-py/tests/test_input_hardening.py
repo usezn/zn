@@ -181,6 +181,21 @@ def test_sanitize_masks_text_form_of_attribute_less_object():
     assert found and FAKE_KEY not in clean[0]
 
 
+class _TextOnlySecret:
+    def __init__(self):
+        self.name = "lookup"
+        self.note = "plain"
+
+    def __str__(self):
+        return "config " + FAKE_KEY
+
+
+def test_secret_only_in_text_form_of_object_with_safe_attributes_is_masked():
+    clean, found = sanitize_tool_result(_TextOnlySecret())
+    assert found
+    assert isinstance(clean, str) and FAKE_KEY not in clean
+
+
 def test_sanitize_recurses_in_containers_with_fake_keys():
     data = {"a": [FAKE_KEY, ("x", {"b": FAKE_KEY})], "c": {FAKE_KEY}}
     clean, found = sanitize_tool_result(data)

@@ -2755,7 +2755,8 @@ def sanitize_tool_result(
     def _sanitize_object(val: Any, names: List[str]) -> Any:
         """Mask the attributes of an object that is not a container, in a copy; the original is left as it was.
 
-        An object with nothing to mask is returned as it is. When the object cannot be copied (copy or setattr fails),
+        An object with nothing to mask is returned as it is, unless its text form shows a secret: then the masked text is
+        returned instead. When the object cannot be copied (copy or setattr fails),
         a plain dict of its masked attributes is returned instead, so the secret never survives in the result; the same
         happens when the copy is the object itself. Attributes that cannot be listed or an object whose text form cannot
         be read raise SanitizeLimitError (rule type:unscannable).
@@ -2767,17 +2768,29 @@ def sanitize_tool_result(
         before = len(detections)
         clean = {n: _sanitize(v) for n, v in attrs.items()}
         if len(detections) == before:
-            return val
-        try:
-            twin = copy.copy(val)
-            if twin is val:
-                # A __copy__ that returns the object itself: never write onto the original.
+            target: Any = val
+        else:
+            try:
+                twin = copy.copy(val)
+                if twin is val:
+                    # A __copy__ that returns the object itself: never write onto the original.
+                    return clean
+                for n, v in clean.items():
+                    object.__setattr__(twin, n, v)
+                target = twin
+            except Exception:
                 return clean
-            for n, v in clean.items():
-                object.__setattr__(twin, n, v)
-            return twin
+        # The text form (__str__, __repr__) can show a secret that no attribute holds. The object is then replaced by
+        # its masked text, so the secret cannot reach the caller through str() of the result.
+        try:
+            text = str(target)
         except Exception:
-            return clean
+            raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
+        clean_text, text_det = redact_secrets(text)
+        if not text_det:
+            return target
+        detections.extend(text_det)
+        return clean_text
 
     def _sanitize_value(val: Any) -> Any:
         if isinstance(val, str):
