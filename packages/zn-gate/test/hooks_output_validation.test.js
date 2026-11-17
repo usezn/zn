@@ -107,7 +107,7 @@ test('hook: a refusal (exit 2) writes no confirmation and keeps its status', asy
 // Starts the launcher so that a TERM can be sent to it. Node cannot send TERM on Windows (child.kill is TerminateProcess, so the
 // launcher's trap never runs and the exit status is null). There the launcher runs under a small sh of Git Bash that sends the
 // TERM from inside, once the file `flag` exists, and ends with the launcher's own exit status.
-function startLauncherForTerm(t, file, event, { env, cwd }) {
+function spawnLauncherForTerm(t, file, event, { env, cwd }) {
   if (process.platform !== 'win32') {
     const child = spawn('/bin/sh', [file, event], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     return { child, term: () => child.kill('SIGTERM') };
@@ -116,6 +116,22 @@ function startLauncherForTerm(t, file, event, { env, cwd }) {
   const script = '/bin/sh "$1" "$2" <&0 & p=$!; while kill -0 $p 2>/dev/null && [ ! -e "$3" ]; do /bin/sleep 0.1; done; [ ! -e "$3" ] || kill -TERM $p; wait $p; exit $?';
   const child = spawn('/bin/sh', ['-c', script, 'sh', file.replace(/\\/g, '/'), event, flag], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   return { child, term: () => fs.writeFileSync(flag, '') };
+}
+
+// Same as spawnLauncherForTerm, plus a cleanup: if the test fails before term() runs (for example a readiness wait that times
+// out), the launcher child is still ended here, and the wait for its exit is bounded. On success the child has already exited,
+// so the cleanup does nothing.
+function startLauncherForTerm(t, file, event, { env, cwd }) {
+  const { child, term } = spawnLauncherForTerm(t, file, event, { env, cwd });
+  t.after(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    child.kill('SIGKILL');
+    let timer;
+    await Promise.race([exited, new Promise((resolve) => { timer = setTimeout(resolve, 2000); })]);
+    clearTimeout(timer);
+  });
+  return { child, term };
 }
 
 function writeScript(t, agent, runnerBody, opts = {}) {
