@@ -3,7 +3,7 @@
 //! Mirrors `vision.rs`: the heavy resources (ONNX encoder + tokenizer +
 //! linear head) are loaded ONCE into a lazy static. Decision semantics:
 //!
-//! - block iff `rules_hit || neural_score >= tau`
+//! - block iff `rules_hit || neural_score >= tau`; a non-finite score blocks
 //! - a rules block stays a block regardless of the neural score
 //! - a neural block alone blocks (the negation case)
 //! - fusion disabled / model missing degrades EXACTLY to the rules gate
@@ -68,7 +68,12 @@ impl NeuralEngine {
             weights,
         };
         // Evaluability probe: catches unsupported ops / quant initializers.
-        engine.score("zn fusion probe: health check")?;
+        let probe = engine.score("zn fusion probe: health check")?;
+        if !probe.is_finite() {
+            return Err(anyhow!(
+                "probe score is not finite ({probe}): corrupt head or model"
+            ));
+        }
         Ok(engine)
     }
 
@@ -115,7 +120,7 @@ pub fn shared_engine(cfg: &FusionConfig) -> Option<Arc<NeuralEngine>> {
 /// Fusion Gate OR semantics: block iff rules hit OR `neural_score >= tau`.
 /// `None` score (fusion inactive) reduces to exactly the rules decision.
 pub fn fused_block(rules_hit: bool, neural_score: Option<f32>, tau: f32) -> bool {
-    rules_hit || neural_score.is_some_and(|s| s >= tau)
+    rules_hit || neural_score.is_some_and(|s| crate::ai::score_blocks(s, tau))
 }
 
 /// One fused decision + its evidence. Evidence is `Some` only when the neural
@@ -147,14 +152,19 @@ pub fn evaluate(
     if rules_hit {
         cameras.push("rules".to_string());
     }
-    if score >= cfg.tau {
+    // A non-finite score is recorded as saturated (1.0) with its own camera
+    // name, so the audit entry stays valid JSON and says what happened.
+    let finite = score.is_finite();
+    if !finite {
+        cameras.push("neural_nonfinite".to_string());
+    } else if score >= cfg.tau {
         cameras.push("neural".to_string());
     }
     (
         true,
         Some(FusionEvidence {
             cameras,
-            neural_score: score,
+            neural_score: if finite { score } else { 1.0 },
             tau: cfg.tau,
             model_id: cfg.model_id.clone(),
         }),
@@ -198,6 +208,21 @@ mod tests {
             assert!(fused_block(false, Some(tau), tau), "score == tau blocks");
             assert!(!fused_block(false, Some(tau - 0.01), tau));
         }
+    }
+
+    #[test]
+    fn neural_non_finite_scores_block() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(fused_block(false, Some(bad), TAU), "{bad} must block");
+            assert!(fused_block(true, Some(bad), TAU));
+            assert!(crate::ai::score_blocks(bad, TAU));
+            assert!(crate::ai::score_blocks(bad, 0.0));
+        }
+        // finite behaviour is unchanged
+        assert!(!fused_block(false, Some(0.49), TAU));
+        assert!(!fused_block(false, None, TAU), "no score: rules only");
+        assert!(crate::ai::score_blocks(TAU, TAU));
+        assert!(!crate::ai::score_blocks(0.0, TAU));
     }
 
     // ── Disabled / missing-model degradation ────────────────────────
@@ -410,6 +435,17 @@ mod tests {
         // sigmoid(2.0) because the pooled, normalised embedding is [1, 0].
         assert!((score - 0.880_797).abs() < 1e-4, "score = {score}");
         assert!((0.0..=1.0).contains(&score));
+    }
+
+    #[test]
+    fn neural_new_refuses_a_corrupt_head() {
+        let dir = fake_model_dir(&["model.onnx"], true);
+        std::fs::write(
+            dir.path().join("head.json"),
+            r#"{"weights":[1e999,0.0],"bias":0.0,"threshold":0.5}"#,
+        )
+        .unwrap();
+        assert!(NeuralEngine::new(dir.path()).is_err(), "corrupt head loads");
     }
 
     #[test]

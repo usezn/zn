@@ -27,7 +27,20 @@ impl Head {
             return Ok(None);
         }
         let h: Head = serde_json::from_str(&std::fs::read_to_string(p)?)?;
+        h.validate()?;
         Ok(Some(h))
+    }
+
+    /// Refuses a head whose numbers are not finite: it could only produce NaN
+    /// or infinite scores.
+    pub fn validate(&self) -> Result<()> {
+        if !self.bias.is_finite()
+            || !self.threshold.is_finite()
+            || self.weights.iter().any(|w| !w.is_finite())
+        {
+            anyhow::bail!("head.json holds a non-finite number (NaN or infinity)");
+        }
+        Ok(())
     }
 
     pub fn probability(&self, v: &[f32]) -> f32 {
@@ -659,5 +672,37 @@ mod tests {
         assert!(m.embed("hello").is_err());
         assert!(m.embed_masked("hello").is_err());
         assert!(m.embed("").is_err());
+    }
+}
+#[cfg(test)]
+mod head_validate_tests {
+    use super::Head;
+
+    fn head(weights: Vec<f32>, bias: f32, threshold: f32) -> Head {
+        Head {
+            weights,
+            bias,
+            threshold,
+        }
+    }
+
+    #[test]
+    fn head_validate_refuses_non_finite_numbers() {
+        assert!(head(vec![1.0, 2.0], 0.0, 0.5).validate().is_ok());
+        assert!(head(vec![1.0, f32::NAN], 0.0, 0.5).validate().is_err());
+        assert!(head(vec![f32::INFINITY], 0.0, 0.5).validate().is_err());
+        assert!(head(vec![1.0], f32::NAN, 0.5).validate().is_err());
+        assert!(head(vec![1.0], 0.0, f32::NEG_INFINITY).validate().is_err());
+    }
+
+    #[test]
+    fn head_load_refuses_a_head_that_overflows_f32() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("head.json"),
+            r#"{"weights":[1e999,0.0],"bias":0.0,"threshold":0.5}"#,
+        )
+        .unwrap();
+        assert!(Head::load(dir.path()).is_err(), "must not load");
     }
 }

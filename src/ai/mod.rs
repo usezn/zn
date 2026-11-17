@@ -33,7 +33,31 @@ pub fn neural_fired(
     prob: Option<f32>,
     classifier_threshold: f32,
 ) -> bool {
-    distance > threshold || prob.is_some_and(|p| p >= classifier_threshold)
+    // A non-finite score never compares false: it counts as a hit.
+    score_exceeds(distance, threshold)
+        || prob.is_some_and(|p| score_blocks(p, classifier_threshold))
+}
+
+/// True when `score >= tau`, and also when `score` is not a finite number.
+///
+/// A NaN makes every comparison false, so a bare `score >= tau` would let a
+/// corrupt head or a broken model silently allow. Every place that compares a
+/// neural score with a threshold goes through here (or `score_exceeds`).
+pub fn score_blocks(score: f32, tau: f32) -> bool {
+    if !score.is_finite() {
+        tracing::warn!("neural score is not finite ({score}); treating it as a hit");
+        return true;
+    }
+    score >= tau
+}
+
+/// Like `score_blocks` but strict (`score > threshold`), for anomaly distances.
+pub fn score_exceeds(score: f32, threshold: f32) -> bool {
+    if !score.is_finite() {
+        tracing::warn!("neural score is not finite ({score}); treating it as a hit");
+        return true;
+    }
+    score > threshold
 }
 
 /// Fused System-2 risk in `[0, 1]`: the max of the normalized anomaly signal
@@ -41,6 +65,9 @@ pub fn neural_fired(
 /// `prob = None` is anomaly-only mode. Used for logging/audit, not the
 /// decision (see `neural_fired`).
 pub fn fused_risk(distance: f32, threshold: f32, prob: Option<f32>) -> f32 {
+    if !distance.is_finite() || prob.is_some_and(|p| !p.is_finite()) {
+        return 1.0;
+    }
     let anomaly = if threshold > 0.0 {
         ((distance - threshold) / threshold).clamp(0.0, 1.0)
     } else {
@@ -198,6 +225,20 @@ pub fn content_ref(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn non_finite_scores_always_fire_and_finite_is_unchanged() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(neural_fired(bad, 1.2, None, 0.5), "distance {bad}");
+            assert!(neural_fired(0.1, 1.2, Some(bad), 0.5), "prob {bad}");
+            assert!(score_blocks(bad, 0.5) && score_exceeds(bad, 0.5));
+            assert_eq!(fused_risk(bad, 1.2, None), 1.0);
+            assert_eq!(fused_risk(0.1, 1.2, Some(bad)), 1.0);
+        }
+        assert!(!neural_fired(0.1, 1.2, Some(0.4), 0.5));
+        assert!(neural_fired(0.1, 1.2, Some(0.5), 0.5));
+        assert!(!score_exceeds(1.2, 1.2) && score_exceeds(1.3, 1.2));
+    }
+
     use super::*;
 
     #[test]
