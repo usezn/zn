@@ -12,6 +12,11 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 serde_json = "1.0"
 zn = { path = ".." }
+tokio = { version = "1.35", features = ["rt"] }
+tempfile = "3.27"
+rusqlite = { version = "0.41", default-features = false }
+async-trait = "0.1"
+anyhow = "1.0"
 
 # Keep this crate out of the root package, so a normal build never needs a nightly toolchain.
 [workspace]
@@ -40,6 +45,27 @@ bench = false
 [[bin]]
 name = "policy_wasm"
 path = "fuzz_targets/policy_wasm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audit_records"
+path = "fuzz_targets/audit_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audit_open"
+path = "fuzz_targets/audit_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kms_state"
+path = "fuzz_targets/kms_state.rs"
 test = false
 doc = false
 bench = false
