@@ -7,6 +7,7 @@
 process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const path = require('path');
 const { getAdapter } = require('../lib/agents');
@@ -335,15 +336,18 @@ test('agent guard: a backslash before the option and npm exec options do not unl
   }
 });
 
-test('agent guard: the npm exec check stays fast', () => {
-  const t0 = process.hrtime.bigint();
+test('agent guard: the npm exec check stays linear', () => {
+  const admin = (text) => policy.adminCommand(text);
   assert.equal(policy.adminCommand('npm exec ' + 'a '.repeat(40000) + 'zn-gate init --dry-run'), 'init');
   assert.equal(policy.adminCommand(('npm x ' + 'b'.repeat(50) + ' ').repeat(1500)), null);
   assert.equal(policy.adminCommand(('npm exec ' + '-- '.repeat(20)).repeat(1500)), null);
   assert.equal(policy.adminCommand('npm' + ' -a b'.repeat(15000) + ' exec zn-gate init --dry-run'), 'init');
-  policy.adminCommand('npm' + ' -a b'.repeat(15000) + ' install');
   assert.equal(policy.adminCommand('npm exec ' + '--yes '.repeat(200) + 'zn-gate init --dry-run'), 'init', 'padding does not hide it');
-  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 500);
+  assertLinear(admin, (n) => 'npm exec ' + 'a '.repeat(n) + 'zn-gate init --dry-run', 40000, 'many words');
+  assertLinear(admin, (n) => ('npm x ' + 'b'.repeat(50) + ' ').repeat(n), 1500, 'many commands');
+  assertLinear(admin, (n) => ('npm exec ' + '-- '.repeat(20)).repeat(n), 1500, 'many separators');
+  assertLinear(admin, (n) => 'npm' + ' -a b'.repeat(n) + ' exec zn-gate init --dry-run', 15000, 'many options');
+  assertLinear(admin, (n) => 'npm' + ' -a b'.repeat(n) + ' install', 15000, 'many options, install');
 });
 
 test('agent guard: Unicode spaces, carriage returns and more npm exec forms do not unlock it (capitals: the CLI refuses them)', () => {

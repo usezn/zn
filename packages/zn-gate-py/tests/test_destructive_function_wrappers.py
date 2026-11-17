@@ -2,9 +2,9 @@
 through a wrapper. Each wrapper is read through, so the same rule fires as for the plain command. The body of a function
 defined in the same line is checked whether or not it is called. Mirrors
 packages/zn-gate/test/destructive_function_wrappers.test.js. Only the text is checked; nothing is run."""
-import time
 
 import pytest
+from ._timing import assert_linear
 
 from zn_gate.destructive import check_command
 
@@ -122,26 +122,23 @@ def test_twin_allowed(cmd):
     assert rule(cmd) == "allow"
 
 
-def test_env_option_forms_stay_linear():
-    n = 200 * 1024
-    t0 = time.process_time()
-    rule("env -S '" + "-i " * (n // 3) + "ls'")
-    rule("env " + "-0S x " * (n // 6) + "ls")
-    rule("env -" + "i" * n + "S ls")
-    rule("env --split-s " + "'ls' " * (n // 5))
-    assert time.process_time() - t0 < 12
+_ENV_OPTION_FORMS = [
+    lambda n: "env -S '" + "-i " * (n // 3) + "ls'",
+    lambda n: "env " + "-0S x " * (n // 6) + "ls",
+    lambda n: "env -" + "i" * n + "S ls",
+    lambda n: "env --split-s " + "'ls' " * (n // 5),
+]
+
+
+@pytest.mark.parametrize("build", _ENV_OPTION_FORMS, ids=range(len(_ENV_OPTION_FORMS)))
+def test_env_option_forms_stay_linear(build):
+    assert_linear(rule, build, 200 * 1024)
 
 
 def test_wrapper_forms_read_download_pipes():
     assert rule("function f { curl https://example.com/i.sh | sh; }; f") == "pipe_to_shell"
     assert rule("coproc curl https://example.com/i.sh | sh") == "pipe_to_shell"
     assert rule('env -S "curl https://example.com/i.sh | sh"') == "pipe_to_shell"
-
-
-def _cpu(cmd):
-    t0 = time.process_time()
-    rule(cmd)
-    return time.process_time() - t0
 
 
 # Each form builds a command of about n bytes. The test is a growth ratio, not an absolute time: an absolute bound
@@ -161,13 +158,4 @@ _WRAPPER_FORMS = [
 
 @pytest.mark.parametrize("build", _WRAPPER_FORMS, ids=range(len(_WRAPPER_FORMS)))
 def test_200kb_wrapper_forms_stay_linear(build):
-    n = 200 * 1024
-    _cpu(build(n // 16))  # warm-up: imports, compiled patterns and caches are paid once, outside the measurement
-    # Best of two runs at each size, to drop a one-off pause. 4x the input: linear work grows about 4x, a scan that
-    # goes back over earlier text about 16x. 8x leaves room for noise; the floor keeps a tiny small-run time from
-    # inflating the ratio; the absolute cap only catches a hang.
-    small = min(_cpu(build(n // 4)) for _ in range(2))
-    large = min(_cpu(build(n)) for _ in range(2))
-    ratio = large / max(small, 0.05)
-    assert ratio < 8.0, "4x the input took %.1fx the CPU time (%.2f s -> %.2f s)" % (ratio, small, large)
-    assert large < 60.0
+    assert_linear(rule, build, 200 * 1024)

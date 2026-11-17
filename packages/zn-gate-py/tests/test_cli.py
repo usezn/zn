@@ -10,11 +10,12 @@ import io
 import json
 import os
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stdout
 
 from zn_gate.cli import cmd_scan, cmd_test
+
+from ._timing import assert_linear
 
 FAKE_AWS = "AKIA" + "ZNTESTFAKE" + "000000"
 
@@ -193,21 +194,13 @@ class TestCliScanCommand(unittest.TestCase):
         # CPU time of this process (the scan runs in it), not wall time: a busy shared runner can pause the test
         # in the middle of a correct run, while a scan that went back over earlier blocks would still burn the CPU.
 
-        def cpu_seconds(n):
-            start = time.process_time()
-            code, out = self._scan_text(block * n)
+        def scan(text):
+            code, out = self._scan_text(text)
             self.assertEqual(code, 1)
-            self.assertEqual(len(json.loads(out)["threats"]), n)
-            return time.process_time() - start
+            self.assertEqual(len(json.loads(out)["threats"]), text.count(self.BEGIN))
 
-        cpu_seconds(200)  # warm-up: imports, compiled patterns and caches are paid once, outside the measurement
-        small, large = cpu_seconds(3750), cpu_seconds(15000)  # 4x the blocks; the large text stays under 2 MiB
-        # Linear work grows about 4x, a scan that goes back over earlier blocks about 16x. The ratio, not an absolute
-        # bound, tells them apart: an absolute bound fails on a slow runner or after new rules are added, and would
-        # pass a quadratic scan on a fast one. 8x leaves room for noise; the absolute cap only catches a hang.
-        ratio = large / max(small, 1e-3)
-        self.assertLess(ratio, 8.0, "4x the blocks took %.1fx the CPU time (%.2f s -> %.2f s)" % (ratio, small, large))
-        self.assertLess(large, 60.0)
+        # 4x the blocks; the larger text stays under 2 MiB.
+        assert_linear(scan, lambda n: block * n, 15000, "15,000 key blocks")
 
 
 if __name__ == "__main__":
