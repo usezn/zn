@@ -5,8 +5,8 @@ The agent works with markers such as `__ZN_GITHUB_TOKEN__`; real values stay in
 an encrypted vault on your machine and are filled in only where you allowed
 them. Everything runs locally.
 
-Supported agents (seven): Claude Code, Codex CLI, OpenCode, Cursor, GitHub
-Copilot (VS Code, CLI), Google Antigravity and the ZCode desktop app. What each
+Supported agents (eight, one of them experimental): Claude Code, Codex CLI, OpenCode, Cursor, GitHub
+Copilot (VS Code, CLI), Google Antigravity, the ZCode desktop app and Gemini CLI (experimental). What each
 one can and cannot do is in [compat.md](compat.md); the limits are in
 [threat-model.md](threat-model.md).
 

@@ -122,4 +122,4 @@ These need the npm package and Node.js. In the Python package they print a short
 - Team, audit, logs and export: `team`, `audit`, `logs`, `export`.
 - Reports and the account connection: `report`, `connect`, `disconnect`, `uninstall`.
 
-The Python package does not install hooks for coding agents and has no local vault. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, install Node.js 18 or later and run `npx -y zn-gate init` in your own terminal. The [command line reference](../cli.md#the-python-package) lists every command of the Python package.
+The Python package does not install hooks for coding agents and has no local vault. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI, install Node.js 18 or later and run `npx -y zn-gate init` in your own terminal. The [command line reference](../cli.md#the-python-package) lists every command of the Python package.
