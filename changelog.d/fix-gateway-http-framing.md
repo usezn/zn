@@ -1,0 +1,2 @@
+### Security
+- The experimental gateway's management API now answers 400 and closes the connection when a request carries both `Content-Length` and `Transfer-Encoding`, or when an HTTP/1.1 request has no `Host` header or more than one. Before, the first pair was accepted with the chunked body winning, which is the ambiguity request smuggling relies on behind a proxy, and the second was accepted too.

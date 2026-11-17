@@ -6,7 +6,7 @@
 //! must end in a clean 4xx, a close, or (when RFC 9112 allows it) a normal answer, within a bounded time:
 //! never a hang, a panic or an unintended 2xx. Run with `--nocapture` to see the `FRAMING` lines.
 //!
-//! Cases that expose a real gap keep their test, marked `#[ignore = "B-xxxx: ..."]`.
+//! A case that exposes a real gap keeps its test, marked `#[ignore = "reason"]`, until it is fixed.
 
 use crate::handlers::api::CreateTenantRequest;
 use crate::http_limits::{serve_limited, ServeLimits};
@@ -194,7 +194,6 @@ async fn non_numeric_and_signed_content_length_are_400() {
 }
 
 #[tokio::test]
-#[ignore = "hyper accepts Content-Length plus Transfer-Encoding: chunked (chunked wins) and answers 200"]
 async fn content_length_plus_chunked_is_rejected() {
     let addr = spawn_server().await;
     let l = BODY.len();
@@ -209,6 +208,77 @@ async fn content_length_plus_chunked_is_rejected() {
     // RFC 9112 6.1 says such a message "ought to be handled as an error" (smuggling risk behind a proxy).
     assert!(is_clean_reject(&p), "{p:?}");
     assert_ne!(p.status, Some(200));
+    assert_eq!(p.status, Some(400), "{p:?}");
+}
+
+#[tokio::test]
+async fn transfer_encoding_before_content_length_is_rejected() {
+    let addr = spawn_server().await;
+    let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
+    let raw = post_with(
+        &format!(
+            "transfer-encoding: chunked\r\ncontent-length: {}\r\n",
+            BODY.len()
+        ),
+        &chunked,
+    );
+    let p = probe(addr, raw, BOUND).await;
+    report("transfer_encoding_then_content_length", &p);
+    assert_eq!(p.status, Some(400), "{p:?}");
+}
+
+#[tokio::test]
+async fn content_length_plus_chunked_on_a_later_request_is_rejected() {
+    let addr = spawn_server().await;
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let first = post_with(&format!("Content-Length: {}\r\n", BODY.len()), BODY);
+    s.write_all(&first).await.unwrap();
+    let mut tmp = [0u8; 4096];
+    let n = tokio::time::timeout(BOUND, s.read(&mut tmp))
+        .await
+        .unwrap()
+        .unwrap();
+    let head = String::from_utf8_lossy(&tmp[..n]).to_string();
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    // Same keep-alive connection: the second request carries both headers.
+    let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
+    let second = post_with(
+        &format!(
+            "Content-Length: {}\r\nTransfer-Encoding: chunked\r\n",
+            BODY.len()
+        ),
+        &chunked,
+    );
+    s.write_all(&second).await.unwrap();
+    let n = tokio::time::timeout(BOUND, s.read(&mut tmp))
+        .await
+        .unwrap()
+        .unwrap();
+    let head = String::from_utf8_lossy(&tmp[..n]).to_string();
+    assert!(head.starts_with("HTTP/1.1 400"), "{head}");
+}
+
+#[tokio::test]
+async fn chunked_alone_is_still_served() {
+    let addr = spawn_server().await;
+    let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
+    let raw = post_with("Transfer-Encoding: chunked\r\n", &chunked);
+    let p = probe(addr, raw, BOUND).await;
+    report("chunked_alone", &p);
+    assert_eq!(p.status, Some(200), "{p:?}");
+}
+
+#[tokio::test]
+async fn duplicate_content_length_with_different_values_is_400() {
+    let addr = spawn_server().await;
+    let l = BODY.len();
+    let raw = post_with(
+        &format!("Content-Length: {l}\r\nContent-Length: {}\r\n", l + 1),
+        BODY,
+    );
+    let p = probe(addr, raw, BOUND).await;
+    report("duplicate_content_length_differs", &p);
+    assert_eq!(p.status, Some(400), "{p:?}");
 }
 
 #[tokio::test]
@@ -253,13 +323,30 @@ async fn http10_without_host_gets_a_clean_answer() {
 }
 
 #[tokio::test]
-#[ignore = "the management API has no Host header check; hyper answers an HTTP/1.1 request without Host with 200"]
 async fn http11_without_host_is_400() {
     let addr = spawn_server().await;
     let p = probe(addr, b"GET /api/v1/health HTTP/1.1\r\n\r\n".to_vec(), BOUND).await;
     report("http11_no_host", &p);
     assert!(is_clean_reject(&p), "{p:?}");
     assert_ne!(p.status, Some(200));
+    assert_eq!(p.status, Some(400), "{p:?}");
+}
+
+#[tokio::test]
+async fn http10_without_host_is_allowed() {
+    let addr = spawn_server().await;
+    let p = probe(addr, b"GET /api/v1/health HTTP/1.0\r\n\r\n".to_vec(), BOUND).await;
+    report("http10_no_host", &p);
+    assert_eq!(p.status, Some(200), "{p:?}");
+}
+
+#[tokio::test]
+async fn http11_with_two_host_headers_is_400() {
+    let addr = spawn_server().await;
+    let raw = b"GET /api/v1/health HTTP/1.1\r\nHost: a.example.com\r\nHost: b.example.com\r\n\r\n";
+    let p = probe(addr, raw.to_vec(), BOUND).await;
+    report("http11_two_hosts", &p);
+    assert_eq!(p.status, Some(400), "{p:?}");
 }
 
 #[tokio::test]
