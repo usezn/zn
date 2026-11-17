@@ -184,6 +184,48 @@ pub struct ZnEngine {
     state_store: Arc<DashMap<String, String>>,
 }
 
+/// Longest key, in bytes, that a policy may pass to `zn_state_set` or `zn_state_get`.
+pub const MAX_STATE_KEY_BYTES: u32 = 4 * 1024;
+/// Longest value, in bytes, that a policy may store with `zn_state_set`.
+pub const MAX_STATE_VALUE_BYTES: u32 = 64 * 1024;
+/// Most keys the shared policy state holds; a new key past this is dropped (an existing key can still be updated).
+/// With the two limits above, the state holds at most about 68 MiB.
+pub const MAX_STATE_ENTRIES: usize = 1024;
+
+/// The guest memory range `ptr..ptr + len` as a host buffer size, or None when `len` is over `max` or the range
+/// does not lie inside the memory (`memory_size` bytes). Checked before any host buffer is allocated, so a
+/// policy cannot make the host allocate a size it chooses.
+fn guest_range(memory_size: usize, ptr: u32, len: u32, max: u32) -> Option<usize> {
+    if len > max {
+        return None;
+    }
+    let len = usize::try_from(len).ok()?;
+    let end = usize::try_from(ptr).ok()?.checked_add(len)?;
+    (end <= memory_size).then_some(len)
+}
+
+/// Policy files in the policy folder that could not be loaded, with the reason for each.
+#[derive(Debug)]
+pub struct PolicyLoadFailures {
+    pub failed: Vec<(std::path::PathBuf, String)>,
+}
+
+impl std::fmt::Display for PolicyLoadFailures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} policy file(s) could not be loaded:",
+            self.failed.len()
+        )?;
+        for (path, reason) in &self.failed {
+            write!(f, " {} ({});", path.display(), reason)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for PolicyLoadFailures {}
+
 impl ZnEngine {
     /// Create a new ZnEngine with the given configuration
     pub fn new(config: ZnEngineConfig) -> Result<Self> {
@@ -221,8 +263,17 @@ impl ZnEngine {
                     _ => return,
                 };
 
-                let mut key_buf = vec![0u8; k_len as usize];
-                let mut val_buf = vec![0u8; v_len as usize];
+                // Lengths come from the policy: bound them and check them against the memory size before
+                // allocating, so a huge length is ignored instead of aborting the process.
+                let size = memory.data_size(&caller);
+                let (Some(k_size), Some(v_size)) = (
+                    guest_range(size, k_ptr, k_len, MAX_STATE_KEY_BYTES),
+                    guest_range(size, v_ptr, v_len, MAX_STATE_VALUE_BYTES),
+                ) else {
+                    return;
+                };
+                let mut key_buf = vec![0u8; k_size];
+                let mut val_buf = vec![0u8; v_size];
 
                 if memory.read(&caller, k_ptr as usize, &mut key_buf).is_ok()
                     && memory.read(&caller, v_ptr as usize, &mut val_buf).is_ok()
@@ -230,7 +281,10 @@ impl ZnEngine {
                     if let (Ok(key), Ok(val)) =
                         (String::from_utf8(key_buf), String::from_utf8(val_buf))
                     {
-                        caller.data().state_store.insert(key, val);
+                        let store = &caller.data().state_store;
+                        if store.contains_key(&key) || store.len() < MAX_STATE_ENTRIES {
+                            store.insert(key, val);
+                        }
                     }
                 }
             },
@@ -251,7 +305,12 @@ impl ZnEngine {
                     _ => return 0,
                 };
 
-                let mut key_buf = vec![0u8; k_len as usize];
+                let Some(k_size) =
+                    guest_range(memory.data_size(&caller), k_ptr, k_len, MAX_STATE_KEY_BYTES)
+                else {
+                    return 0;
+                };
+                let mut key_buf = vec![0u8; k_size];
                 if memory.read(&caller, k_ptr as usize, &mut key_buf).is_err() {
                     return 0;
                 }
@@ -429,23 +488,34 @@ impl ZnEngine {
         self.policies.len()
     }
 
-    /// Load all policies from a directory
+    /// Load all policies from a directory.
+    ///
+    /// Every `.wasm` file directly in `dir` is loaded. If any of them fails (hash not allowed, bad signature,
+    /// truncated or invalid WASM), the others are still registered and the result is an error that downcasts
+    /// to [`PolicyLoadFailures`]: a policy the operator installed but that is not enforcing must not go
+    /// unnoticed, so the gateway refuses to start on it.
     pub fn load_all_policies(&self, dir: impl AsRef<Path>) -> Result<()> {
         let dir = dir.as_ref();
         if !dir.exists() {
             std::fs::create_dir_all(dir)?;
         }
 
+        let mut failed = Vec::new();
         for entry in walkdir::WalkDir::new(dir).max_depth(1) {
             let entry = entry?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "wasm") {
                 if let Err(e) = self.register_policy_from_file(path) {
                     error!("Failed to load policy {:?}: {}", path, e);
+                    failed.push((path.to_path_buf(), e.to_string()));
                 }
             }
         }
-        Ok(())
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(PolicyLoadFailures { failed }.into())
+        }
     }
 
     /// Unregister a policy by name
@@ -1151,12 +1221,16 @@ mod tests {
             simple_policy("(i32.const 1)"),
         )
         .unwrap();
-        e.load_all_policies(&dir).unwrap();
+        let err = e.load_all_policies(&dir).unwrap_err();
+        let failures = err.downcast_ref::<PolicyLoadFailures>().unwrap();
+        assert_eq!(failures.failed.len(), 1);
+        assert!(failures.failed[0].0.ends_with("blocked.wasm"));
         assert_eq!(e.list_policies(), vec!["good".to_string()]);
 
         let open = engine();
         std::fs::write(dir.join("broken.wasm"), b"garbage").unwrap();
-        open.load_all_policies(&dir).unwrap();
+        let err = open.load_all_policies(&dir).unwrap_err();
+        assert!(err.to_string().contains("broken.wasm"), "{err}");
         assert!(open._has_policy("good"));
         assert!(open._has_policy("blocked"));
         assert!(!open._has_policy("broken"));
@@ -1316,6 +1390,106 @@ mod tests {
         e.load_all_policies(&dir).unwrap();
         assert_eq!(e.policy_count(), 0);
         assert!(e.list_policies().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- bounded state host functions and failed policy loads ----
+
+    #[test]
+    fn guest_range_checks_length_and_bounds_before_any_allocation() {
+        assert_eq!(guest_range(65536, 0, 16, 64), Some(16));
+        assert_eq!(guest_range(65536, 65520, 16, 64), Some(16));
+        assert_eq!(guest_range(65536, 65521, 16, 64), None);
+        assert_eq!(guest_range(65536, 0, 65, 64), None);
+        assert_eq!(guest_range(65536, u32::MAX, 1, 64), None);
+        assert_eq!(guest_range(65536, 0, u32::MAX, u32::MAX), None);
+        assert_eq!(guest_range(70000, 0, 65536, u32::MAX), Some(65536));
+    }
+
+    #[test]
+    fn state_host_functions_ignore_huge_lengths() {
+        let e = engine();
+        // 0xFFFFFFFF lengths must be refused before the host allocates anything; the call still returns.
+        let m = module_of(
+            &e,
+            &simple_policy(
+                "(call $set (i32.const 0) (i32.const -1) (i32.const 0) (i32.const -1))
+                 (call $set (i32.const 2048) (i32.const 1) (i32.const 0) (i32.const -1))
+                 (i32.eq (call $get (i32.const 0) (i32.const -1) (i32.const 0) (i32.const 8))
+                         (i32.const 0))",
+            ),
+        );
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+        assert!(e.state_store.is_empty());
+    }
+
+    #[test]
+    fn state_host_functions_refuse_keys_and_values_over_the_limits() {
+        let e = engine();
+        let key_over = MAX_STATE_KEY_BYTES + 1;
+        let val_over = MAX_STATE_VALUE_BYTES + 1;
+        let m = module_of(
+            &e,
+            &format!(
+                "(module
+                  (import \"env\" \"zn_state_set\" (func $set (param i32 i32 i32 i32)))
+                  (memory (export \"memory\") 4)
+                  (func (export \"alloc\") (param i32) (result i32) (i32.const 200000))
+                  (func (export \"dealloc\") (param i32 i32))
+                  (func (export \"validate_tool_call\") (param i32 i32 i32 i32) (result i32)
+                    (call $set (i32.const 0) (i32.const {key_over}) (i32.const 0) (i32.const 1))
+                    (call $set (i32.const 0) (i32.const 1) (i32.const 0) (i32.const {val_over}))
+                    (call $set (i32.const 0) (i32.const 1) (i32.const 0) (i32.const {MAX_STATE_VALUE_BYTES}))
+                    (i32.const 1)))"
+            ),
+        );
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+        assert_eq!(e.state_store.len(), 1);
+        assert_eq!(
+            e.state_store.iter().next().unwrap().value().len(),
+            MAX_STATE_VALUE_BYTES as usize
+        );
+    }
+
+    #[test]
+    fn state_store_stops_taking_new_keys_at_the_entry_limit() {
+        let e = engine();
+        for i in 0..MAX_STATE_ENTRIES {
+            e.state_store.insert(format!("k{i}"), String::new());
+        }
+        let m = module_of(
+            &e,
+            &simple_policy("(call $set (i32.const 2048) (i32.const 1) (i32.const 2048) (i32.const 1)) (i32.const 1)"),
+        );
+        assert!(e.check_tool_call(&m, "t", "{}", None).unwrap());
+        assert_eq!(e.state_store.len(), MAX_STATE_ENTRIES);
+        // An existing key is still updated.
+        e.state_store.insert("k0".to_string(), "old".to_string());
+        assert_eq!(e.state_store.len(), MAX_STATE_ENTRIES);
+    }
+
+    #[test]
+    fn a_policy_that_fails_to_load_is_reported_not_skipped() {
+        let wat = simple_policy("(i32.const 1)");
+        let good = ZnEngine::compute_hash(wat.as_bytes());
+        let e = engine_with(1_000_000, 16 * 1024 * 1024, vec![good]);
+        let dir = temp_dir("load-fail-closed");
+        std::fs::write(dir.join("good.wasm"), &wat).unwrap();
+        e.load_all_policies(&dir).unwrap();
+
+        // Hash not in the allowed list.
+        std::fs::write(dir.join("other.wasm"), simple_policy("(i32.const 0)")).unwrap();
+        let err = e.load_all_policies(&dir).unwrap_err();
+        assert!(err.downcast_ref::<PolicyLoadFailures>().is_some());
+        assert!(err.to_string().contains("other.wasm"), "{err}");
+        std::fs::remove_file(dir.join("other.wasm")).unwrap();
+
+        // Truncated file.
+        std::fs::write(dir.join("cut.wasm"), &wat.as_bytes()[..wat.len() / 2]).unwrap();
+        let err = engine().load_all_policies(&dir).unwrap_err();
+        let failures = err.downcast_ref::<PolicyLoadFailures>().unwrap();
+        assert_eq!(failures.failed.len(), 1);
+        assert!(failures.failed[0].0.ends_with("cut.wasm"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

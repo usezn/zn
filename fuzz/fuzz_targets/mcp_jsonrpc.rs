@@ -2,18 +2,27 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use zn::jsonrpc::{validate_jsonrpc, with_arguments, JsonRpcValidation};
+use zn::jsonrpc::{
+    has_duplicate_keys, nesting_exceeds, validate_jsonrpc, with_arguments, JsonRpcValidation,
+    MAX_FRAME_DEPTH,
+};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(frame) = std::str::from_utf8(data) else {
         return;
     };
+    let verdict = validate_jsonrpc(frame);
+    if !matches!(verdict, JsonRpcValidation::Error { .. }) {
+        // A frame that is not refused was read to the end, repeats no key and is not nested too deep.
+        assert!(!has_duplicate_keys(frame));
+        assert!(!nesting_exceeds(frame, MAX_FRAME_DEPTH));
+    }
     if let JsonRpcValidation::ToolCall {
         tool_name,
         arguments,
         source,
         ..
-    } = validate_jsonrpc(frame)
+    } = verdict
     {
         assert!(!tool_name.is_empty());
         // The arguments handed to the policy check are always valid JSON text.

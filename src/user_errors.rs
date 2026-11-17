@@ -67,6 +67,15 @@ pub fn policy_folder_problem(dir: &str, err: &anyhow::Error) -> String {
     )
 }
 
+/// Policy files in the policy folder failed to load, so zn does not start.
+pub fn policy_files_failed(dir: &str, failures: &crate::engine::PolicyLoadFailures) -> String {
+    format!(
+        "zn did not start because a security policy in {} would not be enforced. {} Fix or remove each file listed (check that its hash is in \"engine.allowed_policy_hashes\", that its signature matches and that the file is complete), then start zn again.",
+        display_path(Path::new(dir)),
+        failures
+    )
+}
+
 /// The policy folder cannot be watched for changes. `load_err` is the earlier
 /// failure to read or create it, if there was one.
 pub fn policy_watch_problem(

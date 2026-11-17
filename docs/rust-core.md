@@ -46,6 +46,14 @@ Only then does it write the file. It writes to a temporary file in the policy di
 
 Known limits that remain, because the gateway is not distributed: bans and the loop breaker follow the agent id that the message gives, inside its namespace, so a client that changes its agent id on every call starts each time with a clean record (the fixed rules and policies still check every call; give each client its own namespace to keep it apart); the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Hardening (November 2026)
+
+A further review of the request path changed these:
+
+- **Deep frames are refused.** A frame that nests objects or arrays more than 64 levels deep is refused with a JSON-RPC `-32600` error before it is parsed. Before, a deeply nested unknown field could stop the repeated-key check early while the request was still accepted, so a key repeated after that field (in the tool arguments, the tool name or an A2A task) was not seen. The repeated-key check now also refuses any frame it could not read to the end.
+- **Bounded policy state.** The `zn_state_set` and `zn_state_get` functions that WASM policies call check the lengths they are given before using them: a key is at most 4 KiB, a value at most 64 KiB, and the range must lie inside the policy's memory. A call outside those limits is ignored (`zn_state_get` returns 0) instead of making the gateway allocate the size the policy asked for. The shared state holds at most 1,024 keys.
+- **A policy that does not load stops the start.** If a `.wasm` file in the policy folder cannot be loaded (its hash is not in `engine.allowed_policy_hashes`, its signature does not match, or the file is incomplete), `zn start` now stops with an error that lists each file and the reason, instead of starting without that policy. A policy file that changes while zn runs and then fails to load is logged as an error and the version loaded before stays in force.
+
 ## Audit payloads
 
 By default the audit database keeps only metadata for each call: event, time, tool name, status, matched policy, agent and namespace. The request payload is not stored. To keep payloads, set `audit.store_payloads = true` (or `ZN_AUDIT_STORE_PAYLOADS=1`); this needs an encryption key (`ZN_DB_KEY`, or a KMS key) in every environment, and the gateway refuses to start without one. Payloads are scrubbed before they are written. Records written by earlier versions stay readable.

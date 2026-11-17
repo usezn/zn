@@ -339,6 +339,12 @@ async fn start_proxy(args: Args) -> Result<()> {
     let policy_dir = &zn_config.engine.policy_dir;
     let mut policy_load_error: Option<anyhow::Error> = None;
     if let Err(e) = engine.load_all_policies(policy_dir) {
+        // An installed policy that does not load would leave its checks off without notice: do not start.
+        if let Some(failures) = e.downcast_ref::<zn::engine::PolicyLoadFailures>() {
+            return Err(anyhow!(zn::user_errors::policy_files_failed(
+                policy_dir, failures
+            )));
+        }
         log::warning(zn::user_errors::policy_folder_problem(policy_dir, &e))?;
         policy_load_error = Some(e);
     } else {
