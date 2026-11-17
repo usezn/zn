@@ -77,6 +77,8 @@ select = ["E9", "F", "B"]
 # The CI job blocks the run, so the package has to stay clean.
 files = ["src/zn_gate"]
 mypy_path = "src"
+# The oldest supported Python (requires-python). Pinned here so the floor is type-checked even though CI runs mypy on 3.12.
+python_version = "3.10"
 
 [[tool.mypy.overrides]]
 # Optional integrations; their packages are not installed in the lint job.

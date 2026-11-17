@@ -1,6 +1,8 @@
 """zn-gate check: proves the Python guard works without Node.js."""
 import io
+import os
 import socket
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -91,11 +93,14 @@ class TestCheckCommand(unittest.TestCase):
         self.assertEqual(code, 0, text)
 
     def test_writes_only_inside_a_temp_folder(self):
-        import os
-        import tempfile
-        before = set(os.listdir(tempfile.gettempdir()))
-        run_check()
-        self.assertEqual(set(os.listdir(tempfile.gettempdir())) - before, set())
+        # Use a temp folder of our own, so other processes sharing TMPDIR cannot add entries during the check.
+        with tempfile.TemporaryDirectory(prefix="zn_cli_tmp_") as own_tmp:
+            with mock.patch.dict(
+                os.environ, {"TMPDIR": own_tmp, "TEMP": own_tmp, "TMP": own_tmp}
+            ), mock.patch("tempfile.tempdir", own_tmp):
+                before = set(os.listdir(own_tmp))
+                run_check()
+                self.assertEqual(set(os.listdir(own_tmp)) - before, set())
 
     def test_check_is_not_an_npm_only_command(self):
         self.assertNotIn("check", cli.NPM_ONLY_COMMANDS)

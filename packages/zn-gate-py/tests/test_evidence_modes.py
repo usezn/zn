@@ -26,8 +26,10 @@ class TestLedgerModes(unittest.TestCase):
 
     def test_new_directory_is_0700_and_new_file_is_0600(self):
         self._log()
-        self.assertEqual(stat.S_IMODE(os.stat(self.ledger_dir).st_mode), 0o700)
-        self.assertEqual(stat.S_IMODE(os.stat(self.ledger).st_mode), 0o600)
+        # Mask the setgid bit: a directory created under a setgid parent (common on shared hosts) inherits it.
+        mode_bits = stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO
+        self.assertEqual(stat.S_IMODE(os.stat(self.ledger_dir).st_mode) & mode_bits, 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(self.ledger).st_mode) & mode_bits, 0o600)
 
     def test_existing_world_readable_ledger_is_restricted_on_the_next_write(self):
         self._log()

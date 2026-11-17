@@ -29,8 +29,12 @@ function run(args) {
       env: { ...process.env, HOME: home, USERPROFILE: home },
       timeout: 60000,
     });
-    // The messages name the folder the run used: compare them without it.
-    return { status: r.status, stderr: (r.stderr || '').split(home).join('<home>') };
+    // The messages name the folder the run used, and the CLI may print its real path (the temp folder can be reached
+    // through a symlink, e.g. /var -> /private/var on macOS): compare them without either spelling of it.
+    const realHome = fs.realpathSync(home);
+    let stderr = (r.stderr || '').split(realHome).join('<home>');
+    stderr = stderr.split(home).join('<home>');
+    return { status: r.status, stderr };
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
