@@ -147,13 +147,20 @@ impl McpConnection {
                 .stderr(std::process::Stdio::inherit())
                 .kill_on_drop(true);
 
-            // Validate and apply environment variables
-            for (key, value) in &config.env {
-                if Self::is_safe_env_var(key) {
-                    cmd.env(key, value);
-                } else {
-                    warn!("Skipping potentially dangerous env var: {}", key);
+            // Refuse the whole config when any variable could load code into the child. The check
+            // runs before the spawn and in name order, so the message is the same on every run.
+            let mut keys: Vec<&String> = config.env.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(reason) = Self::env_var_refusal(key) {
+                    warn!(mcp = %name, var = %key, "Refusing MCP server: env var not allowed");
+                    return Err(anyhow!(crate::user_errors::mcp_env_var_not_allowed(
+                        name, key, reason
+                    )));
                 }
+            }
+            for (key, value) in &config.env {
+                cmd.env(key, value);
             }
 
             let mut child = cmd.spawn().map_err(|e| {
@@ -263,22 +270,194 @@ impl McpConnection {
         Ok(())
     }
 
-    fn is_safe_env_var(name: &str) -> bool {
-        const BLOCKED_ENV_VARS: &[&str] = &[
-            "LD_PRELOAD",
-            "LD_LIBRARY_PATH",
-            "DYLD_INSERT_LIBRARIES",
-            "DYLD_LIBRARY_PATH",
-            "PATH",
-            "HOME",
-            "USERPROFILE",
-            "SHELL",
-            "COMSPEC",
+    /// Why an environment variable from the MCP server config is not passed to the child process.
+    ///
+    /// `None` means the name is accepted. Many variables make a program load code, plugins or
+    /// settings of someone else's choosing (`NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `LD_*`, ...), so
+    /// the rule is: a plain name (letters, digits and `_`, not starting with a digit), minus a deny
+    /// list of exact names and prefixes. Matching ignores case, so `node_options` is refused too.
+    /// Proxy variables (`HTTPS_PROXY` and similar) are accepted: they send traffic elsewhere but do
+    /// not load code, and corporate networks need them.
+    fn env_var_refusal(name: &str) -> Option<&'static str> {
+        let plain = !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !plain {
+            return Some("is not a plain name (only letters, digits and underscores are allowed)");
+        }
+        let up = name.to_ascii_uppercase();
+        const EXACT: &[(&str, &str)] = &[
+            // Where the child finds programs and what it treats as home.
+            ("PATH", "changes which programs the server runs"),
+            ("PATHEXT", "changes which programs the server runs"),
+            (
+                "HOME",
+                "moves the home directory the server reads its settings from",
+            ),
+            (
+                "USERPROFILE",
+                "moves the home directory the server reads its settings from",
+            ),
+            ("SHELL", "changes the shell the server starts"),
+            ("COMSPEC", "changes the shell the server starts"),
+            // Shells.
+            ("BASH_ENV", "runs a script when a shell starts"),
+            ("ENV", "runs a script when a shell starts"),
+            ("PROMPT_COMMAND", "runs a command in an interactive shell"),
+            ("SHELLOPTS", "changes how shells run"),
+            ("BASHOPTS", "changes how shells run"),
+            ("IFS", "changes how shells split words"),
+            ("CDPATH", "changes how shells resolve directories"),
+            // Node.js, Deno, Bun.
+            (
+                "NODE_OPTIONS",
+                "makes Node.js load code or change its settings at start",
+            ),
+            (
+                "NODE_PATH",
+                "adds module folders that Node.js loads code from",
+            ),
+            (
+                "NODE_REPL_EXTERNAL_MODULE",
+                "makes Node.js load a module at start",
+            ),
+            (
+                "NODE_TLS_REJECT_UNAUTHORIZED",
+                "turns off certificate checks",
+            ),
+            // Python.
+            ("PYTHONPATH", "adds folders that Python loads code from"),
+            ("PYTHONSTARTUP", "runs a script when Python starts"),
+            ("PYTHONHOME", "moves the Python standard library"),
+            ("PYTHONINSPECT", "keeps Python in an interactive prompt"),
+            (
+                "PYTHONUSERBASE",
+                "adds a folder that Python loads code from",
+            ),
+            ("PYTHONBREAKPOINT", "names a function that Python calls"),
+            (
+                "PYTHONWARNINGS",
+                "can make Python import a module named in the value",
+            ),
+            ("PYTHONEXECUTABLE", "changes the Python program"),
+            ("PYTHONPLATLIBDIR", "moves the Python standard library"),
+            // Perl, Ruby, Lua, PHP.
+            ("PERL5OPT", "makes Perl load code at start"),
+            ("PERL5LIB", "adds folders that Perl loads code from"),
+            ("PERLLIB", "adds folders that Perl loads code from"),
+            ("PERL5DB", "runs code in the Perl debugger"),
+            ("RUBYOPT", "makes Ruby load code at start"),
+            ("RUBYLIB", "adds folders that Ruby loads code from"),
+            ("LUA_PATH", "adds folders that Lua loads code from"),
+            ("LUA_CPATH", "adds folders that Lua loads code from"),
+            ("LUA_INIT", "runs a script when Lua starts"),
+            ("PHPRC", "changes the PHP settings file"),
+            ("PHP_INI_SCAN_DIR", "adds PHP settings folders"),
+            // Java, .NET, Go, Rust.
+            (
+                "JAVA_TOOL_OPTIONS",
+                "makes the Java runtime load agents or change its settings",
+            ),
+            (
+                "_JAVA_OPTIONS",
+                "makes the Java runtime load agents or change its settings",
+            ),
+            (
+                "JDK_JAVA_OPTIONS",
+                "makes the Java runtime load agents or change its settings",
+            ),
+            ("CLASSPATH", "adds folders that Java loads code from"),
+            ("DOTNET_STARTUP_HOOKS", "makes .NET load code at start"),
+            ("DOTNET_ADDITIONAL_DEPS", "makes .NET load extra code"),
+            ("COR_PROFILER", "makes .NET load a profiler library"),
+            ("COR_ENABLE_PROFILING", "makes .NET load a profiler library"),
+            ("COR_PROFILER_PATH", "makes .NET load a profiler library"),
+            (
+                "GOFLAGS",
+                "changes how Go builds, including running helper programs",
+            ),
+            (
+                "RUSTC_WRAPPER",
+                "wraps every Rust compiler call in another program",
+            ),
+            (
+                "RUSTC_WORKSPACE_WRAPPER",
+                "wraps every Rust compiler call in another program",
+            ),
+            (
+                "RUSTFLAGS",
+                "changes how Rust builds, including linker programs",
+            ),
+            // C library and system loaders.
+            ("GCONV_PATH", "makes the C library load conversion modules"),
+            (
+                "LOCPATH",
+                "makes the C library load locale data from another folder",
+            ),
+            (
+                "NLSPATH",
+                "makes the C library load message catalogs from another folder",
+            ),
+            ("HOSTALIASES", "changes how host names resolve"),
+            (
+                "OPENSSL_CONF",
+                "makes OpenSSL load a settings file that can load engines",
+            ),
+            // Programs that other programs start.
+            ("SSH_ASKPASS", "names a program that ssh runs"),
+            ("SSH_ASKPASS_REQUIRE", "makes ssh run the askpass program"),
+            ("EDITOR", "names a program that tools start"),
+            ("VISUAL", "names a program that tools start"),
+            ("PAGER", "names a program that tools start"),
+            ("MANPAGER", "names a program that tools start"),
+            ("BROWSER", "names a program that tools start"),
+            ("LESSOPEN", "names a program that less starts"),
+            ("LESSCLOSE", "names a program that less starts"),
         ];
-        let name_upper = name.to_uppercase();
-        !BLOCKED_ENV_VARS
+        if let Some((_, why)) = EXACT.iter().find(|(n, _)| *n == up) {
+            return Some(why);
+        }
+        const PREFIXES: &[(&str, &str)] = &[
+            (
+                "LD_",
+                "makes the dynamic loader load other libraries or change the library search",
+            ),
+            (
+                "DYLD_",
+                "makes the dynamic loader load other libraries or change the library search",
+            ),
+            ("BASH_FUNC_", "defines a shell function that shells run"),
+            (
+                "GIT_CONFIG",
+                "sets git configuration, which can name programs to run",
+            ),
+            ("GIT_SSH", "names the program git uses for ssh"),
+            ("GIT_EXEC", "changes where git finds its helper programs"),
+            ("GIT_ASKPASS", "names a program that git runs"),
+            ("GIT_PROXY_COMMAND", "names a program that git runs"),
+            ("GIT_EXTERNAL_DIFF", "names a program that git runs"),
+            ("GIT_PAGER", "names a program that git runs"),
+            ("GIT_EDITOR", "names a program that git runs"),
+            ("GIT_SEQUENCE_EDITOR", "names a program that git runs"),
+            (
+                "GIT_TEMPLATE_DIR",
+                "makes git copy hooks from another folder",
+            ),
+            (
+                "NPM_CONFIG_",
+                "changes npm settings such as the registry, script shell and hooks",
+            ),
+            ("PIP_", "changes pip settings such as the package index"),
+            (
+                "UV_",
+                "changes uv settings such as the package index and Python",
+            ),
+            ("CORECLR_", "makes .NET load a profiler library"),
+        ];
+        PREFIXES
             .iter()
-            .any(|&blocked| blocked == name_upper)
+            .find(|(p, _)| up.starts_with(p))
+            .map(|(_, why)| *why)
     }
 }
 
@@ -663,6 +842,162 @@ mod tests {
         assert!(validate_command("node").is_ok());
         assert!(validate_command("python").is_ok());
         assert!(validate_command("npx").is_ok());
+    }
+
+    fn env_config(command: &str, vars: &[(&str, &str)]) -> McpServerConfig {
+        McpServerConfig {
+            command: Some(command.to_string()),
+            args: vec![],
+            env: vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            url: None,
+        }
+    }
+
+    #[test]
+    fn env_vars_that_load_code_are_refused() {
+        let names = [
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "PYTHONPATH",
+            "PYTHONSTARTUP",
+            "PYTHONHOME",
+            "PYTHONINSPECT",
+            "PYTHONBREAKPOINT",
+            "PYTHONWARNINGS",
+            "BASH_ENV",
+            "ENV",
+            "PROMPT_COMMAND",
+            "SHELLOPTS",
+            "PERL5OPT",
+            "PERL5LIB",
+            "RUBYOPT",
+            "RUBYLIB",
+            "JAVA_TOOL_OPTIONS",
+            "_JAVA_OPTIONS",
+            "JDK_JAVA_OPTIONS",
+            "CLASSPATH",
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "LD_AUDIT",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_FRAMEWORK_PATH",
+            "GCONV_PATH",
+            "GIT_SSH",
+            "GIT_SSH_COMMAND",
+            "GIT_EXEC_PATH",
+            "GIT_ASKPASS",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_GLOBAL",
+            "SSH_ASKPASS",
+            "EDITOR",
+            "VISUAL",
+            "NPM_CONFIG_SCRIPT_SHELL",
+            "npm_config_registry",
+            "PIP_INDEX_URL",
+            "PIP_EXTRA_INDEX_URL",
+            "UV_INDEX_URL",
+            "DOTNET_STARTUP_HOOKS",
+            "CORECLR_PROFILER_PATH",
+            "RUSTC_WRAPPER",
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "SHELL",
+            "COMSPEC",
+            "PATHEXT",
+            "BASH_FUNC_x%%",
+            "NODE_TLS_REJECT_UNAUTHORIZED",
+        ];
+        for n in names {
+            if n.contains('%') {
+                // Not a plain name either way.
+                assert!(McpConnection::env_var_refusal(n).is_some(), "{n}");
+                continue;
+            }
+            let why = McpConnection::env_var_refusal(n);
+            assert!(why.is_some(), "{n} should be refused");
+            assert!(!why.unwrap().is_empty(), "{n} needs a reason");
+        }
+    }
+
+    #[test]
+    fn env_var_matching_ignores_case() {
+        for n in [
+            "node_options",
+            "Node_Options",
+            "pythonpath",
+            "Ld_Preload",
+            "bash_env",
+            "Path",
+        ] {
+            assert!(McpConnection::env_var_refusal(n).is_some(), "{n}");
+        }
+    }
+
+    #[test]
+    fn common_env_vars_are_accepted() {
+        let names = [
+            "API_KEY",
+            "GITHUB_TOKEN",
+            "OPENAI_API_KEY",
+            "SERVICE_URL",
+            "LOG_LEVEL",
+            "DEBUG",
+            "NODE_ENV",
+            "PYTHONUNBUFFERED",
+            "PYTHONUTF8",
+            "PYTHONIOENCODING",
+            "PYTHONDONTWRITEBYTECODE",
+            "NPM_TOKEN",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "NO_PROXY",
+            "TZ",
+            "LANG",
+            "GIT_AUTHOR_NAME",
+            "DATABASE_URL",
+            "my_var_2",
+            "_PRIVATE",
+            "NODE_EXTRA_CA_CERTS",
+            "SSL_CERT_FILE",
+            "TMPDIR",
+        ];
+        for n in names {
+            assert!(
+                McpConnection::env_var_refusal(n).is_none(),
+                "{n} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn env_var_names_must_be_plain() {
+        for n in ["", "1ABC", "A=B", "A B", "A-B", "A\0B", "A.B", "ÄB"] {
+            assert!(McpConnection::env_var_refusal(n).is_some(), "{n:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn config_with_a_bad_env_var_is_refused_with_a_message() {
+        let cfg = env_config(
+            "node",
+            &[
+                ("API_KEY", "example-value"),
+                ("node_options", "example-value"),
+            ],
+        );
+        let err = match McpConnection::connect("demo", &cfg).await {
+            Ok(_) => panic!("config with a code-loading variable must be refused"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("demo"), "{err}");
+        assert!(err.contains("node_options"), "{err}");
+        assert!(err.contains("Node.js"), "{err}");
+        assert!(!err.contains("API_KEY"), "{err}");
     }
 
     #[test]

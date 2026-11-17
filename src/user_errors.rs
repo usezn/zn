@@ -199,6 +199,13 @@ pub fn mcp_command_not_allowed(
     )
 }
 
+/// An env var in an upstream MCP server config that could load code into the server process.
+pub fn mcp_env_var_not_allowed(server: &str, var: &str, reason: &str) -> String {
+    format!(
+        "MCP server \"{server}\" was refused: its environment variable \"{var}\" is not allowed because it {reason}. Remove \"{var}\" from \"env\" in your MCP servers file."
+    )
+}
+
 /// An upstream MCP server with neither a command nor a URL.
 pub fn mcp_server_incomplete(server: &str, file: Option<&str>) -> String {
     let place = file.map(|f| format!(" in {f}")).unwrap_or_default();

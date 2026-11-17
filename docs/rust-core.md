@@ -148,6 +148,21 @@ sqlite3 zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id 
 
 `ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. A generated token is saved in `zn-mcp-ws-token.txt`, in the same directory as `audit.db_path` (mode 0600; on Windows the file inherits the directory ACL). It changes on every start and is never printed, so read it from that file, or set `ZN_MCP_WS_TOKEN` to use a stable one. If the file cannot be written, the gateway refuses to start and asks you to set `ZN_MCP_WS_TOKEN`. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
 
+## MCP server environment variables
+
+The `env` map of a stdio MCP server is passed to the server process, so it must not be able to make that process load someone else's code. A server whose `env` has a variable that is not allowed is refused with a message that names the variable and why, and none of its variables are applied. Nothing is dropped silently.
+
+The rule: a name is plain (letters, digits and underscores, not starting with a digit) and is not on the deny list. Matching ignores case. The deny list covers:
+
+- `PATH`, `PATHEXT`, `HOME`, `USERPROFILE`, `SHELL`, `COMSPEC`;
+- shell start-up and options: `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `SHELLOPTS`, `BASHOPTS`, `IFS`, `CDPATH`, `BASH_FUNC_*`;
+- runtime code and module paths: `NODE_OPTIONS`, `NODE_PATH`, `NODE_REPL_EXTERNAL_MODULE`, `NODE_TLS_REJECT_UNAUTHORIZED`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONINSPECT`, `PYTHONUSERBASE`, `PYTHONBREAKPOINT`, `PYTHONWARNINGS`, `PERL5OPT`, `PERL5LIB`, `PERLLIB`, `RUBYOPT`, `RUBYLIB`, `LUA_PATH`, `LUA_CPATH`, `LUA_INIT`, `PHPRC`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `CLASSPATH`, `DOTNET_STARTUP_HOOKS`, `RUSTC_WRAPPER`, `GOFLAGS` and similar;
+- the dynamic loader and C library: every `LD_*` and `DYLD_*`, `GCONV_PATH`, `LOCPATH`, `NLSPATH`, `OPENSSL_CONF`;
+- programs that tools start: `SSH_ASKPASS`, `EDITOR`, `VISUAL`, `PAGER`, `BROWSER`, and the git settings that name a program (`GIT_SSH*`, `GIT_CONFIG*`, `GIT_EXEC_PATH`, `GIT_ASKPASS` and similar);
+- package manager settings that change where code comes from or run hooks: every `NPM_CONFIG_*`, `PIP_*` and `UV_*`.
+
+A deny list is used because MCP servers need arbitrary names for their own settings (`*_TOKEN`, `*_URL`, `LOG_LEVEL`), so an allow list of known names would break normal setups. Proxy variables (`HTTPS_PROXY`, `NO_PROXY`) are accepted: they send traffic elsewhere but do not load code, and corporate networks need them. `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are accepted for the same reason. To use a refused variable, set it in the environment you start the server from instead.
+
 ## Policy endpoints
 
 `POST /api/v1/policies/upload` and `POST /api/v1/policies/delete` (super-admin only) work on `engine.policy_dir` (default `./policies_bin`), the directory the gateway loads and watches. A policy name, and an uploaded file name without its `.wasm` extension, must be 1-64 ASCII letters, digits, `.`, `-` or `_`, starting with a letter or digit. Other names are refused, and so is a policy file that resolves outside the directory through a symlink. Earlier versions wrote uploads to `./policies` and joined the name from the request to that path as given, so a name such as `../x` could write or delete a `.wasm` file outside it.

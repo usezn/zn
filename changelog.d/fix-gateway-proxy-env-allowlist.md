@@ -1,0 +1,2 @@
+### Security
+- The experimental Rust gateway now refuses an MCP server whose `env` sets a variable that makes the server process load code or change what it runs, such as `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `LD_*`, `JAVA_TOOL_OPTIONS` or `GIT_SSH_COMMAND`, with a message that names the variable. Before, only a few names were blocked and the rest were passed on silently. The full rule is in `docs/rust-core.md`.
