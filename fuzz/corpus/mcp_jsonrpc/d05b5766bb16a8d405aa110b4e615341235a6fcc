@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"a","method":"tools/call","params":{"name":"sarch","input":{"q":"example.com"}},"agenCtzid":94994e44}
