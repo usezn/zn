@@ -34,6 +34,8 @@ what happens depends on how you installed zn-gate:
   changed, so the hooks block tool calls and say so until you run
   `zn hooks install <agent>` again for each agent.
 
+The vault keeps running the version it started with, so after an update `zn vault status` and `zn unlock` tell you when the running vault is older than the installed zn-gate. To use the new version, run `zn lock`, then `zn unlock`, in your own terminal.
+
 If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
 
 If `zn-gate check` says an agent is not protected, it also prints the command

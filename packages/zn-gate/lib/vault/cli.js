@@ -204,6 +204,16 @@ function isOutdatedVault(s) {
   return Boolean(s) && !(Array.isArray(s.features) && s.features.includes(RESOLVE_POLICY_FEATURE) && s.features.includes(CAPABILITIES_FEATURE));
 }
 
+/** The sentence for a running vault whose zn-gate version differs from the installed one, or null when they match
+ *  (or the vault did not report a version). The vault keeps running the version it started with until it is locked. */
+function versionMismatchNote(s, installed) {
+  const running = s && typeof s.version === 'string' ? s.version : '';
+  const current = installed || require('../../package.json').version;
+  if (!running || running === current) return null;
+  return 'The vault is running zn-gate ' + running + '; zn-gate ' + current + ' is installed. To use the new version, run `'
+    + znCommand('lock') + '`, then `' + znCommand('unlock') + '`, in your own terminal.';
+}
+
 /* Is the process still there? EPERM means it exists but is not ours to signal. */
 function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (err) { return Boolean(err && err.code === 'EPERM'); }
@@ -272,7 +282,10 @@ async function unlockCmd(args, deps) {
   if (agent) throw new Error(messages.agentRefusal(znCommand('unlock'), agent));
   // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
   const running = await runningStatus(d.clientFactory);
-  if (running && !isOutdatedVault(running)) throw new Error(messages.vaultAlreadyUnlocked());
+  if (running && !isOutdatedVault(running)) {
+    const note = versionMismatchNote(running, d.installedVersion);
+    throw new Error(note ? messages.vaultAlreadyUnlocked() + ' ' + note : messages.vaultAlreadyUnlocked());
+  }
   const meta = keychain.readMeta({});
   const backend = asked || (meta && meta.backend) || keychain.detectBackend();
   opts.backend = backend;
@@ -324,6 +337,8 @@ async function statusCmd() {
   try {
     const s = await c.status();
     out(unlockedLine(meta, s));
+    const note = isOutdatedVault(s) ? null : versionMismatchNote(s);
+    if (note) out(note);
   } catch (err) {
     out('Vault: locked (backend ' + meta.backend + ')');
   } finally {
@@ -402,7 +417,7 @@ async function runVaultCommand(args) {
   }
 }
 
-module.exports = { runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, untilText, lockWhenText };
+module.exports = { runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, versionMismatchNote, unlockedLine, untilText, lockWhenText };
 // The sentences that name a command are built when read, so they show the form that works on this computer.
 Object.defineProperties(module.exports, {
   ALREADY_UNLOCKED: { enumerable: true, get: () => messages.vaultAlreadyUnlocked() },
