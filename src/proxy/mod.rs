@@ -654,6 +654,25 @@ impl McpPool {
     }
 }
 
+/// Load an MCP servers file for the fuzz target `mcp_server_config`, and check that every server kept with a
+/// command has an allowed one. Built only with `--cfg fuzzing` (cargo-fuzz sets it), never in a normal build.
+#[cfg(fuzzing)]
+#[allow(unexpected_cfgs)]
+pub fn fuzz_load_config_file(path: &str) -> Result<Vec<(String, Option<String>)>> {
+    let pool = McpPool::from_config_file(path)?;
+    let mut servers = Vec::new();
+    for (name, config) in &pool.configs {
+        if let Some(command) = &config.command {
+            assert!(
+                validate_command(command).is_ok(),
+                "a server with a command that is not allowed was kept"
+            );
+        }
+        servers.push((name.clone(), config.command.clone()));
+    }
+    Ok(servers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
