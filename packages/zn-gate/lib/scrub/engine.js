@@ -211,6 +211,8 @@ function normWindows(norm, c) {
   const out = [];
   let from = -1;
   let to = -1;
+  let nlAt = -2; // forward newline search cache: -2 none yet, -1 no newline after nlFrom
+  let nlFrom = 0;
   for (const m of norm.marks) {
     if (m - NORM_MARGIN <= to && from >= 0) {
       // overlaps the open window: extend it
@@ -220,7 +222,14 @@ function normWindows(norm, c) {
       from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
     }
     let e = Math.min(n, m + NORM_MARGIN);
-    if (e < n) { const nl = text.indexOf('\n', e); e = nl < 0 ? n : nl; }
+    if (e < n) {
+      // e never goes down: a newline found before is still the next one while it is at or after e, and "none" stays true,
+      // so a text with many marks and no newline is not searched to its end once per mark.
+      if (nlAt === -1 && e >= nlFrom) { /* still none */ }
+      else if (nlAt >= e) { /* still the next one */ }
+      else { nlFrom = e; nlAt = text.indexOf('\n', e); }
+      e = nlAt < 0 ? n : nlAt;
+    }
     if (e > to) to = e;
   }
   if (from >= 0) out.push([from, to]);
