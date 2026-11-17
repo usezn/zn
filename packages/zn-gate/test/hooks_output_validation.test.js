@@ -406,11 +406,13 @@ for (const [mode, opts, edit] of MODES) {
 
 test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
-  const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
+  const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 3000);\n");
   const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp } });
   child.stdin.end('{}');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  await new Promise((r) => setTimeout(r, 300));
+  // A slow runner (Windows) can take more than a fixed 300 ms to start the shell and make the files, so wait for them.
+  // The hook runs for 3 s (the launcher waits for it): long enough for the TERM to arrive while it is still running.
+  for (let i = 0; i < 200 && zfiles(tmp).length < 2 && child.exitCode === null; i++) await new Promise((r) => setTimeout(r, 100));
   assert.ok(zfiles(tmp).length >= 2, 'the launcher made its private files');
   term();
   assert.equal(await exited, 2);
