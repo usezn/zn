@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.29';
+const POLICY_RULES_VERSION = '2026-11-17.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3908,9 +3908,23 @@ function egressInterpreter(words, k, text, found) {
   found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
 }
 
+// The program name of a command word and the network program it stands for ('' when none), remembered by word for one
+// reading: a long command repeats the same few words, and the chain walk and the later search over every word would
+// otherwise redo the same splitting and glob matching for each repeat (work that grew with the number of words, twice).
+function egressWordInfo(cache, text) {
+  let info = cache.get(text);
+  if (info === undefined) {
+    const name = programName(text);
+    info = { name, prog: egressProgramOf(name) };
+    if (text.length <= 256) cache.set(text, info);
+  }
+  return info;
+}
+
 // One reading of the command text: the requests it makes go to `found`. `raw` is the command as written (for heredocs).
 function egressCollectText(raw, text, opts, depth, found) {
   const vars = shellVars.newScope();
+  const wordInfo = new Map();
   egressPowerShell(text, opts.powershell === true, found);
   let rest = text;
   let guard = 0;
@@ -3937,16 +3951,17 @@ function egressCollectText(raw, text, opts, depth, found) {
       let chainAt = -1;
       while (i < words.length) {
         const t = words[i].text;
-        let name = programName(t);
+        let info = egressWordInfo(wordInfo, t);
         // {curl,-H,x,URL} is the words curl -H x URL.
         if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
           const alts = expandBraces(t);
-          if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
+          if (alts && alts.length > 1 && egressWordInfo(wordInfo, alts[0]).prog) {
             words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
-            name = programName(alts[0]);
+            info = egressWordInfo(wordInfo, alts[0]);
           }
         }
-        prog = egressProgramOf(name);
+        const name = info.name;
+        prog = info.prog;
         if (prog) { k = i; break; }
         if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
         if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { if (chainAt < 0) chainAt = i; i = skipWrapper(words, i, name, chain); continue; }
@@ -3957,7 +3972,7 @@ function egressCollectText(raw, text, opts, depth, found) {
       // The words an option may have taken are read too (from the first wrapper on), so a wrong skip cannot hide the request.
       if (k < 0 && chain.unsure) {
         for (let j = Math.max(chainAt, 0); j < words.length; j++) {
-          prog = egressProgramOf(programName(words[j].text));
+          prog = egressWordInfo(wordInfo, words[j].text).prog;
           if (prog) { k = j; break; }
         }
       }
