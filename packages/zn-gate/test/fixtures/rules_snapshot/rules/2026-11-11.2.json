@@ -1,6 +1,6 @@
 {
   "version_const": "RULES_VERSION",
-  "version": "2026-11-17.1",
+  "version": "2026-11-11.2",
   "ids": [
     "evasion:bidi_override",
     "exfil:credentials",
@@ -45,7 +45,7 @@
     "secret:private_key"
   ],
   "sha256": {
-    "lib/rules.js": "c0a2a5c76800eeccb1f0229d58dd5297bb9d82cc0a5f64304b81b4f95e8bd098",
-    "lib/mcp-secrets.js": "c2b042519d6a37cadba528d24b0a5b5c53a0f8cb4650da6d9cbb86e40d7e86be"
+    "lib/rules.js": "da1ffa94e6a7339319e77e9296d5ec5adf324f70064b56a95bd8972687c15496",
+    "lib/mcp-secrets.js": "5e8b328563be363beaed8fca28e8dc92e8a2fdf14e528858698f114ca421aa73"
   }
 }

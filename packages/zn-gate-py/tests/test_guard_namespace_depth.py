@@ -8,9 +8,12 @@ Fictitious values only.
 
 import argparse
 import dataclasses
+import io
 import json
 import logging
 import logging.handlers
+import os
+import tempfile
 import types
 import unittest
 
@@ -205,12 +208,37 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
                 self.text = BAD
 
         self.assertFalse(check_tool_result(Captured()).allowed)
-        # The root handlers of the test runner may be classes with properties of their own, which a result
-        # refuses (rule type:unscannable); the others are read without a block.
-        handlers = logging.getLogger().handlers
-        res = check_tool_result(handlers)
-        self.assertTrue(res.allowed or res.rule == "type:unscannable")
-        self.assertTrue(check_tool_result([logging.StreamHandler(), logging.NullHandler()]).allowed)
+        # Standard library handlers are read without a block, whatever the runner has installed.
+        with tempfile.TemporaryDirectory() as tmp:
+            file_handler = logging.FileHandler(os.path.join(tmp, "example.log"), delay=True)
+            try:
+                stdlib = [logging.StreamHandler(io.StringIO()), logging.NullHandler(), file_handler]
+                self.assertTrue(check_tool_result(stdlib).allowed)
+            finally:
+                file_handler.close()
+
+        # A handler class that shows a value through a property of its own is refused.
+        class WithProperty(logging.NullHandler):
+            @property
+            def label(self):
+                return "example"
+
+        res = check_tool_result([WithProperty()])
+        self.assertFalse(res.allowed)
+        self.assertEqual(res.rule, "type:unscannable")
+
+    def test_arguments_stay_lenient_and_results_block_unreadable_values(self):
+        class WithProperty:
+            @property
+            def label(self):
+                return "example"
+
+        value = WithProperty()
+        res = check_tool_result(value)
+        self.assertFalse(res.allowed)
+        self.assertEqual(res.rule, "type:unscannable")
+        # The same value in arguments is read as far as possible, not refused.
+        self.assertTrue(check_tool_call("example_tool", {"client": value}).allowed)
 
     def test_logger_handlers_filters_and_subclass_attributes_are_read(self):
         logger = logging.getLogger("zn.example.capture")

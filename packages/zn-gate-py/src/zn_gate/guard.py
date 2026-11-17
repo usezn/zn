@@ -461,11 +461,12 @@ def _unwrap_partial(func: Any) -> Tuple[Any, Tuple[Any, ...], Dict[str, Any]]:
 
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
                   lenient_objects: bool = True, allow_truncated: bool = False,
-                  lenient_depth: Optional[int] = None, best_effort_budget: bool = False) -> Assessment:
+                  lenient_depth: Optional[int] = None, best_effort_budget: bool = False,
+                  *, block_unreadable: bool) -> Assessment:
     strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects,
                                                   lenient_depth=lenient_depth,
                                                   best_effort_budget=best_effort_budget,
-                                                  block_unreadable=what != "Arguments")
+                                                  block_unreadable=block_unreadable)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -518,7 +519,7 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
                          lenient_objects=_lenient_objects,
                          lenient_depth=LENIENT_MAX_DEPTH if _lenient_objects else None,
-                         best_effort_budget=_lenient_objects)
+                         best_effort_budget=_lenient_objects, block_unreadable=False)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -537,7 +538,8 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     sanitize_tool_result refuses it.
     """
     res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
-                        allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH)
+                        allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH,
+                        block_unreadable=True)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
