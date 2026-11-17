@@ -226,3 +226,105 @@ class UnreadableDirTests(unittest.TestCase):
         finally:
             os.chmod(locked, 0o755)
             shutil.rmtree(d, ignore_errors=True)
+
+
+class UnreadableReasonTests(unittest.TestCase):
+    def test_reason_carries_the_cause(self):
+        import errno
+        self.assertEqual(cli._unreadable_reason(OSError(errno.EACCES, "denied")), "cannot be read")
+        self.assertEqual(cli._unreadable_reason(OSError(errno.ENAMETOOLONG, "long")), "cannot be read (path too long)")
+        self.assertEqual(cli._unreadable_reason(OSError(errno.ELOOP, "loop")), "cannot be read (too many symbolic links)")
+        self.assertEqual(cli._unreadable_reason(OSError(errno.EIO, "io")), "cannot be read (eio)")
+
+    def test_the_advice_matches_the_reason(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli._print_report("text", 1, [], [], [{"dir": "d", "reason": "cannot be read (path too long)"}], ".")
+        text = out.getvalue()
+        self.assertIn("Next step: shorten or move the folders marked 'path too long'", text)
+        self.assertNotIn("give your account read access", text)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli._print_report("text", 1, [], [], [{"dir": "d", "reason": "cannot be read"}], ".")
+        self.assertIn("give your account read access", out.getvalue())
+
+
+@unittest.skipIf(os.name == "nt", "PATH_MAX behaves differently on Windows")
+class DeepPathTests(unittest.TestCase):
+    DEPTH = 3000
+
+    def test_a_path_too_long_to_read_is_listed_and_exits_3(self):
+        d = tempfile.mkdtemp()
+        home = os.getcwd()
+        try:
+            with open(os.path.join(d, "clean.md"), "w", encoding="utf-8") as f:
+                f.write("hello\n")
+            os.makedirs(os.path.join(d, "x"))
+            os.chdir(os.path.join(d, "x"))
+            for _ in range(self.DEPTH):
+                os.mkdir("a")
+                os.chdir("a")
+            with open("secret.md", "w", encoding="utf-8") as f:
+                f.write("key AKIAIOSFODNN7EXAMPLE\n")
+            os.chdir(home)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cmd_scan(argparse.Namespace(path=d, exclude=None, include=None, format="json", no_fail=False))
+            data = json.loads(buf.getvalue())
+            self.assertEqual(code, 3)
+            self.assertTrue(data["incomplete"])
+            self.assertEqual(data["skipped_dirs"][0]["reason"], "cannot be read (path too long)")
+        finally:
+            os.chdir(home)
+            try:
+                os.chdir(os.path.join(d, "x"))
+                depth = 0
+                while depth < self.DEPTH:
+                    try:
+                        os.chdir("a")
+                    except OSError:
+                        break
+                    depth += 1
+                try:
+                    os.unlink("secret.md")
+                except OSError:
+                    pass
+                for _ in range(depth):
+                    os.chdir("..")
+                    try:
+                        os.rmdir("a")
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            finally:
+                os.chdir(home)
+            shutil.rmtree(d, ignore_errors=True)
+
+
+@unittest.skipIf(os.name == "nt", "creating links needs a privilege on Windows")
+class LinksNotFollowedTests(unittest.TestCase):
+    def test_links_are_counted_and_the_exit_code_is_unchanged(self):
+        d = _tree({"ok.md": "hello\n", "real/inner.md": "hello\n"})
+        try:
+            os.symlink(os.path.join(d, "ok.md"), os.path.join(d, "link.md"))
+            os.symlink(os.path.join(d, "real"), os.path.join(d, "linkdir"))
+            data = json.loads(_run(d))
+            self.assertEqual(data["links_not_followed"], 2)
+            self.assertFalse(data["incomplete"])
+            self.assertEqual(data["total_files"], 2)
+            self.assertIn("Links not followed: 2 ", _run(d, fmt="text"))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cmd_scan(argparse.Namespace(path=d, exclude=None, include=None, format="text", no_fail=False))
+            self.assertEqual(code, 0)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_no_links_no_line(self):
+        d = _tree({"ok.md": "hello\n"})
+        try:
+            self.assertEqual(json.loads(_run(d))["links_not_followed"], 0)
+            self.assertNotIn("Links not followed", _run(d, fmt="text"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)

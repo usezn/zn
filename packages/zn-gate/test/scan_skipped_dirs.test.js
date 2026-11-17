@@ -206,3 +206,75 @@ test('scan text output escapes control characters in the path of a finding and i
     assert.ok(empty.includes('No files were scanned in ') && empty.includes('e' + bs + 'x1b[2Je'), empty);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// An entry that is listed but cannot be inspected is reported, not dropped: a folder whose path is longer than
+// the system allows used to vanish and the scan said "PASSED".
+const DEPTH = 3000;
+function makeDeepTree() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-deep-'));
+  fs.writeFileSync(path.join(root, 'clean.md'), 'hello\n');
+  const home = process.cwd();
+  fs.mkdirSync(path.join(root, 'x'));
+  try {
+    process.chdir(path.join(root, 'x'));
+    for (let i = 0; i < DEPTH; i++) { fs.mkdirSync('a'); process.chdir('a'); }
+    fs.writeFileSync('secret.md', 'key AKIAIOSFODNN7EXAMPLE\n');
+  } finally { process.chdir(home); }
+  return root;
+}
+function removeDeepTree(root) {
+  const home = process.cwd();
+  try {
+    let depth = 0;
+    process.chdir(path.join(root, 'x'));
+    for (; depth < DEPTH; depth++) { try { process.chdir('a'); } catch (e) { break; } }
+    try { fs.unlinkSync('secret.md'); } catch (e) { /* not at the bottom */ }
+    for (let i = 0; i < depth; i++) { process.chdir('..'); try { fs.rmdirSync('a'); } catch (e) { /* keep going */ } }
+  } catch (e) { /* best effort */ } finally { process.chdir(home); }
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+test('scan reports a folder whose path is too long to read and does not call the scan clean', (t) => {
+  if (process.platform === 'win32') return t.skip('PATH_MAX behaves differently on Windows');
+  const root = makeDeepTree();
+  try {
+    const text = spawnSync(process.execPath, [CLI, 'scan', root], { encoding: 'utf8', env: ENV });
+    assert.strictEqual(text.status, 3, text.stdout + text.stderr);
+    assert.ok(!text.stdout.includes('PASSED'), text.stdout);
+    assert.match(text.stdout, /Directories not scanned \(1\)/);
+    assert.match(text.stdout, /\(cannot be read \(path too long\)\)/);
+    assert.match(text.stdout, /Next step: shorten or move the folders marked 'path too long'/);
+    assert.ok(!text.stdout.includes('give your account read access'), 'no permissions advice for a long path');
+    const json = spawnSync(process.execPath, [CLI, 'scan', root, '--format', 'json'], { encoding: 'utf8', env: ENV });
+    assert.strictEqual(json.status, 3);
+    const j = JSON.parse(json.stdout);
+    assert.strictEqual(j.incomplete, true);
+    assert.strictEqual(j.skipped_dirs.length, 1);
+    assert.ok(j.skipped_dirs[0].dir.includes(path.join('x', 'a')), JSON.stringify(j.skipped_dirs));
+    assert.strictEqual(j.skipped_dirs[0].reason, 'cannot be read (path too long)');
+    const partial = spawnSync(process.execPath, [CLI, 'scan', root, '--allow-partial'], { encoding: 'utf8', env: ENV });
+    assert.strictEqual(partial.status, 0, partial.stdout);
+  } finally { removeDeepTree(root); }
+});
+
+test('scan counts the links it does not follow and says so, without changing the exit code', (t) => {
+  if (process.platform === 'win32') return t.skip('creating links needs a privilege on Windows');
+  const dir = tree({ 'ok.md': 'hello\n', 'real/inner.md': 'hello\n' });
+  try {
+    fs.symlinkSync(path.join(dir, 'ok.md'), path.join(dir, 'link.md'));
+    fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'linkdir'));
+    const text = spawnSync(process.execPath, [CLI, 'scan', dir], { encoding: 'utf8', env: ENV });
+    assert.strictEqual(text.status, 0, text.stdout + text.stderr);
+    assert.match(text.stdout, /Links not followed: 2 /);
+    const j = JSON.parse(spawnSync(process.execPath, [CLI, 'scan', dir, '--format', 'json'], { encoding: 'utf8', env: ENV }).stdout);
+    assert.strictEqual(j.links_not_followed, 2);
+    assert.strictEqual(j.incomplete, false);
+    assert.strictEqual(j.total_files, 2);
+    const none = tree({ 'ok.md': 'hello\n' });
+    try {
+      const out = spawnSync(process.execPath, [CLI, 'scan', none], { encoding: 'utf8', env: ENV });
+      assert.ok(!out.stdout.includes('Links not followed'), out.stdout);
+      assert.strictEqual(JSON.parse(spawnSync(process.execPath, [CLI, 'scan', none, '--format', 'json'], { encoding: 'utf8', env: ENV }).stdout).links_not_followed, 0);
+    } finally { fs.rmSync(none, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

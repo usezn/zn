@@ -493,6 +493,27 @@ function relativeToCwd(filePath) {
   return path.relative(cwd, realFolderOf(filePath));
 }
 
+// Why an entry could not be read, from the error code: "cannot be read" alone is a permissions problem (the
+// advice for it is to give the account read access); the other causes say what happened.
+const UNREADABLE_ADVICE = {
+  'path too long': "shorten or move the folders marked 'path too long' (the system limits how long a path can be), or leave them out of the scan",
+  'too many symbolic links': "fix the link loop in the items marked 'too many symbolic links', or leave them out of the scan",
+};
+function unreadableReason(e) {
+  const code = e && e.code;
+  if (code === 'ENAMETOOLONG') return 'cannot be read (path too long)';
+  if (code === 'ELOOP') return 'cannot be read (too many symbolic links)';
+  if (code === 'ENOENT') return 'cannot be read (no longer there)';
+  if (code === 'EACCES' || code === 'EPERM' || !code) return 'cannot be read';
+  return `cannot be read (${String(code).toLowerCase()})`;
+}
+function unreadableAdvice(reasons) {
+  const out = [];
+  if (reasons.some((r) => r === 'cannot be read')) out.push("give your account read access to the items marked 'cannot be read' (or leave them out of the scan)");
+  for (const [k, v] of Object.entries(UNREADABLE_ADVICE)) if (reasons.some((r) => r === `cannot be read (${k})`)) out.push(v);
+  return out;
+}
+
 function scanDirectory(targetPath, includeCode = false, options = {}) {
   const IGNORED_DIRS = SCAN_DIRS;
   // Names the user passes with --exclude are skipped everywhere and never reported.
@@ -523,6 +544,8 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   // Directories that are not entered, reported next to the skipped files.
   const skippedDirs = [];
   filesToScan.skippedDirs = skippedDirs;
+  // Links found inside the tree are not followed; they are counted so the report can say so.
+  filesToScan.linksNotFollowed = 0;
 
   function walk(current, isRoot = false) {
     let stat;
@@ -531,9 +554,13 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       // found inside the tree are never followed (loops, escapes).
       stat = isRoot ? fs.statSync(current) : fs.lstatSync(current);
     } catch (e) {
+      // An entry that was listed but cannot be inspected (path too long, no access, a link loop) was not
+      // scanned: say so, because a silent drop would turn a partial scan into a clean one. Whether it was a
+      // file or a folder is unknown, so it goes with the folders.
+      skippedDirs.push({ dir: current, reason: unreadableReason(e) });
       return;
     }
-    if (stat.isSymbolicLink()) return;
+    if (stat.isSymbolicLink()) { filesToScan.linksNotFollowed++; return; }
 
     if (stat.isDirectory()) {
       const base = path.basename(current);
@@ -554,7 +581,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
         entries = fs.readdirSync(current);
       } catch (e) {
         // A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
-        skippedDirs.push({ dir: current, reason: 'cannot be read' });
+        skippedDirs.push({ dir: current, reason: unreadableReason(e) });
         return;
       }
       // Editor settings are not scanned; the MCP servers of VS Code are.
@@ -642,7 +669,7 @@ Files   : ${files.length} file(s) queued for audit\n
       }
       content = decodeScanText(raw);
     } catch (e) {
-      files.skipped.push({ file: filePath, reason: 'cannot be read' });
+      files.skipped.push({ file: filePath, reason: unreadableReason(e) });
       notRead++;
       continue;
     }
@@ -749,7 +776,7 @@ Files   : ${files.length} file(s) queued for audit\n
   // exits 3, unless --allow-partial accepts the skipped ones.
   const nothingScanned = `No files were scanned in ${options.targetLabel || targetPath || '.'}`;
   // A package is read in full, so a directory that was skipped for any reason is incomplete coverage.
-  const unreadDirs = options.noPrune ? files.skippedDirs.length : files.skippedDirs.filter((d) => d.reason === 'cannot be read').length;
+  const unreadDirs = options.noPrune ? files.skippedDirs.length : files.skippedDirs.filter((d) => d.reason.startsWith('cannot be read')).length;
   const incomplete = files.skipped.length + unreadDirs > 0;
   const incompleteNote = `${files.skipped.length} file(s) and ${unreadDirs} folder(s) were not read`;
   const coverageExit = () => {
@@ -798,6 +825,8 @@ Files   : ${files.length} file(s) queued for audit\n
       }),
       skipped: files.skipped.map((s) => ({ file: displayPath(s.file, homeFiles), reason: s.reason })),
       skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
+      // Links found inside the folder are not followed; this is only the count (it does not change the exit code).
+      links_not_followed: files.linksNotFollowed || 0,
       ...(files.length - notRead === 0 ? { warning: nothingScanned } : {}),
     }, null, 2) + '\n');
     process.exitCode = coverageExit();
@@ -844,6 +873,10 @@ ${ruleLine(process.env, 77)}\n
     if (files.skippedDirs.length > 20) process.stdout.write(`  ... and ${files.skippedDirs.length - 20} more\n`);
     process.stdout.write('\n');
   }
+  for (const advice of unreadableAdvice([...files.skipped, ...files.skippedDirs].map((s) => s.reason))) {
+    process.stdout.write(`Next step: ${advice}, then scan again.\n`);
+  }
+  if (files.linksNotFollowed) process.stdout.write(`Links not followed: ${files.linksNotFollowed} (a link inside the folder is not read; scan the folder it points to if you need it)\n`);
 
   // exitCode, not process.exit(): a large report written to a pipe must be
   // flushed completely before the process ends.

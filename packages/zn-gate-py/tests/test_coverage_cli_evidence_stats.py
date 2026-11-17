@@ -100,7 +100,7 @@ def test_scan_binary_key_file_direct(tmp_path):
 
 def test_scan_file_that_vanished(tmp_path):
     assert cli._scan_file(tmp_path / "gone.txt") == []
-    assert cli._skip_reason(tmp_path / "gone.txt") == "cannot be read"
+    assert cli._skip_reason(tmp_path / "gone.txt") == "cannot be read (no longer there)"
 
 
 def test_skip_reason_when_the_file_cannot_be_opened(tmp_path):

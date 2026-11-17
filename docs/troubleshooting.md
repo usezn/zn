@@ -383,14 +383,14 @@ Not scanned (1):
 - `2 MiB or larger`: `scan` reads a file only when it is smaller than 2 MiB (2,097,152 bytes). A bigger file is never opened.
 - `not a regular file`: the name matches, but it is not an ordinary file (for example a socket or a named pipe).
 - `binary .key file, not a key`: a `.key` file with binary content, such as a macOS Keynote file, not a private key.
-- `cannot be read`: the file could not be opened, usually because of its permissions.
+- `cannot be read`: the file could not be opened, usually because of its permissions. When the cause is something else it is added in brackets: `cannot be read (path too long)` (the path is longer than the system allows) or `cannot be read (too many symbolic links)`.
 
 A folder that `scan` did not enter is listed apart, under "Directories not scanned". It says `cannot be read` when the folder could not be opened, or `skipped by name` for a build or cache folder such as `dist` or `build`. Folders such as `node_modules` and `.git` are skipped without being listed.
 
 **What to do:**
 
 1. For `2 MiB or larger`, check whether the file is really text you wrote. If it can hold a secret, split it, or scan a smaller copy.
-2. For `cannot be read`, fix the permissions of the file or folder and run the scan again.
+2. For `cannot be read`, fix the permissions of the file or folder and run the scan again. For `path too long`, move the folder closer to the root or shorten the names, and for `too many symbolic links`, remove the link loop.
 3. If you accept that these files stay unread, see [The scan ends with exit code 3](#16-the-scan-ends-with-exit-code-3).
 
 ## 16. The scan ends with exit code 3

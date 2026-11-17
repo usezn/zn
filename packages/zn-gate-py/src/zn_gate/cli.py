@@ -267,6 +267,28 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 2 if res.get("verdict") == "block" else 0
 
 
+_UNREADABLE_DETAIL = {
+    errno.ENAMETOOLONG: "path too long",
+    errno.ELOOP: "too many symbolic links",
+    errno.ENOENT: "no longer there",
+}
+_UNREADABLE_ADVICE = {
+    "path too long": "shorten or move the folders marked 'path too long' (the system limits how long a path can be), "
+                     "or leave them out of the scan",
+    "too many symbolic links": "fix the link loop in the items marked 'too many symbolic links', "
+                               "or leave them out of the scan",
+}
+
+
+def _unreadable_reason(err: OSError) -> str:
+    """Why an entry could not be read. Plain "cannot be read" is a permissions problem; the rest say what happened."""
+    code = err.errno
+    if code in (None, errno.EACCES, errno.EPERM):
+        return "cannot be read"
+    detail = _UNREADABLE_DETAIL.get(code) or (errno.errorcode.get(code, "error")).lower()
+    return f"cannot be read ({detail})"
+
+
 def _skip_reason(file_path: Path, mcp_only: bool = False, follow: bool = False) -> Optional[str]:
     """Why a file that matches the scan is not read, or None."""
     try:
@@ -279,8 +301,8 @@ def _skip_reason(file_path: Path, mcp_only: bool = False, follow: bool = False) 
             head = f.read(_BINARY_SNIFF)
         if file_path.suffix.lower() == ".key" and head[:2] not in _UTF16_BOMS and b"\0" in head:
             return "binary .key file, not a key"
-    except OSError:
-        return "cannot be read"
+    except OSError as e:
+        return _unreadable_reason(e)
     return None
 
 
@@ -545,6 +567,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     skip_dirs = _SCAN_SKIP_DIRS
     user_excluded = set()
     skipped_dirs: List[Dict[str, str]] = []
+    links_not_followed = 0
 
     if getattr(args, "exclude", None):
         for ed in args.exclude.split(","):
@@ -574,9 +597,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
     else:
         # A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
         def _unreadable(err: OSError) -> None:
-            skipped_dirs.append({"dir": str(err.filename), "reason": "cannot be read"})
+            skipped_dirs.append({"dir": str(err.filename), "reason": _unreadable_reason(err)})
 
         for root, dirs, files in os.walk(target_path, onerror=_unreadable):
+            # Links found inside the folder are not followed (os.walk lists a link to a folder but does not enter it).
+            links_not_followed += sum(1 for n in (*dirs, *files) if os.path.islink(os.path.join(root, n)))
             kept = []
             for d in dirs:
                 if d in user_excluded:
@@ -625,8 +650,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
     allow_partial = bool(getattr(args, "allow_partial", False))
-    unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path), allow_partial=allow_partial)
+    unread_dirs = sum(1 for d in skipped_dirs if str(d.get("reason", "")).startswith("cannot be read"))
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path), allow_partial=allow_partial,
+                  links_not_followed=links_not_followed)
     if getattr(args, "no_fail", False):
         return 0
     if all_violations:
@@ -638,14 +664,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".", allow_partial: bool = False) -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".", allow_partial: bool = False, links_not_followed: int = 0) -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
     skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
     # An empty or partial result is not a clean one: say so (cmd_scan sets the exit code).
     nothing = f"No files were scanned in {target}" if scanned == 0 else ""
-    unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
+    unread_dirs = sum(1 for d in skipped_dirs if str(d.get("reason", "")).startswith("cannot be read"))
     incomplete = bool(skipped) or unread_dirs > 0
     incomplete_note = f"{len(skipped)} file(s) and {unread_dirs} folder(s) were not read"
     if fmt == "github":
@@ -682,6 +708,8 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             "threats": all_violations,
             "skipped": skipped,
             "skipped_dirs": skipped_dirs,
+            # Links found inside the folder are not followed; this is only the count (it does not change the exit code).
+            "links_not_followed": links_not_followed,
             **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
@@ -700,9 +728,16 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
             if len(skipped_dirs) > 20:
                 print(f"  ... and {len(skipped_dirs) - 20} more")
-        if any(r.get("reason") == "cannot be read" for r in [*skipped, *skipped_dirs]):
+        reasons = [str(r.get("reason", "")) for r in [*skipped, *skipped_dirs]]
+        if "cannot be read" in reasons:
             print("Next step: give your account read access to the items marked 'cannot be read' "
                   "(or leave them out of the scan), then scan again.")
+        for detail, advice in _UNREADABLE_ADVICE.items():
+            if f"cannot be read ({detail})" in reasons:
+                print(f"Next step: {advice}, then scan again.")
+        if links_not_followed:
+            print(f"Links not followed: {links_not_followed} (a link inside the folder is not read; "
+                  "scan the folder it points to if you need it)")
         if not all_violations and nothing:
             print()
             return
