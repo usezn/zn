@@ -43,3 +43,10 @@ path = "fuzz_targets/policy_wasm.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "scrubber"
+path = "fuzz_targets/scrubber.rs"
+test = false
+doc = false
+bench = false
