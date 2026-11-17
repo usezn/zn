@@ -110,6 +110,10 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 # so the crate must be a direct dependency even though no source line names it.
 ignored = ["schemars"]
 
+# cargo-fuzz builds the crate with --cfg fuzzing (see fuzz/); tell rustc the name is expected.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 # gemm (via candle) still uses the unmaintained paste crate (RUSTSEC-2024-0436); route it to pastey.
 [patch.crates-io]
 paste = { path = "tools/paste-shim" }
