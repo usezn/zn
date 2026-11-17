@@ -81,10 +81,18 @@ export type GuardBlockedValue<Fallback> = Fallback | ToolCallAssessment;
  * Wraps a function so its arguments are checked before it runs and, with
  * checkResult, its return value before it is returned. Throws TypeError on an
  * unknown onBlock or a wrongly typed option.
+ *
+ * With the default onBlock ('throw', or omitted) a blocked call throws, so the
+ * guarded function has the same return type as the original. With onBlock
+ * 'return' the result can also be the fallback or the assessment.
  */
+export function guardTool<F extends (...args: any[]) => any>(
+  fn: F,
+  options?: GuardToolOptions<unknown> & { onBlock?: 'throw' },
+): (...args: Parameters<F>) => ReturnType<F>;
 export function guardTool<F extends (...args: any[]) => any, Fallback = never>(
   fn: F,
-  options?: GuardToolOptions<Fallback>,
+  options: GuardToolOptions<Fallback>,
 ): (...args: Parameters<F>) => ReturnType<F> extends Promise<infer U>
   ? Promise<Awaited<U> | GuardBlockedValue<Fallback>>
   : ReturnType<F> | GuardBlockedValue<Fallback>;

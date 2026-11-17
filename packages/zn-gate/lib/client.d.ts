@@ -7,7 +7,7 @@ export { evaluate, RULES_VERSION } from './rules';
 export { sanitizeToolResult, redactSecrets } from './rules';
 export type { SecretDetection, RedactResult } from './rules';
 export { logEvidence, verifyEvidenceLedger } from './evidence';
-export type { EvidenceEvent, EvidenceRecord, EvidenceVerification } from './evidence';
+export type { EvidenceEvent, EvidenceRecord, EvidenceVerification, LogEvidenceOptions } from './evidence';
 export { checkToolCall, guardTool, GuardBlockError } from './guard';
 export type {
   RuleAssessment,
@@ -87,6 +87,13 @@ export function analyze(input: string, options?: AnalyzeOptions): Promise<Analyz
 
 /** Local-only evaluation. Never touches the network. */
 export function analyzeLocal(input: string, options?: EvaluateOptions): AnalyzeResult;
+
+/**
+ * Checks shell command text (Bash, sh, zsh or PowerShell) for the destructive shapes zn-gate knows.
+ * Synchronous and local. Calling it is the opt-in: it always applies every command rule.
+ * Input that is not a string is allowed. `rule` is "destructive:<name>" when blocked.
+ */
+export function checkCommand(command: string): Assessment;
 
 /**
  * Inspects tool output before it enters the model context. Local only; secrets

@@ -69,6 +69,8 @@ const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 
 The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.ts`, `lib/evidence.d.ts`); no `@types` package is needed.
 
+Subpath imports such as `zn-gate/lib/rules` need the `.js` extension in an ES module (`import ... from 'zn-gate/lib/rules.js'`, and in TypeScript with `moduleResolution` set to `node16` or `nodenext`). In CommonJS (`require`) the extension is optional, as in the example above.
+
 ### `evaluate(text, options)`
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.

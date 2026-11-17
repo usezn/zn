@@ -17,7 +17,8 @@ function readFile(path: string): string {
 }
 
 const guardedRead = guardTool(readFile, { name: 'read_file', checkResult: true });
-const text: string | ToolCallAssessment = guardedRead('notes.txt');
+// The default onBlock is 'throw', so the guarded function keeps the original return type.
+const text: string = guardedRead('notes.txt');
 
 const asyncFetch = guardTool(async (url: string): Promise<number> => url.length, { onBlock: 'return', fallback: -1 });
 async function run(): Promise<void> {
@@ -55,7 +56,15 @@ const ev = logEvidence({ tool_name: 'bash', verdict: 'block', payload: { cmd: 'x
 const hash: string | null = ev ? ev.record_hash : null;
 const ok: boolean = verifyEvidenceLedger().valid;
 
-void [allowed, rule, reason, same, base, text, r, redacted, out, deep, hash, ok, run];
+const lengthOf = guardTool((value: string): number => value.length);
+const length: number = lengthOf('abc');
+const explicitThrow = guardTool(readFile, { onBlock: 'throw', name: 'read_file' });
+const thrown: string = explicitThrow('notes.txt');
+const asyncDefault = guardTool(async (url: string): Promise<number> => url.length);
+const asyncLength: Promise<number> = asyncDefault('https://example.test');
+const returning = guardTool(readFile, { onBlock: 'return' });
+const returned: string | ToolCallAssessment = returning('notes.txt');
+void [length, thrown, asyncLength, returned, allowed, rule, reason, same, base, text, r, redacted, out, deep, hash, ok, run];
 
 // @ts-expect-error the verdict is only 'allow' or 'block'
 const bad: 'maybe' = call.verdict;
@@ -68,3 +77,8 @@ const code: 'other' = new GuardBlockError(call, 'x').code;
 // @ts-expect-error a callback is required to be a function
 guardTool(readFile, { onBlockCallback: 'log' });
 void [bad, code];
+// @ts-expect-error with onBlock 'throw' the result is the tool's own type, so it is a number here, not a string
+const notString: string = lengthOf('abc');
+// @ts-expect-error with onBlock 'return' the result can be the assessment, so it is not just a string
+const onlyString: string = returning('notes.txt');
+void [notString, onlyString];
