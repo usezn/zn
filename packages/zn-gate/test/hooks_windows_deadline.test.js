@@ -133,7 +133,7 @@ test('copilot and codex on Windows: reinstall replaces an older command with the
   assert.equal(fs.existsSync(file) ? JSON.stringify(JSON.parse(fs.readFileSync(file, 'utf8')).hooks || {}) : '{}', '{}');
 });
 
-test('copilot project install keeps its own start guard (the deadline is for the user install)', (t) => {
+test('copilot project install on Windows is still recognised as the start guard of zn (it now carries the deadline too)', (t) => {
   const dir = tempDir(t, 'zn-win-deadline-project-');
   cop.install({ scope: 'project', projectDir: dir, platform: 'win32' });
   const h = JSON.parse(fs.readFileSync(path.join(dir, '.github', 'hooks', 'zn-gate.json'), 'utf8')).hooks.preToolUse[0];

@@ -285,6 +285,8 @@ function parseCommand(command, agentId) {
   // The project hook (shared file): `zn` on the PATH inside zn's own guard (launcher.projectShCommand / projectWindowsScript).
   // Only the exact guard this version writes counts as guarded; a guard-looking command that differs is reported as modified.
   if (launcher.isProjectGuardExact(c, agentId) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
+  // The guard of an older zn-gate, before the deadline (see launcher.PROJECT_DEADLINE_S): it works, but a stall before zn starts is not covered.
+  if (launcher.isProjectGuardNoDeadline(c, agentId) || (ws && launcher.isProjectWindowsScriptNoDeadline(ws, agentId))) return { onPath: true, guarded: true, noDeadline: true };
   if (launcher.isProjectGuard(c, agentId) || (ws && launcher.isProjectWindowsScript(ws, agentId))) return { onPath: true, guarded: true, modified: true };
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
@@ -958,6 +960,15 @@ function modifiedProjectGuard(spec, text) {
   } catch (_) { return false; }
 }
 
+/* Whether this folder's hooks file holds the guard of an older zn-gate that has no deadline before `zn` starts. */
+function noDeadlineProjectGuard(spec, text) {
+  if (!text || spec.id === 'opencode' || spec.id === 'zcode') return false;
+  try {
+    const tree = JSON.parse(String(text).replace(/^\uFEFF/, ''));
+    return hookEntries(tree, spec.id).some((e) => { const c = parseCommand(e.command, spec.id); return Boolean(c && c.noDeadline); });
+  } catch (_) { return false; }
+}
+
 /* The time a hook gets to start. The agents kill a hook at 15 s, so that is the default; only a test on a slow machine passes a longer one (opts.hookTimeoutMs), never above 120 s. */
 function hookTimeout(ctx, own) {
   const t = ctx && ctx.hookTimeoutMs;
@@ -996,7 +1007,7 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
   }
   const user = readJson(path.join(adapter.copilotHome({ home: ctx.home, env: ctx.env }), 'settings.json'));
   if (user && user.disableAllHooks === true) out.notes.push('your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs');
-  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout (zn answers by itself 4 seconds before that); zn cannot see the policy hooks from here');
+  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout (zn answers by itself 4 seconds before that, and a script that starts first 2 seconds before); zn cannot see the policy hooks from here');
   return out;
 }
 
@@ -1331,6 +1342,7 @@ async function checkAgent(spec, ctx) {
   const projModified = !projBare && modifiedProjectGuard(spec, projText);
   const MOD_MSG = 'the zn hook in ' + projFile + ' was modified (it is not the guard zn writes); run `zn hooks install ' + spec.id + ' --project` again in that project';
   if (installed && projModified) res.notes.push(MOD_MSG);
+  if (installed && !projBare && !projModified && noDeadlineProjectGuard(spec, projText)) res.notes.push('the hook in ' + projFile + ' was written by an older zn-gate and has no deadline before zn starts: if the machine stalls at that point, ' + spec.name + ' lets the call run; run `zn hooks install ' + spec.id + ' --project` again in that project');
   if (installed && projBare) res.notes.push('the hook in ' + projFile + ' is a bare `zn hook ' + spec.id + '`: where zn or Node.js cannot start, ' + spec.name + ' runs the call unchecked there; ' + BARE_FIX);
 
   if (cursorPlugin && !installed) {

@@ -62,9 +62,13 @@ const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemin
 // Agents that read a block from a deny JSON on stdout with exit 0 (not from exit code 2).
 const DENY_STDOUT = {
   antigravity: (r) => ({ decision: 'deny', reason: r }),
+  // Copilot: only preToolUse can deny, with this JSON and exit 0 (exit 2 also denies, but the JSON carries the reason).
+  copilot: (r) => ({ permissionDecision: 'deny', permissionDecisionReason: r }),
 };
 // Agents whose non-blocking events get the warning on stderr (exit 0) instead of a systemMessage on stdout.
-const WARN_STDERR = new Set(['cursor']);
+const WARN_STDERR = new Set(['cursor', 'copilot']);
+// Copilot's camelCase event name: the one event that can block (the shared default set is the Claude Code spelling).
+const COPILOT_BLOCKS = new Set(['preToolUse']);
 const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
 const blockJson = (agentId) => BLOCK_JSON_BY_AGENT[agentId] || BLOCK_JSON;
 
@@ -242,7 +246,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   const noTimer = opts.deadlineSoft ? 'zn_cap "$@"' : 'ZN_RC=127';
   const reason = T(reasonText(agentId));
   const warn = T(warnText(agentId));
-  const exitEvents = [...blockExit(agentId)];
+  const exitEvents = [...(agentId === 'copilot' ? COPILOT_BLOCKS : blockExit(agentId))];
   const jsonEvents = [...blockJson(agentId)];
   const crash = T(crashText(agentId));
   const crashWarn = T(crashWarnText());
@@ -409,8 +413,8 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   return file;
 }
 
-/** The agents whose user hooks go through a launcher script (Copilot and OpenCode have none). */
-const LAUNCHER_AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'antigravity', 'zcode'];
+/** The agents whose user hooks go through a launcher script (OpenCode has none; Copilot has one on macOS and Linux). */
+const LAUNCHER_AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'antigravity', 'zcode', 'copilot'];
 const LAUNCHER_MARK = '#!/bin/sh\n# Written by `zn hooks install ';
 
 /** True when the file is a launcher script that zn wrote (a regular file with zn's header). */
@@ -506,7 +510,7 @@ const PROJECT_WIN_DENY_JSON = {
 function projectAnswer(agentId, event, why, win) {
   const t = projectTexts(agentId);
   const crash = why === 'crash';
-  const block = agentId === 'antigravity' ? true : agentId === 'copilot' ? event === 'preToolUse' : blockExit(agentId).has(event);
+  const block = agentId === 'antigravity' ? true : agentId === 'copilot' ? COPILOT_BLOCKS.has(event) : blockExit(agentId).has(event);
   if (block) {
     const r = crash ? t.crash : t.missing;
     if (PROJECT_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_DENY_JSON[agentId](r)), stderr: null, exit: 0 };
@@ -517,8 +521,36 @@ function projectAnswer(agentId, event, why, win) {
   if (agentId !== 'copilot' && blockJson(agentId).has(event)) {
     return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: crash ? t.crash : t.missing } } }), stderr: null, exit: 0 };
   }
-  if (agentId === 'copilot' || WARN_STDERR.has(agentId)) return { stdout: null, stderr: w, exit: 0 };
+  if (WARN_STDERR.has(agentId)) return { stdout: null, stderr: w, exit: 0 };
   return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
+}
+
+/*
+ * Project installs of an agent that lets the call run when its hook times out (Copilot) also get a deadline before `zn` starts, written
+ * inline in the command: the shared file cannot name this machine's launcher script (see above), so the command itself runs `zn hook`
+ * as a child in its own process group with a timer. Seconds, agent's timeout minus 2 (the same offset as the launcher; Copilot: 15 s).
+ */
+const PROJECT_DEADLINE_S = { copilot: launcherDeadlineS(15) };
+
+// The part of the POSIX project guard that runs `zn hook <agent>` under a deadline of `d` seconds and leaves with the hook's answer
+// (status 0 or 2); anything else (also a hook killed at the deadline) falls through to the crash answer that follows it. Without
+// /bin/sleep or mktemp the hook runs directly, with only its own supervisor, as a guard with no deadline does.
+function projectRunWithDeadline(agentId, d) {
+  const hook = '"$Z" hook ' + agentId;
+  const redir = ' <&3 3<&- >"$O"';
+  return 'C=1; O=; [ -x /bin/sleep ] && O=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null); ' +
+    'if [ -n "$O" ]; then ' +
+    'G=; for X in /usr/bin/setsid /bin/setsid; do [ -x "$X" ] && { G=$X; break; }; done; ' +
+    'exec 3<&0; ' +
+    'if [ -n "$G" ]; then "$G" ' + hook + redir + ' & ' +
+    'elif [ -x /usr/bin/perl ]; then /usr/bin/perl -e "setpgrp(0,0); exec { \\$ARGV[0] } @ARGV; exit 127" ' + hook + redir + ' & ' +
+    'else ' + hook + redir + ' & fi; ' +
+    'H=$!; exec 3<&-; ' +
+    '( trap "kill \\$K 2>/dev/null; exit 0" TERM; /bin/sleep ' + d + ' & K=$!; wait $K; kill -TERM -$H 2>/dev/null; kill -TERM $H 2>/dev/null; ' +
+    '/bin/sleep 1 & K=$!; wait $K; kill -KILL -$H 2>/dev/null; kill -KILL $H 2>/dev/null ) >/dev/null 2>&1 </dev/null & ' +
+    'W=$!; wait $H; C=$?; kill -TERM $W 2>/dev/null; kill -KILL -$H 2>/dev/null; ' +
+    'if [ "$C" = 0 ] || [ "$C" = 2 ]; then cat "$O"; rm -f "$O"; exit $C; fi; rm -f "$O"; ' +
+    'else ' + hook + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ';
 }
 
 // The project guard trusts the zn and node it found only when the folder of each one is an entry of the PATH as written:
@@ -535,8 +567,11 @@ const PROJECT_TRUST = [
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
  * exit 127, which the agents run through as a non-blocking error.
  */
-function projectShCommand(agentId, event) {
+function projectShCommand(agentId, event, opts = {}) {
   checkAgentId(agentId);
+  // The deadline (whole seconds) of an agent that fails open on a timeout; opts.deadlineS = 0 gives the guard without one (what older versions wrote).
+  const deadlineS = opts.deadlineS !== undefined ? opts.deadlineS : (PROJECT_DEADLINE_S[agentId] || 0);
+  if (!Number.isInteger(deadlineS) || deadlineS < 0) throw new Error('zn: bad deadline');
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   // An agent that runs the command through a shell (every one but Antigravity) gets the readable script in single quotes: the
   // ${IFS} form below is for a command split on spaces with no shell, and a shell such as zsh does not split an unquoted ${IFS}.
@@ -548,8 +583,9 @@ function projectShCommand(agentId, event) {
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
+    const ranHook = deadlineS ? projectRunWithDeadline(agentId, deadlineS) + 'fi; ' : '"$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ';
     const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
-      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; ' + ranHook +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
   }
@@ -582,8 +618,10 @@ function projectShCommand(agentId, event) {
 }
 
 /** The PowerShell text of the same project hook (for windowsScriptCommand). Ends with the comment that isOurs() reads. */
-function projectWindowsScript(agentId, event) {
+function projectWindowsScript(agentId, event, opts = {}) {
   checkAgentId(agentId);
+  const deadlineS = opts.deadlineS !== undefined ? opts.deadlineS : (PROJECT_DEADLINE_S[agentId] || 0);
+  if (!Number.isInteger(deadlineS) || deadlineS < 0) throw new Error('zn: bad deadline');
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   const say = (a) => [
     ...(a.stdout ? ["[Console]::Out.WriteLine('" + a.stdout + "')"] : []),
@@ -593,6 +631,13 @@ function projectWindowsScript(agentId, event) {
   const missing = projectAnswer(agentId, event, 'missing', true);
   // Only 0 (done) and 2 (blocked) leave early; with an answer that exits 0 (a deny JSON, a warning) the refusal passes on as exit 0.
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
+  if (deadlineS) {
+    // The hook runs as a child with a deadline (zr, as in windowsScript): on expiry the process tree is killed and the answer is the crash one.
+    const zleave = 'if ($rc -eq 0 -or $rc -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$rc') + ' }';
+    return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + winZr(deadlineS) +
+      "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
+      'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
+  }
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
     "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
@@ -605,6 +650,7 @@ function isProjectGuard(command, agentId) {
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
     if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
+    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + ' <&3 3<&- >"$O"')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
@@ -614,7 +660,7 @@ function isProjectWindowsScript(script, agentId) {
   try {
     if (typeof script !== 'string') return false;
     if (script === projectWindowsScript(agentId)) return true;
-    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';')) && script.endsWith('# zn hook ' + agentId);
+    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';') || (script.includes("$rc = zr (zf 'zn.cmd') 'hook " + agentId + "';") && !script.includes("Exists('"))) && script.endsWith('# zn hook ' + agentId);
   } catch (_) { return false; }
 }
 
@@ -629,10 +675,26 @@ function isProjectGuardExact(command, agentId) {
   } catch (_) { return false; }
 }
 
+/** Whether a command is exactly the guard an older zn-gate wrote for an agent that now gets a deadline: the same guard with none (POSIX or Windows). */
+function isProjectGuardNoDeadline(command, agentId) {
+  try {
+    if (typeof command !== 'string' || !PROJECT_DEADLINE_S[agentId]) return false;
+    const old = (e) => command === projectShCommand(agentId, e, { deadlineS: 0 });
+    return GUARD_EVENTS.some(old);
+  } catch (_) { return false; }
+}
+
 /** Whether a script is exactly a Windows project guard that this version writes (any event of this agent). */
 function isProjectWindowsScriptExact(script, agentId) {
   try {
     return typeof script === 'string' && GUARD_EVENTS.some((e) => script === projectWindowsScript(agentId, e));
+  } catch (_) { return false; }
+}
+
+/** Whether a script is exactly the Windows project guard an older zn-gate wrote for an agent that now gets a deadline (the same one with none). */
+function isProjectWindowsScriptNoDeadline(script, agentId) {
+  try {
+    return typeof script === 'string' && Boolean(PROJECT_DEADLINE_S[agentId]) && GUARD_EVENTS.some((e) => script === projectWindowsScript(agentId, e, { deadlineS: 0 }));
   } catch (_) { return false; }
 }
 
@@ -1060,6 +1122,19 @@ function spaceMessage(file, opts) {
     'The folder must be one you own, with no link in its path, and every folder above it must belong to you or to root and not be writable by others: zn-gate refuses anything else, because the launcher in it runs on every tool call.';
 }
 
+/*
+ * zr runs a command as a child with the hook input passed on (stdin) and its output left alone; after the deadline the child and
+ * everything it started are killed (taskkill /T) and zr gives -1, which falls through to the block of the script.
+ */
+function winZr(deadlineS) {
+  return 'function zr($f, $a) { $rc = -1; try { $i = [System.Diagnostics.ProcessStartInfo]::new(); $i.FileName = $f; $i.Arguments = $a; $i.UseShellExecute = $false; ' +
+    '$i.RedirectStandardInput = $true; $sw = [System.Diagnostics.Stopwatch]::StartNew(); $p = [System.Diagnostics.Process]::Start($i); ' +
+    'try { $c = [Console]::OpenStandardInput().CopyToAsync($p.StandardInput.BaseStream); [void]$c.Wait(' + deadlineS * 1000 + ') } catch {}; ' +
+    'try { $p.StandardInput.Close() } catch {}; ' +
+    '$left = [Math]::Max(0, ' + deadlineS * 1000 + ' - $sw.ElapsedMilliseconds); ' +
+    'if ($p.WaitForExit([int]$left)) { $rc = $p.ExitCode } else { try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {} } } catch {}; return $rc }; ';
+}
+
 /**
  * The PowerShell text (for windowsCommand-style quoting by the caller) of the
  * same three steps, ending with a comment that names the agent so that
@@ -1081,8 +1156,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
     copilot: (r) => ({ permissionDecision: 'deny', permissionDecisionReason: r }),
   };
   const jsonDeny = Boolean(DENY_JSON[agentId]);
-  // Copilot's camelCase event name: only preToolUse can deny (the shared default set is the Claude Code spelling).
-  const blocks = agentId === 'copilot' ? new Set(['preToolUse']) : blockExit(agentId);
+  const blocks = agentId === 'copilot' ? COPILOT_BLOCKS : blockExit(agentId);
   // The block text (the Node.js is gone) or, when the hook ran and failed or timed out, the crash text.
   const tailOf = (reason, warn) => {
   let tail;
@@ -1095,7 +1169,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
       : "[Console]::Error.WriteLine('" + reason + "'); exit 2";
   }
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
-  else if (WARN_STDERR.has(agentId) || agentId === 'copilot') tail = "[Console]::Error.WriteLine('" + warn + "'); exit 0";
+  else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warn + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
   return 'zd; ' + tail;
   };
@@ -1109,12 +1183,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   if (deadlineS) {
     // zr runs the command as a child with the hook input passed on (stdin) and its output left alone; after the deadline the
     // child and everything it started are killed (taskkill /T) and zr gives -1, which falls through to the block below.
-    const zr = 'function zr($f, $a) { $rc = -1; try { $i = [System.Diagnostics.ProcessStartInfo]::new(); $i.FileName = $f; $i.Arguments = $a; $i.UseShellExecute = $false; ' +
-      '$i.RedirectStandardInput = $true; $sw = [System.Diagnostics.Stopwatch]::StartNew(); $p = [System.Diagnostics.Process]::Start($i); ' +
-      'try { $c = [Console]::OpenStandardInput().CopyToAsync($p.StandardInput.BaseStream); [void]$c.Wait(' + deadlineS * 1000 + ') } catch {}; ' +
-      'try { $p.StandardInput.Close() } catch {}; ' +
-      '$left = [Math]::Max(0, ' + deadlineS * 1000 + ' - $sw.ElapsedMilliseconds); ' +
-      'if ($p.WaitForExit([int]$left)) { $rc = $p.ExitCode } else { try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {} } } catch {}; return $rc }; ';
+    const zr = winZr(deadlineS);
     const zleave = jsonDeny
       ? 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx 0 }'
       : 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx $rc }';
@@ -1154,4 +1223,4 @@ function windowsScriptCommand(script, opts = {}) {
   return (opts.cmd ? q.CMD_POWERSHELL : q.powershellExe()) + ' -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { LAUNCHER_AGENTS, isOurLauncher, removeLauncher, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON, treeManifest, parseManifest };
+module.exports = { LAUNCHER_AGENTS, isOurLauncher, removeLauncher, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, PROJECT_DEADLINE_S, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, isProjectGuardNoDeadline, isProjectWindowsScriptNoDeadline, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON, treeManifest, parseManifest };

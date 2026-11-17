@@ -241,7 +241,8 @@ test('install (user): uses $COPILOT_HOME when set, backs up, keeps foreign hooks
   assert.ok(rep.backup && fs.existsSync(rep.backup));
   let data = readJson(file);
   assert.deepEqual(data.hooks.preToolUse[0], mine);
-  assert.match(data.hooks.preToolUse[1].bash, /runner\.js'? copilot/);
+  // macOS and Linux: the sh launcher (it names the runner and the SHA-256 inside); on Windows the bash command stays plain (PowerShell has its own script).
+  assert.match(data.hooks.preToolUse[1].bash, process.platform === 'win32' ? /runner\.js'? copilot/ : /zn-hook-copilot\.sh' preToolUse$/);
   assert.equal(data.hooks.preToolUse.length, 2);
   cop.install({ scope: 'user', home, env: E, nodePath: '/usr/bin/node' });
   assert.equal(readJson(file).hooks.preToolUse.length, 2);

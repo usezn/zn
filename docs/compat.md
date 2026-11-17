@@ -561,8 +561,10 @@ The launcher scripts (the POSIX ones, and on Windows the PowerShell hooks of ZCo
 agent's timeout, that stops the whole hook (and anything it started) and answers the same block, for the case
 where the hook is stuck before it can start its own timer (a slow disk, an antivirus scan of `node.exe`, a machine under load); the same answer is given when the launcher itself
 is told to stop. On Windows, Claude Code, Cursor, Gemini CLI and Antigravity have the first timer
-only. Copilot CLI has the second deadline only in a user install on Windows (a PowerShell script, 13 seconds); on macOS and Linux, and in a project install, it
-has the first timer only, so a hook that is stuck before it starts is let through there (Copilot fails open on a timeout).
+only. Copilot CLI has the second deadline (13 seconds) in every install, because it lets a call through when a hook times out: a user install on
+macOS and Linux runs the hook through the launcher script, a user install on Windows through a PowerShell script, and a project install carries the
+same deadline inside its command (the shared file cannot name a launcher on your machine). On a machine without `/bin/sleep` or `mktemp`, a project
+install has the first timer only.
 
 When zn's hook cannot start (for example, the Node.js it was installed with was
 removed, and `node` or `zn` is not on the PATH of the agent), what happens
@@ -601,10 +603,11 @@ installs, and the plugins keep a plain command. Agent by agent:
   and the tool call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
-  fails open, so that output is not scrubbed. Copilot has no launcher on macOS and Linux; zn
-  sets a 15-second timeout on its hooks and blocks the call itself at 11 seconds
-  (Copilot lets a call through when a hook times out). On Windows a user install
-  runs the hook from a PowerShell script that stops it at 13 seconds and answers the deny itself.
+  fails open, so that output is not scrubbed. Copilot lets a call through when a hook
+  times out, so zn sets a 15-second timeout on its hooks and blocks the call itself at 11
+  seconds. A script that starts before Node.js also stops the hook at 13 seconds and answers
+  the deny itself: the launcher script on macOS and Linux, a PowerShell script on Windows, and,
+  in a project install, the same deadline written inside the hook command.
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.

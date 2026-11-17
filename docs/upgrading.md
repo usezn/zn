@@ -148,8 +148,11 @@ installs, and the plugins keep a plain command. Agent by agent:
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot lets a call through when
   a hook times out, so zn sets a 15-second timeout on its hooks and blocks the
-  call itself at 11 seconds. On Windows, run `zn hooks install copilot` again to
-  also get the 13-second deadline of the PowerShell script that starts the hook.
+  call itself at 11 seconds. Run `zn hooks install copilot` again (and
+  `zn hooks install copilot --project` in a project) to also get the 13-second
+  deadline of the script that starts the hook: the launcher on macOS and Linux,
+  a PowerShell script on Windows, and the same deadline inside the command of a
+  project install. `zn-gate check` tells you when a project hook is the older one.
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.

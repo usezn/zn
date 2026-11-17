@@ -14,10 +14,14 @@
  * Limits that VS Code and GitHub document, and that no hook format can lift:
  *  - "Timeouts are fail-open for every event, including preToolUse and admin-deployed policy hooks"
  *    (https://docs.github.com/en/copilot/reference/hooks-reference, "Exit codes"). zn does not wait for it: its own
- *    supervisor (runner armSupervisor) answers with a deny 4 s before timeoutSec. On Windows (user install) the hook is also
- *    a PowerShell script (launcher.windowsScript with a deadline) that kills the process tree 2 s before timeoutSec and
- *    answers the deny itself, so a stall before Node.js starts is covered; on macOS and Linux (and in a project install) only a
- *    hook that is stopped before it could start its timer (a machine so loaded that Node.js does not start in 11 s) is let through.
+ *    supervisor (runner armSupervisor) answers with a deny 4 s before timeoutSec, and a deadline armed BEFORE Node.js starts
+ *    does the same 2 s before timeoutSec, so a stall before the supervisor exists (a slow disk, an antivirus scan, a cold start) is
+ *    covered too: a user install on macOS and Linux goes through zn's sh launcher (launcher.unixScript, which also checks the
+ *    SHA-256 of the runner), on Windows through a PowerShell script (launcher.windowsScript); a project install carries the same
+ *    deadline inline in its command (launcher.projectShCommand / projectWindowsScript), because the shared file cannot name this
+ *    machine's launcher. On expiry the process tree is killed and the answer is the deny of preToolUse (a warning for postToolUse).
+ *    Left uncovered: a machine without /bin/sleep or mktemp (a project install then has only the supervisor), and an install
+ *    with a command of the caller's own (`--command`).
  *  - "Command and HTTP config-file userPromptSubmitted hooks have their output dropped, including modifiedPrompt"
  *    (same page, "userPromptSubmitted"): a typed prompt cannot be blocked from a hook file in VS Code or the CLI.
  *  - The Copilot harness also reads the repository .claude/settings(.local).json ("Cross-tool .claude/settings.json ...
@@ -621,9 +625,14 @@ function install(opts = {}) {
   // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand / projectWindowsScript): a missing zn or Node.js denies the call.
   const guarded = project && !opts.command;
   const bash = cfg.hookCommand(id, opts);
+  // macOS and Linux user install: the sh launcher with a deadline 2 s before Copilot's own timeout (which lets the call run), armed
+  // before Node.js starts; the file is written once here and named by both events. Windows has the PowerShell script below.
+  const launcherFile = (!project && !opts.command && platform !== 'win32')
+    ? launcher.writeLauncher(id, opts.nodePath || process.execPath, opts.runnerPath || cfg.runnerPath(), { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true })
+    : null;
   const handlerFor = (event) => {
     if (guarded) return { type: 'command', bash: launcher.projectShCommand(id, event), powershell: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event)), timeoutSec: HOOK_TIMEOUT_S };
-    const h = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
+    const h = { type: 'command', bash: launcherFile ? launcher.launcherCommand(launcherFile, event, platform) : bash, timeoutSec: HOOK_TIMEOUT_S };
     if (opts.command) h.powershell = opts.command;
     else if (project) h.powershell = bash;
     else if (platform === 'win32') {
@@ -650,7 +659,7 @@ function install(opts = {}) {
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
   report.warnings.push('Copilot drops the output of a command hook for a typed prompt (userPromptSubmitted), in VS Code and in Copilot CLI, so a secret pasted into a prompt is not stopped.');
   report.warnings.push('The hooks follow the VS Code and GitHub documentation; they were run end to end with Copilot CLI, not inside the VS Code app.');
-  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s and blocks the call itself 4 s earlier; on Windows a PowerShell script also stops the hook and blocks the call 2 s earlier), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
+  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s and blocks the call itself 4 s earlier, and a script that starts first stops the hook and blocks the call 2 s earlier), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
   if (project && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook copilot): every teammate who opens this project in Copilot CLI needs zn-gate installed, otherwise the hook cannot start. Copilot also asks each person to trust the folder before it runs repository hooks.');
   return report;
 }
@@ -672,6 +681,9 @@ function uninstall(opts = {}) {
     if (!hooksLeft) delete data.hooks;
     cfg.writeJson(file, data);
   }
+  // The launcher (see install) is shared by every config of this machine: one uninstall leaves it in place,
+  // only the machine-wide uninstall (opts.removeLauncher) deletes it.
+  if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) launcher.removeLauncher(id, opts);
   return report;
 }
 
