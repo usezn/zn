@@ -120,6 +120,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
 | `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. `1` does the same. The environment can only add offline mode: `online` is read as offline. | npm |
 | `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
+| `ZN_MCP_MAX_LINE_BYTES` | `33554432` (32 MiB) | Longest input line, in bytes, that `zn-gate mcp` accepts as one message. Only lowers the limit: a value above 32 MiB is cut to it, and a value that is not a positive whole number is ignored. | npm |
 | `ZN_SHIELD_LIMITS` | The built-in limits | A JSON object that lowers the shield's size and count limits, for tests and unusual setups. Values above a built-in limit are cut to it; values that are not positive whole numbers are ignored. | npm |
 | `ZN_HOOK_DIR` | `~/.zn/hooks` (`$ZN_HOME/hooks` when `ZN_HOME` is set) | Folder for the hook launchers. It must be private to your user. | npm |
 | `ZN_AGENT` | None | Agent name for `zn run` and the MCP server when `--agent` is not given. | npm |
@@ -612,6 +613,8 @@ zn-gate mcp
 ```
 
 Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status` (reports the detection engine, the rules version and whether anything leaves the computer).
+
+A message is one line of input, and a line may be at most 32 MiB. A longer line is not kept in memory: it is read past and dropped, the server answers once with the JSON-RPC error `-32600` (`Invalid Request`, `id` `null`), and the next message is served as usual. `ZN_MCP_MAX_LINE_BYTES` can lower that limit (see the [environment variables](#all-environment-variables)).
 
 Exit codes: it runs until its input is closed, then exits `0`.
 

@@ -1,6 +1,5 @@
 'use strict';
 
-const readline = require('readline');
 const { analyze, analyzeLocal, checkToolResult, isCloudEnabled, RULES_VERSION, resolveEndpoint, usesStoredKey } = require('./client');
 const { sanitizeToolResult } = require('./rules');
 
@@ -12,6 +11,21 @@ try {
 const { AsyncLocalStorage } = require('async_hooks');
 const proto = require('./mcp-protocol');
 const { isVerbose } = require('./verbose');
+const { DEFAULT_LIMITS, createLineReader } = require('./shield_framing');
+
+// Longest stdin line (one JSON-RPC message) accepted, in bytes. The same cap the shield applies to its client.
+const MAX_LINE_BYTES = DEFAULT_LIMITS.clientLineBytes;
+
+/**
+ * The line cap: ZN_MCP_MAX_LINE_BYTES (a positive whole number of bytes) can only lower it. A value that is not
+ * a positive whole number is ignored, and one above the default is cut to the default.
+ */
+function resolveLineCap(env = process.env) {
+  const raw = env.ZN_MCP_MAX_LINE_BYTES;
+  if (!raw || !/^[0-9]+$/.test(String(raw).trim())) return MAX_LINE_BYTES;
+  const n = Number(String(raw).trim());
+  return Number.isSafeInteger(n) && n > 0 ? Math.min(n, MAX_LINE_BYTES) : MAX_LINE_BYTES;
+}
 
 const PROTOCOL_VERSION = proto.LATEST_PROTOCOL_VERSION;
 // Version agreed in initialize (one client per stdio process); until then the latest.
@@ -310,18 +324,14 @@ async function handleBatch(messages, options) {
 }
 
 function startMcpServer(options = {}) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: false,
-  });
+  const maxBytes = resolveLineCap();
 
   if (isVerbose()) {
     process.stderr.write(`[zn-gate] MCP server listening on stdio (engine: ${isCloudEnabled(options) ? 'local + cloud for analyze_prompt' : 'local only'})...\n`);
   }
 
-  rl.on('line', async (line) => {
-    const trimmed = line.trim();
+  const onLine = async (buf) => {
+    const trimmed = buf.toString('utf8').trim();
     if (!trimmed) return;
 
     try {
@@ -345,10 +355,22 @@ function startMcpServer(options = {}) {
         },
       });
     }
-  });
+  };
 
-  rl.on('close', () => {
-    process.exit(0);
+  // Lines are split here, not by readline, so a peer that never sends a newline cannot make the process
+  // buffer without a bound: a line over the cap is counted and dropped as it streams past.
+  createLineReader(process.stdin, {
+    maxBytes,
+    onLine,
+    onOversize: ({ bytes }) => {
+      if (isVerbose()) {
+        process.stderr.write(`[zn-gate] MCP message dropped: its line is longer than ${maxBytes} bytes (${bytes} read)\n`);
+      }
+      sendError(null, -32600, `Invalid Request: the message is larger than ${maxBytes} bytes`);
+    },
+    onEnd: () => {
+      process.exit(0);
+    },
   });
 }
 
@@ -356,6 +378,8 @@ module.exports = {
   TOOLS,
   toolsFor,
   startMcpServer,
+  resolveLineCap,
+  MAX_LINE_BYTES,
   handleRequest,
   handleBatch,
   SERVER_NAME,
