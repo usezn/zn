@@ -7,6 +7,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('node:fs');
 const path = require('node:path');
 const policy = require('../lib/hooks/policy');
@@ -147,16 +148,14 @@ test('posix keeps a trailing dot as a different file, and ~1 is a plain name', {
 test('very long segments stay linear (win32)', () => {
   asWindows(() => {
     const inputs = [
-      'C:\\Users\\alice\\proj\\' + '.'.repeat(100000) + 'x',
-      'C:\\Users\\alice\\proj\\' + 'a' + ' .'.repeat(50000),
-      'C:\\Users\\alice\\proj\\' + 'a~1'.repeat(30000),
-      'C:\\Users\\alice\\proj\\' + 'abcdef~1\\'.repeat(10000) + 'f',
-      '/Users/alice/proj/' + 'abcdef~1/'.repeat(10000) + 'f',
+      [100000, (n) => 'C:\\Users\\alice\\proj\\' + '.'.repeat(n) + 'x'],
+      [50000, (n) => 'C:\\Users\\alice\\proj\\' + 'a' + ' .'.repeat(n)],
+      [30000, (n) => 'C:\\Users\\alice\\proj\\' + 'a~1'.repeat(n)],
+      [10000, (n) => 'C:\\Users\\alice\\proj\\' + 'abcdef~1\\'.repeat(n) + 'f'],
+      [10000, (n) => '/Users/alice/proj/' + 'abcdef~1/'.repeat(n) + 'f'],
     ];
-    for (const p of inputs) {
-      const t = Date.now();
-      policy.classifyPath(p, p.startsWith('/') ? P : O);
-      assert.ok(Date.now() - t < 2000, 'slow: ' + p.length + ' chars took ' + (Date.now() - t) + ' ms');
+    for (const [size, build] of inputs) {
+      assertLinear((p) => policy.classifyPath(p, p.startsWith('/') ? P : O), build, size, build(4).slice(0, 40));
     }
   });
 });
