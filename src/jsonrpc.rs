@@ -82,12 +82,66 @@ pub enum JsonRpcValidation {
     },
 }
 
-/// Validate and extract tool call from JSON-RPC request
+/// Deepest nesting of objects and arrays that a frame may have; the top-level object counts as one level.
+/// A deeper frame is refused before it is parsed. serde_json stops at 128 levels, and a value it skips without
+/// reading (an unknown top-level key) has no limit at all, so without this ceiling a deep unknown key could make
+/// the duplicate-key walk stop early while the request still parses.
+pub const MAX_FRAME_DEPTH: usize = 64;
+
+/// True when `json_str` opens more than `limit` objects or arrays inside each other. Brackets inside JSON strings
+/// do not count. It only reads bytes, so it is safe on any input, however deep.
+pub fn nesting_exceeds(json_str: &str, limit: usize) -> bool {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for b in json_str.bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth = depth.saturating_add(1);
+                if depth > limit {
+                    return true;
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// What the duplicate-key walk found.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum KeyScan {
+    /// The whole text was read and no object repeats a key.
+    Unique,
+    /// Some object repeats a key.
+    Repeated,
+    /// The walk stopped before the end (invalid JSON, or nesting past serde_json's recursion limit), so
+    /// the part after that point was never looked at.
+    Unfinished,
+}
+
 /// True when any JSON object in `json_str`, at any depth, has the same key twice. serde_json::Value keeps only the
 /// last of two equal keys, so a frame with a benign last copy and a different earlier one would be checked on the
 /// benign copy while a server that reads the first one acts on the other. Such frames are refused before any check.
-/// Unparsable text returns false here; the normal parse reports it.
+/// Text that cannot be read to the end (invalid JSON, or nested too deep to walk) also returns true: a part of the
+/// text that was never read is never reported as free of duplicates.
 pub fn has_duplicate_keys(json_str: &str) -> bool {
+    scan_keys(json_str) != KeyScan::Unique
+}
+
+fn scan_keys(json_str: &str) -> KeyScan {
     use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
     use std::collections::HashSet;
     use std::fmt;
@@ -148,10 +202,17 @@ pub fn has_duplicate_keys(json_str: &str) -> bool {
 
     let mut dup = false;
     let mut de = serde_json::Deserializer::from_str(json_str);
-    let _ = Walk(&mut dup).deserialize(&mut de);
-    dup
+    let walked = Walk(&mut dup).deserialize(&mut de);
+    if dup {
+        KeyScan::Repeated
+    } else if walked.is_err() {
+        KeyScan::Unfinished
+    } else {
+        KeyScan::Unique
+    }
 }
 
+/// Validate and extract tool call from JSON-RPC request
 pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
     // One frame is one object. Batches (arrays) are not supported, and a string, number, boolean or null
     // is not a request, so none of them is forwarded. The struct would read an array as a positional
@@ -176,14 +237,36 @@ pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
             },
         };
     }
-    // A key repeated in any object (also inside params or the arguments) is refused: the checks below read a
-    // serde_json::Value, which keeps only the last copy.
-    if has_duplicate_keys(json_str) {
+    // A frame nested deeper than MAX_FRAME_DEPTH is refused before any parse, so the duplicate-key walk below
+    // always reads the whole frame.
+    if nesting_exceeds(json_str, MAX_FRAME_DEPTH) {
         return JsonRpcValidation::Error {
             id: None,
             code: jsonrpc_error::INVALID_REQUEST,
-            message: "Invalid Request: a JSON object in this frame repeats a key".to_string(),
+            message: format!(
+                "Invalid Request: the frame nests objects or arrays more than {MAX_FRAME_DEPTH} levels deep"
+            ),
         };
+    }
+    // A key repeated in any object (also inside params or the arguments) is refused: the checks below read a
+    // serde_json::Value, which keeps only the last copy. A walk that stops early is refused too: the text after
+    // that point was never checked for repeated keys.
+    match scan_keys(json_str) {
+        KeyScan::Unique => {}
+        KeyScan::Repeated => {
+            return JsonRpcValidation::Error {
+                id: None,
+                code: jsonrpc_error::INVALID_REQUEST,
+                message: "Invalid Request: a JSON object in this frame repeats a key".to_string(),
+            };
+        }
+        KeyScan::Unfinished => {
+            return JsonRpcValidation::Error {
+                id: None,
+                code: jsonrpc_error::PARSE_ERROR,
+                message: "Parse error: Invalid JSON".to_string(),
+            };
+        }
     }
     // Straight into the struct, never through serde_json::Value: a Value keeps the last of two duplicate
     // keys, while the struct rejects them, so the method and params checked here are the only ones in
@@ -752,8 +835,9 @@ mod tests {
             "[".repeat(depth),
             "]".repeat(depth)
         );
-        let (_, code, _) = err(validate_jsonrpc(&frame));
-        assert_eq!(code, jsonrpc_error::PARSE_ERROR);
+        let (_, code, msg) = err(validate_jsonrpc(&frame));
+        assert_eq!(code, jsonrpc_error::INVALID_REQUEST);
+        assert!(msg.contains("levels deep"), "{msg}");
     }
 
     #[test]
@@ -898,5 +982,105 @@ mod tests {
             validate_jsonrpc(frame),
             JsonRpcValidation::ToolCall { .. }
         ));
+    }
+
+    // ---- nesting ceiling and an unfinished duplicate-key walk ----
+
+    fn nested(levels: usize) -> String {
+        format!("{}1{}", "[".repeat(levels), "]".repeat(levels))
+    }
+
+    fn assert_refused(frame: &str) {
+        match validate_jsonrpc(frame) {
+            JsonRpcValidation::Error { code, .. } => assert!(
+                code == jsonrpc_error::INVALID_REQUEST || code == jsonrpc_error::PARSE_ERROR,
+                "{code}"
+            ),
+            other => panic!("frame must be refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_deep_unknown_key_cannot_hide_a_repeated_argument_key() {
+        for levels in [65, 127, 128, 200, 5000] {
+            let deep = nested(levels);
+            for frame in [
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"x":{deep},"method":"tools/call","params":{{"name":"shell","arguments":{{"cmd":"rm -rf /tmp/example","cmd":"ls 1"}}}}}}"#
+                ),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"x":{deep},"method":"tools/call","params":{{"name":"shell","name":"echo","arguments":{{}}}}}}"#
+                ),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"x":{deep},"method":"tasks/send","params":{{"message":"a","message":"b"}}}}"#
+                ),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","x":{deep},"params":{{"name":"shell","arguments":{{"cmd":"a","cmd":"b"}}}}}}"#
+                ),
+            ] {
+                assert_refused(&frame);
+                assert!(has_duplicate_keys(&frame) || nesting_exceeds(&frame, MAX_FRAME_DEPTH));
+            }
+        }
+    }
+
+    #[test]
+    fn the_nesting_ceiling_is_exact() {
+        // The top-level object is level 1, so 63 nested arrays reach the ceiling and 64 go past it.
+        let at = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"x":{},"method":"tools/call","params":{{"name":"t","arguments":{{}}}}}}"#,
+            nested(MAX_FRAME_DEPTH - 1)
+        );
+        assert!(matches!(
+            validate_jsonrpc(&at),
+            JsonRpcValidation::ToolCall { .. }
+        ));
+        let past = at
+            .replacen("\"x\":[", "\"x\":[[", 1)
+            .replacen("]]", "]]]", 1);
+        assert!(nesting_exceeds(&past, MAX_FRAME_DEPTH));
+        let (_, code, msg) = err(validate_jsonrpc(&past));
+        assert_eq!(code, jsonrpc_error::INVALID_REQUEST);
+        assert!(msg.contains("levels deep"), "{msg}");
+    }
+
+    #[test]
+    fn a_deep_field_without_a_repeated_key_is_refused_by_the_ceiling() {
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"x":{},"method":"tools/call","params":{{"name":"t","arguments":{{"cmd":"ls"}}}}}}"#,
+            nested(200)
+        );
+        let (_, code, msg) = err(validate_jsonrpc(&frame));
+        assert_eq!(code, jsonrpc_error::INVALID_REQUEST);
+        assert!(msg.contains("levels deep"), "{msg}");
+    }
+
+    #[test]
+    fn a_repeated_key_without_a_deep_field_is_still_reported_as_repeated() {
+        let frame = r#"{"jsonrpc":"2.0","id":1,"x":[[1]],"method":"tools/call","params":{"name":"t","arguments":{"cmd":"a","cmd":"b"}}}"#;
+        let (_, code, msg) = err(validate_jsonrpc(frame));
+        assert_eq!(code, jsonrpc_error::INVALID_REQUEST);
+        assert!(msg.contains("repeats a key"), "{msg}");
+    }
+
+    #[test]
+    fn brackets_inside_strings_do_not_count_as_nesting() {
+        let text = format!("{}\\\"{}", "[".repeat(300), "{".repeat(300));
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"t","arguments":{{"cmd":"{text}"}}}}}}"#
+        );
+        assert!(!nesting_exceeds(&frame, MAX_FRAME_DEPTH));
+        assert!(matches!(
+            validate_jsonrpc(&frame),
+            JsonRpcValidation::ToolCall { .. }
+        ));
+    }
+
+    #[test]
+    fn an_unfinished_walk_counts_as_repeated() {
+        // Past serde_json's recursion limit the walk cannot finish; the part it did not read is not trusted.
+        assert!(has_duplicate_keys(&format!(r#"{{"x":{}}}"#, nested(200))));
+        assert!(has_duplicate_keys(r#"{"a":1,"#));
+        assert!(!has_duplicate_keys(&format!(r#"{{"x":{}}}"#, nested(10))));
     }
 }

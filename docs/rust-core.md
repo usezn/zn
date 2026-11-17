@@ -46,6 +46,12 @@ Only then does it write the file. It writes to a temporary file in the policy di
 
 Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Hardening (November 2026)
+
+A further review of the request path changed these:
+
+- **Deep frames are refused.** A frame that nests objects or arrays more than 64 levels deep is refused with a JSON-RPC `-32600` error before it is parsed. Before, a deeply nested unknown field could stop the repeated-key check early while the request was still accepted, so a key repeated after that field (in the tool arguments, the tool name or an A2A task) was not seen. The repeated-key check now also refuses any frame it could not read to the end.
+
 ## Audit payloads
 
 By default the audit database keeps only metadata for each call: event, time, tool name, status, matched policy, agent and namespace. The request payload is not stored. To keep payloads, set `audit.store_payloads = true` (or `ZN_AUDIT_STORE_PAYLOADS=1`); this needs an encryption key (`ZN_DB_KEY`, or a KMS key) in every environment, and the gateway refuses to start without one. Payloads are scrubbed before they are written. Records written by earlier versions stay readable.
