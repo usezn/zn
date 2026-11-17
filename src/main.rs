@@ -278,6 +278,35 @@ async fn run_dashboard(args: &Args) -> Result<()> {
 }
 
 /// The startup error for a Management API address that cannot be bound.
+/// How often the management API's rate limiter forgets clients that are back to a full allowance.
+const LIMITER_GC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Stops the cleanup task it belongs to when dropped.
+struct LimiterGcGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for LimiterGcGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Runs `cleanup` every `every` until the returned guard is dropped. The first run is one full period
+/// after the call. The limiter stores one entry per client address; without this, a gateway that is
+/// reachable from many addresses (a `bind_address` other than loopback) would keep all of them.
+fn spawn_limiter_gc(
+    cleanup: impl Fn() + Send + 'static,
+    every: std::time::Duration,
+) -> LimiterGcGuard {
+    LimiterGcGuard(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            cleanup();
+        }
+    }))
+}
+
 fn bind_error(addr: &str, port: u16, e: &std::io::Error) -> anyhow::Error {
     if e.kind() == std::io::ErrorKind::AddrInUse {
         anyhow!(
@@ -608,6 +637,9 @@ async fn start_proxy(args: Args) -> Result<()> {
             )
         })?;
 
+    let governor_conf = std::sync::Arc::new(governor_conf);
+    let limiter = governor_conf.limiter().clone();
+
     // Bound before the task starts, so a port that is taken stops the gateway
     // with a clear message instead of leaving it running without an API.
     let addr = format!("{}:{}", bind_address, port);
@@ -620,7 +652,7 @@ async fn start_proxy(args: Args) -> Result<()> {
         let cors = build_cors_layer(&allowed_origins);
         let serve_limits = zn::http_limits::ServeLimits::from_server(&api_state.config.server);
 
-        let governor_layer = GovernorLayer::new(std::sync::Arc::new(governor_conf));
+        let governor_layer = GovernorLayer::new(governor_conf);
 
         let auth_config = Arc::new(
             AuthConfig::new(
@@ -670,6 +702,15 @@ async fn start_proxy(args: Args) -> Result<()> {
         // Header and body timeouts, a connection cap that keeps room for served clients, and a
         // write timeout and idle time for streams (axum::serve has none of these). The listener was
         // bound before this task started, so a port in use is a startup error (bind_error).
+        // The limiter keeps one entry per client address and never drops them by itself. The
+        // guard stops the cleanup task when the server stops.
+        let _limiter_gc = spawn_limiter_gc(
+            move || {
+                limiter.retain_recent();
+                limiter.shrink_to_fit();
+            },
+            LIMITER_GC_INTERVAL,
+        );
         zn::http_limits::serve_limited(listener, app, serve_limits).await;
     });
 
@@ -2325,6 +2366,66 @@ fn resolve_db_key(
         Some(Err(e)) => Err(format!(
             "Failed to fetch the encryption key from the KMS: {e}. Refusing to start with a different key. Fix the KMS access, or set kms.allow_config_fallback = true to allow the key from the config."
         )),
+    }
+}
+
+#[cfg(test)]
+mod limiter_gc_tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn forgets_clients_that_are_back_to_a_full_allowance() {
+        let conf = GovernorConfigBuilder::default()
+            .per_millisecond(5)
+            .burst_size(1)
+            .finish()
+            .unwrap();
+        let limiter = conf.limiter().clone();
+        for i in 0..5000u32 {
+            let ip = IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i));
+            limiter.check_key(&ip).ok();
+        }
+        assert_eq!(limiter.len(), 5000);
+        // One request refills in 5 ms: after this, every entry is indistinguishable from new.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        limiter.retain_recent();
+        limiter.shrink_to_fit();
+        assert_eq!(limiter.len(), 0);
+    }
+
+    #[test]
+    fn keeps_clients_that_are_still_limited() {
+        let conf = GovernorConfigBuilder::default()
+            .per_second(3600)
+            .burst_size(1)
+            .finish()
+            .unwrap();
+        let limiter = conf.limiter().clone();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+        assert!(limiter.check_key(&ip).is_ok());
+        limiter.retain_recent();
+        assert_eq!(limiter.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_runs_on_a_timer_and_stops_with_its_guard() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&runs);
+        let guard = spawn_limiter_gc(
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            },
+            std::time::Duration::from_millis(10),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(runs.load(Ordering::SeqCst) >= 2);
+        drop(guard);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let after = runs.load(Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), after);
     }
 }
 
