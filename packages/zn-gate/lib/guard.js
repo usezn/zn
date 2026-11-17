@@ -425,7 +425,7 @@ function copyListed(own, out, maxDepth, memo, state, skip) {
     const d = own[key];
     if (typeof key !== 'string' || !d.enumerable || isAccessor(d) || (skip && setHas(skip, key))) continue;
     const value = snapshotOf(d.value, maxDepth - 1, memo, state);
-    if (typeof d.value === 'function') continue;
+    if (typeof d.value === 'function' && !state.keepFunctions) continue;
     defineData(out, key, value);
   }
   return out;
@@ -457,9 +457,11 @@ const BIGINT_PROTOTYPE = BigInt.prototype;
  * - The description of a symbol is checked; the symbol itself is kept.
  *
  * The built-in prototypes the copy inherits from are added to `state.protos` (see prototypeModified).
+ * With `state.keepFunctions` (tool arguments), a function is kept as it is instead of left out: a
+ * callback passed to a tool still reaches it. A function holds code, not data, and is not checked.
  */
 function snapshotOf(data, maxDepth, memo, state) {
-  if (typeof data === 'function') return undefined;
+  if (typeof data === 'function') return state.keepFunctions ? data : undefined;
   if (typeof data === 'symbol') {
     const description = ReflectApply(SYMBOL_DESCRIPTION, data, []);
     if (description !== undefined) push(state.texts, description);
@@ -524,7 +526,7 @@ function snapshotOf(data, maxDepth, memo, state) {
     const out = remember(new SET_CLASS());
     setAdd(state.protos, SET_ITERATOR_PROTOTYPE); // what iterates the copy
     eachOf(data, (v) => {
-      if (typeof v !== 'function') setAdd(out, snapshotOf(v, maxDepth - 1, memo, state));
+      if (typeof v !== 'function' || state.keepFunctions) setAdd(out, snapshotOf(v, maxDepth - 1, memo, state));
     });
     return out;
   }
@@ -532,7 +534,7 @@ function snapshotOf(data, maxDepth, memo, state) {
     const out = remember(new MAP_CLASS());
     setAdd(state.protos, MAP_ITERATOR_PROTOTYPE);
     eachOf(data, (entry) => {
-      if (typeof entry[0] === 'function' || typeof entry[1] === 'function') return;
+      if (!state.keepFunctions && (typeof entry[0] === 'function' || typeof entry[1] === 'function')) return;
       mapSet(out, snapshotOf(entry[0], maxDepth - 1, memo, state), snapshotOf(entry[1], maxDepth - 1, memo, state));
     });
     return out;
@@ -582,6 +584,8 @@ function copyStrings(data, maxDepth, path, out) {
 
 const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters, setters or a Proxy that cannot be checked '
   + 'without running its code; return its data as a plain object instead';
+const ARGS_HIDDEN_ACCESSORS_REASON = 'An object shows values through getters, setters or a Proxy that cannot be checked '
+  + 'without running its code; pass its data as a plain object instead';
 
 /**
  * Calls `visit(key, value)` for each listed (enumerable) string-keyed own property of `data`, in the
@@ -662,33 +666,29 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WEAK_SET_CLASS(),
 }
 
 /**
- * extractStrings, or a block assessment when the payload is nested too deeply to check, or when a
- * built-in the check relies on was modified since this module was loaded (intrinsicsModified): before
- * the strings are read, and for arguments again after (a getter or a Proxy trap of the arguments runs
- * while they are read, and the rules read the strings through those built-ins).
- * With snapshot (tool results), the strings are read from snapshotOf(data), returned as
- * `snapshot` (see snapshotOf), and a value that cannot be read without running its code is a
- * block too, as is a check run while a built-in it relies on was modified since this module was
- * loaded (intrinsicsModified, before the copy is made) or a copy that inherits from a modified
- * built-in prototype (prototypeModified).
+ * The strings of snapshotOf(data), with that copy as `snapshot`, or a block assessment: when the
+ * payload is nested too deeply to check (rule size:nesting), when a value cannot be read without
+ * running its code (a getter, a setter or a Proxy anywhere in it; rule type:unscannable), when a
+ * built-in the check relies on was modified since this module was loaded (intrinsicsModified,
+ * before the copy is made), or when the copy inherits from a modified built-in prototype
+ * (prototypeModified). Nothing of `data` runs while it is copied, so what the rules read is
+ * exactly the copy: guardTool passes that same copy to the tool (`args` true: functions kept,
+ * see snapshotOf) or returns it as the result.
  */
-function stringsOrBlock(data, what, snapshot = false) {
+function stringsOrBlock(data, what, args) {
+  const modified = args ? MODIFIED_ARGUMENTS_REASON : MODIFIED_PROTOTYPE_REASON;
   try {
-    if (!snapshot) {
-      if (intrinsicsModified()) throw new Unscannable(MODIFIED_ARGUMENTS_REASON);
-      const strings = extractStrings(data, MAX_DEPTH, new WEAK_SET_CLASS(), []);
-      if (intrinsicsModified()) throw new Unscannable(MODIFIED_ARGUMENTS_REASON);
-      return { strings };
-    }
-    if (intrinsicsModified()) throw new Unscannable(MODIFIED_PROTOTYPE_REASON);
-    const state = { texts: [], protos: new SET_CLASS() };
+    if (intrinsicsModified()) throw new Unscannable(modified);
+    const state = { texts: [], protos: new SET_CLASS(), keepFunctions: args };
     const copy = snapshotOf(data, MAX_DEPTH, new MAP_CLASS(), state);
-    if (prototypeModified(state.protos)) throw new Unscannable(MODIFIED_PROTOTYPE_REASON);
+    if (prototypeModified(state.protos)) throw new Unscannable(modified);
     const strings = copyStrings(copy, MAX_DEPTH, new WEAK_SET_CLASS(), []);
     for (let i = 0; i < state.texts.length; i++) push(strings, state.texts[i]);
     return { strings, snapshot: copy };
   } catch (e) {
-    if (e instanceof Unscannable) return { block: unscannableBlock(what, e.message || HIDDEN_ACCESSORS_REASON) };
+    if (e instanceof Unscannable) {
+      return { block: unscannableBlock(what, e.message || (args ? ARGS_HIDDEN_ACCESSORS_REASON : HIDDEN_ACCESSORS_REASON)) };
+    }
     if (!(e instanceof NestingTooDeep)) throw e;
     return {
       block: {
@@ -711,20 +711,31 @@ function allow(advisory, extra) {
 
 /**
  * Decide whether an agent tool call is safe to run. Every string in `args`
- * (nested values and keys) is evaluated; the first block wins. Arguments nested
- * too deeply to check are blocked (rule size:nesting).
+ * (nested values and keys) is evaluated; the first block wins. The strings are
+ * read from a plain-data copy of `args` made without running any of its code (see
+ * snapshotOf): arguments holding a getter, a setter or a Proxy are blocked (rule
+ * type:unscannable), and arguments nested too deeply to check are blocked (rule
+ * size:nesting).
  * Returns { allowed, verdict, confidence, rule, reason, advisory? }.
  */
 function checkToolCall(toolName, args, opts = {}) {
+  return checkArgsSnapshot(args, opts).assessment;
+}
+
+/**
+ * checkToolCall, plus the plain-data copy of `args` it checked when the call is allowed: guardTool
+ * runs the tool with that copy, so the tool reads exactly what was checked.
+ */
+function checkArgsSnapshot(args, opts) {
   let advisory = null;
-  const { strings, block } = stringsOrBlock(args, 'Arguments');
-  if (block) return block;
+  const { strings, block, snapshot } = stringsOrBlock(args, 'Arguments', true);
+  if (block) return { assessment: block };
   for (let i = 0; i < strings.length; i++) {
     const res = evaluate(strings[i], opts);
-    if (res.verdict === 'block') return { allowed: false, ...res };
+    if (res.verdict === 'block') return { assessment: { allowed: false, ...res } };
     advisory = advisory || res.advisory;
   }
-  return allow(advisory);
+  return { assessment: allow(advisory), snapshot };
 }
 
 /**
@@ -747,7 +758,7 @@ function scanToolResult(result, opts = {}) {
 function checkResultSnapshot(result, opts) {
   let truncated = false;
   let advisory = null;
-  const { strings, block, snapshot } = stringsOrBlock(result, 'Result', true);
+  const { strings, block, snapshot } = stringsOrBlock(result, 'Result', false);
   if (block) return { assessment: block };
   if (tooInvisible(strings)) return { assessment: { allowed: false, ...invisibleBlock() } };
   for (let i = 0; i < strings.length; i++) {
@@ -790,7 +801,11 @@ function validateOptions(opts) {
 /**
  * Wrap a sync or async function as a guarded tool. The call arguments are
  * checked before it runs and, with checkResult: true, its result before it
- * is returned.
+ * is returned. With checkArgs (the default), the tool is called with the
+ * plain-data copy of the arguments that was checked (see snapshotOf; functions
+ * are passed as they are), never with the objects the caller passed: a getter
+ * or a Proxy cannot show the check one value and the tool another, and the
+ * caller cannot change what the tool reads after the check.
  *
  * opts:
  *   name            tool name used in messages (default: fn.name)
@@ -819,11 +834,13 @@ function guardTool(fn, opts = {}) {
     return { value: opts.fallback !== undefined ? opts.fallback : assessment };
   };
 
+  // { args } to call the tool with (the checked copy), or { blocked } with the value to return.
   const before = (args) => {
-    if (!checkArgs) return null;
+    if (!checkArgs) return { args };
     const payload = { args };
-    const assessment = checkToolCall(name, payload, engineOpts);
-    return assessment.allowed ? null : blocked(assessment, name, payload);
+    const { assessment, snapshot } = checkArgsSnapshot(payload, engineOpts);
+    if (!assessment.allowed) return { blocked: blocked(assessment, name, payload) };
+    return { args: snapshot.args };
   };
 
   const after = (res) => {
@@ -847,13 +864,13 @@ function guardTool(fn, opts = {}) {
   const wrapped = isAsync
     ? async function (...args) {
         const b = before(args);
-        if (b) return b.value;
-        return after(await fn.apply(this, args));
+        if (b.blocked) return b.blocked.value;
+        return after(await ReflectApply(fn, this, b.args));
       }
     : function (...args) {
         const b = before(args);
-        if (b) return b.value;
-        const res = fn.apply(this, args);
+        if (b.blocked) return b.blocked.value;
+        const res = ReflectApply(fn, this, b.args);
         // A thenable is settled as a real promise, so whatever it resolves to goes through after():
         // its own then() could return anything.
         if (res && typeof res.then === 'function') {

@@ -171,6 +171,8 @@ test('a checked and masked result keeps its shape', () => {
   assert.deepEqual(out, original);
 });
 
-test('arguments with getters are checked as before', () => {
-  assert.equal(checkToolCall('tool', { client: new GetterKey() }).allowed, true);
+test('arguments with getters are blocked before the tool runs', () => {
+  const res = checkToolCall('tool', { client: new GetterKey() });
+  assert.equal(res.allowed, false);
+  assert.equal(res.rule, 'type:unscannable');
 });

@@ -106,7 +106,6 @@ test('the arguments are listed without their own iterators or methods', () => {
     'an array with its own Symbol.iterator': hiddenIterator,
     'a Set subclass whose iterator lists nothing': new QuietSet([INJECTION]),
     'a Map subclass whose iterator lists nothing': new QuietMap([['k', INJECTION]]),
-    'a listed property of an array': named,
     'an ArrayBuffer': new TextEncoder().encode(INJECTION).buffer,
     'a DataView': new DataView(new TextEncoder().encode(INJECTION).buffer),
     'a String object': new String(INJECTION),
@@ -117,9 +116,15 @@ test('the arguments are listed without their own iterators or methods', () => {
     assert.equal(res.allowed, false, label);
     assert.equal(ran, false, label);
   }
+  // A listed property of an array is not part of the checked copy the tool runs with, so the tool never reads it.
+  let received;
+  const tool = guardTool((a) => { received = a; return 'ran'; });
+  assert.equal(tool({ value: named }), 'ran');
+  assert.equal(received.value.note, undefined);
+  assert.deepEqual(received.value, ['weather']);
 });
 
-test('a Proxy of a Set or a Map in the arguments is refused, a Proxy of an array or object is read', () => {
+test('a Proxy in the arguments is refused, of a Set, a Map, an array or an object', () => {
   const bound = (target) => new Proxy(target, {
     get(t, k) { const v = Reflect.get(t, k, t); return typeof v === 'function' ? v.bind(t) : v; },
   });
@@ -130,7 +135,7 @@ test('a Proxy of a Set or a Map in the arguments is refused, a Proxy of an array
   }
   assert.equal(checkToolCall('fetch', { value: new Proxy([INJECTION], {}) }).allowed, false);
   assert.equal(checkToolCall('fetch', { value: new Proxy({ text: INJECTION }, {}) }).allowed, false);
-  assert.equal(checkToolCall('fetch', { value: new Proxy(['weather'], {}) }).allowed, true);
+  assert.equal(checkToolCall('fetch', { value: new Proxy(['weather'], {}) }).rule, 'type:unscannable');
 });
 
 test('masking does not return a value read through a replaced built-in', () => {

@@ -41,7 +41,12 @@ export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
   onBlock?: GuardOnBlock;
   /** Value returned when onBlock is 'return'. */
   fallback?: Fallback;
-  /** Check the call arguments before the function runs. Default true. */
+  /**
+   * Check the call arguments before the function runs. Default true. The function then runs with the plain-data copy
+   * of the arguments that was checked (class instances as plain objects, Map, Set, Date, URL, typed arrays and Buffer
+   * as new values of the same kind, functions as they are), not with the objects the caller passed; arguments holding
+   * a getter, a setter or a Proxy are blocked. With false, the function gets the arguments as they are.
+   */
   checkArgs?: boolean;
   /**
    * Check the return value before it is returned. Default false. The wrapper then returns the plain-data copy that
@@ -75,6 +80,8 @@ export class GuardBlockError extends Error {
 /**
  * Decides whether an agent tool call is safe to run. Every string in `args`
  * (nested values and object keys included) is evaluated; the first block wins.
+ * The strings are read from a plain-data copy made without running code of `args`:
+ * a getter, a setter or a Proxy in `args` is blocked (rule type:unscannable).
  */
 export function checkToolCall(toolName: string, args: unknown, opts?: GuardEngineOptions): ToolCallAssessment;
 
