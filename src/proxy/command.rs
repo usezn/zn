@@ -222,7 +222,9 @@ pub fn check_batch_args(program: &str, args: &[String]) -> Result<(), String> {
 /// `.git` folder or file, plus the repositories around that one (up to 8 levels more). A gateway
 /// started in `C:\repo\src` would otherwise treat `C:\repo\bin` as a trusted PATH folder. The home
 /// folder and the folders above it are never the project: a home that is a git work tree (dotfiles)
-/// must not make every tool installed there untrusted. When the check cannot be made (a folder is
+/// must not make every tool installed there untrusted. That includes `cwd` itself: a gateway
+/// started in the home folder returns no roots at all, and `PATH` folders under home are searched.
+/// When the check cannot be made (a folder is
 /// unreadable), the working folder and every folder above it are treated as untrusted, never
 /// fewer. `exists` tells whether a path exists, or an error when that cannot be known.
 pub fn untrusted_project_roots(
