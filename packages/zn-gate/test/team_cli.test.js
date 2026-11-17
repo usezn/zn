@@ -623,3 +623,47 @@ test('log export to stdout writes nothing when the log changed after it was veri
   assert.strictEqual(r.stdout, '');
   assert.match(r.stderr, /changed after the vault verified it/);
 });
+
+test('log export copes with writeSync taking only part of a chunk, to stdout and to a file', async () => {
+  writeAudit([rec(1, new Date().toISOString()), rec(2, new Date().toISOString())]);
+  const whole = await capture(() => runLogExport(['--unverified', '--otlp']));
+  assert.strictEqual(whole.code, 0);
+  assert.ok(whole.stdout.length > 100);
+  const orig = fs.writeSync;
+  let calls = 0;
+  fs.writeSync = function (fd, buf, off, len, pos) {
+    if (fd > 2 && Buffer.isBuffer(buf)) {
+      calls++;
+      return orig.call(fs, fd, buf, off, Math.min(len, 7), pos);
+    }
+    return orig.apply(fs, arguments);
+  };
+  try {
+    const r = await capture(() => runLogExport(['--unverified', '--otlp']));
+    assert.strictEqual(r.code, 0);
+    assert.strictEqual(r.stdout, whole.stdout, 'stdout is the complete export');
+    const out = path.join(HOME, 'partial.jsonl');
+    const f = await capture(() => runLogExport(['--unverified', '--otlp', '--out', out]));
+    assert.strictEqual(f.code, 0);
+    assert.ok(calls > 10, 'the chunk really was written in pieces');
+    assert.strictEqual(fs.readFileSync(out, 'utf8'), whole.stdout);
+  } finally { fs.writeSync = orig; }
+});
+
+test('log export refuses to move into place a temporary export that is shorter than what was generated', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  const out = path.join(HOME, 'short.jsonl');
+  const orig = fs.writeSync;
+  fs.writeSync = function (fd, buf, off, len, pos) {
+    if (fd > 2 && Buffer.isBuffer(buf)) { orig.call(fs, fd, buf, off, len - 1, pos); return len; } // claims all, wrote less
+    return orig.apply(fs, arguments);
+  };
+  try {
+    const r = await capture(() => runLogExport(['--unverified', '--otlp', '--out', out]));
+    assert.strictEqual(r.code, 1);
+    assert.strictEqual(r.stdout, '', 'nothing reaches stdout');
+    assert.match(r.stderr, /temporary copy of the export on disk does not match/);
+    assert.strictEqual(fs.existsSync(out), false, 'no export file is left');
+    assert.deepStrictEqual(fs.readdirSync(HOME).filter((n) => n.startsWith('short.jsonl.')), [], 'no temporary file is left');
+  } finally { fs.writeSync = orig; }
+});

@@ -595,3 +595,16 @@ def test_a_rule_id_in_two_tables_reports_one_type_like_the_npm_package():
     types = reach_history._types()
     assert types["secret:openai_key"] == "OPENAI_KEY"
     assert types["secret:github_token"] == "GITHUB_TOKEN"
+
+
+def test_a_secret_that_crosses_the_cut_between_two_slices_is_found_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(reach_history, "SLICE_CHARS", 2000)
+    # Non-word filler with no space or line break: the first cut falls at exactly 2000, inside the key.
+    text = "-" * 1990 + AWS + "-" * 3000 + "\n"
+    assert text.index(AWS) < 2000 < text.index(AWS) + len(AWS)
+    path = _write(tmp_path, text)
+    sliced = reach_history.scan_file(path, deadline=10 ** 18)
+    monkeypatch.setattr(reach_history, "SLICE_CHARS", 10 ** 9)
+    whole = reach_history.scan_file(path, deadline=10 ** 18)
+    assert sliced["complete"] and sum(sliced["counts"].values()) == 1
+    assert sliced["counts"] == whole["counts"]

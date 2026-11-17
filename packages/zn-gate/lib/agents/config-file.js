@@ -86,12 +86,242 @@ function hooksOf(data, file) {
   return data.hooks;
 }
 
-function backup(file) {
-  if (!fs.existsSync(file)) return null;
+/** How many zn backups of one config file are kept (the newest ones); older ones are removed on each new backup. */
+const KEEP_BACKUPS = 3;
+const ABSENT_SUFFIX = '-absent';
+// The file as it was before the first install is kept apart from the rotating backups and never pruned:
+// '<file>.bak-zn-original' (a copy) or '<file>.bak-zn-original-absent' (an empty marker: install created the file).
+const ORIGINAL_SUFFIX = '.bak-zn-original';
+const ABSENT = Object.freeze({ absent: true });
+
+/** Whether anything is at p, links included: a dangling link is an entry too (fs.existsSync follows it and says no). */
+function entryAt(p) {
+  try { return fs.lstatSync(p); } catch (e) { if (e && e.code === 'ENOENT') return null; throw e; }
+}
+
+/** Whether p is a regular file itself, not a link to one. */
+function isRegularFile(p) {
+  const st = entryAt(p);
+  return !!st && st.isFile();
+}
+
+/**
+ * Writes data to a new file at dest, never through what is already there: the file is created exclusively (O_EXCL, and
+ * O_NOFOLLOW where the platform has it), so a link planted at dest, dangling or not, makes this throw instead of writing
+ * to the link's target. The copy is private (0600).
+ */
+function writeNewFile(dest, data) {
+  const st = entryAt(dest);
+  if (st) {
+    const err = new Error('cannot write the backup ' + dest + ': something is already there (' + (st.isSymbolicLink() ? 'a symbolic link' : st.isDirectory() ? 'a folder' : 'a file') + '). Move it away and try again.');
+    err.code = 'EEXIST';
+    throw err;
+  }
+  const c = fs.constants;
+  const fd = fs.openSync(dest, c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW || 0), 0o600);
+  try {
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
+    let off = 0;
+    while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
+  } catch (e) {
+    try { fs.closeSync(fd); } catch (_) { /* closed */ }
+    try { fs.unlinkSync(dest); } catch (_) { /* gone */ }
+    throw e;
+  }
+  fs.closeSync(fd);
+}
+
+/** A new backup name next to the file, never an existing entry (two backups in the same second get -2, -3...). */
+function newBackupPath(file, absent) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-  const dest = file + '.bak-zn-' + stamp;
-  fs.copyFileSync(file, dest);
+  const tail = absent ? ABSENT_SUFFIX : '';
+  let dest = file + '.bak-zn-' + stamp + tail;
+  for (let n = 2; entryAt(dest); n++) dest = file + '.bak-zn-' + stamp + '-' + n + tail;
   return dest;
+}
+
+/**
+ * The zn backups of a file, newest first: [{ path, absent }]. A backup with the -absent suffix is an empty marker that
+ * records that the file did not exist before install.
+ */
+function backupsOf(file) {
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  // Only the names newBackupPath() makes: '<file>.bak-zn-<YYYYMMDDTHHMMSS>[-<n>][-absent]'. Any other file that shares
+  // the prefix (for example '<file>.bak-zn-user-notes') is the user's and is never listed, so never pruned.
+  const generated = new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.bak-zn-\\d{8}T\\d{6}(?:-\\d+)?(?:-absent)?$');
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const out = [];
+  for (const name of names) {
+    if (!generated.test(name)) continue;
+    const p = path.join(dir, name);
+    let st;
+    try { st = fs.lstatSync(p); } catch (_) { continue; }
+    if (st.isFile()) out.push({ path: p, absent: name.endsWith(ABSENT_SUFFIX), mtime: st.mtimeMs });
+  }
+  out.sort((a, b) => (b.mtime - a.mtime) || (a.path < b.path ? 1 : a.path > b.path ? -1 : 0));
+  return out;
+}
+
+/** Keeps the KEEP_BACKUPS newest zn backups of a file and removes the rest. */
+function pruneBackups(file, keep = KEEP_BACKUPS) {
+  for (const b of backupsOf(file).slice(keep)) {
+    try { fs.unlinkSync(b.path); } catch (_) { /* already gone */ }
+  }
+}
+
+function removeOriginals(file) {
+  for (const p of [file + ORIGINAL_SUFFIX, file + ORIGINAL_SUFFIX + ABSENT_SUFFIX]) {
+    try { fs.unlinkSync(p); } catch (_) { /* not there */ }
+  }
+}
+
+/**
+ * Copies the file before zn changes it and returns the copy's path, or null when the file did not exist (an empty marker
+ * is written instead, so uninstall knows install created the file). Only the newest KEEP_BACKUPS copies are kept.
+ * Besides those, the first install also keeps the file as it was (or the marker) apart; it is never pruned and later
+ * installs do not overwrite it. opts.original = false (uninstall) leaves it alone.
+ */
+function backup(file, opts = {}) {
+  const keepOriginal = opts.original !== false;
+  // Any entry at an original's name counts (a link too, dangling or not); one that is not a regular file is refused below.
+  const hasOriginal = !!entryAt(file + ORIGINAL_SUFFIX) || !!entryAt(file + ORIGINAL_SUFFIX + ABSENT_SUFFIX);
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    writeNewFile(newBackupPath(file, true), '');
+    if (keepOriginal) {
+      // The file is gone now (removed by hand after an earlier install): an older original no longer applies.
+      removeOriginals(file);
+      writeNewFile(file + ORIGINAL_SUFFIX + ABSENT_SUFFIX, '');
+    }
+    pruneBackups(file);
+    return null;
+  }
+  const content = fs.readFileSync(file);
+  if (keepOriginal) {
+    for (const p of [file + ORIGINAL_SUFFIX, file + ORIGINAL_SUFFIX + ABSENT_SUFFIX]) {
+      const st = entryAt(p);
+      if (st && !st.isFile()) {
+        const err = new Error('cannot keep the original of ' + file + ': ' + p + ' is ' + (st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file') + ', not a copy zn made. Move it away and try again.');
+        err.code = 'EEXIST';
+        throw err;
+      }
+    }
+  }
+  const dest = newBackupPath(file, false);
+  writeNewFile(dest, content);
+  if (keepOriginal && !hasOriginal) writeNewFile(file + ORIGINAL_SUFFIX, content);
+  pruneBackups(file);
+  return dest;
+}
+
+/**
+ * Undoes backup(file) after a failed write: removes the copy it returned and, when no other rotating backup is left
+ * (this was the first install), the kept original it may have created too.
+ */
+function discardBackup(file, copy) {
+  if (copy) { try { fs.unlinkSync(copy); } catch (_) { /* none */ } }
+  if (backupsOf(file).length === 0) removeOriginals(file);
+}
+
+function canonical(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+  if (v !== null && typeof v === 'object') return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Wraps a strip(data) helper that may tidy up data it did not change: the wrapper changes data only when strip reports
+ * that it removed something, which uninstallJson relies on.
+ */
+function ifChanged(strip) {
+  return (data) => {
+    if (!strip(JSON.parse(JSON.stringify(data)))) return false;
+    strip(data);
+    return true;
+  };
+}
+
+/** The keys install adds to a file that had none: "version": 1 and an empty "hooks" object. */
+function isInstallLeftover(data) {
+  return Object.keys(data).every((k) => (k === 'version' && data.version === 1) || (k === 'hooks' && isPlainObject(data.hooks) && Object.keys(data.hooks).length === 0));
+}
+
+/**
+ * The file as it was before zn's install: the newest zn backup that holds no zn entry (removeOurs reports none), or
+ * ABSENT when install created the file, or undefined when no such backup is left.
+ */
+function originalOf(file, removeOurs) {
+  const fromCopy = (p) => {
+    let text;
+    if (!isRegularFile(p)) return undefined;
+    try { text = fs.readFileSync(p, 'utf8'); } catch (_) { return undefined; }
+    let data;
+    try { data = text.replace(/^\uFEFF/, '').trim() ? parseJson(text) : {}; } catch (_) { return undefined; }
+    if (!isPlainObject(data) || removeOurs(data)) return undefined;
+    return { data, text };
+  };
+  // The copy kept by the first install comes first; a copy that already holds zn entries (taken after an install by an
+  // older version) is not an original and is skipped.
+  if (isRegularFile(file + ORIGINAL_SUFFIX + ABSENT_SUFFIX)) return ABSENT;
+  const kept = fromCopy(file + ORIGINAL_SUFFIX);
+  if (kept) return kept;
+  // Configs installed by an older version have no such copy: use the newest rotating backup that is still an original.
+  for (const b of backupsOf(file)) {
+    if (b.absent) return ABSENT;
+    const o = fromCopy(b.path);
+    if (o) return o;
+  }
+  return undefined;
+}
+
+/** True when the data, minus the keys install adds to a file that had none, equals the original. */
+function sameAsOriginal(data, original) {
+  const d = { ...data };
+  if (!('version' in original) && d.version === 1) delete d.version;
+  if (!('hooks' in original) && isPlainObject(d.hooks) && Object.keys(d.hooks).length === 0) delete d.hooks;
+  return canonical(d) === canonical(original);
+}
+
+/**
+ * Uninstall for a JSON config zn edits. removeOurs(data) takes zn's entries out of data in place and returns true when it
+ * removed any (and changes nothing when it removed none). Then:
+ * - install created the file and only zn's keys are left: the file is deleted;
+ * - the file is as install left it (no other key changed) and the original is known: the original bytes come back,
+ *   so a one-line file, a pre-existing "{}" and the indentation are kept as they were;
+ * - anything else: zn's entries are removed and the rest is written back as it was.
+ * The original comes from the copy the first install kept (never pruned); a config installed by an older version has
+ * none, so the newest rotating backup that is still an original is used, if any is left. Without any original,
+ * opts.leftover(data), when given, says whether what is left is only what install adds, and the file is deleted.
+ * Returns { action: 'unchanged' | 'deleted' | 'restored' | 'written', backup }.
+ */
+function uninstallJson(file, removeOurs, read = readJson, opts = {}) {
+  if (!fs.existsSync(file)) return { action: 'unchanged', backup: null };
+  const data = read(file);
+  if (!removeOurs(data)) return { action: 'unchanged', backup: null };
+  const original = originalOf(file, removeOurs);
+  const copy = backup(file, { original: false });
+  const leftover = typeof opts.leftover === 'function' && opts.leftover(data);
+  let action;
+  if ((original === ABSENT && isInstallLeftover(data)) || ((original === undefined || original === ABSENT) && leftover)) {
+    fs.unlinkSync(file);
+    action = 'deleted';
+  } else if (original && original !== ABSENT && sameAsOriginal(data, original.data)) {
+    const target = realFile(file);
+    const mode = fs.statSync(target).mode & 0o777;
+    writeFileAtomic(target, original.text, mode);
+    action = 'restored';
+  } else {
+    writeJson(file, data);
+    action = 'written';
+  }
+  removeOriginals(file); // zn is out of the file: the next install starts a new original
+  return { action, backup: copy };
 }
 
 /** Where the config really lives: an existing symlink is followed, so the link itself stays as it is. */
@@ -156,4 +386,4 @@ function isOurs(command, agentId) {
   return script !== null && re.test(script);
 }
 
-module.exports = { readJson, parseJson, stringifyJson, formatJson, detectStyle, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
+module.exports = { readJson, parseJson, stringifyJson, formatJson, detectStyle, hooksOf, backup, backupsOf, pruneBackups, discardBackup, removeOriginals, uninstallJson, ifChanged, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs, KEEP_BACKUPS, _internal: { writeNewFile } };

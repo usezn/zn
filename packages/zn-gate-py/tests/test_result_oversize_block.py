@@ -3,6 +3,9 @@ import pytest
 from zn_gate import check_tool_result, sanitize_tool_result
 from zn_gate.rules import MAX_TOOL_RESULT_SCAN_CHARS
 
+# Slow on purpose (multi-megabyte inputs); see the Tests section of CONTRIBUTING.md for the fast path.
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):

@@ -211,6 +211,10 @@ const SHELL_FLAGS = {
 };
 // Keys VS Code reads under a task's options; any other key is refused so a new field fails closed.
 const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
+// Stand-in values for a placeholder in a task's environment: one per way classifyEnv decides that a key is dangerous.
+const UNRESOLVED_PROBES = ['x', 'http://unresolved.invalid', '--require x', '0', '1'];
+// Fields of a task that start more tasks; zn does not follow them, so a task that sets one is refused.
+const TASK_DEPENDENCY_KEYS = ['dependsOn', 'dependsOrder'];
 
 /** The settings of a task's options as {shell, cwd, env}; null = unreadable or not accepted. shell: false = none, or {exe, args}. */
 // System folders a task shell given as a path may live in (POSIX and Windows): only folders an ordinary user
@@ -234,6 +238,10 @@ function taskOptions(o) {
       if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') return null;
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return null;
       if (classifyEnv(k, v) || /^(?:LD_|DYLD_)/i.test(k)) return null;
+      // VS Code expands ${...} in a task's environment before it starts the task, so a value that is only a placeholder
+      // (BASH_ENV=${TASK_SCRIPT}) can become anything. classifyEnv lets such a value pass; here the value is unknown, so
+      // the key is judged with values that would be dangerous, and a key that loads code or moves a configuration is refused.
+      if (typeof v === 'string' && /\$|\{env:|\{\{/.test(v) && UNRESOLVED_PROBES.some((p) => classifyEnv(k, p))) return null;
       out.env[k] = String(v);
     }
   }
@@ -333,6 +341,8 @@ function taskLinesUnsafe(v, workspace) {
   const isTask = hasCommand(v) || overrides.some((k) => isObj(v[k]) && hasCommand(v[k]));
   if (!isTask) return undefined;
   if (v.type !== undefined && typeof v.type !== 'string') return null;
+  // dependsOn and dependsOrder make VS Code run other tasks first, and their commands are not in this call: refuse, never skip.
+  if (TASK_DEPENDENCY_KEYS.some((k) => v[k] !== undefined) || overrides.some((k) => isObj(v[k]) && TASK_DEPENDENCY_KEYS.some((d) => v[k][d] !== undefined))) return null;
   const baseOpts = taskOptions(v.options);
   if (baseOpts === null) return null;
   const base = {};
@@ -651,19 +661,14 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const before = JSON.stringify(data);
-  if (!stripOurs(data) || JSON.stringify(data) === before) return report;
-  report.backup = cfg.backup(file);
-  report.removed = 1;
-  const hooksLeft = isObj(data.hooks) ? Object.keys(data.hooks).length : 0;
-  const others = Object.keys(data).filter((k) => k !== 'version' && k !== 'hooks' && k !== 'disableAllHooks');
-  if (!hooksLeft && !others.length) {
-    fs.unlinkSync(file);
-  } else {
-    if (!hooksLeft) delete data.hooks;
-    cfg.writeJson(file, data);
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
+  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs), cfg.readJson, {
+    // Without a kept original (installed by an older version): a file with only version, hooks and disableAllHooks left is deleted.
+    leftover: (d) => Object.keys(d).every((k) => k === 'version' || k === 'disableAllHooks' || (k === 'hooks' && isObj(d.hooks) && Object.keys(d.hooks).length === 0)),
+  });
+  if (res.action !== 'unchanged') {
+    report.backup = res.backup;
+    report.removed = 1;
   }
   return report;
 }

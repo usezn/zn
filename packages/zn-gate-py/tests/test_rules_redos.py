@@ -9,6 +9,8 @@ import time
 import unittest
 from unittest import mock
 
+import pytest
+
 from zn_gate import rules as R
 from zn_gate import evaluate, normalize_input, redact_secrets, sanitize_tool_result
 from zn_gate.guard import GuardBlockError, check_tool_result, guard
@@ -18,6 +20,9 @@ SIZE = 64 * 1024
 PER_RULE_MS = 500
 EVALUATE_256K_MS = 2000
 RUNS = 3
+
+# Slow on purpose (large inputs); see the Tests section of CONTRIBUTING.md for the fast path.
+pytestmark = pytest.mark.slow
 
 
 def fill(unit, size=SIZE):
