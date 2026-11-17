@@ -5,15 +5,20 @@
 //!
 //! "The Immune System of the Agent Mesh"
 
+use super::bounded::{batch_size, oldest_keys, WarnOnce, MAX_REPUTATION_AGENTS, SWEEP_EVERY};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 const MAX_SCORE: i32 = 100;
 const INITIAL_SCORE: i32 = 50;
 const BAN_THRESHOLD: i32 = 0; // A score at or below 0 bans the agent
 const BAN_DURATION_MINUTES: i64 = 10;
+/// An agent that has not called for this long (and is not banned) is forgotten.
+const IDLE_EXPIRY_HOURS: i64 = 24;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AgentStatus {
@@ -50,15 +55,85 @@ impl Default for ReputationScore {
     }
 }
 
+struct Tracked {
+    score: ReputationScore,
+    last_seen: Instant,
+}
+
+/// Memory is bounded: at most `max_agents` agents are tracked (10,000 by
+/// default). When the cap is reached, agents idle for 24 hours are removed and,
+/// if still full, the agents seen the longest ago. Agents with an active ban
+/// are dropped only if every tracked agent is banned, and the agent being
+/// recorded is never dropped, so sending new ids cannot erase a bad record.
 pub struct ReputationSystem {
     // Map of AgentID -> Score
-    scores: Arc<RwLock<HashMap<String, ReputationScore>>>,
+    scores: Arc<RwLock<HashMap<String, Tracked>>>,
+    max_agents: usize,
+    new_agents: AtomicUsize,
+    warned: WarnOnce,
 }
 
 impl ReputationSystem {
     pub fn new() -> Self {
+        Self::with_max_agents(MAX_REPUTATION_AGENTS)
+    }
+
+    pub fn with_max_agents(max_agents: usize) -> Self {
         Self {
             scores: Arc::new(RwLock::new(HashMap::new())),
+            max_agents: max_agents.max(1),
+            new_agents: AtomicUsize::new(0),
+            warned: WarnOnce::new(),
+        }
+    }
+
+    /// Get the entry of an agent, creating it (after making room) if needed.
+    fn entry<'a>(
+        &self,
+        scores: &'a mut HashMap<String, Tracked>,
+        agent_id: &str,
+    ) -> &'a mut ReputationScore {
+        let now = Instant::now();
+        if !scores.contains_key(agent_id) {
+            self.make_room(scores, now);
+            scores.insert(
+                agent_id.to_string(),
+                Tracked {
+                    score: ReputationScore {
+                        agent_id: agent_id.to_string(),
+                        ..Default::default()
+                    },
+                    last_seen: now,
+                },
+            );
+        }
+        let t = scores.get_mut(agent_id).expect("entry was just ensured");
+        t.last_seen = now;
+        &mut t.score
+    }
+
+    fn make_room(&self, scores: &mut HashMap<String, Tracked>, now: Instant) {
+        let n = self.new_agents.fetch_add(1, Ordering::Relaxed) + 1;
+        let full = scores.len() >= self.max_agents;
+        if !full && !n.is_multiple_of(SWEEP_EVERY) {
+            return;
+        }
+        let idle = std::time::Duration::from_secs(IDLE_EXPIRY_HOURS as u64 * 3600);
+        let wall = Utc::now();
+        scores.retain(|_, t| now.duration_since(t.last_seen) <= idle || t.score.ban_active(wall));
+        if scores.len() >= self.max_agents {
+            self.warned.warn("reputation agents", self.max_agents);
+            let drop = batch_size(self.max_agents);
+            // Not banned first, then banned; each group oldest first.
+            let keys = oldest_keys(
+                scores
+                    .iter()
+                    .map(|(k, t)| (k.clone(), (t.score.ban_active(wall), t.last_seen))),
+                drop,
+            );
+            for k in keys {
+                scores.remove(&k);
+            }
         }
     }
 }
@@ -73,7 +148,7 @@ impl ReputationSystem {
     /// Get current status of an agent (Auth Check)
     pub fn check_agent_status(&self, agent_id: &str) -> Result<(), String> {
         let scores = self.scores.read().unwrap();
-        if let Some(entry) = scores.get(agent_id) {
+        if let Some(entry) = scores.get(agent_id).map(|t| &t.score) {
             if entry.status == AgentStatus::Banned {
                 if let Some(ban_end) = entry.banned_until {
                     if Utc::now() < ban_end {
@@ -91,12 +166,7 @@ impl ReputationSystem {
     /// Record a clean, allowed call
     pub fn record_success(&self, agent_id: &str) {
         let mut scores = self.scores.write().unwrap();
-        let entry = scores
-            .entry(agent_id.to_string())
-            .or_insert(ReputationScore {
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            });
+        let entry = self.entry(&mut scores, agent_id);
 
         // Auto-unban check
         if entry.status == AgentStatus::Banned {
@@ -117,12 +187,7 @@ impl ReputationSystem {
     /// Record a security violation (Block)
     pub fn record_violation(&self, agent_id: &str, reason: &str, severity: i32) {
         let mut scores = self.scores.write().unwrap();
-        let entry = scores
-            .entry(agent_id.to_string())
-            .or_insert(ReputationScore {
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            });
+        let entry = self.entry(&mut scores, agent_id);
 
         entry.total_calls += 1;
         entry.blocked_calls += 1;
@@ -140,11 +205,20 @@ impl ReputationSystem {
 
     /// Get all scores for dashboard
     pub fn all_scores(&self) -> HashMap<String, ReputationScore> {
-        self.scores.read().unwrap().clone()
+        self.scores
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, t)| (k.clone(), t.score.clone()))
+            .collect()
     }
 }
 
 impl ReputationScore {
+    fn ban_active(&self, now: DateTime<Utc>) -> bool {
+        self.status == AgentStatus::Banned && matches!(self.banned_until, Some(end) if now < end)
+    }
+
     fn update_status(&mut self) {
         // An active ban holds until `banned_until`, whatever the score does.
         let ban_active = self.status == AgentStatus::Banned
@@ -183,6 +257,7 @@ mod tests {
         scores
             .get_mut(agent)
             .expect("agent should exist")
+            .score
             .banned_until = Some(when);
     }
 
@@ -361,5 +436,116 @@ mod tests {
         snapshot.get_mut("agent-1").unwrap().score = 999;
         assert_eq!(score_of(&sys, "agent-1").score, 51);
         assert!(sys.all_scores().contains_key("agent-1"));
+    }
+
+    fn violate_until_banned(sys: &ReputationSystem, agent: &str) {
+        for _ in 0..10 {
+            sys.record_violation(agent, "x", 10);
+        }
+    }
+
+    #[test]
+    fn default_cap_is_ten_thousand_agents() {
+        assert_eq!(ReputationSystem::new().max_agents, 10_000);
+    }
+
+    #[test]
+    fn agent_cap_is_respected_with_new_ids_on_every_call() {
+        let sys = ReputationSystem::with_max_agents(100);
+        for i in 0..5_000 {
+            sys.record_success(&format!("a-{i}"));
+            assert!(sys.all_scores().len() <= 100);
+        }
+    }
+
+    #[test]
+    fn least_recently_seen_agents_are_dropped_first() {
+        let sys = ReputationSystem::with_max_agents(10);
+        for i in 0..10 {
+            sys.record_success(&format!("a-{i}"));
+        }
+        sys.record_success("a-0");
+        sys.record_success("new");
+        let all = sys.all_scores();
+        assert!(all.contains_key("a-0"));
+        assert!(all.contains_key("new"));
+        assert!(!all.contains_key("a-1"));
+    }
+
+    #[test]
+    fn flooding_new_ids_does_not_clear_an_active_ban() {
+        let sys = ReputationSystem::with_max_agents(50);
+        violate_until_banned(&sys, "bad");
+        assert!(sys.check_agent_status("bad").is_err());
+        for i in 0..2_000 {
+            sys.record_success(&format!("flood-{i}"));
+        }
+        assert!(
+            sys.check_agent_status("bad").is_err(),
+            "ban survives the flood"
+        );
+        assert!(sys.all_scores().len() <= 50);
+    }
+
+    #[test]
+    fn a_low_score_survives_a_flood_while_the_agent_keeps_calling() {
+        let sys = ReputationSystem::with_max_agents(50);
+        sys.record_violation("shady", "x", 40);
+        let before = score_of(&sys, "shady").score;
+        for i in 0..1_000 {
+            sys.record_success(&format!("flood-{i}"));
+            if i % 5 == 0 {
+                sys.record_violation("shady", "x", 0);
+            }
+        }
+        assert!(score_of(&sys, "shady").score <= before);
+    }
+
+    #[test]
+    fn the_recorded_agent_is_never_dropped() {
+        let sys = ReputationSystem::with_max_agents(1);
+        sys.record_success("a");
+        sys.record_violation("b", "x", 5);
+        let all = sys.all_scores();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all["b"].blocked_calls, 1);
+    }
+
+    #[test]
+    fn if_every_agent_is_banned_the_oldest_ban_goes_first() {
+        let sys = ReputationSystem::with_max_agents(3);
+        for a in ["b1", "b2", "b3"] {
+            violate_until_banned(&sys, a);
+        }
+        sys.record_success("fresh");
+        let all = sys.all_scores();
+        assert!(all.contains_key("fresh"));
+        assert!(!all.contains_key("b1"));
+        assert!(all.contains_key("b3"));
+    }
+
+    #[test]
+    fn idle_agents_expire_when_the_cap_is_reached_but_bans_stay() {
+        let sys = ReputationSystem::with_max_agents(4);
+        violate_until_banned(&sys, "banned");
+        for a in ["i1", "i2", "i3"] {
+            sys.record_success(a);
+        }
+        {
+            let mut scores = sys.scores.write().unwrap();
+            let old = Instant::now()
+                .checked_sub(std::time::Duration::from_secs(2 * 24 * 3600))
+                .expect("instant should support a 2 day offset");
+            for t in scores.values_mut() {
+                t.last_seen = old;
+            }
+        }
+        sys.record_success("fresh");
+        let all = sys.all_scores();
+        assert!(all.contains_key("fresh"));
+        assert!(all.contains_key("banned"), "an active ban is not forgotten");
+        assert!(!all.contains_key("i1"));
+        assert!(!all.contains_key("i2"));
+        assert!(!all.contains_key("i3"));
     }
 }

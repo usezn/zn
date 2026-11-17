@@ -1,0 +1,2 @@
+### Fixed
+- The gateway no longer grows without limit when a client sends a new agent id on every call. The loop breaker, the reputation list, the result cache, the waiting multi-signature approvals and the state shared by policies now have a size cap, and the entries seen the longest ago are removed first. The current caller is never removed, and a warning is logged once when a cap is reached. The limits are listed in the Rust core docs.

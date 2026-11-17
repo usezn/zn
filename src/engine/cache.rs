@@ -1,5 +1,7 @@
+use super::bounded::{batch_size, oldest_keys, WarnOnce, MAX_CACHE_ENTRIES, SWEEP_EVERY};
 use crate::config::CachingConfig;
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 struct CacheEntry {
@@ -8,17 +10,53 @@ struct CacheEntry {
 }
 
 /// Tool Result Cache (Exact Match)
+///
+/// Holds at most 10,000 entries by default. Expired entries are removed on
+/// insert (every `SWEEP_EVERY` new entries and whenever the cap is reached); if the cache is
+/// still full, the entries that expire first are dropped.
 pub struct ResultCache {
     /// agent_id:tool:args_hash -> Result
     cache: DashMap<String, CacheEntry>,
     config: CachingConfig,
+    max_entries: usize,
+    inserts: AtomicUsize,
+    warned: WarnOnce,
 }
 
 impl ResultCache {
     pub fn new(config: CachingConfig) -> Self {
+        Self::with_max_entries(config, MAX_CACHE_ENTRIES)
+    }
+
+    pub fn with_max_entries(config: CachingConfig, max_entries: usize) -> Self {
         Self {
             cache: DashMap::new(),
             config,
+            max_entries: max_entries.max(1),
+            inserts: AtomicUsize::new(0),
+            warned: WarnOnce::new(),
+        }
+    }
+
+    /// Called before a new key is added: removes expired entries and, if the
+    /// cache is still full, the entries that expire first. The key being added
+    /// is not in the map yet, so it is never the one dropped.
+    fn make_room(&self, now: Instant) {
+        let n = self.inserts.fetch_add(1, Ordering::Relaxed) + 1;
+        let full = self.cache.len() >= self.max_entries;
+        if !full && !n.is_multiple_of(SWEEP_EVERY) {
+            return;
+        }
+        self.cache.retain(|_, e| e.expiry > now);
+        if self.cache.len() >= self.max_entries {
+            self.warned.warn("result cache", self.max_entries);
+            let keys = oldest_keys(
+                self.cache.iter().map(|e| (e.key().clone(), e.expiry)),
+                batch_size(self.max_entries),
+            );
+            for k in keys {
+                self.cache.remove(&k);
+            }
         }
     }
 
@@ -53,6 +91,9 @@ impl ResultCache {
         let expiry = now
             .checked_add(Duration::from_secs(self.config.ttl_seconds))
             .unwrap_or(now);
+        if !self.cache.contains_key(&key) {
+            self.make_room(now);
+        }
         self.cache.insert(key, CacheEntry { result, expiry });
     }
 
@@ -174,5 +215,69 @@ mod tests {
             assert_eq!(h.await.unwrap(), Some(format!("result-{i}")));
         }
         assert_eq!(c.cache.len(), 16);
+    }
+
+    fn capped(ttl: u64, max: usize) -> ResultCache {
+        ResultCache::with_max_entries(
+            CachingConfig {
+                enabled: true,
+                ttl_seconds: ttl,
+            },
+            max,
+        )
+    }
+
+    #[test]
+    fn default_cap_is_ten_thousand_entries() {
+        assert_eq!(cache(true, 60).max_entries, 10_000);
+    }
+
+    #[test]
+    fn entry_cap_is_respected() {
+        let c = capped(60, 100);
+        for i in 0..5_000 {
+            c.set(&format!("agent-{i}"), "t", "{}", "r".to_string());
+            assert!(c.cache.len() <= 100);
+        }
+    }
+
+    #[test]
+    fn oldest_entries_are_dropped_first_and_the_new_one_is_kept() {
+        let c = capped(60, 10);
+        for i in 0..10 {
+            c.set(&format!("a-{i}"), "t", "{}", format!("r{i}"));
+        }
+        c.set("new", "t", "{}", "fresh".to_string());
+        assert_eq!(c.get("new", "t", "{}").as_deref(), Some("fresh"));
+        assert!(c.get("a-0", "t", "{}").is_none(), "oldest is dropped");
+        assert_eq!(c.get("a-9", "t", "{}").as_deref(), Some("r9"));
+    }
+
+    #[test]
+    fn expired_entries_are_removed_on_insert_without_being_read() {
+        let c = capped(0, 1_000);
+        for i in 0..SWEEP_EVERY {
+            c.set(&format!("a-{i}"), "t", "{}", "r".to_string());
+        }
+        // Every entry has a zero TTL, so the periodic sweep leaves almost none.
+        assert!(c.cache.len() < SWEEP_EVERY);
+    }
+
+    #[test]
+    fn expired_entries_make_room_before_live_ones_are_dropped() {
+        let c = capped(60, 4);
+        for i in 0..4 {
+            c.set(&format!("a-{i}"), "t", "{}", "r".to_string());
+        }
+        // Expire a-3 (the newest) by hand: the sweep must remove it, not a-0.
+        let past = Instant::now() - Duration::from_secs(1);
+        for mut e in c.cache.iter_mut() {
+            if e.result == "r" {
+                e.expiry = past;
+            }
+        }
+        c.set("live", "t", "{}", "live".to_string());
+        assert_eq!(c.get("live", "t", "{}").as_deref(), Some("live"));
+        assert_eq!(c.cache.len(), 1);
     }
 }

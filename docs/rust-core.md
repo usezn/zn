@@ -44,7 +44,20 @@ It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the p
 
 Only then does it write the file. It writes to a temporary file in the policy directory, which is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
 
-Known limits that remain, because the gateway is not distributed: bans and the loop breaker follow the agent id that the message gives, inside its namespace, so a client that changes its agent id on every call starts each time with a clean record (the fixed rules and policies still check every call; give each client its own namespace to keep it apart); the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+Known limits that remain, because the gateway is not distributed: bans and the loop breaker follow the agent id that the message gives, inside its namespace, so a client that changes its agent id on every call starts each time with a clean record (the fixed rules and policies still check every call; give each client its own namespace to keep it apart); the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault has no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+
+## Memory limits
+
+The agent id in a message is not authenticated, so everything the gateway keeps per agent or per call has a cap. A client that sends a new agent id on every call cannot make the gateway use more and more memory. When a cap is reached, the gateway removes the entries that were seen the longest ago, never the entry of the call it is handling, and logs one warning for that structure (it does not repeat it). Flooding new ids therefore does not erase the record of an agent that keeps calling. The limits are fixed in this version:
+
+| Structure | Limit | Older entries |
+| --- | --- | --- |
+| Loop breaker, agents | 10,000 agents | An agent idle for longer than the loop window is removed; at the cap, the 10% seen the longest ago are removed |
+| Loop breaker, actions per agent | 1,000 actions (or `max_repeats` + 1 if that is larger) | The oldest action is removed; actions older than the window are removed as before |
+| Reputation and bans | 10,000 agents | An agent idle for 24 hours is removed unless its ban is active; at the cap, agents without an active ban go first, oldest first |
+| Result cache (`caching`) | 10,000 entries | Expired entries are removed on insert; at the cap, the entries that expire first are removed |
+| Multi-signature approvals (`consensus`) | 1,000 waiting actions | Expired actions are removed on every call; at the cap, the oldest waiting action is removed to make room for a new one |
+| Policy state (`zn_state_set`) | 16 MiB of keys and values together | The entry used the longest ago is removed; a single entry larger than the limit is not stored |
 
 ## Audit payloads
 

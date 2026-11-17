@@ -5,6 +5,7 @@
 //! - Policy integrity verification via SHA-256 hashes
 //! - Memory-safe communication with WASM modules
 
+pub mod bounded;
 pub mod cache;
 pub mod consensus;
 pub mod loop_breaker;
@@ -13,6 +14,7 @@ pub mod policy_file;
 pub mod reputation;
 pub mod rules;
 pub mod signing;
+pub mod state_store;
 pub mod sync;
 pub mod vision;
 pub mod watcher;
@@ -133,7 +135,7 @@ pub fn remove_policy_file(dir: impl AsRef<Path>, name: &str) -> Result<bool> {
 struct ZnContext {
     memory_limit: usize,
     agent_id: Option<String>,
-    state_store: Arc<DashMap<String, String>>,
+    state_store: Arc<state_store::StateStore>,
 }
 
 impl ResourceLimiter for ZnContext {
@@ -181,7 +183,7 @@ pub struct ZnEngine {
     /// Policy signature verifier
     verifier: signing::PolicyVerifier,
     /// Shared state store for policies
-    state_store: Arc<DashMap<String, String>>,
+    state_store: Arc<state_store::StateStore>,
 }
 
 impl ZnEngine {
@@ -203,7 +205,7 @@ impl ZnEngine {
         });
 
         let mut linker = Linker::<ZnContext>::new(&engine);
-        let state_store = Arc::new(DashMap::new());
+        let state_store = Arc::new(state_store::StateStore::new());
 
         // --- Host Functions ---
 
@@ -262,7 +264,7 @@ impl ZnEngine {
                 };
 
                 // Copy value out of DashMap to avoid borrow conflicts
-                let val_opt = caller.data().state_store.get(&key).map(|v| v.clone());
+                let val_opt = caller.data().state_store.get(&key);
 
                 if let Some(val) = val_opt {
                     let val_bytes = val.as_bytes();

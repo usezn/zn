@@ -1,3 +1,4 @@
+use super::bounded::{oldest_keys, WarnOnce, MAX_PENDING_ACTIONS};
 use crate::config::ConsensusConfig;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -46,11 +47,17 @@ pub enum ActionStatus {
 }
 
 /// M-of-N Consensus Manager
+///
+/// Actions older than the TTL are removed on every access. At most 1,000
+/// actions wait at once; when a new proposal would pass that, the oldest one
+/// is dropped (the new one is always kept).
 pub struct ConsensusManager {
     /// Pending actions: action_id -> Action
     pending: DashMap<String, AuthorizableAction>,
     config: ConsensusConfig,
     clock: Clock,
+    max_pending: usize,
+    warned: WarnOnce,
 }
 
 impl ConsensusManager {
@@ -64,7 +71,15 @@ impl ConsensusManager {
             pending: DashMap::new(),
             config,
             clock,
+            max_pending: MAX_PENDING_ACTIONS,
+            warned: WarnOnce::new(),
         }
+    }
+
+    /// Change the cap on waiting actions (used by tests).
+    pub fn with_max_pending(mut self, max_pending: usize) -> Self {
+        self.max_pending = max_pending.max(1);
+        self
     }
 
     fn now(&self) -> DateTime<Utc> {
@@ -134,6 +149,21 @@ impl ConsensusManager {
             status: ActionStatus::Pending,
         };
 
+        // Expired actions were purged above; if the queue is still full, drop the oldest.
+        while self.pending.len() >= self.max_pending {
+            self.warned
+                .warn("consensus pending actions", self.max_pending);
+            let oldest = oldest_keys(
+                self.pending.iter().map(|e| (e.key().clone(), e.timestamp)),
+                1,
+            );
+            match oldest.first() {
+                Some(id) => {
+                    self.pending.remove(id);
+                }
+                None => break,
+            }
+        }
         self.pending.insert(action_id.clone(), action);
         Some(action_id)
     }
@@ -715,5 +745,60 @@ mod tests {
             pending[0].arguments_hash,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn default_cap_is_one_thousand_pending_actions() {
+        assert_eq!(mgr_default_cap(), 1_000);
+    }
+
+    fn mgr_default_cap() -> usize {
+        ConsensusManager::new(ConsensusConfig::default()).max_pending
+    }
+
+    fn capped_mgr(cap: usize) -> (ConsensusManager, Arc<std::sync::Mutex<DateTime<Utc>>>) {
+        let now = Arc::new(std::sync::Mutex::new(Utc::now()));
+        let c = Arc::clone(&now);
+        let mgr = ConsensusManager::with_clock(
+            ConsensusConfig {
+                enabled: true,
+                critical_tools: vec!["deploy".to_string()],
+                required_signatures: 1,
+                pending_ttl_secs: 900,
+                ..ConsensusConfig::default()
+            },
+            Arc::new(move || *c.lock().unwrap()),
+        )
+        .with_max_pending(cap);
+        (mgr, now)
+    }
+
+    #[test]
+    fn pending_cap_is_respected_and_the_oldest_goes_first() {
+        let (mgr, now) = capped_mgr(5);
+        let mut ids = Vec::new();
+        for _ in 0..20 {
+            *now.lock().unwrap() += chrono::Duration::seconds(1);
+            ids.push(mgr.propose_action("ns", "agent", "deploy", "{}").unwrap());
+            assert!(mgr.pending.len() <= 5);
+        }
+        assert_eq!(mgr.pending.len(), 5);
+        assert!(!mgr.pending.contains_key(&ids[0]));
+        assert!(mgr.pending.contains_key(&ids[19]), "the newest is kept");
+        assert!(mgr.pending.contains_key(&ids[15]));
+    }
+
+    #[test]
+    fn expired_actions_are_purged_before_live_ones_are_dropped() {
+        let (mgr, now) = capped_mgr(3);
+        let first = mgr.propose_action("ns", "agent", "deploy", "{}").unwrap();
+        *now.lock().unwrap() += chrono::Duration::seconds(1000);
+        let live1 = mgr.propose_action("ns", "agent", "deploy", "{}").unwrap();
+        let live2 = mgr.propose_action("ns", "agent", "deploy", "{}").unwrap();
+        let live3 = mgr.propose_action("ns", "agent", "deploy", "{}").unwrap();
+        assert!(!mgr.pending.contains_key(&first));
+        for id in [live1, live2, live3] {
+            assert!(mgr.pending.contains_key(&id));
+        }
     }
 }
