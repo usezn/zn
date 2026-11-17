@@ -202,3 +202,101 @@ def test_arguments_with_properties_are_still_checked_as_before():
     # Only tool results are refused: an application object passed as an argument is never returned to the model.
     assert check_tool_call("tool", {"client": PropertyOnlyKey()}).allowed
     assert check_tool_call("tool", {"client": PropertyOnlyKey()}, _lenient_objects=True).allowed
+
+
+# --- spoofed trust and containers ----------------------------------------------------------------
+
+class SpoofedModuleKey:
+    """Claims to come from a trusted package: the claim alone is not trusted."""
+
+    __module__ = "pydantic.main"
+    __qualname__ = "BaseModel"
+
+    @property
+    def token(self):
+        return FAKE_KEY
+
+
+class SpoofedStdlibKey:
+    __module__ = "collections"
+
+    @property
+    def token(self):
+        return FAKE_KEY
+
+
+class ClassPropertyCounter:
+    """A __class__ property that answers dict, counting how often it is asked."""
+
+    reads = 0
+
+    @property
+    def __class__(self):
+        type(self).reads += 1
+        return dict
+
+    def items(self):
+        return [("note", "hello")]
+
+
+class ClassAttributeDict:
+    __class__ = dict
+
+
+class ListWithProperty(list):
+    @property
+    def token(self):
+        return FAKE_KEY
+
+
+class DictWithProperty(dict):
+    @property
+    def token(self):
+        return FAKE_KEY
+
+
+class HashableProperty:
+    @property
+    def token(self):
+        return FAKE_KEY
+
+
+@pytest.mark.parametrize("make", [
+    SpoofedModuleKey, SpoofedStdlibKey, ClassAttributeDict,
+    lambda: ListWithProperty(["hello"]), lambda: DictWithProperty(a="hello"),
+    lambda: [HashableProperty()], lambda: {HashableProperty()}, lambda: frozenset({HashableProperty()}),
+    lambda: ({"k": [HashableProperty()]},), lambda: {"k": (HashableProperty(),)},
+], ids=["module", "stdlib-module", "class-attribute", "list-subclass", "dict-subclass", "in-list", "in-set",
+        "in-frozenset", "nested-tuple", "dict-of-tuple"])
+def test_spoofed_and_contained_accessors_are_refused(make):
+    assert check_tool_result(make()).rule == "type:unscannable"
+    with pytest.raises(SanitizeLimitError) as err:
+        sanitize_tool_result(make())
+    assert err.value.rule == "type:unscannable"
+
+
+def test_a_class_property_is_not_read_while_checking():
+    ClassPropertyCounter.reads = 0
+    assert check_tool_result({"items": [ClassPropertyCounter()]}).rule == "type:unscannable"
+    with pytest.raises(SanitizeLimitError):
+        sanitize_tool_result([ClassPropertyCounter()])
+    assert ClassPropertyCounter.reads == 0
+
+
+def test_a_trusted_class_is_recognized_by_identity():
+    assert unread_accessors(SpoofedModuleKey()) is True
+    assert unread_accessors(namedtuple("Point", "x y")(1, 2)) is False
+    import collections
+    import datetime
+    import fractions
+    for value in (collections.OrderedDict(a=1), datetime.datetime(2026, 1, 1), fractions.Fraction(1, 3)):
+        assert unread_accessors(value) is False
+
+
+def test_plain_subclasses_and_containers_still_pass():
+    class PlainList(list):
+        pass
+
+    assert check_tool_result(PlainList(["hello"])).allowed
+    assert check_tool_result([{"a": "hello"}, {"b"}, ("c",)]).allowed
+    assert FAKE_KEY not in str(sanitize_tool_result(PlainList(["key " + FAKE_KEY]))[0])

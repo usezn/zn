@@ -71,8 +71,102 @@ test('plain objects, class instances without getters and built-ins still pass th
   assert.equal(scanToolResult(new Plain('hello')).allowed, true);
   assert.equal(scanToolResult(Object.create(null)).allowed, true);
   assert.equal(scanToolResult([new Date(0), new Map([['a', 'b']]), new URL('https://example.com/a')]).allowed, true);
-  assert.equal(scanToolResult({ own: 'x', get shown() { return 'hello'; } }).allowed, true);
   assert.equal(scanToolResult(new Plain(INJECTION)).allowed, false);
+});
+
+// Getters that answer safe text the first time they are read and an injection afterwards.
+function statefulGetter() {
+  let reads = 0;
+  return () => { reads += 1; return reads === 1 ? 'hello' : INJECTION; };
+}
+
+function enumerableGetter() {
+  return Object.defineProperty({}, 'note', { get: statefulGetter(), enumerable: true });
+}
+
+class SpoofedCtor {
+  get note() { return INJECTION; }
+}
+// A prototype that claims a native constructor: the check must not trust it.
+Object.defineProperty(SpoofedCtor.prototype, 'constructor', { value: Object, writable: true });
+
+const BYPASSES = [
+  ['an enumerable own getter', () => enumerableGetter()],
+  ['an object literal getter', () => ({ own: 'x', get shown() { return INJECTION; } })],
+  ['a getter inside an array', () => ['hello', enumerableGetter()]],
+  ['a getter as an array element', () => Object.defineProperty(['hello'], 0, { get: statefulGetter(), enumerable: true })],
+  ['a getter inside a Set', () => new Set(['hello', enumerableGetter()])],
+  ['a getter in a Map value', () => new Map([['k', enumerableGetter()]])],
+  ['a getter in a Map key', () => new Map([[enumerableGetter(), 'v']])],
+  ['a custom prototype with a native-looking constructor', () => new SpoofedCtor()],
+  ['a prototype made with Object.create', () => Object.create(Object.defineProperty({}, 'note', { get: statefulGetter() }))],
+  ['a Proxy', () => new Proxy({ note: 'hello' }, {})],
+  ['a Proxy inside an array', () => [new Proxy({}, { get: () => INJECTION })]],
+  ['a Proxy as a prototype', () => Object.create(new Proxy({}, {}))],
+  ['an array with its own iterator', () => Object.defineProperty(['hello'], Symbol.iterator, { value: function* it() { yield INJECTION; } })],
+  ['a Set subclass with its own iterator', () => new (class extends Set { *[Symbol.iterator]() { yield INJECTION; } })(['hello'])],
+];
+
+for (const [label, make] of BYPASSES) {
+  test(`the result check blocks ${label} before reading it`, () => {
+    for (const result of [make(), { nested: [make()] }]) {
+      const res = scanToolResult(result);
+      assert.equal(res.allowed, false, label);
+      assert.equal(res.rule, 'type:unscannable', label);
+    }
+    const guarded = guardTool(() => make(), { checkResult: true, maskSecrets: true, onBlock: 'return', fallback: 'blocked' });
+    assert.equal(guarded(), 'blocked', label);
+  });
+}
+
+test('a getter is never read by the result check', () => {
+  let reads = 0;
+  const result = { items: [Object.defineProperty({}, 'note', { get: () => { reads += 1; return 'hello'; }, enumerable: true })] };
+  assert.equal(scanToolResult(result).rule, 'type:unscannable');
+  assert.equal(reads, 0);
+});
+
+test('masking rebuilds the values the check read, not a second read of the result', () => {
+  const key = 'key ' + FAKE_AWS_KEY;
+  const guarded = guardTool(() => ({ list: ['hello', key], set: new Set([key]), map: new Map([['k', key]]) }),
+    { checkResult: true, maskSecrets: true });
+  const out = guarded();
+  assert.ok(!JSON.stringify(out).includes(FAKE_AWS_KEY));
+  assert.equal(out.list[0], 'hello');
+});
+
+test('the result check reads a Set and a Map with the built-in iterators', () => {
+  const set = new Set(['hello', INJECTION]);
+  set.values = function values() { return ['hello'][Symbol.iterator](); };
+  assert.equal(scanToolResult(set).allowed, false);
+  const map = new Map([['k', INJECTION]]);
+  map.entries = function entries() { return [][Symbol.iterator](); };
+  assert.equal(scanToolResult(map).allowed, false);
+});
+
+test('plain data and built-in objects still pass the result check', () => {
+  const err = new TypeError('fine');
+  const nullProto = Object.assign(Object.create(null), { a: 'hello' });
+  const cyclic = { a: 'hello' };
+  cyclic.self = cyclic;
+  for (const [i, result] of [{ a: ['hello', { b: 'world' }] }, Object.assign(new Array(3), { 0: 1, 2: 3 }), nullProto, new Set(['a', { b: 'c' }]),
+    new Map([[{ k: 'a' }, ['v']]]), new Date(0), /re/g, new URL('https://example.com/a?b=c'),
+    new URLSearchParams('a=b'), err, Buffer.from('hello'), new Uint8Array([104, 105]), new Float64Array(3),
+    new Plain('hello'), cyclic, new (class extends Array {})('a')].entries()) {
+    const res = scanToolResult(result);
+    assert.equal(res.allowed, true, `case ${i}`);
+  }
+  assert.equal(scanToolResult(Buffer.from(INJECTION)).allowed, false);
+  assert.equal(scanToolResult(new Map([['k', INJECTION]])).allowed, false);
+});
+
+test('a checked and masked result keeps its shape', () => {
+  const guarded = guardTool(() => ({ a: Object.assign(new Array(3), { 0: 'x', 2: 'y' }), n: 1, nested: { s: new Set(['z']) } }),
+    { checkResult: true, maskSecrets: true });
+  const direct = sanitizeToolResult({ a: Object.assign(new Array(3), { 0: 'x', 2: 'y' }), n: 1, nested: { s: new Set(['z']) } }).sanitized;
+  assert.deepEqual(guarded(), direct);
+  const original = { a: 'hello' };
+  assert.equal(guardTool(() => original, { checkResult: true })(), original);
 });
 
 test('arguments with getters are checked as before', () => {

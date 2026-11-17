@@ -6,6 +6,7 @@
  * the network.
  */
 
+const { types } = require('node:util');
 const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock, truncatedBlocks } = require('./rules');
 
 const MAX_DEPTH = 10;
@@ -45,58 +46,143 @@ class GuardBlockError extends Error {
 /** Internal: a payload is nested deeper than the scanner is willing to walk. */
 class NestingTooDeep extends Error {}
 
-// Classes of Node.js written in JavaScript whose getters only show what the instance already holds.
-const TRUSTED_ACCESSOR_CLASSES = new Set([URL, URLSearchParams]);
-const NATIVE_CODE_RE = /\{\s*\[native code\]\s*\}\s*$/;
+/** Internal: a tool result holds a value that cannot be read without running its code. */
+class Unscannable extends Error {}
 
-function isNativeFunction(fn) {
-  try {
-    return typeof fn === 'function' && NATIVE_CODE_RE.test(Function.prototype.toString.call(fn));
-  } catch {
-    return false;
-  }
+// Prototypes of the built-in classes, compared by identity: their getters only show what the
+// instance already holds. A prototype is never recognized by its constructor or a name, which
+// any object can set.
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
+const TRUSTED_PROTOTYPES = new Set([
+  Object.prototype, Array.prototype, Map.prototype, Set.prototype, WeakMap.prototype, WeakSet.prototype,
+  Date.prototype, RegExp.prototype, Promise.prototype, URL.prototype, URLSearchParams.prototype,
+  ArrayBuffer.prototype, DataView.prototype, Number.prototype, String.prototype, Boolean.prototype,
+  BigInt.prototype, Symbol.prototype, Buffer.prototype, TYPED_ARRAY_PROTOTYPE,
+  ...[Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array,
+    Float32Array, Float64Array, BigInt64Array, BigUint64Array].map((c) => c.prototype),
+  ...[Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, AggregateError]
+    .map((c) => c.prototype),
+]);
+if (typeof SharedArrayBuffer === 'function') TRUSTED_PROTOTYPES.add(SharedArrayBuffer.prototype);
+if (typeof globalThis.Float16Array === 'function') TRUSTED_PROTOTYPES.add(globalThis.Float16Array.prototype);
+// The `stack` accessor pair V8 puts on every error: it formats the stack the error already holds.
+const ERROR_STACK = Object.getOwnPropertyDescriptor(new Error(), 'stack');
+// The built-in iterators, so that a Set or a Map is read the same way whatever its own methods say.
+const SET_VALUES = Set.prototype.values;
+const MAP_ENTRIES = Map.prototype.entries;
+
+function isErrorStack(key, d) {
+  return key === 'stack' && ERROR_STACK !== undefined && ERROR_STACK.get !== undefined
+    && d.get === ERROR_STACK.get && d.set === ERROR_STACK.set;
+}
+
+function isIndexKey(key) {
+  return typeof key === 'string' && key !== '4294967295' && String(Number(key) >>> 0) === key;
 }
 
 /**
- * True when `obj` can show values that Object.entries does not list: a getter or setter
- * on a prototype of its class chain (other than the built-in classes), or an own getter
- * or setter that is not enumerable. Reading those would run the object's code, so the
- * result check does not read them and blocks the result instead (rule type:unscannable);
- * sanitizeToolResult rebuilds such an object as a plain object of its listed values.
+ * The own property descriptors of `obj`, or Unscannable when reading `obj` could run its code:
+ * `obj` or one of its prototypes is a Proxy; it has an own getter or setter (listed or not); a
+ * prototype other than a built-in one (TRUSTED_PROTOTYPES) defines one; or it is an array, a
+ * Set, a Map or a typed array whose own or inherited Symbol.iterator is not the built-in one.
+ * Nothing here calls a getter: on an object that is not a Proxy, reading descriptors runs no code.
+ * Returns null for a typed array, whose elements are bytes and numbers.
  */
-function hiddenAccessors(obj) {
-  try {
-    for (const key of Reflect.ownKeys(obj)) {
+function screenObject(obj) {
+  if (types.isProxy(obj)) throw new Unscannable();
+  const typed = types.isTypedArray(obj);
+  const container = typed || Array.isArray(obj) || types.isSet(obj) || types.isMap(obj);
+  let own = null;
+  if (typed) {
+    // Its elements cannot be accessors; listing every index of a large buffer would be slow.
+    for (const key of [Symbol.iterator, 'toJSON']) {
       const d = Object.getOwnPropertyDescriptor(obj, key);
-      if (d && !d.enumerable && (d.get || d.set)) return true;
+      if (d && (d.get || d.set || key === Symbol.iterator)) throw new Unscannable();
     }
-    for (let proto = Object.getPrototypeOf(obj); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
-      const ctor = Object.prototype.hasOwnProperty.call(proto, 'constructor') ? proto.constructor : undefined;
-      if (isNativeFunction(ctor) || TRUSTED_ACCESSOR_CLASSES.has(ctor)) continue;
-      for (const key of Reflect.ownKeys(proto)) {
-        const d = Object.getOwnPropertyDescriptor(proto, key);
-        if (d && (d.get || d.set)) return true;
-      }
+  } else {
+    own = Object.getOwnPropertyDescriptors(obj);
+    for (const key of Reflect.ownKeys(own)) {
+      const d = own[key];
+      if ((d.get || d.set) && !isErrorStack(key, d)) throw new Unscannable();
+      if (container && key === Symbol.iterator) throw new Unscannable();
     }
-    return false;
-  } catch {
-    // A prototype chain that cannot be read (a Proxy that throws) cannot be checked either.
-    return true;
   }
+  for (let proto = Object.getPrototypeOf(obj); proto !== null; proto = Object.getPrototypeOf(proto)) {
+    if (types.isProxy(proto)) throw new Unscannable();
+    if (TRUSTED_PROTOTYPES.has(proto)) continue;
+    const inherited = Object.getOwnPropertyDescriptors(proto);
+    for (const key of Reflect.ownKeys(inherited)) {
+      const d = inherited[key];
+      if (d.get || d.set) throw new Unscannable();
+      if (container && key === Symbol.iterator) throw new Unscannable();
+    }
+  }
+  return own;
 }
 
-const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters that cannot be checked without running its code; '
-  + 'return its data as a plain object instead';
+/**
+ * A copy of a tool result made of plain data, built without running any of its code, or
+ * Unscannable (see screenObject). Arrays, Sets and Maps are copied as the same kind of
+ * container (read with the built-in iterators), typed arrays are kept as they are, and any
+ * other object becomes a plain object of its listed (enumerable) string-keyed values, which
+ * is all that extractStrings and sanitizeToolResult read. A container that contains itself
+ * stays so in the copy. Throws NestingTooDeep where extractStrings would.
+ * The result check reads this copy and masking rebuilds it, so both see the same values even
+ * when the result would answer differently a second time.
+ */
+function snapshotOf(data, maxDepth, memo) {
+  if (data === null || typeof data !== 'object') return data;
+  if (memo.has(data)) return memo.get(data);
+  const own = screenObject(data);
+  if (types.isUint8Array(data)) { memo.set(data, data); return data; }
+  if (maxDepth <= 0) throw new NestingTooDeep();
+  if (own === null) { memo.set(data, data); return data; }
+  if (Array.isArray(data)) {
+    const out = new Array(own.length.value);
+    memo.set(data, out);
+    for (const key of Reflect.ownKeys(own)) {
+      if (isIndexKey(key)) out[Number(key)] = snapshotOf(own[key].value, maxDepth - 1, memo);
+    }
+    return out;
+  }
+  if (types.isSet(data)) {
+    const out = new Set();
+    memo.set(data, out);
+    for (const v of SET_VALUES.call(data)) out.add(snapshotOf(v, maxDepth - 1, memo));
+    return out;
+  }
+  if (types.isMap(data)) {
+    const out = new Map();
+    memo.set(data, out);
+    for (const entry of MAP_ENTRIES.call(data)) {
+      out.set(snapshotOf(entry[0], maxDepth - 1, memo), snapshotOf(entry[1], maxDepth - 1, memo));
+    }
+    return out;
+  }
+  const out = {};
+  memo.set(data, out);
+  for (const key of Reflect.ownKeys(own)) {
+    const d = own[key];
+    if (typeof key !== 'string' || !d.enumerable || !('value' in d)) continue;
+    // defineProperty, so a key such as __proto__ stays an ordinary property
+    Object.defineProperty(out, key, {
+      value: snapshotOf(d.value, maxDepth - 1, memo), enumerable: true, writable: true, configurable: true,
+    });
+  }
+  return out;
+}
+
+const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters, setters or a Proxy that cannot be checked '
+  + 'without running its code; return its data as a plain object instead';
 
 /**
  * Every string in a nested structure, object keys included. Walks arrays, sets,
  * maps (keys and values) and plain objects, and decodes Buffer / Uint8Array as
  * UTF-8. Throws NestingTooDeep instead of skipping content below the depth
  * limit, so callers can fail closed. A container that contains itself is walked
- * once. With `walk`, objects whose getters are not read (see hiddenAccessors)
- * are counted in walk.hidden.
+ * once.
  */
-function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = [], walk = null) {
+function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = []) {
   if (typeof data === 'string') { out.push(data); return out; }
   if (data instanceof Uint8Array) { out.push(Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8')); return out; }
   let children;
@@ -106,7 +192,6 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
     children = [];
     for (const [k, v] of data) children.push(k, v);
   } else if (data && typeof data === 'object') {
-    if (walk && hiddenAccessors(data)) walk.hidden += 1;
     children = [];
     for (const [k, v] of Object.entries(data)) children.push(k, v);
   } else {
@@ -117,7 +202,7 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
   path.add(data);
   try {
     // Collected into one shared list: spreading a large child list into push() overflows the call stack.
-    for (const child of children) extractStrings(child, maxDepth - 1, path, out, walk);
+    for (const child of children) extractStrings(child, maxDepth - 1, path, out);
     return out;
   } finally {
     path.delete(data);
@@ -125,14 +210,17 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
 }
 
 /**
- * extractStrings, or a block assessment when the payload is nested too deeply to check
- * or, with blockHidden (tool results), holds an object whose getters are not read.
+ * extractStrings, or a block assessment when the payload is nested too deeply to check.
+ * With snapshot (tool results), the strings are read from snapshotOf(data), returned as
+ * `snapshot`, and a value that cannot be read without running its code is a block too.
  */
-function stringsOrBlock(data, what, blockHidden = false) {
+function stringsOrBlock(data, what, snapshot = false) {
   try {
-    const walk = { hidden: 0 };
-    const strings = extractStrings(data, MAX_DEPTH, new WeakSet(), [], walk);
-    if (blockHidden && walk.hidden > 0) {
+    if (!snapshot) return { strings: extractStrings(data, MAX_DEPTH, new WeakSet(), []) };
+    const copy = snapshotOf(data, MAX_DEPTH, new Map());
+    return { strings: extractStrings(copy, MAX_DEPTH, new WeakSet(), []), snapshot: copy };
+  } catch (e) {
+    if (e instanceof Unscannable) {
       return {
         block: {
           allowed: false, verdict: 'block', confidence: 1.0, rule: 'type:unscannable',
@@ -140,8 +228,6 @@ function stringsOrBlock(data, what, blockHidden = false) {
         },
       };
     }
-    return { strings };
-  } catch (e) {
     if (!(e instanceof NestingTooDeep)) throw e;
     return {
       block: {
@@ -181,29 +267,36 @@ function checkToolCall(toolName, args, opts = {}) {
  * strings are scanned in overlapping windows; `truncated` is true when some
  * string was not scanned in full, and such output is blocked by default (rule
  * size:truncated); opts.allowTruncated or ZN_ALLOW_TRUNCATED=1 allows it.
- * An object whose class shows values through getters is blocked (rule
- * type:unscannable, see hiddenAccessors), as in the Python package.
+ * A result holding a getter, a setter or a Proxy outside the built-in classes
+ * is blocked (rule type:unscannable, see screenObject), as in the Python package.
  * Internal helper of guardTool; the public async variant is checkToolResult in lib/client.js.
  */
 function scanToolResult(result, opts = {}) {
+  return checkResultSnapshot(result, opts).assessment;
+}
+
+/** scanToolResult, plus the plain-data copy it checked (see snapshotOf) when the result is allowed. */
+function checkResultSnapshot(result, opts) {
   let truncated = false;
   let advisory = null;
-  const { strings, block } = stringsOrBlock(result, 'Result', true);
-  if (block) return block;
-  if (tooInvisible(strings)) return { allowed: false, ...invisibleBlock() };
+  const { strings, block, snapshot } = stringsOrBlock(result, 'Result', true);
+  if (block) return { assessment: block };
+  if (tooInvisible(strings)) return { assessment: { allowed: false, ...invisibleBlock() } };
   for (const s of strings) {
     const res = scanWindows(s, opts);
-    if (res.verdict === 'block') return { allowed: false, ...res };
+    if (res.verdict === 'block') return { assessment: { allowed: false, ...res } };
     truncated = truncated || res.truncated === true;
     advisory = advisory || res.advisory;
   }
   if (truncated && truncatedBlocks(opts)) {
     return {
-      allowed: false, verdict: 'block', confidence: 1.0, rule: 'size:truncated',
-      reason: 'Output too large to scan in full', truncated: true,
+      assessment: {
+        allowed: false, verdict: 'block', confidence: 1.0, rule: 'size:truncated',
+        reason: 'Output too large to scan in full', truncated: true,
+      },
     };
   }
-  return allow(advisory, { truncated });
+  return { assessment: allow(advisory, { truncated }), snapshot };
 }
 
 function validateOptions(opts) {
@@ -265,11 +358,14 @@ function guardTool(fn, opts = {}) {
   };
 
   const after = (res) => {
+    let checked = res;
     if (opts.checkResult) {
-      const assessment = scanToolResult(res, { ...engineOpts, blockTruncated: opts.blockTruncated === true, allowTruncated: opts.allowTruncated === true });
+      const { assessment, snapshot } = checkResultSnapshot(res, { ...engineOpts, blockTruncated: opts.blockTruncated === true, allowTruncated: opts.allowTruncated === true });
       if (!assessment.allowed) return blocked(assessment, name + ':result', res).value;
+      // Masking rebuilds the copy that was checked, so it cannot see other values than the check did.
+      checked = snapshot;
     }
-    return opts.maskSecrets ? sanitizeToolResult(res).sanitized : res;
+    return opts.maskSecrets ? sanitizeToolResult(checked).sanitized : res;
   };
 
   const isAsync = fn.constructor && fn.constructor.name === 'AsyncFunction';

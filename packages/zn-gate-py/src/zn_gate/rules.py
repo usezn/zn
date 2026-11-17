@@ -24,7 +24,7 @@ import sys
 import types
 import unicodedata
 import weakref
-from collections import Counter
+from collections import Counter, namedtuple
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
@@ -2567,32 +2567,78 @@ def _is_opaque_object(val: Any) -> bool:
 _TRUSTED_ACCESSOR_PACKAGES = frozenset({
     "zn_gate", "pydantic", "pydantic_core", "attr", "attrs", "msgspec", "langchain_core", "llama_index",
 })
-_ACCESSOR_HOOKS = ("__getattr__", "__getattribute__")
+# A class attribute named __class__ (a property or a plain value) changes what isinstance() answers.
+_ACCESSOR_HOOKS = ("__getattr__", "__getattribute__", "__class__")
 UNREAD_ACCESSORS_REASON = ("An object shows values through properties or attribute hooks that cannot be checked "
                            "without running its code; return its data as a dict instead")
+# Values that unread_accessors never needs to look at: the plain containers and None, and text, numbers, classes
+# and modules (subclasses included, as the scanners read them as such). Compared with the real type.
+_PLAIN_VALUE_TYPES = frozenset({dict, list, tuple, set, frozenset, type(None)})
+_SCALAR_TYPES = (str, bytes, bytearray, memoryview, bool, int, float, complex, type, types.ModuleType)
 _accessor_cache: "weakref.WeakKeyDictionary[type, Tuple[bool, Tuple[str, ...]]]" = weakref.WeakKeyDictionary()
+
+
+# The slots of `type` itself, read directly: a metaclass can override __mro__, __dict__, __module__ or
+# __qualname__ with a property of its own, so the class's own answer is never asked for.
+_TYPE_MRO = type.__dict__["__mro__"]
+_TYPE_DICT = type.__dict__["__dict__"]
+_TYPE_MODULE = type.__dict__["__module__"]
+_TYPE_QUALNAME = type.__dict__["__qualname__"]
+_TYPE_FLAGS = type.__dict__["__flags__"]
+_HEAPTYPE = 1 << 9
+# The descriptor type of a namedtuple field, compared by identity (its name can be copied).
+_TUPLEGETTER = type(vars(namedtuple("_ZnField", "a"))["a"])
+
+
+def _trusted_module(module: Any) -> bool:
+    top = module.split(".", 1)[0] if isinstance(module, str) else ""
+    return top == "builtins" or top in sys.stdlib_module_names or top in _TRUSTED_ACCESSOR_PACKAGES
+
+
+def _trusted_class(c: type) -> bool:
+    """True for a class of the standard library or of a trusted package.
+
+    A class written in Python can set __module__ (and __qualname__) to any name, so its module name is
+    trusted only when that module, already imported, holds this very class under that qualified name.
+    A static type (written in C) cannot change its module name.
+    """
+    if c is object:
+        return True
+    module = _TYPE_MODULE.__get__(c)
+    if not _trusted_module(module):
+        return False
+    if not _TYPE_FLAGS.__get__(c) & _HEAPTYPE:
+        return True
+    target: Any = sys.modules.get(module)
+    for part in str(_TYPE_QUALNAME.__get__(c)).split("."):
+        if isinstance(target, types.ModuleType):
+            namespace: Any = vars(target)
+        elif isinstance(target, type):
+            namespace = _TYPE_DICT.__get__(target)
+        else:
+            return False
+        target = namespace.get(part) if isinstance(namespace, (dict, types.MappingProxyType)) else None
+    return target is c
 
 
 def _class_accessors(klass: type) -> Tuple[bool, Tuple[str, ...]]:
     """(whether a class of the MRO outside the trusted packages defines a data descriptor or an attribute hook,
     the names of its cached properties)."""
     lazy: List[str] = []
-    for c in klass.__mro__:
-        module = getattr(c, "__module__", None)
-        top = module.split(".", 1)[0] if isinstance(module, str) else ""
-        if c is object or top == "builtins" or top in sys.stdlib_module_names or top in _TRUSTED_ACCESSOR_PACKAGES:
+    for c in _TYPE_MRO.__get__(klass):
+        if _trusted_class(c):
             continue
-        for name, attr in list(vars(c).items()):
+        for name, attr in list(_TYPE_DICT.__get__(c).items()):
             if name in _ACCESSOR_HOOKS:
                 return True, ()
-            if isinstance(attr, functools.cached_property):
+            kind = type(attr)
+            if kind is functools.cached_property:
                 lazy.append(attr.attrname or name)
                 continue
-            if isinstance(attr, (types.MemberDescriptorType, types.GetSetDescriptorType)):
+            if kind in (types.MemberDescriptorType, types.GetSetDescriptorType):
                 # __slots__ entries, __dict__ and __weakref__: what they hold is walked.
                 continue
-            kind = type(attr)
-            if kind.__name__ == "_tuplegetter" and issubclass(klass, tuple):
+            if kind is _TUPLEGETTER and issubclass(klass, tuple):
                 # A namedtuple field: an item of the tuple, which is walked.
                 continue
             if hasattr(kind, "__get__") and (hasattr(kind, "__set__") or hasattr(kind, "__delete__")):
@@ -2604,8 +2650,9 @@ def unread_accessors(val: Any) -> bool:
     """True when `val` can show values that a walk of its __dict__ and __slots__ does not read.
 
     That is the case when a class of its MRO, outside the standard library and the trusted packages
-    (_TRUSTED_ACCESSOR_PACKAGES), defines a data descriptor (a property, or any descriptor with __get__ and
-    __set__ or __delete__), a __getattr__ or __getattribute__ hook, or a cached property not computed yet.
+    (_TRUSTED_ACCESSOR_PACKAGES; see _trusted_class: a class that only names such a module is not trusted),
+    defines a data descriptor (a property, or any descriptor with __get__ and __set__ or __delete__), a
+    __getattr__ or __getattribute__ hook, a __class__ attribute, or a cached property not computed yet.
     Reading those would run the object's code (side effects, slowness, exceptions), so the scanners do not
     read them: a tool result with one is refused instead (rule type:unscannable), and the masker and the
     checker agree on it.
@@ -2818,11 +2865,13 @@ def sanitize_tool_result(
         path.add(id(val))
 
     def _sanitize(val: Any) -> Any:
+        kind = type(val)
+        if kind not in _PLAIN_VALUE_TYPES and not issubclass(kind, _SCALAR_TYPES) and unread_accessors(val):
+            # A property or attribute hook could show a secret that no attribute holds: refuse the object (a
+            # subclass of dict or list too) before anything reads it, even isinstance(), which asks the object
+            # for __class__ (check_tool_result blocks it the same way).
+            raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
         if not isinstance(val, (dict, list, tuple, set, frozenset)):
-            if _is_opaque_object(val) and unread_accessors(val):
-                # A property or attribute hook could show a secret that no attribute holds: refuse the object
-                # instead of passing it through unread (check_tool_result blocks it the same way).
-                raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
             names = _object_names(val)
             if not names:
                 return _sanitize_value(val)

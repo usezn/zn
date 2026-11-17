@@ -150,7 +150,7 @@ _FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
 
 def _is_framework_context(value: Any) -> bool:
     """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES)."""
-    if isinstance(value, (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
+    if issubclass(type(value), (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
         return False
     try:
         mro = type(value).__mro__
@@ -181,13 +181,15 @@ class _Walk:
     reused during the walk), a count of parts left out, and a count of objects whose
     properties or attribute hooks were not read (see rules.unread_accessors)."""
 
-    __slots__ = ("done", "skipped", "unreadable", "hidden")
+    __slots__ = ("done", "skipped", "unreadable", "hidden", "stop_hidden")
 
     def __init__(self) -> None:
         self.done: Dict[int, Any] = {}
         self.skipped = 0
         self.unreadable = 0
         self.hidden = 0
+        # With stop_hidden (a tool result), the first such object raises _Unscannable before it is read.
+        self.stop_hidden = False
 
 
 def _is_data_object(value: Any) -> bool:
@@ -254,25 +256,32 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     out inside a plain object, and raises _Unscannable (rule type:unscannable)
     anywhere else.
     """
-    if isinstance(data, str):
+    # Judged by the real type: isinstance() also asks the object for __class__, which a property can answer.
+    kind = type(data)
+    if issubclass(kind, str):
         return [data]
-    if isinstance(data, (bytes, bytearray, memoryview)):
+    if issubclass(kind, (bytes, bytearray, memoryview)):
         return [bytes(data).decode("utf-8", errors="replace")]
-    if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
-            or inspect.isroutine(data):
+    if data is None or issubclass(kind, (bool, int, float, complex, type, types.ModuleType)):
+        return []
+    seen = _seen if _seen is not None else _Walk()
+    if kind not in _PLAIN_CONTAINERS and not issubclass(kind, io.IOBase) and not _is_framework_context(data) \
+            and unread_accessors(data):
+        # Its properties or attribute hooks are not read (that would run its code): a result blocks on it,
+        # before anything else here reads the object. A file or stream is checked by its name only, below.
+        seen.hidden += 1
+        if seen.stop_hidden:
+            raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
+    if inspect.isroutine(data):
         return []
     if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
         return []
-    seen = _seen if _seen is not None else _Walk()
     if id(data) in seen.done:
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
     children: Optional[List[Any]]
     if isinstance(data, (Mapping, list, tuple, set, frozenset, _DICT_VIEWS)):
-        if type(data) not in _PLAIN_CONTAINERS and unread_accessors(data):
-            # Its properties or attribute hooks are not read (that would run its code): a result blocks on it.
-            seen.hidden += 1
         try:
             if isinstance(data, Mapping):
                 children = []
@@ -311,8 +320,6 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         # effort; containers without attributes (deque, array, custom
         # sequences) and data models are walked strictly.
         is_model = _is_data_object(data)
-        if unread_accessors(data):
-            seen.hidden += 1
         try:
             children = _object_fields(data)
             if children is not None and isinstance(data, logging.Logger):
@@ -381,6 +388,7 @@ def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
     and so is an object whose properties or attribute hooks were not read (rule type:unscannable)."""
     try:
         walk = _Walk()
+        walk.stop_hidden = block_unreadable
         found = _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
                                  best_effort_budget=best_effort_budget, _seen=walk)
         if block_unreadable and walk.unreadable:
