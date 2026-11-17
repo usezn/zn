@@ -137,7 +137,6 @@ const URL_CLASS = URL;
 const URL_PROTOTYPE = URL.prototype;
 const URL_HREF = Object.getOwnPropertyDescriptor(URL.prototype, 'href').get;
 const PROMISE_THEN = Promise.prototype.then;
-const PROMISE_RESOLVE = Promise.resolve;
 const PROMISE_CLASS = Promise;
 const STRING_VALUE = String.prototype.valueOf;
 const NUMBER_VALUE = Number.prototype.valueOf;
@@ -171,9 +170,10 @@ const TEXT_DECODE = TextDecoder.prototype.decode;
 // else that ran before the check, put there would run when the copy is serialized, converted,
 // printed or iterated, or when the rules read it, and could produce or hide text that was never
 // checked. Their state when this module was loaded is kept, and a result is blocked when one of
-// them changed: a function (method, getter or setter) replaced, added or removed, a value under a
-// PROTOTYPE_KEYS key changed or added, or an index key added (an array hole reads it). Other new
-// keys (a polyfill adding a method that did not exist) and other values (Buffer.poolSize) are ignored.
+// them changed: a function (method, getter or setter) replaced or removed, a value under a
+// PROTOTYPE_KEYS key changed, or any key added (string or symbol: the copy inherits it, so the tool
+// reads it, while the check reads only the copy's own keys). Other values of existing keys
+// (Buffer.poolSize) are ignored.
 const PROTOTYPE_KEYS = new Set(['toJSON', 'toString', 'valueOf', 'toISOString', 'then', 'entries', 'values', 'keys',
   'get', 'set', 'add', 'has', 'delete', 'forEach', 'next', 'value', 'enumerable', 'writable', 'configurable',
   Symbol.toPrimitive, Symbol.toStringTag, Symbol.iterator, Symbol.hasInstance, util.inspect.custom]);
@@ -194,8 +194,12 @@ function holderState(holder) {
   for (let i = 0; i < keys.length; i++) mapSet(state, keys[i], ObjectGetOwnPropertyDescriptor(holder, keys[i]));
   return state;
 }
+// Prototypes of the built-in kinds of function (plain, async, generator, async generator). A function
+// passed as a tool argument is kept as it is (a callback), so what it inherits is recorded too.
+const FUNCTION_PROTOTYPES = new Set([Function.prototype, Object.getPrototypeOf(async function () {}),
+  Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async function* () {})]);
 const PROTOTYPE_BASELINE = new Map();
-for (const holder of [...TRUSTED_PROTOTYPES, ...CHECK_INTRINSICS, ...CHECK_METHODS]) {
+for (const holder of [...TRUSTED_PROTOTYPES, ...CHECK_INTRINSICS, ...CHECK_METHODS, ...FUNCTION_PROTOTYPES]) {
   PROTOTYPE_BASELINE.set(holder, holderState(holder));
 }
 const GLOBAL_BASELINE = CHECK_GLOBALS.map((name) => [name, globalThis[name]]);
@@ -223,7 +227,9 @@ function holderModified(holder, existingOnly = false) {
     const key = keys[i];
     const tracked = setHas(PROTOTYPE_KEYS, key);
     if (!mapHas(baseline, key)) {
-      if (!existingOnly && (tracked || isIndexKey(key))) return true;
+      // Any key added since load: the copy inherits it, so the tool can read it, but the check never
+      // listed it (only own keys of the copy are read).
+      if (!existingOnly) return true;
       continue;
     }
     seen++;
@@ -285,8 +291,9 @@ function isAccessor(d) {
  * Nothing here calls a getter: on an object that is not a Proxy, reading descriptors runs no code.
  * `own` is null for a typed array, whose elements are bytes and numbers. `hooked` is true when a
  * function under a HOOK_KEYS key (own, or on a prototype other than a built-in one) decides how
- * `obj` serializes, converts or resolves. A typed array is kept as it is in the snapshot, so one
- * with such a hook is Unscannable instead.
+ * `obj` serializes, converts or resolves; `ownHooked` when such a function is an own property of
+ * `obj` (string or symbol key). A typed array is kept as it is in the snapshot, so one with such a
+ * hook is Unscannable instead.
  */
 function screenObject(obj) {
   if (isProxy(obj)) throw new Unscannable();
@@ -294,6 +301,7 @@ function screenObject(obj) {
   const container = typed || ArrayIsArray(obj) || isSet(obj) || isMap(obj);
   let own = null;
   let hooked = false;
+  let ownHooked = false;
   if (typed) {
     // Its elements cannot be accessors; listing every index of a large buffer would be slow.
     for (let i = 0; i < TYPED_ARRAY_OWN_KEYS.length; i++) {
@@ -307,7 +315,10 @@ function screenObject(obj) {
       const d = own[key];
       if (isAccessor(d) && !isErrorStack(key, d)) throw new Unscannable();
       if (container && key === SYMBOL_ITERATOR) throw new Unscannable();
-      if (setHas(HOOK_KEYS, key) && typeof d.value === 'function') hooked = true;
+      if (setHas(HOOK_KEYS, key) && typeof d.value === 'function') {
+        hooked = true;
+        ownHooked = true;
+      }
     }
   }
   for (let proto = ObjectGetPrototypeOf(obj); proto !== null; proto = ObjectGetPrototypeOf(proto)) {
@@ -326,7 +337,53 @@ function screenObject(obj) {
       }
     }
   }
-  return { own, hooked };
+  return { own, hooked, ownHooked };
+}
+
+const OBJECT_PROTOTYPE = Object.prototype;
+const ARGS_HOOK_REASON = 'An object or function decides how it is serialized or converted to text (toJSON, toString, '
+  + 'valueOf, then...) with a function of its own, which would run after the check; pass its data as a plain object '
+  + 'instead';
+
+/**
+ * `fn` itself, for the copy of tool arguments (a callback still reaches the tool), or Unscannable when
+ * it decides how it serializes, converts, prints or resolves: a Proxy, a key of HOOK_KEYS of its own
+ * (JSON.stringify calls the toJSON of a function too), or a prototype other than a built-in function
+ * prototype or Object.prototype that is a Proxy or holds such a key (a class extending another). The
+ * built-in prototypes it inherits from are recorded for prototypeModified.
+ */
+function keptFunction(fn, state) {
+  for (let holder = fn; holder !== null; holder = ObjectGetPrototypeOf(holder)) {
+    if (holder !== fn && (setHas(FUNCTION_PROTOTYPES, holder) || holder === OBJECT_PROTOTYPE)) {
+      setAdd(state.protos, holder);
+      continue;
+    }
+    if (isProxy(holder)) throw new Unscannable(ARGS_HOOK_REASON);
+    const keys = ReflectOwnKeys(holder);
+    for (let i = 0; i < keys.length; i++) {
+      if (setHas(HOOK_KEYS, keys[i])) throw new Unscannable(ARGS_HOOK_REASON);
+    }
+  }
+  return fn;
+}
+
+/**
+ * The `then` that a value resolves through, read without running any of its code: the descriptor
+ * of `then` on the value or the first prototype that has one, read with the built-in
+ * getOwnPropertyDescriptor. undefined when the value is not an object or has no `then`; throws
+ * Unscannable when the value or a prototype on the way is a Proxy, or the `then` found is a getter
+ * or a setter (never called).
+ */
+function thenOf(value) {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return undefined;
+  for (let holder = value; holder !== null; holder = ObjectGetPrototypeOf(holder)) {
+    if (isProxy(holder)) throw new Unscannable();
+    const d = ObjectGetOwnPropertyDescriptor(holder, 'then');
+    if (d === undefined) continue;
+    if (isAccessor(d)) throw new Unscannable();
+    return d.value;
+  }
+  return undefined;
 }
 
 
@@ -434,6 +491,7 @@ function copyListed(own, out, maxDepth, memo, state, skip) {
 const ERROR_FIELDS = new Set(['name', 'message', 'stack', 'cause', 'errors']);
 const ERROR_LINKS = ['cause', 'errors'];
 const BIGINT_PROTOTYPE = BigInt.prototype;
+const SYMBOL_PROTOTYPE = Symbol.prototype;
 
 /**
  * A copy of a tool result made of plain data, built without running any of its code, or
@@ -459,12 +517,16 @@ const BIGINT_PROTOTYPE = BigInt.prototype;
  * The built-in prototypes the copy inherits from are added to `state.protos` (see prototypeModified).
  * With `state.keepFunctions` (tool arguments), a function is kept as it is instead of left out: a
  * callback passed to a tool still reaches it. A function holds code, not data, and is not checked.
+ * An object with an own serialization hook (toJSON, toString, valueOf, then, Symbol.toPrimitive,
+ * util.inspect.custom) or a function with one (see keptFunction) is then Unscannable instead: the
+ * hook would be copied and run after the check.
  */
 function snapshotOf(data, maxDepth, memo, state) {
-  if (typeof data === 'function') return state.keepFunctions ? data : undefined;
+  if (typeof data === 'function') return state.keepFunctions ? keptFunction(data, state) : undefined;
   if (typeof data === 'symbol') {
     const description = ReflectApply(SYMBOL_DESCRIPTION, data, []);
     if (description !== undefined) push(state.texts, description);
+    setAdd(state.protos, SYMBOL_PROTOTYPE);
     return data;
   }
   if (typeof data === 'bigint') {
@@ -477,7 +539,11 @@ function snapshotOf(data, maxDepth, memo, state) {
     mapSet(memo, data, copy);
     return copy !== null && typeof copy === 'object' ? usesPrototypes(copy, state) : copy;
   };
-  const { own } = screenObject(data);
+  const { own, ownHooked } = screenObject(data);
+  // Tool arguments keep their functions (callbacks), so an own toJSON, toString, valueOf, then,
+  // Symbol.toPrimitive or util.inspect.custom would be copied too and run when the tool serializes,
+  // converts, prints or awaits the copy: refused. A result copy leaves every function out.
+  if (ownHooked && state.keepFunctions) throw new Unscannable(ARGS_HOOK_REASON);
   if (isTypedArray(data)) return remember(typedCopy(data));
   if (maxDepth <= 0) throw new NestingTooDeep();
   if (isStringObject(data) || isNumberObject(data) || isBooleanObject(data)) {
@@ -872,9 +938,22 @@ function guardTool(fn, opts = {}) {
         if (b.blocked) return b.blocked.value;
         const res = ReflectApply(fn, this, b.args);
         // A thenable is settled as a real promise, so whatever it resolves to goes through after():
-        // its own then() could return anything.
-        if (res && typeof res.then === 'function') {
-          return ReflectApply(PROMISE_THEN, ReflectApply(PROMISE_RESOLVE, PROMISE_CLASS, [res]), [after]);
+        // its own then() could return anything. With checkResult, `then` is found from its descriptor
+        // (thenOf), so a getter or a Proxy on the result never runs before the result is checked.
+        let then;
+        if (opts.checkResult) {
+          try {
+            then = thenOf(res);
+          } catch (e) {
+            if (!(e instanceof Unscannable)) throw e;
+            return blocked(unscannableBlock('Result', HIDDEN_ACCESSORS_REASON), name + ':result', res).value;
+          }
+        } else {
+          then = res ? res.then : undefined;
+        }
+        if (typeof then === 'function') {
+          // Resolved through a new promise, never Promise.resolve(res), which reads res.constructor.
+          return ReflectApply(PROMISE_THEN, new PROMISE_CLASS((resolve) => { resolve(res); }), [after]);
         }
         return after(res);
       };

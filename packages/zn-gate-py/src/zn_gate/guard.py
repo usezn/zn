@@ -23,6 +23,7 @@ from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invi
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
 from .rules import OVERRIDDEN_READING_REASON, UNREAD_ACCESSORS_REASON, overrides_builtin_reading, unread_accessors
 from .rules import CUSTOM_TEXT_REASON, custom_text_form
+from .rules import _TYPE_MODULE, _TYPE_MRO, _TYPE_QUALNAME, _class_bound
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -164,22 +165,27 @@ _FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
 )
 
 
-def _is_framework_context(value: Any) -> bool:
-    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES)."""
+def _is_framework_context(value: Any, verified: bool = False) -> bool:
+    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES).
+
+    The module and name that a class carries are only labels: any class can set them. With `verified` (a tool
+    result, which skips the context unread), they count only when that module, already imported, holds this very
+    class under that name (see rules._class_bound)."""
     if issubclass(type(value), (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
         return False
     try:
-        mro = type(value).__mro__
+        mro = _TYPE_MRO.__get__(type(value))
     except Exception:  # pragma: no cover - exotic metaclasses
         return False
     for klass in mro:
-        module = getattr(klass, "__module__", None)
+        module = _TYPE_MODULE.__get__(klass)
         if not isinstance(module, str):
             continue
         for prefix, names in _FRAMEWORK_CONTEXT_TYPES:
             if module == prefix or module.startswith(prefix + "."):
-                if names is None or klass.__name__ in names:
-                    return True
+                if names is None or _TYPE_QUALNAME.__get__(klass) in names:
+                    if not verified or _class_bound(klass):
+                        return True
     return False
 
 
@@ -281,24 +287,28 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         return [data]
     if issubclass(kind, (bytes, bytearray, memoryview)):
         return [bytes(data).decode("utf-8", errors="replace")]
+    if (_seen is not None and _seen.stop_hidden and issubclass(kind, (type, types.ModuleType))
+            and custom_text_form(data)):
+        # A tool result: a class whose metaclass (or a module whose class) writes its own text form.
+        raise _Unscannable("type:unscannable", CUSTOM_TEXT_REASON)
     if data is None or issubclass(kind, (bool, int, float, complex, type, types.ModuleType)):
         return []
     seen = _seen if _seen is not None else _Walk()
-    if kind not in _PLAIN_CONTAINERS and not _is_framework_context(data) and unread_accessors(data):
+    context = _is_framework_context(data, verified=seen.stop_hidden)
+    if kind not in _PLAIN_CONTAINERS and not context and unread_accessors(data):
         # Its properties or attribute hooks are not read (that would run its code): a result blocks on it,
         # before anything else here reads the object. Files and streams too: the standard-library ones
         # (io, sys.std*, logging) are trusted by unread_accessors, a subclass of them with a property is not.
         seen.hidden += 1
         if seen.stop_hidden:
             raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
-    if seen.stop_hidden and kind not in _PLAIN_CONTAINERS and not _is_framework_context(data) \
-            and custom_text_form(data):
+    if seen.stop_hidden and kind not in _PLAIN_CONTAINERS and not context and custom_text_form(data):
         # A tool result: str(), repr() or format() of it would run its own code, which could show text that
         # was never checked, so it is refused before it is read (sanitize_tool_result refuses it too).
         raise _Unscannable("type:unscannable", CUSTOM_TEXT_REASON)
     if inspect.isroutine(data):
         return []
-    if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
+    if context or isinstance(data, _LOGGING_TYPES):
         return []
     if id(data) in seen.done:
         return []

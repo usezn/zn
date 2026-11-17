@@ -122,11 +122,12 @@ test('a replaced Set or Map method blocks every result, as the rules use them to
   assert.equal(JSON.stringify(guarded(make())), JSON.stringify(make()), 'restored: an object seen twice comes back as the same data');
 });
 
-test('a method added by a polyfill under a new name does not block results', () => {
+test('a key added under a new name after load blocks results: the copy would inherit it unchecked', () => {
   const { res, out } = withReplaced(Array.prototype, 'znExampleAddedMethod', function added() { return 1; },
     () => ({ items: ['a', 'b'], tags: new Set(['x']) }));
-  assert.equal(res.allowed, true);
-  assert.equal(JSON.stringify(out), JSON.stringify({ items: ['a', 'b'], tags: {} }));
+  assert.equal(res.allowed, false);
+  assert.equal(res.rule, 'type:unscannable');
+  assert.equal(out, 'blocked');
 });
 
 test('restored built-ins check as before', () => {

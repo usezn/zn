@@ -45,7 +45,8 @@ export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
    * Check the call arguments before the function runs. Default true. The function then runs with the plain-data copy
    * of the arguments that was checked (class instances as plain objects, Map, Set, Date, URL, typed arrays and Buffer
    * as new values of the same kind, functions as they are), not with the objects the caller passed; arguments holding
-   * a getter, a setter or a Proxy are blocked. With false, the function gets the arguments as they are.
+   * a getter, a setter or a Proxy, or an object or function with its own toJSON, toString, valueOf, then,
+   * Symbol.toPrimitive or util.inspect.custom, are blocked. With false, the function gets the arguments as they are.
    */
   checkArgs?: boolean;
   /**

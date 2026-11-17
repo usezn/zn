@@ -15,6 +15,8 @@ import binascii
 import bisect
 import copy
 import functools
+import inspect
+import itertools
 from array import array
 import json
 import math
@@ -24,6 +26,7 @@ import sys
 import types
 import unicodedata
 from collections import Counter, namedtuple
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
@@ -2605,12 +2608,16 @@ def _trusted_class(c: type) -> bool:
     """
     if c is object:
         return True
+    return _trusted_module(_TYPE_MODULE.__get__(c)) and _class_bound(c)
+
+
+def _class_bound(c: type) -> bool:
+    """True when the module that `c` names, already imported, holds this very class under its qualified name, or
+    when `c` is a static type (written in C), which cannot change its module name."""
     module = _TYPE_MODULE.__get__(c)
-    if not _trusted_module(module):
-        return False
     if not _TYPE_FLAGS.__get__(c) & _HEAPTYPE:
         return True
-    target: Any = sys.modules.get(module)
+    target: Any = sys.modules.get(module) if isinstance(module, str) else None
     for part in str(_TYPE_QUALNAME.__get__(c)).split("."):
         if isinstance(target, types.ModuleType):
             namespace: Any = vars(target)
@@ -2690,17 +2697,41 @@ OVERRIDDEN_READING_REASON = ("A value of a built-in type (str, list, dict...) re
                              "str, list or dict instead")
 
 
+_NAMEDTUPLE_ASDICT_FN = _TYPE_DICT.__get__(namedtuple("_ZnFields", "a"))["_asdict"]
+
+
+def _generated_namedtuple_asdict(klass: type, fn: Any) -> bool:
+    """True for the _asdict that namedtuple wrote for `klass`: the very code of the one it writes, no closure or
+    defaults, the same globals, and field names of the class that are identifiers (as for its __repr__)."""
+    if type(fn) is not types.FunctionType or fn.__code__ is not _NAMEDTUPLE_ASDICT_FN.__code__:
+        return False
+    if fn.__closure__ != _NAMEDTUPLE_ASDICT_FN.__closure__ or fn.__defaults__ or fn.__kwdefaults__:
+        return False
+    fields = _TYPE_DICT.__get__(klass).get("_fields")
+    if type(fields) is not tuple or not all(type(name) is str and name.isidentifier() for name in fields):
+        return False
+    return _same_globals(fn, _NAMEDTUPLE_ASDICT_FN)
+
+
 def _class_overrides_reading(klass: type) -> bool:
-    for c in _TYPE_MRO.__get__(klass):
+    """True when a class of the MRO of `klass` that is not trusted (see _trusted_class, which checks that the
+    module really holds the class) defines a method of _READING_HOOKS that is not, by identity, the method of the
+    same name of a trusted class of the same MRO (enum copies Enum.__repr__ onto each enum class) or the __repr__
+    or _asdict that namedtuple writes (compared by code, closure and globals). The __module__ that a function
+    carries is never evidence: any code can set it."""
+    mro = _TYPE_MRO.__get__(klass)
+    trusted_methods = {(n, id(v)) for c in mro if _trusted_class(c) for n, v in _TYPE_DICT.__get__(c).items()}
+    for c in mro:
         if _trusted_class(c):
             continue
         for name, attr in list(_TYPE_DICT.__get__(c).items()):
-            if name not in _READING_HOOKS:
+            if name not in _READING_HOOKS or (name, id(attr)) in trusted_methods:
                 continue
-            # A method that a standard-library helper wrote for the class (namedtuple, enum) is trusted.
-            fn = attr.__func__ if isinstance(attr, (staticmethod, classmethod)) else attr
-            if not _trusted_module(getattr(fn, "__module__", None)):
-                return True
+            if name == "__repr__" and _generated_namedtuple_repr(c, attr):
+                continue
+            if name == "_asdict" and _generated_namedtuple_asdict(c, attr):
+                continue
+            return True
     return False
 
 
@@ -2721,9 +2752,9 @@ def overrides_builtin_reading(val: Any) -> bool:
         return True
 
 
-# Methods that decide the text of an object: str(), repr(), format() and f-strings, and the repr() of a container
-# that holds it.
-_TEXT_HOOKS = ("__str__", "__repr__", "__format__")
+# Methods that decide the text of an object: str(), repr(), format() and f-strings, the repr() of a container
+# that holds it, and os.fspath() (which the result check itself calls on a path-like object).
+_TEXT_HOOKS = ("__str__", "__repr__", "__format__", "__fspath__")
 CUSTOM_TEXT_REASON = ("An object defines its own text form (__str__, __repr__ or __format__), which could show "
                       "something else than the values that were checked; return its data as a dict instead")
 
@@ -2911,6 +2942,122 @@ def _object_names(val: Any) -> List[str]:
     return names
 
 
+_EXACT_TEXT_TYPES = frozenset({str, bytes, bytearray, int, bool, float, complex, type(None)})
+_TEXT_GRAPH_MAX_DEPTH = 64
+_TEXT_GRAPH_MAX_VALUES = 100_000
+_EXCEPTION_SLOT_READERS = tuple(BaseException.__dict__[name] for name in ("args", "__cause__", "__context__"))
+
+
+def _screen_kind(val: Any) -> None:
+    """SanitizeLimitError (rule type:unscannable) when the class of `val` shows it through code that is not trusted by
+    identity: properties or attribute hooks (unread_accessors), its own text form (custom_text_form, the metaclass's for
+    a class) or a redefined reading method of a built-in type (overrides_builtin_reading). Runs none of that code."""
+    if type(val) in _EXACT_TEXT_TYPES:
+        return
+    if unread_accessors(val):
+        raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
+    if custom_text_form(val):
+        raise SanitizeLimitError("type:unscannable", CUSTOM_TEXT_REASON)
+    if overrides_builtin_reading(val):
+        raise SanitizeLimitError("type:unscannable", OVERRIDDEN_READING_REASON)
+
+
+def _text_children(val: Any) -> List[Any]:
+    """What str() or repr() of `val` (screened by _screen_kind) shows the text of, read through the built-in storage:
+    items of a dict, list, tuple or set (subclasses included), the object and function of a bound method, the parts
+    of a functools.partial, the args, cause and context of an exception, the __dict__ and __slots__ of an object, and
+    the items of another standard-library container. A class, a module or a function shows only its name."""
+    if isinstance(val, dict):
+        return [part for item in dict.items(val) for part in item]
+    if isinstance(val, list):
+        return list(list.__iter__(val))
+    if isinstance(val, tuple):
+        return list(tuple.__iter__(val))
+    if isinstance(val, frozenset):
+        return list(frozenset.__iter__(val))
+    if isinstance(val, set):
+        return list(set.__iter__(val))
+    if isinstance(val, types.MethodType):
+        return [val.__self__, val.__func__]
+    if isinstance(val, (type, types.ModuleType)) or inspect.isroutine(val):
+        return []
+    if isinstance(val, functools.partial):
+        return [val.func, val.args, val.keywords]
+    children: List[Any] = []
+    if isinstance(val, BaseException):
+        children.extend(slot.__get__(val) for slot in _EXCEPTION_SLOT_READERS)
+    try:
+        attrs = object.__getattribute__(val, "__dict__")
+    except AttributeError:
+        attrs = None
+    if type(attrs) is dict:
+        children.extend(dict.values(attrs))
+    for klass in _TYPE_MRO.__get__(type(val)):
+        slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
+        for name in ((slots,) if isinstance(slots, str) else slots):
+            if isinstance(name, str) and name not in ("__dict__", "__weakref__"):
+                try:
+                    children.append(object.__getattribute__(val, name))
+                except AttributeError:
+                    continue
+    if _trusted_class(type(val)) and not isinstance(val, (Iterator, str, bytes, bytearray, memoryview)):
+        if isinstance(val, Mapping):
+            items = itertools.islice(val.items(), _TEXT_GRAPH_MAX_VALUES + 1)
+            children.extend(part for item in items for part in item)
+        elif isinstance(val, Iterable):
+            children.extend(itertools.islice(val, _TEXT_GRAPH_MAX_VALUES + 1))
+    return children
+
+
+def _screen_text_graph(content: Any) -> None:
+    """SanitizeLimitError when turning `content` into text (json, str(), repr()) could run code of the output: every
+    value that the text shows is screened by _screen_kind before anything turns it into text. Deeper than
+    _TEXT_GRAPH_MAX_DEPTH levels or more than _TEXT_GRAPH_MAX_VALUES values is refused too."""
+    seen: set[int] = set()
+    keep: List[Any] = []  # keeps the ids in `seen` from being reused during the walk
+    stack: List[Tuple[Any, int]] = [(content, 0)]
+    while stack:
+        val, depth = stack.pop()
+        if type(val) in _EXACT_TEXT_TYPES or id(val) in seen:
+            continue
+        if depth > _TEXT_GRAPH_MAX_DEPTH:
+            raise SanitizeLimitError("size:nesting", "The output is nested too deeply to check")
+        seen.add(id(val))
+        keep.append(val)
+        if len(seen) > _TEXT_GRAPH_MAX_VALUES:
+            raise SanitizeLimitError("size:items", "The output holds too many values to check")
+        _screen_kind(val)
+        try:
+            children = _text_children(val)
+        except SanitizeLimitError:
+            raise
+        except Exception:
+            raise SanitizeLimitError("type:unscannable", "An object could not be read to check it") from None
+        stack.extend((child, depth + 1) for child in children)
+
+
+def _checked_text(val: Any) -> str:
+    """str() of a value that json cannot write as it is (a set, a dataclass, a datetime...), once _screen_kind has
+    found that its class shows it through trusted code only."""
+    _screen_kind(val)
+    return str(val)
+
+
+def _checked_json(content: Any) -> str:
+    """The JSON text of a tool output that check_tool_result allowed, as Node.js writes it. Every value its text
+    shows is screened first (_screen_text_graph), so no __str__, __repr__ or reading method of the output's own
+    classes runs: such an output raises SanitizeLimitError (rule type:unscannable) instead. A value json cannot
+    write is written as its str() (_checked_text); a container that contains itself or keys json cannot write give
+    str() of the whole output."""
+    _screen_text_graph(content)
+    try:
+        return json.dumps(content, ensure_ascii=False, default=_checked_text)
+    except SanitizeLimitError:
+        raise
+    except (TypeError, ValueError, RecursionError):
+        return str(content)
+
+
 @overload
 def sanitize_tool_result(
     tool_or_result: Any,
@@ -2972,16 +3119,20 @@ def sanitize_tool_result(
             # Structured output: check every real string value (keys and object
             # attributes included) as check_tool_result does, then the JSON text
             # as Node.js does. str() would escape BiDi and zero-width characters.
+            # check_tool_result comes first: it refuses an object with properties,
+            # attribute hooks, its own text form or a redefined reading method
+            # before anything reads it, so serializing what it allowed runs no
+            # code of the output (see _checked_json).
             from .guard import check_tool_result
-            try:
-                text_content = json.dumps(content, ensure_ascii=False, default=str)
-            except (TypeError, ValueError, RecursionError):
-                text_content = str(content)
-            # The JSON text holds every string of the output: count the invisible
-            # characters before the string-by-string check pays for them.
-            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict, allow_truncated=True)
+            text_content = ""
+            assessment = check_tool_result(content, strict=strict, allow_truncated=True)
             if assessment.allowed:
-                text_assessment = scan_windows(text_content, strict=strict)
+                try:
+                    text_content = _checked_json(content)
+                except SanitizeLimitError as exc:
+                    assessment = Assessment(verdict='block', confidence=1.0, rule=exc.rule, reason=f"Result: {exc.reason}")
+            if assessment.allowed:
+                text_assessment = invisible_block() if too_invisible([text_content]) else scan_windows(text_content, strict=strict)
                 if not text_assessment.allowed:
                     assessment = text_assessment
                 else:
