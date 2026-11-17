@@ -90,6 +90,141 @@ pub fn parse_policy_hashes<'a>(
     Ok(hashes)
 }
 
+/// The canonical form of a browser origin: `http` or `https`, a host and an
+/// optional port, with no path, query, fragment or credentials. `None` when
+/// `raw` is not an origin.
+fn canonical_origin(raw: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return None;
+    }
+    Some(url.origin().ascii_serialization())
+}
+
+/// The error for an origin zn cannot use: the wildcard gets its own advice.
+fn origin_problem(source: &str, raw: &str) -> anyhow::Error {
+    if raw == "*" {
+        return anyhow!(
+            "{source} holds \"*\". zn does not accept a wildcard origin: list each origin in full (for example https://app.example.com), or leave the list empty to allow only this computer (localhost and 127.0.0.1). zn did not start."
+        );
+    }
+    match canonical_origin(raw) {
+        Some(good) => anyhow!(
+            "{source} holds {}; write that origin as {good}. zn did not start, because a browser sends exactly that form and anything else would never match.",
+            shown_value(raw)
+        ),
+        None => anyhow!(
+            "{source} holds {}, which is not an origin. An origin is http:// or https:// followed by a host and an optional port, with no path (for example https://app.example.com). zn did not start.",
+            shown_value(raw)
+        ),
+    }
+}
+
+/// Refuses an origin that is not in canonical form.
+fn check_origin(source: &str, raw: &str) -> Result<()> {
+    if raw != "*" && canonical_origin(raw).as_deref() == Some(raw) {
+        Ok(())
+    } else {
+        Err(origin_problem(source, raw))
+    }
+}
+
+/// Reads a list of allowed origins. Each entry is trimmed, a trailing `/` is
+/// dropped, empty entries are skipped and repeats are kept once, so `""` and
+/// `","` give an empty list (which allows only loopback origins). An entry that
+/// is not an origin, and the wildcard `*`, is an error naming `source`.
+pub fn parse_origins<'a>(
+    source: &str,
+    entries: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<String>> {
+    let mut origins: Vec<String> = Vec::new();
+    for raw in entries {
+        let value = raw.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let value = value
+            .strip_suffix('/')
+            .filter(|rest| !rest.is_empty())
+            .unwrap_or(value);
+        check_origin(source, value)?;
+        if !origins.iter().any(|o| o == value) {
+            origins.push(value.to_string());
+        }
+    }
+    Ok(origins)
+}
+
+/// Refuses a SIEM endpoint that is not an `http://` or `https://` address. The
+/// value is never shown: it can carry a token.
+fn check_siem_endpoint(source: &str, raw: &str) -> Result<()> {
+    match reqwest::Url::parse(raw) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") && url.host_str().is_some() => Ok(()),
+        _ => Err(anyhow!(
+            "{source} is not a valid address. Give an http:// or https:// URL (for example https://siem.example.com/ingest), or leave it empty to turn the SIEM export off. zn did not start."
+        )),
+    }
+}
+
+/// Reads the SIEM endpoint: blank means not set; anything else must be an
+/// `http://` or `https://` URL.
+fn parse_siem_endpoint(source: &str, raw: Option<&str>) -> Result<Option<String>> {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(value) => {
+            check_siem_endpoint(source, value)?;
+            Ok(Some(value.to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+/// The key stores `zn` can use for the audit key.
+const KMS_TYPES: &[&str] = &["local", "aws"];
+
+/// Reads the KMS type: `local` or `aws`, in any capitalisation, spaces ignored.
+/// Anything else is an error: an unknown type must never fall back to the local
+/// key without a word.
+fn parse_kms_type(source: &str, raw: &str) -> Result<String> {
+    let value = raw.trim().to_ascii_lowercase();
+    if KMS_TYPES.contains(&value.as_str()) {
+        Ok(value)
+    } else {
+        Err(anyhow!(
+            "{source} is {}, which zn does not know. Use \"local\" or \"aws\". zn did not start, because an unknown type would quietly keep the key on this machine.",
+            shown_value(raw)
+        ))
+    }
+}
+
+/// Refuses a number that is not finite or lies outside `0..=max`.
+fn check_unit_range(name: &str, value: f64, max: f64) -> Result<()> {
+    if value.is_finite() && (0.0..=max).contains(&value) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "{name} must be a number from 0 to {max}, but it is {value}. zn did not start, because a value outside that range turns the check off or makes it block everything."
+        ))
+    }
+}
+
+/// Reads the paranoia level: a whole number from 1 to 5.
+fn parse_paranoia(source: &str, raw: &str) -> Result<u8> {
+    match raw.trim().parse::<i64>() {
+        Ok(n) if (1..=5).contains(&n) => Ok(n as u8),
+        _ => Err(anyhow!(
+            "{source} is {}; it must be a whole number from 1 to 5. zn did not start.",
+            shown_value(raw)
+        )),
+    }
+}
+
 /// Main configuration structure for zn
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZnConfig {
@@ -466,7 +601,7 @@ fn default_batch_size() -> usize {
 /// KMS Configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KmsConfig {
-    /// Type of KMS to use (local, aws, gcp, vaults)
+    /// Type of KMS to use: `local` (the default) or `aws`. Any other value is refused at start.
     #[serde(default = "default_kms_type")]
     pub kms_type: String,
     /// Key ID / ARN
@@ -853,6 +988,15 @@ impl ZnConfig {
     /// Parse the text of a settings file. `file` is only used in the error
     /// message, which names the file and, when it can, the setting.
     pub fn parse_text(file: &str, content: &str) -> Result<Self> {
+        // serde would read a JSON array as the settings in field order and skip
+        // the check for unknown keys: require an object.
+        if !content.trim_start().starts_with('{')
+            && serde_json::from_str::<serde_json::Value>(content).is_ok()
+        {
+            return Err(anyhow!(
+                "zn could not use the settings file {file}: it must be a JSON object that starts with {{ and holds the settings by name. Fix the file, or move it away and run `zn init` to create a fresh zn.json."
+            ));
+        }
         serde_json::from_str(content).map_err(|e| anyhow!(config_parse_problem(file, content, &e)))
     }
 
@@ -882,6 +1026,7 @@ impl ZnConfig {
     /// call fails with a message that says what to do.
     pub fn load_with_notices(path: Option<&Path>) -> Result<(Self, Vec<String>)> {
         let mut notices = Vec::new();
+        let mut auto_loaded: Option<String> = None;
         let mut config = if let Some(p) = path {
             let shown = crate::user_errors::display_path(p);
             let is_json = p
@@ -895,8 +1040,9 @@ impl ZnConfig {
                 return Err(anyhow!(crate::user_errors::config_missing(&shown)));
             }
             let content = Self::read_settings_file(p)?;
-            let config = Self::parse_text(&shown, &content)?;
+            let mut config = Self::parse_text(&shown, &content)?;
             notices.extend(checked_setting_notices(&shown, &content)?);
+            config.normalize_file_settings()?;
             config
         } else {
             // Try to load from default locations
@@ -907,8 +1053,12 @@ impl ZnConfig {
                 if option_path.exists() {
                     let shown = crate::user_errors::display_path(option_path);
                     let content = Self::read_settings_file(option_path)?;
-                    found = Some(Self::parse_text(&shown, &content)?);
+                    let mut parsed = Self::parse_text(&shown, &content)?;
                     notices.extend(checked_setting_notices(&shown, &content)?);
+                    parsed.normalize_file_settings()?;
+                    tracing::info!("settings loaded from {shown} (found in the current folder)");
+                    auto_loaded = Some(shown);
+                    found = Some(parsed);
                     break;
                 }
             }
@@ -918,12 +1068,19 @@ impl ZnConfig {
         // Override with environment variables
         config.apply_env_overrides(&mut notices)?;
 
+        if let Some(shown) = auto_loaded {
+            if let Some(warning) = config.auto_loaded_warning(&shown) {
+                notices.push(warning);
+            }
+        }
+
         Ok((config, notices))
     }
 
     /// Apply environment variable overrides
     fn apply_env_overrides(&mut self, notices: &mut Vec<String>) -> Result<()> {
         self.apply_checked_settings(&|var| std::env::var(var).ok())?;
+        self.apply_validated_env(&|var| std::env::var(var).ok())?;
 
         if let Ok(port) = std::env::var("ZN_PORT") {
             match port.trim().parse() {
@@ -948,11 +1105,6 @@ impl ZnConfig {
 
         if let Ok(jwt) = std::env::var("ZN_JWT_SECRET") {
             self.security.jwt_secret = Some(jwt);
-        }
-
-        if let Ok(origins) = std::env::var("ZN_ALLOWED_ORIGINS") {
-            self.security.allowed_origins =
-                origins.split(',').map(|s| s.trim().to_string()).collect();
         }
 
         // A blank token counts as not set; the gateway then generates one.
@@ -983,16 +1135,8 @@ impl ZnConfig {
             self.engine.signing_public_key = Some(key);
         }
 
-        if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
-            self.siem.endpoint = Some(endpoint);
-        }
-
         if let Ok(token) = std::env::var("ZN_SIEM_TOKEN") {
             self.siem.token = Some(token);
-        }
-
-        if let Ok(kms_type) = std::env::var("ZN_KMS_TYPE") {
-            self.kms.kms_type = kms_type;
         }
 
         if let Ok(key_id) = std::env::var("ZN_KMS_KEY_ID") {
@@ -1008,27 +1152,9 @@ impl ZnConfig {
             self.neural.enabled = neural_enabled.parse().unwrap_or(true);
         }
 
-        if let Ok(neural_threshold) = std::env::var("ZN_NEURAL_THRESHOLD") {
-            if let Ok(t) = neural_threshold.parse() {
-                self.neural.threshold = t;
-            }
-        }
-
-        if let Ok(paranoia) = std::env::var("ZN_PARANOIA_LEVEL") {
-            if let Ok(lvl) = paranoia.parse::<u8>() {
-                self.guardrails.paranoia_level = lvl.clamp(1, 5);
-            }
-        }
-
         if let Ok(min_s) = std::env::var("ZN_MIN_SAMPLES") {
             if let Ok(v) = min_s.parse::<u64>() {
                 self.guardrails.min_samples = v;
-            }
-        }
-
-        if let Ok(margin) = std::env::var("ZN_FPR_MARGIN") {
-            if let Ok(m) = margin.parse::<f64>() {
-                self.guardrails.fpr_margin = m;
             }
         }
 
@@ -1080,6 +1206,109 @@ impl ZnConfig {
             }
         }
         Ok(())
+    }
+
+    /// Normalizes the values read from a settings file: origins, the SIEM
+    /// endpoint, the KMS type and the consensus tool patterns. A value zn cannot
+    /// use is an error that names the setting.
+    fn normalize_file_settings(&mut self) -> Result<()> {
+        self.security.allowed_origins = parse_origins(
+            "\"security.allowed_origins\" in the settings file",
+            self.security.allowed_origins.iter().map(String::as_str),
+        )?;
+        self.siem.endpoint = parse_siem_endpoint(
+            "\"siem.endpoint\" in the settings file",
+            self.siem.endpoint.as_deref(),
+        )?;
+        self.kms.kms_type =
+            parse_kms_type("\"kms.kms_type\" in the settings file", &self.kms.kms_type)?;
+        self.consensus.critical_tools = self
+            .consensus
+            .critical_tools
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        Ok(())
+    }
+
+    /// The environment settings that must be well formed: allowed origins, the
+    /// SIEM endpoint, the KMS type, the neural threshold, the paranoia level and
+    /// the FPR margin. A variable that is unset or blank keeps the value from the
+    /// settings file (except `ZN_ALLOWED_ORIGINS`, where blank means no extra
+    /// origins); a value zn cannot read is an error that names the variable.
+    /// Range checks run in `validate`.
+    fn apply_validated_env(&mut self, get: &dyn Fn(&str) -> Option<String>) -> Result<()> {
+        let set = |var: &str| get(var).filter(|v| !v.trim().is_empty());
+
+        if let Some(raw) = get("ZN_ALLOWED_ORIGINS") {
+            self.security.allowed_origins = parse_origins("ZN_ALLOWED_ORIGINS", raw.split(','))?;
+        }
+
+        if let Some(raw) = set("ZN_SIEM_ENDPOINT") {
+            self.siem.endpoint = parse_siem_endpoint("ZN_SIEM_ENDPOINT", Some(&raw))?;
+        }
+
+        if let Some(raw) = set("ZN_KMS_TYPE") {
+            self.kms.kms_type = parse_kms_type("ZN_KMS_TYPE", &raw)?;
+        }
+
+        if let Some(raw) = set("ZN_NEURAL_THRESHOLD") {
+            self.neural.threshold = raw.trim().parse::<f32>().map_err(|_| {
+                anyhow!(
+                    "ZN_NEURAL_THRESHOLD is {}, which is not a number. Use a number from 0 to 10, for example 1.2. zn did not start.",
+                    shown_value(&raw)
+                )
+            })?;
+        }
+
+        if let Some(raw) = set("ZN_PARANOIA_LEVEL") {
+            self.guardrails.paranoia_level = parse_paranoia("ZN_PARANOIA_LEVEL", &raw)?;
+        }
+
+        if let Some(raw) = set("ZN_FPR_MARGIN") {
+            self.guardrails.fpr_margin = raw.trim().parse::<f64>().map_err(|_| {
+                anyhow!(
+                    "ZN_FPR_MARGIN is {}, which is not a number. Use a number from 0 to 1, for example 0.02. zn did not start.",
+                    shown_value(&raw)
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The protections a settings file turned off, in plain words.
+    fn disabled_protections(&self) -> Vec<&'static str> {
+        let m = &self.managed_rules;
+        let mut off = Vec::new();
+        for (on, name) in [
+            (m.pii_redaction, "managed rule: PII redaction"),
+            (m.lfi_protection, "managed rule: file access protection"),
+            (m.sql_injection, "managed rule: SQL injection"),
+            (m.prompt_injection, "managed rule: prompt injection"),
+            (m.restricted_commands, "managed rule: dangerous commands"),
+            (self.loop_breaker.enabled, "loop breaker"),
+            (self.neural.enabled, "neural analysis"),
+            (self.security.rate_limit_enabled, "rate limiting"),
+        ] {
+            if !on {
+                off.push(name);
+            }
+        }
+        off
+    }
+
+    /// A warning for a settings file zn found in the current folder without
+    /// being asked, when it turns protections off. `None` when it turns none off.
+    fn auto_loaded_warning(&self, file: &str) -> Option<String> {
+        let off = self.disabled_protections();
+        if off.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "zn loaded {file} from the current folder without being asked, and it turns off: {}. If you did not put that file there, remove it, or pass your own settings with --config.",
+            off.join(", ")
+        ))
     }
 
     /// True when `environment` is production.
@@ -1147,6 +1376,73 @@ impl ZnConfig {
                 "caching.ttl_seconds must be between 0 and {} (one year), but it is {}",
                 MAX_CACHE_TTL_SECONDS,
                 self.caching.ttl_seconds
+            ));
+        }
+
+        for origin in &self.security.allowed_origins {
+            check_origin("\"security.allowed_origins\" / ZN_ALLOWED_ORIGINS", origin)?;
+        }
+
+        if let Some(endpoint) = &self.siem.endpoint {
+            check_siem_endpoint(
+                "The SIEM endpoint (ZN_SIEM_ENDPOINT or \"siem.endpoint\")",
+                endpoint,
+            )?;
+        }
+
+        parse_kms_type(
+            "The KMS type (ZN_KMS_TYPE or \"kms.kms_type\")",
+            &self.kms.kms_type,
+        )
+        .and_then(|t| {
+            if t == self.kms.kms_type {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "The KMS type {} must be written as \"{t}\". zn did not start.",
+                    shown_value(&self.kms.kms_type)
+                ))
+            }
+        })?;
+
+        check_unit_range(
+            "neural.threshold (ZN_NEURAL_THRESHOLD)",
+            f64::from(self.neural.threshold),
+            10.0,
+        )?;
+        check_unit_range(
+            "neural.classifier_threshold",
+            f64::from(self.neural.classifier_threshold),
+            1.0,
+        )?;
+        check_unit_range("fusion.tau", f64::from(self.fusion.tau), 1.0)?;
+        check_unit_range(
+            "guardrails.fpr_margin (ZN_FPR_MARGIN)",
+            self.guardrails.fpr_margin,
+            1.0,
+        )?;
+
+        if !(1..=5).contains(&self.guardrails.paranoia_level) {
+            return Err(anyhow!(
+                "guardrails.paranoia_level (ZN_PARANOIA_LEVEL) must be a whole number from 1 to 5, but it is {}. zn did not start.",
+                self.guardrails.paranoia_level
+            ));
+        }
+
+        if let Some(bad) = self
+            .consensus
+            .critical_tools
+            .iter()
+            .find(|t| t.trim() != t.as_str() || t.is_empty())
+        {
+            return Err(anyhow!(
+                "\"consensus.critical_tools\" holds {}, which has spaces around it or is empty, so it would never match a tool name. Remove the spaces. zn did not start.",
+                shown_value(bad)
+            ));
+        }
+        if self.consensus.enabled && self.consensus.critical_tools.is_empty() {
+            return Err(anyhow!(
+                "consensus.enabled is true but \"consensus.critical_tools\" lists no tool, so no call would need approval. List the tools that need approval (a name, or a prefix ending in *), or set consensus.enabled to false. zn did not start."
             ));
         }
 
@@ -2462,5 +2758,386 @@ mod checked_settings_tests {
                 "{dir:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod value_validation_tests {
+    use super::*;
+
+    /// A config read from `file` (JSON text) with the environment `vars`,
+    /// through the same steps as `load_with_notices`, validated.
+    fn load(file: &str, vars: &[(&str, &str)]) -> Result<ZnConfig> {
+        let mut config = ZnConfig::parse_text("/work/zn.json", file)?;
+        config.normalize_file_settings()?;
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        config.apply_validated_env(&|name| {
+            vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+        })?;
+        config.security.jwt_secret = None;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn env(vars: &[(&str, &str)]) -> Result<ZnConfig> {
+        load("{}", vars)
+    }
+
+    fn refused(r: Result<ZnConfig>) -> String {
+        match r {
+            Ok(_) => panic!("must be refused"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    // F5: allowed origins.
+
+    #[test]
+    fn blank_origin_list_means_loopback_only() {
+        for raw in ["", ",", " , ,", "  "] {
+            let c = env(&[("ZN_ALLOWED_ORIGINS", raw)]).unwrap();
+            assert!(c.security.allowed_origins.is_empty(), "env {raw:?}");
+            assert!(!crate::shield::McpShield::validate_origin(
+                "",
+                &c.security.allowed_origins
+            ));
+            assert!(crate::shield::McpShield::validate_origin(
+                "http://127.0.0.1:9090",
+                &c.security.allowed_origins
+            ));
+            if raw.contains(',') {
+                continue;
+            }
+            let file = format!(
+                "{{\"security\": {{\"allowed_origins\": [{}]}}}}",
+                serde_json::to_string(raw).unwrap()
+            );
+            let c = load(&file, &[]).unwrap();
+            assert!(c.security.allowed_origins.is_empty(), "file {raw:?}");
+        }
+    }
+
+    #[test]
+    fn origins_are_trimmed_and_kept_once() {
+        let c = env(&[(
+            "ZN_ALLOWED_ORIGINS",
+            " https://a.example.com , https://b.example.com:8443/,,https://a.example.com",
+        )])
+        .unwrap();
+        assert_eq!(
+            c.security.allowed_origins,
+            ["https://a.example.com", "https://b.example.com:8443"]
+        );
+    }
+
+    #[test]
+    fn wildcard_and_non_origins_are_refused_from_env_and_file() {
+        for bad in [
+            "*",
+            "notaurl",
+            "ftp://a.example.com",
+            "https://a.example.com/app",
+            "https://a.example.com?x=1",
+            "https://user:pw@a.example.com",
+            "http://",
+            "null",
+        ] {
+            let msg = refused(env(&[("ZN_ALLOWED_ORIGINS", bad)]));
+            assert!(msg.contains("ZN_ALLOWED_ORIGINS"), "{bad}: {msg}");
+            assert!(msg.contains("zn did not start"), "{bad}: {msg}");
+            let file = format!(
+                "{{\"security\": {{\"allowed_origins\": [{}]}}}}",
+                serde_json::to_string(bad).unwrap()
+            );
+            let msg = refused(load(&file, &[]));
+            assert!(msg.contains("security.allowed_origins"), "{bad}: {msg}");
+        }
+        assert!(refused(env(&[("ZN_ALLOWED_ORIGINS", "*")])).contains("wildcard"));
+        // A non-canonical spelling names the form a browser sends.
+        let msg = refused(env(&[("ZN_ALLOWED_ORIGINS", "HTTPS://A.example.com")]));
+        assert!(msg.contains("https://a.example.com"), "{msg}");
+    }
+
+    #[test]
+    fn validate_refuses_a_wildcard_in_a_config_built_in_code() {
+        let mut c = ZnConfig::default();
+        c.security.jwt_secret = None;
+        c.security.allowed_origins = vec!["*".to_string()];
+        assert!(c.validate().unwrap_err().to_string().contains("wildcard"));
+        c.security.allowed_origins = vec![String::new()];
+        assert!(c.validate().is_err());
+        c.security.allowed_origins = vec!["https://app.example.com".to_string()];
+        assert!(c.validate().is_ok());
+    }
+
+    // F6: SIEM endpoint.
+
+    #[test]
+    fn siem_endpoint_must_be_an_http_url_and_blank_means_off() {
+        for raw in ["", "  "] {
+            assert!(env(&[("ZN_SIEM_ENDPOINT", raw)])
+                .unwrap()
+                .siem
+                .endpoint
+                .is_none());
+            let file = format!(
+                "{{\"siem\": {{\"endpoint\": {}}}}}",
+                serde_json::to_string(raw).unwrap()
+            );
+            assert!(load(&file, &[]).unwrap().siem.endpoint.is_none(), "{raw:?}");
+        }
+        let c = env(&[("ZN_SIEM_ENDPOINT", " https://siem.example.com/ingest ")]).unwrap();
+        assert_eq!(
+            c.siem.endpoint.as_deref(),
+            Some("https://siem.example.com/ingest")
+        );
+        for bad in [
+            "notaurl",
+            "ftp://siem.example.com",
+            "file:///etc/passwd",
+            "http://",
+        ] {
+            let msg = refused(env(&[("ZN_SIEM_ENDPOINT", bad)]));
+            assert!(msg.contains("ZN_SIEM_ENDPOINT"), "{bad}: {msg}");
+            let file = format!(
+                "{{\"siem\": {{\"endpoint\": {}}}}}",
+                serde_json::to_string(bad).unwrap()
+            );
+            assert!(refused(load(&file, &[])).contains("siem.endpoint"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_refused_siem_endpoint_is_not_echoed() {
+        let msg = refused(env(&[("ZN_SIEM_ENDPOINT", "notaurl?token=SECRET123")]));
+        assert!(!msg.contains("SECRET123"), "{msg}");
+    }
+
+    // F7: KMS type.
+
+    #[test]
+    fn kms_type_is_local_or_aws() {
+        assert_eq!(env(&[]).unwrap().kms.kms_type, "local");
+        assert_eq!(
+            env(&[("ZN_KMS_TYPE", " AWS ")]).unwrap().kms.kms_type,
+            "aws"
+        );
+        assert_eq!(
+            env(&[("ZN_KMS_TYPE", "Local")]).unwrap().kms.kms_type,
+            "local"
+        );
+        // A blank variable keeps the file value.
+        let c = load("{\"kms\": {\"kms_type\": \"aws\"}}", &[("ZN_KMS_TYPE", "")]).unwrap();
+        assert_eq!(c.kms.kms_type, "aws");
+        for bad in ["gcp", "vaults", "garbage", "aws-kms"] {
+            let msg = refused(env(&[("ZN_KMS_TYPE", bad)]));
+            assert!(
+                msg.contains("ZN_KMS_TYPE") && msg.contains("\"aws\""),
+                "{bad}: {msg}"
+            );
+            let file = format!("{{\"kms\": {{\"kms_type\": \"{bad}\"}}}}");
+            assert!(refused(load(&file, &[])).contains("kms.kms_type"), "{bad}");
+        }
+        assert!(load("{\"kms\": {\"kms_type\": \"\"}}", &[]).is_err());
+        let file = "{\"kms\": {\"kms_type\": \"AWS\"}}";
+        assert_eq!(load(file, &[]).unwrap().kms.kms_type, "aws");
+    }
+
+    // F8: thresholds.
+
+    #[test]
+    fn neural_threshold_env_must_be_a_finite_number_in_range() {
+        for ok in ["0", "1.2", " 10 ", "5"] {
+            assert!(env(&[("ZN_NEURAL_THRESHOLD", ok)]).is_ok(), "{ok}");
+        }
+        for bad in ["NaN", "inf", "-inf", "-1", "11", "1e999", "abc", "1,2"] {
+            let msg = refused(env(&[("ZN_NEURAL_THRESHOLD", bad)]));
+            assert!(
+                msg.contains("neural") || msg.contains("NEURAL"),
+                "{bad}: {msg}"
+            );
+        }
+        // Blank keeps the default.
+        assert_eq!(
+            env(&[("ZN_NEURAL_THRESHOLD", "")])
+                .unwrap()
+                .neural
+                .threshold,
+            1.2
+        );
+    }
+
+    #[test]
+    fn file_thresholds_must_be_in_range() {
+        for (key, ok, bad) in [
+            ("neural.threshold", "10", "10.5"),
+            ("neural.threshold", "0", "-0.1"),
+            ("neural.classifier_threshold", "1", "1.5"),
+            ("neural.classifier_threshold", "0", "-1"),
+            ("fusion.tau", "1", "2"),
+            ("fusion.tau", "0", "-0.5"),
+            ("guardrails.fpr_margin", "1", "1.01"),
+            ("guardrails.fpr_margin", "0", "-0.02"),
+        ] {
+            let (section, field) = key.split_once('.').unwrap();
+            let file = |v: &str| format!("{{\"{section}\": {{\"{field}\": {v}}}}}");
+            assert!(load(&file(ok), &[]).is_ok(), "{key}={ok}");
+            let msg = refused(load(&file(bad), &[]));
+            assert!(msg.contains(key), "{key}={bad}: {msg}");
+        }
+    }
+
+    #[test]
+    fn non_finite_thresholds_in_a_config_built_in_code_are_refused() {
+        for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut c = ZnConfig::default();
+            c.security.jwt_secret = None;
+            c.fusion.tau = v;
+            assert!(c.validate().is_err(), "tau {v}");
+            let mut c = ZnConfig::default();
+            c.security.jwt_secret = None;
+            c.neural.classifier_threshold = v;
+            assert!(c.validate().is_err(), "classifier {v}");
+        }
+        let mut c = ZnConfig::default();
+        c.security.jwt_secret = None;
+        c.guardrails.fpr_margin = f64::NAN;
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn fpr_margin_env_must_be_a_number_in_range() {
+        assert_eq!(
+            env(&[("ZN_FPR_MARGIN", "0.05")])
+                .unwrap()
+                .guardrails
+                .fpr_margin,
+            0.05
+        );
+        for bad in ["NaN", "inf", "-1", "abc", "2"] {
+            let msg = refused(env(&[("ZN_FPR_MARGIN", bad)]));
+            assert!(
+                msg.contains("FPR_MARGIN") || msg.contains("fpr_margin"),
+                "{bad}: {msg}"
+            );
+        }
+    }
+
+    // F9: paranoia level.
+
+    #[test]
+    fn paranoia_level_is_a_whole_number_from_1_to_5() {
+        for n in 1..=5u8 {
+            let c = env(&[("ZN_PARANOIA_LEVEL", &format!(" {n} "))]).unwrap();
+            assert_eq!(c.guardrails.paranoia_level, n);
+            let file = format!("{{\"guardrails\": {{\"paranoia_level\": {n}}}}}");
+            assert_eq!(load(&file, &[]).unwrap().guardrails.paranoia_level, n);
+        }
+        for bad in ["high", "300", "-1", "0", "6", "3.5", "1e1"] {
+            let msg = refused(env(&[("ZN_PARANOIA_LEVEL", bad)]));
+            assert!(msg.contains("ZN_PARANOIA_LEVEL"), "{bad}: {msg}");
+        }
+        for bad in ["0", "6", "255"] {
+            let file = format!("{{\"guardrails\": {{\"paranoia_level\": {bad}}}}}");
+            let msg = refused(load(&file, &[]));
+            assert!(msg.contains("paranoia_level"), "{bad}: {msg}");
+        }
+        // Blank keeps the file value.
+        let file = "{\"guardrails\": {\"paranoia_level\": 4}}";
+        assert_eq!(
+            load(file, &[("ZN_PARANOIA_LEVEL", "")])
+                .unwrap()
+                .guardrails
+                .paranoia_level,
+            4
+        );
+    }
+
+    // F11: consensus.
+
+    #[test]
+    fn consensus_enabled_needs_a_critical_tool() {
+        for tools in ["[]", "[\"\"]", "[\" \", \"\\t\"]"] {
+            let file =
+                format!("{{\"consensus\": {{\"enabled\": true, \"critical_tools\": {tools}}}}}");
+            let msg = refused(load(&file, &[]));
+            assert!(msg.contains("critical_tools"), "{tools}: {msg}");
+        }
+        // Off, an empty list is fine.
+        assert!(load("{\"consensus\": {\"enabled\": false}}", &[]).is_ok());
+        assert!(load("{}", &[]).is_ok());
+    }
+
+    #[test]
+    fn consensus_patterns_are_trimmed_when_a_file_is_read() {
+        let c = load(
+            "{\"consensus\": {\"enabled\": true, \"critical_tools\": [\" delete_file \", \"admin:* \", \"\"]}}",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(c.consensus.critical_tools, ["delete_file", "admin:*"]);
+    }
+
+    #[test]
+    fn validate_refuses_a_padded_consensus_pattern_in_code() {
+        let mut c = ZnConfig::default();
+        c.security.jwt_secret = None;
+        c.consensus.enabled = true;
+        c.consensus.critical_tools = vec!["delete_file ".to_string()];
+        assert!(c.validate().unwrap_err().to_string().contains("spaces"));
+        c.consensus.critical_tools = vec!["delete_file".to_string()];
+        assert!(c.validate().is_ok());
+    }
+
+    // F12: the settings file must be an object.
+
+    #[test]
+    fn settings_file_must_be_a_json_object() {
+        for body in [
+            "[\"production\"]",
+            "[]",
+            "[ {} ]",
+            "1",
+            "true",
+            "null",
+            "\"x\"",
+        ] {
+            let msg = refused(load(body, &[]));
+            assert!(msg.contains("JSON object"), "{body}: {msg}");
+        }
+        // Not JSON at all keeps the syntax message.
+        let msg = refused(load("{", &[]));
+        assert!(msg.contains("too early"), "{msg}");
+        assert!(load("  \n{}\n", &[]).is_ok());
+    }
+
+    // F13: a settings file found in the current folder.
+
+    #[test]
+    fn auto_loaded_file_warns_about_disabled_protections() {
+        let on = ZnConfig::default();
+        assert!(on.auto_loaded_warning("zn.json").is_none());
+
+        let c = ZnConfig::parse_text(
+            "zn.json",
+            "{\"managed_rules\": {\"sql_injection\": false, \"prompt_injection\": false}, \"loop_breaker\": {\"enabled\": false}, \"neural\": {\"enabled\": false}, \"security\": {\"rate_limit_enabled\": false}}",
+        )
+        .unwrap();
+        let warning = c.auto_loaded_warning("zn.json").unwrap();
+        for part in [
+            "zn.json",
+            "SQL injection",
+            "prompt injection",
+            "loop breaker",
+            "neural analysis",
+            "rate limiting",
+            "--config",
+        ] {
+            assert!(warning.contains(part), "{part}: {warning}");
+        }
+        assert!(!warning.contains("PII"), "{warning}");
     }
 }
