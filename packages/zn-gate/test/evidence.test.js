@@ -124,6 +124,17 @@ function get(port, urlPath) {
   });
 }
 
+function headersOf(port, urlPath, method) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: urlPath, method }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(Object.assign({ __status: res.statusCode }, res.headers)));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function status(port, urlPath, host) {
   return new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: urlPath, headers: { Host: host } }, (res) => {
@@ -176,21 +187,60 @@ test('evidence dashboard - listens on loopback only and serves the escaping rend
     assert.ok(banner.includes(`http://127.0.0.1:${addr.port}`));
     assert.ok(!banner.includes('localhost'));
 
-    const page = await get(addr.port, '/');
+    const t = `?token=${server.token}`;
+    const page = await get(addr.port, '/' + t);
     assert.ok(page.includes('function escapeHtml('));
     assert.ok(page.includes('function renderAuditRow('));
     assert.ok(page.includes('d.recent.map(renderAuditRow)'));
     assert.ok(!page.includes("'<strong>' + (r.tool_name"));
 
-    const stats = JSON.parse(await get(addr.port, '/api/stats'));
+    const stats = JSON.parse(await get(addr.port, '/api/stats' + t));
     const row = renderAuditRow(stats.recent[0]);
     assert.ok(row.includes('&lt;b&gt;x&lt;/b&gt;'));
 
     // Requests for another host name (DNS rebinding) are refused.
-    assert.equal(await status(addr.port, '/api/stats', `localhost:${addr.port}`), 200);
-    assert.equal(await status(addr.port, '/api/stats', 'attacker.example'), 403);
-    assert.equal(await status(addr.port, '/api/export', `attacker.example:${addr.port}`), 403);
-    assert.equal(await status(addr.port, '/', `127.0.0.1:${addr.port + 1}`), 403);
+    assert.equal(await status(addr.port, '/api/stats' + t, `localhost:${addr.port}`), 200);
+    assert.equal(await status(addr.port, '/api/stats' + t, 'attacker.example'), 403);
+    assert.equal(await status(addr.port, '/api/export' + t, `attacker.example:${addr.port}`), 403);
+    assert.equal(await status(addr.port, '/' + t, `127.0.0.1:${addr.port + 1}`), 403);
+
+    // The token is random per run, long, and printed in the start-up address.
+    assert.match(server.token, /^[0-9a-f]{64}$/);
+    assert.ok(banner.includes(`http://127.0.0.1:${addr.port}/?token=${server.token}`));
+
+    // Without the right token the ledger is not served on any route.
+    const host = `127.0.0.1:${addr.port}`;
+    for (const p of ['/', '/api/stats', '/api/verify', '/api/export', '/api/export?format=csv', '/other']) {
+      assert.equal(await status(addr.port, p, host), 401, p);
+      assert.equal(await status(addr.port, p + (p.includes('?') ? '&' : '?') + 'token=' + 'a'.repeat(64), host), 401, p);
+      assert.equal(await status(addr.port, p + (p.includes('?') ? '&' : '?') + 'token=', host), 401, p);
+    }
+    assert.equal(await status(addr.port, `/api/stats?token=${server.token.slice(0, 63)}`, host), 401);
+    assert.equal(await status(addr.port, `/api/stats?token=${server.token}x`, host), 401);
+
+    // Security headers on a page, an API answer and an error.
+    for (const p of ['/' + t, '/api/stats' + t, '/api/export' + t, '/api/stats']) {
+      const h = await headersOf(addr.port, p, 'GET');
+      assert.equal(h['x-content-type-options'], 'nosniff', p);
+      assert.equal(h['x-frame-options'], 'DENY', p);
+      assert.equal(h['referrer-policy'], 'no-referrer', p);
+      assert.equal(h['cache-control'], 'no-store', p);
+      assert.match(h['content-security-policy'], /default-src 'none'/, p);
+      assert.match(h['content-security-policy'], /frame-ancestors 'none'/, p);
+      assert.ok(!/unsafe-inline/.test(h['content-security-policy'].replace("style-src-attr 'unsafe-inline'", '')), p);
+    }
+    // The inline script and style of the page carry the nonce the policy names.
+    const csp = (await headersOf(addr.port, '/' + t, 'GET'))['content-security-policy'];
+    assert.match(csp, /script-src 'nonce-[A-Za-z0-9+/=]+'/);
+
+    // Only GET and HEAD are answered.
+    for (const m of ['POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
+      const h = await headersOf(addr.port, '/api/stats' + t, m);
+      assert.equal(h.__status, 405, m);
+      assert.equal(h.allow, 'GET, HEAD', m);
+      assert.equal(h['x-content-type-options'], 'nosniff', m);
+    }
+    assert.equal((await headersOf(addr.port, '/api/stats' + t, 'HEAD')).__status, 200);
   } finally {
     process.stdout.write = origWrite;
     if (server) await new Promise((resolve) => server.close(resolve));

@@ -636,7 +636,7 @@ zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
-- `--ui`: open a local dashboard in your browser (default port 3100).
+- `--ui`: start a local dashboard (default port 3100) and print its address. The address ends in a random token that is new on every run (`http://127.0.0.1:3100/?token=...`); open that exact address. A request without the token gets `401`, so another program or user on the same computer cannot read the log through the port. Keep the address private, and stop the dashboard with Ctrl+C when you are done. The dashboard only answers `GET` and `HEAD`.
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 
 Aliases: `logs`, `export`.

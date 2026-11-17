@@ -854,60 +854,97 @@ function renderAuditRow(r) {
 /**
  * Starts a zero-dependency local dashboard at 127.0.0.1:<port> (loopback only)
  */
-function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
+function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE, options = {}) {
+  const crypto = require('crypto');
+  // A random token per run. Only the URL printed at start carries it, so
+  // another local user or process that finds the port cannot read the ledger.
+  const token = (options && options.token) || crypto.randomBytes(32).toString('hex');
+  const tokenDigest = crypto.createHash('sha256').update(token).digest();
+  const tokenMatches = (given) => {
+    const digest = crypto.createHash('sha256').update(String(given || '')).digest();
+    return crypto.timingSafeEqual(digest, tokenDigest);
+  };
   const server = require('http').createServer((req, res) => {
+    const nonce = crypto.randomBytes(16).toString('base64');
+    // Sent on every answer, errors included. The page has its own inline style
+    // and script, so they carry a per-response nonce; nothing else may run.
+    const secure = (headers) => Object.assign({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    }, headers);
     // Only answer requests addressed to the loopback name and port, so a web
     // page cannot reach the dashboard through DNS rebinding.
     const addr = server.address();
     const boundPort = addr && typeof addr === 'object' ? addr.port : port;
     const host = String(req.headers.host || '').toLowerCase();
     if (host !== `127.0.0.1:${boundPort}` && host !== `localhost:${boundPort}`) {
-      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.writeHead(403, secure({ 'Content-Type': 'text/plain' }));
       res.end('Forbidden');
       return;
     }
+    // The page and the API only read: no other method is answered.
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, secure({ 'Content-Type': 'text/plain', Allow: 'GET, HEAD' }));
+      res.end('Method Not Allowed');
+      return;
+    }
+    let urlObj;
+    try {
+      urlObj = new URL(req.url, `http://127.0.0.1:${boundPort}`);
+    } catch (e) {
+      res.writeHead(400, secure({ 'Content-Type': 'text/plain' }));
+      res.end('Bad Request');
+      return;
+    }
+    if (!tokenMatches(urlObj.searchParams.get('token'))) {
+      res.writeHead(401, secure({ 'Content-Type': 'text/plain' }));
+      res.end('Unauthorized: open the address printed by zn-gate evidence --ui');
+      return;
+    }
     // 1. API: Aggregated stats
-    if (req.url === '/api/stats') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (urlObj.pathname === '/api/stats') {
+      res.writeHead(200, secure({ 'Content-Type': 'application/json' }));
       res.end(JSON.stringify(getEvidenceStats(filePath)));
       return;
     }
 
     // 2. API: Cryptographic verification
-    if (req.url === '/api/verify') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (urlObj.pathname === '/api/verify') {
+      res.writeHead(200, secure({ 'Content-Type': 'application/json' }));
       res.end(JSON.stringify(verifyEvidenceLedger(filePath)));
       return;
     }
 
     // 3. API: Compliance Audit Exporter (/api/export?format=jsonl|csv)
-    if (req.url.startsWith('/api/export')) {
-      const urlObj = new URL(req.url, `http://127.0.0.1:${port}`);
+    if (urlObj.pathname === '/api/export') {
       const format = urlObj.searchParams.get('format') === 'csv' ? 'csv' : 'jsonl';
       const exportData = exportEvidenceLedger(filePath, format);
 
       const contentType = format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8';
       const filename = `zn-audit-ledger-${new Date().toISOString().slice(0, 10)}.${format}`;
 
-      res.writeHead(200, {
+      res.writeHead(200, secure({
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${filename}"`,
         'X-Evidence-Integrity': exportData.valid ? 'valid' : 'tampered',
         'X-Evidence-Tip-Hash': exportData.tip_hash,
         'X-Evidence-Total': String(exportData.total),
-      });
+      }));
       res.end(exportData.content);
       return;
     }
 
     // 4. Single-page dashboard HTML
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, secure({ 'Content-Type': 'text/html; charset=utf-8' }));
     res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>zn Evidence Engine - Cryptographic AI Audit Ledger</title>
-  <style>
+  <style nonce="${nonce}">
     :root {
       --bg: #0b0f19;
       --card: #151c2e;
@@ -971,8 +1008,8 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
     <header>
       <h1><span>🛡️</span> zn Evidence Engine Dashboard</h1>
       <div class="header-actions">
-        <a href="/api/export?format=jsonl" download class="btn-export">⬇ Export JSONL</a>
-        <a href="/api/export?format=csv" download class="btn-export">⬇ Export CSV</a>
+        <a href="/api/export?format=jsonl&token=${token}" download class="btn-export">⬇ Export JSONL</a>
+        <a href="/api/export?format=csv&token=${token}" download class="btn-export">⬇ Export CSV</a>
         <div id="integrity-badge" class="status-badge badge-valid">● SHA-256 Ledger Verified</div>
       </div>
     </header>
@@ -1018,14 +1055,15 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
     </table>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
+    const ZN_TOKEN = ${JSON.stringify(token)};
     ${escapeHtml.toString()}
     ${renderAuditRow.toString()}
     async function fetchData() {
       try {
         const [statsRes, verifyRes] = await Promise.all([
-          fetch('/api/stats'),
-          fetch('/api/verify')
+          fetch('/api/stats?token=' + ZN_TOKEN),
+          fetch('/api/verify?token=' + ZN_TOKEN)
         ]);
         const d = await statsRes.json();
         const v = await verifyRes.json();
@@ -1066,11 +1104,13 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
   const banner = require('./term').sym(process.env, '🛡️', null, '  ');
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(`
-${banner}zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}
+${banner}zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}/?token=${token}
+Keep this address private: the token in it lets whoever has it read your ledger.
 Ledger location: ${filePath}
 Press Ctrl+C to stop dashboard.
 \n`);
   });
+  server.token = token;
   return server;
 }
 

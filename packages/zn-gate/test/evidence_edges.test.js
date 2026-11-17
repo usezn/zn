@@ -94,6 +94,8 @@ test('renderAuditRow - a null record throws', () => {
   assert.throws(() => renderAuditRow(undefined), TypeError);
 });
 
+const TOKEN = 'f'.repeat(64);
+
 // The request handler is captured from a stubbed http.createServer and called
 // with fake request and response objects, so no socket is opened.
 function makeApp(ledger, port = 4321) {
@@ -105,19 +107,21 @@ function makeApp(ledger, port = 4321) {
   process.stdout.write = (chunk, ...rest) => (String(chunk).includes('Dashboard running')
     ? true : origWrite.call(process.stdout, chunk, ...rest));
   try {
-    startEvidenceUi(port, ledger);
+    startEvidenceUi(port, ledger, { token: TOKEN });
   } finally {
     http.createServer = realCreate;
     process.stdout.write = origWrite;
   }
-  return (url, host) => {
+  // The token is added to the address unless the test asks for a bare one.
+  return (url, host, method = 'GET', bare = false) => {
     const headers = host === undefined ? {} : { host };
+    if (!bare) url += (url.includes('?') ? '&' : '?') + 'token=' + TOKEN;
     const res = {
       status: null, headers: {}, body: '',
       writeHead(code, h) { this.status = code; this.headers = Object.fromEntries(Object.entries(h || {}).map(([k, v]) => [k.toLowerCase(), v])); },
       end(b) { this.body = b === undefined ? '' : String(b); },
     };
-    handler({ url, headers }, res);
+    handler({ method, url, headers }, res);
     return res;
   };
 }
@@ -166,6 +170,31 @@ test('evidence server - an unknown path serves the dashboard page', (t) => {
   assert.equal(res.status, 200);
   assert.ok(res.headers['content-type'].startsWith('text/html'));
   assert.ok(res.body.includes('<!DOCTYPE html>'));
+});
+
+test('evidence server - a request without the run token is refused before any ledger read', (t) => {
+  const dir = tempDir(t, 'zn-ev-edge-');
+  const ledger = path.join(dir, 'evidence.jsonl');
+  logEvidence({ agent: 'test', phase: 'tool-call', tool_name: 'secret-tool-name', payload: 'fake', verdict: 'allow' }, ledger);
+  const app = makeApp(ledger);
+  for (const url of ['/', '/api/stats', '/api/verify', '/api/export', '/api/export?format=csv', '/api/stats?token=wrong', '/api/stats?token=' + TOKEN + '0']) {
+    const res = app(url, HOST, 'GET', true);
+    assert.equal(res.status, 401, url);
+    assert.ok(!res.body.includes('secret-tool-name'), url);
+    assert.equal(res.headers['cache-control'], 'no-store');
+  }
+});
+
+test('evidence server - only GET and HEAD are answered, with an Allow header', (t) => {
+  const dir = tempDir(t, 'zn-ev-edge-');
+  const app = makeApp(path.join(dir, 'none.jsonl'));
+  for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'TRACE', '']) {
+    const res = app('/api/stats', HOST, method);
+    assert.equal(res.status, 405, String(method));
+    assert.equal(res.headers.allow, 'GET, HEAD');
+    assert.equal(res.headers['x-content-type-options'], 'nosniff');
+  }
+  assert.equal(app('/api/stats', HOST, 'HEAD').status, 200);
 });
 
 test('evidence server - Host header checks are exact', (t) => {

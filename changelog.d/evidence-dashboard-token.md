@@ -1,0 +1,3 @@
+### Security
+- `zn-gate evidence --ui` now needs a random token that is new on every run and is printed only in the address it shows. Before, any program or user on the same computer that found the port could read the whole log, the statistics and the exports, although the log file itself is private. A request without the token gets `401`.
+- The `evidence --ui` dashboard now sends `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` and a strict `Content-Security-Policy` (no framing, no outside content), and answers `405` to anything other than `GET` and `HEAD`.

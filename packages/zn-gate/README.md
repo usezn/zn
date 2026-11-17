@@ -355,7 +355,7 @@ The agent hooks write to the same log. When a hook blocks a tool call, a prompt 
 
 ```bash
 npx -y zn-gate evidence --verify
-npx -y zn-gate evidence --ui        # local dashboard on http://localhost:3100
+npx -y zn-gate evidence --ui        # local dashboard: open the address it prints (it ends in a private token)
 npx -y zn-gate evidence --tail 20
 ```
 
