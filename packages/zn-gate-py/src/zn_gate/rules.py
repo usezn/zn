@@ -2763,39 +2763,105 @@ def _sample_dataclass_repr() -> Any:
 # The code of the wrapper that dataclasses put around every __repr__ it writes (reprlib.recursive_repr, or the
 # copy of it in dataclasses before Python 3.13) and of the __repr__ of every namedtuple, compared by identity.
 _DATACLASS_REPR_WRAPPER = _sample_dataclass_repr().__code__
-_NAMEDTUPLE_REPR = _TYPE_DICT.__get__(namedtuple("_ZnText", "a"))["__repr__"].__code__
+_NAMEDTUPLE_REPR_FN = _TYPE_DICT.__get__(namedtuple("_ZnText", "a"))["__repr__"]
+_NAMEDTUPLE_REPR = _NAMEDTUPLE_REPR_FN.__code__
+
+
+def _code_shape(code: Any) -> Tuple[Any, ...]:
+    return (code.co_code, code.co_consts, code.co_names, code.co_varnames, code.co_freevars, code.co_cellvars)
+
+
+_NO_GLOBAL = object()
+
+
+def _same_globals(fn: Any, reference: Any) -> bool:
+    """True when every global name that the code of `reference` loads is the very same object for `fn`, with the
+    same builtins: a function can be rebuilt from trusted code with globals of its own."""
+    import dis
+
+    if getattr(fn, "__builtins__", None) is not getattr(reference, "__builtins__", None):
+        return False
+    names = {ins.argval for ins in dis.get_instructions(reference.__code__) if ins.opname in ("LOAD_GLOBAL", "LOAD_NAME")}
+    return all(fn.__globals__.get(name, _NO_GLOBAL) is reference.__globals__.get(name, _NO_GLOBAL) for name in names)
+
+
+def _reference_dataclass_repr(names: Tuple[str, ...]) -> Any:
+    """The __repr__ that dataclasses writes for a class whose repr fields are `names`, or None when it cannot write
+    one (a name that is not an identifier)."""
+    import dataclasses
+
+    try:
+        reference = dataclasses.make_dataclass("_ZnReference", [(name, object) for name in names])
+    except (TypeError, ValueError, SyntaxError):
+        return None
+    return _TYPE_DICT.__get__(reference).get("__repr__")
+
+
+def _same_wrapper_cells(fn: Any, reference: Any) -> Optional[Any]:
+    """The inner function of `fn`, a repr wrapper with the code of `reference`, when every other cell of its closure
+    holds what the cell of `reference` holds (the text shown for a repr that calls itself, "..."); None otherwise."""
+    cells, expected = fn.__closure__ or (), reference.__closure__ or ()
+    if len(cells) != len(expected):
+        return None
+    inner = None
+    for cell, ref in zip(cells, expected, strict=True):
+        value, ref_value = cell.cell_contents, ref.cell_contents
+        if type(ref_value) is types.FunctionType:
+            if type(value) is not types.FunctionType or inner is not None:
+                return None
+            inner = value
+        elif type(ref_value) is set:
+            if type(value) is not set:  # the ids of the objects being shown
+                return None
+        elif type(value) is not type(ref_value) or value != ref_value:
+            return None
+    return inner
 
 
 def _generated_dataclass_repr(klass: type, fn: Any) -> bool:
     """True for the __repr__ that dataclasses wrote for `klass`: it shows the class name and the repr() of its fields,
-    which are walked like any attribute. Recognized by the code of the wrapper and by what the inner function reads
-    (only __class__.__qualname__ and field names), never by a name the class could set."""
+    which are walked like any attribute. Recognized by comparing it with the __repr__ that dataclasses writes, here
+    and now, for the same repr fields: the same wrapper code and closure, and an inner function with the same code
+    (bytecode, constants and names). Never by a file name, a marker or a name, which any code can set."""
     fields = _TYPE_DICT.__get__(klass).get("__dataclass_fields__")
-    if type(fn) is not types.FunctionType or fn.__code__ is not _DATACLASS_REPR_WRAPPER or not isinstance(fields, dict):
+    if type(fn) is not types.FunctionType or fn.__code__ is not _DATACLASS_REPR_WRAPPER or type(fields) is not dict:
         return False
-    inner = [c.cell_contents for c in (fn.__closure__ or ()) if isinstance(c.cell_contents, types.FunctionType)]
-    if len(inner) != 1:
+    import dataclasses
+
+    names = []
+    for name, field in fields.items():
+        if type(field) is not dataclasses.Field or type(name) is not str:
+            return False
+        if getattr(field, "_field_type", None) is dataclasses._FIELD and field.repr is True:  # type: ignore[attr-defined]
+            names.append(name)
+    reference = _reference_dataclass_repr(tuple(names))
+    if type(reference) is not types.FunctionType or reference.__code__ is not _DATACLASS_REPR_WRAPPER:
         return False
-    code = inner[0].__code__
-    allowed = {"__class__", "__qualname__", *(name for name in fields if isinstance(name, str))}
-    return (code.co_filename == "<string>" and set(code.co_names) <= allowed
-            and all(isinstance(c, (str, type(None))) for c in code.co_consts))
+    inner, ref_inner = _same_wrapper_cells(fn, reference), _same_wrapper_cells(reference, reference)
+    if inner is None or ref_inner is None or not _same_globals(fn, reference):
+        return False
+    if inner.__defaults__ or inner.__kwdefaults__ or _code_shape(inner.__code__) != _code_shape(ref_inner.__code__):
+        return False
+    cells = tuple(c.cell_contents for c in (inner.__closure__ or ()))
+    ref_cells = tuple(c.cell_contents for c in (ref_inner.__closure__ or ()))
+    return (len(cells) == len(ref_cells) and all(a is b for a, b in zip(cells, ref_cells, strict=True))
+            and _same_globals(inner, ref_inner))
 
 
-def _generated_attrs_repr(klass: type, fn: Any) -> bool:
-    """True for the __repr__ that attrs wrote for `klass` (the class name and the repr() of its attributes, which are
-    walked): the class holds __attrs_attrs__ and the code comes from attrs (its generated-code file name, or a file of
-    the attr package already imported)."""
-    if "__attrs_attrs__" not in _TYPE_DICT.__get__(klass):
+def _generated_namedtuple_repr(klass: type, fn: Any) -> bool:
+    """True for the __repr__ that namedtuple wrote for `klass`: its code, and a closure whose only cell is the format
+    namedtuple builds from the class's own field names. The code alone can be reused with another closure."""
+    if type(fn) is not types.FunctionType or fn.__code__ is not _NAMEDTUPLE_REPR:
         return False
-    filename = fn.__code__.co_filename
-    if not isinstance(filename, str):
+    fields = _TYPE_DICT.__get__(klass).get("_fields")
+    if type(fields) is not tuple or not all(type(name) is str and name.isidentifier() for name in fields):
         return False
-    if filename.startswith("<attrs generated"):
-        return True
-    package = sys.modules.get("attr")
-    root = os.path.dirname(getattr(package, "__file__", None) or "")
-    return bool(root) and os.path.dirname(filename) == root
+    cells = fn.__closure__ or ()
+    if len(cells) != 1 or fn.__defaults__ or fn.__kwdefaults__:
+        return False
+    expected = "(" + ", ".join(f"{name}=%r" for name in fields) + ")"
+    value = cells[0].cell_contents
+    return type(value) is str and value == expected and _same_globals(fn, _NAMEDTUPLE_REPR_FN)
 
 
 def _class_defines_text(klass: type) -> bool:
@@ -2812,9 +2878,7 @@ def _class_defines_text(klass: type) -> bool:
             if id(fn) in trusted_methods:
                 # The very method of a standard-library class (enum copies Enum.__repr__ onto each enum class).
                 continue
-            if name == "__repr__" and type(fn) is types.FunctionType and (
-                    fn.__code__ is _NAMEDTUPLE_REPR or _generated_dataclass_repr(c, fn)
-                    or _generated_attrs_repr(c, fn)):
+            if name == "__repr__" and (_generated_namedtuple_repr(c, fn) or _generated_dataclass_repr(c, fn)):
                 continue
             return True
     return False
@@ -2827,8 +2891,10 @@ def custom_text_form(val: Any) -> bool:
     Such an object turns into text through its own code: str(), repr(), format(), an f-string, a log line or the repr()
     of a list that holds it can show text that no checked attribute holds, and a different text each time. A tool
     result holding one is refused (rule type:unscannable) by check_tool_result and sanitize_tool_result. The __repr__
-    that dataclasses, namedtuple or attrs write (the class name and the repr() of the fields, which are checked) and
-    the methods that enum copies from the standard library are not counted.
+    that dataclasses or namedtuple write (the class name and the repr() of the fields, which are checked; recognized
+    by comparing their code and closure with what those helpers write) and the methods that enum copies from the
+    standard library are not counted. The __repr__ that attrs writes is counted: nothing that a class cannot also
+    set tells it apart from a hand-written one, and a per-attribute repr callable runs code of its own.
     """
     klass = type(val)
     try:

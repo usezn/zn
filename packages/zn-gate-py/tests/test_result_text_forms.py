@@ -10,6 +10,7 @@ import enum
 import io
 import json
 import sys
+import typing
 
 import pytest
 
@@ -133,7 +134,8 @@ def test_generated_and_standard_library_text_forms_are_allowed(value):
         assert "Ignore all previous" not in text
 
 
-def test_attrs_classes_pass_and_their_values_are_checked():
+def test_attrs_generated_repr_is_refused_like_any_custom_repr():
+    """Nothing a class cannot also set tells the __repr__ attrs writes apart from a hand-written one."""
     attr = pytest.importorskip("attr")
 
     @attr.s
@@ -145,9 +147,16 @@ def test_attrs_classes_pass_and_their_values_are_checked():
         title: str
 
     for make in (Old, New):
-        assert not custom_text_form(make("weather"))
-        assert check_tool_result(make("weather")).allowed
-        assert not check_tool_result(make(INJECTION)).allowed
+        assert custom_text_form(make("weather"))
+        assert check_tool_result(make("weather")).rule == "type:unscannable"
+
+    @attr.define(repr=False)
+    class NoRepr:
+        title: str
+
+    assert not custom_text_form(NoRepr("weather"))
+    assert check_tool_result(NoRepr("weather")).allowed
+    assert not check_tool_result(NoRepr(INJECTION)).allowed
 
     @attr.define(repr=False)
     class OwnRepr:
@@ -157,6 +166,95 @@ def test_attrs_classes_pass_and_their_values_are_checked():
             return INJECTION
 
     assert check_tool_result(OwnRepr("ok")).rule == "type:unscannable"
+
+
+def _compiled_repr(filename, text=INJECTION):
+    namespace = {}
+    exec(compile(f"def __repr__(self):\n    return {text!r}\n", filename, "exec"), namespace)
+    return namespace["__repr__"]
+
+
+def test_a_repr_compiled_under_an_attrs_file_name_with_an_attrs_marker_is_refused():
+    class Forged:
+        __attrs_attrs__ = ()
+        __repr__ = _compiled_repr("<attrs generated repr tests.Forged>")
+
+    assert custom_text_form(Forged())
+    assert check_tool_result(Forged()).rule == "type:unscannable"
+    with pytest.raises(SanitizeLimitError):
+        sanitize_tool_result(Forged())
+
+
+def test_a_dataclass_repr_wrapper_around_other_code_is_refused():
+    import reprlib
+
+    @dataclasses.dataclass
+    class Forged:
+        title: str
+
+    # The wrapper dataclasses uses, around an inner function compiled as "<string>" that returns a constant.
+    Forged.__repr__ = reprlib.recursive_repr()(_compiled_repr("<string>"))
+    assert custom_text_form(Forged("ok"))
+    assert check_tool_result(Forged("ok")).rule == "type:unscannable"
+
+    @dataclasses.dataclass
+    class OtherFill:
+        title: object
+        count: int = 0
+
+    # The inner function dataclasses wrote for the same fields, with another text for a repr that calls itself.
+    inner = [c.cell_contents for c in vars(Record)["__repr__"].__closure__ if callable(c.cell_contents)][0]
+    OtherFill.__repr__ = reprlib.recursive_repr(fillvalue=INJECTION)(inner)
+    looped = OtherFill(None)
+    looped.title = looped
+    assert custom_text_form(looped)
+    assert check_tool_result(looped).rule == "type:unscannable"
+
+
+def test_a_namedtuple_repr_rebuilt_with_another_format_is_refused():
+    import types
+
+    real = vars(Point)["__repr__"]
+    cell = types.CellType(f"({INJECTION}=%r, y=%r)")
+    forged = types.FunctionType(real.__code__, real.__globals__, "__repr__", None, (cell,))
+
+    class Forged(tuple):
+        _fields = ("x", "y")
+        __repr__ = forged
+
+    assert custom_text_form(Forged((1, 2)))
+    assert check_tool_result(Forged((1, 2))).rule == "type:unscannable"
+
+    # The very __repr__ of another namedtuple shows that namedtuple's field names, not this class's.
+    Other = collections.namedtuple("Other", "a b")
+
+    class Borrowed(tuple):
+        _fields = ("x", "y")
+        __repr__ = vars(Other)["__repr__"]
+
+    assert custom_text_form(Borrowed((1, 2)))
+
+
+def test_generated_reprs_of_dataclasses_and_namedtuples_with_more_fields_are_allowed():
+    @dataclasses.dataclass
+    class Wide:
+        a: int = 0
+        b: str = dataclasses.field(default="x", repr=False)
+        c: object = None
+        d: dataclasses.InitVar[int] = 0
+        e: typing.ClassVar[int] = 0
+
+        def __post_init__(self, d):
+            pass
+
+    @dataclasses.dataclass
+    class Child(Wide):
+        f: str = "y"
+
+    Many = collections.namedtuple("Many", "a b c d")
+    for value in (Wide(), Child(), Many(1, 2, 3, 4), Wide(c=Record("weather"))):
+        assert not custom_text_form(value), value
+        assert check_tool_result(value).allowed
 
 
 def test_exception_args_cause_and_context_are_checked():

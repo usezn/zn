@@ -50,6 +50,64 @@ class NestingTooDeep extends Error {}
 /** Internal: a tool result holds a value that cannot be read without running its code. */
 class Unscannable extends Error {}
 
+// Built-in functions taken when this module is loaded. The result check calls only these (through
+// Reflect.apply), never a method looked up on a live object or prototype, so a built-in replaced
+// later (Set.prototype.add, Map.prototype.get, Array.prototype.push, Object.getOwnPropertyDescriptors,
+// a typed array getter, Buffer.prototype.toString...) cannot change what is copied or read.
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
+const ARRAY_CLASS = Array;
+const SET_CLASS = Set;
+const MAP_CLASS = Map;
+const WEAK_SET_CLASS = WeakSet;
+const NUMBER_CLASS = Number;
+const STRING_CLASS = String;
+const SYMBOL_ITERATOR = Symbol.iterator;
+const ARRAY_PUSH = Array.prototype.push;
+const SET_HAS = Set.prototype.has;
+const SET_ADD = Set.prototype.add;
+const SET_VALUES = Set.prototype.values;
+const MAP_HAS = Map.prototype.has;
+const MAP_GET = Map.prototype.get;
+const MAP_SET = Map.prototype.set;
+const MAP_ENTRIES = Map.prototype.entries;
+const WEAK_SET_HAS = WeakSet.prototype.has;
+const WEAK_SET_ADD = WeakSet.prototype.add;
+const WEAK_SET_DELETE = WeakSet.prototype.delete;
+const ARRAY_ITERATOR_PROTOTYPE = Object.getPrototypeOf([][Symbol.iterator]());
+const ITERATOR_PROTOTYPE = Object.getPrototypeOf(ARRAY_ITERATOR_PROTOTYPE);
+const SET_ITERATOR_PROTOTYPE = Object.getPrototypeOf(new Set().values());
+const MAP_ITERATOR_PROTOTYPE = Object.getPrototypeOf(new Map().entries());
+const STRING_ITERATOR_PROTOTYPE = Object.getPrototypeOf(''[Symbol.iterator]());
+const REGEXP_STRING_ITERATOR_PROTOTYPE = Object.getPrototypeOf(/a/g[Symbol.matchAll](''));
+const SET_ITERATOR_NEXT = SET_ITERATOR_PROTOTYPE.next;
+const MAP_ITERATOR_NEXT = MAP_ITERATOR_PROTOTYPE.next;
+const {
+  isProxy, isTypedArray, isSet, isMap, isUint8Array, isStringObject, isNumberObject, isBooleanObject,
+  isAnyArrayBuffer, isSharedArrayBuffer, isDataView, isDate, isRegExp, isNativeError,
+} = types;
+
+const setHas = (set, value) => ReflectApply(SET_HAS, set, [value]);
+const setAdd = (set, value) => ReflectApply(SET_ADD, set, [value]);
+const mapHas = (map, key) => ReflectApply(MAP_HAS, map, [key]);
+const mapGet = (map, key) => ReflectApply(MAP_GET, map, [key]);
+const mapSet = (map, key, value) => ReflectApply(MAP_SET, map, [key, value]);
+const push = (list, value) => ReflectApply(ARRAY_PUSH, list, [value]);
+
+/** Calls `visit` on each value of a Set, or each [key, value] entry of a Map, through the built-in iterator. */
+function eachOf(collection, visit) {
+  const map = isMap(collection);
+  const it = ReflectApply(map ? MAP_ENTRIES : SET_VALUES, collection, []);
+  const next = map ? MAP_ITERATOR_NEXT : SET_ITERATOR_NEXT;
+  for (let step = ReflectApply(next, it, []); !step.done; step = ReflectApply(next, it, [])) visit(step.value);
+}
+
 // Prototypes of the built-in classes, compared by identity: their getters only show what the
 // instance already holds. A prototype is never recognized by its constructor or a name, which
 // any object can set.
@@ -68,17 +126,18 @@ if (typeof SharedArrayBuffer === 'function') TRUSTED_PROTOTYPES.add(SharedArrayB
 if (typeof globalThis.Float16Array === 'function') TRUSTED_PROTOTYPES.add(globalThis.Float16Array.prototype);
 // The `stack` accessor pair V8 puts on every error: it formats the stack the error already holds.
 const ERROR_STACK = Object.getOwnPropertyDescriptor(new Error(), 'stack');
-// The built-in iterators, so that a Set or a Map is read the same way whatever its own methods say.
-const SET_VALUES = Set.prototype.values;
-const MAP_ENTRIES = Map.prototype.entries;
 // Keys through which an object decides what it becomes when it is serialized (JSON.stringify),
 // converted to text or a number, printed, or awaited. A function stored under one of them runs
 // after the check, so it could produce text that was never checked.
 const HOOK_KEYS = new Set(['toJSON', 'toString', 'valueOf', 'toISOString', 'then', Symbol.toPrimitive, util.inspect.custom]);
+const TYPED_ARRAY_OWN_KEYS = [Symbol.iterator, ...HOOK_KEYS];
 // Built-in readers, called on objects whose class is known so that no code of the result runs.
 const URL_CLASS = URL;
+const URL_PROTOTYPE = URL.prototype;
 const URL_HREF = Object.getOwnPropertyDescriptor(URL.prototype, 'href').get;
 const PROMISE_THEN = Promise.prototype.then;
+const PROMISE_RESOLVE = Promise.resolve;
+const PROMISE_CLASS = Promise;
 const STRING_VALUE = String.prototype.valueOf;
 const NUMBER_VALUE = Number.prototype.valueOf;
 const BOOLEAN_VALUE = Boolean.prototype.valueOf;
@@ -88,6 +147,8 @@ const REGEXP_SOURCE = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source'
 const REGEXP_FLAGS = Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags').get;
 const SYMBOL_DESCRIPTION = Object.getOwnPropertyDescriptor(Symbol.prototype, 'description').get;
 const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, Symbol.toStringTag).get;
+const TYPED_ARRAY_BUFFER = Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'buffer').get;
+const TYPED_ARRAY_LENGTH = Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'byteLength').get;
 const TYPED_ARRAY_CLASSES = new Map([Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array,
   Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array,
   ...(typeof globalThis.Float16Array === 'function' ? [globalThis.Float16Array] : [])].map((c) => [c.name, c]));
@@ -98,36 +159,98 @@ const BUFFER_PROTOTYPE = Buffer.prototype;
 const DATA_VIEW_BUFFER = Object.getOwnPropertyDescriptor(DataView.prototype, 'buffer').get;
 const DATA_VIEW_OFFSET = Object.getOwnPropertyDescriptor(DataView.prototype, 'byteOffset').get;
 const DATA_VIEW_LENGTH = Object.getOwnPropertyDescriptor(DataView.prototype, 'byteLength').get;
+// UTF-8 text of bytes, as Buffer#toString('utf8') gives it (a leading BOM kept, invalid bytes replaced).
+const UTF8_DECODER = new TextDecoder('utf-8', { ignoreBOM: true });
+const TEXT_DECODE = TextDecoder.prototype.decode;
 
 // What the checked copy becomes as text goes through the built-in prototypes of the values in it
-// (Object.prototype for every object, Array.prototype, Map.prototype, Date.prototype...). A function
-// that the tool, or anything else that ran before the check, added to one of them under one of
-// these keys would run when the copy is serialized, converted, printed or iterated, and could
-// produce text that was never checked. Their state when this module was loaded is kept, and a
-// result is blocked when a prototype that its copy uses no longer matches it.
-const PROTOTYPE_KEYS = ['toJSON', 'toString', 'valueOf', 'toISOString', 'then', 'entries', 'values', 'keys', 'get',
-  Symbol.toPrimitive, Symbol.toStringTag, Symbol.iterator, util.inspect.custom];
-function prototypeState(proto) {
-  return PROTOTYPE_KEYS.map((key) => Object.getOwnPropertyDescriptor(proto, key));
-}
-const PROTOTYPE_BASELINE = new Map([...TRUSTED_PROTOTYPES].map((proto) => [proto, prototypeState(proto)]));
+// (Object.prototype for every object, Array.prototype, Map.prototype, Date.prototype...), and the
+// rules read the text through String.prototype, RegExp.prototype, the built-in iterators and the
+// Object, Array, String, Number, JSON and Reflect functions. A function that the tool, or anything
+// else that ran before the check, put there would run when the copy is serialized, converted,
+// printed or iterated, or when the rules read it, and could produce or hide text that was never
+// checked. Their state when this module was loaded is kept, and a result is blocked when one of
+// them changed: a function (method, getter or setter) replaced, added or removed, a value under a
+// PROTOTYPE_KEYS key changed or added, or an index key added (an array hole reads it). Other new
+// keys (a polyfill adding a method that did not exist) and other values (Buffer.poolSize) are ignored.
+const PROTOTYPE_KEYS = new Set(['toJSON', 'toString', 'valueOf', 'toISOString', 'then', 'entries', 'values', 'keys',
+  'get', 'set', 'add', 'has', 'delete', 'forEach', 'next', 'value', 'enumerable', 'writable', 'configurable',
+  Symbol.toPrimitive, Symbol.toStringTag, Symbol.iterator, Symbol.hasInstance, util.inspect.custom]);
+// Always checked, before the copy is made: the check and every copy use them.
+const CHECK_INTRINSICS = [Object.prototype, Function.prototype, Array.prototype, String.prototype, RegExp.prototype,
+  ITERATOR_PROTOTYPE, ARRAY_ITERATOR_PROTOTYPE, STRING_ITERATOR_PROTOTYPE, REGEXP_STRING_ITERATOR_PROTOTYPE,
+  Object, Array, String, Number, JSON, Reflect];
+// Always checked too, for their existing methods only (the rules use them); a key added to one of
+// them (Set.prototype.toJSON) only matters to a copy that holds such a value (prototypeModified).
+const CHECK_METHODS = [Set.prototype, Map.prototype, WeakSet.prototype, WeakMap.prototype, SET_ITERATOR_PROTOTYPE,
+  MAP_ITERATOR_PROTOTYPE];
+// Global bindings that the rules and the caller's serialization look up by name.
+const CHECK_GLOBALS = ['Object', 'Array', 'String', 'Number', 'JSON', 'Reflect', 'Map', 'Set', 'RegExp', 'Symbol'];
 
-function sameDescriptor(a, b) {
-  if (a === undefined || b === undefined) return a === b;
-  return a.value === b.value && a.get === b.get && a.set === b.set;
+function holderState(holder) {
+  const state = new MAP_CLASS();
+  const keys = ReflectOwnKeys(holder);
+  for (let i = 0; i < keys.length; i++) mapSet(state, keys[i], ObjectGetOwnPropertyDescriptor(holder, keys[i]));
+  return state;
+}
+const PROTOTYPE_BASELINE = new Map();
+for (const holder of [...TRUSTED_PROTOTYPES, ...CHECK_INTRINSICS, ...CHECK_METHODS]) {
+  PROTOTYPE_BASELINE.set(holder, holderState(holder));
+}
+const GLOBAL_BASELINE = CHECK_GLOBALS.map((name) => [name, globalThis[name]]);
+
+/** False when `now` and `before` (own property descriptors, or undefined) differ in a way that can change text. */
+function sameDescriptor(now, before, strict) {
+  if (now === undefined || before === undefined) return now === before;
+  const isData = ObjectHasOwn(now, 'value');
+  if (isData !== ObjectHasOwn(before, 'value')) return false;
+  if (!isData) return now.get === before.get && now.set === before.set;
+  if (strict || typeof now.value === 'function' || typeof before.value === 'function') return now.value === before.value;
+  return true; // another number or string (Buffer.poolSize...): configuration, not code
 }
 
-/** True when one of `protos` (built-in prototypes) has another value under a PROTOTYPE_KEYS key than at load. */
-function prototypeModified(protos) {
-  for (const proto of protos) {
-    const baseline = PROTOTYPE_BASELINE.get(proto);
-    if (baseline === undefined) return true; // not a built-in prototype: never expected in the copy
-    const now = prototypeState(proto);
-    for (let i = 0; i < now.length; i++) {
-      if (!sameDescriptor(now[i], baseline[i])) return true;
+/**
+ * True when `holder` (a built-in prototype or namespace) changed since this module was loaded (see
+ * above); with `existingOnly`, keys added since then are not counted.
+ */
+function holderModified(holder, existingOnly = false) {
+  const baseline = mapGet(PROTOTYPE_BASELINE, holder);
+  if (baseline === undefined) return true; // not a built-in prototype: never expected in the copy
+  const keys = ReflectOwnKeys(holder);
+  let seen = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const tracked = setHas(PROTOTYPE_KEYS, key);
+    if (!mapHas(baseline, key)) {
+      if (!existingOnly && (tracked || isIndexKey(key))) return true;
+      continue;
     }
+    seen++;
+    if (!sameDescriptor(ObjectGetOwnPropertyDescriptor(holder, key), mapGet(baseline, key), tracked)) return true;
+  }
+  return seen !== baseline.size; // a built-in key was removed
+}
+
+/** True when a built-in the check relies on (CHECK_INTRINSICS, CHECK_METHODS, CHECK_GLOBALS) changed since load. */
+function intrinsicsModified() {
+  for (let i = 0; i < CHECK_INTRINSICS.length; i++) {
+    if (holderModified(CHECK_INTRINSICS[i])) return true;
+  }
+  for (let i = 0; i < CHECK_METHODS.length; i++) {
+    if (holderModified(CHECK_METHODS[i], true)) return true;
+  }
+  for (let i = 0; i < GLOBAL_BASELINE.length; i++) {
+    const d = ObjectGetOwnPropertyDescriptor(globalThis, GLOBAL_BASELINE[i][0]);
+    if (d === undefined || !ObjectHasOwn(d, 'value') || d.value !== GLOBAL_BASELINE[i][1]) return true;
   }
   return false;
+}
+
+/** True when one of `protos` (a Set of the built-in prototypes the copy uses) changed since load (see holderModified). */
+function prototypeModified(protos) {
+  let modified = false;
+  eachOf(protos, (proto) => { if (!modified && holderModified(proto)) modified = true; });
+  return modified;
 }
 
 const MODIFIED_PROTOTYPE_REASON = 'a built-in prototype was modified (for example Object.prototype.toJSON), so the result '
@@ -139,7 +262,16 @@ function isErrorStack(key, d) {
 }
 
 function isIndexKey(key) {
-  return typeof key === 'string' && key !== '4294967295' && String(Number(key) >>> 0) === key;
+  return typeof key === 'string' && key !== '4294967295' && STRING_CLASS(NUMBER_CLASS(key) >>> 0) === key;
+}
+
+/** The own descriptor `key` of `descriptors` (from getOwnPropertyDescriptors), never one inherited from Object.prototype. */
+function ownDescriptor(descriptors, key) {
+  return ObjectHasOwn(descriptors, key) ? descriptors[key] : undefined;
+}
+
+function isAccessor(d) {
+  return !ObjectHasOwn(d, 'value');
 }
 
 /**
@@ -154,34 +286,38 @@ function isIndexKey(key) {
  * with such a hook is Unscannable instead.
  */
 function screenObject(obj) {
-  if (types.isProxy(obj)) throw new Unscannable();
-  const typed = types.isTypedArray(obj);
-  const container = typed || Array.isArray(obj) || types.isSet(obj) || types.isMap(obj);
+  if (isProxy(obj)) throw new Unscannable();
+  const typed = isTypedArray(obj);
+  const container = typed || ArrayIsArray(obj) || isSet(obj) || isMap(obj);
   let own = null;
   let hooked = false;
   if (typed) {
     // Its elements cannot be accessors; listing every index of a large buffer would be slow.
-    for (const key of [Symbol.iterator, ...HOOK_KEYS]) {
-      if (Object.getOwnPropertyDescriptor(obj, key)) throw new Unscannable();
+    for (let i = 0; i < TYPED_ARRAY_OWN_KEYS.length; i++) {
+      if (ObjectGetOwnPropertyDescriptor(obj, TYPED_ARRAY_OWN_KEYS[i])) throw new Unscannable();
     }
   } else {
-    own = Object.getOwnPropertyDescriptors(obj);
-    for (const key of Reflect.ownKeys(own)) {
+    own = ObjectGetOwnPropertyDescriptors(obj);
+    const keys = ReflectOwnKeys(own);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
       const d = own[key];
-      if ((d.get || d.set) && !isErrorStack(key, d)) throw new Unscannable();
-      if (container && key === Symbol.iterator) throw new Unscannable();
-      if (HOOK_KEYS.has(key) && typeof d.value === 'function') hooked = true;
+      if (isAccessor(d) && !isErrorStack(key, d)) throw new Unscannable();
+      if (container && key === SYMBOL_ITERATOR) throw new Unscannable();
+      if (setHas(HOOK_KEYS, key) && typeof d.value === 'function') hooked = true;
     }
   }
-  for (let proto = Object.getPrototypeOf(obj); proto !== null; proto = Object.getPrototypeOf(proto)) {
-    if (types.isProxy(proto)) throw new Unscannable();
-    if (TRUSTED_PROTOTYPES.has(proto)) continue;
-    const inherited = Object.getOwnPropertyDescriptors(proto);
-    for (const key of Reflect.ownKeys(inherited)) {
+  for (let proto = ObjectGetPrototypeOf(obj); proto !== null; proto = ObjectGetPrototypeOf(proto)) {
+    if (isProxy(proto)) throw new Unscannable();
+    if (setHas(TRUSTED_PROTOTYPES, proto)) continue;
+    const inherited = ObjectGetOwnPropertyDescriptors(proto);
+    const keys = ReflectOwnKeys(inherited);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
       const d = inherited[key];
-      if (d.get || d.set) throw new Unscannable();
-      if (container && key === Symbol.iterator) throw new Unscannable();
-      if (HOOK_KEYS.has(key) && typeof d.value === 'function') {
+      if (isAccessor(d)) throw new Unscannable();
+      if (container && key === SYMBOL_ITERATOR) throw new Unscannable();
+      if (setHas(HOOK_KEYS, key) && typeof d.value === 'function') {
         if (typed) throw new Unscannable();
         hooked = true;
       }
@@ -193,16 +329,16 @@ function screenObject(obj) {
 
 /** The primitive inside a String, Number or Boolean object, read with the built-in valueOf. */
 function unboxed(data) {
-  if (types.isStringObject(data)) return STRING_VALUE.call(data);
-  if (types.isNumberObject(data)) return NUMBER_VALUE.call(data);
-  return BOOLEAN_VALUE.call(data);
+  if (isStringObject(data)) return ReflectApply(STRING_VALUE, data, []);
+  if (isNumberObject(data)) return ReflectApply(NUMBER_VALUE, data, []);
+  return ReflectApply(BOOLEAN_VALUE, data, []);
 }
 
 /** The href of a URL made by the URL class, or undefined for any other object. */
 function urlHref(data) {
-  if (!(data instanceof URL_CLASS)) return undefined;
+  if (!inChain(data, URL_PROTOTYPE)) return undefined;
   try {
-    return URL_HREF.call(data);
+    return ReflectApply(URL_HREF, data, []);
   } catch {
     return undefined; // URL.prototype in its chain, but not made by the URL class
   }
@@ -210,12 +346,12 @@ function urlHref(data) {
 
 /** Records the prototypes `out` (an object of the copy) inherits from, for prototypeModified; returns `out`. */
 function usesPrototypes(out, state) {
-  for (let proto = Object.getPrototypeOf(out); proto !== null; proto = Object.getPrototypeOf(proto)) state.protos.add(proto);
+  for (let proto = ObjectGetPrototypeOf(out); proto !== null; proto = ObjectGetPrototypeOf(proto)) setAdd(state.protos, proto);
   return out;
 }
 
 function inChain(obj, proto) {
-  for (let p = Object.getPrototypeOf(obj); p !== null; p = Object.getPrototypeOf(p)) {
+  for (let p = ObjectGetPrototypeOf(obj); p !== null; p = ObjectGetPrototypeOf(p)) {
     if (p === proto) return true;
   }
   return false;
@@ -230,8 +366,11 @@ function copiedBytes(buffer, offset, length) {
   }
 }
 
+/** The UTF-8 text of a Uint8Array (or Buffer), decoded by the decoder taken at load. */
 function utf8(bytes) {
-  return BUFFER_FROM(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8');
+  // The decoder refuses a view of shared memory: it reads a private copy of those bytes instead.
+  const view = isSharedArrayBuffer(ReflectApply(TYPED_ARRAY_BUFFER, bytes, [])) ? new UINT8_ARRAY(bytes) : bytes;
+  return ReflectApply(TEXT_DECODE, UTF8_DECODER, [view]);
 }
 
 /**
@@ -239,11 +378,12 @@ function utf8(bytes) {
  * its elements only, without the properties, hooks or class of the original.
  */
 function typedCopy(data) {
-  const Kind = TYPED_ARRAY_CLASSES.get(TYPED_ARRAY_TAG.call(data));
+  const Kind = mapGet(TYPED_ARRAY_CLASSES, ReflectApply(TYPED_ARRAY_TAG, data, []));
   if (Kind === undefined) throw new Unscannable();
   try {
     const copy = new Kind(data); // reads the elements through the internal slots, never through its code
-    return inChain(data, BUFFER_PROTOTYPE) ? BUFFER_FROM(copy.buffer, 0, copy.byteLength) : copy;
+    if (!inChain(data, BUFFER_PROTOTYPE)) return copy;
+    return BUFFER_FROM(ReflectApply(TYPED_ARRAY_BUFFER, copy, []), 0, ReflectApply(TYPED_ARRAY_LENGTH, copy, []));
   } catch {
     throw new Unscannable(); // a detached buffer
   }
@@ -251,23 +391,26 @@ function typedCopy(data) {
 
 /** The value of a data property `key`, own or inherited, when it is a string; '' otherwise. */
 function textProperty(data, own, key) {
-  let d = own[key];
-  for (let proto = Object.getPrototypeOf(data); d === undefined && proto !== null; proto = Object.getPrototypeOf(proto)) {
-    d = Object.getOwnPropertyDescriptor(proto, key);
+  let d = ownDescriptor(own, key);
+  for (let proto = ObjectGetPrototypeOf(data); d === undefined && proto !== null; proto = ObjectGetPrototypeOf(proto)) {
+    d = ObjectGetOwnPropertyDescriptor(proto, key);
   }
-  return d !== undefined && 'value' in d && typeof d.value === 'string' ? d.value : '';
+  return d !== undefined && !isAccessor(d) && typeof d.value === 'string' ? d.value : '';
 }
 
 function defineData(out, key, value) {
-  // defineProperty, so a key such as __proto__ stays an ordinary property
-  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
+  // defineProperty, so a key such as __proto__ stays an ordinary property and no setter of a
+  // prototype runs; a descriptor without a prototype, so none of its fields is inherited.
+  ObjectDefineProperty(out, key, { __proto__: null, value, enumerable: true, writable: true, configurable: true });
 }
 
 /** Copies the listed (enumerable) string-keyed data values of `own` into `out`, functions left out. */
 function copyListed(own, out, maxDepth, memo, state, skip) {
-  for (const key of Reflect.ownKeys(own)) {
+  const keys = ReflectOwnKeys(own);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
     const d = own[key];
-    if (typeof key !== 'string' || !d.enumerable || !('value' in d) || (skip && skip.has(key))) continue;
+    if (typeof key !== 'string' || !d.enumerable || isAccessor(d) || (skip && setHas(skip, key))) continue;
     const value = snapshotOf(d.value, maxDepth - 1, memo, state);
     if (typeof d.value === 'function') continue;
     defineData(out, key, value);
@@ -276,6 +419,8 @@ function copyListed(own, out, maxDepth, memo, state, skip) {
 }
 
 const ERROR_FIELDS = new Set(['name', 'message', 'stack', 'cause', 'errors']);
+const ERROR_LINKS = ['cause', 'errors'];
+const BIGINT_PROTOTYPE = BigInt.prototype;
 
 /**
  * A copy of a tool result made of plain data, built without running any of its code, or
@@ -303,85 +448,129 @@ const ERROR_FIELDS = new Set(['name', 'message', 'stack', 'cause', 'errors']);
 function snapshotOf(data, maxDepth, memo, state) {
   if (typeof data === 'function') return undefined;
   if (typeof data === 'symbol') {
-    const description = SYMBOL_DESCRIPTION.call(data);
-    if (description !== undefined) state.texts.push(description);
+    const description = ReflectApply(SYMBOL_DESCRIPTION, data, []);
+    if (description !== undefined) push(state.texts, description);
     return data;
   }
   if (typeof data === 'bigint') {
-    state.protos.add(BigInt.prototype); // JSON.stringify looks up toJSON on it
+    setAdd(state.protos, BIGINT_PROTOTYPE); // JSON.stringify looks up toJSON on it
     return data;
   }
   if (data === null || typeof data !== 'object') return data;
-  if (memo.has(data)) return memo.get(data);
+  if (mapHas(memo, data)) return mapGet(memo, data);
   const remember = (copy) => {
-    memo.set(data, copy);
+    mapSet(memo, data, copy);
     return copy !== null && typeof copy === 'object' ? usesPrototypes(copy, state) : copy;
   };
   const { own } = screenObject(data);
-  if (types.isTypedArray(data)) return remember(typedCopy(data));
+  if (isTypedArray(data)) return remember(typedCopy(data));
   if (maxDepth <= 0) throw new NestingTooDeep();
-  if (types.isStringObject(data) || types.isNumberObject(data) || types.isBooleanObject(data)) {
+  if (isStringObject(data) || isNumberObject(data) || isBooleanObject(data)) {
     return remember(unboxed(data));
   }
-  if (types.isAnyArrayBuffer(data)) {
+  if (isAnyArrayBuffer(data)) {
     const bytes = copiedBytes(data);
-    state.texts.push(utf8(bytes));
-    return remember(bytes.buffer);
+    push(state.texts, utf8(bytes));
+    return remember(ReflectApply(TYPED_ARRAY_BUFFER, bytes, []));
   }
-  if (types.isDataView(data)) {
-    let view;
+  if (isDataView(data)) {
+    let bytes;
     try {
-      view = [DATA_VIEW_BUFFER.call(data), DATA_VIEW_OFFSET.call(data), DATA_VIEW_LENGTH.call(data)];
+      bytes = copiedBytes(ReflectApply(DATA_VIEW_BUFFER, data, []), ReflectApply(DATA_VIEW_OFFSET, data, []),
+        ReflectApply(DATA_VIEW_LENGTH, data, []));
     } catch {
       throw new Unscannable(); // a detached buffer
     }
-    const bytes = copiedBytes(...view);
-    state.texts.push(utf8(bytes));
-    return remember(new DATA_VIEW(bytes.buffer));
+    push(state.texts, utf8(bytes));
+    return remember(new DATA_VIEW(ReflectApply(TYPED_ARRAY_BUFFER, bytes, [])));
   }
-  if (types.isDate(data)) return remember(new DATE_CLASS(DATE_TIME.call(data)));
+  if (isDate(data)) return remember(new DATE_CLASS(ReflectApply(DATE_TIME, data, [])));
   const href = urlHref(data);
   if (href !== undefined) {
-    state.texts.push(href);
+    push(state.texts, href);
     return remember(new URL_CLASS(href));
   }
-  if (types.isRegExp(data)) return remember(`/${REGEXP_SOURCE.call(data)}/${REGEXP_FLAGS.call(data)}`);
-  if (types.isNativeError(data)) {
+  if (isRegExp(data)) {
+    return remember(`/${ReflectApply(REGEXP_SOURCE, data, [])}/${ReflectApply(REGEXP_FLAGS, data, [])}`);
+  }
+  if (isNativeError(data)) {
     const out = remember({});
     defineData(out, 'name', textProperty(data, own, 'name'));
     defineData(out, 'message', textProperty(data, own, 'message'));
     copyListed(own, out, maxDepth, memo, state, ERROR_FIELDS);
-    for (const key of ['cause', 'errors']) {
-      const d = own[key];
-      if (d === undefined || !('value' in d) || typeof d.value === 'function') continue;
-      defineData(out, key, snapshotOf(d.value, maxDepth - 1, memo, state));
+    for (let i = 0; i < ERROR_LINKS.length; i++) {
+      const d = ownDescriptor(own, ERROR_LINKS[i]);
+      if (d === undefined || isAccessor(d) || typeof d.value === 'function') continue;
+      defineData(out, ERROR_LINKS[i], snapshotOf(d.value, maxDepth - 1, memo, state));
     }
     return out;
   }
-  if (Array.isArray(data)) {
-    const out = remember(new Array(own.length.value));
-    for (const key of Reflect.ownKeys(own)) {
-      if (isIndexKey(key)) out[Number(key)] = snapshotOf(own[key].value, maxDepth - 1, memo, state);
+  if (ArrayIsArray(data)) {
+    const out = remember(new ARRAY_CLASS(own.length.value));
+    const keys = ReflectOwnKeys(own);
+    for (let i = 0; i < keys.length; i++) {
+      if (isIndexKey(keys[i])) defineData(out, keys[i], snapshotOf(own[keys[i]].value, maxDepth - 1, memo, state));
     }
     return out;
   }
-  if (types.isSet(data)) {
-    const out = remember(new Set());
-    for (const v of SET_VALUES.call(data)) {
-      if (typeof v === 'function') continue;
-      out.add(snapshotOf(v, maxDepth - 1, memo, state));
-    }
+  if (isSet(data)) {
+    const out = remember(new SET_CLASS());
+    setAdd(state.protos, SET_ITERATOR_PROTOTYPE); // what iterates the copy
+    eachOf(data, (v) => {
+      if (typeof v !== 'function') setAdd(out, snapshotOf(v, maxDepth - 1, memo, state));
+    });
     return out;
   }
-  if (types.isMap(data)) {
-    const out = remember(new Map());
-    for (const entry of MAP_ENTRIES.call(data)) {
-      if (typeof entry[0] === 'function' || typeof entry[1] === 'function') continue;
-      out.set(snapshotOf(entry[0], maxDepth - 1, memo, state), snapshotOf(entry[1], maxDepth - 1, memo, state));
-    }
+  if (isMap(data)) {
+    const out = remember(new MAP_CLASS());
+    setAdd(state.protos, MAP_ITERATOR_PROTOTYPE);
+    eachOf(data, (entry) => {
+      if (typeof entry[0] === 'function' || typeof entry[1] === 'function') return;
+      mapSet(out, snapshotOf(entry[0], maxDepth - 1, memo, state), snapshotOf(entry[1], maxDepth - 1, memo, state));
+    });
     return out;
   }
   return copyListed(own, remember({}), maxDepth, memo, state, null);
+}
+
+/**
+ * Every string in a copy made by snapshotOf, as extractStrings would list them, read with the
+ * built-in functions taken at load: own data properties, the built-in Set and Map iterators, and
+ * the UTF-8 decoder. Throws NestingTooDeep where extractStrings would.
+ */
+function copyStrings(data, maxDepth, path, out) {
+  if (typeof data === 'string') { push(out, data); return out; }
+  if (data === null || typeof data !== 'object') return out;
+  if (isTypedArray(data)) {
+    if (isUint8Array(data)) push(out, utf8(data)); // other kinds hold numbers only
+    return out;
+  }
+  if (maxDepth <= 0) throw new NestingTooDeep();
+  if (ReflectApply(WEAK_SET_HAS, path, [data])) return out;
+  ReflectApply(WEAK_SET_ADD, path, [data]);
+  try {
+    const visit = (child) => { copyStrings(child, maxDepth - 1, path, out); };
+    if (isSet(data)) {
+      eachOf(data, visit);
+    } else if (isMap(data)) {
+      eachOf(data, (entry) => { visit(entry[0]); visit(entry[1]); });
+    } else {
+      // An array lists its index keys (its holes hold nothing), any other object its listed keys.
+      const array = ArrayIsArray(data);
+      const keys = ReflectOwnKeys(data);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (typeof key !== 'string' || (array && !isIndexKey(key))) continue;
+        const d = ObjectGetOwnPropertyDescriptor(data, key);
+        if (!d.enumerable || isAccessor(d)) continue;
+        if (!array) push(out, key);
+        visit(d.value);
+      }
+    }
+    return out;
+  } finally {
+    ReflectApply(WEAK_SET_DELETE, path, [data]);
+  }
 }
 
 const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters, setters or a Proxy that cannot be checked '
@@ -396,7 +585,7 @@ const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters, setters
  */
 function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = []) {
   if (typeof data === 'string') { out.push(data); return out; }
-  if (data instanceof Uint8Array) { out.push(Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8')); return out; }
+  if (isUint8Array(data)) { out.push(utf8(data)); return out; }
   let children;
   if (Array.isArray(data) || data instanceof Set) {
     children = Array.from(data);
@@ -425,17 +614,19 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
  * extractStrings, or a block assessment when the payload is nested too deeply to check.
  * With snapshot (tool results), the strings are read from snapshotOf(data), returned as
  * `snapshot` (see snapshotOf), and a value that cannot be read without running its code is a
- * block too, as is a copy that inherits from a built-in prototype modified since this module
- * was loaded (see prototypeModified).
+ * block too, as is a check run while a built-in it relies on was modified since this module was
+ * loaded (intrinsicsModified, before the copy is made) or a copy that inherits from a modified
+ * built-in prototype (prototypeModified).
  */
 function stringsOrBlock(data, what, snapshot = false) {
   try {
     if (!snapshot) return { strings: extractStrings(data, MAX_DEPTH, new WeakSet(), []) };
-    const state = { texts: [], protos: new Set() };
-    const copy = snapshotOf(data, MAX_DEPTH, new Map(), state);
+    if (intrinsicsModified()) throw new Unscannable(MODIFIED_PROTOTYPE_REASON);
+    const state = { texts: [], protos: new SET_CLASS() };
+    const copy = snapshotOf(data, MAX_DEPTH, new MAP_CLASS(), state);
     if (prototypeModified(state.protos)) throw new Unscannable(MODIFIED_PROTOTYPE_REASON);
-    const strings = extractStrings(copy, MAX_DEPTH, new WeakSet(), []);
-    for (const text of state.texts) strings.push(text);
+    const strings = copyStrings(copy, MAX_DEPTH, new WEAK_SET_CLASS(), []);
+    for (let i = 0; i < state.texts.length; i++) push(strings, state.texts[i]);
     return { strings, snapshot: copy };
   } catch (e) {
     if (e instanceof Unscannable) {
@@ -503,8 +694,8 @@ function checkResultSnapshot(result, opts) {
   const { strings, block, snapshot } = stringsOrBlock(result, 'Result', true);
   if (block) return { assessment: block };
   if (tooInvisible(strings)) return { assessment: { allowed: false, ...invisibleBlock() } };
-  for (const s of strings) {
-    const res = scanWindows(s, opts);
+  for (let i = 0; i < strings.length; i++) {
+    const res = scanWindows(strings[i], opts);
     if (res.verdict === 'block') return { assessment: { allowed: false, ...res } };
     truncated = truncated || res.truncated === true;
     advisory = advisory || res.advisory;
@@ -605,7 +796,9 @@ function guardTool(fn, opts = {}) {
         const res = fn.apply(this, args);
         // A thenable is settled as a real promise, so whatever it resolves to goes through after():
         // its own then() could return anything.
-        if (res && typeof res.then === 'function') return PROMISE_THEN.call(Promise.resolve(res), after);
+        if (res && typeof res.then === 'function') {
+          return ReflectApply(PROMISE_THEN, ReflectApply(PROMISE_RESOLVE, PROMISE_CLASS, [res]), [after]);
+        }
         return after(res);
       };
   Object.defineProperty(wrapped, 'name', { value: fn.name, configurable: true });
