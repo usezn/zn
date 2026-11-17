@@ -1344,3 +1344,140 @@ async fn a_denied_tool_call_over_the_websocket_gets_the_same_error_as_the_pipeli
     assert_eq!(parse(&over_ws), parse(&direct));
     assert!(!over_ws.contains(BAD_INJECTION), "{over_ws}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Audit rows for calls refused by the managed rules and guards (before the policy engine)
+// ---------------------------------------------------------------------------------------------
+
+/// The rows of the refused calls: one per refusal, each DENIED, naming the tool, the namespace and the reason.
+fn assert_block_row(row: &AuditEntry, tool: &str, namespace: &str, reason_prefix: &str) {
+    assert_eq!(row.event, "TOOL_CALL", "{row:?}");
+    assert_eq!(row.status, "DENIED", "{row:?}");
+    assert_eq!(row.tool_name, tool, "{row:?}");
+    assert_eq!(row.namespace.as_deref(), Some(namespace), "{row:?}");
+    let reason = row.policy_match.as_deref().unwrap_or_default();
+    assert!(reason.starts_with(reason_prefix), "{row:?}");
+}
+
+#[tokio::test]
+async fn a_restricted_tool_refusal_writes_a_denied_audit_row() {
+    let (state, _dir) = test_state(None);
+    let out = run(
+        &state,
+        Some("tenant-a"),
+        &call_frame(3, "arguments", "shutdown_host", "hello"),
+    )
+    .await;
+    assert_error_only(&out, Some(-32001));
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_block_row(&rows[0], "shutdown_host", "tenant-a", "managed_rule:");
+    assert!(
+        rows[0]
+            .policy_match
+            .as_deref()
+            .unwrap()
+            .contains("Restricted command"),
+        "{:?}",
+        rows[0]
+    );
+    assert_eq!(
+        rows[0].payload, None,
+        "no arguments in a block row: {:?}",
+        rows[0]
+    );
+}
+
+#[tokio::test]
+async fn an_injection_refusal_writes_a_denied_audit_row() {
+    let (state, _dir) = test_state(None);
+    let out = run(
+        &state,
+        Some("tenant-a"),
+        &call_frame(5, "arguments", "search_notes", BAD_INJECTION),
+    )
+    .await;
+    assert_error_only(&out, Some(-32001));
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_block_row(&rows[0], "search_notes", "tenant-a", "managed_rule:");
+    assert!(
+        !rows[0]
+            .policy_match
+            .as_deref()
+            .unwrap()
+            .contains(BAD_INJECTION),
+        "the row holds the reason, never the arguments: {:?}",
+        rows[0]
+    );
+}
+
+#[tokio::test]
+async fn a_block_row_never_holds_a_fake_secret_and_an_allowed_call_still_has_one_row() {
+    let (state, _dir) = test_state(None);
+    let line = call_frame(7, "arguments", "shutdown_host", BAD_KEY);
+    assert_error_only(&run(&state, None, &line).await, Some(-32001));
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(!format!("{rows:?}").contains(BAD_KEY), "{rows:?}");
+    // An allowed call: exactly one row, ALLOWED, as before.
+    let ok = call_frame(8, "arguments", "search_notes", "quarterly revenue");
+    assert_eq!(run(&state, None, &ok).await, ok);
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows.iter().filter(|r| r.status == "ALLOWED").count(), 1);
+}
+
+#[tokio::test]
+async fn a_banned_agent_refusal_writes_a_denied_audit_row() {
+    let (state, _dir) = test_state(None);
+    let line = call_frame(1, "arguments", "search_notes", BAD_INJECTION);
+    let mut banned_at = None;
+    for n in 0..200 {
+        let v = parse(&run(&state, Some("tenant-a"), &line).await);
+        if v["error"]["code"] == -32003 {
+            banned_at = Some(n + 1);
+            break;
+        }
+    }
+    let calls = banned_at.expect("repeated violations end in a ban");
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), calls, "every refused call has one row");
+    assert!(rows.iter().all(|r| r.status == "DENIED"), "{rows:?}");
+    // get_recent returns the newest first: the last call is the one the ban refused.
+    assert_block_row(&rows[0], "search_notes", "tenant-a", "banned_agent:");
+}
+
+#[tokio::test]
+async fn a_loop_breaker_refusal_writes_a_denied_audit_row() {
+    let (state, _dir) = test_state(None);
+    let line = call_frame(1, "arguments", "search_notes", "quarterly revenue");
+    let mut sent = 0;
+    let mut looped = false;
+    for _ in 0..200 {
+        sent += 1;
+        let out = run(&state, Some("tenant-a"), &line).await;
+        if parse(&out)["error"]["code"] == -32002 {
+            looped = true;
+            break;
+        }
+    }
+    assert!(
+        looped,
+        "the same call repeated is stopped by the loop breaker"
+    );
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), sent, "{rows:?}");
+    assert_block_row(&rows[0], "search_notes", "tenant-a", "loop_breaker:");
+}
+
+#[tokio::test]
+async fn a_consensus_refusal_writes_a_denied_audit_row() {
+    let (mut state, _dir) = test_state(None);
+    consensus_state(&mut state);
+    let out = run(&state, Some("tenant-a"), &frame("drop_table")).await;
+    assert_error_only(&out, Some(-32004));
+    let rows = audit_rows(&state);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_block_row(&rows[0], "drop_table", "tenant-a", "consensus_required:");
+}

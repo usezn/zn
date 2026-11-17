@@ -1000,6 +1000,22 @@ fn audit_write(state: &AppState, event: &str, entry: AuditEntry) -> bool {
     }
 }
 
+/// Audit row for a call that a managed rule or guard refused before the policy engine saw it.
+///
+/// Every refusal in `process_mcp_message` goes through here, so no block leaves without a row. The row
+/// goes through `AuditVault::log`, which redacts the tool name, the agent id and the reason and applies
+/// the payload settings, exactly like the rows of policy decisions. It holds the reason (a short,
+/// bounded text), never the arguments. The call is refused anyway, so a failed write is only counted.
+fn audit_block(state: &AppState, tool_log: &str, namespace: &str, agent_id: &str, reason: &str) {
+    const MAX_REASON: usize = 200;
+    let reason: String = reason.chars().take(MAX_REASON).collect();
+    let entry = AuditEntry::new("TOOL_CALL", tool_log, "DENIED")
+        .with_policy(reason)
+        .with_namespace(namespace)
+        .with_agent_id(agent_id);
+    audit_write(state, "TOOL_CALL", entry);
+}
+
 /// The webhook alert for an audit entry: metadata only. The request payload
 /// never leaves in a webhook, even when `audit.store_payloads` keeps it in the
 /// database.
@@ -1057,6 +1073,13 @@ async fn process_mcp_message(
                     "Tool call '{tool_log}' refused: MCP server '{server}' was skipped ({reason})"
                 ))
                 .ok();
+                audit_block(
+                    state,
+                    &tool_log,
+                    &memory_namespace,
+                    &agent_id_str,
+                    &format!("skipped_server: {server}"),
+                );
                 return Ok(Some(jsonrpc_error_response(
                     id,
                     jsonrpc_error::POLICY_DENIED,
@@ -1092,6 +1115,13 @@ async fn process_mcp_message(
                         ocr_text.len()
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_log,
+                        &memory_namespace,
+                        &agent_id_str,
+                        &format!("ocr_veto: {rule}"),
+                    );
                     return Ok(Some(jsonrpc_error_response(
                         id,
                         -32001,
@@ -1105,6 +1135,13 @@ async fn process_mcp_message(
                         e.as_str()
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_log,
+                        &memory_namespace,
+                        &agent_id_str,
+                        &format!("vision_budget: {}", e.as_str()),
+                    );
                     return Ok(Some(jsonrpc_error_response(id, -32001, e.as_str())));
                 }
             }
@@ -1122,6 +1159,13 @@ async fn process_mcp_message(
                         e.as_str()
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_log,
+                        &memory_namespace,
+                        &agent_id_str,
+                        &format!("vision_sanitize: {}", e.as_str()),
+                    );
                     return Ok(Some(jsonrpc_error_response(id, -32001, e.as_str())));
                 }
             };
@@ -1135,6 +1179,13 @@ async fn process_mcp_message(
                     Scrubber::redact_for_log(&ban_msg)
                 ))
                 .ok();
+                audit_block(
+                    state,
+                    &tool_log,
+                    &memory_namespace,
+                    &agent_id_str,
+                    &format!("banned_agent: {ban_msg}"),
+                );
                 return Ok(Some(jsonrpc_error_response(
                     id, -32003, // Custom error code for BANNED
                     &ban_msg,
@@ -1167,6 +1218,13 @@ async fn process_mcp_message(
                 state
                     .reputation
                     .record_violation(&rep_key, "Managed Rules Violation", 10);
+                audit_block(
+                    state,
+                    &tool_log,
+                    &memory_namespace,
+                    &agent_id_str,
+                    &format!("managed_rule: {msg}"),
+                );
                 return Ok(Some(jsonrpc_error_response(id, -32001, &msg)));
             }
 
@@ -1183,6 +1241,13 @@ async fn process_mcp_message(
                 state
                     .reputation
                     .record_violation(&rep_key, "Recursive Loop Detected", 15);
+                audit_block(
+                    state,
+                    &tool_log,
+                    &memory_namespace,
+                    &agent_id_str,
+                    &format!("loop_breaker: {msg}"),
+                );
                 return Ok(Some(jsonrpc_error_response(id, -32002, &msg)));
             }
 
@@ -1204,6 +1269,13 @@ async fn process_mcp_message(
                         tool_log, action_id
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_log,
+                        &memory_namespace,
+                        &agent_id_str,
+                        &format!("consensus_required: {action_id}"),
+                    );
                     return Ok(Some(jsonrpc_error_response(
                         id,
                         -32004,

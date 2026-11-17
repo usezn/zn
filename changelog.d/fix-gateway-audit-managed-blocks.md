@@ -1,0 +1,2 @@
+### Security
+- The gateway now writes an audit record for every tool call that a managed rule or guard refuses (restricted tools, injection and secret rules, banned agents, the loop breaker, pending consensus, vision and OCR checks, skipped servers). Until now only calls that reached the policy engine were audited. The record is DENIED, names the tool, the namespace and the reason, and never holds the call's arguments.
