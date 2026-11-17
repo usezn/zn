@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.23';
+const POLICY_RULES_VERSION = '2026-11-16.29';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3918,47 +3918,56 @@ function egressCollectText(raw, text, opts, depth, found) {
     const scan = scanFirstCommand(rest, false);
     let op = scan.operator;
     if ((op === '&' || op === '|') && rest[scan.end + 1] === op) op += op;
-    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...).
-    let words = scan.words;
-    const filled = shellVars.applyWords(vars, words.map((w) => w.text), op);
-    if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
-    let k = -1;
-    let prog = '';
-    const chain = {};
-    let i = 0;
-    let chainAt = -1;
-    while (i < words.length) {
-      const t = words[i].text;
-      let name = programName(t);
-      // {curl,-H,x,URL} is the words curl -H x URL.
-      if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
-        const alts = expandBraces(t);
-        if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
-          words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
-          name = programName(alts[0]);
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...). A variable an assignment may not have
+    // changed (after &&, in an if, ...) holds each of its values: every reading is looked at.
+    const readings = shellVars.applyVariants(vars, scan.words.map((w) => w.text), op, 0);
+    // Past the variable limits (too many possible values or combinations) the readings are incomplete: refuse rather
+    // than check only some of them (the same marker as a command too nested to check).
+    if (vars.overflow) {
+      found.push({ urls: [], parts: [{ where: 'code', text: 'a command whose variables have too many possible values for zn to check' }] });
+      return;
+    }
+    for (const filled of readings) {
+      let words = scan.words;
+      if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
+      let k = -1;
+      let prog = '';
+      const chain = {};
+      let i = 0;
+      let chainAt = -1;
+      while (i < words.length) {
+        const t = words[i].text;
+        let name = programName(t);
+        // {curl,-H,x,URL} is the words curl -H x URL.
+        if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
+          const alts = expandBraces(t);
+          if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
+            words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
+            name = programName(alts[0]);
+          }
+        }
+        prog = egressProgramOf(name);
+        if (prog) { k = i; break; }
+        if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
+        if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { if (chainAt < 0) chainAt = i; i = skipWrapper(words, i, name, chain); continue; }
+        break;
+      }
+      // The wrappers did not end on a plausible program (an option zn does not know may have taken the next word): the
+      // first later word that is a network program counts, so the request is not hidden behind the option.
+      // The words an option may have taken are read too (from the first wrapper on), so a wrong skip cannot hide the request.
+      if (k < 0 && chain.unsure) {
+        for (let j = Math.max(chainAt, 0); j < words.length; j++) {
+          prog = egressProgramOf(programName(words[j].text));
+          if (prog) { k = j; break; }
         }
       }
-      prog = egressProgramOf(name);
-      if (prog) { k = i; break; }
-      if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
-      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { if (chainAt < 0) chainAt = i; i = skipWrapper(words, i, name, chain); continue; }
-      break;
-    }
-    // The wrappers did not end on a plausible program (an option zn does not know may have taken the next word): the
-    // first later word that is a network program counts, so the request is not hidden behind the option.
-    // The words an option may have taken are read too (from the first wrapper on), so a wrong skip cannot hide the request.
-    if (k < 0 && chain.unsure) {
-      for (let j = Math.max(chainAt, 0); j < words.length; j++) {
-        prog = egressProgramOf(programName(words[j].text));
-        if (prog) { k = j; break; }
-      }
-    }
-    if (k >= 0) {
-      if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
-      // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
-      else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
-        const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
-        if (r.parts.length) found.push(r);
+      if (k >= 0) {
+        if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
+        // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
+        else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
+          const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+          if (r.parts.length) found.push(r);
+        }
       }
     }
     rest = rest.slice(scan.end + 1);

