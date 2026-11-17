@@ -679,7 +679,7 @@ def test_breaker_writes_its_token_into_the_break_mutex_and_deletes_it(tmp_path, 
 
     monkeypatch.setitem(evidence._test_hooks, "after_mutex_create", peek)
     assert log_evidence({"payload": "x"}, file_path=p) is not None
-    assert re.fullmatch(r"\d+:[0-9a-f]{16}", seen[0])
+    assert re.fullmatch(r"\d+:[0-9a-f]{16}:[0-9a-f]{8}", seen[0])
     assert not os.path.exists(p + ".lock.break")
 
 

@@ -14,6 +14,7 @@ import os
 import random
 import re
 import secrets
+import socket
 import sys
 import time
 from datetime import datetime, timezone
@@ -163,7 +164,8 @@ class EvidenceLockError(Exception):
 # same file and the same rules, so the two exclude each other. A writer waits at most LOCK_WAIT
 # seconds; if it cannot get the lock it skips the write (fail closed: the log is never written
 # without the lock) and the caller goes on. A lock file older than LOCK_STALE seconds belongs to
-# a process that died (or was suspended) and is broken. The lock holds its owner's token: a writer
+# a process that died (or was suspended) and is broken; so is a lock whose owner pid (same machine)
+# no longer exists, at once. The lock holds its owner's token: a writer
 # only deletes the lock while it is still its own, and checks that again just before it appends,
 # so a writer that lost its lock to a takeover writes nothing.
 LOCK_WAIT = 2.0
@@ -179,6 +181,38 @@ def _read_lock_token(lock_path: str) -> Optional[str]:
         return None
 
 
+def _host_tag() -> str:
+    """The token is `pid:16 hex:8 hex`; the last part is a short hash of this machine's name, so a
+    lock on a ledger shared between machines is never judged by a pid that means nothing here."""
+    return hashlib.sha256(socket.gethostname().lower().encode("utf-8", errors="replace")).hexdigest()[:8]
+
+
+_TOKEN_RE = re.compile(r"^([0-9]{1,10}):[0-9a-f]{16}:([0-9a-f]{8})$")
+
+
+def _dead_owner_token(lock_path: str) -> Optional[str]:
+    """The token of the lock when its owner is a process of this machine that no longer exists, else
+    None. Any doubt (a token of another format or machine, a process that exists, PermissionError,
+    which means "alive but not ours") answers None: the lock then waits for the stale window as
+    before. Not checked on Windows, where os.kill(pid, 0) would end the process."""
+    if os.name == "nt":
+        return None
+    token = _read_lock_token(lock_path)
+    m = _TOKEN_RE.match(token) if token is not None else None
+    if not m:
+        return None
+    pid = int(m.group(1))
+    if pid <= 0 or pid == os.getpid() or m.group(2) != _host_tag():
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return token
+    except OSError:
+        return None
+    return None
+
+
 def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
     """Takes the lock and returns this writer's token (pid + random bytes), which is written into
     the lock file. The token lets a writer tell its own lock from one taken over after it was
@@ -188,7 +222,7 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
             and math.isfinite(wait) and wait >= 0):
         wait = LOCK_WAIT
     deadline = time.monotonic() + wait
-    token = f"{os.getpid()}:{secrets.token_hex(8)}"
+    token = f"{os.getpid()}:{secrets.token_hex(8)}:{_host_tag()}"
     delay = 0.002
     missing = 0
     while True:
@@ -231,6 +265,9 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
             stale = abs(time.time() - os.stat(lock_path).st_mtime) > LOCK_STALE
         except OSError:
             pass  # gone or unreadable: wait a moment and try again
+        # A lock whose owner process is gone (same machine) is broken at once, not after the stale window.
+        if not stale and _dead_owner_token(lock_path) is not None:
+            stale = True
         if stale and _break_stale_lock(lock_path, token):
             continue
         time.sleep(delay + random.random() * delay)
@@ -312,10 +349,14 @@ def _break_stale_lock(lock_path: str, token: str) -> bool:
         # Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
         # the stale file still exists, so what is judged stale here is still the stale file.
         stale = False
+        dead_token: Optional[str] = None
         try:
             stale = abs(time.time() - os.stat(lock_path).st_mtime) > LOCK_STALE
         except OSError:
             pass  # gone
+        if not stale:
+            dead_token = _dead_owner_token(lock_path)
+            stale = dead_token is not None
         if not stale:
             return True
         # Break it by renaming it away, then delete the renamed file. Never delete by the shared path.
@@ -329,6 +370,9 @@ def _break_stale_lock(lock_path: str, token: str) -> bool:
         try:
             fresh = abs(time.time() - os.stat(aside).st_mtime) <= LOCK_STALE
         except OSError:
+            fresh = False
+        # What was judged dead by its owner is recent by age: it is put back only if it is not that lock.
+        if dead_token is not None and _read_lock_token(aside) == dead_token:
             fresh = False
         if fresh:
             try:
@@ -479,6 +523,76 @@ def _canonical_forms(record: Dict[str, Any]) -> List[str]:
 _last_write_warn: Optional[float] = None
 
 
+# A write that is dropped (the lock stayed busy) leaves a trace: one byte appended to `<log>.dropped`
+# (mode 0600, no content: only the number of bytes is meaningful). The next writer that holds the lock
+# takes the counter, writes a record "N events were not recorded (log busy)" before its own record, and
+# deletes it. So a gap shows in the log, and `zn-gate evidence --verify` reports it. The Node package
+# uses the same file and the same record.
+_GAP_RULE = "evidence-gap"
+
+
+def _dropped_path(file_path: str) -> str:
+    return file_path + ".dropped"
+
+
+def note_dropped(file_path: str = EVIDENCE_FILE, n: int = 1) -> None:
+    """Counts n events as not recorded. Never raises."""
+    try:
+        if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+            return
+        _ensure_dir(file_path)
+        fd = os.open(_dropped_path(file_path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, b"x" * min(n, 100000))
+        finally:
+            os.close(fd)
+    except OSError:
+        pass  # the counter is best effort
+
+
+def _pending_dropped(file_path: str) -> int:
+    try:
+        return os.stat(_dropped_path(file_path)).st_size
+    except OSError:
+        return 0
+
+
+def _take_dropped(file_path: str, token: str) -> Optional[Tuple[str, int]]:
+    """Moves the counter aside (atomic: a writer that drops an event meanwhile starts a new counter)
+    and returns (aside path, count), or None when there is nothing to report. The caller holds the lock."""
+    src = _dropped_path(file_path)
+    aside = f"{src}.taking-{token.replace(':', '-')}"
+    try:
+        os.rename(src, aside)
+    except OSError:
+        return None
+    try:
+        n = os.stat(aside).st_size
+    except OSError:
+        n = 0
+    if n <= 0:
+        try:
+            os.unlink(aside)
+        except OSError:
+            pass
+        return None
+    return aside, n
+
+
+def _settle_dropped(file_path: str, gap: Tuple[str, int], written: bool) -> None:
+    aside, n = gap
+    try:
+        if not written:
+            note_dropped(file_path, n)
+        os.unlink(aside)
+    except OSError:
+        pass
+
+
+def _gap_text(n: int) -> str:
+    return f"{n} event{' was' if n == 1 else 's were'} not recorded (log busy)"
+
+
 def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
                  lock_wait: float = LOCK_WAIT) -> Optional[Dict[str, Any]]:
     """
@@ -496,6 +610,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
     global _last_warn, _last_write_warn
     lock_path = file_path + ".lock"
     token: Optional[str] = None
+    gap: Optional[Tuple[str, int]] = None
     try:
         _ensure_dir(file_path)
         token = _acquire_lock(lock_path, lock_wait)
@@ -511,15 +626,34 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
                     f"{recovery_hint(file_path)}\n"
                 )
             return None
+        # Events dropped earlier (the lock was busy for another writer): say so in the log, in the chain, before this record.
+        lines = ""
+        gap = _take_dropped(file_path, token)
+        if gap:
+            marker = _build_record({
+                "agent": "zn-gate", "phase": "ledger", "tool_name": "evidence-log", "verdict": "allow",
+                "rule": _GAP_RULE, "reason": _gap_text(gap[1]),
+                "payload": '{"not_recorded":' + str(gap[1]) + "}", "engine": "zn-ledger",
+            }, prev_hash)
+            lines += _canonical(marker) + "\n"
+            prev_hash = marker["record_hash"]
         final_record = _build_record(event, prev_hash)
         # Still our lock? If it was taken over (this process was stalled for over 10 s) the last
         # hash read above may be out of date: write nothing rather than fork the chain.
         if not _owns_lock(lock_path, token):
             raise EvidenceLockError("the write lock was taken over")
         with _open_for_append(file_path) as f:
-            f.write(_canonical(final_record) + "\n")
+            f.write(lines + _canonical(final_record) + "\n")
+        if gap:
+            _settle_dropped(file_path, gap, True)
+            gap = None
         return final_record
     except (OSError, EvidenceLockError) as e:
+        if gap:
+            _settle_dropped(file_path, gap, False)
+            gap = None
+        if isinstance(e, EvidenceLockError):
+            note_dropped(file_path)
         # A log problem (no permission, a full disk, a busy lock) must never break the caller.
         now = time.monotonic()
         if _last_write_warn is None or now - _last_write_warn >= WARN_INTERVAL:
@@ -638,6 +772,8 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         return _corrupt_result(0, 0, str(e))
 
     expected_prev = GENESIS_HASH
+    gap_markers = 0
+    gap_events = 0
 
     for i, line in enumerate(lines):
         if i in bad:
@@ -689,8 +825,17 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
             }
 
         expected_prev = recorded_hash
+        if rec.get("rule") == _GAP_RULE and rec.get("agent_environment") == "zn-gate":
+            m = re.match(r"^([0-9]+) event", str(rec.get("reason")))
+            gap_markers += 1
+            gap_events += int(m.group(1)) if m else 0
 
-    return {"valid": True, "total": len(lines), "verified": len(lines), "broken_index": None, "error": None}
+    ok: Dict[str, Any] = {"valid": True, "total": len(lines), "verified": len(lines), "broken_index": None, "error": None}
+    # Events that were not recorded because the log was busy: the gaps the chain itself cannot show.
+    pending = _pending_dropped(file_path)
+    if gap_markers > 0 or pending > 0:
+        ok["gaps"] = {"markers": gap_markers, "events": gap_events, "pending": pending}
+    return ok
 
 
 def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[str, Any]:

@@ -2003,6 +2003,17 @@ function countHook(agentId, ev, decision, opts = {}, latencyMs) {
  * code is loaded only then. A problem with the ledger is reported on stderr by the ledger itself
  * and never changes the decision: the answer is already built when this runs.
  */
+/*
+ * How long a hook may wait for the ledger lock: the 2 seconds the libraries wait, cut to what is left of the
+ * hook's time. The wait blocks the process, so the supervisor cannot answer meanwhile; it leaves a second
+ * of the supervisor deadline (hook timeout minus SUPERVISOR_MARGIN_S) for writing the answer.
+ */
+const EVIDENCE_WAIT_MS = 2000;
+function evidenceWaitMs(agentId) {
+  const left = supervisorDeadlineMs(agentId) - Math.round(process.uptime() * 1000) - 1000;
+  return Math.max(0, Math.min(EVIDENCE_WAIT_MS, left));
+}
+
 function recordEvidence(agentId, ev, decision, opts = {}) {
   try {
     if (!ev || !ev.event || !decision || ev.permissionRequest) return;
@@ -2030,7 +2041,7 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
       engine: 'zn-hook',
     // _plainPreview: the payload above is the event name, the tool name and the checked secret kinds,
     // never text from the agent, so the ledger does not load the redaction engine for it (~17 ms).
-    }, file, { lockWaitMs: 500, noStats: true, _plainPreview: true });
+    }, file, { lockWaitMs: evidenceWaitMs(agentId), noStats: true, _plainPreview: true });
   } catch (e) {
     try { process.stderr.write('zn-gate: could not record the block in the evidence log (' + (e && e.code || 'error') + ').' + String.fromCharCode(10)); } catch (_) { /* nothing more to do */ }
   }
@@ -2045,8 +2056,10 @@ function recordPackageCheck(agentId, ev, records, opts) {
   try {
     const evidence = require('../evidence');
     const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
-    for (const r of records.slice(0, 8)) {
-      evidence.logEvidence({
+    const list = records.slice(0, 8);
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const wrote = evidence.logEvidence({
         agent: agentId,
         phase: 'hook-' + ev.event,
         tool_name: ev.tool || ev.event,
@@ -2055,7 +2068,9 @@ function recordPackageCheck(agentId, ev, records, opts) {
         rule: r.rule,
         reason: r.reason,
         engine: 'zn-hook',
-      }, file, { lockWaitMs: 500, noStats: true, _plainPreview: true });
+      }, file, { lockWaitMs: evidenceWaitMs(agentId), noStats: true, _plainPreview: true });
+      // One busy lock is enough: waiting again for every finding could use up the hook's time. The rest are counted.
+      if (wrote === null) { if (i + 1 < list.length) evidence.noteDropped(file, list.length - i - 1); break; }
     }
   } catch (e) {
     /* the decision is already made */
@@ -2580,7 +2595,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
+module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, evidenceWaitMs, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

@@ -47,7 +47,12 @@ function createFakeVault(opts = {}) {
       const p = proj(project);
       return wrap(p.byToken.has(token) ? p.byToken.get(token) : null);
     },
-    async setSecret(name, value, meta = {}) {
+    async setSecret(name, value, meta = {}, opts) {
+      if (opts && opts.createOnly === true && secrets.has(name)) {
+        const err = new Error(name + ' already exists; use --force to replace it');
+        err.code = 'ZN_POLICY_DENIED';
+        throw err;
+      }
       secrets.set(name, { value: String(value), meta: { ...meta } });
     },
     // Like the daemon: the policy changes, the value stays.
@@ -72,7 +77,7 @@ function createFakeVault(opts = {}) {
       }));
     },
     async removeSecret(name) {
-      secrets.delete(name);
+      return secrets.delete(name);
     },
     // Like the daemon, matching happens here: positions and names come back, never values.
     async maskInfo() {

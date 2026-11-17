@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 // rules (with the scrubber engine behind it), term and http are loaded where they are used, so an
 // append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
@@ -66,7 +67,8 @@ class EvidenceLedgerError extends Error {}
 // same file and the same rules, so the two exclude each other. A writer waits at most
 // LOCK_WAIT_MS; if it cannot get the lock it skips the write (fail closed: the log is never
 // written without the lock) and the caller goes on. A lock file older than LOCK_STALE_MS
-// belongs to a process that died (or was suspended) and is broken. The lock holds its owner's
+// belongs to a process that died (or was suspended) and is broken; so is a lock whose owner pid
+// (same machine) no longer exists, at once. The lock holds its owner's
 // token: a writer only deletes the lock while it is still its own, and checks that again just
 // before it appends, so a writer that lost its lock to a takeover writes nothing.
 const LOCK_WAIT_MS = 2000;
@@ -80,6 +82,25 @@ function sleepMs(ms) {
 
 function readLockToken(lockPath) {
   try { return fs.readFileSync(lockPath, 'utf8'); } catch { return null; }
+}
+
+// The token is `pid:16 hex:8 hex`; the last part is a short hash of this machine's name, so a lock
+// on a ledger shared between machines is never judged by a pid that means nothing here.
+function hostTag() {
+  return crypto.createHash('sha256').update(String(os.hostname()).toLowerCase()).digest('hex').slice(0, 8);
+}
+const TOKEN_RE = /^(\d{1,10}):[0-9a-f]{16}:([0-9a-f]{8})$/;
+
+// The token of the lock when its owner is a process of this machine that no longer exists, else
+// null. Any doubt (a token of another format or machine, a process that exists, EPERM, which
+// means "alive but not ours") answers null: the lock then waits for the stale window as before.
+function deadOwnerToken(lockPath) {
+  const token = readLockToken(lockPath);
+  const m = token === null ? null : TOKEN_RE.exec(token);
+  if (!m) return null;
+  const pid = Number(m[1]);
+  if (!(pid > 0) || pid === process.pid || m[2] !== hostTag()) return null;
+  try { process.kill(pid, 0); return null; } catch (e) { return e && e.code === 'ESRCH' ? token : null; }
 }
 
 // Test seams: they let a test run code between two steps of the break protocol.
@@ -101,7 +122,7 @@ function reclaimStaleMutex(mutex, token) {
   try {
     if (Math.abs(Date.now() - fs.statSync(mutex).mtimeMs) <= LOCK_STALE_MS) return;
     if (testHooks.beforeMutexReclaim) testHooks.beforeMutexReclaim(mutex);
-    const aside = `${mutex}-reclaim-${token.replace(':', '-')}`;
+    const aside = `${mutex}-reclaim-${token.replace(/:/g, '-')}`;
     fs.renameSync(mutex, aside);
     let fresh = false;
     try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
@@ -143,10 +164,12 @@ function breakStaleLock(lockPath, token) {
     // Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
     // the stale file still exists, so what is judged stale here is still the stale file.
     let stale = false;
+    let deadToken = null;
     try { stale = Math.abs(Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS; } catch { /* gone */ }
+    if (!stale) { deadToken = deadOwnerToken(lockPath); stale = deadToken !== null; }
     if (!stale) return true;
     // Break it by renaming it away, then delete the renamed file. Never delete by the shared path.
-    const aside = `${lockPath}.stale-${token.replace(':', '-')}`;
+    const aside = `${lockPath}.stale-${token.replace(/:/g, '-')}`;
     let moved = false;
     try { fs.renameSync(lockPath, aside); moved = true; } catch { /* already gone, or busy on Windows: retry */ }
     if (moved) {
@@ -154,6 +177,8 @@ function breakStaleLock(lockPath, token) {
       // (atomic, fails if a lock exists again) before deleting our copy.
       let fresh = false;
       try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
+      // What was judged dead by its owner is recent by age: it is put back only if it is not that lock.
+      if (deadToken !== null && readLockToken(aside) === deadToken) fresh = false;
       if (fresh) {
         try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
       }
@@ -176,7 +201,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
   // NaN, Infinity or a negative wait would never time out (or time out at once): use the default.
   if (!(Number.isFinite(waitMs) && waitMs >= 0)) waitMs = LOCK_WAIT_MS;
   const deadline = Date.now() + waitMs;
-  const token = `${process.pid}:${crypto.randomBytes(8).toString('hex')}`;
+  const token = `${process.pid}:${crypto.randomBytes(8).toString('hex')}:${hostTag()}`;
   let delay = 2;
   let missing = 0;
   for (;;) {
@@ -210,6 +235,8 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
       // abs(): a lock dated in the future (clock moved back) is stale too.
       stale = Math.abs(Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS;
     } catch { /* gone or unreadable: wait a moment and try again */ }
+    // A lock whose owner process is gone (same machine) is broken at once, not after the stale window.
+    if (!stale && deadOwnerToken(lockPath) !== null) stale = true;
     if (stale && breakStaleLock(lockPath, token)) continue;
     sleepMs(delay + Math.floor(Math.random() * delay));
     delay = Math.min(delay * 2, 50);
@@ -446,12 +473,64 @@ function getLastHash(filePath = EVIDENCE_FILE) {
   return hash;
 }
 
+// A write that is dropped (the lock stayed busy) leaves a trace: one byte appended to `<log>.dropped`
+// (mode 0600, no content: only the number of bytes is meaningful). The next writer that holds the lock
+// takes the counter, writes a record "N events were not recorded (log busy)" before its own record, and
+// deletes it. So a gap shows in the log, and `zn-gate evidence --verify` reports it. The Python package
+// uses the same file and the same record.
+const GAP_RULE = 'evidence-gap';
+function droppedPath(filePath) { return filePath + '.dropped'; }
+
+/** Counts n events as not recorded. Never throws. */
+function noteDropped(filePath = EVIDENCE_FILE, n = 1) {
+  try {
+    if (!(Number.isInteger(n) && n > 0)) return;
+    ensureZnDir(filePath);
+    fs.appendFileSync(droppedPath(filePath), 'x'.repeat(Math.min(n, 100000)), { mode: LEDGER_FILE_MODE });
+  } catch { /* the counter is best effort */ }
+}
+
+function pendingDropped(filePath) {
+  try { return fs.statSync(droppedPath(filePath)).size; } catch { return 0; }
+}
+
+// Moves the counter aside (atomic: a writer that drops an event meanwhile starts a new counter) and
+// returns {aside, n}, or null when there is nothing to report. The caller holds the write lock.
+function takeDropped(filePath, token) {
+  const src = droppedPath(filePath);
+  const aside = `${src}.taking-${token.replace(/:/g, '-')}`;
+  try { fs.renameSync(src, aside); } catch { return null; }
+  let n = 0;
+  try { n = fs.statSync(aside).size; } catch { /* gone */ }
+  if (n <= 0) { try { fs.unlinkSync(aside); } catch { /* best effort */ } return null; }
+  return { aside, n };
+}
+
+function settleDropped(filePath, gap, written) {
+  try {
+    if (!written) fs.appendFileSync(droppedPath(filePath), 'x'.repeat(Math.min(gap.n, 100000)), { mode: LEDGER_FILE_MODE });
+    fs.unlinkSync(gap.aside);
+  } catch { /* best effort */ }
+}
+
+function gapText(n) {
+  return `${n} event${n === 1 ? ' was' : 's were'} not recorded (log busy)`;
+}
+
+function gapEvent(n) {
+  return {
+    agent: 'zn-gate', phase: 'ledger', tool_name: 'evidence-log', verdict: 'allow', rule: GAP_RULE,
+    reason: gapText(n), payload: JSON.stringify({ not_recorded: n }), engine: 'zn-ledger',
+  };
+}
+
 /**
  * Records a security event with cryptographic hash-chaining.
  *
  * @param {object} event - Event details (agent, phase, tool_name, payload, verdict, rule, reason, latency_us, engine)
  * @param {string} [filePath] - Optional ledger path
- * @param {{lockWaitMs?: number}} [opts] - How long to wait for the write lock (default 2000)
+ * @param {{lockWaitMs?: number}} [opts] - How long to wait for the write lock (default 2000). A write dropped because
+ *   the lock stayed busy is counted; the next write adds a record "N events were not recorded (log busy)".
  * @returns {object|null} The recorded evidence record, or null when the existing ledger is
  *   damaged: nothing is appended (the chain is never restarted), a warning is printed to
  *   stderr (first time, then at most every 5 minutes), and the caller carries on. It also
@@ -468,6 +547,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
 
   const lockPath = filePath + '.lock';
   let token = null;
+  let gap = null;
   try {
     ensureZnDir(filePath);
     token = acquireLock(lockPath, opts.lockWaitMs);
@@ -483,15 +563,26 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
       }
       return null;
     }
+    // Events dropped earlier (the lock was busy for another writer): say so in the log, in the chain, before this record.
+    let lines = '';
+    gap = takeDropped(filePath, token);
+    if (gap) {
+      const marker = buildRecord(gapEvent(gap.n), prevHash, true);
+      lines += JSON.stringify(marker) + '\n';
+      prevHash = marker.record_hash;
+    }
     const finalRecord = buildRecord(event, prevHash, opts._plainPreview === true);
     // _beforeAppend is a test-only hook (internal, not part of the public options).
     if (typeof opts._beforeAppend === 'function') opts._beforeAppend();
     // Still our lock? If it was taken over (this process was stalled for over 10 s) the last
     // hash read above may be out of date: write nothing rather than fork the chain.
     if (!ownsLock(lockPath, token)) throw new EvidenceLockError('the write lock was taken over');
-    appendLedgerLine(filePath, JSON.stringify(finalRecord) + '\n');
+    appendLedgerLine(filePath, lines + JSON.stringify(finalRecord) + '\n');
+    if (gap) { settleDropped(filePath, gap, true); gap = null; }
     return finalRecord;
   } catch (e) {
+    if (gap) { settleDropped(filePath, gap, false); gap = null; }
+    if (e instanceof EvidenceLockError) noteDropped(filePath);
     // A log problem (no permission, a full disk, a busy lock) must never break the caller.
     const now = Date.now();
     if (lastWriteWarnAt === null || now - lastWriteWarnAt >= WARN_INTERVAL_MS) {
@@ -620,6 +711,8 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     return { valid: false, total: 0, verified: 0, broken_index: 0, error: e.message };
   }
   let expectedPrevHash = GENESIS_HASH;
+  let gapMarkers = 0;
+  let gapEvents = 0;
 
   for (let i = 0; i < lines.length; i++) {
     if (bad.has(i)) {
@@ -661,9 +754,18 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     }
 
     expectedPrevHash = record_hash;
+    if (rec.rule === GAP_RULE && rec.agent_environment === 'zn-gate') {
+      const m = /^(\d+) event/.exec(String(rec.reason));
+      gapMarkers++;
+      gapEvents += m ? Number(m[1]) : 0;
+    }
   }
 
-  return { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null };
+  const ok = { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null };
+  // Events that were not recorded because the log was busy: the gaps the chain itself cannot show.
+  const pending = pendingDropped(filePath);
+  if (gapMarkers > 0 || pending > 0) ok.gaps = { markers: gapMarkers, events: gapEvents, pending };
+  return ok;
 }
 
 /**
@@ -1076,6 +1178,7 @@ Press Ctrl+C to stop dashboard.
 
 module.exports = {
   logEvidence,
+  noteDropped,
   EvidenceLedgerError,
   recoveryHint,
   getLastHash,
@@ -1088,4 +1191,5 @@ module.exports = {
   EVIDENCE_FILE,
   GENESIS_HASH,
   _testHooks: testHooks,
+  _deadOwnerToken: deadOwnerToken,
 };

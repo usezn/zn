@@ -142,7 +142,13 @@ async function secretSet(args, io) {
   const tooShort = validateSecretValue(value);
   if (tooShort) throw deps.znError('ZN_USAGE', tooShort + ' Nothing stored.');
   const meta = metaFromFlags(flags);
-  await vault.setSecret(name, value, meta);
+  try {
+    // Create-only: the daemon refuses inside its serial section, so two terminals cannot both store the same new name.
+    await vault.setSecret(name, value, meta, flags.force ? undefined : { createOnly: true });
+  } catch (err) {
+    if (err && err.code === 'ZN_POLICY_DENIED' && /already exists; use --force to replace it$/.test(String(err.message))) throw deps.znError('ZN_USAGE', name + ' already exists; use --force to replace it');
+    throw err;
+  }
   out(io, 'Stored ' + name + ' (' + meta.mode + ' mode). Agents use it as ' + markers.markerFor(name) + '.');
   if (meta.mode === 'proxy' && meta.allowHosts.length === 0) out(io, 'Tip: allow a host for secrets_http_request: zn secret allow ' + name + ' --host api.example.com');
   if (meta.mode === 'env' && meta.allowCommands.length === 0) out(io, 'Tip: allow a command for zn run: zn secret allow ' + name + ' --command psql');
@@ -182,7 +188,8 @@ async function secretRm(args, io) {
   if (!await existingMeta(vault, name)) throw deps.znError('ZN_NOT_FOUND', name + ' is not in the vault');
   const ok = await (io.confirm ? io.confirm('Remove ' + name + '?') : tty.confirm('Remove ' + name + '?', io));
   if (!ok) { out(io, 'Kept ' + name + '.'); return 1; }
-  await vault.removeSecret(name);
+  // The daemon answers false when the name is gone (another terminal removed it meanwhile): nothing was removed, say so.
+  if ((await vault.removeSecret(name)) === false) throw deps.znError('ZN_NOT_FOUND', name + ' is not in the vault');
   out(io, 'Removed ' + name + '.');
   return 0;
 }

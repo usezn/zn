@@ -293,7 +293,8 @@ class VaultClient {
 
   mapToken(project, type, value) { return this.call('mapToken', [project, type, value]); }
   resolve(project, token, opts) { return this.call('resolve', [project, token, opts || {}]); }
-  setSecret(name, value, meta) { return this.call('setSecret', [name, value, meta || {}]); }
+  // opts {createOnly: true}: the daemon refuses (ZN_POLICY_DENIED, "already exists; use --force to replace it") when the name is taken. Sent only when asked for.
+  setSecret(name, value, meta, opts) { return this.call('setSecret', opts ? [name, value, meta || {}, opts] : [name, value, meta || {}]); }
   // opts {effective, agent}: the organization policy applied for that agent.
   listSecrets(opts) { return this.call('listSecrets', opts ? [opts] : []); }
   removeSecret(name) { return this.call('removeSecret', [name]); }
@@ -343,7 +344,7 @@ async function mapToken(project, type, value) { return client().mapToken(project
 // Contract arity is (project, token); an optional third argument carries
 // {destination, agent, tool} for the daemon's policy check and audit.
 async function resolve(project, token) { return client().resolve(project, token, arguments[2]); }
-async function setSecret(name, value, meta) { return client().setSecret(name, value, meta); }
+async function setSecret(name, value, meta) { return client().setSecret(name, value, meta, arguments[3]); }
 // Contract arity is 0; an optional argument {effective, agent} applies the
 // organization policy for that agent (zn Team).
 async function listSecrets() { return client().listSecrets(arguments[0]); }

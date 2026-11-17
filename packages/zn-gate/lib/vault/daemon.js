@@ -675,13 +675,17 @@ function makeOps(state, ctl) {
       return o.withPolicy === true ? Object.assign({ value, policy: RESOLVE_POLICY_VERSION }, value === null ? null : org) : value;
     },
 
-    async setSecret(name, value, meta) {
+    /* opts.createOnly: refuse when the name exists. The check runs inside the serial section, so two
+     * writers cannot both create the same name. An older daemon ignores the extra argument. */
+    async setSecret(name, value, meta, opts) {
       const n = checkName(name);
+      const createOnly = !!opts && typeof opts === 'object' && opts.createOnly === true;
       str(value, 'value');
       const backup = meta && typeof meta === 'object' && meta.mode === 'backup'; // whole files kept by `zn env shadow`
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         const prev = secrets.secrets[n];
+        if (createOnly && prev) throw znError(CODES.POLICY_DENIED, n + ' already exists; use --force to replace it');
         // New values under the minimum are refused; a value an older version stored keeps working.
         if (!backup && !(prev && prev.value === value)) {
           const bad = validateSecretValue(value);

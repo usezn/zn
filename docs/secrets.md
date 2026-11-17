@@ -16,7 +16,7 @@ one can and cannot do is in [compat.md](compat.md); the limits are in
 |---|---|
 | `zn secret set NAME` | Store a secret, typed at a hidden prompt (or copied with `--clipboard`) |
 | `zn secret list` | List your secrets: names and rules, never values |
-| `zn secret rm NAME` | Remove a secret and the approvals it had |
+| `zn secret rm NAME` | Remove a secret and the approvals it had (it says so, and exits with an error, if the name is not in the vault) |
 | `zn secret allow NAME` | Add the hosts or commands that may use a secret |
 | `zn secret approve NAME` | Approve the first use of a secret by a command that is already allowed |
 | `zn secret import [FILE]` | Copy the values of a `.env` file into the vault (the file is not changed) |

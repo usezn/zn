@@ -1403,7 +1403,7 @@ ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
   Ledger Path   : ${EVIDENCE_FILE}
   Total Records : ${verification.total}
   Integrity     : ${integrity}
-\n`);
+${verification.gaps ? '  Gaps          : ' + (verification.gaps.events + verification.gaps.pending) + ' event(s) were not recorded because the log was busy' + (verification.gaps.markers ? ' (' + verification.gaps.markers + ' gap record(s) in the log' + (verification.gaps.pending ? ', ' + verification.gaps.pending + ' more not yet marked' : '') + ')' : ' (not yet marked in the log)') + '. The chain itself is intact.\n' : ''}\n`);
       if (!verification.valid) {
         const next = verification.truncated_tail
           ? `The first ${verification.verified} records verified; the last line is incomplete (cut off by a crash, or removed by someone). ${recoveryHint()}`

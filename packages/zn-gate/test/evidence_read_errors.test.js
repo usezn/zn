@@ -138,7 +138,10 @@ test('a second process holding the writer lock makes the write skip and the log 
   fs.unlinkSync(lock);
   const next = fresh.logEvidence({ payload: 'example-2', tool_name: 'bash' }, file);
   assert.ok(next && next.record_hash, 'writing works again once the lock is free');
-  assert.equal(fresh.verifyEvidenceLedger(file).total, 2);
+  // The write that was skipped is counted: the next record is preceded by one that says so.
+  const res = fresh.verifyEvidenceLedger(file);
+  assert.equal(res.total, 3);
+  assert.deepEqual(res.gaps, { markers: 1, events: 1, pending: 0 });
 });
 
 test('reading the log does not need the writer lock', async (t) => {

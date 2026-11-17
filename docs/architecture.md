@@ -136,7 +136,7 @@ How the records link:
 - A `record_hash` is the SHA-256 of the record's `prev_hash`, a colon, and the rest of the record (every field except `record_hash`) written as JSON.
 - If someone edits a record, its `record_hash` no longer matches. If someone removes or reorders records, a `prev_hash` no longer points at the record before it.
 
-To check the whole chain, run `zn-gate evidence --verify`. It ends with exit code `0` when every record matches and `1` when one does not, and a damaged log is explained in [Troubleshooting](troubleshooting.md#10-the-evidence-log--is-damaged). As said above, this finds accidental or partial edits and does not stop someone who can write to the file and recalculates every hash.
+To check the whole chain, run `zn-gate evidence --verify`. It ends with exit code `0` when every record matches and `1` when one does not, and a damaged log is explained in [Troubleshooting](troubleshooting.md#10-the-evidence-log--is-damaged). If events could not be written because another process held the log for too long, the next record says so (`N events were not recorded (log busy)`) and `evidence --verify` prints a `Gaps` line. The chain is still intact; the line tells you that some events are missing. As said above, this finds accidental or partial edits and does not stop someone who can write to the file and recalculates every hash.
 
 ## Read next
 

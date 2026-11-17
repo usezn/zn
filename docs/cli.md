@@ -358,7 +358,7 @@ Aliases: `secrets`.
 zn-gate secret set NAME [--clipboard] [--force] [--mode proxy|env|file] [--host api.example.com] [--command psql] [--in header|query|body]
 ```
 
-Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in. `--mode` defaults to `env` when `--command` is given and to `proxy` otherwise.
+Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. Without `--force`, a name that already exists is refused (`NAME already exists; use --force to replace it`), also when another terminal stores the same name at the same moment: the vault decides, so only one of the two is stored. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in. `--mode` defaults to `env` when `--command` is given and to `proxy` otherwise.
 
 #### `secret list`
 
@@ -635,7 +635,7 @@ zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] 
 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
-- `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
+- `--verify`: check the SHA-256 chain. Exit `1` if it was changed. A `Gaps` line says how many events were not recorded because the log was busy (the chain is still valid).
 - `--ui`: open a local dashboard in your browser (default port 3100).
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 

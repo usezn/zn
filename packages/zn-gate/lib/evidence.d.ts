@@ -43,6 +43,9 @@ export interface EvidenceVerification {
   /** Index of the first broken record, or null. */
   broken_index: number | null;
   error: string | null;
+  /** Present when events were not recorded because the log was busy: records that say so, the events they count,
+   *  and events dropped since the last such record. */
+  gaps?: { markers: number; events: number; pending: number };
 }
 
 export interface LogEvidenceOptions {

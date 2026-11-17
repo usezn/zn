@@ -683,7 +683,7 @@ test('a breaker writes its token into the break mutex and deletes it afterwards'
     let seen = null;
     fresh._testHooks.afterMutexCreate = (mutex) => { seen = fs.readFileSync(mutex, 'utf8'); };
     try { fresh.logEvidence({ payload: 'x' }, file); } finally { fresh._testHooks.afterMutexCreate = null; }
-    assert.match(seen, /^\d+:[0-9a-f]{16}$/);
+    assert.match(seen, /^\d+:[0-9a-f]{16}:[0-9a-f]{8}$/);
     assert.equal(fs.existsSync(file + '.lock.break'), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
