@@ -6,7 +6,8 @@ name: Hook latency
 # relative to Node's own start-up in the same run, is more than 20 % above its baseline fails, and so does a
 # run whose median over all cases is more than 10 % above it. The Windows job has its own baseline and a 35 %
 # per-case margin, and does not block a merge. Runs when the hook code or the benchmark changes. The report
-# is kept as an artifact for 30 days.
+# is kept as an artifact for 30 days. Two informational cases (a cold start with a new home per sample, and the
+# POSIX launcher in front of the runner) are measured but not checked, and a macOS job reports without a budget.
 on:
   push:
     branches: [ main ]
@@ -138,6 +139,42 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hook-latency-windows
+          path: ${{ runner.temp }}/hook_latency.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # macOS only reports: there is no baseline for it yet, so nothing is checked. It runs on pushes to main, the nightly run
+  # on next, manual runs and pull requests with the full-ci label (macOS minutes cost more than Linux ones).
+  latency-macos:
+    name: Hook latency (macOS, report only, not required)
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Install
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Measure (no budget)
+        run: |
+          set -euo pipefail
+          node bench/hook_latency_matrix.js --runs 40 --json "$RUNNER_TEMP/hook_latency.json" | tee "$RUNNER_TEMP/hook_latency.md"
+      - name: Summary
+        if: always()
+        run: 'if [ -f "$RUNNER_TEMP/hook_latency.md" ]; then { echo "### macOS"; cat "$RUNNER_TEMP/hook_latency.md"; } >> "$GITHUB_STEP_SUMMARY" || true; fi'
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hook-latency-macos
           path: ${{ runner.temp }}/hook_latency.json
           if-no-files-found: ignore
           retention-days: 30

@@ -14,12 +14,18 @@
  * committed baseline (--baseline), which cancels most of the speed difference
  * between machines, and fails when a case is more than --max-increase slower.
  * Fake values are generated at run time; a case fails if one of them comes back.
+ *
+ * Two extra kinds of case are measured and reported but never checked against the baseline (they are
+ * informational, in the report under `informational`):
+ *   - cold start: the same event, but every sample gets a new, empty home, as on a machine that has never run zn;
+ *   - launcher: the same event through the POSIX launcher script (`sh launcher.sh <event>`) that the agents run,
+ *     which adds a shell and a check of the runner. Skipped when there is no `sh`.
  */
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const PKG = path.resolve(__dirname, '..', 'packages', 'zn-gate');
 const RUNNER = path.join(PKG, 'lib', 'hooks', 'runner.js');
@@ -74,10 +80,16 @@ function cases() {
   return out;
 }
 
-function once(agent, event) {
+function envFor(home) {
+  return { ...process.env, ZN_HOME: home, HOME: home, USERPROFILE: home, ZN_STATS: 'off', ZN_KEYCHAIN_BACKEND: 'passphrase' };
+}
+
+/* `how` says what to start: { cmd, args, env, cwd }; the default is the runner in the shared home. */
+function once(agent, event, how) {
+  const h = how || { cmd: process.execPath, args: [RUNNER, agent], env: ENV, cwd: HOME };
   return new Promise((resolve, reject) => {
     const t0 = process.hrtime.bigint();
-    const child = spawn(process.execPath, [RUNNER, agent], { env: ENV, cwd: HOME, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(h.cmd, h.args, { env: h.env, cwd: h.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; });
@@ -127,10 +139,50 @@ async function measure(agent, label, event, runs) {
   return { agent, case: label, p50: +pct(times, 50).toFixed(1), p95: +pct(times, 95).toFixed(1), bare };
 }
 
+/* Informational cases: a fresh home per sample (cold start) and the POSIX launcher in front of the runner. */
+async function informational(runs) {
+  const out = [];
+  const pre = { session_id: 'bench', cwd: HOME, tool_use_id: 't' };
+  const event = { ...pre, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } };
+  const sample = async (label, start) => {
+    const times = [];
+    for (let i = 0; i < runs; i++) {
+      const s = start();
+      try {
+        const r = await once('claude-code', event, s.how);
+        // A hook that failed (or a launcher that blocked the call) is fast but measures nothing.
+        if (/could not check|output withheld|was hidden|so this was blocked/i.test(r.out + r.err)) throw new Error('the hook did not do its work: ' + label + ': ' + (r.err || r.out).slice(0, 200));
+        times.push(r.ms);
+      } finally { if (s.cleanup) s.cleanup(); }
+    }
+    times.sort((a, b) => a - b);
+    out.push({ agent: 'claude-code', case: label, p50: +pct(times, 50).toFixed(1), p95: +pct(times, 95).toFixed(1), informational: true });
+  };
+  await sample('cold start: PreToolUse Bash, new home per sample', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-hookcold-'));
+    return { how: { cmd: process.execPath, args: [RUNNER, 'claude-code'], env: envFor(home), cwd: home }, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
+  });
+  const sh = spawnSync('sh', ['-c', 'exit 0'], { stdio: 'ignore' });
+  if (sh.error || sh.status !== 0) {
+    console.log('launcher case skipped: no sh on this machine');
+  } else {
+    const launcher = require(path.join(PKG, 'lib', 'agents', 'launcher'));
+    const { portablePath } = require(path.join(PKG, 'lib', 'shell-quote'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-hooklauncher-'));
+    const file = path.join(dir, 'launcher.sh');
+    try {
+      fs.writeFileSync(file, launcher.unixScript('claude-code', portablePath(process.execPath, process.platform), portablePath(RUNNER, process.platform), {}), { mode: 0o755 });
+      await sample('launcher: PreToolUse Bash through the POSIX launcher', () => ({ how: { cmd: 'sh', args: [file, 'PreToolUse'], env: ENV, cwd: HOME } }));
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  return out;
+}
+
 async function main() {
   const list = cases();
   const results = [];
   for (const [agent, label, event] of list) results.push(await measure(agent, label, event, RUNS));
+  const extra = await informational(Math.max(10, Math.floor(RUNS / 2)));
   const allBare = results.flatMap((r) => r.bare).sort((a, b) => a - b);
   const nodeP50 = +pct(allBare, 50).toFixed(1);
   for (const r of results) { r.ratio = +(r.p95 / nodeP50).toFixed(3); delete r.bare; }
@@ -138,10 +190,15 @@ async function main() {
     date: new Date().toISOString().slice(0, 10), node: process.version, platform: process.platform + ' ' + os.release(),
     cpu: (os.cpus()[0] || {}).model + ' x' + os.cpus().length, runs: RUNS, bareNodeP50: nodeP50,
   };
-  const report = { meta, results };
+  const report = { meta, results, informational: extra };
   console.log('Hook latency (ms), ' + meta.platform + ', ' + meta.cpu + ', Node ' + meta.node + ', ' + RUNS + ' runs; bare node p50 ' + nodeP50 + ' ms');
   console.log('| agent | case | p50 | p95 | p95 / node start-up |\n|---|---|---|---|---|');
   for (const r of results) console.log('| ' + r.agent + ' | ' + r.case + ' | ' + r.p50 + ' | ' + r.p95 + ' | ' + r.ratio + ' |');
+  if (extra.length) {
+    console.log('\nInformational (not checked against the baseline), ms');
+    console.log('| agent | case | p50 | p95 | p95 / node start-up |\n|---|---|---|---|---|');
+    for (const r of extra) { r.ratio = +(r.p95 / nodeP50).toFixed(3); console.log('| ' + r.agent + ' | ' + r.case + ' | ' + r.p50 + ' | ' + r.p95 + ' | ' + r.ratio + ' |'); }
+  }
   if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2) + '\n');
   if (!BASELINE) fs.rmSync(HOME, { recursive: true, force: true });
   if (BASELINE) {
