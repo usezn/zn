@@ -10,6 +10,7 @@ import importlib
 import json
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from zn_gate import rules as R
@@ -245,7 +246,8 @@ class TestIdentityRequestFoldedCharacters(unittest.TestCase):
                              capture_output=True, check=True, timeout=60).stdout
         node_verdicts = json.loads(out)
         py_verdicts = [[R.RULE_TESTERS[i](c["text"]) for i in FAMILY] for c in cases]
-        for c, n, p in zip(cases, node_verdicts, py_verdicts, strict=True):
+        self.assertEqual(len(node_verdicts), len(cases))
+        for c, n, p in zip(cases, node_verdicts, py_verdicts):
             self.assertEqual(p, n, c["name"])
 
     def test_prefilters_never_hide_a_match_of_the_full_pattern(self):
@@ -284,9 +286,27 @@ class TestIdentityFoldOncePerText(unittest.TestCase):
         text = "x" * 5000 + "\u0131" + "y" * 100
         first = R._no_i_fold(text)
         self.assertNotIn("\u0131", first)
-        self.assertIs(R._no_i_fold(text), first)
         self.assertEqual(len(first), len(text))
-        R.evaluate(text + " ")
+        seen = []
+
+        def views(_text, _strict=False):
+            a = R._no_i_fold(text)
+            seen.append((a, R._no_i_fold(text), len(R._I_FOLD_MEMO)))
+            return R.Assessment(verdict="allow", confidence=1.0, rule="none", reason=None)
+
+        with mock.patch.object(R, "_evaluate_uncached_views", views):
+            R._evaluate_uncached(text + " ")
+        self.assertIs(seen[0][0], seen[0][1])
+        self.assertEqual(seen[0][2], 1)
+        self.assertEqual(R._I_FOLD_MEMO, {})
+
+    def test_a_direct_call_keeps_nothing(self):
+        R._I_FOLD_MEMO.clear()
+        for n in range(3):
+            text = ("x" * 5000) + "\u0131" * (n + 1)
+            self.assertNotIn("\u0131", R._no_i_fold(text))
+            R.RULE_TESTERS["pi:identity_request"](text)
+            R.RULE_TESTERS["pi:identity_request_multi"](text)
         self.assertEqual(R._I_FOLD_MEMO, {})
 
     def test_same_verdicts_on_short_and_long_texts(self):

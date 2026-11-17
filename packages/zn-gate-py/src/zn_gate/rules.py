@@ -419,12 +419,14 @@ _NO_I_FOLD = str.maketrans({'\u0131': '\ue000', '\u0130': '\ue000'})
 # The two membership scans and the translation run once per text in one evaluation: both identity rules check the
 # same views, so the result is kept by identity of the text (the entry holds the text, so its id cannot be reused)
 # and dropped when the evaluation ends. Short texts are not kept: their scan costs less than the lookup.
+# Outside an evaluation (a direct call of a tester) nothing is kept, so the table cannot grow without bound.
 _I_FOLD_MEMO: Dict[int, Tuple[str, str]] = {}
 _I_FOLD_MEMO_MIN = 4096
+_i_fold_depth = 0
 
 
 def _no_i_fold(text: str) -> str:
-    if len(text) < _I_FOLD_MEMO_MIN:
+    if len(text) < _I_FOLD_MEMO_MIN or _i_fold_depth <= 0:
         if '\u0131' in text or '\u0130' in text:
             return text.translate(_NO_I_FOLD)
         return text
@@ -938,9 +940,12 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 
 
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
+    global _i_fold_depth
+    _i_fold_depth += 1
     try:
         return _evaluate_uncached_views(input_text, strict)
     finally:
+        _i_fold_depth -= 1
         _I_FOLD_MEMO.clear()
 
 
