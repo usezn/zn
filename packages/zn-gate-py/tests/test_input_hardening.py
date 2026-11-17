@@ -176,9 +176,17 @@ def test_sanitize_masks_slots_and_nested_objects():
     assert FAKE_KEY not in json.dumps(clean["a"][1][0].key)
 
 
-def test_sanitize_masks_text_form_of_attribute_less_object():
-    clean, found = sanitize_tool_result([Texty()])
-    assert found and FAKE_KEY not in clean[0]
+def test_sanitize_refuses_an_object_with_a_text_form_of_its_own():
+    # Its __str__ could show a secret differently each time: it is refused, as check_tool_result refuses it.
+    with pytest.raises(SanitizeLimitError) as exc:
+        sanitize_tool_result([Texty()])
+    assert exc.value.rule == "type:unscannable"
+    assert check_tool_result([Texty()]).rule == "type:unscannable"
+
+
+def test_sanitize_masks_text_form_of_a_standard_library_object():
+    clean, found = sanitize_tool_result([ValueError("key " + FAKE_KEY)])
+    assert found and FAKE_KEY not in str(clean[0])
 
 
 class _TextOnlySecret:
@@ -190,10 +198,10 @@ class _TextOnlySecret:
         return "config " + FAKE_KEY
 
 
-def test_secret_only_in_text_form_of_object_with_safe_attributes_is_masked():
-    clean, found = sanitize_tool_result(_TextOnlySecret())
-    assert found
-    assert isinstance(clean, str) and FAKE_KEY not in clean
+def test_secret_only_in_text_form_of_object_with_safe_attributes_is_refused():
+    with pytest.raises(SanitizeLimitError) as exc:
+        sanitize_tool_result(_TextOnlySecret())
+    assert exc.value.rule == "type:unscannable"
 
 
 def test_sanitize_recurses_in_containers_with_fake_keys():

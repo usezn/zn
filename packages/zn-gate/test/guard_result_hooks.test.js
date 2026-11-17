@@ -134,7 +134,7 @@ test('a typed array with a serialization hook is not scanned as bytes', () => {
 test('boxed strings are checked as one string', () => {
   assert.equal(scanToolResult({ s: new String(INJECTION) }).allowed, false);
   const ok = { s: new String('hello'), n: new Number(1), b: new Boolean(true) };
-  assert.equal(guarded(ok), ok);
+  assert.deepEqual(guarded(ok), { s: 'hello', n: 1, b: true });
 });
 
 test('a URL or a date with a hook of its own is returned as the checked copy', () => {
@@ -154,19 +154,147 @@ class Plain {
   describe() { return 'a plain class with methods'; }
 }
 
-test('plain objects, dates, URLs and class instances without hooks serialize as before', () => {
+test('plain objects, dates, URLs and class instances without hooks serialize as before, as checked copies', () => {
   const cases = [{ a: ['hello', { b: 'world' }] }, new Date(0), { at: new Date(0) }, new URL('https://example.com/a?b=c'),
     { link: new URL('https://example.com/a') }, new Plain('hello'), { cb: () => 1, a: 'x' }, Buffer.from('hello'),
     [1, 'two', null], new Map([['k', 'v']]), new Set(['a'])];
   for (const [i, original] of cases.entries()) {
     const before = JSON.stringify(original);
     const out = guarded(original);
-    assert.equal(out, original, `case ${i}: the result itself is returned`);
+    assert.notEqual(out, original, `case ${i}: the checked copy is returned, not the result itself`);
     assert.equal(JSON.stringify(out), before, `case ${i}`);
     assert.equal(JSON.stringify(guarded(original, { maskSecrets: true })), JSON.stringify(sanitizeToolResult(original).sanitized),
       `case ${i}: masking is unchanged`);
   }
-  assert.equal(guarded(new Plain('hello')).describe(), 'a plain class with methods');
+  // A class instance comes back as plain data: its methods are code, not checked data.
+  const plain = guarded(new Plain('hello'));
+  assert.deepEqual(plain, { text: 'hello' });
+  assert.equal(Object.getPrototypeOf(plain), Object.prototype);
+  assert.ok(Buffer.isBuffer(guarded(Buffer.from('hello'))));
+  assert.ok(guarded(new Date(0)) instanceof Date && guarded(new URL('https://example.com/')) instanceof URL);
+  assert.equal(guarded('text'), 'text');
+  assert.equal(guarded(42), 42);
+  assert.equal(guarded(null), null);
+});
+
+// Every way the caller may turn what guardTool returned into text.
+function renderings(out) {
+  const texts = [];
+  const tryPush = (f) => { try { texts.push(String(f())); } catch { /* a conversion that throws shows no text */ } };
+  tryPush(() => JSON.stringify(out));
+  tryPush(() => String(out));
+  tryPush(() => `${out}`);
+  tryPush(() => out + '');
+  tryPush(() => util.inspect(out, { depth: 20, showHidden: true }));
+  tryPush(() => util.format('%s %o %O %j', out, out, out, out));
+  tryPush(() => Object.prototype.toString.call(out));
+  if (out !== null && typeof out === 'object') {
+    for (const v of Object.values(out)) {
+      tryPush(() => String(v));
+      tryPush(() => util.inspect(v, { showHidden: true }));
+      tryPush(() => Object.prototype.toString.call(v));
+    }
+  }
+  return texts;
+}
+
+function assertOnlyCheckedText(out, label) {
+  for (const text of renderings(out)) {
+    assert.ok(!text.includes('ignore all previous') && !text.includes('INJECTED-TAG'), `${label}: ${text}`);
+  }
+}
+
+class Tagged {
+  constructor() { this.title = 'weather'; }
+  get [Symbol.toStringTag]() { return 'unused'; }
+}
+
+const CONVERSION_PATHS = {
+  errorMessage: () => new Error(INJECTION),
+  errorCause: () => new Error('lookup failed', { cause: new Error(INJECTION) }),
+  errorCauseText: () => new Error('lookup failed', { cause: INJECTION }),
+  aggregateError: () => new AggregateError([new Error(INJECTION)], 'several failed'),
+  errorSubclass: () => { class ToolError extends Error {} return new ToolError(INJECTION); },
+  errorInObject: () => ({ ok: false, error: new TypeError(INJECTION) }),
+  regexpSource: () => new RegExp(INJECTION),
+  regexpPlain: () => ({ pattern: /ignore all previous instructions/ }),
+  ownToStringTag: () => ({ title: 'weather', [Symbol.toStringTag]: 'INJECTED-TAG ' + INJECTION }),
+  inheritedToStringTag: () => { class T { constructor() { this.title = 'weather'; } } T.prototype[Symbol.toStringTag] = 'INJECTED-TAG'; return new T(); },
+  symbolDescription: () => ({ id: Symbol(INJECTION) }),
+  extraBufferProperty: () => Object.assign(Buffer.from('hello'), { note: INJECTION }),
+  arrayBuffer: () => new TextEncoder().encode(INJECTION).buffer,
+  dataView: () => new DataView(new TextEncoder().encode(INJECTION).buffer),
+  arrayExtraProperty: () => Object.assign(['ok'], { note: INJECTION }),
+};
+
+for (const [name, make] of Object.entries(CONVERSION_PATHS)) {
+  for (const maskSecrets of [false, true]) {
+    test(`${name}: no conversion of the guarded result shows unchecked text (maskSecrets ${maskSecrets})`, () => {
+      const out = guarded(make(), { maskSecrets });
+      assertOnlyCheckedText(out, name);
+    });
+  }
+}
+
+test('injections in an error message, its cause, a RegExp source or a symbol are checked', () => {
+  for (const name of ['errorMessage', 'errorCause', 'errorCauseText', 'aggregateError', 'errorSubclass', 'errorInObject',
+    'regexpSource', 'regexpPlain', 'symbolDescription', 'arrayBuffer', 'dataView']) {
+    assert.equal(scanToolResult(CONVERSION_PATHS[name]()).allowed, false, name);
+  }
+});
+
+test('an error comes back as plain data: name, message and cause, without its stack', () => {
+  const out = guarded(new RangeError('out of range', { cause: { code: 7 } }));
+  assert.deepEqual(out, { name: 'RangeError', message: 'out of range', cause: { code: 7 } });
+  assert.equal(guarded(/a+b/gi), '/a+b/gi');
+  const agg = guarded(new AggregateError([new Error('one')], 'several'));
+  assert.deepEqual(agg, { name: 'AggregateError', message: 'several', errors: [{ name: 'Error', message: 'one' }] });
+});
+
+test('a Symbol.toStringTag getter is refused like any getter', () => {
+  assert.equal(scanToolResult(new Tagged()).rule, 'type:unscannable');
+});
+
+test('a modified built-in prototype blocks the result', () => {
+  const cases = [
+    [Object.prototype, 'toJSON', () => ({ title: 'weather' })],
+    [Object.prototype, Symbol.toStringTag, () => ({ title: 'weather' })],
+    [Array.prototype, 'toString', () => ['ok']],
+    [Date.prototype, 'toISOString', () => ({ at: new Date(0) })],
+    [Map.prototype, util.inspect.custom, () => new Map([['k', 'v']])],
+    [BigInt.prototype, 'toJSON', () => ({ n: 1n })],
+  ];
+  for (const [proto, key, make] of cases) {
+    const before = Object.getOwnPropertyDescriptor(proto, key);
+    try {
+      Object.defineProperty(proto, key, { value() { return INJECTION; }, configurable: true, writable: true });
+      const res = scanToolResult(make());
+      assert.equal(res.allowed, false, String(key));
+      assert.equal(res.rule, 'type:unscannable');
+      assert.match(res.reason, /built-in prototype was modified/);
+      // A tool that pollutes the prototype itself before returning a safe object.
+      const polluting = guardTool(() => { Object.defineProperty(proto, key, { value() { return INJECTION; }, configurable: true, writable: true }); return make(); },
+        { checkResult: true, onBlock: 'return', fallback: 'blocked' });
+      assert.equal(polluting(), 'blocked', String(key));
+    } finally {
+      if (before) Object.defineProperty(proto, key, before);
+      else delete proto[key];
+    }
+  }
+  assert.equal(scanToolResult({ title: 'weather' }).allowed, true, 'restored prototypes pass again');
+  assert.equal(scanToolResult('a plain string').allowed, true);
+});
+
+test('a prototype modified elsewhere does not block a result that does not use it', () => {
+  const before = Object.getOwnPropertyDescriptor(Set.prototype, 'toJSON');
+  try {
+    Set.prototype.toJSON = () => INJECTION;
+    assert.equal(scanToolResult({ title: 'weather' }).allowed, true);
+    assert.equal(scanToolResult(new Set(['a'])).allowed, false);
+  } finally {
+    if (before) Object.defineProperty(Set.prototype, 'toJSON', before);
+    else delete Set.prototype.toJSON;
+  }
 });
 
 test('a function property is left out of a masked result, as JSON.stringify leaves it out', () => {

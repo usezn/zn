@@ -2742,6 +2742,111 @@ def overrides_builtin_reading(val: Any) -> bool:
     return cached
 
 
+# Methods that decide the text of an object: str(), repr(), format() and f-strings, and the repr() of a container
+# that holds it.
+_TEXT_HOOKS = ("__str__", "__repr__", "__format__")
+CUSTOM_TEXT_REASON = ("An object defines its own text form (__str__, __repr__ or __format__), which could show "
+                      "something else than the values that were checked; return its data as a dict instead")
+_text_cache: "weakref.WeakKeyDictionary[type, bool]" = weakref.WeakKeyDictionary()
+
+
+def _sample_dataclass_repr() -> Any:
+    import dataclasses
+
+    @dataclasses.dataclass
+    class _ZnSample:
+        a: int
+
+    return _TYPE_DICT.__get__(_ZnSample)["__repr__"]
+
+
+# The code of the wrapper that dataclasses put around every __repr__ it writes (reprlib.recursive_repr, or the
+# copy of it in dataclasses before Python 3.13) and of the __repr__ of every namedtuple, compared by identity.
+_DATACLASS_REPR_WRAPPER = _sample_dataclass_repr().__code__
+_NAMEDTUPLE_REPR = _TYPE_DICT.__get__(namedtuple("_ZnText", "a"))["__repr__"].__code__
+
+
+def _generated_dataclass_repr(klass: type, fn: Any) -> bool:
+    """True for the __repr__ that dataclasses wrote for `klass`: it shows the class name and the repr() of its fields,
+    which are walked like any attribute. Recognized by the code of the wrapper and by what the inner function reads
+    (only __class__.__qualname__ and field names), never by a name the class could set."""
+    fields = _TYPE_DICT.__get__(klass).get("__dataclass_fields__")
+    if type(fn) is not types.FunctionType or fn.__code__ is not _DATACLASS_REPR_WRAPPER or not isinstance(fields, dict):
+        return False
+    inner = [c.cell_contents for c in (fn.__closure__ or ()) if isinstance(c.cell_contents, types.FunctionType)]
+    if len(inner) != 1:
+        return False
+    code = inner[0].__code__
+    allowed = {"__class__", "__qualname__", *(name for name in fields if isinstance(name, str))}
+    return (code.co_filename == "<string>" and set(code.co_names) <= allowed
+            and all(isinstance(c, (str, type(None))) for c in code.co_consts))
+
+
+def _generated_attrs_repr(klass: type, fn: Any) -> bool:
+    """True for the __repr__ that attrs wrote for `klass` (the class name and the repr() of its attributes, which are
+    walked): the class holds __attrs_attrs__ and the code comes from attrs (its generated-code file name, or a file of
+    the attr package already imported)."""
+    if "__attrs_attrs__" not in _TYPE_DICT.__get__(klass):
+        return False
+    filename = fn.__code__.co_filename
+    if not isinstance(filename, str):
+        return False
+    if filename.startswith("<attrs generated"):
+        return True
+    package = sys.modules.get("attr")
+    root = os.path.dirname(getattr(package, "__file__", None) or "")
+    return bool(root) and os.path.dirname(filename) == root
+
+
+def _class_defines_text(klass: type) -> bool:
+    mro = _TYPE_MRO.__get__(klass)
+    trusted_methods = {id(v) for c in mro if _trusted_class(c) for v in _TYPE_DICT.__get__(c).values()}
+    for c in mro:
+        if _trusted_class(c):
+            continue
+        namespace = _TYPE_DICT.__get__(c)
+        for name in _TEXT_HOOKS:
+            if name not in namespace:
+                continue
+            fn = namespace[name]
+            if id(fn) in trusted_methods:
+                # The very method of a standard-library class (enum copies Enum.__repr__ onto each enum class).
+                continue
+            if name == "__repr__" and type(fn) is types.FunctionType and (
+                    fn.__code__ is _NAMEDTUPLE_REPR or _generated_dataclass_repr(c, fn)
+                    or _generated_attrs_repr(c, fn)):
+                continue
+            return True
+    return False
+
+
+def custom_text_form(val: Any) -> bool:
+    """True when a class of the MRO of `val`, outside the standard library and the trusted packages (see
+    _trusted_class), defines __str__, __repr__ or __format__.
+
+    Such an object turns into text through its own code: str(), repr(), format(), an f-string, a log line or the repr()
+    of a list that holds it can show text that no checked attribute holds, and a different text each time. A tool
+    result holding one is refused (rule type:unscannable) by check_tool_result and sanitize_tool_result. The __repr__
+    that dataclasses, namedtuple or attrs write (the class name and the repr() of the fields, which are checked) and
+    the methods that enum copies from the standard library are not counted.
+    """
+    klass = type(val)
+    try:
+        cached = _text_cache.get(klass)
+    except TypeError:
+        cached = None
+    if cached is None:
+        try:
+            cached = _class_defines_text(klass)
+        except Exception:
+            cached = True
+        try:
+            _text_cache[klass] = cached
+        except TypeError:
+            pass
+    return cached
+
+
 def _object_names(val: Any) -> List[str]:
     """The attribute names of an instance of a class (__dict__ and __slots__), [] for anything else."""
     if not _is_opaque_object(val):
@@ -2930,6 +3035,10 @@ def sanitize_tool_result(
             # subclass of dict or list too) before anything reads it, even isinstance(), which asks the object
             # for __class__ (check_tool_result blocks it the same way).
             raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
+        if kind not in _PLAIN_VALUE_TYPES and not issubclass(kind, _SCALAR_TYPES) and custom_text_form(val):
+            # Its own __str__/__repr__/__format__ could show a secret differently each time (check_tool_result
+            # blocks it the same way).
+            raise SanitizeLimitError("type:unscannable", CUSTOM_TEXT_REASON)
         if not isinstance(val, (dict, list, tuple, set, frozenset)):
             names = _object_names(val)
             if not names:

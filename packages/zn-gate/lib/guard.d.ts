@@ -43,7 +43,11 @@ export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
   fallback?: Fallback;
   /** Check the call arguments before the function runs. Default true. */
   checkArgs?: boolean;
-  /** Check the return value before it is returned. Default false. */
+  /**
+   * Check the return value before it is returned. Default false. The wrapper then returns the plain-data copy that
+   * was checked (class instances as plain objects, an Error as { name, message, cause, errors }, a RegExp as its
+   * text, a function as undefined), not the object the tool returned.
+   */
   checkResult?: boolean;
   /** Redact credentials in the returned value. Default false. */
   maskSecrets?: boolean;

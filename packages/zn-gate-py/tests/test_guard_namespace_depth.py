@@ -227,6 +227,31 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
         self.assertFalse(res.allowed)
         self.assertEqual(res.rule, "type:unscannable")
 
+    def test_handlers_that_applications_commonly_hold_are_allowed(self):
+        """Handlers built from the standard-library classes an application usually has are allowed as a result.
+
+        The runner's own root handlers (logging.getLogger().handlers) are not used here: under pytest they include
+        its LogCaptureHandler and capture streams, third-party classes with properties, and a tool result holding
+        one of those is refused by design (rule type:unscannable), so the test would depend on the runner.
+        """
+        import queue
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rotating = logging.handlers.RotatingFileHandler(os.path.join(tmp, "app.log"), maxBytes=1024,
+                                                            backupCount=1, delay=True)
+            stream = logging.StreamHandler(sys.__stderr__)
+            queued = logging.handlers.QueueHandler(queue.Queue())
+            try:
+                handlers = [stream, rotating, queued]
+                for value in (handlers, {"handlers": handlers}, stream, rotating, queued):
+                    with self.subTest(value=type(value).__name__):
+                        res = check_tool_result(value)
+                        self.assertTrue(res.allowed, res.reason)
+            finally:
+                for handler in (stream, rotating, queued):
+                    handler.close()
+
     def test_arguments_stay_lenient_and_results_block_unreadable_values(self):
         class WithProperty:
             @property

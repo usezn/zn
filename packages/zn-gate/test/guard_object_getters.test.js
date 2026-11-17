@@ -166,7 +166,9 @@ test('a checked and masked result keeps its shape', () => {
   const direct = sanitizeToolResult({ a: Object.assign(new Array(3), { 0: 'x', 2: 'y' }), n: 1, nested: { s: new Set(['z']) } }).sanitized;
   assert.deepEqual(guarded(), direct);
   const original = { a: 'hello' };
-  assert.equal(guardTool(() => original, { checkResult: true })(), original);
+  const out = guardTool(() => original, { checkResult: true })();
+  assert.notEqual(out, original, 'the checked copy is returned, not the result itself');
+  assert.deepEqual(out, original);
 });
 
 test('arguments with getters are checked as before', () => {

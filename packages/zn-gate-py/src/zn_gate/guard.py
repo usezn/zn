@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, T
 from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invisible
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
 from .rules import OVERRIDDEN_READING_REASON, UNREAD_ACCESSORS_REASON, overrides_builtin_reading, unread_accessors
+from .rules import CUSTOM_TEXT_REASON, custom_text_form
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -131,6 +132,21 @@ def _object_fields(data: Any) -> Optional[List[Any]]:
             children.append(name)
             children.append(value)
     return children if found else None
+
+
+# The slots of BaseException itself, read directly so that no property of a subclass answers instead.
+_EXCEPTION_SLOTS = tuple((name, BaseException.__dict__[name]) for name in ("args", "__cause__", "__context__"))
+
+
+def _exception_fields(exc: BaseException) -> List[Any]:
+    """The names and values of the args, cause and context of an exception (those that are set)."""
+    children: List[Any] = []
+    for name, slot in _EXCEPTION_SLOTS:
+        value = slot.__get__(exc)
+        if value is not None:
+            children.append(name)
+            children.append(value)
+    return children
 
 
 # Context objects that agent frameworks pass to a tool next to the model's
@@ -268,13 +284,18 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or issubclass(kind, (bool, int, float, complex, type, types.ModuleType)):
         return []
     seen = _seen if _seen is not None else _Walk()
-    if kind not in _PLAIN_CONTAINERS and not issubclass(kind, io.IOBase) and not _is_framework_context(data) \
-            and unread_accessors(data):
+    if kind not in _PLAIN_CONTAINERS and not _is_framework_context(data) and unread_accessors(data):
         # Its properties or attribute hooks are not read (that would run its code): a result blocks on it,
-        # before anything else here reads the object. A file or stream is checked by its name only, below.
+        # before anything else here reads the object. Files and streams too: the standard-library ones
+        # (io, sys.std*, logging) are trusted by unread_accessors, a subclass of them with a property is not.
         seen.hidden += 1
         if seen.stop_hidden:
             raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
+    if seen.stop_hidden and kind not in _PLAIN_CONTAINERS and not _is_framework_context(data) \
+            and custom_text_form(data):
+        # A tool result: str(), repr() or format() of it would run its own code, which could show text that
+        # was never checked, so it is refused before it is read (sanitize_tool_result refuses it too).
+        raise _Unscannable("type:unscannable", CUSTOM_TEXT_REASON)
     if inspect.isroutine(data):
         return []
     if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
@@ -325,6 +346,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         is_model = _is_data_object(data)
         try:
             children = _object_fields(data)
+            if issubclass(kind, BaseException):
+                # str() and repr() of an exception show its args, and a traceback its cause and context:
+                # none of them is in __dict__.
+                children = (children or []) + _exception_fields(data)
             if children is not None and isinstance(data, logging.Logger):
                 children = [c for i in range(0, len(children) - 1, 2)
                             if children[i] not in _LOGGER_LINKS for c in children[i:i + 2]]
