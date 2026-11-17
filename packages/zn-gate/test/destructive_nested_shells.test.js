@@ -8,7 +8,7 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { checkCommand } = require('../lib/destructive');
+const { checkCommand, backtickCode } = require('../lib/destructive');
 
 const wrap = (cmd, levels, shell = 'sh') => {
   let s = cmd;
@@ -47,4 +47,21 @@ test('cost stays bounded near the scan cap: the limit finishes, one level more i
   const r = checkCommand(wrap('echo ' + 'word '.repeat(30000), 4));
   assert.equal(r.rule, 'destructive:too_many_commands');
   assert.ok(Date.now() - t0 < 3000, 'four levels took ' + (Date.now() - t0) + ' ms');
+});
+
+test('the backtick helper always returns text: none, an unmatched backtick and an empty substitution', () => {
+  for (const s of ['', 'echo hello', 'echo `ls', 'echo ``']) assert.equal(typeof backtickCode(s), 'string', JSON.stringify(s));
+  assert.equal(backtickCode('echo hello'), '');
+  assert.equal(backtickCode('echo `ls'), 'ls');
+  assert.equal(backtickCode('echo ``'), '');
+});
+
+test('an unmatched or empty backtick past the depth limit is refused, not read as a crash', () => {
+  for (const base of ['echo `ls', 'echo ``', 'cd ~/projects && echo `ls', 'cd ~/projects && echo ``']) {
+    for (const levels of [4, 5]) {
+      const r = checkCommand(wrap(base, levels));
+      assert.equal(r.verdict, 'block', base + ' ' + levels);
+      assert.equal(r.rule, 'destructive:too_many_commands', base + ' ' + levels);
+    }
+  }
 });

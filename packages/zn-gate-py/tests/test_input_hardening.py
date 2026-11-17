@@ -7,6 +7,7 @@ import types
 import pytest
 
 from zn_gate import check_command, evaluate
+from zn_gate.destructive import _backtick_code
 from zn_gate.guard import GuardBlockError, check_tool_result, guard
 from zn_gate.rules import SanitizeLimitError, sanitize_tool_result
 
@@ -26,6 +27,23 @@ def wrap(cmd, levels, shell="sh"):
 @pytest.mark.parametrize("levels", [1, 3, 4, 5, 7])
 def test_dangerous_command_in_nested_shells_is_blocked(shell, levels):
     assert not check_command(wrap(DANGER, levels, shell)).allowed
+
+
+def test_backtick_helper_always_returns_text_none_unmatched_or_empty():
+    for s in ["", "echo hello", "echo `ls", "echo ``"]:
+        assert isinstance(_backtick_code(s), str), s
+    assert _backtick_code("echo hello") == ""
+    assert _backtick_code("echo `ls") == "ls"
+    assert _backtick_code("echo ``") == ""
+
+
+@pytest.mark.parametrize("base", [
+    "echo `ls", "echo ``", "cd ~/projects && echo `ls", "cd ~/projects && echo ``",
+])
+@pytest.mark.parametrize("levels", [4, 5])
+def test_unmatched_or_empty_backtick_past_the_depth_limit_is_refused(base, levels):
+    res = check_command(wrap(base, levels))
+    assert res.verdict == "block" and res.rule == "destructive:too_many_commands"
 
 
 def test_dangerous_disk_write_in_nested_shells_is_blocked():
