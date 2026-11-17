@@ -2684,8 +2684,8 @@ def sanitize_tool_result(
             if not det:
                 return val
             detections.extend(det)
-            out = clean_text.encode("utf-8")
-            return bytearray(out) if isinstance(val, bytearray) else out
+            encoded = clean_text.encode("utf-8")
+            return bytearray(encoded) if isinstance(val, bytearray) else encoded
         elif _is_opaque_object(val):
             # An object with no attributes to walk: what its text form shows is masked, as a string.
             try:
