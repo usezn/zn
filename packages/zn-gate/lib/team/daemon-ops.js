@@ -34,7 +34,9 @@ const JOIN_TOKEN_RE = /^znj_[A-Za-z0-9]{32,64}$/;
 const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ALERT_EVERY_MS = 6 * 3600 * 1000; // a sync that keeps failing leaves one local alert every 6 hours
-const REVOCATION_GIVE_UP_MS = 30 * 24 * 3600 * 1000; // a revocation the server never confirms is dropped after 30 days
+const REVOCATION_GIVE_UP_MS = 30 * 24 * 3600 * 1000; // a revocation the server never confirms is dropped after 30 days...
+// ...but only after this many failed attempts, so a system clock that jumps ahead cannot drop it at once.
+const REVOCATION_MIN_TRIES = 20;
 const MAX_PENDING_REVOCATIONS = 8;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
@@ -253,7 +255,8 @@ function makeTeamOps(ctx) {
       if (isClosed()) break;
       const now = Date.now();
       const since = Date.parse(rec.since);
-      if (!Number.isFinite(since) || now - since > REVOCATION_GIVE_UP_MS) {
+      const tries = Number.isInteger(rec.tries) ? rec.tries : 0;
+      if (!Number.isFinite(since) || (now - since > REVOCATION_GIVE_UP_MS && tries >= REVOCATION_MIN_TRIES)) {
         await updatePending((list) => {
           const i = list.findIndex((r) => sameRevocation(r, rec));
           if (i >= 0) { list.splice(i, 1); writeAudit({ mode: 'remove', decision: 'error', reason: 'team_revocation_abandoned' }); }

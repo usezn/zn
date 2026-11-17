@@ -572,6 +572,66 @@ test('lifecycle: idle expiry drops the session', async () => {
   srv = null;
 });
 
+/* The session also ends by the wall clock (the monotonic timers stand still while the computer sleeps). */
+const H = 3600 * 1000;
+async function wallClockCase(shift, extra) {
+  await stopDaemon();
+  let reason = null;
+  const t = { now: Date.now() };
+  await startDaemon(Object.assign({ ttlMs: 8 * H, idleMs: 30 * 60000, now: () => t.now, onExit: (r) => { reason = r; } }, extra || {}));
+  const c = clientMod.createClient({});
+  await c.status();
+  t.now += shift;
+  return { c, t, reasonOf: () => reason };
+}
+async function waitReason(get) {
+  const deadline = Date.now() + 20000;
+  while (get() === null && Date.now() < deadline) await sleep(25);
+  return get();
+}
+
+test('lifecycle: a wall clock 9 hours ahead locks the vault on the next request', async () => {
+  const { c, reasonOf } = await wallClockCase(9 * H);
+  await assert.rejects(c.status(), (e) => e.code === 'ZN_LOCKED');
+  assert.strictEqual(await waitReason(reasonOf), 'expired');
+  c.close();
+  srv = null;
+});
+
+test('lifecycle: a wall clock one year ahead locks the vault on the next request', async () => {
+  const { c, reasonOf } = await wallClockCase(365 * 24 * H);
+  await assert.rejects(c.status(), (e) => e.code === 'ZN_LOCKED');
+  assert.strictEqual(await waitReason(reasonOf), 'expired');
+  c.close();
+  srv = null;
+});
+
+test('lifecycle: 31 minutes of wall time without a request (a sleep) locks by idle time', async () => {
+  const { c, reasonOf } = await wallClockCase(31 * 60000);
+  await assert.rejects(c.status(), (e) => e.code === 'ZN_LOCKED');
+  assert.strictEqual(await waitReason(reasonOf), 'idle');
+  c.close();
+  srv = null;
+});
+
+test('lifecycle: the periodic check locks the vault with no request at all', async () => {
+  const { c, reasonOf } = await wallClockCase(9 * H, { wallCheckMs: 40 });
+  assert.strictEqual(await waitReason(reasonOf), 'expired');
+  c.close();
+  srv = null;
+});
+
+test('lifecycle: a wall clock set back one year never unlocks anything and does not extend the session', async () => {
+  const { c, t } = await wallClockCase(-365 * 24 * H);
+  const st = await c.status();
+  assert.strictEqual(st.unlocked, true, 'still unlocked: the monotonic timers are what end the session');
+  // the session now counts from the moved clock: 31 idle minutes on it lock the vault again
+  t.now += 365 * 24 * H + 31 * 60000;
+  await assert.rejects(c.status(), (e) => e.code === 'ZN_LOCKED');
+  c.close();
+  srv = null;
+});
+
 test('lifecycle: a slow start does not use up the idle time before the first client', async () => {
   await stopDaemon();
   // Simulate a slow disk: the unlock audit write blocks the loop for longer

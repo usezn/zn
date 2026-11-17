@@ -270,12 +270,27 @@ test('give-up: a record older than 30 days is dropped without asking the server;
   assert.strictEqual(pendingOf(m).length, 1);
   assert.ok((await m.o.teamInfo()).revocations[0].give_up_at, 'status says when it stops');
   pendingOf(m)[0].since = new Date(Date.now() - 31 * DAY).toISOString();
+  pendingOf(m)[0].tries = 20;
   cloud.requests.length = 0;
   await assert.rejects(m.o.teamSync({}), /not in an organization/);
   assert.strictEqual(leaveCalls().length, 0, '31 days: no request');
   assert.strictEqual(m.secrets.pendingRevocations, undefined);
   assert.ok(m.audit.some((a) => a.reason === 'team_revocation_abandoned'));
   assert.deepStrictEqual(await m.o.teamInfo(), { joined: false });
+});
+
+test('give-up: a clock that jumps 31 days ahead does not drop a record that has been tried only a few times', async () => {
+  const m = await joined();
+  cloud.setLeaveMode({ status: 503 });
+  await m.o.teamLeave();
+  cloud.setLeaveMode({ status: 503 });
+  pendingOf(m)[0].since = new Date(Date.now() - 31 * DAY).toISOString();
+  pendingOf(m)[0].tries = 3;
+  cloud.requests.length = 0;
+  await assert.rejects(m.o.teamSync({}), /not in an organization/);
+  assert.strictEqual(leaveCalls().length, 1, 'still retried');
+  assert.strictEqual(pendingOf(m).length, 1, 'not dropped');
+  assert.ok(!m.audit.some((a) => a.reason === 'team_revocation_abandoned'));
 });
 
 test('a leave of the same installation twice keeps one record; at most 8 are kept', async () => {

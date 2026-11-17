@@ -200,7 +200,8 @@ function breakStaleLock(lockPath, token) {
 function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
   // NaN, Infinity or a negative wait would never time out (or time out at once): use the default.
   if (!(Number.isFinite(waitMs) && waitMs >= 0)) waitMs = LOCK_WAIT_MS;
-  const deadline = Date.now() + waitMs;
+  // The wait is measured on a monotonic clock: a wall clock that jumps must not cut it short or stretch it.
+  const waitStart = process.hrtime.bigint();
   const token = `${process.pid}:${crypto.randomBytes(8).toString('hex')}:${hostTag()}`;
   let delay = 2;
   let missing = 0;
@@ -229,7 +230,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
       }
       missing = 0;
     }
-    if (Date.now() >= deadline) throw new EvidenceLockError('another process is writing to the log');
+    if (Number(process.hrtime.bigint() - waitStart) / 1e6 >= waitMs) throw new EvidenceLockError('another process is writing to the log');
     let stale = false;
     try {
       // abs(): a lock dated in the future (clock moved back) is stale too.

@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-16.34
+ * RULES_VERSION: 2026-11-16.35
  */
 
-const RULES_VERSION = '2026-11-16.34';
+const RULES_VERSION = '2026-11-16.35';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -534,6 +534,8 @@ function strictMode(options, cfg) {
 // Local custom rules cache (.znrules or zn.config.json)
 let customConfig = null;
 let lastConfigCheck = 0;
+// The reload check uses a monotonic clock: a wall clock set back must not freeze reloading of a changed rules file.
+const monotonicMs = () => Number(process.hrtime.bigint() / 1000000n);
 
 class RulesFileError extends Error {}
 
@@ -555,7 +557,7 @@ function jsonPlace(text, err) {
 // is not valid JSON, or holds a pattern that is not accepted (see lib/linear-regex.js)
 // gives a config with `errors`, and the rules then block until the file is fixed.
 function loadCustomConfig(forceReload = false) {
-  const now = Date.now();
+  const now = monotonicMs();
   if (!forceReload && customConfig !== null && now - lastConfigCheck < 5000) {
     return customConfig;
   }

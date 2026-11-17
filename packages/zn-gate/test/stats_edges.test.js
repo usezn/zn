@@ -106,7 +106,7 @@ test('record keeps a day exactly 90 days old and drops the day before it', () =>
   const now = at('2026-06-01');
   const cutoff = stats.today(new Date(now.getTime() - stats.KEEP_DAYS * 86400000));
   const before = stats.today(new Date(now.getTime() - (stats.KEEP_DAYS + 1) * 86400000));
-  fs.writeFileSync(file, JSON.stringify({ version: 1, events: {}, days: { [cutoff]: { 'cli:a': { checked: 1 } }, [before]: { 'cli:a': { checked: 1 } } } }));
+  fs.writeFileSync(file, JSON.stringify({ version: 1, events: {}, days: { [cutoff]: { 'cli:a': { checked: 1 } }, [before]: { 'cli:a': { checked: 1 } }, [stats.today(new Date(now.getTime() - 86400000))]: { 'cli:a': { checked: 1 } } } }));
   stats.record({ checked: 1 }, { file, now });
   const days = Object.keys(stats.load(file).days);
   assert.ok(days.includes(cutoff));

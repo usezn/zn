@@ -140,7 +140,11 @@ const DAY_MS = 86400000;
 // A day more than this far ahead of now was written under a wrong clock: it never counts and never moves the prune.
 const FUTURE_SLACK_DAYS = 1;
 // If now is further ahead of the newest stored day than this, the clock is not believed: nothing is pruned.
-const IMPLAUSIBLE_GAP_DAYS = 400;
+// It is the keep window itself: a clock further ahead than that would delete every stored day.
+const IMPLAUSIBLE_GAP_DAYS = KEEP_DAYS;
+// Pruning never leaves fewer than this many days (today included): one new day under a wrong clock must not
+// push out all the history.
+const MIN_DAYS_AFTER_PRUNE = 3;
 
 function isFutureDay(day, now) {
   return day > today(new Date(now.getTime() + FUTURE_SLACK_DAYS * DAY_MS));
@@ -159,7 +163,10 @@ function prune(data, now = new Date()) {
   }
   if (newest && now.getTime() - Date.parse(newest + 'T00:00:00Z') > IMPLAUSIBLE_GAP_DAYS * DAY_MS) return;
   const cutoff = today(new Date(now.getTime() - KEEP_DAYS * DAY_MS));
-  for (const day of Object.keys(data.days)) if (day < cutoff) delete data.days[day];
+  const days = Object.keys(data.days);
+  const doomed = days.filter((day) => day < cutoff);
+  if (doomed.length && days.length - doomed.length < MIN_DAYS_AFTER_PRUNE) return;
+  for (const day of doomed) delete data.days[day];
 }
 
 /**

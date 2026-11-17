@@ -40,7 +40,8 @@ The first `zn unlock` creates the vault: an [age](https://age-encryption.org)
 identity stored in your OS keychain (macOS Keychain, Windows Credential
 Manager, or Secret Service on Linux), or behind a passphrase when there is no
 keychain. The vault stays unlocked for 8 hours, or until 30 minutes without
-use, or until `zn lock`.
+use, or until `zn lock`. Both limits also follow the system clock, so a vault
+whose computer was asleep past a limit locks as soon as it wakes up.
 
 After you update zn-gate, a vault that is still running from the older
 version keeps secrets as markers in the agent hooks until it is restarted.

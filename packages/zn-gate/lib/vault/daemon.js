@@ -1132,21 +1132,37 @@ async function serve(opts) {
   // Confirmation channel: injected (tests), chosen by the caller, or none.
   const channel = typeof o.confirm === 'function' ? { kind: 'injected', confirm: o.confirm }
     : (o.channel && typeof o.channel.confirm === 'function' ? o.channel : confirmMod.noneChannel());
-  const ctl = { expiresAt: Date.now() + ttlMs, idleMs, shutdown: null, channel, fetchImpl: o.fetchImpl };
+  // The session also ends by the wall clock: the monotonic timers below do not advance while the computer sleeps
+  // (Linux, macOS). Either clock saying "expired" locks the vault. A wall clock set back never unlocks anything
+  // (the timers still run); one set forward locks earlier, which is the safe side. o.now is for tests.
+  const clock = typeof o.now === 'function' ? o.now : Date.now;
+  const ctl = { expiresAt: clock() + ttlMs, idleMs, shutdown: null, channel, fetchImpl: o.fetchImpl };
   const ops = makeOps(state, ctl);
   const sockets = new Set();
   let closed = false;
   let idleTimer = null;
+  let wallActivity = clock();
 
   const server = net.createServer((socket) => handleConnection(socket));
 
+  /** 'expired' or 'idle' when the wall clock says the session is over, else null. */
+  function wallExpiry() {
+    const now = clock();
+    if (!Number.isFinite(now)) return null;
+    if (now >= ctl.expiresAt) return 'expired';
+    if (now - wallActivity >= idleMs) return 'idle';
+    return null;
+  }
   function bumpIdle() {
+    wallActivity = clock();
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => shutdown('idle'), idleMs);
     idleTimer.unref();
   }
   const ttlTimer = setTimeout(() => shutdown('expired'), ttlMs);
   ttlTimer.unref();
+  const wallTimer = setInterval(() => { const why = wallExpiry(); if (why) shutdown(why); }, o.wallCheckMs || 60000);
+  wallTimer.unref();
   // Persist lastUsed and the audit head now and then.
   const flushTimer = setInterval(() => { if (state.dirtySecrets) state.serial(() => state.saveSecrets()).catch(() => {}); }, 60000);
   flushTimer.unref();
@@ -1168,6 +1184,7 @@ async function serve(opts) {
     closed = true;
     ctl.closed = true;
     clearTimeout(ttlTimer);
+    clearInterval(wallTimer);
     clearInterval(flushTimer);
     if (teamTimer) clearInterval(teamTimer);
     if (teamFirst) clearTimeout(teamFirst);
@@ -1236,6 +1253,13 @@ async function serve(opts) {
         const id = msg && msg.id;
         chain = chain.then(async () => {
           if (closed) { send({ id, ok: false, error: { code: CODES.LOCKED, message: 'vault locked' } }); return; }
+          const over = wallExpiry();
+          if (over) {
+            send({ id, ok: false, error: { code: CODES.LOCKED, message: 'vault locked' } });
+            await new Promise((resolve) => setImmediate(resolve));
+            await shutdown(over);
+            return;
+          }
           bumpIdle();
           const op = msg && typeof msg.op === 'string' && Object.prototype.hasOwnProperty.call(ops, msg.op) ? ops[msg.op] : null;
           if (!op) { send({ id, ok: false, error: { code: CODES.POLICY_DENIED, message: 'unknown operation' } }); return; }

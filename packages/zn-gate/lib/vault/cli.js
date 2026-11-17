@@ -56,6 +56,9 @@ function untilText(iso, now) {
   const clock = pad(at.getHours()) + ':' + pad(at.getMinutes());
   const minutes = Math.max(0, Math.round((at.getTime() - nowMs) / 60000));
   const left = minutes < 90 ? 'in ' + Math.max(1, minutes) + ' min' : 'in ' + Math.round(minutes / 60) + ' h';
+  // A session lasts at most 24 hours: a time outside that means the system clock changed since the unlock.
+  const remaining = at.getTime() - nowMs;
+  if (remaining < -120000 || remaining > 24 * 3600000 + 120000) return clock + ' (the system clock changed since the vault was unlocked)';
   return (sameDay ? '' : 'tomorrow ') + clock + ' (' + left + ')';
 }
 

@@ -75,7 +75,11 @@ test('days older than 90 are dropped; ZN_STATS=off records nothing', () => {
   reset();
   stats.record({ layer: 'hook', agent: 'codex', checked: 1 }, { now: new Date('2026-06-01T00:00:00Z') });
   stats.record({ layer: 'hook', agent: 'codex', checked: 1 }, { now: new Date('2026-10-14T00:00:00Z') });
-  assert.deepEqual(Object.keys(stats.load().days), ['2026-10-14']);
+  // One new day after a gap longer than the keep window does not push the old day out: the clock may be wrong.
+  assert.deepEqual(Object.keys(stats.load().days), ['2026-06-01', '2026-10-14']);
+  stats.record({ layer: 'hook', agent: 'codex', checked: 1 }, { now: new Date('2026-10-15T00:00:00Z') });
+  stats.record({ layer: 'hook', agent: 'codex', checked: 1 }, { now: new Date('2026-10-16T00:00:00Z') });
+  assert.deepEqual(Object.keys(stats.load().days), ['2026-10-14', '2026-10-15', '2026-10-16']);
   process.env.ZN_STATS = 'off';
   try { stats.record({ layer: 'hook', agent: 'codex', checked: 5 }, { now: new Date('2026-10-14T00:00:00Z') }); } finally { delete process.env.ZN_STATS; }
   assert.equal(stats.load().days['2026-10-14']['hook:codex'].checked, 1);

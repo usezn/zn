@@ -1403,11 +1403,24 @@ function settingsRoot(cwd, opts) {
 const STATE_KEEP_MS = 14 * 24 * 3600 * 1000;
 function pruneState(dir) {
   try {
-    const cutoff = Date.now() - STATE_KEEP_MS;
+    const now = Date.now();
+    const cutoff = now - STATE_KEEP_MS;
+    const files = [];
+    let newest = -Infinity;
     for (const n of fs.readdirSync(dir).slice(0, 5000)) {
       if (!/^(?:config-change|instructions-loaded)-[0-9a-f]{16}\.json$/.test(n)) continue;
       const f = path.join(dir, n);
-      try { if (fs.statSync(f).mtimeMs < cutoff) fs.unlinkSync(f); } catch (_) { /* gone, or not ours to remove */ }
+      try {
+        const m = fs.statSync(f).mtimeMs;
+        files.push([f, m]);
+        if (m > newest) newest = m;
+      } catch (_) { /* gone */ }
+    }
+    // A clock far ahead would make every live session's file look old, and a deleted baseline cannot be restored:
+    // when even the newest file is older than the keep time, the clock is not believed and nothing is removed.
+    if (files.length && newest < cutoff) return;
+    for (const [f, m] of files) {
+      try { if (m < cutoff) fs.unlinkSync(f); } catch (_) { /* gone, or not ours to remove */ }
     }
   } catch (_) { /* nothing to clean */ }
 }
@@ -2595,7 +2608,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, evidenceWaitMs, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
+module.exports = { readConfig, handle, main, failDecision, pruneState, mapStrings, decidePre, decidePost, evidenceWaitMs, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
