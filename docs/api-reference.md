@@ -73,7 +73,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
 - Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same). Any other value (`true`, `yes`) leaves it off and prints one warning on stderr.
-- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated: true`).
+- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MiB (4,194,304 characters) is blocked with rule `size:oversize` (and `truncated: true`). Sizes in this page count characters. The hook and shield limits are different: see [troubleshooting](troubleshooting.md) and the [threat model](threat-model.md).
 - Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was blocked for its size and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
 - `evaluate` is also exported by `zn-gate/lib/client`.
 
@@ -127,7 +127,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Deep sanitization of external tool outputs. Blocks indirect prompt injections and redacts sensitive credentials (AWS keys, OpenAI tokens, DB passwords).
 - Two call forms. With a tool name and content (`sanitizeToolResult('web_search', output, options)`), it scans the output and returns the object below. With one value and no content (`sanitizeToolResult(data)`), it only redacts secrets, walking strings, arrays and objects, and returns `{ sanitized, detections }`; each detection is `{ rule, index }` (`index` is the offset of the match).
 - Options: `maskSecrets` (default `true`), `allowTruncated`, `blockTruncated`, `strict`.
-- Output is scanned in overlapping 256 KB windows up to 4 MB (plus the last 256 KB). `truncated` is `true` when the output was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`), because its middle was never checked; pass `allowTruncated: true` or set `ZN_ALLOW_TRUNCATED=1` to let it through marked `truncated`. `blockTruncated: true` and `ZN_BLOCK_TRUNCATED=1` still force the block.
+- Output is scanned in overlapping 256 KB windows up to 4 MiB (plus the last 256 KB). `truncated` is `true` when the output was not scanned in full. Such output (over 4 MiB) is blocked by default (rule `size:truncated`), because its middle was never checked; pass `allowTruncated: true` or set `ZN_ALLOW_TRUNCATED=1` to let it through marked `truncated`. `blockTruncated: true` and `ZN_BLOCK_TRUNCATED=1` still force the block.
 - Returns (tool name and content form): `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }`
 
 ### `redactSecrets(text)`
@@ -215,7 +215,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 
 - Pure Python in-memory deterministic evaluation. Never touches the network.
 - `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default. `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`: another value such as `true` or `yes` leaves them off and logs a warning (logger `zn_gate`), once per value.
-- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated=True`).
+- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MiB is blocked with rule `size:oversize` (and `truncated=True`).
 - Returns: `Assessment(verdict, confidence, rule, reason, engine, rules_version, truncated, advisory)`. `verdict` is `'allow'` or `'block'`; `advisory` is a dict or `None`. `assessment.allowed` is a boolean and `assessment.to_dict()` gives a plain dict.
 
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
@@ -223,7 +223,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - Python decorator protecting sync and async agent functions and tool handlers.
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
-- With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block even with `ZN_ALLOW_TRUNCATED=1`. An argument string over 4 MB is always blocked (rule `size:oversize`); `ZN_ALLOW_TRUNCATED` does not change that. `ZN_ALLOW_TRUNCATED=1` weakens protection: the part of the output past 4 MB is never checked. The `self` or `cls` of a method is not checked.
+- With `check_result=True`, a result too large to scan in full (over 4 MiB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block even with `ZN_ALLOW_TRUNCATED=1`. An argument string over 4 MiB is always blocked (rule `size:oversize`); `ZN_ALLOW_TRUNCATED` does not change that. `ZN_ALLOW_TRUNCATED=1` weakens protection: the part of the output past 4 MiB is never checked. The `self` or `cls` of a method is not checked.
 - Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: they are read attribute by attribute down to 32 levels, as a result is, and the text found there is checked; what is deeper than 32 levels blocks the call (rule `size:nesting`), while what cannot be read, or lies past 100,000 values, is left out. Data is checked strictly, like in `check_tool_call`: dicts, lists, `SimpleNamespace`, `argparse.Namespace`, dataclasses and data models nested deeper than ten levels block the call, and a container that cannot be read (its items raise) blocks it with rule `type:unscannable`. Framework run contexts (pydantic-ai `RunContext`, Google ADK and OpenAI Agents SDK tool contexts, LangChain callback managers and `RunnableConfig`) and logging objects (loggers, handlers, `LoggerAdapter`) are not checked, so pass those as before. Arguments bound with `functools.partial` are checked the same way.
 - A generator or async generator result is passed on chunk by chunk, each chunk checked together with the end of the previous one. With `mask_secrets=True` the text is masked as one stream, so a secret split across chunks is masked whole: the last 16 KiB of text are held back, as it arrived, until more text or the end of the stream (also when the function fails) arrives, and a secret that reaches into them keeps the text from its start held too. Each chunk the function yields still gives one chunk out, empty while its text is held. The held text is withheld when a chunk blocks.
 
@@ -249,13 +249,13 @@ except GuardBlockError as e:
 
 - Recursively extracts and inspects all strings in arguments for malicious commands or credentials: dict keys and values, lists, tuples, sets, dict views, dataclasses, pydantic models and the attributes of other objects.
 - A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up; more than 100,000 values taken from objects and other iterables is blocked (rule `size:items`); nesting deeper than ten levels is blocked (rule `size:nesting`).
-- Long strings are scanned in overlapping windows up to 4 MB, as tool results are. An argument string over 4 MB is always blocked (rule `size:oversize`, `Assessment.truncated` is `True`); `ZN_ALLOW_TRUNCATED` does not apply to arguments.
+- Long strings are scanned in overlapping windows up to 4 MiB, as tool results are. An argument string over 4 MiB is always blocked (rule `size:oversize`, `Assessment.truncated` is `True`); `ZN_ALLOW_TRUNCATED` does not apply to arguments.
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
 
 - Dicts, lists, dataclasses, models, `SimpleNamespace` (for example from `json.loads(..., object_hook=...)`) and `argparse.Namespace` nested deeper than ten levels are blocked (rule `size:nesting`). Other objects are read up to 32 levels deep and blocked past that, and more than 100,000 attribute names and values taken from them (about 50,000 attributes) is blocked (rule `size:items`) instead of being skipped. An object reached through several references is counted once, and loggers are not read (handlers, which can hold captured records, are). The same applies to results checked by `@guard(check_result=True)`.
 
-- Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`) because its middle was never checked; pass `allow_truncated=True` or set `ZN_ALLOW_TRUNCATED=1` to allow it marked `truncated`. `block_truncated=True` and `ZN_BLOCK_TRUNCATED=1` force the block. `@guard(check_result=True)` uses this check.
+- Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MiB; `Assessment.truncated` is `True` when a string was not scanned in full. Such output (over 4 MiB) is blocked by default (rule `size:truncated`) because its middle was never checked; pass `allow_truncated=True` or set `ZN_ALLOW_TRUNCATED=1` to allow it marked `truncated`. `block_truncated=True` and `ZN_BLOCK_TRUNCATED=1` force the block. `@guard(check_result=True)` uses this check.
 
 ### `check_command(command: str) -> Assessment`
 

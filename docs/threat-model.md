@@ -502,7 +502,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
   post-tool check answers before that. It has its own deadline for each agent
   (the hook timeout zn installs minus 5 seconds: 10 s for Claude Code and
   Copilot, 15 s for OpenCode, 25 s for Codex and Cursor) and these limits per
-  output: 8 MiB of text, 1,000 different secret values, and 32 MiB read from
+  output: 8 MiB (8,388,608 characters) of text, 1,000 different secret values, and 32 MiB (33,554,432 characters) read from
   stdin. When a limit is reached, the part zn did not check is replaced by a
   fixed notice ("output withheld because it is too large to check for secrets
   in time") through the agent's own way of replacing output, and the agent is

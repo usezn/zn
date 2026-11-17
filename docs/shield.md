@@ -181,7 +181,7 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
 - The shadowing check only knows servers that were pinned on this machine, and it compares names, not what a tool does.
-- Tool results are checked in full up to 32 MB. A larger result is removed and the agent is told to ask the tool for a smaller part (a page or a line range).
+- Tool results are checked in full up to 32 MiB (33,554,432 characters). A larger result is removed and the agent is told to ask the tool for a smaller part (a page or a line range).
 - Text nested more than 8 levels deep in a server message or in a tool result's structured content is not checked. It is replaced by a notice, so the agent does not get it unchecked; in shadow mode it is passed on unchanged, and the shield writes one line to stderr saying the message was not fully checked.
 - Lines are capped before they are read in full: a line over 64 MiB from the server (32 MiB from the client) is dropped, in shadow mode too, because it cannot be held in memory to be checked. A message nested more than 128 levels, with more than 4 million values, or in a batch of 1000 messages or more is refused with a JSON-RPC error; when the server sends such a batch, each request it was answering gets its own error. While a lot of server output waits to be checked, the shield stops reading from the server.
 - At most 5000 requests can wait for an answer from the server at once. The next tool call or tool list is refused with an error until the server answers or the agent cancels one (shadow mode sends it on without tracking it). A tool list that answers no waiting request is not passed on.

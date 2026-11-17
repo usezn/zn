@@ -72,13 +72,13 @@ These apply to the local rules when they check a string. The runs below call the
 
 - Up to 256 KB (262,144 characters) is checked in one piece.
 - A longer text is checked whole, in overlapping windows, so a payload in the middle is not skipped. A 300 KB made-up text of repeated lines was allowed, and the same text with the line above added at its end was blocked.
-- A text over 4 MB is blocked with the rule `size:oversize` and `truncated: true`, because it cannot be checked in full:
+- A text over 4 MiB (4,194,304 characters) is blocked with the rule `size:oversize` and `truncated: true`, because it cannot be checked in full:
 
   ```text
   {"verdict":"block","rule":"size:oversize","reason":"Input too large to scan in full","truncated":true}
   ```
 
-  This is the result of `evaluate` on a made-up text of 5 MB.
+  This is the result of `evaluate` on a made-up text of 5 MB (over the 4 MiB limit).
 
 The optional cloud check has its own limits, and they matter only when it is on. A text over 1,000 characters is sent in overlapping windows of 512 tokens, up to 20 windows, and the wait is 12 seconds instead of 4. A result can carry a `warning` that part of the text was not read. See [Example: checking a long text](long-text-analysis.md). A text that the local rules block is never sent to the cloud.
 

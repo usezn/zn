@@ -697,7 +697,7 @@ zn checks every command and patch before it runs. When one is too large or too d
 
 The command message names the rule `(rule: size:command-too-long)`, says that unchecked it could read a secret or a protected file, and says that only you can run it, in your own terminal.
 
-**What to do:** ask the agent to split the work into smaller steps. Do not send the same content in pieces to get around the limit. MCP means a tool server your agent talks to; the limit there is 1 MB of arguments.
+**What to do:** ask the agent to split the work into smaller steps. Do not send the same content in pieces to get around the limit. MCP means a tool server your agent talks to; the limit there is 1 MiB (1,048,576 characters) of arguments together.
 
 #### "zn: this command chains more commands than zn checks at once" / "has too many paths for zn to check in time" / "nests shell code deeper than zn checks"
 
@@ -719,7 +719,7 @@ The command message names the rule `(rule: size:command-too-long)`, says that un
 
 **What happened:** a tool printed more than zn can check in time, so zn withheld the part it could not check. In ZCode, which cannot hold output back, the message says so.
 
-**What to do:** ask the agent for a smaller output: a line range, `grep`, `head` or `tail`.
+**What to do:** ask the agent for a smaller output: a line range, `grep`, `head` or `tail`. The hook checks up to 8 MiB (8,388,608 characters) of one output for secrets, and up to 32 MiB (33,554,432 characters) for the whole event it reads; see [threat model](threat-model.md).
 
 ### A secret or odd text showed up in output, a prompt or an answer
 
@@ -941,9 +941,15 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 #### "Output too large to scan in full" / "Input too large to scan in full" / "nested too deeply to check"
 
-**What happened:** zn-gate scans text in windows up to a limit (4 MB for a tool result). Text past it, or nested too deeply to walk, is blocked, because the part that was not scanned could hold an attack.
+**What happened:** zn-gate checks text in windows, and each path has its own size limit. A text over its limit is blocked, because the part that was not checked could hold an attack. A structure nested too deeply to walk is blocked too. The limits are counted in characters (one byte per character only in plain ASCII text):
 
-**What to do:** ask for a smaller output or split the input. If you trust the tool and want large results to pass without a full check, set `ZN_ALLOW_TRUNCATED=1` (or `allowTruncated` in your code). See [api-reference](api-reference.md).
+- Tool result checked by the SDK functions, the MCP server or `check_result` (`checkToolResult`, `@guard`, `guarded_tool`): 4 MiB (4,194,304 characters). A larger result is blocked with rule `size:truncated`. Code: `packages/zn-gate/lib/rules.js:1736`.
+- Tool call input (arguments or text passed to the SDK): 4 MiB (4,194,304 characters). A larger input is blocked with rule `size:oversize`. Code: `packages/zn-gate/lib/rules.js:873`.
+- Hook check of one tool output for secrets: 8 MiB (8,388,608 characters). A larger output is withheld. Code: `packages/zn-gate/lib/hooks/runner.js:1146`.
+- Hook read of the whole event from stdin: 32 MiB (33,554,432 characters). Code: `packages/zn-gate/lib/hooks/runner.js:1149`.
+- MCP shield check of one tool result: 32 MiB (33,554,432 characters). A larger result is removed. Code: `packages/zn-gate/lib/shield.js:12`.
+
+**What to do:** for a result, ask the tool for a smaller part (a page or a line range). For an input, split it. If you trust the tool and want large results to pass without a full check, set `ZN_ALLOW_TRUNCATED=1` (or `allowTruncated` in your code). This does not let an input through. See [api-reference](api-reference.md) and [threat model](threat-model.md).
 
 ### Messages from commands you run yourself
 

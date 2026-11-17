@@ -236,7 +236,7 @@ Changes in behavior that you may notice:
   (`hooks.blockDestructiveCommands`). Each can be changed in `~/.zn/config.json`.
 - [ ] **Agents can no longer run `zn-gate uninstall`.** Run it yourself in your
   own terminal.
-- [ ] **A tool result larger than 4 MB is blocked** by the SDK functions and the
+- [ ] **A tool result larger than 4 MiB (4,194,304 characters) is blocked** by the SDK functions and the
   Python framework integrations. The agent hooks are unchanged. The block message
   names the opt-out (`ZN_ALLOW_TRUNCATED=1`).
 - [ ] **`DEBUG=*` no longer turns on zn's technical detail.** Use `ZN_VERBOSE=1`
