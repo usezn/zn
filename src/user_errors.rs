@@ -76,6 +76,25 @@ pub fn policy_files_failed(dir: &str, failures: &crate::engine::PolicyLoadFailur
     )
 }
 
+/// A policy folder named in the settings does not exist. zn creates only its
+/// default folder, so a typo in the name cannot quietly start the gateway
+/// with no policies.
+pub fn policy_dir_missing(dir: &str) -> String {
+    format!(
+        "zn did not start: the policy folder {:?} set in \"engine.policy_dir\" ({}) does not exist. zn creates only its default folder (./policies_bin). Check the name for a typo or extra spaces and that it is right for the folder zn starts in, or create the folder.",
+        dir,
+        display_path(Path::new(dir))
+    )
+}
+
+/// A policy folder named in the settings holds no policy file.
+pub fn no_policies_loaded(dir: &str) -> String {
+    format!(
+        "zero security policies loaded from {} (\"engine.policy_dir\"): it holds no .wasm policy file, so no policy checks tool calls. Put the policy files there, or fix \"engine.policy_dir\".",
+        display_path(Path::new(dir))
+    )
+}
+
 /// The policy folder cannot be watched for changes. `load_err` is the earlier
 /// failure to read or create it, if there was one.
 pub fn policy_watch_problem(

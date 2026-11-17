@@ -11,6 +11,85 @@ use std::path::Path;
 /// Shortest accepted `ZN_JWT_SECRET`: HS256 keys should have at least 256 bits.
 pub const MIN_JWT_SECRET_BYTES: usize = 32;
 
+/// Shortest accepted audit encryption passphrase (`ZN_DB_KEY`,
+/// `audit.encryption_key`), in characters, after spaces around it are removed.
+pub const MIN_DB_KEY_CHARS: usize = 16;
+
+/// The values `environment` (`ZN_ENV`) accepts.
+pub const ENVIRONMENTS: [&str; 2] = ["development", "production"];
+
+/// A value from the environment or a settings file, quoted and cut short for
+/// an error message, so a huge value does not flood the terminal.
+fn shown_value(raw: &str) -> String {
+    const MAX: usize = 80;
+    if raw.chars().count() > MAX {
+        let head: String = raw.chars().take(MAX).collect();
+        format!("{head:?}... ({} characters)", raw.chars().count())
+    } else {
+        format!("{raw:?}")
+    }
+}
+
+/// Reads an `environment` value: spaces around it are ignored and any
+/// capitalisation is accepted, so `Production` means `production`. Any other
+/// value is an error that names `source` and the accepted values: an unknown
+/// word must never quietly turn off the production-only checks.
+pub fn parse_environment(source: &str, raw: &str) -> Result<String> {
+    let value = raw.trim().to_ascii_lowercase();
+    if ENVIRONMENTS.contains(&value.as_str()) {
+        Ok(value)
+    } else {
+        Err(anyhow!(
+            "{source} is {}, which zn does not know. Use \"development\" or \"production\". zn did not start, because an unknown value would leave the production checks off.",
+            shown_value(raw)
+        ))
+    }
+}
+
+/// A policy hash as zn compares it: 64 lowercase hexadecimal characters (a
+/// SHA-256 digest).
+fn is_policy_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Reads a list of allowed policy hashes. Each entry is trimmed and
+/// lowercased and empty entries are dropped, so `AB12..., cd34...` and a
+/// trailing newline work. An entry that is not 64 hexadecimal characters, or a
+/// list that holds entries but no hash at all (for example `","`), is an error
+/// naming `source`: a broken allow list must not start the gateway.
+pub fn parse_policy_hashes<'a>(
+    source: &str,
+    entries: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<String>> {
+    let mut any = false;
+    let mut hashes = Vec::new();
+    for raw in entries {
+        any = true;
+        let value = raw.trim().to_ascii_lowercase();
+        if value.is_empty() {
+            continue;
+        }
+        if !is_policy_hash(&value) {
+            return Err(anyhow!(
+                "{source} holds {}, which is not a policy hash. Each hash must be the SHA-256 of a policy file: 64 hexadecimal characters (for example the output of `sha256sum policy.wasm`), with hashes separated by commas. zn did not start.",
+                shown_value(raw)
+            ));
+        }
+        if !hashes.contains(&value) {
+            hashes.push(value);
+        }
+    }
+    if any && hashes.is_empty() {
+        return Err(anyhow!(
+            "{source} is set but lists no policy hash. Give at least one 64-character SHA-256 hash, or remove the setting to accept every policy. zn did not start."
+        ));
+    }
+    Ok(hashes)
+}
+
 /// Main configuration structure for zn
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZnConfig {
@@ -354,7 +433,7 @@ impl Default for AuditConfig {
             db_path: default_db_path(),
             max_logs_in_memory: default_max_logs(),
             encryption_enabled: false,
-            encryption_key: std::env::var("ZN_DB_KEY").ok(),
+            encryption_key: normalize_credential(std::env::var("ZN_DB_KEY").ok()),
             store_payloads: false,
             require_write: false,
         }
@@ -844,9 +923,7 @@ impl ZnConfig {
 
     /// Apply environment variable overrides
     fn apply_env_overrides(&mut self, notices: &mut Vec<String>) -> Result<()> {
-        if let Ok(env) = std::env::var("ZN_ENV") {
-            self.environment = env;
-        }
+        self.apply_checked_settings(&|var| std::env::var(var).ok())?;
 
         if let Ok(port) = std::env::var("ZN_PORT") {
             match port.trim().parse() {
@@ -902,21 +979,8 @@ impl ZnConfig {
             }
         }
 
-        if let Ok(hashes) = std::env::var("ZN_POLICY_HASHES") {
-            self.engine.allowed_policy_hashes = hashes.split(',').map(|s| s.to_string()).collect();
-        }
-
         if let Ok(key) = std::env::var("ZN_SIGNING_PUBLIC_KEY") {
             self.engine.signing_public_key = Some(key);
-        }
-
-        if let Ok(db) = std::env::var("ZN_DB_PATH") {
-            self.audit.db_path = db;
-        }
-
-        if let Ok(key) = std::env::var("ZN_DB_KEY") {
-            self.audit.encryption_key = Some(key);
-            self.audit.encryption_enabled = true;
         }
 
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
@@ -978,6 +1042,68 @@ impl ZnConfig {
         Ok(())
     }
 
+    /// Settings where a mistyped value would quietly weaken a protection:
+    /// `ZN_ENV` / `environment`, `ZN_POLICY_HASHES` /
+    /// `engine.allowed_policy_hashes`, `ZN_DB_PATH` and `ZN_DB_KEY` /
+    /// `audit.encryption_key`. A variable that is unset or blank keeps the
+    /// value from the settings file; the result is normalized, and a value zn
+    /// cannot use is an error that names where it came from.
+    fn apply_checked_settings(&mut self, get: &dyn Fn(&str) -> Option<String>) -> Result<()> {
+        self.environment = match get("ZN_ENV").filter(|v| !v.trim().is_empty()) {
+            Some(raw) => parse_environment("ZN_ENV", &raw)?,
+            None => parse_environment("\"environment\" in the settings file", &self.environment)?,
+        };
+
+        self.engine.allowed_policy_hashes =
+            match get("ZN_POLICY_HASHES").filter(|v| !v.trim().is_empty()) {
+                Some(raw) => parse_policy_hashes("ZN_POLICY_HASHES", raw.split(','))?,
+                None => parse_policy_hashes(
+                    "\"engine.allowed_policy_hashes\" in the settings file",
+                    self.engine.allowed_policy_hashes.iter().map(String::as_str),
+                )?,
+            };
+
+        // A blank path is refused by `validate`, after the --db-path flag.
+        if let Some(db) = get("ZN_DB_PATH") {
+            self.audit.db_path = db;
+        }
+
+        // A blank ZN_DB_KEY counts as not set: it never turns encryption on
+        // with an empty passphrase, and production then refuses to start.
+        match normalize_credential(get("ZN_DB_KEY")) {
+            Some(key) => {
+                self.audit.encryption_key = Some(key);
+                self.audit.encryption_enabled = true;
+            }
+            None => {
+                self.audit.encryption_key = normalize_credential(self.audit.encryption_key.take())
+            }
+        }
+        Ok(())
+    }
+
+    /// True when `environment` is production.
+    pub fn is_production(&self) -> bool {
+        self.environment == "production"
+    }
+
+    /// True when `engine.policy_dir` was set to something other than the
+    /// default folder. zn creates only the default folder; a folder that was
+    /// named on purpose must already exist.
+    pub fn policy_dir_is_explicit(&self) -> bool {
+        self.engine.policy_dir != default_policy_dir()
+    }
+
+    /// The audit encryption passphrase, trimmed, or `None` when it is unset or
+    /// blank.
+    fn db_key(&self) -> Option<&str> {
+        self.audit
+            .encryption_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+    }
+
     /// The on/off environment settings that guard security behaviour. An unset or
     /// empty variable keeps the current value; anything that is not a clear on/off
     /// word is an error, so a typo can never leave a protection off.
@@ -1024,7 +1150,48 @@ impl ZnConfig {
             ));
         }
 
-        if self.security.api_key.is_none() && self.environment == "production" {
+        if !ENVIRONMENTS.contains(&self.environment.as_str()) {
+            // `load` normalizes the value; this catches a config built in code.
+            return Err(anyhow!(
+                "\"environment\" is {}; it must be \"development\" or \"production\".",
+                shown_value(&self.environment)
+            ));
+        }
+
+        if let Some(bad) = self
+            .engine
+            .allowed_policy_hashes
+            .iter()
+            .find(|h| !is_policy_hash(h))
+        {
+            return Err(anyhow!(
+                "\"engine.allowed_policy_hashes\" holds {}, which is not a policy hash: use 64 lowercase hexadecimal characters (the SHA-256 of the policy file).",
+                shown_value(bad)
+            ));
+        }
+
+        if self.engine.policy_dir.trim().is_empty() {
+            return Err(anyhow!(
+                "\"engine.policy_dir\" is empty. Name the folder that holds the security policy files, or remove the setting to use the default folder (./policies_bin). zn did not start, because an empty folder name would load no policy."
+            ));
+        }
+
+        if self.audit.db_path.trim().is_empty() {
+            return Err(anyhow!(
+                "The audit database path is empty (ZN_DB_PATH, --db-path or \"audit.db_path\"). Give a file path, or remove the setting to use the default (zn.db). zn did not start, because an empty path would keep the audit log in a temporary database that is lost when zn stops."
+            ));
+        }
+
+        if let Some(key) = self.db_key() {
+            let chars = key.chars().count();
+            if chars < MIN_DB_KEY_CHARS {
+                return Err(anyhow!(
+                    "The audit encryption key (ZN_DB_KEY or \"audit.encryption_key\") is {chars} characters long; it must be at least {MIN_DB_KEY_CHARS} (for example `openssl rand -hex 32`). zn did not start."
+                ));
+            }
+        }
+
+        if self.security.api_key.is_none() && self.is_production() {
             tracing::warn!("No API key configured in production - Management API is unprotected!");
         }
 
@@ -1032,9 +1199,7 @@ impl ZnConfig {
             tracing::info!("No CORS origins configured - only localhost will be allowed");
         }
 
-        if self.environment == "production"
-            && (!self.audit.encryption_enabled || self.audit.encryption_key.is_none())
-        {
+        if self.is_production() && (!self.audit.encryption_enabled || self.db_key().is_none()) {
             return Err(anyhow!(
                 "Audit log encryption is MANDATORY in production. Please set ZN_DB_KEY."
             ));
@@ -1042,7 +1207,7 @@ impl ZnConfig {
 
         if self.audit.store_payloads
             && self.kms.key_id.is_none()
-            && (!self.audit.encryption_enabled || self.audit.encryption_key.is_none())
+            && (!self.audit.encryption_enabled || self.db_key().is_none())
         {
             return Err(anyhow!(
                 "audit.store_payloads needs an encryption key: set ZN_DB_KEY, or leave payloads off (the default)."
@@ -1960,5 +2125,342 @@ mod bool_flag_tests {
             })
             .expect_err("must fail");
         assert!(err.to_string().contains("ZN_NEURAL_BLOCKING"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod checked_settings_tests {
+    use super::*;
+
+    const HASH: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+    /// A config read from `file` (JSON text) with the environment given by
+    /// `vars`, without touching the process environment.
+    fn load(file: &str, vars: &[(&str, &str)]) -> Result<ZnConfig> {
+        let mut config = ZnConfig::parse_text("/work/zn.json", file)?;
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        config.apply_checked_settings(&|name| {
+            vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+        })?;
+        Ok(config)
+    }
+
+    fn env(vars: &[(&str, &str)]) -> Result<ZnConfig> {
+        load("{}", vars)
+    }
+
+    fn json(value: &str) -> String {
+        serde_json::to_string(value).unwrap()
+    }
+
+    fn message(r: Result<ZnConfig>) -> String {
+        match r.and_then(|c| c.validate().map(|_| c)) {
+            Ok(_) => panic!("must be refused"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    // Environment.
+
+    #[test]
+    fn environment_accepts_both_words_in_any_case_and_with_spaces() {
+        for (raw, want) in [
+            ("production", "production"),
+            ("Production", "production"),
+            (" PRODUCTION\n", "production"),
+            ("development", "development"),
+            ("Development ", "development"),
+        ] {
+            assert_eq!(
+                env(&[("ZN_ENV", raw)]).unwrap().environment,
+                want,
+                "{raw:?}"
+            );
+            let file = format!("{{\"environment\": {}}}", json(raw));
+            assert_eq!(load(&file, &[]).unwrap().environment, want, "file {raw:?}");
+        }
+    }
+
+    #[test]
+    fn production_in_any_spelling_turns_on_the_production_checks() {
+        for raw in ["production", "Production", " production", "PRODUCTION\n"] {
+            let msg = message(env(&[("ZN_ENV", raw)]));
+            assert!(msg.contains("MANDATORY in production"), "{raw:?}: {msg}");
+            let file = format!("{{\"environment\": {}}}", json(raw));
+            let msg = message(load(&file, &[]));
+            assert!(
+                msg.contains("MANDATORY in production"),
+                "file {raw:?}: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_environment_is_refused_with_its_name_and_the_valid_ones() {
+        for raw in ["prod", "staging", "dev", "production1"] {
+            let msg = env(&[("ZN_ENV", raw)]).unwrap_err().to_string();
+            assert!(msg.contains("ZN_ENV"), "{msg}");
+            assert!(msg.contains(raw), "{msg}");
+            assert!(msg.contains("\"development\" or \"production\""), "{msg}");
+            let file = format!("{{\"environment\": {}}}", json(raw));
+            let msg = load(&file, &[]).unwrap_err().to_string();
+            assert!(
+                msg.contains("\"environment\" in the settings file"),
+                "{msg}"
+            );
+            assert!(msg.contains(raw), "{msg}");
+        }
+        assert!(load("{\"environment\": \"\"}", &[]).is_err());
+    }
+
+    #[test]
+    fn a_huge_environment_value_is_cut_short_in_the_message() {
+        let raw = "x".repeat(100_000);
+        let msg = env(&[("ZN_ENV", &raw)]).unwrap_err().to_string();
+        assert!(msg.len() < 1_000, "{}", msg.len());
+        assert!(msg.contains("100000 characters"), "{msg}");
+    }
+
+    #[test]
+    fn a_blank_zn_env_keeps_the_file_value() {
+        let c = load("{\"environment\": \"production\"}", &[("ZN_ENV", "  ")]).unwrap();
+        assert!(c.is_production());
+        assert_eq!(env(&[("ZN_ENV", "")]).unwrap().environment, "development");
+    }
+
+    #[test]
+    fn validate_refuses_an_environment_set_in_code_that_is_not_exact() {
+        let c = ZnConfig {
+            environment: "Production".into(),
+            ..ZnConfig::default()
+        };
+        let msg = c.validate().unwrap_err().to_string();
+        assert!(msg.contains("\"environment\""), "{msg}");
+    }
+
+    // Policy hashes.
+
+    #[test]
+    fn policy_hashes_are_trimmed_lowercased_and_empty_entries_dropped() {
+        let upper = HASH.to_ascii_uppercase();
+        for raw in [
+            HASH.to_string(),
+            upper.clone(),
+            format!("{HASH}\n"),
+            format!(" {upper} , "),
+            format!("{HASH},,{HASH}"),
+        ] {
+            let c = env(&[("ZN_POLICY_HASHES", &raw)]).unwrap();
+            assert_eq!(c.engine.allowed_policy_hashes, vec![HASH], "{raw:?}");
+            c.validate().unwrap();
+        }
+        let file = format!(
+            "{{\"engine\": {{\"allowed_policy_hashes\": [{}, \"\"]}}}}",
+            json(&format!(" {upper}\n"))
+        );
+        assert_eq!(
+            load(&file, &[]).unwrap().engine.allowed_policy_hashes,
+            vec![HASH]
+        );
+    }
+
+    #[test]
+    fn two_hashes_with_a_comma_and_a_space_both_count() {
+        let other = "0".repeat(64);
+        let c = env(&[("ZN_POLICY_HASHES", &format!("{other}, {HASH}"))]).unwrap();
+        assert_eq!(
+            c.engine.allowed_policy_hashes,
+            vec![other, HASH.to_string()]
+        );
+    }
+
+    #[test]
+    fn a_malformed_policy_hash_is_refused_naming_the_hash() {
+        let long = format!("{HASH}0");
+        for bad in [&HASH[..16], "zz", "sha256:abc", long.as_str()] {
+            let msg = env(&[("ZN_POLICY_HASHES", bad)]).unwrap_err().to_string();
+            assert!(msg.contains("ZN_POLICY_HASHES"), "{msg}");
+            assert!(msg.contains(bad), "{msg}");
+            assert!(msg.contains("not a policy hash"), "{msg}");
+            assert!(msg.contains("64 hexadecimal"), "{msg}");
+            let file = format!(
+                "{{\"engine\": {{\"allowed_policy_hashes\": [{}]}}}}",
+                json(bad)
+            );
+            let msg = load(&file, &[]).unwrap_err().to_string();
+            assert!(msg.contains("engine.allowed_policy_hashes"), "{msg}");
+            assert!(msg.contains("not a policy hash"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn a_hash_list_with_no_hash_is_refused() {
+        for raw in [",", " , ,\n"] {
+            let msg = env(&[("ZN_POLICY_HASHES", raw)]).unwrap_err().to_string();
+            assert!(msg.contains("lists no policy hash"), "{msg}");
+        }
+        let msg = load(
+            "{\"engine\": {\"allowed_policy_hashes\": [\"\", \" \"]}}",
+            &[],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(msg.contains("lists no policy hash"), "{msg}");
+    }
+
+    #[test]
+    fn an_empty_hash_list_or_blank_variable_means_no_allow_list() {
+        assert!(env(&[("ZN_POLICY_HASHES", "")])
+            .unwrap()
+            .engine
+            .allowed_policy_hashes
+            .is_empty());
+        assert!(load("{\"engine\": {\"allowed_policy_hashes\": []}}", &[])
+            .unwrap()
+            .engine
+            .allowed_policy_hashes
+            .is_empty());
+        // A blank variable keeps the list from the file.
+        let file = format!(
+            "{{\"engine\": {{\"allowed_policy_hashes\": [{}]}}}}",
+            json(HASH)
+        );
+        let c = load(&file, &[("ZN_POLICY_HASHES", " ")]).unwrap();
+        assert_eq!(c.engine.allowed_policy_hashes, vec![HASH]);
+    }
+
+    #[test]
+    fn validate_refuses_a_hash_set_in_code_that_is_not_lowercase_hex() {
+        let mut c = ZnConfig::default();
+        c.engine.allowed_policy_hashes = vec![HASH.to_ascii_uppercase()];
+        let msg = c.validate().unwrap_err().to_string();
+        assert!(msg.contains("not a policy hash"), "{msg}");
+    }
+
+    // Audit database path.
+
+    #[test]
+    fn an_empty_audit_db_path_is_refused() {
+        for raw in ["", "  ", "\n"] {
+            let msg = message(env(&[("ZN_DB_PATH", raw)]));
+            assert!(
+                msg.contains("audit database path is empty"),
+                "{raw:?}: {msg}"
+            );
+            assert!(msg.contains("ZN_DB_PATH"), "{msg}");
+            let file = format!("{{\"audit\": {{\"db_path\": {}}}}}", json(raw));
+            let msg = message(load(&file, &[]));
+            assert!(msg.contains("audit.db_path"), "{msg}");
+        }
+        // The --db-path flag is applied after the load and checked by validate.
+        let mut c = env(&[]).unwrap();
+        c.audit.db_path = String::new();
+        assert!(message(Ok(c)).contains("--db-path"));
+    }
+
+    #[test]
+    fn a_normal_audit_db_path_passes() {
+        env(&[("ZN_DB_PATH", "audit/zn.db")])
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+
+    // Audit encryption key.
+
+    #[test]
+    fn a_blank_db_key_counts_as_not_set() {
+        for raw in ["", " ", "\n"] {
+            let c = env(&[("ZN_DB_KEY", raw)]).unwrap();
+            assert_eq!(c.audit.encryption_key, None, "{raw:?}");
+            assert!(!c.audit.encryption_enabled, "{raw:?}");
+            let msg = message(env(&[("ZN_DB_KEY", raw), ("ZN_ENV", "production")]));
+            assert!(msg.contains("MANDATORY in production"), "{raw:?}: {msg}");
+            let file = format!(
+                "{{\"environment\": \"production\", \"audit\": {{\"encryption_enabled\": true, \"encryption_key\": {}}}}}",
+                json(raw)
+            );
+            let msg = message(load(&file, &[]));
+            assert!(
+                msg.contains("MANDATORY in production"),
+                "file {raw:?}: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_blank_db_key_variable_keeps_the_file_key() {
+        let file = "{\"audit\": {\"encryption_enabled\": true, \"encryption_key\": \"file-passphrase-not-real\"}}";
+        let c = load(file, &[("ZN_DB_KEY", " ")]).unwrap();
+        assert_eq!(
+            c.audit.encryption_key.as_deref(),
+            Some("file-passphrase-not-real")
+        );
+    }
+
+    #[test]
+    fn a_short_db_key_is_refused_naming_the_setting() {
+        for raw in ["a", "short-key", "fifteen-chars-x", "  fifteen-chars-x  "] {
+            let msg = message(env(&[("ZN_DB_KEY", raw)]));
+            assert!(msg.contains("ZN_DB_KEY"), "{msg}");
+            assert!(msg.contains("at least 16"), "{msg}");
+            if raw.trim().len() > 3 {
+                assert!(
+                    !msg.contains(raw.trim()),
+                    "the key must not be shown: {msg}"
+                );
+            }
+            let file = format!("{{\"audit\": {{\"encryption_key\": {}}}}}", json(raw));
+            let msg = message(load(&file, &[]));
+            assert!(msg.contains("audit.encryption_key"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn a_db_key_is_trimmed_and_a_long_one_passes_in_production() {
+        let c = env(&[
+            ("ZN_DB_KEY", " example-passphrase-16 \n"),
+            ("ZN_ENV", "Production"),
+        ])
+        .unwrap();
+        assert_eq!(
+            c.audit.encryption_key.as_deref(),
+            Some("example-passphrase-16")
+        );
+        c.validate().unwrap();
+        let mut c = ZnConfig::default();
+        c.audit.encryption_key = Some("x".repeat(MIN_DB_KEY_CHARS));
+        c.validate().unwrap();
+    }
+
+    // Policy folder.
+
+    #[test]
+    fn an_empty_policy_dir_is_refused() {
+        for raw in ["", " "] {
+            let file = format!("{{\"engine\": {{\"policy_dir\": {}}}}}", json(raw));
+            let msg = message(load(&file, &[]));
+            assert!(msg.contains("\"engine.policy_dir\" is empty"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn only_a_named_policy_dir_counts_as_explicit() {
+        assert!(!ZnConfig::default().policy_dir_is_explicit());
+        assert!(
+            !load("{\"engine\": {\"policy_dir\": \"./policies_bin\"}}", &[])
+                .unwrap()
+                .policy_dir_is_explicit()
+        );
+        for dir in ["./policies", "./policies_bin ", "/srv/zn/policies"] {
+            let file = format!("{{\"engine\": {{\"policy_dir\": {}}}}}", json(dir));
+            assert!(
+                load(&file, &[]).unwrap().policy_dir_is_explicit(),
+                "{dir:?}"
+            );
+        }
     }
 }

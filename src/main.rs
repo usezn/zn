@@ -337,6 +337,11 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initial load of all policies from configured directory
     let policy_dir = &zn_config.engine.policy_dir;
+    // zn creates only its default policy folder: a named folder that is not
+    // there (a typo, a trailing space, another working folder) stops the start.
+    if let Some(problem) = policy_dir_start_problem(&zn_config) {
+        return Err(anyhow!(problem));
+    }
     let mut policy_load_error: Option<anyhow::Error> = None;
     if let Err(e) = engine.load_all_policies(policy_dir) {
         // An installed policy that does not load would leave its checks off without notice: do not start.
@@ -352,6 +357,10 @@ async fn start_proxy(args: Args) -> Result<()> {
             "Loaded {} initial security policies",
             engine.policy_count()
         ))?;
+        if let Some(warning) = zero_policies_warning(&zn_config, engine.policy_count()) {
+            tracing::warn!("{warning}");
+            log::warning(warning)?;
+        }
     }
 
     // Initialize Policy Watcher for Hot-Reload
@@ -2319,6 +2328,68 @@ mod fusion_wiring_tests {
 /// Picks the audit database key. `kms_fetch` is `None` when no KMS key is
 /// configured, otherwise the result of fetching it. Returns the key and
 /// whether the config key was used because the KMS fetch failed.
+/// Why `zn start` must not go on with this policy folder: it was named in the
+/// settings and does not exist. `None` for the default folder, which zn
+/// creates when it is missing.
+fn policy_dir_start_problem(config: &ZnConfig) -> Option<String> {
+    let dir = &config.engine.policy_dir;
+    (config.policy_dir_is_explicit() && !std::path::Path::new(dir).exists())
+        .then(|| zn::user_errors::policy_dir_missing(dir))
+}
+
+/// The warning for a policy folder named in the settings from which no
+/// policy was loaded.
+fn zero_policies_warning(config: &ZnConfig, loaded: usize) -> Option<String> {
+    (config.policy_dir_is_explicit() && loaded == 0)
+        .then(|| zn::user_errors::no_policies_loaded(&config.engine.policy_dir))
+}
+
+#[cfg(test)]
+mod policy_dir_tests {
+    use super::{policy_dir_start_problem, zero_policies_warning, ZnConfig};
+
+    fn with_dir(dir: &std::path::Path) -> ZnConfig {
+        let mut config = ZnConfig::default();
+        config.engine.policy_dir = dir.to_string_lossy().into_owned();
+        config
+    }
+
+    #[test]
+    fn a_named_folder_that_does_not_exist_stops_the_start_and_is_not_created() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("polices_bin");
+        let msg = policy_dir_start_problem(&with_dir(&missing)).expect("must refuse");
+        assert!(msg.contains("does not exist"), "{msg}");
+        assert!(msg.contains("polices_bin"), "{msg}");
+        assert!(!missing.exists());
+        // A trailing space is a different folder, shown quoted.
+        let spaced = format!("{} ", root.path().display());
+        let mut config = ZnConfig::default();
+        config.engine.policy_dir = spaced.clone();
+        let msg = policy_dir_start_problem(&config).expect("must refuse");
+        assert!(msg.contains(&format!("{spaced:?}")), "{msg}");
+    }
+
+    #[test]
+    fn the_default_folder_and_an_existing_named_folder_go_on() {
+        assert!(policy_dir_start_problem(&ZnConfig::default()).is_none());
+        let root = tempfile::tempdir().unwrap();
+        assert!(policy_dir_start_problem(&with_dir(root.path())).is_none());
+    }
+
+    #[test]
+    fn an_empty_named_folder_warns_and_the_default_does_not() {
+        let root = tempfile::tempdir().unwrap();
+        let msg = zero_policies_warning(&with_dir(root.path()), 0).expect("must warn");
+        assert!(
+            msg.starts_with("zero security policies loaded from"),
+            "{msg}"
+        );
+        assert!(zero_policies_warning(&with_dir(root.path()), 1).is_none());
+        assert!(zero_policies_warning(&ZnConfig::default(), 0).is_none());
+    }
+}
+
 fn resolve_db_key(
     kms_fetch: Option<Result<String, String>>,
     allow_config_fallback: bool,

@@ -246,7 +246,7 @@ mod tests {
         // namespace and KMS values are kept here: they do not equal any
         // environment value.
         let mut cfg = ZnConfig {
-            environment: "persist-example".to_string(),
+            environment: "development".to_string(),
             ..ZnConfig::default()
         };
         cfg.security.api_key = Some("fake-api-key-0000-not-real".to_string());
@@ -276,7 +276,7 @@ mod tests {
         }
         let back: ZnConfig = serde_json::from_str(&text).unwrap();
         back.validate().unwrap();
-        assert_eq!(back.environment, "persist-example");
+        assert_eq!(back.environment, "development");
         assert_eq!(
             back.security.namespace.as_deref(),
             Some("tenant-from-config-example")
