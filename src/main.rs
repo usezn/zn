@@ -630,41 +630,9 @@ async fn start_proxy(args: Args) -> Result<()> {
             .with_tenant_store(Arc::clone(&api_state.tenants)),
         );
 
-        let app = Router::new()
-            .route("/api/v1/events", get(sse_handler))
-            .route("/api/v1/health", get(health_handler))
-            .route("/api/v1/stats", get(stats_handler))
-            .route("/api/v1/logs", get(logs_handler))
-            .route("/api/v1/reputation", get(reputation_handler))
-            .route("/api/v1/policies", get(policies_handler))
-            .route(
-                "/api/v1/policies/upload",
-                axum::routing::post(policies_upload_handler),
-            )
-            .route(
-                "/api/v1/policies/delete",
-                axum::routing::post(policies_delete_handler),
-            )
-            .route(
-                "/api/v1/tenants",
-                get(tenants_list_handler).post(tenants_create_handler),
-            )
-            .route("/api/v1/consensus/pending", get(consensus_list_handler))
-            .route(
-                "/api/v1/consensus/sign",
-                axum::routing::post(consensus_sign_handler),
-            )
-            .route(
-                "/api/v1/consensus/deny",
-                axum::routing::post(consensus_deny_handler),
-            )
-            .route("/mcp/ws", get(mcp_ws_handler))
-            .route("/metrics", get(metrics_handler))
-            .layer(middleware::from_fn(api_key_auth))
-            .layer(Extension(auth_config))
+        let app = management_router(api_state, auth_config)
             .layer(governor_layer)
-            .layer(cors)
-            .with_state(api_state);
+            .layer(cors);
 
         log::info(format!("🛰️ Management API listening on {}", addr)).ok();
         // Header and body timeouts, a connection cap that keeps room for served clients, and a
@@ -1964,6 +1932,44 @@ async fn metrics_handler() -> String {
     metrics::render()
 }
 
+/// The management API routes behind the authentication layer. The caller adds the rate limiter and the CORS
+/// layer around it; the tests serve this same table.
+fn management_router(state: AppState, auth_config: Arc<AuthConfig>) -> Router {
+    Router::new()
+        .route("/api/v1/events", get(sse_handler))
+        .route("/api/v1/health", get(health_handler))
+        .route("/api/v1/stats", get(stats_handler))
+        .route("/api/v1/logs", get(logs_handler))
+        .route("/api/v1/reputation", get(reputation_handler))
+        .route("/api/v1/policies", get(policies_handler))
+        .route(
+            "/api/v1/policies/upload",
+            axum::routing::post(policies_upload_handler),
+        )
+        .route(
+            "/api/v1/policies/delete",
+            axum::routing::post(policies_delete_handler),
+        )
+        .route(
+            "/api/v1/tenants",
+            get(tenants_list_handler).post(tenants_create_handler),
+        )
+        .route("/api/v1/consensus/pending", get(consensus_list_handler))
+        .route(
+            "/api/v1/consensus/sign",
+            axum::routing::post(consensus_sign_handler),
+        )
+        .route(
+            "/api/v1/consensus/deny",
+            axum::routing::post(consensus_deny_handler),
+        )
+        .route("/mcp/ws", get(mcp_ws_handler))
+        .route("/metrics", get(metrics_handler))
+        .layer(middleware::from_fn(api_key_auth))
+        .layer(Extension(auth_config))
+        .with_state(state)
+}
+
 /// Build CORS layer with configured origins
 fn build_cors_layer(allowed_origins: &[String]) -> CorsLayer {
     let origins: Vec<HeaderValue> = if allowed_origins.is_empty() {
@@ -1975,8 +1981,16 @@ fn build_cors_layer(allowed_origins: &[String]) -> CorsLayer {
             "http://127.0.0.1:9090".parse().unwrap(),
         ]
     } else {
+        // tower-http panics on a wildcard in an origin list, which stopped the management API without a
+        // message. The API answers with credentials, so a wildcard is never wanted: it is skipped.
+        if allowed_origins.iter().any(|o| o.trim() == "*") {
+            tracing::warn!(
+                "security.allowed_origins: \"*\" is not supported and was ignored; list each origin"
+            );
+        }
         allowed_origins
             .iter()
+            .filter(|o| o.trim() != "*")
             .filter_map(|o| o.parse().ok())
             .collect()
     };
@@ -3212,3 +3226,6 @@ mod fail_closed_tests {
         assert!(b.get("error").is_none(), "{b}");
     }
 }
+
+#[cfg(test)]
+mod pipeline_tests;
