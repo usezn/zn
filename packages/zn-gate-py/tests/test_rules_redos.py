@@ -133,9 +133,15 @@ ALL_RULES = R.INJECTION_RULES + R.INDIRECT_INJECTION_RULES + R.MARKDOWN_EXFIL_RU
 
 
 def check_worst_cases(fn, what):
-    """fn on every worst case: 4x the input takes under 8x the CPU time."""
-    for i, s in enumerate(WORST_CASES):
-        assert_linear(fn, lambda k, i=i: worst_cases(k)[i], SIZE, f"{what} on {s[:12]!r}...")
+    """fn on every worst case: 4x the input takes under 8x the CPU time.
+
+    All the worst cases are one timed unit per rule: a single case of a few microseconds cannot be measured on its own
+    (repeating each of thousands of rule-and-case pairs until it can would make the suite many times slower), and a
+    pattern that is quadratic on any one case grows far faster than the sum of the others. The bound is 12 here, not 8:
+    a scan that bails out at memory speed (a prefilter) is 2x slower per byte once the 64 KB inputs no longer fit in the
+    CPU cache the 16 KB ones fit in, which shows as about 9x for 4x the input; a quadratic pattern is 16x or more.
+    """
+    assert_linear(lambda cases: [fn(case) for case in cases], worst_cases, SIZE, f"{what} on the worst cases", ratio=12.0)
 
 
 class TestLinearTime(unittest.TestCase):

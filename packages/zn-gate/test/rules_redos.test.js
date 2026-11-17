@@ -143,8 +143,13 @@ function ruleTester(rule) {
 const ALL_RULES = [...INJECTION_RULES, ...INDIRECT_INJECTION_RULES, ...MARKDOWN_EXFIL_RULES, ...SENSITIVE_PATH_RULES];
 
 // fn on every worst case: 4x the input takes under 8x the CPU time (a quadratic pattern takes about 16x).
+// All the worst cases are one timed unit per rule: a single case of a few microseconds cannot be measured on its own
+// (repeating each of thousands of rule-and-case pairs until it can would make the suite many times slower), and a
+// pattern that is quadratic on any one case grows far faster than the sum of the others. The bound is 12 here, not 8:
+// a scan that bails out at memory speed (a prefilter) is 2x slower per byte once the 64 KB inputs no longer fit in the
+// CPU cache the 16 KB ones fit in, which shows as about 9x for 4x the input; a quadratic pattern is 16x or more.
 function checkWorstCases(fn, what) {
-  WORST_CASES.forEach((input, i) => assertLinear(fn, (k) => worstCases(k)[i], SIZE, `${what} on ${label(input)}...`));
+  assertLinear((cases) => { for (const input of cases) fn(input); }, worstCases, SIZE, `${what} on the worst cases`, { ratio: 12 });
 }
 
 test('every detection rule is linear on 64 KB worst-case inputs', () => {
