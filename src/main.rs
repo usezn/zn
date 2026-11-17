@@ -311,7 +311,7 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Fast boot (tests/smoke): skip neural scoring and model loading entirely.
     // Note: model_path is still used by registry/canary bookkeeping.
-    if std::env::var("ZN_FAST_BOOT").is_ok() {
+    if zn::config::fast_boot_from_env()? {
         log::warning(apply_fast_boot(&mut zn_config)?)?;
     }
 
@@ -328,7 +328,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     // Initialize Engine with config
     let engine_config = ZnEngineConfig {
         gas_limit: zn_config.engine.gas_limit,
-        memory_limit: zn_config.engine.memory_limit_mb * 1024 * 1024,
+        memory_limit: zn_config.engine_memory_limit_bytes()?,
         timeout_ms: zn_config.engine.timeout_ms,
         allowed_hashes: zn_config.engine.allowed_policy_hashes.clone(),
         signing_public_key: zn_config.engine.signing_public_key.clone(),
@@ -386,7 +386,8 @@ async fn start_proxy(args: Args) -> Result<()> {
             Arc::new(Box::new(
                 AwsKmsVault::new(
                     zn::crypto::kms_vault::data_key_file_for(&zn_config.audit.db_path),
-                    zn::crypto::kms_vault::recover_flag_from_env(),
+                    zn::crypto::kms_vault::recover_flag_from_env()?,
+                    zn_config.kms.region.clone(),
                 )
                 .await,
             ))
@@ -485,7 +486,7 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initialize Neural Core
     log::info("🧠 Initializing Neural Core (Candle)...")?;
-    let fast_boot = std::env::var("ZN_FAST_BOOT").is_ok();
+    let fast_boot = zn::config::fast_boot_from_env()?;
     let model_dir = std::env::var("ZN_NEURAL_MODEL_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&zn_config.neural.model_path));
@@ -507,8 +508,11 @@ async fn start_proxy(args: Args) -> Result<()> {
                 Arc::new(b)
             }
             Err(e) => {
-                log::warning(format!("⚠️ Neural Core Failed to Start: {}.", e))?;
-                panic!("Critical: Neural Core (Candle) failed to load: {}", e);
+                return Err(anyhow!(
+                    "The neural model could not be loaded from {}: {}. zn did not start. Fix the model folder (neural.model_path or ZN_NEURAL_MODEL_PATH) or the connection that downloads it (HF_ENDPOINT), or turn the neural check off with \"neural\": {{\"enabled\": false}} (ZN_NEURAL_ENABLED=0).",
+                    zn::user_errors::display_path(&model_dir),
+                    zn::user_errors::plain_text(&e.to_string())
+                ));
             }
         }
     };
@@ -613,15 +617,27 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Built before the task starts so a bad value is a normal startup error.
     let rate_limit = api_state.config.security.rate_limit_per_minute;
-    let governor_conf = GovernorConfigBuilder::default()
-        .per_second(1)
-        .burst_size(rate_limit)
-        .finish()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "security.rate_limit_per_minute is {rate_limit}, but the rate limiter needs a value of at least 1"
-            )
-        })?;
+    let governor_conf = if api_state.config.security.rate_limit_enabled {
+        GovernorConfigBuilder::default()
+            .per_second(1)
+            .burst_size(rate_limit)
+            .finish()
+    } else {
+        // security.rate_limit_enabled = false: a bucket too large to run out.
+        log::warning(
+            "Rate limiting is off (security.rate_limit_enabled is false): the management API accepts any number of requests."
+                .to_string(),
+        )?;
+        GovernorConfigBuilder::default()
+            .per_nanosecond(1)
+            .burst_size(u32::MAX)
+            .finish()
+    }
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "security.rate_limit_per_minute is {rate_limit}, but the rate limiter needs a value of at least 1"
+        )
+    })?;
 
     // Bound before the task starts, so a port that is taken stops the gateway
     // with a clear message instead of leaving it running without an API.
@@ -746,7 +762,7 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
         gas_limit: config.engine.gas_limit,
-        memory_limit: config.engine.memory_limit_mb * 1024 * 1024,
+        memory_limit: config.engine_memory_limit_bytes()?,
         timeout_ms: config.engine.timeout_ms,
         allowed_hashes: config.engine.allowed_policy_hashes.clone(),
         signing_public_key: config.engine.signing_public_key.clone(),
@@ -766,7 +782,7 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // grows policy checks.
 
     // Initialize neural backend (fast boot if model unavailable)
-    let fast_boot = std::env::var("ZN_FAST_BOOT").is_ok();
+    let fast_boot = zn::config::fast_boot_from_env()?;
     let model_dir = std::env::var("ZN_NEURAL_MODEL_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&config.neural.model_path));

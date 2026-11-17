@@ -66,10 +66,97 @@ A mistyped value in these settings used to switch a protection off without a wor
 - **`security.allowed_origins` / `ZN_ALLOWED_ORIGINS`.** The browser origins allowed for the management API and the MCP WebSocket. `ZN_ALLOWED_ORIGINS` takes origins separated by commas. Each entry is trimmed, a trailing `/` is dropped and empty entries are skipped, so an empty value or `,` gives an empty list, which allows only loopback origins (`localhost` and `127.0.0.1`); a WebSocket upgrade without an `Origin` header is then refused. An entry must be `http://` or `https://`, a host and an optional port, with no path (`https://app.example.com`). The wildcard `*` and anything else that is not an origin stop the start and the message names the setting.
 - **`siem.endpoint` / `ZN_SIEM_ENDPOINT`.** An empty or blank value means no SIEM export. Otherwise it must be an `http://` or `https://` URL; anything else stops the start (the message never repeats the value, which can hold a token). Before, a bad value was accepted and failed at the first event.
 - **`kms.kms_type` / `ZN_KMS_TYPE`.** `local` (the default) or `aws`, in any capitalisation. Any other value (`gcp`, `vaults`, a typo) stops the start; it no longer falls back to the local key. A blank `ZN_KMS_TYPE` keeps the value from `zn.json`.
-- **Thresholds.** `neural.threshold` / `ZN_NEURAL_THRESHOLD` is a number from 0 to 10; `neural.classifier_threshold`, `fusion.tau` and `guardrails.fpr_margin` / `ZN_FPR_MARGIN` are numbers from 0 to 1. `NaN`, infinity, a negative number, a number out of range and, for the variables, a value that is not a number stop the start. A blank variable keeps the value from `zn.json`.
+- **Thresholds.** `neural.threshold` / `ZN_NEURAL_THRESHOLD` is a number from 0 to 10; `fusion.tau` and `guardrails.fpr_margin` / `ZN_FPR_MARGIN` are numbers from 0 to 1. `NaN`, infinity, a negative number, a number out of range and, for the variables, a value that is not a number stop the start. A blank variable keeps the value from `zn.json`.
 - **`guardrails.paranoia_level` / `ZN_PARANOIA_LEVEL`.** A whole number from 1 to 5. Any other value, in the variable or in `zn.json` (`high`, `300`, `-1`, `0`, `6`), stops the start. Before, a bad variable was ignored and `0` was raised to 1.
 - **`consensus.critical_tools`.** `consensus.enabled` with no tool listed stops the start, because no call would need approval. Spaces around a name or prefix in `zn.json` are removed and empty entries are dropped; a pattern with spaces around it in a configuration built in code is refused.
 - **The settings file.** It must be a JSON object (`{ ... }`). A JSON array or any other value stops the start. When zn takes `zn.json`, `zn.config.json` or `.zn.json` from the current folder without `--config`, it logs `settings loaded from <file>`, and warns when that file turns off managed rules, the loop breaker, neural analysis or rate limiting.
+
+- **`server.channel_capacity`.** The size of the event queue behind the live stream, a whole number from 1 to 1,000,000 (default 100). `0` or a value above the range stops the start; before, `0` aborted the process and a huge value tried to reserve all the memory.
+- **`engine.memory_limit_mb` / `ZN_MEMORY_LIMIT`.** The memory a policy may use, in megabytes (default 128). A value too large to count in bytes (above 17,592,186,044,415) stops the start with a message that names the setting.
+- **The neural model.** If the model cannot be loaded (the folder is damaged, or the first download fails), `zn start` stops with an error that names the folder and the three ways out: fix `neural.model_path` or `ZN_NEURAL_MODEL_PATH`, fix the connection or `HF_ENDPOINT`, or turn the neural check off. Before, it aborted with a panic.
+
+## Environment variables
+
+Every variable the gateway reads. A variable that is set overrides the same setting in `zn.json`. "On/off" variables take `1`, `0`, `true`, `false`, `yes`, `no`, `on` or `off`, in any capitalisation and with spaces around the value ignored; an unset or blank variable keeps the default, and any other word (for example `0n` or `fasle`) stops the start with a message that names the variable. A blank value of any other variable counts as not set, unless the table says otherwise.
+
+| Variable | Meaning | Default | Accepted values |
+|---|---|---|---|
+| `ZN_ENV` | `environment`: development or production (see [Production mode](#production-mode)). | `development` | `development`, `production` |
+| `ZN_PORT` | `server.port`: port of the management API. A value that is not a port is ignored with a warning. | `9090` | whole number, 0 to 65535 |
+| `ZN_API_KEY` | Key of the management API (super-admin). | none: a random key is written to a file | any non-blank text |
+| `ZN_NAMESPACE` | `security.namespace`: namespace of the local stdio proxy and `zn analyze`. | `global` | a namespace name |
+| `ZN_JWT_SECRET` | HS256 secret that checks JWTs. | none (JWTs refused) | at least 32 bytes |
+| `ZN_ALLOWED_ORIGINS` | `security.allowed_origins`: browser origins allowed for the API and the WebSocket. | loopback only | origins separated by commas, never `*` |
+| `ZN_MCP_WS_TOKEN` | Extra token for `/mcp/ws`. | none: a random token is written to a file | any non-blank text |
+| `ZN_GAS_LIMIT` | `engine.gas_limit`: instructions a policy may run. A value that is not a number is ignored. | `10000000` | whole number |
+| `ZN_MEMORY_LIMIT` | `engine.memory_limit_mb`: megabytes a policy may use. A value that is not a number is ignored. | `128` | whole number (see above for the top) |
+| `ZN_TIMEOUT` | `engine.timeout_ms`: milliseconds a policy may run. A value that is not a number is ignored. | `1000` | whole number |
+| `ZN_POLICY_HASHES` | `engine.allowed_policy_hashes`: SHA-256 of each policy that may load. | empty (any hash) | 64 hex characters each, separated by commas |
+| `ZN_SIGNING_PUBLIC_KEY` | `engine.signing_public_key`: Ed25519 public key that policy signatures must match. | none | 64 hex characters |
+| `ZN_PQ_PUBLIC_KEY` | ML-DSA-65 public key; when set, a post-quantum signature is mandatory. | none | hex |
+| `ZN_DB_PATH` | `audit.db_path`: the audit database file. | `zn.db` | a file path, not blank |
+| `ZN_DB_KEY` | `audit.encryption_key`: passphrase of the audit database. | none | at least 16 characters |
+| `ZN_SIEM_ENDPOINT` | `siem.endpoint`: where audit events are exported. | none (no export) | an `http://` or `https://` URL |
+| `ZN_SIEM_TOKEN` | `siem.token`: token sent to the SIEM. | none | any text |
+| `ZN_KMS_TYPE` | `kms.kms_type`: where the audit key comes from. | `local` | `local`, `aws` |
+| `ZN_KMS_KEY_ID` | `kms.key_id`: KMS key id or ARN. | none | any text |
+| `ZN_KMS_REGION` | `kms.region`: AWS region of the KMS key. Without it the AWS environment decides (`AWS_REGION`, the profile). | none | an AWS region such as `eu-west-1` |
+| `ZN_KMS_ALLOW_CONFIG_FALLBACK` | `kms.allow_config_fallback`: start with the key from the config when the KMS key cannot be fetched. | off | on/off |
+| `ZN_KMS_RECOVER_NEW_DATA_KEY` | Allows one start with a new KMS data key, losing older encrypted records (see [AWS KMS data key](#aws-kms-data-key)). Remove it afterwards. | off | on/off |
+| `ZN_NEURAL_ENABLED` | `neural.enabled`: the neural check. | on | on/off |
+| `ZN_NEURAL_THRESHOLD` | `neural.threshold`: anomaly distance above which a call is flagged. | `1.2` | number, 0 to 10 |
+| `ZN_NEURAL_BLOCKING` | `neural.active_blocking`: block what the neural check flags (otherwise it only reports). | off | on/off |
+| `ZN_NEURAL_MODEL_PATH` | Folder of the embedding model; overrides `neural.model_path`. | `~/.zn/models/all-MiniLM-L6-v2` | a folder path |
+| `ZN_GUARDRAILS_ALERT_ONLY` | `guardrails.alert_only`: neural findings only alert. | on | on/off |
+| `ZN_PARANOIA_LEVEL` | `guardrails.paranoia_level`: 1 is relaxed, 5 is strict. | `1` | whole number, 1 to 5 |
+| `ZN_MIN_SAMPLES` | `guardrails.min_samples`: samples before the false-positive guard judges. A value that is not a number is ignored. | `50` | whole number |
+| `ZN_FPR_MARGIN` | `guardrails.fpr_margin`: false-positive margin before a roll back. | `0.02` | number, 0 to 1 |
+| `ZN_NEAREST_NEIGHBOR_AUDIT` | `guardrails.nearest_neighbor_audit`: record the closest earlier call (by reference, never its content). | on | on/off |
+| `ZN_AUDIT_STORE_PAYLOADS` | `audit.store_payloads`: keep the scrubbed request in the audit log (needs a key). | off | on/off |
+| `ZN_AUDIT_REQUIRE_WRITE` | `audit.require_write`: deny a call whose audit record cannot be written. | off | on/off |
+| `ZN_FAST_BOOT` | Skip loading the neural model (tests only; see [Model download on first start](#model-download-on-first-start)). | off | on/off |
+| `HF_ENDPOINT` | Server the model is downloaded from. | `https://huggingface.co` | a URL |
+| `ZN_MEMORY_MAX_AGENT_ROWS`, `ZN_MEMORY_MAX_NAMESPACE_ROWS`, `ZN_MEMORY_MAX_TOTAL_ROWS` | Vector memory limits (see [Vector memory limits](#vector-memory-limits)). | 10,000, 25,000, 100,000 | whole number, 1 to 100,000,000 |
+| `ZN_OTLP_ENDPOINT` | Base URL of an OpenTelemetry collector; traces go to `<url>/v1/traces`. Wins over the two `OTEL_` variables. | none | a URL |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` | The standard OpenTelemetry endpoint variables, used when `ZN_OTLP_ENDPOINT` is not set. | `http://localhost:4318/v1/traces` | a URL |
+| `RUST_LOG` | Log level filter. | `info` | a `tracing` filter such as `debug` or `zn=debug` |
+
+## Production mode
+
+`ZN_ENV=production` (or `"environment": "production"`) turns on two checks:
+
+- The audit database must be encrypted: set `ZN_DB_KEY` (at least 16 characters; it also turns encryption on), or `audit.encryption_enabled` with `audit.encryption_key` in `zn.json`. Without a key, `zn start` stops with the message "Audit log encryption is MANDATORY in production".
+- With no `ZN_API_KEY`, the gateway warns at start that the management API is unprotected. It still starts.
+
+Nothing else changes with the environment name: the defaults of the other settings are the same in development and in production.
+
+## Settings file keys
+
+`zn init` writes a `zn.json` with every key below at its default. A variable from the previous section overrides the key of the same name. Keys with no variable:
+
+| Section | Keys (default) |
+|---|---|
+| `server` | `bind_address` (`127.0.0.1`); `channel_capacity` (100, 1 to 1,000,000); `ws_max_message_bytes` and `ws_max_frame_bytes` (1,048,576 each); `session_idle_timeout_secs` (900) and `write_timeout_secs` (30), where 0 means the default |
+| `security` | `rate_limit_enabled` (true; false turns the limiter off and logs a warning at start); `rate_limit_per_minute` (60, at least 1; the size of the burst each client may send before it is limited to one request per second) |
+| `audit` | `encryption_enabled` (false; `ZN_DB_KEY` turns it on) |
+| `siem` | `batch_size` (10) |
+| `neural` | `model_id` (`all-MiniLM-L6-v2`); `dim` (384, must match the model) |
+| `fusion` | `enabled` (false); `tau` (0.623, 0 to 1); `model_path`; `model_id` |
+| `managed_rules` | `pii_redaction`, `lfi_protection`, `sql_injection`, `prompt_injection`, `restricted_commands` (all true); `visual_pii_redaction` (false) |
+| `loop_breaker` | `enabled` (true); `max_repeats` (3); `window_seconds` (60) |
+| `caching` | `enabled` (false); `ttl_seconds` (300, at most one year) |
+| `consensus` | `enabled` (false); `critical_tools` (empty; required when enabled); `required_signatures` (2); `pending_ttl_secs` (900) |
+| `webhooks` | a list of webhook targets (empty) |
+
+### Settings that no longer do anything
+
+These keys are still accepted so that an existing `zn.json` keeps working, but nothing reads them. `zn init` no longer writes them, and a file that sets one gets a warning at start (`... which zn ignores ... will be removed in a later release`). Delete the line.
+
+- `audit.max_logs_in_memory`: no code reads it.
+- `neural.classifier_threshold`: the classifier threshold comes from `guardrails.paranoia_level` (0.7 at level 1, down to 0.3 at level 5). It is no longer range-checked.
+- `consensus.neural_as_witness`: the neural check never signs an action; only people do (`/api/v1/consensus/sign`).
+
+`security.rate_limit_enabled` and `kms.region` were also ignored before. They are now applied: the first turns the limiter off, the second selects the AWS region of the KMS client (it was not applied at all; `ZN_KMS_REGION` is read the same way).
 
 ## Audit payloads
 
@@ -81,7 +168,7 @@ Calls keep no content in the audit database, the event stream or the vector memo
 
 If an audit record cannot be written, the gateway logs the error (never the payload) and increments the `zn_audit_write_failures_total` counter, and the call goes on. To fail closed instead, set `audit.require_write = true` (or `ZN_AUDIT_REQUIRE_WRITE=1`): a call whose audit record cannot be written is denied with a JSON-RPC error.
 
-The on/off environment settings `ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRITE`, `ZN_NEURAL_BLOCKING` and `ZN_GUARDRAILS_ALERT_ONLY` accept `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off`, in any capitalisation. An unset or empty variable keeps the default. Any other value (for example a typo such as `0n`) stops the gateway at start-up with a message that names the variable, so a mistyped value can never leave a security setting off.
+Every on/off environment variable (`ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRITE`, `ZN_NEURAL_BLOCKING`, `ZN_GUARDRAILS_ALERT_ONLY`, `ZN_NEURAL_ENABLED`, `ZN_NEAREST_NEIGHBOR_AUDIT`, `ZN_KMS_ALLOW_CONFIG_FALLBACK`, `ZN_KMS_RECOVER_NEW_DATA_KEY` and `ZN_FAST_BOOT`) accepts `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off`, in any capitalisation. An unset or empty variable keeps the default. Any other value (for example a typo such as `0n`) stops the gateway at start-up with a message that names the variable, so a mistyped value can never leave a security setting off.
 
 If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant also sees the local stdio calls of this process.
 
@@ -211,7 +298,7 @@ A search runs on the request path, so it is tried once and gives up after one se
 
 To avoid the download:
 
-- `ZN_FAST_BOOT=1` (any value): the gateway does not load the model and runs with a stub. The neural check is off, and the gateway says so when it starts. With `neural.active_blocking` on (and `guardrails.alert_only` off) the gateway does not start, because the check that should block would be missing. For tests only.
+- `ZN_FAST_BOOT=1` (or `true`, `yes`, `on`; `0` or `off` leaves it off, and any other word stops the start): the gateway does not load the model and runs with a stub. The neural check is off, and the gateway says so when it starts. With `neural.active_blocking` on (and `guardrails.alert_only` off) the gateway does not start, because the check that should block would be missing. For tests only.
 - `"neural": {"enabled": false}` in `zn.json`: the model is not loaded and the neural check is off.
 - `ZN_NEURAL_MODEL_PATH=/path/to/folder` (or `neural.model_path` in `zn.json`): the gateway loads the model from that folder. Nothing is downloaded if the three files there match their hashes, so a local copy must be byte-identical.
 - `HF_ENDPOINT=<your-mirror-url>`: the gateway downloads from that server instead of huggingface.co. The server must serve the same paths, `<endpoint>/sentence-transformers/all-MiniLM-L6-v2/resolve/<commit>/<file>`.

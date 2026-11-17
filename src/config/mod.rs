@@ -536,8 +536,9 @@ pub struct AuditConfig {
     #[serde(default = "default_db_path")]
     pub db_path: String,
 
-    /// Maximum logs to keep in memory for dashboard
-    #[serde(default = "default_max_logs")]
+    /// Deprecated and ignored: nothing reads it. A file that sets it gets a warning at
+    /// start; it is no longer written by `zn init` and will be removed.
+    #[serde(default = "default_max_logs", skip_serializing)]
     pub max_logs_in_memory: usize,
 
     /// Enable database encryption (requires encryption key)
@@ -646,9 +647,10 @@ pub struct NeuralConfig {
     #[serde(default = "default_false")]
     pub active_blocking: bool,
 
-    /// Classifier probability threshold (0.0 - 1.0) for the fused decision.
-    /// Only used when the model ships a `head.json`; anomaly-only models ignore it.
-    #[serde(default = "default_classifier_threshold")]
+    /// Deprecated and ignored: the classifier threshold comes from
+    /// `guardrails.paranoia_level`. A file that sets it gets a warning at start; it is
+    /// no longer written by `zn init` and will be removed.
+    #[serde(default = "default_classifier_threshold", skip_serializing)]
     pub classifier_threshold: f32,
 
     /// Embedding model ID to use
@@ -856,8 +858,10 @@ pub struct ConsensusConfig {
     /// Number of required signatures (M)
     #[serde(default = "default_m")]
     pub required_signatures: u32,
-    /// Allow neural core to act as one witness if risk is low
-    #[serde(default = "default_true")]
+    /// Deprecated and ignored: the neural check never signs an action; only people do.
+    /// A file that sets it gets a warning at start; it is no longer written by
+    /// `zn init` and will be removed.
+    #[serde(default = "default_true", skip_serializing)]
     pub neural_as_witness: bool,
     /// Seconds a proposed action stays valid (default 900). After that it can no
     /// longer be approved and is removed. 0 means the default.
@@ -1143,23 +1147,10 @@ impl ZnConfig {
             self.kms.key_id = Some(key_id);
         }
 
-        if let Ok(allow) = std::env::var("ZN_KMS_ALLOW_CONFIG_FALLBACK") {
-            self.kms.allow_config_fallback =
-                matches!(allow.as_str(), "1" | "true" | "TRUE" | "True");
-        }
-
-        if let Ok(neural_enabled) = std::env::var("ZN_NEURAL_ENABLED") {
-            self.neural.enabled = neural_enabled.parse().unwrap_or(true);
-        }
-
         if let Ok(min_s) = std::env::var("ZN_MIN_SAMPLES") {
             if let Ok(v) = min_s.parse::<u64>() {
                 self.guardrails.min_samples = v;
             }
-        }
-
-        if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
-            self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
         }
 
         self.apply_security_flags(&|var| {
@@ -1251,6 +1242,10 @@ impl ZnConfig {
 
         if let Some(raw) = set("ZN_KMS_TYPE") {
             self.kms.kms_type = parse_kms_type("ZN_KMS_TYPE", &raw)?;
+        }
+
+        if let Some(raw) = set("ZN_KMS_REGION") {
+            self.kms.region = Some(raw.trim().to_string());
         }
 
         if let Some(raw) = set("ZN_NEURAL_THRESHOLD") {
@@ -1349,6 +1344,15 @@ impl ZnConfig {
         if let Some(v) = bool_env("ZN_GUARDRAILS_ALERT_ONLY", get)? {
             self.guardrails.alert_only = v;
         }
+        if let Some(v) = bool_env("ZN_KMS_ALLOW_CONFIG_FALLBACK", get)? {
+            self.kms.allow_config_fallback = v;
+        }
+        if let Some(v) = bool_env("ZN_NEURAL_ENABLED", get)? {
+            self.neural.enabled = v;
+        }
+        if let Some(v) = bool_env("ZN_NEAREST_NEIGHBOR_AUDIT", get)? {
+            self.guardrails.nearest_neighbor_audit = v;
+        }
         Ok(())
     }
 
@@ -1370,6 +1374,16 @@ impl ZnConfig {
                 self.security.rate_limit_per_minute
             ));
         }
+
+        if !(1..=MAX_CHANNEL_CAPACITY).contains(&self.server.channel_capacity) {
+            return Err(anyhow!(
+                "server.channel_capacity must be a whole number from 1 to {}, but it is {}. It sizes the queue of events for the live stream; 100 is the default. zn did not start.",
+                MAX_CHANNEL_CAPACITY,
+                self.server.channel_capacity
+            ));
+        }
+
+        self.engine_memory_limit_bytes()?;
 
         if self.caching.ttl_seconds > MAX_CACHE_TTL_SECONDS {
             return Err(anyhow!(
@@ -1409,11 +1423,6 @@ impl ZnConfig {
             "neural.threshold (ZN_NEURAL_THRESHOLD)",
             f64::from(self.neural.threshold),
             10.0,
-        )?;
-        check_unit_range(
-            "neural.classifier_threshold",
-            f64::from(self.neural.classifier_threshold),
-            1.0,
         )?;
         check_unit_range("fusion.tau", f64::from(self.fusion.tau), 1.0)?;
         check_unit_range(
@@ -1513,6 +1522,21 @@ impl ZnConfig {
         Ok(())
     }
 
+    /// `engine.memory_limit_mb` in bytes. A value too large to count in bytes is an error
+    /// that names the setting, not an overflow.
+    pub fn engine_memory_limit_bytes(&self) -> Result<u64> {
+        self.engine
+            .memory_limit_mb
+            .checked_mul(1024 * 1024)
+            .ok_or_else(|| {
+                anyhow!(
+                    "engine.memory_limit_mb (ZN_MEMORY_LIMIT) is {}, which is too large: the most it accepts is {} (megabytes). The default is 128. zn did not start.",
+                    self.engine.memory_limit_mb,
+                    u64::MAX / (1024 * 1024)
+                )
+            })
+    }
+
     /// Get neural blocking mode based on paranoia level and alert_only
     pub fn is_neural_blocking(&self) -> bool {
         !self.guardrails.alert_only && self.neural.active_blocking
@@ -1564,6 +1588,21 @@ fn bool_env(var: &str, get: &dyn Fn(&str) -> Option<String>) -> Result<Option<bo
         Some(raw) => parse_bool_flag(var, &raw),
         None => Ok(None),
     }
+}
+
+/// Reads one on/off environment variable from the process environment with the same
+/// rules as every other on/off setting (`1`, `0`, `true`, `false`, `yes`, `no`, `on`,
+/// `off`). `Ok(None)` means unset or blank; any other word is an error naming the variable.
+pub fn env_flag(var: &str) -> Result<Option<bool>> {
+    bool_env(var, &|name| {
+        std::env::var_os(name).map(|v| v.to_string_lossy().into_owned())
+    })
+}
+
+/// `ZN_FAST_BOOT` (tests and smoke runs): on means the neural model is not loaded.
+/// Unset or blank is off; a word that is not on/off is an error.
+pub fn fast_boot_from_env() -> Result<bool> {
+    Ok(env_flag("ZN_FAST_BOOT")?.unwrap_or(false))
 }
 
 /// Plain wording for a value of the wrong type: serde's `u16` becomes
@@ -1657,6 +1696,38 @@ fn find_bad_setting(content: &str) -> Option<String> {
     None
 }
 
+/// Settings that are still accepted in a file but have no effect. They are not written by
+/// `zn init`, and a file that sets one gets a warning at start.
+const DEPRECATED_SETTINGS: &[&str] = &[
+    "audit.max_logs_in_memory",
+    "neural.classifier_threshold",
+    "consensus.neural_as_witness",
+];
+
+/// The largest `server.channel_capacity` zn accepts: the queue is allocated at start, so a huge
+/// value would exhaust memory.
+pub const MAX_CHANNEL_CAPACITY: usize = 1_000_000;
+
+/// Warnings for the deprecated settings that `content` sets.
+fn deprecated_setting_notices(file: &str, content: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return Vec::new();
+    };
+    DEPRECATED_SETTINGS
+        .iter()
+        .filter(|path| {
+            path.split('.')
+                .try_fold(&value, |v, key| v.get(key))
+                .is_some()
+        })
+        .map(|path| {
+            format!(
+                "{file} sets \"{path}\", which zn ignores: it has no effect and will be removed in a later release. Delete the line from the file."
+            )
+        })
+        .collect()
+}
+
 /// Every setting name zn knows, as dotted paths (`server.port`), taken from
 /// the default configuration so the list can never fall behind the structs.
 fn known_setting_paths() -> Vec<String> {
@@ -1702,6 +1773,7 @@ pub fn unknown_settings(content: &str) -> Vec<String> {
                 format!("{prefix}.{key}")
             };
             match known_map.get(key) {
+                None if DEPRECATED_SETTINGS.contains(&path.as_str()) => {}
                 None => out.push(path),
                 Some(known_inner) => walk(&path, inner, known_inner, out),
             }
@@ -1822,7 +1894,9 @@ fn checked_setting_notices(file: &str, content: &str) -> Result<Vec<String>> {
             suggest_setting(bad, &known).as_deref()
         )));
     }
-    Ok(unknown_setting_notices(file, content))
+    let mut notices = unknown_setting_notices(file, content);
+    notices.extend(deprecated_setting_notices(file, content));
+    Ok(notices)
 }
 
 /// Plain-English text for a settings file that cannot be parsed: the file, the
@@ -2975,8 +3049,6 @@ mod value_validation_tests {
         for (key, ok, bad) in [
             ("neural.threshold", "10", "10.5"),
             ("neural.threshold", "0", "-0.1"),
-            ("neural.classifier_threshold", "1", "1.5"),
-            ("neural.classifier_threshold", "0", "-1"),
             ("fusion.tau", "1", "2"),
             ("fusion.tau", "0", "-0.5"),
             ("guardrails.fpr_margin", "1", "1.01"),
@@ -2997,10 +3069,6 @@ mod value_validation_tests {
             c.security.jwt_secret = None;
             c.fusion.tau = v;
             assert!(c.validate().is_err(), "tau {v}");
-            let mut c = ZnConfig::default();
-            c.security.jwt_secret = None;
-            c.neural.classifier_threshold = v;
-            assert!(c.validate().is_err(), "classifier {v}");
         }
         let mut c = ZnConfig::default();
         c.security.jwt_secret = None;
@@ -3139,5 +3207,175 @@ mod value_validation_tests {
             assert!(warning.contains(part), "{part}: {warning}");
         }
         assert!(!warning.contains("PII"), "{warning}");
+    }
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+
+    fn with_env(vars: &[(&str, &str)]) -> Result<ZnConfig> {
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let get = move |name: &str| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+        let mut c = ZnConfig::default();
+        c.apply_security_flags(&get)?;
+        c.apply_validated_env(&get)?;
+        Ok(c)
+    }
+
+    #[test]
+    fn the_remaining_on_off_variables_use_the_same_parser() {
+        for var in [
+            "ZN_KMS_ALLOW_CONFIG_FALLBACK",
+            "ZN_NEURAL_ENABLED",
+            "ZN_NEAREST_NEIGHBOR_AUDIT",
+        ] {
+            let read = |c: &ZnConfig| match var {
+                "ZN_KMS_ALLOW_CONFIG_FALLBACK" => c.kms.allow_config_fallback,
+                "ZN_NEURAL_ENABLED" => c.neural.enabled,
+                _ => c.guardrails.nearest_neighbor_audit,
+            };
+            for on in ["1", "true", "TRUE", "yes", "On", " on "] {
+                assert!(read(&with_env(&[(var, on)]).unwrap()), "{var}={on:?}");
+            }
+            for off in ["0", "false", "False", "no", "OFF", " off "] {
+                assert!(!read(&with_env(&[(var, off)]).unwrap()), "{var}={off:?}");
+            }
+            for blank in ["", "  "] {
+                assert_eq!(
+                    read(&with_env(&[(var, blank)]).unwrap()),
+                    read(&ZnConfig::default()),
+                    "{var}={blank:?}"
+                );
+            }
+            for bad in ["0n", "yes please", "2", "enabled", "y"] {
+                let err = with_env(&[(var, bad)]).unwrap_err().to_string();
+                assert!(err.contains(var), "{var}={bad:?}: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mistyped_neural_flag_no_longer_means_on() {
+        // Before, an unparsable value counted as "true".
+        let err = with_env(&[("ZN_NEURAL_ENABLED", "fasle")]).unwrap_err();
+        assert!(err.to_string().contains("ZN_NEURAL_ENABLED"), "{err}");
+    }
+
+    #[test]
+    fn fast_boot_and_recovery_flags_use_the_shared_parser() {
+        // These two read the process environment, so they are checked through the
+        // shared reader with an unset name (always unset) and the parser itself.
+        assert_eq!(env_flag("ZN_TEST_NEVER_SET_FLAG").unwrap(), None);
+        assert_eq!(parse_bool_flag("ZN_FAST_BOOT", "1").unwrap(), Some(true));
+        assert_eq!(parse_bool_flag("ZN_FAST_BOOT", "0").unwrap(), Some(false));
+        assert!(parse_bool_flag("ZN_KMS_RECOVER_NEW_DATA_KEY", "treu").is_err());
+    }
+
+    #[test]
+    fn kms_region_from_the_environment() {
+        let c = with_env(&[("ZN_KMS_REGION", " eu-west-1 ")]).unwrap();
+        assert_eq!(c.kms.region.as_deref(), Some("eu-west-1"));
+        let mut c = ZnConfig::default();
+        c.kms.region = Some("us-east-2".into());
+        c.apply_validated_env(&|n| (n == "ZN_KMS_REGION").then(|| "  ".to_string()))
+            .unwrap();
+        assert_eq!(
+            c.kms.region.as_deref(),
+            Some("us-east-2"),
+            "blank keeps the file value"
+        );
+    }
+
+    #[test]
+    fn memory_limit_overflow_is_an_error_not_a_wrap() {
+        let mut c = ZnConfig::default();
+        c.security.jwt_secret = None;
+        assert_eq!(c.engine_memory_limit_bytes().unwrap(), 128 * 1024 * 1024);
+        c.engine.memory_limit_mb = u64::MAX;
+        let msg = c.engine_memory_limit_bytes().unwrap_err().to_string();
+        assert!(
+            msg.contains("engine.memory_limit_mb") && msg.contains("too large"),
+            "{msg}"
+        );
+        assert!(c.validate().is_err());
+        c.engine.memory_limit_mb = u64::MAX / (1024 * 1024);
+        assert!(c.engine_memory_limit_bytes().is_ok());
+        c.engine.memory_limit_mb = u64::MAX / (1024 * 1024) + 1;
+        assert!(c.engine_memory_limit_bytes().is_err());
+    }
+
+    #[test]
+    fn channel_capacity_must_be_in_range() {
+        for bad in [0usize, MAX_CHANNEL_CAPACITY + 1, usize::MAX] {
+            let mut c = ZnConfig::default();
+            c.security.jwt_secret = None;
+            c.server.channel_capacity = bad;
+            let msg = c.validate().unwrap_err().to_string();
+            assert!(
+                msg.contains("server.channel_capacity") && msg.contains("did not start"),
+                "{bad}: {msg}"
+            );
+        }
+        for ok in [1usize, 100, MAX_CHANNEL_CAPACITY] {
+            let mut c = ZnConfig::default();
+            c.security.jwt_secret = None;
+            c.server.channel_capacity = ok;
+            assert!(c.validate().is_ok(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn deprecated_settings_warn_but_are_accepted() {
+        let file = r#"{"audit": {"max_logs_in_memory": 10}, "neural": {"classifier_threshold": 5.0}, "consensus": {"neural_as_witness": false}}"#;
+        let c = ZnConfig::parse_text("zn.json", file).unwrap();
+        let notices = checked_setting_notices("zn.json", file).unwrap();
+        assert_eq!(c.audit.max_logs_in_memory, 10);
+        assert_eq!(notices.len(), 3, "{notices:?}");
+        for key in [
+            "audit.max_logs_in_memory",
+            "neural.classifier_threshold",
+            "consensus.neural_as_witness",
+        ] {
+            assert!(
+                notices.iter().any(|n| n.contains(key)
+                    && n.contains("ignores")
+                    && n.contains("will be removed")),
+                "{key}: {notices:?}"
+            );
+        }
+        // An ignored value never stops the start, even an out-of-range one.
+        let mut c = c;
+        c.security.jwt_secret = None;
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn deprecated_settings_are_not_written_and_not_reported_as_unknown() {
+        let json = serde_json::to_string(&ZnConfig::init_template()).unwrap();
+        for key in [
+            "max_logs_in_memory",
+            "classifier_threshold",
+            "neural_as_witness",
+        ] {
+            assert!(!json.contains(key), "{key} is still written");
+        }
+        assert!(checked_setting_notices("zn.json", &json)
+            .unwrap()
+            .is_empty());
+        let file = r#"{"audit": {"max_logs_in_memory": 10}}"#;
+        assert!(unknown_settings(file).is_empty());
+    }
+
+    #[test]
+    fn rate_limit_enabled_is_still_a_real_setting() {
+        let c = ZnConfig::parse_text("zn.json", r#"{"security": {"rate_limit_enabled": false}}"#)
+            .unwrap();
+        assert!(!c.security.rate_limit_enabled);
+        let json = serde_json::to_string(&ZnConfig::init_template()).unwrap();
+        assert!(json.contains("rate_limit_enabled"));
     }
 }

@@ -43,14 +43,10 @@ pub fn data_key_file_for(db_path: impl AsRef<Path>) -> PathBuf {
     db_path.as_ref().with_file_name(DATA_KEY_FILE_NAME)
 }
 
-/// True when `ZN_KMS_RECOVER_NEW_DATA_KEY` is set to `true` or `1`.
-pub fn recover_flag_from_env() -> bool {
-    matches!(
-        std::env::var(RECOVER_ENV)
-            .map(|v| v.trim().to_ascii_lowercase())
-            .as_deref(),
-        Ok("true") | Ok("1")
-    )
+/// True when `ZN_KMS_RECOVER_NEW_DATA_KEY` is on (`1`, `true`, `yes` or `on`). Unset or blank
+/// is off; any other word is an error, so a typo cannot silently leave recovery off.
+pub fn recover_flag_from_env() -> Result<bool> {
+    Ok(crate::config::env_flag(RECOVER_ENV)?.unwrap_or(false))
 }
 
 /// A new data key: the plaintext (memory only) and its encrypted copy.
@@ -78,8 +74,14 @@ pub struct AwsKmsApi {
 }
 
 impl AwsKmsApi {
-    pub async fn new() -> Self {
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    /// `region` (`kms.region` / `ZN_KMS_REGION`) overrides the region of the AWS
+    /// environment (`AWS_REGION`, the profile); `None` keeps it.
+    pub async fn new(region: Option<String>) -> Self {
+        let mut loader = aws_config::defaults(BehaviorVersion::latest());
+        if let Some(region) = region.filter(|r| !r.trim().is_empty()) {
+            loader = loader.region(aws_config::Region::new(region.trim().to_string()));
+        }
+        let config = loader.load().await;
         Self {
             client: kms::Client::new(&config),
         }
@@ -173,9 +175,9 @@ pub struct AwsKmsVault {
 impl AwsKmsVault {
     /// Real KMS client. `state_path` is the data key file (see
     /// [`data_key_file_for`]); `recover_new_key` is the explicit recovery flag.
-    pub async fn new(state_path: PathBuf, recover_new_key: bool) -> Self {
+    pub async fn new(state_path: PathBuf, recover_new_key: bool, region: Option<String>) -> Self {
         Self::with_api(
-            Box::new(AwsKmsApi::new().await),
+            Box::new(AwsKmsApi::new(region).await),
             state_path,
             recover_new_key,
         )

@@ -48,7 +48,6 @@ struct PersistedSecurity<'a> {
 #[derive(Serialize)]
 struct PersistedAudit<'a> {
     db_path: &'a str,
-    max_logs_in_memory: usize,
     encryption_enabled: bool,
     store_payloads: bool,
     require_write: bool,
@@ -89,7 +88,7 @@ impl<'a> PersistedConfig<'a> {
         } = &c.security;
         let AuditConfig {
             db_path,
-            max_logs_in_memory,
+            max_logs_in_memory: _,
             encryption_enabled,
             encryption_key: _,
             store_payloads,
@@ -113,7 +112,6 @@ impl<'a> PersistedConfig<'a> {
             engine: &c.engine,
             audit: PersistedAudit {
                 db_path,
-                max_logs_in_memory: *max_logs_in_memory,
                 encryption_enabled: *encryption_enabled,
                 store_payloads: *store_payloads,
                 require_write: *require_write,
