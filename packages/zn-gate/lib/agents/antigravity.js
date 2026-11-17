@@ -59,6 +59,15 @@ const SHELL_TOOLS = new Set(['run_command']);
 const READ_TOOLS = new Set(['read_file', 'view_file', 'list_dir', 'find_by_name']);
 const NAMES_ONLY_TOOLS = new Set(['list_dir', 'find_by_name']);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']);
+// Agent-management tools of the docs (https://antigravity.google/docs/hooks, checked 2026-11-17).
+// manage_task with Action send_input types text into a running terminal, so the text is a shell command like run_command's.
+const TASK_ACTIONS = new Set(['list', 'kill', 'status', 'send_input']);
+// schedule starts a prompt later (a timer or a cron job) with nobody watching; define_subagent creates an agent with its own
+// instructions and tools: both leave something behind that acts after this call, so the user is asked every time.
+const ASK_TOOLS = {
+  schedule: 'zn: this call schedules a prompt to run later, on a timer or a cron job, when nobody is watching the agent. Approve only if you want that prompt to run.',
+  define_subagent: 'zn: this call creates a custom subagent with its own instructions and tools. Approve only if you want that agent to exist.',
+};
 const COMMAND_KEYS = ['CommandLine', 'commandLine', 'command_line', 'command', 'Command'];
 const PATH_KEY_RE = /path|file|target|uri|dir|source|destination/i;
 const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title|^target$/i; // edit_file's "Target" holds text, not a path
@@ -300,6 +309,19 @@ function normalize(raw) {
     const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2] }, input: { args, paths: mp.paths, texts: [] } };
     if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
+  }
+  if (Object.prototype.hasOwnProperty.call(ASK_TOOLS, toolName)) return { ...ev, tool: toolName, askReason: ASK_TOOLS[toolName], input: { texts: [] } };
+  if (toolName === 'manage_task') {
+    const action = args.Action;
+    if (action === 'send_input') {
+      // The text goes to a running terminal: it gets the checks of a shell command.
+      if (args.Input !== undefined && typeof args.Input !== 'string') return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read the input of this task call, so zn cannot check it.' };
+      const text = args.Input || '';
+      const scan = text ? searchScan(text, cwd) : { dirs: [], ask: null };
+      return { ...ev, tool: 'bash', input: { command: text, texts: [], ...(scan.dirs.length ? { scanDirs: scan.dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
+    }
+    if (action !== undefined && !TASK_ACTIONS.has(action)) return { ...ev, tool: toolName, askReason: 'zn: this task call uses an action zn does not know, so zn cannot check it.', input: { texts: [] } };
+    return { ...ev, tool: toolName, input: { texts: [] } };
   }
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!READ_TOOLS.has(toolName) && !WRITE_TOOLS.has(toolName) && cmd !== undefined)) {

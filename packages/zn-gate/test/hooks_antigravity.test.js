@@ -590,7 +590,7 @@ test('edit_file: the Target key is text, not a path', async () => {
 });
 
 test('search_web, invoke_subagent and other tools without a path keep the default (no opinion)', async () => {
-  for (const name of ['search_web', 'invoke_subagent', 'schedule', 'manage_task', 'ask_question', 'list_resources']) {
+  for (const name of ['search_web', 'invoke_subagent', 'send_message', 'ask_permission', 'manage_task', 'ask_question', 'list_resources']) {
     assert.equal((await run(pre(name, { Query: 'x' }))).output.decision, 'allow', name);
   }
 });
@@ -604,7 +604,7 @@ test('every real tool name, with its real argument shape, answers an explicit de
     ['run_command', { CommandLine: 'ls' }], ['run_command', { CommandLine: 'cat ' + cred }], ['run_command', {}],
     ['view_file', { AbsolutePath: '/work/proj/a.txt' }], ['write_to_file', { TargetFile: '/work/proj/a.txt', CodeContent: 'x' }],
     ['find_by_name', { SearchDirectory: '/work/proj', Pattern: '*.js' }], ['list_dir', { DirectoryPath: '/work/proj' }],
-    ['invoke_subagent', { Task: 'x' }], ['search_web', { query: 'x' }], ['schedule', {}], ['manage_task', {}], ['ask_question', {}], ['list_resources', {}],
+    ['invoke_subagent', { Task: 'x' }], ['search_web', { query: 'x' }], ['schedule', {}], ['define_subagent', {}], ['send_message', {}], ['ask_permission', {}], ['manage_task', {}], ['manage_task', { Action: 'send_input' }], ['ask_question', {}], ['list_resources', {}],
   ];
   for (const [name, args] of shapes) {
     const r = await run(pre(name, args));
@@ -670,4 +670,43 @@ test('the real hook: the test variables do nothing without ZN_TEST_HOOK_FAULTS=1
   assert.equal(JSON.parse(r.stdout).decision, 'allow');
   const env2 = spawnSync(process.execPath, [RUNNER, 'antigravity'], { input: JSON.stringify(pre('search_web', { query: 'x' })), encoding: 'utf8', env: { ...process.env, ZN_STATS: 'off', ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '100', ZN_TEST_HOOK_FAULTS: '' }, timeout: 20000 });
   assert.equal(JSON.parse(env2.stdout).decision, 'allow');
+});
+
+test('schedule and define_subagent always ask the user (force_ask); a documented shape and an empty one alike', async () => {
+  for (const [name, args] of [
+    ['schedule', { CronExpression: '* * * * *', Prompt: 'run the deploy', MaxIterations: 3 }],
+    ['schedule', { DurationSeconds: 60, Prompt: 'x' }], ['schedule', {}],
+    ['define_subagent', { name: 'a', description: 'd', system_prompt: 's', enable_write_tools: true }], ['define_subagent', {}],
+  ]) {
+    const r = await run(pre(name, args));
+    assert.equal(r.output.decision, 'force_ask', name + ' ' + JSON.stringify(args));
+    assert.match(r.output.reason, /^zn: /);
+  }
+});
+
+test('manage_task send_input: the Input text gets the shell checks; other actions have no opinion', async () => {
+  const cred = path.join(HOME, '.ssh', 'id_rsa');
+  const n = agy.normalize(pre('manage_task', { Action: 'send_input', TaskId: 't1', Input: 'ls -la' }));
+  assert.equal(n.tool, 'bash');
+  assert.equal(n.input.command, 'ls -la');
+  const denied = await run(pre('manage_task', { Action: 'send_input', TaskId: 't1', Input: 'cat ' + cred }));
+  assert.equal(denied.output.decision, 'deny');
+  assert.ok(denied.output.reason);
+  assert.equal((await run(pre('manage_task', { Action: 'send_input', TaskId: 't1', Input: 'ls' }))).output.decision, 'allow');
+  assert.equal((await run(pre('manage_task', { Action: 'send_input', TaskId: 't1' }))).output.decision, 'allow');
+  const bad = await run(pre('manage_task', { Action: 'send_input', Input: { a: 1 } }));
+  assert.equal(bad.output.decision, 'deny');
+  for (const action of ['list', 'kill', 'status']) assert.equal((await run(pre('manage_task', { Action: action, TaskId: 't1' }))).output.decision, 'allow', action);
+  assert.equal((await run(pre('manage_task', { Action: 'teleport' }))).output.decision, 'force_ask');
+});
+
+test('invoke_subagent, send_message and ask_permission are classified as no-opinion on purpose', async () => {
+  for (const [name, args] of [
+    ['invoke_subagent', { Subagents: [{ Prompt: 'p', Role: 'r', TypeName: 't' }] }],
+    ['send_message', { Recipient: 'a', Message: 'hi' }],
+    ['ask_permission', { Action: 'read', Target: '/work/proj', Reason: 'r' }],
+  ]) {
+    const r = await run(pre(name, args));
+    assert.equal(r.output.decision, 'allow', name);
+  }
 });

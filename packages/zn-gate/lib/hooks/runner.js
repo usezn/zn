@@ -751,6 +751,8 @@ async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
   const input = ev.input || {};
   const tool = ev.tool;
+  // An adapter can mark a tool that always needs the user's confirmation (it leaves something behind that acts later).
+  if (typeof ev.askReason === 'string') return { decision: 'ask', message: ev.askReason };
 
   if (tool === 'read' || tool === 'lsp' || (tool === 'grep' && input.path)) {
     // An adapter that finds several paths in one call lists them all in input.paths.
