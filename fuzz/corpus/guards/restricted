@@ -1,0 +1,2 @@
+shell
+{"cmd":"rm -rf /tmp/example"}

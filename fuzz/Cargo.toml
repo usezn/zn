@@ -43,3 +43,10 @@ path = "fuzz_targets/policy_wasm.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "guards"
+path = "fuzz_targets/guards.rs"
+test = false
+doc = false
+bench = false
