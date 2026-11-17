@@ -19,6 +19,7 @@ import math
 import os
 import re
 import sys
+import threading
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
@@ -70,7 +71,11 @@ _PREFILTER_MAX_ALTERNATIVES = 128
 _NEEDLE_FOLD: Dict[int, str] = {**{c: chr(c + 32) for c in range(65, 91)}, 0x212A: 'k', 0x17F: 's', 0x131: 'i', 0x130: 'i'}
 _folded_cache: Tuple[str, str] = ('', '')
 # Number of evaluations running; the folded text is only cached while it is above zero.
+# Changed only under _state_lock (the evaluation cache below shares the lock).
 _evaluating = 0
+# Guards the evaluation counter and the evaluate() cache. Held for a few dictionary operations,
+# never while a text is being evaluated.
+_state_lock = threading.Lock()
 
 
 def _fold_for_needles(text: str) -> str:
@@ -1020,14 +1025,16 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     global _folded_cache, _evaluating
-    _evaluating += 1
+    with _state_lock:
+        _evaluating += 1
     try:
         return _evaluate_body(input_text, strict)
     finally:
-        _evaluating -= 1
-        if not _evaluating:
-            # Do not keep the last (possibly large, untrusted) input alive between calls.
-            _folded_cache = ('', '')
+        with _state_lock:
+            _evaluating -= 1
+            if not _evaluating:
+                # Do not keep the last (possibly large, untrusted) input alive between calls.
+                _folded_cache = ('', '')
 
 
 def _evaluate_body(input_text: str, strict: bool = False) -> Assessment:
@@ -2761,21 +2768,40 @@ def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)
-    if RULES_VERSION != _eval_cache_ver:
-        _eval_cache.clear()
-        _eval_cache_ver = RULES_VERSION
     key = (strict, input_text)
-    hit = _eval_cache.get(key)
+    with _state_lock:
+        if RULES_VERSION != _eval_cache_ver:
+            _eval_cache.clear()
+            _eval_cache_ver = RULES_VERSION
+        hit = _eval_cache.get(key)
+        if hit is not None:
+            _eval_cache[key] = _eval_cache.pop(key)
     if hit is not None:
-        _eval_cache[key] = _eval_cache.pop(key)
         return Assessment(hit[0], hit[1], hit[2], hit[3], hit[4], hit[5], hit[6], advisory=dict(hit[7]) if hit[7] else None)
+    # The evaluation runs outside the lock; two threads that miss on the same text both compute it.
     res = _evaluate_uncached(input_text, strict)
-    _eval_cache[key] = (res.verdict, res.confidence, res.rule,
-                               res.reason, res.engine, res.rules_version, res.truncated,
-                               dict(res.advisory) if res.advisory else None)
-    if len(_eval_cache) > _EVAL_CACHE_MAX:
-        _eval_cache.pop(next(iter(_eval_cache)))
+    entry = (res.verdict, res.confidence, res.rule,
+             res.reason, res.engine, res.rules_version, res.truncated,
+             dict(res.advisory) if res.advisory else None)
+    with _state_lock:
+        _eval_cache[key] = entry
+        while len(_eval_cache) > _EVAL_CACHE_MAX:
+            _eval_cache.pop(next(iter(_eval_cache)), None)
     return res
+
+
+def _reset_after_fork() -> None:
+    # A forked child has only the forking thread. The lock may have been held, and the counter
+    # raised, by a thread that does not exist in the child, so start both from a clean state.
+    global _state_lock, _evaluating, _folded_cache
+    _state_lock = threading.Lock()
+    _evaluating = 0
+    _folded_cache = ('', '')
+    _eval_cache.clear()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 # Third-party notice for the provider formats marked as taken from gitleaks v8.30.1 (config/gitleaks.toml):
