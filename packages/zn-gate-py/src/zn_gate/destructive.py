@@ -474,8 +474,8 @@ class _Vars:
             out = [self.substitute(w, chosen) for w in words] if self.vars else words
             # A command word that is just a variable ($X url, | $S) is split on blanks, as an unquoted expansion is.
             if self.vars and words:
-                m = _VAR_SOLE_REF_RE.match(words[0])
-                if m and (m.group(1) or m.group(2)) in self.vars:
+                sole = _VAR_SOLE_REF_RE.match(words[0])
+                if sole and (sole.group(1) or sole.group(2)) in self.vars:
                     out = out[0].split() + out[1:]
             key = "\0".join(out) if total > 1 else ""
             if key not in keys:
@@ -515,9 +515,9 @@ class _Vars:
                 alts.append(v2)
         if conditional:
             merged: List[Optional[str]] = list(self.vars.get(name) or [None])
-            for v in alts:
-                if v not in merged:
-                    merged.append(v)
+            for alt in alts:
+                if alt not in merged:
+                    merged.append(alt)
             alts = merged
         if all(v is None for v in alts):
             self.vars.pop(name, None)
@@ -1547,7 +1547,6 @@ def _check_segments(
             hit = _check_simple(w1, depth, known)
             if hit:
                 return hit
-        words = readings[0]
         # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
         # is still the one the line started in, the whole-line reading in _analyze() has already covered it.
         if raws and raws[idx] and known is not cwd0 and depth < _MAX_DEPTH:
