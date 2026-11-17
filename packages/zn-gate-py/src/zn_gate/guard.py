@@ -14,6 +14,7 @@ import itertools
 import logging
 import os
 import re
+import sys
 from pathlib import PurePath
 import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
@@ -134,7 +135,9 @@ def _object_fields(data: Any) -> Optional[List[Any]]:
 # Context objects that agent frameworks pass to a tool next to the model's
 # arguments: (module prefix, class names, or None for every class there).
 # They hold the run state (messages, model, dependencies, callbacks), never
-# text the model chose for this call, so they are not checked.
+# text the model chose for this call, so they are not checked. A class is taken
+# for one of them only when the framework's module really holds it (see
+# _class_in_module): any class can name such a module and class.
 _FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
     ("pydantic_ai", frozenset({"RunContext"})),
     ("google.adk", frozenset({"ToolContext", "CallbackContext", "InvocationContext",
@@ -146,21 +149,65 @@ _FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
 )
 
 
+# The slots of `type` and of `module` themselves, read directly: a metaclass can override __mro__,
+# __dict__, __module__, __qualname__ or __name__ with a property of its own, so the class's own
+# answer is never asked for. zn_gate.rules._trusted_class makes the same identity check for its
+# trusted packages; the two can share one helper later.
+_TYPE_MRO = type.__dict__["__mro__"]
+_TYPE_DICT = type.__dict__["__dict__"]
+_TYPE_MODULE = type.__dict__["__module__"]
+_TYPE_QUALNAME = type.__dict__["__qualname__"]
+_TYPE_NAME = type.__dict__["__name__"]
+_TYPE_FLAGS = type.__dict__["__flags__"]
+_MODULE_DICT = cast(Any, types.ModuleType).__dict__["__dict__"]
+_HEAPTYPE = 1 << 9
+
+
+def _class_in_module(klass: type, module: str) -> bool:
+    """True when the module named `module`, already imported, holds this very class under its
+    qualified name.
+
+    A class written in Python can set __module__ and __qualname__ to any name, so the names alone
+    prove nothing. A static type (written in C) cannot change them. Nothing is imported here: a
+    framework that is not loaded cannot have built the object.
+    """
+    try:
+        if not _TYPE_FLAGS.__get__(klass) & _HEAPTYPE:
+            return True
+        target: Any = sys.modules.get(module)
+        for part in str(_TYPE_QUALNAME.__get__(klass)).split("."):
+            if isinstance(target, types.ModuleType):
+                namespace: Any = _MODULE_DICT.__get__(target)
+            elif isinstance(target, type):
+                namespace = _TYPE_DICT.__get__(target)
+            else:
+                return False
+            target = namespace.get(part) if isinstance(namespace, (dict, types.MappingProxyType)) else None
+        return target is klass
+    except Exception:  # an object that only claims to be a module or a class
+        return False
+
+
 def _is_framework_context(value: Any) -> bool:
-    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES)."""
+    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES).
+
+    The class of the value, or one of its bases, must be the framework's own class: its module
+    and name are read from the class itself (not through a metaclass), and that module, already
+    imported, must hold that very class. A class that only copies the names is checked as usual.
+    """
     if isinstance(value, (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
         return False
     try:
-        mro = type(value).__mro__
-    except Exception:  # pragma: no cover - exotic metaclasses
+        mro = _TYPE_MRO.__get__(type(value))
+    except Exception:  # pragma: no cover - type() always gives a class
         return False
     for klass in mro:
-        module = getattr(klass, "__module__", None)
+        module = _TYPE_MODULE.__get__(klass)
         if not isinstance(module, str):
             continue
         for prefix, names in _FRAMEWORK_CONTEXT_TYPES:
             if module == prefix or module.startswith(prefix + "."):
-                if names is None or klass.__name__ in names:
+                if (names is None or _TYPE_NAME.__get__(klass) in names) and _class_in_module(klass, module):
                     return True
     return False
 

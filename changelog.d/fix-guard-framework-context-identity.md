@@ -1,0 +1,2 @@
+### Security
+- Python: `guard`, `guarded_tool` and the native tool hooks leave out a run-context argument or result (Pydantic AI `RunContext`, OpenAI Agents SDK `ToolContext`, Google ADK `ToolContext`, LangChain callback managers) only when its class is the framework's own class, held by that framework's loaded module. A class that only copies a framework's module and class name is now checked like any other object.

@@ -3,10 +3,19 @@ OpenAI Agents SDK ToolContext / RunContextWrapper, LangChain callback managers a
 RunnableConfig) are not checked, while the model's own arguments and application
 objects are still checked in full.
 
+A class counts as a framework context only when the framework's module, already
+imported, holds that very class: the stand-ins below are put in sys.modules under
+the framework's module name for the test, and a class that only copies the names
+is checked as usual.
+
 Fictitious values only. The pydantic-ai case is skipped when it is not installed.
 """
 
+import contextlib
 import dataclasses
+import importlib
+import sys
+import types
 import unittest
 
 from zn_gate import check_tool_call, guard
@@ -17,8 +26,36 @@ KEY = "AKIAIOSFODNN7EXAMPLE"
 
 
 def _context_class(module, name):
-    """A stand-in for a framework class, defined in that framework's module path."""
+    """A class that names a framework module and class, without being held by that module."""
     return type(name, (), {"__module__": module, "__init__": lambda self, **kw: self.__dict__.update(kw)})
+
+
+@contextlib.contextmanager
+def _installed(module, name):
+    """A stand-in for a framework class, held by a stand-in module put in sys.modules under the
+    framework's module name for the duration of the block (the previous entry is put back)."""
+    cls = _context_class(module, name)
+    fake = types.ModuleType(module)
+    setattr(fake, name, cls)
+    missing = object()
+    previous = sys.modules.get(module, missing)
+    sys.modules[module] = fake
+    try:
+        yield cls
+    finally:
+        if previous is missing:
+            sys.modules.pop(module, None)
+        else:
+            sys.modules[module] = previous
+
+
+def _returns(value):
+    """A guarded tool, with its result checked, that gives back `value`."""
+    @guarded_tool(on_block="return", fallback="blocked", check_result=True)
+    def tool(city: str):
+        return value
+
+    return tool
 
 
 def _deep(levels, leaf):
@@ -54,8 +91,8 @@ class TestFrameworkContextArguments(unittest.TestCase):
     def test_context_with_deep_state_does_not_block_a_clean_call(self):
         ran = []
         for module, name in self.CONTEXTS:
-            with self.subTest(context=name, module=module):
-                ctx = _context_class(module, name)(state=_deep(30, BAD), messages=[BAD])
+            with self.subTest(context=name, module=module), _installed(module, name) as cls:
+                ctx = cls(state=_deep(30, BAD), messages=[BAD])
                 ran.clear()
 
                 @guarded_tool(on_block="return", fallback="blocked", check_result=True)
@@ -69,8 +106,8 @@ class TestFrameworkContextArguments(unittest.TestCase):
 
     def test_model_arguments_next_to_a_context_are_still_checked(self):
         for module, name in self.CONTEXTS:
-            with self.subTest(context=name):
-                ctx = _context_class(module, name)()
+            with self.subTest(context=name), _installed(module, name) as cls:
+                ctx = cls()
 
                 @guard(on_block="return", fallback="blocked")
                 def lookup(ctx, city):
@@ -82,6 +119,74 @@ class TestFrameworkContextArguments(unittest.TestCase):
     def test_same_class_name_elsewhere_is_still_checked(self):
         fake = _context_class("myapp.tools", "RunContext")(q=BAD)
         self.assertEqual(check_tool_call("t", {"args": (fake,), "kwargs": {}}).verdict, "block")
+
+    def test_framework_names_alone_are_still_checked(self):
+        # A class can set __module__ and __name__ to those of a framework class; while that module
+        # does not hold this very class, its arguments and results are checked as usual.
+        for module, name in self.CONTEXTS:
+            with self.subTest(context=name, module=module):
+                fake = _context_class(module, name)(messages=[BAD])
+                self.assertEqual(check_tool_call("t", {"args": (fake,), "kwargs": {}}).verdict, "block")
+
+                @guard(on_block="return", fallback="blocked")
+                def lookup(ctx, city):
+                    return "ran"
+
+                self.assertEqual(lookup(fake, "Example City"), "blocked")
+                self.assertEqual(lookup(ctx=fake, city="Example City"), "blocked")
+
+                self.assertEqual(_returns(_context_class(module, name)(note=BAD))("Example City"), "blocked")
+
+    def test_copy_of_an_installed_class_is_still_checked(self):
+        # The module is loaded and holds the real class: another class with the same names is not it.
+        module, name = "pydantic_ai._run_context", "RunContext"
+        with _installed(module, name) as real:
+            self.assertEqual(check_tool_call("t", {"args": (real(messages=[BAD]),), "kwargs": {}}).verdict, "allow")
+            fake = _context_class(module, name)(messages=[BAD])
+            self.assertEqual(check_tool_call("t", {"args": (fake,), "kwargs": {}}).verdict, "block")
+
+    def test_subclass_of_an_installed_class_is_skipped(self):
+        # A framework or an application can subclass the real context class.
+        with _installed("agents.run_context", "RunContextWrapper") as real:
+            sub = type("AppContext", (real,), {"__module__": "myapp.ctx"})
+            self.assertEqual(check_tool_call("t", {"args": (sub(messages=[BAD]),), "kwargs": {}}).verdict, "allow")
+
+    def test_metaclass_cannot_fake_the_names(self):
+        # A metaclass property answers klass.__module__ and klass.__name__; the check reads the class itself.
+        module, name = "pydantic_ai._run_context", "RunContext"
+
+        class Meta(type):
+            __module__ = property(lambda cls: module)  # type: ignore[assignment]
+            __name__ = property(lambda cls: name)  # type: ignore[assignment]
+
+        class Impostor(metaclass=Meta):
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+
+        with _installed(module, name):
+            fake = Impostor(messages=[BAD])
+            self.assertEqual(check_tool_call("t", {"args": (fake,), "kwargs": {}}).verdict, "block")
+
+    def test_real_framework_context_classes_are_recognised(self):
+        guard_module = importlib.import_module("zn_gate.guard")
+        cases = [
+            ("pydantic_ai", "RunContext"),
+            ("agents", "RunContextWrapper"),
+            ("agents.tool_context", "ToolContext"),
+            ("google.adk.tools", "ToolContext"),
+            ("langchain_core.callbacks.manager", "CallbackManagerForToolRun"),
+        ]
+        found = 0
+        for module, name in cases:
+            with self.subTest(module=module, name=name):
+                try:
+                    cls = getattr(importlib.import_module(module), name)
+                except (ImportError, AttributeError):
+                    continue
+                found += 1
+                self.assertTrue(guard_module._is_framework_context(object.__new__(cls)))
+        if not found:
+            self.skipTest("no agent framework is installed")
 
     def test_runnable_config_parameter_is_skipped(self):
         @guard(on_block="return", fallback="blocked")
