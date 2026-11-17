@@ -12,6 +12,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 serde_json = "1.0"
 zn = { path = ".." }
+base64 = "0.22"
 
 # Keep this crate out of the root package, so a normal build never needs a nightly toolchain.
 [workspace]
@@ -40,6 +41,13 @@ bench = false
 [[bin]]
 name = "policy_wasm"
 path = "fuzz_targets/policy_wasm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vision"
+path = "fuzz_targets/vision.rs"
 test = false
 doc = false
 bench = false
