@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import sys
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
@@ -68,17 +69,24 @@ _PREFILTER_MAX_ALTERNATIVES = 128
 # ASCII letters, plus the four characters re.IGNORECASE folds into ASCII letters.
 _NEEDLE_FOLD: Dict[int, str] = {**{c: chr(c + 32) for c in range(65, 91)}, 0x212A: 'k', 0x17F: 's', 0x131: 'i', 0x130: 'i'}
 _folded_cache: Tuple[str, str] = ('', '')
+# Number of evaluations running; the folded text is only cached while it is above zero.
+_evaluating = 0
 
 
 def _fold_for_needles(text: str) -> str:
-    """The text with ASCII letters lower-cased (and the four folded characters mapped), kept for the next call.
+    """The text with ASCII letters lower-cased (and the four folded characters mapped).
 
-    The last text is only kept while one evaluation runs: _evaluate_uncached clears it."""
+    While an evaluation is running (_evaluating > 0) the last folded text is kept, so the many
+    searches of one evaluation fold a large text once; _evaluate_uncached clears it when the
+    outermost evaluation ends. Outside an evaluation nothing is stored, so a direct search never
+    keeps its input alive. str.translate is called unbound: a str subclass cannot change the view."""
     global _folded_cache
+    if not _evaluating:
+        return str.translate(text, _NEEDLE_FOLD)
     cached = _folded_cache
     if cached[0] is text:
         return cached[1]
-    folded = text.translate(_NEEDLE_FOLD)
+    folded = str.translate(text, _NEEDLE_FOLD)
     _folded_cache = (text, folded)
     return folded
 
@@ -175,8 +183,8 @@ class _LazyPattern:
             compiled = self._compiled = re.compile(self.pattern, self._flags)
         return compiled
 
-    def search(self, string: str, *args: Any) -> Any:
-        if not args and len(string) >= _PREFILTER_MIN_CHARS:
+    def search(self, string: str, pos: int = 0, endpos: int = sys.maxsize) -> Any:
+        if pos == 0 and endpos == sys.maxsize and len(string) >= _PREFILTER_MIN_CHARS:
             needles = self._needles
             if needles is None:
                 needles = self._needles = _needles_for(self.pattern, self._flags)
@@ -187,7 +195,7 @@ class _LazyPattern:
                         break
                 else:
                     return None
-        return self._compile().search(string, *args)
+        return self._compile().search(string, pos, endpos)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
@@ -1011,12 +1019,15 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 
 
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
-    global _folded_cache
+    global _folded_cache, _evaluating
+    _evaluating += 1
     try:
         return _evaluate_body(input_text, strict)
     finally:
-        # Do not keep the last (possibly large, untrusted) input alive between calls.
-        _folded_cache = ('', '')
+        _evaluating -= 1
+        if not _evaluating:
+            # Do not keep the last (possibly large, untrusted) input alive between calls.
+            _folded_cache = ('', '')
 
 
 def _evaluate_body(input_text: str, strict: bool = False) -> Assessment:
