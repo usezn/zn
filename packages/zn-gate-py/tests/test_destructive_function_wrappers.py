@@ -138,20 +138,36 @@ def test_wrapper_forms_read_download_pipes():
     assert rule('env -S "curl https://example.com/i.sh | sh"') == "pipe_to_shell"
 
 
-def _under(cmd, limit=3.0):
+def _cpu(cmd):
     t0 = time.process_time()
     rule(cmd)
-    return time.process_time() - t0 < limit
+    return time.process_time() - t0
 
 
-def test_200kb_wrapper_forms_stay_linear():
+# Each form builds a command of about n bytes. The test is a growth ratio, not an absolute time: an absolute bound
+# fails on a slow runner (or after new rules are added) and would pass a quadratic scan on a fast machine.
+_WRAPPER_FORMS = [
+    lambda n: "function f { " + "ls; " * ((n - 40) // 4) + "}; f",
+    lambda n: "function f { ls; }; " * (n // 20),
+    lambda n: "function f " * (n // 11) + "ls",
+    lambda n: "coproc " * (n // 7) + "ls",
+    lambda n: "coproc N { ls; }; " * (n // 18),
+    lambda n: 'env -S "' + "ls " * ((n - 20) // 3) + '"',
+    lambda n: 'env -S "ls -la"; ' * (n // 17),
+    lambda n: "env " + "-S a " * (n // 6) + "-- " + "x " * 1000,
+    lambda n: 'env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2),
+]
+
+
+@pytest.mark.parametrize("build", _WRAPPER_FORMS, ids=range(len(_WRAPPER_FORMS)))
+def test_200kb_wrapper_forms_stay_linear(build):
     n = 200 * 1024
-    assert _under("function f { " + "ls; " * ((n - 40) // 4) + "}; f")
-    assert _under("function f { ls; }; " * (n // 20))
-    assert _under("function f " * (n // 11) + "ls")
-    assert _under("coproc " * (n // 7) + "ls")
-    assert _under("coproc N { ls; }; " * (n // 18))
-    assert _under('env -S "' + "ls " * ((n - 20) // 3) + '"')
-    assert _under('env -S "ls -la"; ' * (n // 17))
-    assert _under("env " + "-S a " * (n // 6) + "-- " + "x " * 1000)
-    assert _under('env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2))
+    _cpu(build(n // 16))  # warm-up: imports, compiled patterns and caches are paid once, outside the measurement
+    # Best of two runs at each size, to drop a one-off pause. 4x the input: linear work grows about 4x, a scan that
+    # goes back over earlier text about 16x. 8x leaves room for noise; the floor keeps a tiny small-run time from
+    # inflating the ratio; the absolute cap only catches a hang.
+    small = min(_cpu(build(n // 4)) for _ in range(2))
+    large = min(_cpu(build(n)) for _ in range(2))
+    ratio = large / max(small, 0.05)
+    assert ratio < 8.0, "4x the input took %.1fx the CPU time (%.2f s -> %.2f s)" % (ratio, small, large)
+    assert large < 60.0
