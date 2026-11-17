@@ -479,6 +479,13 @@ async function audit(args, io) {
   for (const r of records || []) {
     out(io, [r.ts, r.decision, r.secret, r.mode, r.agent, r.tool, r.argv0 || r.host || '', r.reason || ''].map((x) => x == null ? '-' : String(x)).join('  '));
   }
+  // After a crash the log can hold records of changes that were never saved (the log is written first).
+  for (const r of records || []) {
+    const m = /^audit_tail_adopted_after_unclean_shutdown:(\d+)$/.exec(r && r.reason ? String(r.reason) : '');
+    if (m) {
+      out(io, 'Note: after an unclean shutdown the vault adopted ' + m[1] + ' log record(s) it had not saved yet (' + r.ts + '). The last ' + m[1] + ' recorded changes may not have been applied; check with `' + znCommand('secret list') + '`.');
+    }
+  }
   const chain = await auditChain();
   out(io, chain.line);
   // Same exit code as `zn vault verify` for a broken chain; "not checked" is not an error.

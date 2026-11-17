@@ -1,0 +1,2 @@
+### Fixed
+- A `zn secret set` or `zn secret rm` that is killed while saving no longer leaves an encrypted copy of the vault behind: the vault deletes such leftover temporary files when it starts and before each save. The vault folder is also synced to disk after each save, and `zn vault log` now says that the last recorded changes may not have been applied when the vault recovered from an unclean shutdown.

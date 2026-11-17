@@ -101,6 +101,8 @@ function ensureLayout(opts) {
   ensurePrivateDir(p.home);
   ensurePrivateDir(p.vaultDir);
   ensurePrivateDir(p.runDir);
+  cleanupOrphanTmp(p.vaultDir);
+  cleanupOrphanTmp(p.home);
   return p;
 }
 
@@ -165,8 +167,64 @@ async function decryptWithPassphrase(passphrase, ciphertext) {
 /* Atomic private files                                                */
 /* ------------------------------------------------------------------ */
 
+// A write that is killed between creating its temporary file and the rename leaves
+// `<name>.<pid>.<12 hex>.tmp` behind: an encrypted snapshot that can still hold secrets removed
+// later. These files are removed when the layout is ensured and before each write.
+const TMP_ORPHAN = /^(.+)\.(\d{1,10})\.([0-9a-f]{12})\.tmp$/;
+const TMP_ORPHAN_MAX_AGE_MS = 5 * 60 * 1000;
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+}
+
+/** Remove leftover temporary files of an interrupted write in `dir` (optionally only those of
+ *  the target `base`). Only regular files of this user with exactly the writer's name are
+ *  touched, and only when the writing process is gone or the file is older than five minutes.
+ *  Returns how many were removed; never throws. */
+function cleanupOrphanTmp(dir, base) {
+  let removed = 0;
+  try {
+    const now = Date.now();
+    for (const name of fs.readdirSync(dir)) {
+      const m = TMP_ORPHAN.exec(name);
+      if (!m || (base !== undefined && m[1] !== base)) continue;
+      const f = path.join(dir, name);
+      try {
+        const st = fs.lstatSync(f);
+        if (!st.isFile()) continue;
+        if (typeof process.getuid === 'function' && st.uid !== process.getuid()) continue;
+        const pid = Number(m[2]);
+        if (pidAlive(pid) && now - st.mtimeMs < TMP_ORPHAN_MAX_AGE_MS) continue;
+        fs.unlinkSync(f);
+        removed++;
+      } catch (e) { /* ignore: another process may have removed it */ }
+    }
+  } catch (e) { /* ignore: the directory may not be readable */ }
+  if (removed > 0) {
+    process.stderr.write('zn: removed ' + removed + ' leftover temporary vault file(s) from an interrupted write\n');
+  }
+  return removed;
+}
+
+/** Make a rename durable: sync the directory that holds the new name (POSIX only). */
+function fsyncDir(dir) {
+  if (process.platform === 'win32') return;
+  let fd;
+  try {
+    fd = fs.openSync(dir, 'r');
+    fs.fsyncSync(fd);
+  } catch (err) {
+    if (err && (err.code === 'EINVAL' || err.code === 'EISDIR' || err.code === 'ENOTSUP' || err.code === 'EPERM')) return;
+    throw err;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) { /* ignore */ } }
+  }
+}
+
 function writePrivateFile(file, data) {
-  ensurePrivateDir(path.dirname(file));
+  const dir = path.dirname(file);
+  ensurePrivateDir(dir);
+  cleanupOrphanTmp(dir, path.basename(file));
   const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(6).toString('hex') + '.tmp';
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
@@ -182,6 +240,7 @@ function writePrivateFile(file, data) {
     throw err;
   }
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+  fsyncDir(dir);
 }
 
 function readPrivateFile(file) {
@@ -310,6 +369,8 @@ module.exports = {
   projectFile,
   normalizeProject,
   ensureLayout,
+  cleanupOrphanTmp,
+  fsyncDir,
   ensurePrivateDir,
   loadAge,
   generateIdentity,
