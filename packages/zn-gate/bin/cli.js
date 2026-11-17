@@ -41,7 +41,7 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
-const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { verifyEvidenceLedger, getEvidenceStats, writeEvidenceExport, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -1367,19 +1367,45 @@ ${ruleLine(process.env, 60)}\n`);
         process.exitCode = 2;
         return;
       }
-      const res = exportEvidenceLedger(EVIDENCE_FILE, format);
-      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+      // The log is streamed to the output while its chain is checked, so a log of any size exports
+      // in bounded memory. The output file is opened first, so a path that cannot be written fails
+      // before anything is read.
+      let out = process.stdout;
       if (options.output) {
         try {
-          fs.writeFileSync(options.output, res.content, 'utf8');
+          out = fs.createWriteStream(options.output, { fd: fs.openSync(options.output, 'w') });
         } catch (err) {
           process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + '\n');
           process.exit(1);
         }
-        process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
-      } else {
-        process.stdout.write(res.content);
       }
+      let res;
+      try {
+        res = await writeEvidenceExport(EVIDENCE_FILE, format, out);
+        if (out !== process.stdout) {
+          await new Promise((resolve, reject) => {
+            const fail = (e) => { if (e) e.writeError = true; reject(e); };
+            out.once('error', fail);
+            out.end((e) => (e ? fail(e) : resolve()));
+          });
+        }
+      } catch (err) {
+        if (out !== process.stdout) out.destroy();
+        const incomplete = options.output ? ` ${options.output} is incomplete: do not use it.` : '';
+        if (err && err.writeError) {
+          process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + incomplete + '\n');
+        } else {
+          process.stderr.write(`zn-gate: the export stopped. ${err.message}.${incomplete}\n`);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+      if (options.output) {
+        process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
+      }
+      // A log whose chain does not verify in full is not proof: exit 1, like --verify.
+      if (!res.valid) process.exitCode = 1;
       return;
     }
 

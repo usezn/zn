@@ -127,7 +127,7 @@ The Python package (`pip install zn-gate`) has a smaller command line than the n
 | `test "<text>"` | `0`, `1` | `0` nothing was flagged; `1` the text was blocked or contains a secret. It does not run the self-test that `test` runs in the npm package. |
 | `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked; without a text, `2` (the npm package exits `1`). |
 | `scan [path]` | `0`, `1`, `3` | `0` nothing found; `1` something was found or the path does not exist; `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
-| `evidence` | `0`, `1` | `0` done; `1` `--verify` found a changed SHA-256 chain, or the export was not saved. |
+| `evidence` | `0`, `1` | `0` done; `1` `--verify` found a changed SHA-256 chain, the export was not saved, the log could not be read to the end, or the exported log does not verify. |
 | `status` | `0` | Always `0`. |
 | `stats` | `0`, `2` | `0` done; `2` `--days` is out of range (1 to 90). |
 | The other commands on this page | `2` | They exist only in the npm package: the Python package prints a short note that points to it, then exits `2`. `help` does the same. |
