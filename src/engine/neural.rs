@@ -567,3 +567,56 @@ mod tests {
         println!("NEURAL_LIVE_CHILD_RAN");
     }
 }
+
+#[cfg(test)]
+mod decision_edge_tests {
+    use super::*;
+
+    #[test]
+    fn tau_at_the_ends_of_the_range() {
+        // tau 0 blocks every computed score; no score means no neural block.
+        assert!(fused_block(false, Some(0.0), 0.0));
+        assert!(fused_block(false, Some(0.0001), 0.0));
+        assert!(!fused_block(false, None, 0.0));
+        // tau above 1 can never be reached by a probability.
+        assert!(!fused_block(false, Some(1.0), 1.0001));
+        assert!(fused_block(false, Some(1.0), 1.0));
+        // A rules hit blocks whatever tau is.
+        assert!(fused_block(true, Some(0.0), 2.0));
+        assert!(fused_block(true, None, f32::INFINITY));
+    }
+
+    #[test]
+    fn the_disabled_engine_never_loads_a_model_and_degrades_to_the_rules() {
+        // With fusion off nothing is read from disk or network, even for a model path that cannot exist.
+        let cfg = FusionConfig {
+            enabled: false,
+            model_path: "/nonexistent/never-read".into(),
+            ..FusionConfig::default()
+        };
+        for rules_hit in [true, false] {
+            let (blocked, ev) = evaluate(rules_hit, "text", &cfg);
+            assert_eq!(blocked, rules_hit);
+            assert!(ev.is_none());
+        }
+    }
+
+    #[test]
+    fn a_model_directory_that_cannot_load_is_an_error_not_a_download() {
+        let dir = tempfile::tempdir().unwrap();
+        // Tokenizer and head without weights: loading must fail locally with a clear message.
+        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+        std::fs::write(
+            dir.path().join("head.json"),
+            r#"{"weights":[1.0],"bias":0.0,"threshold":0.5}"#,
+        )
+        .unwrap();
+        let err = NeuralEngine::new(dir.path()).err().expect("must fail");
+        assert!(err.to_string().contains("no model.onnx"), "{err}");
+        // The same for a path that does not exist.
+        let err = NeuralEngine::new(&dir.path().join("missing"))
+            .err()
+            .expect("must fail");
+        assert!(err.to_string().contains("no model.onnx"), "{err}");
+    }
+}

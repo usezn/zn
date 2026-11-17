@@ -224,14 +224,24 @@ fn strip_jpeg_metadata(data: &[u8]) -> Vec<u8> {
             i += 2;
             continue;
         }
+        // A segment cut short is copied as it is, except an EXIF one: its bytes are the metadata
+        // this function exists to remove.
         if i + 3 >= data.len() {
-            out.extend_from_slice(&data[i..]);
+            if marker == 0xE1 {
+                changed = true;
+            } else {
+                out.extend_from_slice(&data[i..]);
+            }
             break;
         }
         let seg_len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
         let total = 2 + seg_len;
         if i + total > data.len() {
-            out.extend_from_slice(&data[i..]);
+            if marker == 0xE1 {
+                changed = true;
+            } else {
+                out.extend_from_slice(&data[i..]);
+            }
             break;
         }
         if marker == 0xE1 {
@@ -262,7 +272,13 @@ fn strip_png_metadata(data: &[u8]) -> Vec<u8> {
         let kind = &data[i + 4..i + 8];
         let total = 12 + len;
         if i + total > data.len() {
-            out.extend_from_slice(&data[i..]);
+            // A chunk cut short is copied as it is, except a metadata or text chunk: its bytes are
+            // what this function exists to remove.
+            if matches!(kind, b"eXIf" | b"iTXt" | b"tEXt" | b"zTXt") {
+                changed = true;
+            } else {
+                out.extend_from_slice(&data[i..]);
+            }
             break;
         }
         if kind == b"IEND" {
@@ -1005,5 +1021,265 @@ mod tests {
         }
         assert_eq!(find_malicious_pattern("a holiday photo of a beach"), None);
         assert_eq!(find_malicious_pattern(""), None);
+    }
+}
+
+#[cfg(test)]
+mod malformed_image_tests {
+    use super::*;
+
+    fn on() -> ManagedRulesConfig {
+        ManagedRulesConfig {
+            visual_pii_redaction: true,
+            ..Default::default()
+        }
+    }
+
+    fn uri(mime: &str, bytes: &[u8]) -> String {
+        format!(
+            r#"{{"image": "data:image/{mime};base64,{}"}}"#,
+            general_purpose::STANDARD.encode(bytes)
+        )
+    }
+
+    fn chunk(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut c = (body.len() as u32).to_be_bytes().to_vec();
+        c.extend_from_slice(kind);
+        c.extend_from_slice(body);
+        c.extend_from_slice(&[0; 4]);
+        c
+    }
+
+    fn png_with(chunks: &[Vec<u8>]) -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(chunk(b"IHDR", &[0; 13]));
+        for c in chunks {
+            png.extend_from_slice(c);
+        }
+        png.extend(chunk(b"IEND", &[]));
+        png
+    }
+
+    /// Decodes the image that `sanitize_multimodal` put back into the arguments.
+    fn sanitized_bytes(out: &str) -> Vec<u8> {
+        let b64 = image_re()
+            .captures(out)
+            .expect("an image stays in the arguments")
+            .get(1)
+            .unwrap()
+            .as_str()
+            .to_string();
+        general_purpose::STANDARD.decode(b64).unwrap()
+    }
+
+    fn contains(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn a_png_cut_in_the_middle_of_a_text_chunk_loses_the_text() {
+        let mut png = png_with(&[chunk(b"tEXt", b"Comment\0holiday at 12 Example Street")]);
+        // Cut inside the tEXt body: the chunk declares more bytes than the file has.
+        let cut = png.windows(4).position(|w| w == b"tEXt").unwrap() + 4 + 14;
+        png.truncate(cut);
+        let out = VisionEngine::sanitize_multimodal(&uri("png", &png), &on()).unwrap();
+        let bytes = sanitized_bytes(&out);
+        assert!(
+            !contains(&bytes, b"holiday"),
+            "metadata text passed through"
+        );
+        assert!(bytes.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn a_png_cut_in_the_middle_of_a_complete_text_chunk_run_keeps_only_clean_chunks() {
+        let mut png = png_with(&[
+            chunk(b"tEXt", b"A\0one"),
+            chunk(b"iTXt", b"B\0two"),
+            chunk(b"zTXt", b"C\0three"),
+            chunk(b"eXIf", b"four-four"),
+        ]);
+        png.truncate(png.len() - 20);
+        let out = VisionEngine::sanitize_multimodal(&uri("png", &png), &on()).unwrap();
+        let bytes = sanitized_bytes(&out);
+        for word in [&b"one"[..], b"two", b"three", b"four"] {
+            assert!(!contains(&bytes, word), "{:?}", word);
+        }
+    }
+
+    #[test]
+    fn a_png_cut_inside_a_header_chunk_is_not_changed_and_has_no_metadata() {
+        let mut png = png_with(&[]);
+        png.truncate(8 + 12);
+        let out = VisionEngine::sanitize_multimodal(&uri("png", &png), &on()).unwrap();
+        assert_eq!(sanitized_bytes(&out), png);
+    }
+
+    #[test]
+    fn a_png_signature_alone_or_a_four_byte_stub_does_not_panic() {
+        for bytes in [
+            &b"\x89PNG\r\n\x1a\n"[..],
+            b"\x89PNG",
+            b"\x89PNG\r\n\x1a\n\0\0",
+        ] {
+            let out = VisionEngine::sanitize_multimodal(&uri("png", bytes), &on()).unwrap();
+            assert_eq!(sanitized_bytes(&out), bytes);
+            assert_eq!(
+                VisionEngine::detect_malicious_ocr(&uri("png", bytes), &on()),
+                Ok(None)
+            );
+        }
+    }
+
+    #[test]
+    fn a_png_chunk_length_that_overflows_the_file_does_not_panic() {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&u32::MAX.to_be_bytes());
+        png.extend_from_slice(b"tEXt");
+        png.extend_from_slice(b"secret words here");
+        let out = VisionEngine::sanitize_multimodal(&uri("png", &png), &on()).unwrap();
+        assert!(!contains(&sanitized_bytes(&out), b"secret"));
+    }
+
+    fn jpeg_app1(payload: &[u8]) -> Vec<u8> {
+        let mut seg = vec![0xFF, 0xE1];
+        seg.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        seg.extend_from_slice(payload);
+        seg
+    }
+
+    #[test]
+    fn a_jpeg_cut_in_the_middle_of_its_exif_segment_loses_the_exif() {
+        let mut jpeg = vec![0xFF, 0xD8];
+        jpeg.extend(jpeg_app1(b"Exif\0\0GPS 51.5N 0.1W camera-serial-1234"));
+        let keep = jpeg.len() - 10;
+        jpeg.truncate(keep);
+        let out = VisionEngine::sanitize_multimodal(&uri("jpeg", &jpeg), &on()).unwrap();
+        let bytes = sanitized_bytes(&out);
+        assert!(!contains(&bytes, b"Exif"), "EXIF passed through");
+        assert!(!contains(&bytes, b"camera-serial"));
+        assert!(bytes.starts_with(&[0xFF, 0xD8]));
+    }
+
+    #[test]
+    fn a_jpeg_cut_right_after_the_exif_marker_loses_the_marker() {
+        for cut in [2usize, 3, 4] {
+            let mut jpeg = vec![0xFF, 0xD8];
+            jpeg.extend(jpeg_app1(b"Exif\0\0data"));
+            jpeg.truncate(2 + cut);
+            let out = VisionEngine::sanitize_multimodal(&uri("jpeg", &jpeg), &on()).unwrap();
+            let bytes = sanitized_bytes(&out);
+            assert!(!contains(&bytes, &[0xFF, 0xE1]), "cut at {cut}");
+        }
+    }
+
+    #[test]
+    fn a_complete_jpeg_exif_segment_is_removed_and_the_rest_is_kept() {
+        let mut jpeg = vec![0xFF, 0xD8];
+        jpeg.extend(jpeg_app1(b"Exif\0\0secret-gps"));
+        jpeg.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x04, b'J', b'F']);
+        jpeg.extend_from_slice(&[0xFF, 0xD9]);
+        let out = VisionEngine::sanitize_multimodal(&uri("jpeg", &jpeg), &on()).unwrap();
+        let bytes = sanitized_bytes(&out);
+        assert!(!contains(&bytes, b"secret-gps"));
+        assert!(contains(&bytes, &[0xFF, 0xE0, 0x00, 0x04, b'J', b'F']));
+    }
+
+    #[test]
+    fn jpeg_stubs_do_not_panic() {
+        for bytes in [
+            &[0xFF, 0xD8, 0xFF][..],
+            &[0xFF, 0xD8, 0xFF, 0xE1],
+            &[0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFF],
+        ] {
+            let out = VisionEngine::sanitize_multimodal(&uri("jpeg", bytes), &on()).unwrap();
+            assert!(!contains(&sanitized_bytes(&out), &[0xFF, 0xE1]));
+        }
+    }
+
+    #[test]
+    fn a_data_uri_with_bad_base64_is_refused_by_both_scans() {
+        // Padding in the middle, a wrong length, and a lone padding character.
+        for payload in ["AAAA=AAA", "A", "AAAAA", "====", "AB=C"] {
+            let args = format!(r#"{{"i": "data:image/png;base64,{payload}"}}"#);
+            assert_eq!(
+                VisionEngine::sanitize_multimodal(&args, &on()),
+                Err(VisionError::UnsupportedFormat),
+                "{payload}"
+            );
+            assert_eq!(
+                VisionEngine::detect_malicious_ocr(&args, &on()),
+                Err(VisionError::UnsupportedFormat),
+                "{payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_later_bad_image_refuses_the_whole_request() {
+        let good = general_purpose::STANDARD.encode(png_with(&[]));
+        let args = format!(
+            r#"{{"a": "data:image/png;base64,{good}", "b": "data:image/png;base64,AAAAA"}}"#
+        );
+        assert_eq!(
+            VisionEngine::sanitize_multimodal(&args, &on()),
+            Err(VisionError::UnsupportedFormat)
+        );
+        assert_eq!(
+            VisionEngine::detect_malicious_ocr(&args, &on()),
+            Err(VisionError::UnsupportedFormat)
+        );
+    }
+
+    #[test]
+    fn a_zero_size_image_is_refused_or_not_an_image() {
+        // Padding only decodes to zero bytes: not a known format.
+        let args = r#"{"i": "data:image/png;base64,===="}"#;
+        assert!(VisionEngine::sanitize_multimodal(args, &on()).is_err());
+        // An empty payload does not match the image pattern at all: nothing is passed on as an image.
+        let empty = r#"{"i": "data:image/png;base64,"}"#;
+        assert_eq!(
+            VisionEngine::sanitize_multimodal(empty, &on()).unwrap(),
+            empty
+        );
+        assert_eq!(VisionEngine::detect_malicious_ocr(empty, &on()), Ok(None));
+        // A zero-byte decode directly.
+        assert_eq!(classify_image(&[]), "UNKNOWN");
+        assert!(strip_png_metadata(&[]).is_empty());
+        assert!(strip_jpeg_metadata(&[]).is_empty());
+    }
+
+    #[test]
+    fn unsupported_formats_are_refused_whatever_the_declared_mime_type() {
+        let samples: [(&str, &[u8]); 6] = [
+            ("png", b"GIF89a\x01\x00\x01\x00"),
+            ("png", b"RIFF\x00\x00\x00\x00WEBPVP8 "),
+            ("jpeg", b"BM\x00\x00\x00\x00"),
+            (
+                "svg+xml",
+                b"<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>",
+            ),
+            ("png", b"<html></html>"),
+            ("gif", b"\x00\x00\x00\x0cjP  \r\n\x87\n"),
+        ];
+        for (mime, bytes) in samples {
+            let args = uri(mime, bytes);
+            assert_eq!(
+                VisionEngine::sanitize_multimodal(&args, &on()),
+                Err(VisionError::UnsupportedFormat),
+                "{mime}"
+            );
+            assert_eq!(
+                VisionEngine::detect_malicious_ocr(&args, &on()),
+                Err(VisionError::UnsupportedFormat),
+                "{mime}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_png_signature_is_not_enough_when_only_three_bytes_match() {
+        assert_eq!(classify_image(&[0x89, 0x50, 0x4E]), "UNKNOWN");
+        assert_eq!(classify_image(&[0xFF, 0xD8]), "UNKNOWN");
     }
 }

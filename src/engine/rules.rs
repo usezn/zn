@@ -486,3 +486,187 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod folding_tests {
+    use super::*;
+    use crate::config::ManagedRulesConfig;
+
+    fn denies_tool(tool: &str) -> bool {
+        ManagedRuleset::evaluate(&ManagedRulesConfig::default(), tool, "").is_err()
+    }
+
+    #[test]
+    fn fullwidth_tool_names_fold_to_the_blocked_name() {
+        for tool in ["ｒｍ", "ＲＭ", "ｓｈｕｔｄｏｗｎ", "ＭＫＦＳ", "ｄｄ"] {
+            assert!(denies_tool(tool), "{tool}");
+        }
+        assert_eq!(fold_system1("ｒｍ Ａ９"), "rm A9");
+    }
+
+    #[test]
+    fn zero_width_characters_inside_a_tool_name_are_removed() {
+        for tool in [
+            "r\u{200B}m",
+            "shut\u{200D}down",
+            "mk\u{FEFF}fs",
+            "\u{2060}reboot",
+            "ch\u{00AD}mod",
+            "r\u{E0041}m",
+        ] {
+            assert!(denies_tool(tool), "{tool:?}");
+        }
+        assert_eq!(fold_system1("r\u{200B}m"), "rm");
+    }
+
+    #[test]
+    fn homoglyph_tool_names_fold_to_the_blocked_name() {
+        // Cyrillic letters that look like Latin ones, written as escapes.
+        for tool in [
+            "r\u{0435}boot",
+            "shutd\u{043E}wn",
+            "\u{0441}hmod",
+            "\u{0441}h\u{043E}wn",
+            "\u{0421}H\u{041C}OD",
+        ] {
+            assert!(denies_tool(tool), "{tool:?}");
+        }
+        // "dd" + Cyrillic a folds to the word "dda", which is not restricted.
+        assert!(!denies_tool("dd\u{0430}"));
+        assert_eq!(fold_system1("r\u{0435}b\u{043E}\u{043E}t"), "reboot");
+    }
+
+    #[test]
+    fn invisible_separators_between_words_are_read_as_spaces_in_the_second_pass() {
+        assert!(ManagedRuleset::evaluate(
+            &ManagedRulesConfig::default(),
+            "exec_command",
+            "please run\u{3164}rm -rf ./build"
+        )
+        .is_err());
+        assert_eq!(fold_system1_spaced("a\u{3164}b"), "a b");
+        assert_eq!(fold_system1("a\u{3164}b"), "ab");
+    }
+
+    #[test]
+    fn unusual_code_points_never_panic_and_pass_through() {
+        for ch in [
+            '\u{FFFF}',
+            '\u{FFFE}',
+            '\u{D7FF}',
+            '\u{E000}',
+            '\u{10FFFF}',
+            '\u{FDD0}',
+            '\u{1F600}',
+        ] {
+            let s = format!("a{ch}b");
+            assert_eq!(fold_system1(&s), s, "{ch:?}");
+            assert_eq!(fold_system1_spaced(&s), s, "{ch:?}");
+            let _ = ManagedRuleset::evaluate(&ManagedRulesConfig::default(), &s, &s);
+        }
+        // Every Unicode scalar value folds without a panic.
+        let mut batch = String::new();
+        for cp in 0..=0x10FFFFu32 {
+            if let Some(ch) = char::from_u32(cp) {
+                batch.push(ch);
+                if batch.len() > 4096 {
+                    let _ = fold_system1(&batch);
+                    let _ = fold_system1_spaced(&batch);
+                    batch.clear();
+                }
+            }
+        }
+        let _ = fold_system1(&batch);
+        // Lone surrogates cannot exist in a Rust string: the lossy decode gives U+FFFD instead.
+        let lossy = String::from_utf8_lossy(&[0xED, 0xA0, 0x80, b'r', b'm']).into_owned();
+        assert!(ManagedRuleset::evaluate(&ManagedRulesConfig::default(), &lossy, "").is_err());
+    }
+
+    #[test]
+    fn the_fullwidth_range_edges_fold_exactly() {
+        assert_eq!(fold_system1("Ａ"), "A");
+        assert_eq!(fold_system1("Ｚ"), "Z");
+        assert_eq!(fold_system1("ａ"), "a");
+        assert_eq!(fold_system1("ｚ"), "z");
+        assert_eq!(fold_system1("０"), "0");
+        assert_eq!(fold_system1("９"), "9");
+        // The characters just outside the ranges are not touched.
+        assert_eq!(
+            fold_system1("\u{FF20}\u{FF3B}\u{FF40}\u{FF5B}\u{FF0F}\u{FF1A}"),
+            "\u{FF20}\u{FF3B}\u{FF40}\u{FF5B}\u{FF0F}\u{FF1A}"
+        );
+    }
+
+    #[test]
+    fn an_empty_rule_set_allows_everything_and_empty_input_is_allowed() {
+        let none = ManagedRulesConfig {
+            pii_redaction: false,
+            lfi_protection: false,
+            sql_injection: false,
+            prompt_injection: false,
+            restricted_commands: false,
+            visual_pii_redaction: false,
+        };
+        assert!(ManagedRuleset::evaluate(&none, "rm", "rm -rf / ../../etc/passwd").is_ok());
+        assert!(ManagedRuleset::evaluate(&none, "", "").is_ok());
+        // The default set allows empty input too.
+        assert!(ManagedRuleset::evaluate(&ManagedRulesConfig::default(), "", "").is_ok());
+    }
+
+    #[test]
+    fn the_restricted_command_switch_alone_decides_tool_name_denials() {
+        let off = ManagedRulesConfig {
+            restricted_commands: false,
+            ..ManagedRulesConfig::default()
+        };
+        assert!(ManagedRuleset::evaluate(&off, "rm", "").is_ok());
+        assert!(ManagedRuleset::evaluate(&off, "shutdown", "now").is_ok());
+        assert!(ManagedRuleset::evaluate(&ManagedRulesConfig::default(), "rm", "").is_err());
+    }
+
+    #[test]
+    fn case_and_separator_variants_of_a_denied_tool_are_all_denied() {
+        for tool in [
+            "rm",
+            "RM",
+            "Rm",
+            "rM",
+            "rm_rf",
+            "RM_RF",
+            "rm-rf",
+            "rm.rf",
+            "rmRf",
+            "RmRf",
+            "sudo.rm",
+            "sudo_RM",
+            "fs/rm",
+            "fs:rm",
+            "do rm now",
+            "format",
+            "FORMAT",
+            "Format",
+            "format_disk",
+            "FORMAT_DISK",
+            "formatDisk",
+            "format-disk",
+            "disk.format",
+            "mkfs",
+            "MKFS.ext4",
+            "mkfs_ext4",
+            "Shutdown",
+            "SHUT", // last one is allowed, checked below
+        ] {
+            if tool == "SHUT" {
+                assert!(!denies_tool(tool), "{tool}");
+            } else {
+                assert!(denies_tool(tool), "{tool}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_denial_message_names_the_original_tool() {
+        let err = ManagedRuleset::evaluate(&ManagedRulesConfig::default(), "ｒｍ", "").unwrap_err();
+        assert_eq!(err, "Restricted command detected: ｒｍ");
+    }
+}
