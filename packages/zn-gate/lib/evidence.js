@@ -316,6 +316,7 @@ function canonicalForms(record) {
 }
 
 const HASH_RE = /^[0-9a-f]{64}$/;
+const { createLedgerIndex } = require('./evidence_index');
 
 // A damaged log makes logEvidence skip its writes. The warning is shown on the first skipped
 // write and again at most every WARN_INTERVAL_MS, so the long-running MCP proxy (shield) does
@@ -854,7 +855,30 @@ function renderAuditRow(r) {
 /**
  * Starts a zero-dependency local dashboard at 127.0.0.1:<port> (loopback only)
  */
-function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
+function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE, opts = {}) {
+  // The stats and the chain check come from an index that only scans bytes added since the last
+  // poll, in chunks, so a large log neither costs a full read per poll nor blocks other requests.
+  const index = createLedgerIndex(filePath, {
+    canonicalForms, genesisHash: GENESIS_HASH, recordStart: RECORD_START, truncatedTailResult,
+  }, { fullEveryMs: opts.fullEveryMs });
+  // Requests waiting for a scan share it; past this many waiting, new ones are told to retry.
+  const maxPending = typeof opts.maxPending === 'number' ? opts.maxPending : 8;
+  let pending = 0;
+  const heavy = (res, pick) => {
+    if (pending >= maxPending) {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '2' });
+      res.end(JSON.stringify({ error: 'The evidence log is still being read. Try again in a moment.' }));
+      return;
+    }
+    pending++;
+    index.get().then((snap) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(pick(snap)));
+    }, () => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Cannot read the evidence log.' }));
+    }).finally(() => { pending--; });
+  };
   const server = require('http').createServer((req, res) => {
     // Only answer requests addressed to the loopback name and port, so a web
     // page cannot reach the dashboard through DNS rebinding.
@@ -868,15 +892,13 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
     }
     // 1. API: Aggregated stats
     if (req.url === '/api/stats') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(getEvidenceStats(filePath)));
+      heavy(res, (snap) => snap.stats);
       return;
     }
 
     // 2. API: Cryptographic verification
     if (req.url === '/api/verify') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(verifyEvidenceLedger(filePath)));
+      heavy(res, (snap) => snap.verify);
       return;
     }
 
@@ -1021,12 +1043,17 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
   <script>
     ${escapeHtml.toString()}
     ${renderAuditRow.toString()}
+    let fetching = false;
     async function fetchData() {
+      if (fetching) return;
+      fetching = true;
       try {
         const [statsRes, verifyRes] = await Promise.all([
           fetch('/api/stats'),
           fetch('/api/verify')
         ]);
+        // 503 means the log is still being read: keep what is on screen and try at the next poll.
+        if (!statsRes.ok || !verifyRes.ok) return;
         const d = await statsRes.json();
         const v = await verifyRes.json();
 
@@ -1053,10 +1080,14 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
         tbody.innerHTML = d.recent.map(renderAuditRow).join('');
       } catch (err) {
         console.error('Failed fetching data:', err);
+      } finally {
+        fetching = false;
       }
     }
     fetchData();
-    setInterval(fetchData, 3000);
+    // Poll every 10 seconds, and not at all while the tab is hidden; coming back refreshes at once.
+    setInterval(function () { if (document.visibilityState !== 'hidden') fetchData(); }, 10000);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState !== 'hidden') fetchData(); });
   </script>
 </body>
 </html>`);
@@ -1088,4 +1119,7 @@ module.exports = {
   EVIDENCE_FILE,
   GENESIS_HASH,
   _testHooks: testHooks,
+  _createLedgerIndex: (filePath, opts) => createLedgerIndex(filePath, {
+    canonicalForms, genesisHash: GENESIS_HASH, recordStart: RECORD_START, truncatedTailResult,
+  }, opts),
 };

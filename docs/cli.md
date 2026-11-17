@@ -637,6 +637,7 @@ Shows the local hash-chained log of what zn-gate decided. With no option it prin
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
 - `--ui`: open a local dashboard in your browser (default port 3100).
+  The dashboard reads the log in small pieces and only the records added since its last refresh, so it stays responsive on a log of many thousands of records. It refreshes every 10 seconds and pauses while its browser tab is hidden. When a refresh finds the log was shortened, replaced or changed in a record it had already checked, it checks the whole chain again, and it does that again every 5 minutes. If many requests arrive while the log is being read, the dashboard answers `503` with `Retry-After: 2` and the page keeps what it shows until the next refresh.
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 
 Aliases: `logs`, `export`.

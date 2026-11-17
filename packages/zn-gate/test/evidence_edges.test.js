@@ -115,8 +115,10 @@ function makeApp(ledger, port = 4321) {
     const res = {
       status: null, headers: {}, body: '',
       writeHead(code, h) { this.status = code; this.headers = Object.fromEntries(Object.entries(h || {}).map(([k, v]) => [k.toLowerCase(), v])); },
-      end(b) { this.body = b === undefined ? '' : String(b); },
+      end(b) { this.body = b === undefined ? '' : String(b); this.finish(); },
     };
+    // The stats and verify answers come after an asynchronous read: wait for res.done.
+    res.done = new Promise((resolve) => { res.finish = () => resolve(res); });
     handler({ url, headers }, res);
     return res;
   };
@@ -124,15 +126,15 @@ function makeApp(ledger, port = 4321) {
 
 const HOST = 'localhost:4321';
 
-test('evidence server - a missing ledger gives empty stats, a valid verify and an empty export', (t) => {
+test('evidence server - a missing ledger gives empty stats, a valid verify and an empty export', async (t) => {
   const dir = tempDir(t, 'zn-ev-edge-');
   const app = makeApp(path.join(dir, 'none.jsonl'));
-  const stats = JSON.parse(app('/api/stats', HOST).body);
+  const stats = JSON.parse((await app('/api/stats', HOST).done).body);
   assert.equal(stats.total, 0);
   assert.deepEqual(stats.recent, []);
   assert.equal(stats.valid, true);
 
-  const verify = app('/api/verify', HOST);
+  const verify = await app('/api/verify', HOST).done;
   assert.equal(verify.status, 200);
   assert.equal(JSON.parse(verify.body).valid, true);
 
@@ -168,11 +170,11 @@ test('evidence server - an unknown path serves the dashboard page', (t) => {
   assert.ok(res.body.includes('<!DOCTYPE html>'));
 });
 
-test('evidence server - Host header checks are exact', (t) => {
+test('evidence server - Host header checks are exact', async (t) => {
   const dir = tempDir(t, 'zn-ev-edge-');
   const app = makeApp(path.join(dir, 'none.jsonl'), 4321);
   for (const host of ['127.0.0.1:4321', 'LOCALHOST:4321', 'localhost:4321']) {
-    assert.equal(app('/api/stats', host).status, 200, host);
+    assert.equal((await app('/api/stats', host).done).status, 200, host);
   }
   const bad = [undefined, '', '127.0.0.1', 'localhost', '127.0.0.1:4321.example.test', '[::1]:4321', '192.0.2.1:4321', 'localhost:43210'];
   for (const host of bad) {

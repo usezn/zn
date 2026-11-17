@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate evidence --ui` no longer re-reads and re-checks the whole log on every refresh. It reads only the records added since the last refresh, in small steps, so a large log (many thousands of records) no longer makes the dashboard stall and use a full CPU core. It still checks the whole chain again whenever the log was shortened, replaced or edited, and every 5 minutes. The page now refreshes every 10 seconds instead of 3 and pauses while its tab is hidden.
