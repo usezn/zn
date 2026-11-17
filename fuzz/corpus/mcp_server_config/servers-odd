@@ -1,0 +1,1 @@
+{"mcpServers":{"bad":{"command":"/work/example/not-allowed"},"empty":{},"wrong":{"command":"python3","args":[1,"ok",null],"env":{"PATH":"x","N":5}},"win":{"command":"C:\\tools\\node.exe"}}}

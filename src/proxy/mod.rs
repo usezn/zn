@@ -656,8 +656,8 @@ impl McpPool {
 
 /// Load an MCP servers file for the fuzz target `mcp_server_config`, and check that every server kept with a
 /// command has an allowed one. Built only with `--cfg fuzzing` (cargo-fuzz sets it), never in a normal build.
-#[cfg(fuzzing)]
 #[allow(unexpected_cfgs)]
+#[cfg(fuzzing)]
 pub fn fuzz_load_config_file(path: &str) -> Result<Vec<(String, Option<String>)>> {
     let pool = McpPool::from_config_file(path)?;
     let mut servers = Vec::new();

@@ -1,0 +1,1 @@
+{"mcpServers":{"files":{"command":"npx","args":["-y","example-server","/work/example"],"env":{"EXAMPLE_MODE":"test"}},"remote":{"url":"wss://mcp.example.com/socket"}}}
