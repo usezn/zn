@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- A hook call whose event name zn does not know, or that has no event name, is now refused, not allowed, on the hooks that can block: a tool call before it runs, a prompt or a permission request. This covers Claude Code, Codex CLI, Cursor and the ZCode desktop app when they run hooks installed with this version. Gemini CLI, Antigravity and GitHub Copilot still let such an event through with a note. Hooks installed by an earlier zn-gate keep the old behaviour until you run `zn hooks install <agent>` again.
+
 ## [1.15.0] - 2026-11-06
 
 zn-gate 1.15.0 hardens how the hooks start and what the command check reads. On macOS and Linux, and for Claude Code on Windows, zn's hook launcher now runs zn-gate's hook runner only while that file matches the copy recorded at install time, and no longer falls back to a `zn` found on the PATH. An update with npm refreshes those launchers through a short install step (`postinstall`, declared in the package's `DISCLOSURE` file); if you update with pnpm, bun or `--ignore-scripts`, run `zn hooks install <agent>` again. The destructive-command check now reads one-liners given to `python -c`, `node -e`, `perl -e` and `ruby -e`, ANSI-C quoting (`$'...'`) and PowerShell 7 line continuation. Messages are clearer when a check runs out of time, when `zn-gate init` has no internet connection and when the OpenCode hook cannot start, and in ZCode a tool output zn could not check is no longer reported as withheld. The Python package now warns when `ZN_STRICT` or `ZN_BLOCK_TRUNCATED` is set to a value other than `1`, and when a LangChain or LlamaIndex guard with `on_block="ignore"` lets a blocked item through.
