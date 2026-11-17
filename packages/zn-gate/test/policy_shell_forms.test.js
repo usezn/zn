@@ -9,6 +9,7 @@
 process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const path = require('path');
 const policy = require('../lib/hooks/policy');
@@ -304,10 +305,8 @@ test('a delayed expansion variable is read from the environment and from the com
 });
 
 test('decoding $-quoting stays linear on long input', () => {
-  for (const body of ['\\'.repeat(100000), '\\x'.repeat(50000), "\\'".repeat(50000)]) {
-    const t0 = process.hrtime.bigint();
-    policy._decodeAnsiC("cat $'" + body + "'");
-    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 1500, 'too slow');
+  for (const [size, unit] of [[100000, '\\'], [50000, '\\x'], [50000, "\\'"]]) {
+    assertLinear((text) => policy._decodeAnsiC(text), (n) => "cat $'" + unit.repeat(n) + "'", size, JSON.stringify(unit));
   }
 });
 

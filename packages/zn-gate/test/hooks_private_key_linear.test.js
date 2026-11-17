@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const { hasPrivateKey } = require('../lib/hooks/runner');
 
 // The body check as it was before the fix, kept here to prove both agree on real key shapes.
@@ -69,19 +70,11 @@ test('private key detection agrees with the previous regex on generated shapes',
   }
 });
 
-test('private key detection stays fast on header plus spaces (100 KB and 1 MB)', () => {
+test('private key detection stays linear on header plus spaces (100 KB and 1 MB)', () => {
   const unit = hdr('') + ' '.repeat(4096);
-  const t0 = process.hrtime.bigint();
   assert.equal(hasPrivateKey(unit.repeat(Math.ceil(100000 / unit.length))), false);
-  const ms100 = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms100 < 300, '100 KB took ' + ms100 + ' ms');
-  const t1 = process.hrtime.bigint();
-  hasPrivateKey(unit.repeat(Math.ceil(1000000 / unit.length)));
-  const ms1m = Number(process.hrtime.bigint() - t1) / 1e6;
-  assert.ok(ms1m < 1000, '1 MB took ' + ms1m + ' ms');
+  assertLinear(hasPrivateKey, (n) => unit.repeat(Math.ceil(n / unit.length)), 1000000, 'header plus spaces');
   assert.equal(hasPrivateKey(hdr('') .repeat(300)), true); // more headers than the cap
-  const sp = hdr('') + ' '.repeat(1000000);
-  const t2 = process.hrtime.bigint();
-  assert.equal(hasPrivateKey(sp), false);
-  assert.ok(Number(process.hrtime.bigint() - t2) / 1e6 < 300);
+  assert.equal(hasPrivateKey(hdr('') + ' '.repeat(1000000)), false);
+  assertLinear(hasPrivateKey, (n) => hdr('') + ' '.repeat(n), 1000000, 'header plus a long run of spaces');
 });
