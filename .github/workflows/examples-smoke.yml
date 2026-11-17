@@ -50,7 +50,8 @@ concurrency:
 jobs:
   smoke:
     name: Package smoke (examples on Python 3.12 and Node.js 22, MCP in node:22-slim)
-    runs-on: ubuntu-latest
+    # Pinned to the image the runs use today (Ubuntu 26.04). To move later, change the label here to the next image label after a green run on it.
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Harden the runner (egress audit)

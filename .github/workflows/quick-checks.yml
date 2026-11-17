@@ -50,7 +50,8 @@ env:
 jobs:
   quick:
     name: Quick checks (docs, workflows, packages)
-    runs-on: ubuntu-latest
+    # Pinned to the image the runs use today (Ubuntu 26.04). To move later, change the label here to the next image label after a green run on it.
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # Pinned release binaries; each archive is verified against its SHA-256 before it is unpacked.
@@ -490,7 +491,8 @@ jobs:
 
   workflow-lint:
     name: Workflow lint
-    runs-on: ubuntu-latest
+    # Pinned to the image the runs use today (Ubuntu 26.04). To move later, change the label here to the next image label after a green run on it.
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     env:
       ACTIONLINT_VERSION: 1.7.12
