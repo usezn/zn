@@ -226,6 +226,8 @@ async function lookupMany(items, opts = {}) {
 
 /* ------------------- another registry in the user's settings ------------------- */
 
+// Bytes read from each settings file (64 KiB). The project folder is untrusted: a file over the limit counts as private,
+// and everything read is parsed one line at a time with anchored patterns, so the work stays linear in the file size.
 const READ_LIMIT = 65536;
 // A settings file larger than the read limit cannot be read whole: it counts as pointing at another registry (fail closed).
 const OVERSIZED_MARK = '\nregistry=https://oversized-settings.invalid\nindex-url=https://oversized-settings.invalid\n';
@@ -240,6 +242,59 @@ function readSmall(file) {
       return buf.toString('utf8', 0, n);
     } finally { fs.closeSync(fd); }
   } catch (e) { return ''; }
+}
+
+/**
+ * The lines of a settings file, cut at the same terminators a multiline `^` uses, each with its leading whitespace
+ * removed. A line is returned together with the next non-blank line ("key:" then its value below), so a value on the
+ * following line is still seen. Plain string work: no pattern here can backtrack over more than one line.
+ */
+const LINE_BREAK = /\r\n|[\n\r\u2028\u2029]/;
+function settingLines(text) {
+  const raw = String(text || '').split(LINE_BREAK).map((l) => l.trimStart());
+  const nextOf = new Array(raw.length);
+  let next = '';
+  for (let i = raw.length - 1; i >= 0; i--) {
+    nextOf[i] = next;
+    if (raw[i]) next = raw[i];
+  }
+  const out = [];
+  for (let i = 0; i < raw.length; i++) if (raw[i]) out.push(nextOf[i] ? raw[i] + '\n' + nextOf[i] : raw[i]);
+  return out;
+}
+
+const NPM_RC_REGISTRY = /^(?:@[\w.-]+:)?registry\s*=\s*["']?([^\s"']+)/i;
+const YARN1_REGISTRY = /^"?(?:@[\w.-]+:)?registry"?\s+"?(https?:[^\s"]+)/i;
+const YAML_REGISTRY = /^["']?(?:@[\w.-]+:)?registry["']?\s*:\s*["']?(https?:[^\s"']+)/i;
+const YAML_REGISTRIES = /^registries\s*:/;
+const YARN_BERRY_SERVER = /^npmRegistryServer\s*:\s*(\S+)/i;
+const YARN_BERRY_MAPS = /^(?:npmScopes|npmRegistries)\s*:/;
+const PY_INDEX_KEY = /^(?:index-url|extra-index-url|find-links|default-index|index)\b/i;
+const PY_INDEX_ASSIGN = /^(?:index-url|extra-index-url|find-links)\s*=/;
+
+/** True when the settings text names an npm registry other than the public one. Linear in the text. */
+function npmTextPrivate(text) {
+  for (const line of settingLines(text)) {
+    let m = NPM_RC_REGISTRY.exec(line);
+    if (m && !NPM_HOST_OK.test(m[1])) return true;
+    // yarn v1: registry "https://..."
+    m = YARN1_REGISTRY.exec(line);
+    if (m && !NPM_HOST_OK.test(m[1])) return true;
+    // pnpm-workspace.yaml: registry: https://... or a registries: map
+    m = YAML_REGISTRY.exec(line);
+    if (m && !NPM_HOST_OK.test(m[1])) return true;
+    if (YAML_REGISTRIES.test(line)) return true;
+    m = YARN_BERRY_SERVER.exec(line);
+    if (m && !NPM_HOST_OK.test(m[1].replace(/['"]/g, ''))) return true;
+    if (YARN_BERRY_MAPS.test(line)) return true;
+  }
+  return false;
+}
+
+/** True when a line of the text, without its leading whitespace, matches the anchored pattern. Linear in the text. */
+function anyLine(text, re) {
+  for (const line of String(text || '').split(LINE_BREAK)) if (re.test(line.trimStart())) return true;
+  return false;
 }
 
 const NPM_HOST_OK = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)(?:[/:]|$)/i;
@@ -302,21 +357,28 @@ function pnpmUserConfigs(env, home) {
  */
 const PYPROJECT_INDEX_TABLES = new Set(['tool.uv.index', 'tool.poetry.source', 'tool.pdm.source']);
 const PYPI_INDEX_OK = /^https?:\/\/(?:pypi\.org|files\.pythonhosted\.org)(?:[/:?#]|$)/i;
+const KEY_RE = /^["']?([A-Za-z0-9_-]+)["']?/;
 function uvConfigPrivate(text, isPyproject) {
   let section = isPyproject ? null : '';
   for (const raw of String(text || '').split(/\r?\n/)) {
-    const line = raw.replace(/^\s+/, '');
+    const line = raw.trimStart();
     if (!line || line[0] === '#') continue;
-    const head = /^\[\[?\s*([^\]]*?)\s*\]\]?/.exec(line);
-    if (head) {
-      section = head[1].replace(/\s*\.\s*/g, '.').replace(/["']/g, '');
+    if (line[0] === '[') {
+      // A table header, [name] or [[name]]. Without a closing bracket it is neither a header nor a key.
+      const close = line.indexOf(']');
+      if (close >= 0) {
+        const inner = line.slice(line[1] === '[' ? 2 : 1, close);
+        section = inner.split('.').map((part) => part.trim()).join('.').trim().replace(/["']/g, '');
+      }
       continue;
     }
     if (section === null) continue;
-    const kv = /^["']?([A-Za-z0-9_-]+)["']?\s*=\s*(.*)$/.exec(line);
+    const kv = KEY_RE.exec(line);
     if (!kv) continue;
+    const rest = line.slice(kv[0].length).trimStart();
+    if (rest[0] !== '=') continue;
     const key = kv[1];
-    const value = kv[2];
+    const value = rest.slice(1).trimStart();
     const inIndexTable = isPyproject ? PYPROJECT_INDEX_TABLES.has(section) : section === 'index';
     const inUv = isPyproject ? (section === 'tool.uv' || section === 'tool.uv.pip') : section === '' || section === 'pip';
     if (inIndexTable) {
@@ -350,22 +412,16 @@ function privateRegistry(eco, opts = {}) {
   const home = opts.home;
   if (eco === 'npm') {
     if (env.NPM_CONFIG_REGISTRY || env.npm_config_registry || env.YARN_NPM_REGISTRY_SERVER || env.BUN_CONFIG_REGISTRY || env.YARN_REGISTRY) return true;
-    const extra = npmGlobalConfigs(env).concat(pnpmUserConfigs(env, home)).map((f) => readSmall(f)).join('\n');
     const npmDirs = projectDirs(cwd, home);
     if (npmDirs.incomplete) return true;
+    // Each file is read and scanned once, however many folders repeat it (the global files, the home folder).
+    const files = npmGlobalConfigs(env).concat(pnpmUserConfigs(env, home));
     for (const dir of npmDirs.concat(home ? [home] : [])) {
-      const text = extra + '\n' + readSmall(path.join(dir, '.pnpmrc')) + '\n' + readSmall(path.join(dir, 'pnpm-workspace.yaml')) + '\n' + readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml')) + '\n' + readSmall(path.join(dir, '.yarnrc')) + '\n'
-        + readSmall(path.join(dir, 'bunfig.toml')) + '\n' + readSmall(path.join(dir, '.bunfig.toml')) + '\n'
-        + (env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig ? readSmall(env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig) : '');
-      for (const m of text.matchAll(/^\s*(?:@[\w.-]+:)?registry\s*=\s*["']?([^\s"']+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
-      // yarn v1: registry "https://..."
-      for (const m of text.matchAll(/^\s*"?(?:@[\w.-]+:)?registry"?\s+"?(https?:[^\s"]+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
-      // pnpm-workspace.yaml: registry: https://... or a registries: map
-      for (const m of text.matchAll(/^\s*["']?(?:@[\w.-]+:)?registry["']?\s*:\s*["']?(https?:[^\s"']+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
-      if (/^\s*registries\s*:/m.test(text)) return true;
-      for (const m of text.matchAll(/^\s*npmRegistryServer\s*:\s*(\S+)/gim)) if (!NPM_HOST_OK.test(m[1].replace(/['"]/g, ''))) return true;
-      if (/^\s*(?:npmScopes|npmRegistries)\s*:/m.test(text)) return true;
+      for (const name of ['.pnpmrc', 'pnpm-workspace.yaml', '.npmrc', '.yarnrc.yml', '.yarnrc', 'bunfig.toml', '.bunfig.toml']) files.push(path.join(dir, name));
     }
+    const userConfig = env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig;
+    if (userConfig) files.push(userConfig);
+    for (const f of new Set(files)) if (npmTextPrivate(readSmall(f))) return true;
     return false;
   }
   for (const v of ['PIP_INDEX_URL', 'PIP_EXTRA_INDEX_URL', 'PIP_FIND_LINKS', 'UV_INDEX_URL', 'UV_EXTRA_INDEX_URL', 'UV_INDEX', 'UV_DEFAULT_INDEX', 'UV_FIND_LINKS']) {
@@ -389,13 +445,13 @@ function privateRegistry(eco, opts = {}) {
   if (programData) files.push(path.join(programData, 'pip', 'pip.ini'), path.join(programData, 'uv', 'uv.toml'));
   for (const f of files) {
     const text = readSmall(f);
-    if (/^\s*(?:index-url|extra-index-url|find-links|default-index|index)\b/im.test(text)) return true;
+    if (anyLine(text, PY_INDEX_KEY)) return true;
     if ((path.basename(f).toLowerCase() === 'uv.toml' || f === env.UV_CONFIG_FILE) && uvConfigPrivate(text, false)) return true;
   }
   for (const dir of projectDirList) {
     const pyproject = readSmall(path.join(dir, 'pyproject.toml'));
     // Union of the table reader (uv, poetry and pdm sources) and the bare keys anywhere in the file: fail closed.
-    if (uvConfigPrivate(pyproject, true) || /^\s*(?:index-url|extra-index-url|find-links)\s*=/m.test(pyproject)) return true;
+    if (uvConfigPrivate(pyproject, true) || anyLine(pyproject, PY_INDEX_ASSIGN)) return true;
   }
   return false;
 }
