@@ -3,7 +3,7 @@
 //! Provides persistent storage for security audit logs using SQLite.
 //!
 //! ## Features
-//! - Thread-safe database access via Arc<Mutex<Connection>>
+//! - Thread-safe database access via `Arc<Mutex<Connection>>`
 //! - Automatic table creation on initialization
 //! - Efficient query for recent entries
 

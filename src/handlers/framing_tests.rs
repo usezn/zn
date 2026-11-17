@@ -331,8 +331,8 @@ fn json_rpc_deeply_nested_frame_does_not_overflow_the_stack() {
     assert!(matches!(v, JsonRpcValidation::Error { .. }), "{v:?}");
 }
 
-/// A JSON array is positional for the serde derive, so ["2.0", <object>, "ping"] reads as jsonrpc="2.0",
-/// id=<object>, method="ping": a pass-through that is forwarded as the raw line. A downstream server that
+/// A JSON array is positional for the serde derive, so `["2.0", <object>, "ping"]` reads as jsonrpc="2.0",
+/// `id=<object>`, method="ping": a pass-through that is forwarded as the raw line. A downstream server that
 /// supports JSON-RPC batching would then run the embedded object as a request, unchecked.
 #[test]
 fn positional_array_cannot_smuggle_a_tool_call_past_the_validator() {
