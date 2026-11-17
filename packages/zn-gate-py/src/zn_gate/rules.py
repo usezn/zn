@@ -66,12 +66,14 @@ _PREFILTER_MIN_CHARS = 16384
 _PREFILTER_MIN_NEEDLE = 3
 _PREFILTER_MAX_ALTERNATIVES = 128
 # ASCII letters, plus the four characters re.IGNORECASE folds into ASCII letters.
-_NEEDLE_FOLD = {**{c: c + 32 for c in range(65, 91)}, 0x212A: 'k', 0x17F: 's', 0x131: 'i', 0x130: 'i'}
+_NEEDLE_FOLD: Dict[int, str] = {**{c: chr(c + 32) for c in range(65, 91)}, 0x212A: 'k', 0x17F: 's', 0x131: 'i', 0x130: 'i'}
 _folded_cache: Tuple[str, str] = ('', '')
 
 
-def _folded(text: str) -> str:
-    """The text with ASCII letters lower-cased (and the four folded characters mapped), kept for the next call."""
+def _fold_for_needles(text: str) -> str:
+    """The text with ASCII letters lower-cased (and the four folded characters mapped), kept for the next call.
+
+    The last text is only kept while one evaluation runs: _evaluate_uncached clears it."""
     global _folded_cache
     cached = _folded_cache
     if cached[0] is text:
@@ -86,7 +88,7 @@ def _needles_of_sequence(items: Any) -> Optional[List[str]]:
 
     Only ASCII literals are used and lookarounds, character classes and optional parts are
     skipped, so the result is a necessary condition: a text without any of the needles
-    (after _folded) cannot match. The best requirement of the sequence is the one with the
+    (after _fold_for_needles) cannot match. The best requirement of the sequence is the one with the
     longest shortest needle.
     """
     candidates: List[List[str]] = []
@@ -132,9 +134,9 @@ def _needles_of_sequence(items: Any) -> Optional[List[str]]:
 def _needles_for(pattern: str, flags: int) -> Tuple[str, ...]:
     """The needles of a pattern, or an empty tuple when none can be derived."""
     try:
-        parser = getattr(re, '_parser', None)
+        parser: Any = getattr(re, '_parser', None)
         if parser is None:
-            import sre_parse as parser  # type: ignore[no-redef]
+            import sre_parse as parser
         found = _needles_of_sequence(parser.parse(pattern, flags))
     except Exception:
         return ()
@@ -149,7 +151,8 @@ class _LazyPattern:
     reach most of them. `pattern` is available at once; any other attribute
     (`sub`, `finditer`, `flags`, ...) compiles the pattern and is then served
     straight from the instance, so later calls cost the same as a real compiled
-    pattern.
+    pattern. `search` is the exception: it goes through the large-text check below
+    and then calls the compiled pattern's `search`.
 
     `search` on a large text first looks for the literals every match of the
     pattern must contain (a plain substring scan, far cheaper than a regex scan
@@ -178,7 +181,7 @@ class _LazyPattern:
             if needles is None:
                 needles = self._needles = _needles_for(self.pattern, self._flags)
             if needles:
-                folded = _folded(string)
+                folded = _fold_for_needles(string)
                 for needle in needles:
                     if needle in folded:
                         break
@@ -1008,6 +1011,15 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 
 
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
+    global _folded_cache
+    try:
+        return _evaluate_body(input_text, strict)
+    finally:
+        # Do not keep the last (possibly large, untrusted) input alive between calls.
+        _folded_cache = ('', '')
+
+
+def _evaluate_body(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
     # Invisible padding is judged on the input as received (see evaluateUncached in rules.js).
