@@ -15,6 +15,7 @@
  * channel, not here: an agent can type in this terminal.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -286,6 +287,43 @@ async function runTeamCommand(args, io) {
   }
 }
 
+/** Writes all of text to fd: fs.writeSync may take only part of it, or fail with EAGAIN when fd is not blocking. */
+function writeAll(fd, text) {
+  const buf = Buffer.from(text, 'utf8');
+  let off = 0;
+  let stalled = 0;
+  while (off < buf.length) {
+    let n = 0;
+    try {
+      n = fs.writeSync(fd, buf, off, buf.length - off);
+    } catch (e) {
+      if (!e || e.code !== 'EAGAIN') throw e;
+    }
+    off += n;
+    if (n === 0 && ++stalled > 100000) throw new Error('could not write the export: no progress');
+    if (n > 0) stalled = 0;
+  }
+}
+
+/** The sha256 of a file, read back from disk. */
+function fileSha256(file) {
+  const h = crypto.createHash('sha256');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(65536);
+    let n;
+    while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) h.update(buf.subarray(0, n));
+  } finally { fs.closeSync(fd); }
+  return h.digest('hex');
+}
+
+/** The export as written must be the export as built: a short or damaged copy is never used. */
+function sameExport(file, res) {
+  if (fileSha256(file) !== res.sha256) {
+    throw new Error('Not exported: the temporary copy of the export on disk does not match what was generated (a write may have been cut short, or the disk is full). Nothing from this run should be used; run the export again.');
+  }
+}
+
 /** zn vault log export --otlp: args after "export". Returns the exit code. */
 async function runLogExport(args) {
   if (!args.includes('--otlp')) { err(EXPORT_USAGE); return 2; }
@@ -349,9 +387,10 @@ async function runLogExport(args) {
       const fd = fs.openSync(tmp, 'wx', 0o600);
       let res;
       try {
-        res = exportAuditStream(opts, (s) => fs.writeSync(fd, s));
+        res = exportAuditStream(opts, (s) => writeAll(fd, s));
         sameBytes(res);
         fs.closeSync(fd);
+        sameExport(tmp, res);
         fs.renameSync(tmp, file);
       } catch (e) {
         try { fs.closeSync(fd); } catch (e2) { /* closed */ }
@@ -365,10 +404,14 @@ async function runLogExport(args) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-export-'));
       const tmp = path.join(dir, 'export.jsonl');
       try {
-        const fd = fs.openSync(tmp, 'wx', 0o600);
+        let fd = fs.openSync(tmp, 'wx', 0o600);
         try {
-          sameBytes(exportAuditStream(opts, (s) => fs.writeSync(fd, s)));
-        } finally { fs.closeSync(fd); }
+          const res = exportAuditStream(opts, (s) => writeAll(fd, s));
+          sameBytes(res);
+          fs.closeSync(fd);
+          fd = -1;
+          sameExport(tmp, res);
+        } finally { if (fd >= 0) fs.closeSync(fd); }
         const rd = fs.openSync(tmp, 'r');
         try {
           const buf = Buffer.alloc(65536);

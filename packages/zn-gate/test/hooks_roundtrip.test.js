@@ -178,3 +178,15 @@ test('copilot: an install from an older version (no kept original) is deleted wh
   assert.equal(AGENTS.copilot.uninstall(o).removed, 1);
   assert.equal(fs.existsSync(file), false);
 });
+
+test('config-file: files that only share the backup prefix are never listed or pruned', (t) => {
+  const home = tempDir(t, 'zn-rt-keep-');
+  const file = path.join(home, 'settings.json');
+  write(file, '{"a":1}\n');
+  const theirs = ['settings.json.bak-zn-user-notes-1', 'settings.json.bak-zn-user-notes-2', 'settings.json.bak-zn-user-notes-3', 'settings.json.bak-zn-20200101T000000.keep', 'settings.json.bak-zn-notes'];
+  for (const n of theirs) write(path.join(home, n), 'mine ' + n);
+  for (let i = 0; i < 8; i++) cfg.backup(file);
+  for (const n of theirs) assert.equal(fs.readFileSync(path.join(home, n), 'utf8'), 'mine ' + n, n + ' was touched');
+  assert.equal(cfg.backupsOf(file).length, cfg.KEEP_BACKUPS);
+  assert.ok(cfg.backupsOf(file).every((b) => /\.bak-zn-\d{8}T\d{6}(-\d+)?(-absent)?$/.test(b.path)));
+});

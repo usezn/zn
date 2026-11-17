@@ -38,6 +38,10 @@ MAX_STRINGS_PER_LINE = 200000
 # A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
 # so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
 SLICE_CHARS = 4 * 1024 * 1024
+# Each slice after the first is scanned together with the last OVERLAP_CHARS characters of the one before, so a secret
+# that crosses a cut is still found (and counted once: what the overlap alone yields is subtracted). It is far longer
+# than any secret with a fixed shape (the longest are private key blocks, a few thousand characters).
+OVERLAP_CHARS = 8192
 
 # Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 # database (SQLite), which this version does not read: they are reported as not scanned.
@@ -326,25 +330,43 @@ def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], 
     from . import rules
     types = _types()
     known = set(types.values()) | {"URL_PASSWORD"}
+    prev = ""
     first = True
     for piece in _slices(text):
         if not first and expired is not None and expired():
             raise _TimeUp()
         first = False
-        piece = _cut_markers(piece, known)
-        _redacted, detections = rules.redact_secrets(piece)
-        # redact_secrets also reads the text without invisible characters, so the fine-grained tokens are counted on
-        # that same text: an invisible character inside a token cannot change its type.
-        view = rules.invisible_view(piece)
-        seen = view[0] if view is not None else piece
-        pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(seen))
-        for d in detections:
-            # An id the table does not know is still a secret: count it as the generic type, never drop it.
-            t = types.get(d["rule"]) or "SECRET"
-            if t == "GITHUB_TOKEN" and pats > 0:
-                pats -= 1
-                t = "GITHUB_PAT"
-            counts[t] = counts.get(t, 0) + 1
+        if prev:
+            tail = prev[-OVERLAP_CHARS:]
+            both = _count_piece(tail + piece, types, known, rules)
+            seen_before = _count_piece(tail, types, known, rules)
+            found = {t: both[t] - seen_before.get(t, 0) for t in both}
+        else:
+            found = _count_piece(piece, types, known, rules)
+        for t, n in found.items():
+            if n > 0:
+                counts[t] = counts.get(t, 0) + n
+        prev = piece
+
+
+def _count_piece(piece: str, types: Dict[str, str], known: set, rules: Any) -> Dict[str, int]:
+    """The secret types found in one piece of text, as {TYPE: n}."""
+    out: Dict[str, int] = {}
+    piece = _cut_markers(piece, known)
+    _redacted, detections = rules.redact_secrets(piece)
+    # redact_secrets also reads the text without invisible characters, so the fine-grained tokens are counted on
+    # that same text: an invisible character inside a token cannot change its type.
+    view = rules.invisible_view(piece)
+    seen = view[0] if view is not None else piece
+    pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(seen))
+    for d in detections:
+        # An id the table does not know is still a secret: count it as the generic type, never drop it.
+        t = types.get(d["rule"]) or "SECRET"
+        if t == "GITHUB_TOKEN" and pats > 0:
+            pats -= 1
+            t = "GITHUB_PAT"
+        out[t] = out.get(t, 0) + 1
+    return out
 
 
 def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:

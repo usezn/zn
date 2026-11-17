@@ -335,3 +335,18 @@ test('a home over the file cap keeps the same files as the Python package', (t) 
   assert.deepEqual(files, ['B.jsonl', 'a.jsonl', 'z.jsonl', '\u00e9.jsonl', '\uff01.jsonl']);
   assert.ok(r.incomplete.some((i) => i.reason === 'too-many-files' && i.limit === 5));
 });
+
+test('a secret that crosses the cut between two slices of a long line is found once', (t) => {
+  const home = tempDir(t, 'zn-hist-cut-');
+  const file = path.join(home, 'long.jsonl');
+  const SLICE = 4 * 1024 * 1024;
+  // Non-word filler with no space or line break, so the first cut falls at exactly SLICE; the key starts 10 characters before it.
+  const text = '-'.repeat(SLICE - 10) + AWS + '-'.repeat(200);
+  assert.ok(text.indexOf(AWS) < SLICE && text.indexOf(AWS) + AWS.length > SLICE, 'the key straddles the cut');
+  fs.writeFileSync(file, text + '\n');
+  const { _internal } = require('../lib/reach/history');
+  const engine = require('../lib/scrub/engine');
+  const r = _internal.scanFile(engine, file, Date.now() + 600000);
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.counts, { AWS_KEY: 1 });
+});

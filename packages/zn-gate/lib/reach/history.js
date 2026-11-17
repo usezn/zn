@@ -33,6 +33,10 @@ const MAX_STRINGS_PER_LINE = 200000;
 // A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
 // so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
 const SLICE_CHARS = 4 * 1024 * 1024;
+// Each slice after the first is scanned together with the last OVERLAP_CHARS characters of the one before, so a secret
+// that crosses a cut is still found (and counted once: what the overlap alone yields is subtracted). It is far longer
+// than any secret with a fixed shape (the longest are private key blocks, a few thousand characters).
+const OVERLAP_CHARS = 8192;
 
 // Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 // database (SQLite), which this version does not read: they are reported as not scanned.
@@ -241,13 +245,27 @@ function scanLine(engine, line, counts, expired) {
   }
   if (text.length < 8) return;
   const parts = slices(text);
+  const typesOf = (piece) => {
+    const out = {};
+    for (const s of engine.scan(piece, { exact: false, pii: false })) {
+      if (s.source === 'pii') continue;
+      out[s.type] = (out[s.type] || 0) + 1;
+    }
+    return out;
+  };
   for (let i = 0; i < parts.length; i++) {
     if (i > 0 && expired && expired()) throw new TimeUp();
-    const spans = engine.scan(parts[i], { exact: false, pii: false });
-    for (const s of spans) {
-      if (s.source === 'pii') continue;
-      counts[s.type] = (counts[s.type] || 0) + 1;
+    let found;
+    if (i === 0) {
+      found = typesOf(parts[0]);
+    } else {
+      const tail = parts[i - 1].slice(-OVERLAP_CHARS);
+      const both = typesOf(tail + parts[i]);
+      const before = typesOf(tail);
+      found = {};
+      for (const t of Object.keys(both)) found[t] = both[t] - (before[t] || 0);
     }
+    for (const t of Object.keys(found)) if (found[t] > 0) counts[t] = (counts[t] || 0) + found[t];
   }
 }
 

@@ -109,12 +109,15 @@ function newBackupPath(file, absent) {
  */
 function backupsOf(file) {
   const dir = path.dirname(file);
-  const prefix = path.basename(file) + '.bak-zn-';
+  const base = path.basename(file);
+  // Only the names newBackupPath() makes: '<file>.bak-zn-<YYYYMMDDTHHMMSS>[-<n>][-absent]'. Any other file that shares
+  // the prefix (for example '<file>.bak-zn-user-notes') is the user's and is never listed, so never pruned.
+  const generated = new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.bak-zn-\\d{8}T\\d{6}(?:-\\d+)?(?:-absent)?$');
   let names;
   try { names = fs.readdirSync(dir); } catch (_) { return []; }
   const out = [];
   for (const name of names) {
-    if (!name.startsWith(prefix) || name === path.basename(file) + ORIGINAL_SUFFIX || name === path.basename(file) + ORIGINAL_SUFFIX + ABSENT_SUFFIX) continue;
+    if (!generated.test(name)) continue;
     const p = path.join(dir, name);
     let st;
     try { st = fs.statSync(p); } catch (_) { continue; }
