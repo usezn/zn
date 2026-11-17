@@ -1,0 +1,3 @@
+### Fixed
+- `zn-gate scan` counts lines the same way in the npm and Python packages: a line ends at `\r\n`, `\r` or `\n` only, as in editors and on GitHub. A file with old Mac line ends or a Unicode line separator no longer gets findings on the wrong line. Both versions also list findings and skipped files in the same order, show an unreadable folder as `locked` instead of `./locked`, and leave a byte order mark out of the shown line.
+- `zn-gate audit --format sarif` now says when it is incomplete (`invocations` with `executionSuccessful` and a notification for each folder not read or an early stop), and no longer emits results for files in the home folder (`--include-home`) that code scanning cannot resolve: they become one notification without file names.

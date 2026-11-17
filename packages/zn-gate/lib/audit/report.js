@@ -136,27 +136,57 @@ function toSarif(result, meta) {
   // Fingerprint: rule, file and evidence (stable when lines move), plus the
   // ordinal among identical findings so that each one stays unique.
   const ordinals = new Map();
-  const results = result.findings.map((f) => {
-    const home = f.file.startsWith('~/');
+  const results = [];
+  // Code scanning needs a file of the repository for every result. A file of the user's home folder
+  // (--include-home) cannot be resolved there, and its name does not belong in a report that may be public:
+  // those findings are counted in one notification instead (the text and JSON reports list them).
+  const notifications = [];
+  const homeFindings = [];
+  for (const f of result.findings) {
+    if (String(f.file).startsWith('~/')) {
+      homeFindings.push(f);
+      continue;
+    }
     const base = [f.id, f.file, f.evidence].join('\u0000');
     const n = (ordinals.get(base) || 0) + 1;
     ordinals.set(base, n);
     const fp = crypto.createHash('sha256').update(base + '\u0000' + n).digest('hex');
-    return {
+    results.push({
       ruleId: f.id,
       ruleIndex: index[f.id],
       level: LEVEL[f.severity],
       message: { text: f.title + ': ' + f.detail },
       locations: [{
         physicalLocation: {
-          artifactLocation: { uri: encodePath(home ? f.file.slice(2) : f.file), uriBaseId: home ? 'HOME' : '%SRCROOT%' },
+          artifactLocation: { uri: encodePath(f.file), uriBaseId: '%SRCROOT%' },
           region: { startLine: f.line },
         },
       }],
       partialFingerprints: { 'znAudit/v1': fp },
       properties: { severity: f.severity, agent: f.agent, evidence: f.evidence, fix: f.fix, references: f.references },
-    };
-  });
+    });
+  }
+  if (homeFindings.length) {
+    const worst = homeFindings.some((f) => LEVEL[f.severity] === 'error') ? 'error' : homeFindings.some((f) => LEVEL[f.severity] === 'warning') ? 'warning' : 'note';
+    notifications.push({
+      level: worst,
+      message: { text: homeFindings.length + ' finding' + (homeFindings.length === 1 ? '' : 's') + ' in files in the home folder (--include-home) ' + (homeFindings.length === 1 ? 'is' : 'are') + ' not in this report: code scanning cannot show files outside the repository. Run zn-gate audit --include-home on your own computer to read ' + (homeFindings.length === 1 ? 'it' : 'them') + '.' },
+      properties: { count: homeFindings.length, rules: [...new Set(homeFindings.map((f) => f.id))].sort() },
+    });
+  }
+  // A folder that was not read, or a scan that stopped early, is an incomplete audit: the text report says so
+  // and the command exits 3, so a report that only code scanning reads must say it too.
+  const skippedDirs = result.skippedDirs || [];
+  for (const d of skippedDirs) {
+    const dir = String(d.dir);
+    // A path outside the repository (absolute, or in the home folder) is not named.
+    const named = dir.startsWith('~/') || /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(dir) ? 'A folder' : 'Folder ' + dir;
+    notifications.push({ level: 'warning', message: { text: named + ' was not read (' + d.reason + '), so the files in it were not checked.' } });
+  }
+  if (result.truncated) {
+    notifications.push({ level: 'warning', message: { text: 'The scan stopped early (see ZNA020); some files were not checked.' } });
+  }
+  const incomplete = skippedDirs.length > 0 || Boolean(result.truncated);
   return JSON.stringify({
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
     version: '2.1.0',
@@ -172,8 +202,8 @@ function toSarif(result, meta) {
       },
       originalUriBaseIds: {
         '%SRCROOT%': { description: { text: 'The audited directory (repository root).' } },
-        HOME: { description: { text: 'The user home directory (--include-home).' } },
       },
+      invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: notifications }],
       columnKind: 'utf16CodeUnits',
       results,
     }],

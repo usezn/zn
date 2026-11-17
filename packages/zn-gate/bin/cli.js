@@ -680,10 +680,16 @@ Files   : ${files.length} file(s) queued for audit\n
       content = mcpSecrets.maskMcpValues(content, mcpFound);
     }
     const generic = !mcpOnly.has(filePath);
-    const lines = generic ? content.split('\n') : [];
-    // Line of a character offset, numbered like the line pass (split on \n).
+    // A line ends at CRLF, CR or LF and nowhere else (the same rule as the Python package, and what editors
+    // and GitHub count): not at U+2028, U+2029, \v, \f or U+0085.
+    const lines = generic ? content.split(/\r\n|\r|\n/) : [];
+    // Line of a character offset, numbered like the line pass: each line starts after its real terminator.
     const starts = [0];
-    for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
+    if (generic) {
+      const eol = /\r\n|\r|\n/g;
+      let t;
+      while ((t = eol.exec(content)) !== null) starts.push(t.index + t[0].length);
+    }
     const lineOf = (offset) => {
       let lo = 0;
       let hi = starts.length - 1;
@@ -700,7 +706,7 @@ Files   : ${files.length} file(s) queued for audit\n
       let m;
       while ((m = rx.exec(content)) !== null) {
         if (m[0].length === 0) { rx.lastIndex++; continue; }
-        if (!m[0].includes('\n')) continue; // one line: the line pass redacts it
+        if (!/[\r\n]/.test(m[0])) continue; // one line: the line pass redacts it
         const first = lineOf(m.index);
         const last = lineOf(m.index + m[0].length - 1);
         const h = r.header.exec(m[0]);

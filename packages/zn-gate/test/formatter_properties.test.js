@@ -75,14 +75,20 @@ test('audit JSON parses and its findings equal the input findings, in order', ()
   }), RUNS);
 });
 
+// A finding in a file of the home folder is not a result (code scanning cannot open it): it is counted in a notification.
+const inRepo = (result) => result.findings.filter((f) => !f.file.startsWith('~/'));
+
 test('audit SARIF parses as 2.1.0, has one result per finding and every ruleId exists', () => {
   fc.assert(fc.property(auditResult, meta, (result, m) => {
     const sarif = JSON.parse(report.toSarif(result, m));
     assert.equal(sarif.version, '2.1.0');
     const run = sarif.runs[0];
     const ruleIds = new Set(run.tool.driver.rules.map((r) => r.id));
-    assert.equal(run.results.length, result.findings.length);
-    result.findings.forEach((f, i) => {
+    assert.equal(run.results.length, inRepo(result).length);
+    const homeCount = result.findings.length - inRepo(result).length;
+    const notes = run.invocations[0].toolExecutionNotifications;
+    assert.equal(notes.filter((n) => n.properties && n.properties.count).reduce((a, n) => a + n.properties.count, 0), homeCount);
+    inRepo(result).forEach((f, i) => {
       const res = run.results[i];
       assert.equal(res.ruleId, f.id);
       assert.ok(ruleIds.has(res.ruleId), 'ruleId ' + res.ruleId + ' missing from rules');
@@ -98,10 +104,9 @@ test('audit SARIF parses as 2.1.0, has one result per finding and every ruleId e
 test('audit SARIF artifact locations decode back to the file names', () => {
   fc.assert(fc.property(auditResult, meta, (result, m) => {
     const run = JSON.parse(report.toSarif(result, m)).runs[0];
-    result.findings.forEach((f, i) => {
+    inRepo(result).forEach((f, i) => {
       const loc = run.results[i].locations[0].physicalLocation;
-      const rel = f.file.startsWith('~/') ? f.file.slice(2) : f.file;
-      assert.equal(decodeURIComponent(loc.artifactLocation.uri), rel);
+      assert.equal(decodeURIComponent(loc.artifactLocation.uri), f.file);
       assert.equal(loc.region.startLine, f.line);
     });
   }), RUNS);

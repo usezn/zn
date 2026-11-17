@@ -79,7 +79,16 @@ def _decode_scan_text(raw: bytes) -> str:
         return raw[2:len(raw) - len(raw) % 2].decode("utf-16-le", errors="ignore")
     if raw[:2] == b"\xfe\xff":
         return raw[2:len(raw) - len(raw) % 2].decode("utf-16-be", errors="ignore")
-    return raw.decode("utf-8", errors="ignore")
+    text = raw.decode("utf-8", errors="ignore")
+    # A UTF-8 byte order mark is not part of the first line.
+    return text[1:] if text.startswith("\ufeff") else text
+
+
+# A line ends at CRLF, CR or LF and nowhere else: the same rule as the Node.js
+# package, and what editors and GitHub count. str.splitlines also splits on
+# \x0b, \x0c, \x1c-\x1e, \x85, U+2028 and U+2029, which would shift every
+# later line number.
+_EOL = re.compile(r"\r\n|\r|\n")
 
 
 # A file name is put in a suggested command only when it is made of plain
@@ -358,10 +367,10 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     if mcp_only:
         return _mcp_violations(shown, mcp_found)
 
-    # Line numbers as the line pass counts them (str.splitlines boundaries).
+    # Line numbers as the line pass counts them (a line ends at CRLF, CR or LF only).
     starts = [0]
-    for part in content.splitlines(keepends=True):
-        starts.append(starts[-1] + len(part))
+    for eol in _EOL.finditer(content):
+        starts.append(eol.end())
     # Private keys over several lines, found first: a line inside one is never
     # printed, even when another rule fires on it (the line on its own does
     # not look like a key, so it would not be redacted).
@@ -370,7 +379,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     for name, rx, header_rx in _MULTILINE_RULES:
         for m in rx.finditer(content):
             # A block on one line is redacted by the line pass.
-            if len(m.group(0).splitlines()) < 2:
+            if not _EOL.search(m.group(0)):
                 continue
             first = bisect.bisect_right(starts, m.start())
             last = bisect.bisect_right(starts, m.end() - 1)
@@ -379,7 +388,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
                            "Exposed credential detected by DLP filter"))
             key_lines.update(range(first, last + 1))
 
-    lines = content.splitlines()
+    lines = _EOL.split(content)
     # BEGIN markers outside any complete block: a truncated key.
     for i, line in enumerate(lines, 1):
         if i in key_lines:
@@ -597,7 +606,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     else:
         # A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
         def _unreadable(err: OSError) -> None:
-            skipped_dirs.append({"dir": str(err.filename), "reason": _unreadable_reason(err)})
+            skipped_dirs.append({"dir": str(Path(err.filename)), "reason": _unreadable_reason(err)})
 
         for root, dirs, files in os.walk(target_path, onerror=_unreadable):
             # Links found inside the folder are not followed (os.walk lists a link to a folder but does not enter it).
@@ -613,7 +622,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                             skipped_dirs.append({"dir": str(Path(root) / d), "reason": pruned["reason"]})
                         continue
                 kept.append(d)
-            dirs[:] = kept
+            dirs[:] = sorted(kept)
             for f in files:
                 p = Path(root) / f
                 # A link found inside the folder is not followed and not a skipped file.
@@ -622,6 +631,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
                     files_to_scan.append(p)
 
+    if not root_file:
+        # Depth first with the entries of a folder in name order, files and folders mixed: the order the
+        # Node.js package walks in, so both reports list the same things in the same order.
+        files_to_scan.sort(key=lambda p: p.parts)
+        skipped_dirs.sort(key=lambda d: Path(d["dir"]).parts)
     home_files = set()
     mcp_only_files = set()
     if getattr(args, "include_home", False):
@@ -640,15 +654,20 @@ def cmd_scan(args: argparse.Namespace) -> int:
     all_violations: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
     scanned = 0
+    # The Node.js package lists first what it finds while walking (not a regular file, 2 MiB or larger), then
+    # what it fails to read; the same order here.
+    read_time_skipped: List[Dict[str, str]] = []
     for fp in files_to_scan:
         shown = _home_display(fp) if str(fp) in home_files else str(fp)
         reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files or str(fp) == root_file)
         if reason:
-            skipped.append({"file": shown, "reason": reason})
+            walk_time = reason in ("not a regular file", "2 MiB or larger") and str(fp) not in home_files
+            (skipped if walk_time else read_time_skipped).append({"file": shown, "reason": reason})
             continue
         scanned += 1
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
+    skipped.extend(read_time_skipped)
     allow_partial = bool(getattr(args, "allow_partial", False))
     unread_dirs = sum(1 for d in skipped_dirs if str(d.get("reason", "")).startswith("cannot be read"))
     _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path), allow_partial=allow_partial,
