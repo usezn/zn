@@ -43,3 +43,24 @@ path = "fuzz_targets/policy_wasm.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "auth_query"
+path = "fuzz_targets/auth_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_jwt"
+path = "fuzz_targets/auth_jwt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shield_origin"
+path = "fuzz_targets/shield_origin.rs"
+test = false
+doc = false
+bench = false

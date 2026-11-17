@@ -359,6 +359,35 @@ pub fn constant_time_compare(a: &str, b: &str) -> bool {
     result == 0
 }
 
+/// Entry points for the fuzz targets in `fuzz/`: the credential parsing above is private. Not a supported API.
+#[doc(hidden)]
+pub mod fuzz_entry {
+    /// See `percent_decode`.
+    pub fn percent_decode(value: &str) -> Option<String> {
+        super::percent_decode(value)
+    }
+
+    /// See `query_token`.
+    pub fn query_token(query: &str) -> Option<String> {
+        super::query_token(query)
+    }
+
+    /// See `query_token_allowed`.
+    pub fn query_token_allowed(path: &str) -> bool {
+        super::query_token_allowed(path)
+    }
+
+    /// See `strip_bearer`.
+    pub fn strip_bearer(value: &str) -> &str {
+        super::strip_bearer(value)
+    }
+
+    /// True when `token` is a JWT for `secret` that grants a usable role.
+    pub fn jwt_grants_access(token: &str, secret: &str) -> bool {
+        matches!(super::check_jwt(token, secret), super::JwtCheck::Granted(_))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
