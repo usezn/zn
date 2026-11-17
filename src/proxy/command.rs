@@ -230,7 +230,20 @@ pub fn untrusted_project_roots(
     home: Option<&std::path::Path>,
     exists: &dyn Fn(&std::path::Path) -> std::io::Result<bool>,
 ) -> Vec<std::path::PathBuf> {
-    let mut roots = vec![cwd.to_path_buf()];
+    // The home folder is not a project: a gateway started there must not make the tools under it untrusted.
+    let cwd_is_home = home.is_some_and(|h| {
+        let (a, b) = (cwd.to_string_lossy(), h.to_string_lossy());
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(&b)
+        } else {
+            a == b
+        }
+    });
+    let mut roots = if cwd_is_home {
+        Vec::new()
+    } else {
+        vec![cwd.to_path_buf()]
+    };
     let mut found = false;
     let mut extra = 0;
     for dir in cwd.ancestors() {
@@ -570,6 +583,32 @@ mod tests {
         // The outer one is the home folder (dotfiles): it is not a project root.
         let roots = untrusted_project_roots(&nested, Some(outer.as_path()), &exists);
         assert_eq!(roots, vec![nested.clone(), inner.clone()]);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_working_folder_that_is_the_home_folder_is_not_an_untrusted_root() {
+        let base = std::env::temp_dir().join(format!("zn-root-{}-d", std::process::id()));
+        let home = base.join("home");
+        let sub = home.join("proj");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(sub.join(".git")).unwrap();
+        let exists = |p: &std::path::Path| -> std::io::Result<bool> {
+            if p.starts_with(&base) {
+                p.try_exists()
+            } else {
+                Ok(false)
+            }
+        };
+        // Started in the home folder (even a work tree): nothing there is a project root.
+        assert!(untrusted_project_roots(&home, Some(home.as_path()), &exists).is_empty());
+        std::fs::create_dir_all(home.join(".git")).unwrap();
+        assert!(untrusted_project_roots(&home, Some(home.as_path()), &exists).is_empty());
+        // A folder below home is still the project.
+        assert_eq!(
+            untrusted_project_roots(&sub, Some(home.as_path()), &exists),
+            vec![sub.clone()]
+        );
         std::fs::remove_dir_all(&base).unwrap();
     }
 
