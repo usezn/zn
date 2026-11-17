@@ -5,12 +5,12 @@ the test is skipped when that package is not next to this one (an sdist).
 """
 
 import json
-import time
 import unittest
 from pathlib import Path
 
 from zn_gate import check_tool_call
 from zn_gate.rules import sensitive_path_view
+from ._timing import assert_linear
 
 CASES_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "sensitive_path_cases.json"
 
@@ -44,10 +44,7 @@ class TestSensitivePathView(unittest.TestCase):
         self.assertEqual(sensitive_path_view("~user/./x//y"), "~/x/y")
 
     def test_linear(self):
-        long = "." * 200000 + "x " + "/.." * 50000 + " " + "\\" * 100000
-        t0 = time.perf_counter()
-        sensitive_path_view(long)
-        self.assertLess(time.perf_counter() - t0, 1.0)
+        assert_linear(sensitive_path_view, lambda n: "." * n + "x " + "/.." * (n // 4) + " " + "\\" * (n // 2), 200000)
 
 
 if __name__ == "__main__":
