@@ -2590,6 +2590,7 @@ _TYPE_MODULE = type.__dict__["__module__"]
 _TYPE_QUALNAME = type.__dict__["__qualname__"]
 _TYPE_FLAGS = type.__dict__["__flags__"]
 _HEAPTYPE = 1 << 9
+_IMMUTABLETYPE = 1 << 8
 # The descriptor type of a namedtuple field, compared by identity (its name can be copied).
 _TUPLEGETTER = type(vars(namedtuple("_ZnField", "a"))["a"])
 
@@ -2613,9 +2614,12 @@ def _trusted_class(c: type) -> bool:
 
 def _class_bound(c: type) -> bool:
     """True when the module that `c` names, already imported, holds this very class under its qualified name, or
-    when `c` is a static type (written in C), which cannot change its module name."""
+    when `c` is a type written in C that cannot change its module name: a static type, or an immutable heap type
+    (_thread.lock on Python 3.12, which _thread binds under another name). A class written in Python is never
+    immutable."""
     module = _TYPE_MODULE.__get__(c)
-    if not _TYPE_FLAGS.__get__(c) & _HEAPTYPE:
+    flags = _TYPE_FLAGS.__get__(c)
+    if not flags & _HEAPTYPE or flags & _IMMUTABLETYPE:
         return True
     target: Any = sys.modules.get(module) if isinstance(module, str) else None
     for part in str(_TYPE_QUALNAME.__get__(c)).split("."):
