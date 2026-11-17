@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-17.1
+ * RULES_VERSION: 2026-11-17.2
  */
 
-const RULES_VERSION = '2026-11-17.1';
+const RULES_VERSION = '2026-11-17.2';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1894,6 +1894,9 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
   // Deep sanitization of objects/arrays
   const detections = [];
   function _sanitize(val) {
+    // Functions are never data: one left in the masked value could run when it is serialized
+    // (a toJSON) and give back text that was not masked.
+    if (typeof val === 'function') return undefined;
     if (typeof val === 'string') {
       const res = redactSecrets(val);
       if (res.detections.length > 0) {

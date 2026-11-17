@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, T
 
 from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invisible
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
-from .rules import UNREAD_ACCESSORS_REASON, unread_accessors
+from .rules import OVERRIDDEN_READING_REASON, UNREAD_ACCESSORS_REASON, overrides_builtin_reading, unread_accessors
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -258,6 +258,9 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     """
     # Judged by the real type: isinstance() also asks the object for __class__, which a property can answer.
     kind = type(data)
+    if _seen is not None and _seen.stop_hidden and overrides_builtin_reading(data):
+        # A tool result: a str, list or dict subclass that redefines how it is read could show other text later.
+        raise _Unscannable("type:unscannable", OVERRIDDEN_READING_REASON)
     if issubclass(kind, str):
         return [data]
     if issubclass(kind, (bytes, bytearray, memoryview)):

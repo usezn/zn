@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-17.1
+RULES_VERSION: 2026-11-17.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-17.1"
+RULES_VERSION = "2026-11-17.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2681,6 +2681,65 @@ def unread_accessors(val: Any) -> bool:
             return True
         return not isinstance(d, dict) or any(n not in d for n in lazy)
     return False
+
+
+# Built-in types that the scanners read through their own storage: the text of a str or bytes, the number of an
+# int or float, the items of a list, tuple, set or dict. Compared with the real type.
+_BUILTIN_READ_TYPES = (str, bytes, bytearray, int, float, complex, list, tuple, dict, set, frozenset)
+_EXACT_BUILTIN_TYPES = frozenset({str, bytes, bytearray, int, bool, float, complex, list, tuple, dict, set, frozenset})
+# Methods through which a subclass of one of them shows other content than the scanners read: str(), repr(),
+# format() and f-strings, iteration, dict(), json, copy and pickle each use the storage or one of these.
+_READING_HOOKS = frozenset({
+    "__str__", "__repr__", "__format__", "__bytes__", "__iter__", "__reversed__", "__getitem__", "__len__",
+    "__contains__", "keys", "items", "values", "get", "__reduce__", "__reduce_ex__", "__getstate__", "__copy__",
+    "__deepcopy__", "__json__", "for_json", "_asdict", "tolist", "to_dict", "__index__", "__int__", "__float__",
+    "__complex__",
+})
+OVERRIDDEN_READING_REASON = ("A value of a built-in type (str, list, dict...) redefines how it is read or turned "
+                             "into text, so it could show something else than what was checked; return a plain "
+                             "str, list or dict instead")
+_reading_cache: "weakref.WeakKeyDictionary[type, bool]" = weakref.WeakKeyDictionary()
+
+
+def _class_overrides_reading(klass: type) -> bool:
+    for c in _TYPE_MRO.__get__(klass):
+        if _trusted_class(c):
+            continue
+        for name, attr in list(_TYPE_DICT.__get__(c).items()):
+            if name not in _READING_HOOKS:
+                continue
+            # A method that a standard-library helper wrote for the class (namedtuple, enum) is trusted.
+            fn = attr.__func__ if isinstance(attr, (staticmethod, classmethod)) else attr
+            if not _trusted_module(getattr(fn, "__module__", None)):
+                return True
+    return False
+
+
+def overrides_builtin_reading(val: Any) -> bool:
+    """True when `val` is an instance of a subclass of a built-in str, bytes, number, list, tuple, dict or set type
+    that redefines a method in _READING_HOOKS outside the standard library and the trusted packages.
+
+    The scanners read such a value through its built-in storage or its methods, and what turns it into text later
+    (str(), json, dict(), a framework) may use the other one, so the text it shows may not be the text that was
+    checked. A tool result holding one is refused (rule type:unscannable).
+    """
+    klass = type(val)
+    if klass in _EXACT_BUILTIN_TYPES or not issubclass(klass, _BUILTIN_READ_TYPES):
+        return False
+    try:
+        cached = _reading_cache.get(klass)
+    except TypeError:
+        cached = None
+    if cached is None:
+        try:
+            cached = _class_overrides_reading(klass)
+        except Exception:
+            cached = True
+        try:
+            _reading_cache[klass] = cached
+        except TypeError:
+            pass
+    return cached
 
 
 def _object_names(val: Any) -> List[str]:

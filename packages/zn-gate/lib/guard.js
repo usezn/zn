@@ -6,7 +6,8 @@
  * the network.
  */
 
-const { types } = require('node:util');
+const util = require('node:util');
+const { types } = util;
 const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock, truncatedBlocks } = require('./rules');
 
 const MAX_DEPTH = 10;
@@ -70,6 +71,20 @@ const ERROR_STACK = Object.getOwnPropertyDescriptor(new Error(), 'stack');
 // The built-in iterators, so that a Set or a Map is read the same way whatever its own methods say.
 const SET_VALUES = Set.prototype.values;
 const MAP_ENTRIES = Map.prototype.entries;
+// Keys through which an object decides what it becomes when it is serialized (JSON.stringify),
+// converted to text or a number, printed, or awaited. A function stored under one of them runs
+// after the check, so it could produce text that was never checked.
+const HOOK_KEYS = new Set(['toJSON', 'toString', 'valueOf', 'toISOString', 'then', Symbol.toPrimitive, util.inspect.custom]);
+const FUNCTION_PROTOTYPES = new Set([
+  Function.prototype, Object.getPrototypeOf(async function () {}),
+  Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async function* () {}),
+]);
+// Built-in readers, called on objects whose class is known so that no code of the result runs.
+const URL_HREF = Object.getOwnPropertyDescriptor(URL.prototype, 'href').get;
+const PROMISE_THEN = Promise.prototype.then;
+const STRING_VALUE = String.prototype.valueOf;
+const NUMBER_VALUE = Number.prototype.valueOf;
+const BOOLEAN_VALUE = Boolean.prototype.valueOf;
 
 function isErrorStack(key, d) {
   return key === 'stack' && ERROR_STACK !== undefined && ERROR_STACK.get !== undefined
@@ -86,18 +101,21 @@ function isIndexKey(key) {
  * prototype other than a built-in one (TRUSTED_PROTOTYPES) defines one; or it is an array, a
  * Set, a Map or a typed array whose own or inherited Symbol.iterator is not the built-in one.
  * Nothing here calls a getter: on an object that is not a Proxy, reading descriptors runs no code.
- * Returns null for a typed array, whose elements are bytes and numbers.
+ * `own` is null for a typed array, whose elements are bytes and numbers. `hooked` is true when a
+ * function under a HOOK_KEYS key (own, or on a prototype other than a built-in one) decides how
+ * `obj` serializes, converts or resolves. A typed array is kept as it is in the snapshot, so one
+ * with such a hook is Unscannable instead.
  */
 function screenObject(obj) {
   if (types.isProxy(obj)) throw new Unscannable();
   const typed = types.isTypedArray(obj);
   const container = typed || Array.isArray(obj) || types.isSet(obj) || types.isMap(obj);
   let own = null;
+  let hooked = false;
   if (typed) {
     // Its elements cannot be accessors; listing every index of a large buffer would be slow.
-    for (const key of [Symbol.iterator, 'toJSON']) {
-      const d = Object.getOwnPropertyDescriptor(obj, key);
-      if (d && (d.get || d.set || key === Symbol.iterator)) throw new Unscannable();
+    for (const key of [Symbol.iterator, ...HOOK_KEYS]) {
+      if (Object.getOwnPropertyDescriptor(obj, key)) throw new Unscannable();
     }
   } else {
     own = Object.getOwnPropertyDescriptors(obj);
@@ -105,6 +123,7 @@ function screenObject(obj) {
       const d = own[key];
       if ((d.get || d.set) && !isErrorStack(key, d)) throw new Unscannable();
       if (container && key === Symbol.iterator) throw new Unscannable();
+      if (HOOK_KEYS.has(key) && typeof d.value === 'function') hooked = true;
     }
   }
   for (let proto = Object.getPrototypeOf(obj); proto !== null; proto = Object.getPrototypeOf(proto)) {
@@ -115,9 +134,43 @@ function screenObject(obj) {
       const d = inherited[key];
       if (d.get || d.set) throw new Unscannable();
       if (container && key === Symbol.iterator) throw new Unscannable();
+      if (HOOK_KEYS.has(key) && typeof d.value === 'function') {
+        if (typed) throw new Unscannable();
+        hooked = true;
+      }
     }
   }
-  return own;
+  return { own, hooked };
+}
+
+/**
+ * Whether serializing or converting `fn` could run its code: JSON.stringify calls a toJSON found
+ * on any value, functions included. A function is plain when it is not a Proxy, its prototype is
+ * a built-in function prototype and it has no own HOOK_KEYS property.
+ */
+function hookedFunction(fn) {
+  if (types.isProxy(fn) || !FUNCTION_PROTOTYPES.has(Object.getPrototypeOf(fn))) return true;
+  for (const key of HOOK_KEYS) {
+    if (Object.getOwnPropertyDescriptor(fn, key)) return true;
+  }
+  return false;
+}
+
+/** The primitive inside a String, Number or Boolean object, read with the built-in valueOf. */
+function unboxed(data) {
+  if (types.isStringObject(data)) return STRING_VALUE.call(data);
+  if (types.isNumberObject(data)) return NUMBER_VALUE.call(data);
+  return BOOLEAN_VALUE.call(data);
+}
+
+/** The href of a URL made by the URL class, or undefined for any other object. */
+function urlHref(data) {
+  if (!(data instanceof URL)) return undefined;
+  try {
+    return URL_HREF.call(data);
+  } catch {
+    return undefined; // URL.prototype in its chain, but not made by the URL class
+  }
 }
 
 /**
@@ -129,33 +182,63 @@ function screenObject(obj) {
  * stays so in the copy. Throws NestingTooDeep where extractStrings would.
  * The result check reads this copy and masking rebuilds it, so both see the same values even
  * when the result would answer differently a second time.
+ *
+ * Functions are never data: the copy holds none (a function property is left out, a function in
+ * an array becomes undefined, a Set or Map entry with one is left out), so nothing in it can run
+ * when it is serialized, printed or awaited. A Date without hooks and a URL are kept as they are
+ * (they serialize to a date or to their href, and the href is checked: it is added to
+ * `state.texts`); a String, Number or Boolean object becomes its primitive value.
+ * `state.hooked` is set when the result itself has a hook (see screenObject and hookedFunction),
+ * so that it could serialize to something else than this copy.
  */
-function snapshotOf(data, maxDepth, memo) {
+function snapshotOf(data, maxDepth, memo, state) {
+  if (typeof data === 'function') {
+    if (hookedFunction(data)) state.hooked = true;
+    return undefined;
+  }
   if (data === null || typeof data !== 'object') return data;
   if (memo.has(data)) return memo.get(data);
-  const own = screenObject(data);
+  const { own, hooked } = screenObject(data);
+  if (hooked) state.hooked = true;
   if (types.isUint8Array(data)) { memo.set(data, data); return data; }
   if (maxDepth <= 0) throw new NestingTooDeep();
   if (own === null) { memo.set(data, data); return data; }
+  if (types.isStringObject(data) || types.isNumberObject(data) || types.isBooleanObject(data)) {
+    const value = unboxed(data);
+    memo.set(data, value);
+    return value;
+  }
+  const href = urlHref(data);
+  if (href !== undefined) state.texts.push(href);
+  if (!hooked && (href !== undefined || types.isDate(data))) {
+    // Its own listed values are still read below by extractStrings, as for any object.
+    memo.set(data, data);
+    return data;
+  }
   if (Array.isArray(data)) {
     const out = new Array(own.length.value);
     memo.set(data, out);
     for (const key of Reflect.ownKeys(own)) {
-      if (isIndexKey(key)) out[Number(key)] = snapshotOf(own[key].value, maxDepth - 1, memo);
+      if (isIndexKey(key)) out[Number(key)] = snapshotOf(own[key].value, maxDepth - 1, memo, state);
     }
     return out;
   }
   if (types.isSet(data)) {
     const out = new Set();
     memo.set(data, out);
-    for (const v of SET_VALUES.call(data)) out.add(snapshotOf(v, maxDepth - 1, memo));
+    for (const v of SET_VALUES.call(data)) {
+      if (typeof v === 'function') snapshotOf(v, maxDepth - 1, memo, state);
+      else out.add(snapshotOf(v, maxDepth - 1, memo, state));
+    }
     return out;
   }
   if (types.isMap(data)) {
     const out = new Map();
     memo.set(data, out);
     for (const entry of MAP_ENTRIES.call(data)) {
-      out.set(snapshotOf(entry[0], maxDepth - 1, memo), snapshotOf(entry[1], maxDepth - 1, memo));
+      const key = snapshotOf(entry[0], maxDepth - 1, memo, state);
+      const value = snapshotOf(entry[1], maxDepth - 1, memo, state);
+      if (typeof entry[0] !== 'function' && typeof entry[1] !== 'function') out.set(key, value);
     }
     return out;
   }
@@ -164,10 +247,10 @@ function snapshotOf(data, maxDepth, memo) {
   for (const key of Reflect.ownKeys(own)) {
     const d = own[key];
     if (typeof key !== 'string' || !d.enumerable || !('value' in d)) continue;
+    const value = snapshotOf(d.value, maxDepth - 1, memo, state);
+    if (typeof d.value === 'function') continue;
     // defineProperty, so a key such as __proto__ stays an ordinary property
-    Object.defineProperty(out, key, {
-      value: snapshotOf(d.value, maxDepth - 1, memo), enumerable: true, writable: true, configurable: true,
-    });
+    Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
   }
   return out;
 }
@@ -212,13 +295,17 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
 /**
  * extractStrings, or a block assessment when the payload is nested too deeply to check.
  * With snapshot (tool results), the strings are read from snapshotOf(data), returned as
- * `snapshot`, and a value that cannot be read without running its code is a block too.
+ * `snapshot` (with `hooked`, see snapshotOf), and a value that cannot be read without running
+ * its code is a block too.
  */
 function stringsOrBlock(data, what, snapshot = false) {
   try {
     if (!snapshot) return { strings: extractStrings(data, MAX_DEPTH, new WeakSet(), []) };
-    const copy = snapshotOf(data, MAX_DEPTH, new Map());
-    return { strings: extractStrings(copy, MAX_DEPTH, new WeakSet(), []), snapshot: copy };
+    const state = { hooked: false, texts: [] };
+    const copy = snapshotOf(data, MAX_DEPTH, new Map(), state);
+    const strings = extractStrings(copy, MAX_DEPTH, new WeakSet(), []);
+    for (const text of state.texts) strings.push(text);
+    return { strings, snapshot: copy, hooked: state.hooked };
   } catch (e) {
     if (e instanceof Unscannable) {
       return {
@@ -275,11 +362,14 @@ function scanToolResult(result, opts = {}) {
   return checkResultSnapshot(result, opts).assessment;
 }
 
-/** scanToolResult, plus the plain-data copy it checked (see snapshotOf) when the result is allowed. */
+/**
+ * scanToolResult, plus the plain-data copy it checked (see snapshotOf) and whether the result
+ * has a serialization hook (`hooked`) when the result is allowed.
+ */
 function checkResultSnapshot(result, opts) {
   let truncated = false;
   let advisory = null;
-  const { strings, block, snapshot } = stringsOrBlock(result, 'Result', true);
+  const { strings, block, snapshot, hooked } = stringsOrBlock(result, 'Result', true);
   if (block) return { assessment: block };
   if (tooInvisible(strings)) return { assessment: { allowed: false, ...invisibleBlock() } };
   for (const s of strings) {
@@ -296,7 +386,7 @@ function checkResultSnapshot(result, opts) {
       },
     };
   }
-  return { assessment: allow(advisory, { truncated }), snapshot };
+  return { assessment: allow(advisory, { truncated }), snapshot, hooked };
 }
 
 function validateOptions(opts) {
@@ -358,14 +448,17 @@ function guardTool(fn, opts = {}) {
   };
 
   const after = (res) => {
-    let checked = res;
+    let out = res;
     if (opts.checkResult) {
-      const { assessment, snapshot } = checkResultSnapshot(res, { ...engineOpts, blockTruncated: opts.blockTruncated === true, allowTruncated: opts.allowTruncated === true });
+      const { assessment, snapshot, hooked } = checkResultSnapshot(res, { ...engineOpts, blockTruncated: opts.blockTruncated === true, allowTruncated: opts.allowTruncated === true });
       if (!assessment.allowed) return blocked(assessment, name + ':result', res).value;
       // Masking rebuilds the copy that was checked, so it cannot see other values than the check did.
-      checked = snapshot;
+      // Without masking the result itself is returned, unless it has a hook (toJSON, toString,
+      // valueOf, Symbol.toPrimitive, then...) that could turn it into text that was not checked:
+      // then the checked copy, which holds no functions, is returned instead.
+      if (opts.maskSecrets || hooked) out = snapshot;
     }
-    return opts.maskSecrets ? sanitizeToolResult(checked).sanitized : res;
+    return opts.maskSecrets ? sanitizeToolResult(out).sanitized : out;
   };
 
   const isAsync = fn.constructor && fn.constructor.name === 'AsyncFunction';
@@ -379,7 +472,9 @@ function guardTool(fn, opts = {}) {
         const b = before(args);
         if (b) return b.value;
         const res = fn.apply(this, args);
-        if (res && typeof res.then === 'function') return res.then(after);
+        // A thenable is settled as a real promise, so whatever it resolves to goes through after():
+        // its own then() could return anything.
+        if (res && typeof res.then === 'function') return PROMISE_THEN.call(Promise.resolve(res), after);
         return after(res);
       };
   Object.defineProperty(wrapped, 'name', { value: fn.name, configurable: true });
