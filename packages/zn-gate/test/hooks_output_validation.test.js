@@ -109,7 +109,8 @@ test('hook: a refusal (exit 2) writes no confirmation and keeps its status', asy
 // TERM from inside, once the file `flag` exists, and ends with the launcher's own exit status.
 function spawnLauncherForTerm(t, file, event, { env, cwd }) {
   if (process.platform !== 'win32') {
-    const child = spawn('/bin/sh', [file, event], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // detached: the launcher leads its own process group, so a cleanup can end it and the hook it started together.
+    const child = spawn('/bin/sh', [file, event], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     return { child, term: () => child.kill('SIGTERM') };
   }
   const flag = path.join(tempDir(t, 'zn-ov-termflag-'), 'term').replace(/\\/g, '/');
@@ -118,20 +119,45 @@ function spawnLauncherForTerm(t, file, event, { env, cwd }) {
   return { child, term: () => fs.writeFileSync(flag, '') };
 }
 
+// Ends what spawnLauncherForTerm started and waits (bounded) for the launcher itself to be gone. First the normal TERM path (the
+// launcher answers and cleans up); if it is still alive, the whole process tree is killed: a process group on POSIX (the hook's
+// node is a grandchild), `taskkill /T` on Windows (the child is the sh wrapper and the launcher runs in its background, so
+// killing only the wrapper would leave the launcher and the hook holding the inherited pipes). On POSIX the group is signalled
+// even if the launcher already exited, because the hook can outlive it. After a clean run this does nothing.
+async function endLauncher(child, term) {
+  const alive = () => child.exitCode === null && child.signalCode === null;
+  const waitExit = async (ms) => {
+    if (!alive()) return;
+    let timer;
+    await Promise.race([new Promise((resolve) => child.once('exit', resolve)), new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
+    clearTimeout(timer);
+  };
+  if (alive()) {
+    try { term(); } catch { /* already gone */ }
+    await waitExit(2000);
+  }
+  if (process.platform === 'win32') {
+    if (alive()) {
+      try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 }); } catch { /* not found */ }
+      await waitExit(5000);
+    }
+  } else {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* ESRCH: nothing left in the group */ }
+    await waitExit(5000);
+    // A killed process leaves the group once its parent (init) reaps it, a moment later: wait for the group to be empty.
+    for (let i = 0; i < 50; i++) {
+      try { process.kill(-child.pid, 0); } catch { break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+}
+
 // Same as spawnLauncherForTerm, plus a cleanup: if the test fails before term() runs (for example a readiness wait that times
-// out), the launcher child is still ended here, and the wait for its exit is bounded. On success the child has already exited,
-// so the cleanup does nothing.
+// out), the launcher and everything it started are still ended here, and the waits are bounded.
 function startLauncherForTerm(t, file, event, { env, cwd }) {
   const { child, term } = spawnLauncherForTerm(t, file, event, { env, cwd });
-  t.after(async () => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    const exited = new Promise((resolve) => child.once('exit', resolve));
-    child.kill('SIGKILL');
-    let timer;
-    await Promise.race([exited, new Promise((resolve) => { timer = setTimeout(resolve, 2000); })]);
-    clearTimeout(timer);
-  });
-  return { child, term };
+  t.after(() => endLauncher(child, term));
+  return { child, term, end: () => endLauncher(child, term) };
 }
 
 function writeScript(t, agent, runnerBody, opts = {}) {
@@ -431,6 +457,26 @@ test('posix launcher, no deadline: a TERM while the hook runs answers with the b
   term();
   assert.equal(await exited, 2);
   assert.deepEqual(zfiles(tmp), []);
+});
+
+test('launcher cleanup: after a forced readiness failure no launcher or hook process of the test is left', { skip: !posix || process.platform === 'win32' }, async (t) => {
+  const tmp = tempDir(t, 'zn-ov-clean-neg-');
+  const pidFile = path.join(tempDir(t, 'zn-ov-neg-pid-'), 'hookpid');
+  const file = writeScript(t, 'claude-code', "require('fs').writeFileSync(process.env.ZN_TEST_READY, String(process.pid)); process.stdin.resume(); setInterval(() => {}, 1000);\n", { deadlineS: 120 });
+  const { child, end } = startLauncherForTerm(t, file, 'PreToolUse', { env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp, ZN_TEST_READY: pidFile } });
+  child.stdin.write('{');
+  for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fs.existsSync(pidFile), 'the hook started');
+  const hookPid = Number(fs.readFileSync(pidFile, 'utf8'));
+  const pgid = child.pid;
+  const gone = (pid) => { try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
+  assert.ok(!gone(hookPid), 'the hook is running before the cleanup');
+  await end();
+  assert.ok(child.exitCode !== null || child.signalCode !== null, 'the launcher exited');
+  assert.ok(gone(-pgid), 'nothing is left in the launcher process group');
+  // The hook runs in its own process group (setsid) and the launcher ends it on TERM; it leaves the process table once init reaps it.
+  for (let i = 0; i < 50 && !gone(hookPid); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(gone(hookPid), 'the hook process is gone');
 });
 
 test('posix launcher with a deadline and an empty PATH still runs the hook (its private files do not depend on the PATH)', { skip: !posix }, (t) => {
