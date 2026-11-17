@@ -26,9 +26,19 @@ pub async fn read_line_bounded<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     max: usize,
 ) -> io::Result<BoundedLine> {
+    Ok(read_line_bounded_ended(reader, max).await?.0)
+}
+
+/// Like [`read_line_bounded`], and also says whether the line was ended by a newline. `false` means the
+/// input stopped in the middle of the line, so the text is only a part of what the peer meant to send.
+pub async fn read_line_bounded_ended<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+) -> io::Result<(BoundedLine, bool)> {
     let mut line: Vec<u8> = Vec::new();
     let mut too_long = false;
     let mut any = false;
+    let mut ended = false;
     loop {
         let chunk = reader.fill_buf().await?;
         if chunk.is_empty() {
@@ -49,20 +59,22 @@ pub async fn read_line_bounded<R: AsyncBufRead + Unpin>(
         }
         reader.consume(if done { take + 1 } else { take });
         if done {
+            ended = true;
             break;
         }
     }
     if !any {
-        return Ok(BoundedLine::Eof);
+        return Ok((BoundedLine::Eof, false));
     }
     if too_long {
-        return Ok(BoundedLine::TooLong);
+        return Ok((BoundedLine::TooLong, ended));
     }
     if line.last() == Some(&b'\r') {
         line.pop();
     }
-    Ok(BoundedLine::Line(
-        String::from_utf8_lossy(&line).into_owned(),
+    Ok((
+        BoundedLine::Line(String::from_utf8_lossy(&line).into_owned()),
+        ended,
     ))
 }
 
@@ -140,6 +152,23 @@ mod tests {
         assert_eq!(
             read_line_bounded(&mut r, 4).await.unwrap(),
             BoundedLine::Eof
+        );
+    }
+
+    #[tokio::test]
+    async fn ended_flag_tells_a_complete_line_from_a_cut_one() {
+        let mut r = BufReader::new(&b"one\ntwo"[..]);
+        assert_eq!(
+            read_line_bounded_ended(&mut r, 16).await.unwrap(),
+            (BoundedLine::Line("one".into()), true)
+        );
+        assert_eq!(
+            read_line_bounded_ended(&mut r, 16).await.unwrap(),
+            (BoundedLine::Line("two".into()), false)
+        );
+        assert_eq!(
+            read_line_bounded_ended(&mut r, 16).await.unwrap(),
+            (BoundedLine::Eof, false)
         );
     }
 }

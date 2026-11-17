@@ -673,3 +673,416 @@ mod tests {
             .is_err());
     }
 }
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    /// Fake KMS whose behaviour is set per test. The "ciphertext" is the key id followed by the
+    /// plaintext reversed, so a truncated or extended blob is rejected like real KMS would.
+    #[derive(Default)]
+    struct ScriptedKms {
+        /// Fail every GenerateDataKey call.
+        fail_generate: bool,
+        /// Length of the plaintext key GenerateDataKey returns (0 means the normal 32).
+        generate_len: usize,
+        /// Fail every Decrypt call.
+        fail_decrypt: bool,
+        /// If set, Decrypt succeeds but returns a key of this length.
+        decrypt_len: Option<usize>,
+        /// Fail every Sign call.
+        fail_sign: bool,
+        generated: AtomicUsize,
+        decrypted: AtomicUsize,
+        signed: AtomicUsize,
+        last_sign: StdMutex<Option<(String, Vec<u8>)>>,
+    }
+
+    const FAKE_SIGNATURE: [u8; 64] = [0xAB; 64];
+
+    #[async_trait]
+    impl KmsApi for Arc<ScriptedKms> {
+        async fn generate_data_key(&self, key_id: &str, ctx: (&str, &str)) -> Result<GeneratedKey> {
+            assert_eq!(ctx, (KMS_CONTEXT_KEY, KMS_CONTEXT_VALUE));
+            self.generated.fetch_add(1, Ordering::SeqCst);
+            if self.fail_generate {
+                return Err(anyhow!("ThrottlingException: rate exceeded"));
+            }
+            let len = if self.generate_len == 0 {
+                32
+            } else {
+                self.generate_len
+            };
+            let plaintext = vec![7u8; len];
+            let mut ciphertext = key_id.as_bytes().to_vec();
+            ciphertext.extend(plaintext.iter().rev());
+            Ok(GeneratedKey {
+                plaintext,
+                ciphertext,
+            })
+        }
+
+        async fn decrypt(&self, key_id: &str, ct: &[u8], ctx: (&str, &str)) -> Result<Vec<u8>> {
+            assert_eq!(ctx, (KMS_CONTEXT_KEY, KMS_CONTEXT_VALUE));
+            self.decrypted.fetch_add(1, Ordering::SeqCst);
+            if self.fail_decrypt {
+                return Err(anyhow!("AccessDeniedException"));
+            }
+            let rest = ct
+                .strip_prefix(key_id.as_bytes())
+                .ok_or_else(|| anyhow!("InvalidCiphertextException"))?;
+            if rest.len() != 32 {
+                return Err(anyhow!("InvalidCiphertextException"));
+            }
+            if let Some(n) = self.decrypt_len {
+                return Ok(vec![9u8; n]);
+            }
+            Ok(rest.iter().rev().copied().collect())
+        }
+
+        async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
+            self.signed.fetch_add(1, Ordering::SeqCst);
+            *self.last_sign.lock().unwrap() = Some((key_id.to_string(), data.to_vec()));
+            if self.fail_sign {
+                return Err(anyhow!("KMSInternalException"));
+            }
+            Ok(FAKE_SIGNATURE.to_vec())
+        }
+    }
+
+    fn vault_for(kms: &Arc<ScriptedKms>, path: &Path, recover: bool) -> AwsKmsVault {
+        AwsKmsVault::with_api(Box::new(kms.clone()), path.to_path_buf(), recover)
+    }
+
+    fn dir_listing(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn state_with_blob(key_id: &str, blob: &[u8]) -> DataKeyState {
+        DataKeyState {
+            version: STATE_VERSION,
+            key_id: key_id.to_string(),
+            ciphertext_b64: STANDARD.encode(blob),
+        }
+    }
+
+    /// Persists a real state file through the vault and returns its path, the blob and the key.
+    async fn first_start(dir: &Path, kms: &Arc<ScriptedKms>) -> (PathBuf, Vec<u8>, Vec<u8>) {
+        let path = data_key_file_for(dir.join("audit.db"));
+        let key = vault_for(kms, &path, false)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        let (_, blob) = read_state(&raw).unwrap();
+        (path, blob, key)
+    }
+
+    #[tokio::test]
+    async fn generate_failure_is_an_error_and_writes_no_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = data_key_file_for(dir.path().join("audit.db"));
+        let kms = Arc::new(ScriptedKms {
+            fail_generate: true,
+            ..Default::default()
+        });
+        let err = vault_for(&kms, &path, false)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ThrottlingException"), "{err}");
+        assert!(!path.exists());
+        assert!(dir_listing(dir.path()).is_empty(), "no temporary file left");
+        assert_eq!(kms.generated.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_data_key_of_the_wrong_length_is_refused_before_anything_is_saved() {
+        for len in [1usize, 16, 31, 33, 64] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = data_key_file_for(dir.path().join("audit.db"));
+            let kms = Arc::new(ScriptedKms {
+                generate_len: len,
+                ..Default::default()
+            });
+            let err = vault_for(&kms, &path, false)
+                .get_encryption_key("key-a")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(&format!("{len} bytes")), "{err}");
+            assert!(err.contains("expected 32"), "{err}");
+            assert!(!path.exists(), "len {len}: a blob for a bad key was saved");
+        }
+    }
+
+    #[tokio::test]
+    async fn no_key_is_returned_when_the_state_file_cannot_be_used() {
+        let dir = tempfile::tempdir().unwrap();
+        // The "directory" of the state file is a regular file, so it can be neither read nor written.
+        let blocker = dir.path().join("not-a-dir");
+        std::fs::write(&blocker, b"x").unwrap();
+        let path = blocker.join(DATA_KEY_FILE_NAME);
+        let kms = Arc::new(ScriptedKms::default());
+        let err = vault_for(&kms, &path, false)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("KMS data key file"), "{err}");
+        assert_eq!(std::fs::read(&blocker).unwrap(), b"x");
+    }
+
+    #[test]
+    fn write_state_never_replaces_an_existing_file_without_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = data_key_file_for(dir.path().join("audit.db"));
+        write_state(&path, &state_with_blob("key-a", b"first"), false).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let err = write_state(&path, &state_with_blob("key-a", b"second"), false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Failed to save"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            dir_listing(dir.path()),
+            vec![DATA_KEY_FILE_NAME.to_string()],
+            "the failed write left a temporary file"
+        );
+
+        // With overwrite the file is replaced in one step.
+        write_state(&path, &state_with_blob("key-a", b"second"), true).unwrap();
+        assert_ne!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            dir_listing(dir.path()),
+            vec![DATA_KEY_FILE_NAME.to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn truncated_or_extended_ciphertext_fails_decrypt_and_keeps_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let kms = Arc::new(ScriptedKms::default());
+        let (path, blob, _) = first_start(dir.path(), &kms).await;
+
+        let mut variants: Vec<Vec<u8>> = vec![
+            blob[..blob.len() - 1].to_vec(),
+            blob[..blob.len() / 2].to_vec(),
+            blob[..1].to_vec(),
+        ];
+        let mut longer = blob.clone();
+        longer.push(0);
+        variants.push(longer);
+
+        for bad in variants {
+            write_state(&path, &state_with_blob("key-a", &bad), true).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            let err = vault_for(&kms, &path, false)
+                .get_encryption_key("key-a")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("could not decrypt"), "{err}");
+            assert!(err.contains("InvalidCiphertextException"), "{err}");
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        // Only the first start generated a key.
+        assert_eq!(kms.generated.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_decrypted_key_of_the_wrong_length_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Arc::new(ScriptedKms::default());
+        let (path, _, _) = first_start(dir.path(), &setup).await;
+        let before = std::fs::read(&path).unwrap();
+
+        for len in [0usize, 16, 31, 33] {
+            let kms = Arc::new(ScriptedKms {
+                decrypt_len: Some(len),
+                ..Default::default()
+            });
+            let err = vault_for(&kms, &path, false)
+                .get_encryption_key("key-a")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("expected 32"), "{err}");
+            assert_eq!(kms.generated.load(Ordering::SeqCst), 0);
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_from_a_truncated_blob_replaces_it_with_a_working_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let kms = Arc::new(ScriptedKms::default());
+        let (path, blob, old_key) = first_start(dir.path(), &kms).await;
+        write_state(
+            &path,
+            &state_with_blob("key-a", &blob[..blob.len() - 3]),
+            true,
+        )
+        .unwrap();
+
+        let new_key = vault_for(&kms, &path, true)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap();
+        assert_eq!(new_key.len(), 32);
+        assert_eq!(kms.generated.load(Ordering::SeqCst), 2);
+        // The new state file works without the flag.
+        let again = vault_for(&kms, &path, false)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap();
+        assert_eq!(again, new_key);
+        let _ = old_key;
+    }
+
+    #[tokio::test]
+    async fn recovery_flag_does_not_destroy_the_old_file_when_a_new_key_cannot_be_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = data_key_file_for(dir.path().join("audit.db"));
+        std::fs::write(&path, "damaged").unwrap();
+        let kms = Arc::new(ScriptedKms {
+            fail_generate: true,
+            ..Default::default()
+        });
+        let err = vault_for(&kms, &path, true)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ThrottlingException"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "damaged");
+        assert_eq!(
+            dir_listing(dir.path()),
+            vec![DATA_KEY_FILE_NAME.to_string()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn state_file_permissions_on_first_write_and_on_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode_of = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+        let dir = tempfile::tempdir().unwrap();
+        let kms = Arc::new(ScriptedKms::default());
+        let (path, _, key) = first_start(dir.path(), &kms).await;
+        assert_eq!(mode_of(&path), 0o600);
+
+        // The file holds only the encrypted key, so a looser mode is not a reason to refuse to
+        // start: the same key comes back and the file is not touched.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let again = vault_for(&kms, &path, false)
+            .get_encryption_key("key-a")
+            .await
+            .unwrap();
+        assert_eq!(again, key);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(mode_of(&path), 0o644);
+
+        // A replacement written by recovery is created owner-only again.
+        let recovered = vault_for(&kms, &path, true)
+            .get_encryption_key("key-b")
+            .await
+            .unwrap();
+        assert_eq!(recovered.len(), 32);
+        assert_eq!(mode_of(&path), 0o600);
+        assert_eq!(
+            dir_listing(dir.path()),
+            vec![DATA_KEY_FILE_NAME.to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_starts_generate_one_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = data_key_file_for(dir.path().join("audit.db"));
+        let kms = Arc::new(ScriptedKms::default());
+        let vault = Arc::new(vault_for(&kms, &path, false));
+        let (a, b, c) = tokio::join!(
+            vault.get_encryption_key("key-a"),
+            vault.get_encryption_key("key-a"),
+            vault.get_encryption_key("key-a")
+        );
+        let (a, b, c) = (a.unwrap(), b.unwrap(), c.unwrap());
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(kms.generated.load(Ordering::SeqCst), 1);
+        assert_eq!(kms.decrypted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn sign_failure_is_an_error_with_no_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = data_key_file_for(dir.path().join("audit.db"));
+        let kms = Arc::new(ScriptedKms {
+            fail_sign: true,
+            ..Default::default()
+        });
+        let result = vault_for(&kms, &path, false)
+            .sign_data("sign-key", b"policy bytes")
+            .await;
+        let err = result.expect_err("a failed signing must not yield a signature");
+        assert!(err.to_string().contains("KMSInternalException"), "{err}");
+        assert_eq!(kms.signed.load(Ordering::SeqCst), 1);
+        // Signing does not touch the data key state.
+        assert!(!path.exists());
+        assert_eq!(kms.generated.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn sign_returns_the_whole_signature_for_the_exact_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = data_key_file_for(dir.path().join("audit.db"));
+        let kms = Arc::new(ScriptedKms::default());
+        let sig = vault_for(&kms, &path, false)
+            .sign_data("sign-key", b"policy bytes")
+            .await
+            .unwrap();
+        assert_eq!(sig, FAKE_SIGNATURE.to_vec());
+        let (key_id, data) = kms.last_sign.lock().unwrap().clone().unwrap();
+        assert_eq!(key_id, "sign-key");
+        assert_eq!(data, b"policy bytes".to_vec());
+        assert!(!path.exists());
+    }
+
+    /// The environment is process-wide, so the cases run in one test, one after the other.
+    #[test]
+    fn recovery_flag_is_read_from_the_environment() {
+        static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os(RECOVER_ENV);
+
+        std::env::remove_var(RECOVER_ENV);
+        assert!(!recover_flag_from_env(), "unset means no recovery");
+
+        for on in ["true", "TRUE", " True ", "1", "\t1\n"] {
+            std::env::set_var(RECOVER_ENV, on);
+            assert!(recover_flag_from_env(), "{on:?} should enable recovery");
+        }
+        for off in ["", "0", "false", "yes", "on", "truee", "2"] {
+            std::env::set_var(RECOVER_ENV, off);
+            assert!(!recover_flag_from_env(), "{off:?} must not enable recovery");
+        }
+
+        match saved {
+            Some(v) => std::env::set_var(RECOVER_ENV, v),
+            None => std::env::remove_var(RECOVER_ENV),
+        }
+    }
+}

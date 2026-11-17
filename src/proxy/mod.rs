@@ -7,7 +7,7 @@
 //! - Command validation for security
 //! - Race-condition-free connection management
 
-use crate::bounded_line::{read_line_bounded, BoundedLine, MAX_STDIN_LINE_BYTES};
+use crate::bounded_line::{read_line_bounded_ended, BoundedLine, MAX_STDIN_LINE_BYTES};
 use anyhow::{anyhow, Result};
 use futures::{future::join_all, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -287,15 +287,23 @@ impl McpConnection {
 /// A longer line is dropped as it streams past, so a server that never sends a newline cannot make the
 /// gateway buffer without a bound. The client then gets a JSON-RPC error carrying the id of its request
 /// (`null` when the request has none), and the connection stays usable for the next request.
+///
+/// A server that closes its output before answering, or in the middle of a reply, is an error: the caller
+/// must not receive an empty string or half a JSON message as if it were the answer.
 async fn read_upstream_line<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     max: usize,
     request: &str,
 ) -> Result<String> {
-    match read_line_bounded(reader, max).await? {
-        BoundedLine::Line(line) => Ok(line.trim().to_string()),
-        BoundedLine::Eof => Ok(String::new()),
-        BoundedLine::TooLong => {
+    match read_line_bounded_ended(reader, max).await? {
+        (BoundedLine::Line(line), true) => Ok(line.trim().to_string()),
+        (BoundedLine::Line(_), false) => Err(anyhow!(
+            "The MCP server closed the connection in the middle of a reply"
+        )),
+        (BoundedLine::Eof, _) => Err(anyhow!(
+            "The MCP server closed the connection before it replied"
+        )),
+        (BoundedLine::TooLong, _) => {
             warn!(
                 limit_bytes = max,
                 "MCP server reply dropped: line over the size limit"
@@ -1309,5 +1317,413 @@ mod retry_and_discovery_tests {
     fn auto_discover_fails_when_no_home_directory_is_known() {
         let _home = HomeGuard::set(None);
         assert!(McpPool::auto_discover().is_err());
+    }
+}
+
+#[cfg(test)]
+mod process_lifecycle_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Upper bound for anything that talks to a child process: a hang fails the test instead of CI.
+    const LIMIT: Duration = Duration::from_secs(30);
+
+    fn python3_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// A stdio server that runs `script` with python3 (an allowed command).
+    fn py_config(script: &str) -> McpServerConfig {
+        McpServerConfig {
+            command: Some("python3".to_string()),
+            args: vec!["-c".to_string(), script.to_string()],
+            env: HashMap::new(),
+            url: None,
+        }
+    }
+
+    /// Replies to every request line with a fixed result, until stdin closes.
+    const ECHO_FOREVER: &str = "import sys\n\
+        for line in sys.stdin:\n\
+        \x20   sys.stdout.write('{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\\n')\n\
+        \x20   sys.stdout.flush()\n";
+
+    fn child_pid(conn: &McpConnection) -> u32 {
+        match conn {
+            McpConnection::Stdio { child, .. } => child.id().expect("child still has a pid"),
+            McpConnection::WebSocket { .. } => panic!("expected a stdio connection"),
+        }
+    }
+
+    async fn pool_pids(pool: &McpPool) -> Vec<u32> {
+        let mut pids = Vec::new();
+        for (_, slot) in pool.snapshot_slots().await {
+            if let Some(conn) = slot.lock().await.as_ref() {
+                pids.push(child_pid(conn));
+            }
+        }
+        pids
+    }
+
+    #[cfg(target_os = "linux")]
+    fn process_exists(pid: u32) -> bool {
+        Path::new(&format!("/proc/{pid}")).exists()
+    }
+
+    #[tokio::test]
+    async fn spawning_a_missing_binary_is_an_error_and_does_not_hang() {
+        let config = McpServerConfig {
+            command: Some("/nonexistent/zn-test-dir/python3".to_string()),
+            args: vec![],
+            env: HashMap::new(),
+            url: None,
+        };
+        let result = tokio::time::timeout(LIMIT, McpConnection::connect("ghost", &config)).await;
+        let err = result
+            .expect("connect must not hang")
+            .err()
+            .expect("a missing binary must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("ghost"), "{msg}");
+        assert!(msg.contains("could not start"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn pool_send_to_a_server_that_cannot_start_fails_and_stays_empty() {
+        let mut configs = HashMap::new();
+        configs.insert(
+            "ghost".to_string(),
+            McpServerConfig {
+                command: Some("/nonexistent/zn-test-dir/python3".to_string()),
+                args: vec![],
+                env: HashMap::new(),
+                url: None,
+            },
+        );
+        let pool = McpPool::new(configs);
+        let result = tokio::time::timeout(LIMIT, pool.send("ghost", "{}", None)).await;
+        assert!(result.expect("send must not hang").is_err());
+        assert!(pool_pids(&pool).await.is_empty());
+        assert_eq!(pool.health_check().await.get("ghost"), Some(&false));
+        // An unknown server is also an error, not a panic.
+        assert!(pool.send("nobody", "{}", None).await.is_err());
+    }
+
+    #[test]
+    fn env_allowlist_rejects_loader_and_path_overrides_and_accepts_ordinary_names() {
+        for blocked in [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "SHELL",
+            "COMSPEC",
+            // Names are compared without regard to case.
+            "ld_preload",
+            "Path",
+            "home",
+        ] {
+            assert!(!McpConnection::is_safe_env_var(blocked), "{blocked}");
+        }
+        for allowed in [
+            "MY_API_TOKEN",
+            "NODE_ENV",
+            "LOG_LEVEL",
+            "ZN_TEST_FOO",
+            "MY_PATH",
+            "HOMEPAGE",
+        ] {
+            assert!(McpConnection::is_safe_env_var(allowed), "{allowed}");
+        }
+    }
+
+    #[tokio::test]
+    async fn blocked_env_vars_never_reach_the_child_and_ordinary_ones_do() {
+        if !python3_available() {
+            eprintln!("python3 not found: skipping");
+            return;
+        }
+        let script = "import os, sys, json\n\
+            sys.stdin.readline()\n\
+            print(json.dumps({'ld': os.environ.get('LD_PRELOAD'), \
+            'path_overridden': os.environ.get('PATH') == '/evil', \
+            'home_overridden': os.environ.get('HOME') == '/evil', \
+            'foo': os.environ.get('ZN_TEST_FOO')}), flush=True)\n";
+        let mut config = py_config(script);
+        config
+            .env
+            .insert("LD_PRELOAD".to_string(), "/evil/lib.so".to_string());
+        config.env.insert("PATH".to_string(), "/evil".to_string());
+        config.env.insert("HOME".to_string(), "/evil".to_string());
+        config
+            .env
+            .insert("ZN_TEST_FOO".to_string(), "bar".to_string());
+
+        let run = async {
+            let mut conn = McpConnection::connect("envcheck", &config)
+                .await
+                .map_err(|e| e.to_string())?;
+            let reply = conn
+                .send_request("{\"id\":1}")
+                .await
+                .map_err(|e| e.to_string());
+            let _ = conn.shutdown().await;
+            reply
+        };
+        let reply = tokio::time::timeout(LIMIT, run)
+            .await
+            .expect("must not hang")
+            .expect("child answers");
+        let v: serde_json::Value = serde_json::from_str(&reply).expect("json reply");
+        assert!(v["ld"].is_null(), "LD_PRELOAD reached the child: {v}");
+        assert_eq!(v["path_overridden"], false);
+        assert_eq!(v["home_overridden"], false);
+        assert_eq!(v["foo"], "bar");
+    }
+
+    #[tokio::test]
+    async fn upstream_closing_before_any_reply_is_an_error() {
+        if !python3_available() {
+            eprintln!("python3 not found: skipping");
+            return;
+        }
+        let config = py_config("import sys\nsys.stdin.readline()\n");
+        let run = async {
+            let mut conn = McpConnection::connect("quitter", &config).await.unwrap();
+            let result = conn.send_request("{\"id\":1}").await;
+            let _ = conn.shutdown().await;
+            result
+        };
+        let result = tokio::time::timeout(LIMIT, run).await.expect("no hang");
+        let err = result.expect_err("a closed upstream is not an empty reply");
+        assert!(err.to_string().contains("closed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn upstream_closing_in_the_middle_of_a_reply_is_an_error() {
+        if !python3_available() {
+            eprintln!("python3 not found: skipping");
+            return;
+        }
+        let script = "import sys\n\
+            sys.stdin.readline()\n\
+            sys.stdout.write('{\"jsonrpc\":\"2.0\",\"id\":1,\"res')\n\
+            sys.stdout.flush()\n";
+        let config = py_config(script);
+        let run = async {
+            let mut conn = McpConnection::connect("cutoff", &config).await.unwrap();
+            let result = conn.send_request("{\"id\":1}").await;
+            let _ = conn.shutdown().await;
+            result
+        };
+        let result = tokio::time::timeout(LIMIT, run).await.expect("no hang");
+        let err = result.expect_err("half a reply must not be passed on as a reply");
+        assert!(err.to_string().contains("closed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn upstream_reply_helper_tells_complete_lines_from_cut_ones() {
+        // Complete line, with and without a carriage return.
+        for data in [&b"{\"id\":1}\n"[..], &b"{\"id\":1}\r\n"[..]] {
+            let mut r = BufReader::new(data);
+            assert_eq!(
+                read_upstream_line(&mut r, 1024, "{}").await.unwrap(),
+                "{\"id\":1}"
+            );
+        }
+        // Nothing at all, and a line with no end.
+        let mut r = BufReader::new(&b""[..]);
+        assert!(read_upstream_line(&mut r, 1024, "{}").await.is_err());
+        let mut r = BufReader::new(&b"{\"id\":1,\"res"[..]);
+        assert!(read_upstream_line(&mut r, 1024, "{}").await.is_err());
+        // An oversized line still becomes a JSON-RPC error for the caller, not a transport error.
+        let mut r = BufReader::new(&b"aaaaaaaaaa"[..]);
+        let out = read_upstream_line(&mut r, 4, r#"{"id":9}"#).await.unwrap();
+        assert!(out.contains("Response too large"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn stdio_request_reply_round_trip_through_the_pool() {
+        if !python3_available() {
+            eprintln!("python3 not found: skipping");
+            return;
+        }
+        let mut configs = HashMap::new();
+        configs.insert("echo".to_string(), py_config(ECHO_FOREVER));
+        let pool = McpPool::new(configs);
+        let run = async {
+            let first = pool.send("echo", "{\"id\":1}", None).await.unwrap();
+            let second = pool.send("echo", "{\"id\":2}", None).await.unwrap();
+            (first, second)
+        };
+        let (first, second) = tokio::time::timeout(LIMIT, run).await.expect("no hang");
+        assert_eq!(first, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}");
+        assert_eq!(first, second);
+        assert_eq!(pool_pids(&pool).await.len(), 1, "one process is reused");
+        pool.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_kills_every_child_and_can_be_repeated() {
+        if !python3_available() {
+            eprintln!("python3 not found: skipping");
+            return;
+        }
+        let mut configs = HashMap::new();
+        configs.insert("one".to_string(), py_config(ECHO_FOREVER));
+        configs.insert("two".to_string(), py_config(ECHO_FOREVER));
+        let pool = McpPool::new(configs);
+
+        let run = async {
+            pool.send("one", "{\"id\":1}", None).await.unwrap();
+            pool.send("two", "{\"id\":1}", None).await.unwrap();
+            let pids = pool_pids(&pool).await;
+            assert_eq!(pids.len(), 2);
+            let health = pool.health_check().await;
+            assert_eq!(health.get("one"), Some(&true));
+            assert_eq!(health.get("two"), Some(&true));
+
+            pool.shutdown_all().await;
+            pids
+        };
+        let pids = tokio::time::timeout(LIMIT, run).await.expect("no hang");
+
+        #[cfg(target_os = "linux")]
+        for pid in &pids {
+            assert!(!process_exists(*pid), "child {pid} survived shutdown_all");
+        }
+        assert!(pool_pids(&pool).await.is_empty());
+
+        // Calling it again, and on a pool that never connected, is harmless.
+        pool.shutdown_all().await;
+        McpPool::new(HashMap::new()).shutdown_all().await;
+        let health = pool.health_check().await;
+        assert_eq!(health.get("one"), Some(&false));
+        assert_eq!(health.get("two"), Some(&false));
+
+        // The pool starts a fresh process on the next request.
+        let reply = tokio::time::timeout(LIMIT, pool.send("one", "{\"id\":3}", None))
+            .await
+            .expect("no hang")
+            .unwrap();
+        assert!(reply.contains("\"result\""));
+        let fresh = pool_pids(&pool).await;
+        assert_eq!(fresh.len(), 1);
+        assert!(!pids.contains(&fresh[0]));
+        pool.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn connection_shutdown_is_idempotent_and_leaves_it_not_alive() {
+        if !python3_available() {
+            eprintln!("python3 not found: skipping");
+            return;
+        }
+        let run = async {
+            let mut conn = McpConnection::connect("echo", &py_config(ECHO_FOREVER))
+                .await
+                .unwrap();
+            assert!(conn.is_alive().await);
+            conn.shutdown().await.unwrap();
+            assert!(!conn.is_alive().await);
+            conn.shutdown().await.unwrap();
+            assert!(!conn.is_alive().await);
+        };
+        tokio::time::timeout(LIMIT, run).await.expect("no hang");
+    }
+
+    fn load(body: &str) -> Result<McpPool> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(&file, body).expect("write");
+        McpPool::from_config_file(file.to_str().expect("utf8"))
+    }
+
+    #[test]
+    fn config_with_a_repeated_server_name_keeps_one_entry_and_does_not_panic() {
+        // JSON parsers keep the last value of a repeated key; the loader must not crash or list it twice.
+        let pool = load(
+            r#"{"mcpServers": {"dup": {"command": "node", "args": ["first.js"]}, "dup": {"command": "python3", "args": ["second.py"]}}}"#,
+        )
+        .expect("loads");
+        assert_eq!(pool.list_mcps(), vec!["dup".to_string()]);
+        let cfg = &pool.configs["dup"];
+        assert_eq!(cfg.command.as_deref(), Some("python3"));
+        assert_eq!(cfg.args, vec!["second.py".to_string()]);
+    }
+
+    #[test]
+    fn config_with_an_empty_command_skips_that_server_with_a_notice() {
+        for command in ["", "   ", "\t"] {
+            let body = format!(
+                r#"{{"mcpServers": {{"blank": {{"command": {command:?}}}, "ok": {{"command": "npx"}}}}}}"#
+            );
+            let pool = load(&body).expect("one bad server does not fail the file");
+            assert_eq!(pool.list_mcps(), vec!["ok".to_string()], "{command:?}");
+            assert!(pool.skip_reason_for_tool("blank.run").is_some());
+            let notices = pool.notices().join("\n");
+            assert!(notices.contains("\"blank\" was skipped"), "{notices}");
+        }
+    }
+
+    #[test]
+    fn config_that_cannot_be_read_is_an_error_naming_the_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+
+        let missing = dir.path().join("missing.json");
+        let err = McpPool::from_config_file(missing.to_str().unwrap())
+            .err()
+            .expect("missing file must fail");
+        assert!(err.to_string().contains("missing.json"), "{err}");
+
+        // A directory where the file should be.
+        let as_dir = dir.path().join("dir.json");
+        std::fs::create_dir(&as_dir).unwrap();
+        let err = McpPool::from_config_file(as_dir.to_str().unwrap())
+            .err()
+            .expect("a directory is not a servers file");
+        assert!(err.to_string().contains("dir.json"), "{err}");
+
+        // Bytes that are not text.
+        let binary = dir.path().join("binary.json");
+        std::fs::write(&binary, [0xff, 0xfe, 0x00, 0x80]).unwrap();
+        let err = McpPool::from_config_file(binary.to_str().unwrap())
+            .err()
+            .expect("binary content must fail");
+        assert!(err.to_string().contains("binary.json"), "{err}");
+    }
+
+    #[test]
+    fn config_with_unexpected_shapes_loads_without_servers_or_panics() {
+        for body in [
+            "[]",
+            "null",
+            "42",
+            r#"{}"#,
+            r#"{"mcpServers": []}"#,
+            r#"{"mcpServers": "x"}"#,
+            r#"{"mcpServers": {"s": "not an object"}}"#,
+            r#"{"mcpServers": {"s": {"command": 5}}}"#,
+        ] {
+            let pool = load(body).unwrap_or_else(|e| panic!("{body}: {e}"));
+            assert!(pool.list_mcps().is_empty(), "{body}");
+        }
+
+        // Entries of the wrong type inside a valid server are dropped, the server stays.
+        let pool = load(
+            r#"{"mcpServers": {"s": {"command": "npx", "args": ["a", 1, null, "b"], "env": {"K": "v", "N": 1}}}}"#,
+        )
+        .unwrap();
+        let cfg = &pool.configs["s"];
+        assert_eq!(cfg.args, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(cfg.env.len(), 1);
+        assert_eq!(cfg.env.get("K").map(String::as_str), Some("v"));
     }
 }
