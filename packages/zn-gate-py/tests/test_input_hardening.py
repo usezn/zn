@@ -223,9 +223,10 @@ def test_sanitize_object_cycle_and_unreadable_object():
         def y(self):
             raise RuntimeError("no")
 
-    # Properties are not attributes of the instance: the object reads fine.
-    clean, _ = sanitize_tool_result(Bad())
-    assert isinstance(clean, Bad)
+    # A property is not read (that would run its code): the object is refused instead of passed through unread.
+    with pytest.raises(SanitizeLimitError) as exc:
+        sanitize_tool_result(Bad())
+    assert exc.value.rule == "type:unscannable"
 
 
 def test_sanitize_object_that_cannot_be_copied_returns_a_dict_of_masked_attributes():

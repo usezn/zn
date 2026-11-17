@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, T
 
 from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invisible
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
+from .rules import UNREAD_ACCESSORS_REASON, unread_accessors
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -100,6 +101,7 @@ LENIENT_MAX_DEPTH = 32
 _DEFAULT_MAX_DEPTH = 10
 
 _DICT_VIEWS = (KeysView, ValuesView, ItemsView)
+_PLAIN_CONTAINERS = (dict, list, tuple, set, frozenset)
 
 
 def _object_fields(data: Any) -> Optional[List[Any]]:
@@ -176,14 +178,16 @@ _LOGGER_LINKS = frozenset({"manager", "parent", "_cache"})
 
 class _Walk:
     """State shared by one walk: containers read in full (kept so their ids are not
-    reused during the walk) and a count of parts left out."""
+    reused during the walk), a count of parts left out, and a count of objects whose
+    properties or attribute hooks were not read (see rules.unread_accessors)."""
 
-    __slots__ = ("done", "skipped", "unreadable")
+    __slots__ = ("done", "skipped", "unreadable", "hidden")
 
     def __init__(self) -> None:
         self.done: Dict[int, Any] = {}
         self.skipped = 0
         self.unreadable = 0
+        self.hidden = 0
 
 
 def _is_data_object(value: Any) -> bool:
@@ -266,6 +270,9 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     lenient = _lenient
     children: Optional[List[Any]]
     if isinstance(data, (Mapping, list, tuple, set, frozenset, _DICT_VIEWS)):
+        if type(data) not in _PLAIN_CONTAINERS and unread_accessors(data):
+            # Its properties or attribute hooks are not read (that would run its code): a result blocks on it.
+            seen.hidden += 1
         try:
             if isinstance(data, Mapping):
                 children = []
@@ -304,6 +311,8 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         # effort; containers without attributes (deque, array, custom
         # sequences) and data models are walked strictly.
         is_model = _is_data_object(data)
+        if unread_accessors(data):
+            seen.hidden += 1
         try:
             children = _object_fields(data)
             if children is not None and isinstance(data, logging.Logger):
@@ -368,13 +377,16 @@ def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
                       best_effort_budget: bool = False,
                       block_unreadable: bool = False) -> Tuple[List[str], Optional[Assessment]]:
     """_extract_strings, or a block Assessment when the payload cannot be checked in full.
-    With block_unreadable, an object that raised while it was read is a block too, not a part left out."""
+    With block_unreadable, an object that raised while it was read is a block too, not a part left out,
+    and so is an object whose properties or attribute hooks were not read (rule type:unscannable)."""
     try:
         walk = _Walk()
         found = _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
                                  best_effort_budget=best_effort_budget, _seen=walk)
         if block_unreadable and walk.unreadable:
             raise _Unscannable("type:unscannable", "An object could not be read to check it")
+        if block_unreadable and walk.hidden:
+            raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
         return found, None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
@@ -508,7 +520,10 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     output (over 4 MB) is blocked by default (rule size:truncated); allow_truncated=True
     or ZN_ALLOW_TRUNCATED=1 allows it, and block_truncated=True or ZN_BLOCK_TRUNCATED=1
     forces the block. A result that cannot be
-    checked in full is blocked as for check_tool_call (for example a generator).
+    checked in full is blocked as for check_tool_call (for example a generator),
+    and so is an object whose own class shows values through properties or
+    attribute hooks (rule type:unscannable, see rules.unread_accessors), as
+    sanitize_tool_result refuses it.
     """
     res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
                         allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH)

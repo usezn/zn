@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-16.34
+RULES_VERSION: 2026-11-17.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -14,19 +14,22 @@ import base64
 import binascii
 import bisect
 import copy
+import functools
 from array import array
 import json
 import math
 import os
 import re
 import sys
+import types
 import unicodedata
+import weakref
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-16.34"
+RULES_VERSION = "2026-11-17.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2530,8 +2533,9 @@ SANITIZE_MAX_ITEMS = 100_000
 
 class SanitizeLimitError(ValueError):
     """Raised by sanitize_tool_result(data) for data it will not walk to mask: nested deeper
-    than SANITIZE_MAX_DEPTH levels, a container that contains itself (rule size:nesting) or
-    more than SANITIZE_MAX_ITEMS values (rule size:items)."""
+    than SANITIZE_MAX_DEPTH levels, a container that contains itself (rule size:nesting),
+    more than SANITIZE_MAX_ITEMS values (rule size:items), or an object it cannot read or
+    whose properties or attribute hooks it does not read (rule type:unscannable)."""
 
     def __init__(self, rule: str, reason: str):
         super().__init__(reason)
@@ -2555,6 +2559,81 @@ def _is_opaque_object(val: Any) -> bool:
                             pathlib.PurePath))
         or inspect.isroutine(val)
     )
+
+
+# Packages whose properties and attribute hooks only show values that a walk of __dict__ and __slots__ already
+# reads: the standard library, zn_gate itself, the data-model libraries (pydantic, attrs, msgspec) and the
+# message and node classes of LangChain and LlamaIndex.
+_TRUSTED_ACCESSOR_PACKAGES = frozenset({
+    "zn_gate", "pydantic", "pydantic_core", "attr", "attrs", "msgspec", "langchain_core", "llama_index",
+})
+_ACCESSOR_HOOKS = ("__getattr__", "__getattribute__")
+UNREAD_ACCESSORS_REASON = ("An object shows values through properties or attribute hooks that cannot be checked "
+                           "without running its code; return its data as a dict instead")
+_accessor_cache: "weakref.WeakKeyDictionary[type, Tuple[bool, Tuple[str, ...]]]" = weakref.WeakKeyDictionary()
+
+
+def _class_accessors(klass: type) -> Tuple[bool, Tuple[str, ...]]:
+    """(whether a class of the MRO outside the trusted packages defines a data descriptor or an attribute hook,
+    the names of its cached properties)."""
+    lazy: List[str] = []
+    for c in klass.__mro__:
+        module = getattr(c, "__module__", None)
+        top = module.split(".", 1)[0] if isinstance(module, str) else ""
+        if c is object or top == "builtins" or top in sys.stdlib_module_names or top in _TRUSTED_ACCESSOR_PACKAGES:
+            continue
+        for name, attr in list(vars(c).items()):
+            if name in _ACCESSOR_HOOKS:
+                return True, ()
+            if isinstance(attr, functools.cached_property):
+                lazy.append(attr.attrname or name)
+                continue
+            if isinstance(attr, (types.MemberDescriptorType, types.GetSetDescriptorType)):
+                # __slots__ entries, __dict__ and __weakref__: what they hold is walked.
+                continue
+            kind = type(attr)
+            if kind.__name__ == "_tuplegetter" and issubclass(klass, tuple):
+                # A namedtuple field: an item of the tuple, which is walked.
+                continue
+            if hasattr(kind, "__get__") and (hasattr(kind, "__set__") or hasattr(kind, "__delete__")):
+                return True, ()
+    return False, tuple(lazy)
+
+
+def unread_accessors(val: Any) -> bool:
+    """True when `val` can show values that a walk of its __dict__ and __slots__ does not read.
+
+    That is the case when a class of its MRO, outside the standard library and the trusted packages
+    (_TRUSTED_ACCESSOR_PACKAGES), defines a data descriptor (a property, or any descriptor with __get__ and
+    __set__ or __delete__), a __getattr__ or __getattribute__ hook, or a cached property not computed yet.
+    Reading those would run the object's code (side effects, slowness, exceptions), so the scanners do not
+    read them: a tool result with one is refused instead (rule type:unscannable), and the masker and the
+    checker agree on it.
+    """
+    klass = type(val)
+    try:
+        cached = _accessor_cache.get(klass)
+    except TypeError:
+        cached = None
+    if cached is None:
+        try:
+            cached = _class_accessors(klass)
+        except Exception:
+            cached = (True, ())
+        try:
+            _accessor_cache[klass] = cached
+        except TypeError:
+            pass
+    hidden, lazy = cached
+    if hidden:
+        return True
+    if lazy:
+        try:
+            d = object.__getattribute__(val, "__dict__")
+        except Exception:
+            return True
+        return not isinstance(d, dict) or any(n not in d for n in lazy)
+    return False
 
 
 def _object_names(val: Any) -> List[str]:
@@ -2620,7 +2699,9 @@ def sanitize_tool_result(
     In form 1, data nested deeper than ten levels, a container that contains itself
     or more than 100,000 values raises SanitizeLimitError (a ValueError with the
     attributes rule, "size:nesting" or "size:items", and reason) instead of
-    exhausting the stack.
+    exhausting the stack. An object that cannot be read, or that shows values
+    through properties or attribute hooks of its own class (see
+    unread_accessors), raises it too, with rule "type:unscannable".
     In form 2, content that is not a string (a dict, list or object) is checked
     string by string, as check_tool_result does, and as JSON text;
     sanitized_content is that JSON text (as in Node.js), with secrets masked.
@@ -2738,6 +2819,10 @@ def sanitize_tool_result(
 
     def _sanitize(val: Any) -> Any:
         if not isinstance(val, (dict, list, tuple, set, frozenset)):
+            if _is_opaque_object(val) and unread_accessors(val):
+                # A property or attribute hook could show a secret that no attribute holds: refuse the object
+                # instead of passing it through unread (check_tool_result blocks it the same way).
+                raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
             names = _object_names(val)
             if not names:
                 return _sanitize_value(val)

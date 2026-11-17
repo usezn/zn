@@ -45,14 +45,58 @@ class GuardBlockError extends Error {
 /** Internal: a payload is nested deeper than the scanner is willing to walk. */
 class NestingTooDeep extends Error {}
 
+// Classes of Node.js written in JavaScript whose getters only show what the instance already holds.
+const TRUSTED_ACCESSOR_CLASSES = new Set([URL, URLSearchParams]);
+const NATIVE_CODE_RE = /\{\s*\[native code\]\s*\}\s*$/;
+
+function isNativeFunction(fn) {
+  try {
+    return typeof fn === 'function' && NATIVE_CODE_RE.test(Function.prototype.toString.call(fn));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when `obj` can show values that Object.entries does not list: a getter or setter
+ * on a prototype of its class chain (other than the built-in classes), or an own getter
+ * or setter that is not enumerable. Reading those would run the object's code, so the
+ * result check does not read them and blocks the result instead (rule type:unscannable);
+ * sanitizeToolResult rebuilds such an object as a plain object of its listed values.
+ */
+function hiddenAccessors(obj) {
+  try {
+    for (const key of Reflect.ownKeys(obj)) {
+      const d = Object.getOwnPropertyDescriptor(obj, key);
+      if (d && !d.enumerable && (d.get || d.set)) return true;
+    }
+    for (let proto = Object.getPrototypeOf(obj); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+      const ctor = Object.prototype.hasOwnProperty.call(proto, 'constructor') ? proto.constructor : undefined;
+      if (isNativeFunction(ctor) || TRUSTED_ACCESSOR_CLASSES.has(ctor)) continue;
+      for (const key of Reflect.ownKeys(proto)) {
+        const d = Object.getOwnPropertyDescriptor(proto, key);
+        if (d && (d.get || d.set)) return true;
+      }
+    }
+    return false;
+  } catch {
+    // A prototype chain that cannot be read (a Proxy that throws) cannot be checked either.
+    return true;
+  }
+}
+
+const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters that cannot be checked without running its code; '
+  + 'return its data as a plain object instead';
+
 /**
  * Every string in a nested structure, object keys included. Walks arrays, sets,
  * maps (keys and values) and plain objects, and decodes Buffer / Uint8Array as
  * UTF-8. Throws NestingTooDeep instead of skipping content below the depth
  * limit, so callers can fail closed. A container that contains itself is walked
- * once.
+ * once. With `walk`, objects whose getters are not read (see hiddenAccessors)
+ * are counted in walk.hidden.
  */
-function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = []) {
+function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = [], walk = null) {
   if (typeof data === 'string') { out.push(data); return out; }
   if (data instanceof Uint8Array) { out.push(Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8')); return out; }
   let children;
@@ -62,6 +106,7 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
     children = [];
     for (const [k, v] of data) children.push(k, v);
   } else if (data && typeof data === 'object') {
+    if (walk && hiddenAccessors(data)) walk.hidden += 1;
     children = [];
     for (const [k, v] of Object.entries(data)) children.push(k, v);
   } else {
@@ -72,17 +117,30 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
   path.add(data);
   try {
     // Collected into one shared list: spreading a large child list into push() overflows the call stack.
-    for (const child of children) extractStrings(child, maxDepth - 1, path, out);
+    for (const child of children) extractStrings(child, maxDepth - 1, path, out, walk);
     return out;
   } finally {
     path.delete(data);
   }
 }
 
-/** extractStrings, or a block assessment when the payload is nested too deeply to check. */
-function stringsOrBlock(data, what) {
+/**
+ * extractStrings, or a block assessment when the payload is nested too deeply to check
+ * or, with blockHidden (tool results), holds an object whose getters are not read.
+ */
+function stringsOrBlock(data, what, blockHidden = false) {
   try {
-    return { strings: extractStrings(data) };
+    const walk = { hidden: 0 };
+    const strings = extractStrings(data, MAX_DEPTH, new WeakSet(), [], walk);
+    if (blockHidden && walk.hidden > 0) {
+      return {
+        block: {
+          allowed: false, verdict: 'block', confidence: 1.0, rule: 'type:unscannable',
+          reason: `${what}: ${HIDDEN_ACCESSORS_REASON}`,
+        },
+      };
+    }
+    return { strings };
   } catch (e) {
     if (!(e instanceof NestingTooDeep)) throw e;
     return {
@@ -123,12 +181,14 @@ function checkToolCall(toolName, args, opts = {}) {
  * strings are scanned in overlapping windows; `truncated` is true when some
  * string was not scanned in full, and such output is blocked by default (rule
  * size:truncated); opts.allowTruncated or ZN_ALLOW_TRUNCATED=1 allows it.
+ * An object whose class shows values through getters is blocked (rule
+ * type:unscannable, see hiddenAccessors), as in the Python package.
  * Internal helper of guardTool; the public async variant is checkToolResult in lib/client.js.
  */
 function scanToolResult(result, opts = {}) {
   let truncated = false;
   let advisory = null;
-  const { strings, block } = stringsOrBlock(result, 'Result');
+  const { strings, block } = stringsOrBlock(result, 'Result', true);
   if (block) return block;
   if (tooInvisible(strings)) return { allowed: false, ...invisibleBlock() };
   for (const s of strings) {

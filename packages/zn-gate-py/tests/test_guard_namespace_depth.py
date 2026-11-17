@@ -205,7 +205,12 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
                 self.text = BAD
 
         self.assertFalse(check_tool_result(Captured()).allowed)
-        self.assertTrue(check_tool_result(logging.getLogger().handlers).allowed)
+        # The root handlers of the test runner may be classes with properties of their own, which a result
+        # refuses (rule type:unscannable); the others are read without a block.
+        handlers = logging.getLogger().handlers
+        res = check_tool_result(handlers)
+        self.assertTrue(res.allowed or res.rule == "type:unscannable")
+        self.assertTrue(check_tool_result([logging.StreamHandler(), logging.NullHandler()]).allowed)
 
     def test_logger_handlers_filters_and_subclass_attributes_are_read(self):
         logger = logging.getLogger("zn.example.capture")
