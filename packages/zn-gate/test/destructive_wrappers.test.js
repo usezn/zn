@@ -8,9 +8,9 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const { checkCommand } = require('../lib/destructive');
-const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const DL = 'https://example.com/i.sh';
 const RC = 'https://example.com/env.sh';
@@ -58,12 +58,6 @@ test('benign twins stay allowed', () => {
 
 test('200 KB inputs with wrappers stay linear', () => {
   const u = `stdbuf -o0 nice -n 5 timeout -s KILL 5 curl ${DL} -o install.sh; `;
-  const big = u.repeat(Math.floor((200 * 1024 - 8) / u.length));
-  const t0 = cpuNow();
-  rule(big);
-  assert.ok(cpuMsSince(t0) < 3000);
-  const chain = 'nice '.repeat(40000) + `curl ${DL} | sh`;
-  const t1 = cpuNow();
-  rule(chain);
-  assert.ok(cpuMsSince(t1) < 3000);
+  assertLinear(rule, (n) => u.repeat(Math.floor(n / u.length)), 200 * 1024 - 8, 'wrapper units');
+  assertLinear(rule, (n) => 'nice '.repeat(n) + `curl ${DL} | sh`, 40000, 'nice chain');
 });

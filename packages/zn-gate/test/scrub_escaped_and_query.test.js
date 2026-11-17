@@ -6,6 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const { findPatterns } = require('../lib/scrub/patterns');
 
 const V = 'fakeSecretValue1234';
@@ -71,16 +72,11 @@ test('benign query parameters and short or placeholder values stay', () => {
 
 test('the new forms stay linear on long hostile input', () => {
   const inputs = [
-    '?' + 'a'.repeat(200000) + 'token',
-    '&' + 'token_'.repeat(40000),
-    'api_key=' + '\\'.repeat(200000),
-    'api_key' + '\\"'.repeat(100000),
-    '?api_key=' + 'A1b2'.repeat(100000),
+    [200000, (n) => '?' + 'a'.repeat(n) + 'token'],
+    [40000, (n) => '&' + 'token_'.repeat(n)],
+    [200000, (n) => 'api_key=' + '\\'.repeat(n)],
+    [100000, (n) => 'api_key' + '\\"'.repeat(n)],
+    [100000, (n) => '?api_key=' + 'A1b2'.repeat(n)],
   ];
-  for (const t of inputs) {
-    const t0 = process.hrtime.bigint();
-    findPatterns(t);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2000, 'slow (' + ms.toFixed(0) + ' ms) on input of ' + t.length);
-  }
+  for (const [size, build] of inputs) assertLinear(findPatterns, build, size, 'input of ' + build(size).length);
 });
