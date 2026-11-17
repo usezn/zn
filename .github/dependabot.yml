@@ -8,9 +8,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # fuzz/ is not a Dependabot entry: its updates edit the root Cargo.toml
-    # without fuzz/Cargo.lock, so they can never pass "cargo build --locked".
     ignore:
+      # Major versions are not opened automatically: the batch of major bumps
+      # of 2026-10-18 .. 2026-10-23 failed build, test and clippy and was
+      # closed unmerged within hours. Review majors by hand.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       # tokenizers follows the ML model dependency; a new minor or major
       # release is taken together with that change, not on its own.
       - dependency-name: "tokenizers"
@@ -19,6 +22,17 @@ updates:
       cargo:
         patterns: ["*"]
         update-types: [minor, patch]
+
+  # fuzz/ is a separate Cargo project with its own fuzz/Cargo.lock. Version
+  # updates are disabled for it (limit 0): bumps for it edit a manifest without
+  # that lock and cannot pass "cargo build --locked". Security updates are not
+  # limited by open-pull-requests-limit.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
 
 
   - package-ecosystem: npm
