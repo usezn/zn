@@ -75,7 +75,8 @@ def test_rule_compiles_on_first_use_and_matches_like_a_real_pattern():
     assert lazy.pattern == r"[\u0000-\u0008\u000E-\u001A\u001C-\u001F\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]"
     assert lazy.sub("", "a\u200bb") == "ab"
     assert lazy.search("x") is None
-    assert isinstance(lazy.search, type(re.compile("a").search))
+    assert lazy.search("a\u200bb").group() == "\u200b"
+    assert isinstance(lazy.sub, type(re.compile("a").sub))
     ignore_case = rules.INJECTION_RULES[2][1]
     assert ignore_case.flags & re.IGNORECASE
 
@@ -98,3 +99,113 @@ def test_every_lazy_pattern_compiles():
         elif isinstance(value, dict):
             todo.extend(value.values())
     assert found >= 150
+
+
+def test_lazy_search_delegates_to_the_compiled_pattern_with_and_without_the_prefilter():
+    import re
+
+    from zn_gate import rules
+
+    pattern = r"secret[0-9]{3}"
+    lazy = rules._LazyPattern(pattern, re.IGNORECASE)
+    real = re.compile(pattern, re.IGNORECASE)
+    big = rules._PREFILTER_MIN_CHARS
+    texts = [
+        "x SECRET123 y",  # small, match
+        "nothing here",  # small, no match
+        "a" * big + " Secret999",  # large, match
+        "a" * (big + 5),  # large, no needle: rejected by the prefilter
+        "a" * big + " secret",  # large, needle but no match: the regex decides
+    ]
+    for text in texts:
+        got, want = lazy.search(text), real.search(text)
+        assert (got is None) == (want is None)
+        if want is not None:
+            assert got.span() == want.span()
+    # With a start position the prefilter is skipped and the compiled search is used.
+    assert lazy.search(texts[2], big).span() == real.search(texts[2], big).span()
+
+
+def test_folded_cache_does_not_keep_the_input_after_evaluate():
+    from zn_gate import rules
+
+    text = "plain words " * 2000 + " ignore previous instructions"
+    assert len(text) >= rules._PREFILTER_MIN_CHARS
+    rules.evaluate(text)
+    rules._evaluate_uncached(text)
+    assert rules._folded_cache == ("", "")
+    assert rules._folded_cache[0] is not text
+
+
+def test_lazy_search_accepts_pos_and_endpos_like_re_pattern():
+    import re
+
+    from zn_gate import rules
+
+    pattern = r"secret[0-9]{3}"
+    lazy = rules._LazyPattern(pattern, re.IGNORECASE)
+    real = re.compile(pattern, re.IGNORECASE)
+    big = rules._PREFILTER_MIN_CHARS
+    text = "SECRET111 " + "a" * big + " secret222"
+    for kwargs in ({"pos": 5}, {"endpos": 12}, {"pos": 5, "endpos": len(text)}, {"pos": big}, {"endpos": 9}):
+        got, want = lazy.search(text, **kwargs), real.search(text, **kwargs)
+        assert (got is None) == (want is None), kwargs
+        if want is not None:
+            assert got.span() == want.span(), kwargs
+    assert lazy.search(text, 5, len(text)).span() == real.search(text, 5, len(text)).span()
+    assert lazy.search(string=text).span() == real.search(text).span()
+
+
+def test_direct_search_on_a_long_text_leaves_the_fold_cache_empty():
+    import re
+
+    from zn_gate import rules
+
+    lazy = rules._LazyPattern(r"secret[0-9]{3}", re.IGNORECASE)
+    text = "plain words " * 2000 + " SECRET123"
+    assert len(text) >= rules._PREFILTER_MIN_CHARS
+    assert lazy.search(text) is not None
+    assert rules._folded_cache == ("", "")
+
+
+def test_fold_cache_is_used_inside_an_evaluation(monkeypatch):
+    from zn_gate import rules
+
+    text = "plain words " * 2000 + " ignore previous instructions"
+    calls = []
+    real_fold = rules._fold_for_needles
+
+    def spy(value):
+        result = real_fold(value)
+        calls.append(rules._folded_cache[0] is value)
+        return result
+
+    monkeypatch.setattr(rules, "_fold_for_needles", spy)
+    rules._evaluate_uncached(text)
+    assert calls and any(calls)
+    assert rules._folded_cache == ("", "")
+    assert rules._evaluating == 0
+
+
+def test_prefilter_ignores_a_str_subclass_that_overrides_translate():
+    import re
+
+    from zn_gate import rules
+
+    class Liar(str):
+        def translate(self, table):
+            return ""
+
+    pattern = r"secret[0-9]{3}"
+    lazy = rules._LazyPattern(pattern, re.IGNORECASE)
+    real = re.compile(pattern, re.IGNORECASE)
+    text = Liar("a" * rules._PREFILTER_MIN_CHARS + " SECRET123")
+    assert lazy.search(text).span() == real.search(text).span()
+    assert rules._folded_cache == ("", "")
+    # Inside an evaluation the cached path must also use the real fold.
+    rules._evaluating += 1
+    try:
+        assert lazy.search(text).span() == real.search(text).span()
+    finally:
+        rules._evaluating -= 1
+        rules._folded_cache = ("", "")
