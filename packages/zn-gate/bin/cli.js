@@ -228,6 +228,7 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
+                      [--approve] records the project's executable configuration as approved, then exits (terminal only)
   evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
   why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
@@ -242,14 +243,18 @@ COMMANDS:
 
 SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret set NAME     Store a secret (hidden prompt or --clipboard; never as an argument)
-                      [--mode proxy|env|file] [--host H] [--command C]
+                      [--mode proxy|env|file] [--host H] [--command C] [--in header|query|body] [--force]
   secret list         List stored secrets (names and policy, never values)
   secret allow NAME   Add allowed hosts (--host) or commands (--command) to a secret
+                      [--in header|query|body] [--mode proxy|env|file] [--replace]
   secret approve NAME Approve the first use of a secret by an allowed command
   secret rm NAME      Remove a secret
   secret import FILE  Copy the secret values of a .env file into the vault
+                      [--all] [--keys A,B] [--host H] [--command C] [--force]
   secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
+                      --name NAME [--host H] [--command C]
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
+                      [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
   env unshadow FILE --backup NAME
                       Put the original values back into FILE from the encrypted copy that env shadow printed
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
@@ -308,6 +313,7 @@ OPTIONS:
 
 VAULT (local, encrypted with age; the key stays in the OS keychain):
   unlock              Unlock the vault for this session [--ttl 8h] [--idle 30m]
+                      [--foreground] keeps the vault in this terminal and asks for confirmations here
                       [--backend NAME]: macos, windows, libsecret or passphrase
                       (first run creates it; --passphrase-stdin without a keychain)
   lock                Lock the vault now

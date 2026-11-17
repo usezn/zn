@@ -581,6 +581,10 @@ const HELP = {
     'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...',
     'Stores secrets in the zn vault so your agent can use them without seeing them.',
     'Run zn secret set NAME and type the value at the hidden prompt (or use --clipboard); values are never passed as arguments.',
+    '  set NAME      [--clipboard] [--force] [--mode proxy|env|file] [--host H] [--command C] [--in header|query|body]',
+    '  allow NAME    [--host H] [--command C] [--in header|query|body] [--mode proxy|env|file] [--replace]',
+    '  import [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force]',
+    '  adopt TOKEN   --name NAME [--host H] [--command C]',
   ],
   'uninstall': [
     'usage: zn-gate uninstall [--dry-run]',
