@@ -162,7 +162,8 @@ provider: 0 secret values sent.
   refuses a known tool whose arguments it cannot read.
 - **When a hook fails:** a hook that takes longer than its timeout lets the
   call through, because Copilot fails open there, so zn sets a 15-second
-  timeout on its hooks and blocks the call itself at 11 seconds. Machine policy hooks in
+  timeout on its hooks and blocks the call itself at 11 seconds (on Windows a PowerShell script
+  also stops the hook at 13 seconds and denies the call). Machine policy hooks in
   `/etc/github-copilot/policy.d` run in addition and are not seen by zn.
 - **Other limits:** it has not been tested on Windows. Copilot's own session
   log (`events.jsonl`) keeps the original tool output on your machine.

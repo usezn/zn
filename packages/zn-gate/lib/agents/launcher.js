@@ -1078,21 +1078,24 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
     antigravity: (r) => ({ decision: 'deny', reason: r }),
     cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
     gemini: (r) => ({ decision: 'deny', reason: r }),
+    copilot: (r) => ({ permissionDecision: 'deny', permissionDecisionReason: r }),
   };
   const jsonDeny = Boolean(DENY_JSON[agentId]);
+  // Copilot's camelCase event name: only preToolUse can deny (the shared default set is the Claude Code spelling).
+  const blocks = agentId === 'copilot' ? new Set(['preToolUse']) : blockExit(agentId);
   // The block text (the Node.js is gone) or, when the hook ran and failed or timed out, the crash text.
   const tailOf = (reason, warn) => {
   let tail;
   // A PowerShell inside the agent's own PowerShell (Cursor) turns a nested exit 2 into 1, and both Cursor and
   // Gemini CLI read the deny JSON only with exit 0. So for them a block is the deny JSON plus exit 0; the
   // runner's own refusal (exit 2, deny JSON already on stdout) is passed on as exit 0 too.
-  if (blockExit(agentId).has(event)) {
+  if (blocks.has(event)) {
     tail = jsonDeny
       ? "[Console]::Out.WriteLine('" + JSON.stringify(DENY_JSON[agentId](reason)) + "'); [Console]::Error.WriteLine('" + reason + "'); exit 0"
       : "[Console]::Error.WriteLine('" + reason + "'); exit 2";
   }
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
-  else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warn + "'); exit 0";
+  else if (WARN_STDERR.has(agentId) || agentId === 'copilot') tail = "[Console]::Error.WriteLine('" + warn + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
   return 'zd; ' + tail;
   };

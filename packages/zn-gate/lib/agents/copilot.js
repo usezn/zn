@@ -14,8 +14,10 @@
  * Limits that VS Code and GitHub document, and that no hook format can lift:
  *  - "Timeouts are fail-open for every event, including preToolUse and admin-deployed policy hooks"
  *    (https://docs.github.com/en/copilot/reference/hooks-reference, "Exit codes"). zn does not wait for it: its own
- *    supervisor (runner armSupervisor) answers with a deny 4 s before timeoutSec, so only a hook that is stopped before it
- *    could start its timer (a machine so loaded that Node.js does not start in 11 s) is let through.
+ *    supervisor (runner armSupervisor) answers with a deny 4 s before timeoutSec. On Windows (user install) the hook is also
+ *    a PowerShell script (launcher.windowsScript with a deadline) that kills the process tree 2 s before timeoutSec and
+ *    answers the deny itself, so a stall before Node.js starts is covered; on macOS and Linux (and in a project install) only a
+ *    hook that is stopped before it could start its timer (a machine so loaded that Node.js does not start in 11 s) is let through.
  *  - "Command and HTTP config-file userPromptSubmitted hooks have their output dropped, including modifiedPrompt"
  *    (same page, "userPromptSubmitted"): a typed prompt cannot be blocked from a hook file in VS Code or the CLI.
  *  - The Copilot harness also reads the repository .claude/settings(.local).json ("Cross-tool .claude/settings.json ...
@@ -624,7 +626,12 @@ function install(opts = {}) {
     const h = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
     if (opts.command) h.powershell = opts.command;
     else if (project) h.powershell = bash;
-    else if (platform === 'win32') h.powershell = cfg.hookCommandWindows(id, opts);
+    else if (platform === 'win32') {
+      // The PowerShell script runs the hook as a child with a deadline armed before Node.js starts (2 s before Copilot's own
+      // timeout, which lets the call run): on expiry it kills the process tree and answers with the deny JSON of preToolUse.
+      const script = launcher.windowsScript(id, event, opts.nodePath || process.execPath, opts.runnerPath || cfg.runnerPath(), { deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S) });
+      h.powershell = script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);
+    }
     return h;
   };
   data.version = 1;
@@ -643,7 +650,7 @@ function install(opts = {}) {
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
   report.warnings.push('Copilot drops the output of a command hook for a typed prompt (userPromptSubmitted), in VS Code and in Copilot CLI, so a secret pasted into a prompt is not stopped.');
   report.warnings.push('The hooks follow the VS Code and GitHub documentation; they were run end to end with Copilot CLI, not inside the VS Code app.');
-  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s and blocks the call itself 4 s earlier), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
+  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s and blocks the call itself 4 s earlier; on Windows a PowerShell script also stops the hook and blocks the call 2 s earlier), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
   if (project && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook copilot): every teammate who opens this project in Copilot CLI needs zn-gate installed, otherwise the hook cannot start. Copilot also asks each person to trust the folder before it runs repository hooks.');
   return report;
 }

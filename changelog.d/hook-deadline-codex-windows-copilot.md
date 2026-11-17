@@ -1,0 +1,2 @@
+### Fixed
+- On Windows, the Codex CLI hook and the Copilot CLI hook (user installs) now run Node.js from a PowerShell script with its own deadline, 2 seconds before the agent's timeout. If the hook is stuck before zn can answer (a slow disk, an antivirus scan, a busy machine), the script stops it and blocks the call itself instead of letting the agent run the call unchecked. Run `zn hooks install codex` and `zn hooks install copilot` again to get it. Copilot on macOS and Linux still has no such script.

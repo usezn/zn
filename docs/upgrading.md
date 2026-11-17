@@ -146,9 +146,10 @@ installs, and the plugins keep a plain command. Agent by agent:
   and the tool call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
-  fails open, so that output is not scrubbed. Copilot has no launcher, and it
-  lets a call through when a hook times out, so zn sets a 15-second timeout on
-  its hooks and blocks the call itself at 11 seconds.
+  fails open, so that output is not scrubbed. Copilot lets a call through when
+  a hook times out, so zn sets a 15-second timeout on its hooks and blocks the
+  call itself at 11 seconds. On Windows, run `zn hooks install copilot` again to
+  also get the 13-second deadline of the PowerShell script that starts the hook.
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.

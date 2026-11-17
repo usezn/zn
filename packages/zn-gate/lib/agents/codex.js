@@ -381,7 +381,8 @@ function handlerFor(opts = {}) {
   return (event) => {
     const h = plain();
     if (file) h.command = launcher.launcherCommand(file, event, platform);
-    const script = launcher.windowsScript(id, event, node, runner);
+    // The deadline (2 s before Codex's own 30 s, which lets the call run) is armed before Node.js starts, as in the sh launcher.
+    const script = launcher.windowsScript(id, event, node, runner, { deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S) });
     if (script) h.commandWindows = launcher.windowsScriptCommand(script);
     return h;
   };
