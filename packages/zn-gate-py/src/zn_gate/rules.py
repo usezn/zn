@@ -23,7 +23,6 @@ import re
 import sys
 import types
 import unicodedata
-import weakref
 from collections import Counter, namedtuple
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
@@ -2575,7 +2574,9 @@ UNREAD_ACCESSORS_REASON = ("An object shows values through properties or attribu
 # and modules (subclasses included, as the scanners read them as such). Compared with the real type.
 _PLAIN_VALUE_TYPES = frozenset({dict, list, tuple, set, frozenset, type(None)})
 _SCALAR_TYPES = (str, bytes, bytearray, memoryview, bool, int, float, complex, type, types.ModuleType)
-_accessor_cache: "weakref.WeakKeyDictionary[type, Tuple[bool, Tuple[str, ...]]]" = weakref.WeakKeyDictionary()
+# The three class checks below (unread_accessors, overrides_builtin_reading, custom_text_form) answer from the class
+# as it is at each check, never from an earlier answer: a class (or a class of its MRO, or the MRO itself) can gain
+# a property, a hook or a text form after a first check that allowed it.
 
 
 # The slots of `type` itself, read directly: a metaclass can override __mro__, __dict__, __module__ or
@@ -2657,21 +2658,10 @@ def unread_accessors(val: Any) -> bool:
     read them: a tool result with one is refused instead (rule type:unscannable), and the masker and the
     checker agree on it.
     """
-    klass = type(val)
     try:
-        cached = _accessor_cache.get(klass)
-    except TypeError:
-        cached = None
-    if cached is None:
-        try:
-            cached = _class_accessors(klass)
-        except Exception:
-            cached = (True, ())
-        try:
-            _accessor_cache[klass] = cached
-        except TypeError:
-            pass
-    hidden, lazy = cached
+        hidden, lazy = _class_accessors(type(val))
+    except Exception:
+        return True
     if hidden:
         return True
     if lazy:
@@ -2698,7 +2688,6 @@ _READING_HOOKS = frozenset({
 OVERRIDDEN_READING_REASON = ("A value of a built-in type (str, list, dict...) redefines how it is read or turned "
                              "into text, so it could show something else than what was checked; return a plain "
                              "str, list or dict instead")
-_reading_cache: "weakref.WeakKeyDictionary[type, bool]" = weakref.WeakKeyDictionary()
 
 
 def _class_overrides_reading(klass: type) -> bool:
@@ -2727,19 +2716,9 @@ def overrides_builtin_reading(val: Any) -> bool:
     if klass in _EXACT_BUILTIN_TYPES or not issubclass(klass, _BUILTIN_READ_TYPES):
         return False
     try:
-        cached = _reading_cache.get(klass)
-    except TypeError:
-        cached = None
-    if cached is None:
-        try:
-            cached = _class_overrides_reading(klass)
-        except Exception:
-            cached = True
-        try:
-            _reading_cache[klass] = cached
-        except TypeError:
-            pass
-    return cached
+        return _class_overrides_reading(klass)
+    except Exception:
+        return True
 
 
 # Methods that decide the text of an object: str(), repr(), format() and f-strings, and the repr() of a container
@@ -2747,7 +2726,6 @@ def overrides_builtin_reading(val: Any) -> bool:
 _TEXT_HOOKS = ("__str__", "__repr__", "__format__")
 CUSTOM_TEXT_REASON = ("An object defines its own text form (__str__, __repr__ or __format__), which could show "
                       "something else than the values that were checked; return its data as a dict instead")
-_text_cache: "weakref.WeakKeyDictionary[type, bool]" = weakref.WeakKeyDictionary()
 
 
 def _sample_dataclass_repr() -> Any:
@@ -2774,20 +2752,27 @@ def _code_shape(code: Any) -> Tuple[Any, ...]:
 _NO_GLOBAL = object()
 
 
+@functools.lru_cache(maxsize=256)
+def _loaded_globals(code: Any) -> frozenset[Any]:
+    """The global names that `code` loads. Only asked for the code of a reference function that this module made."""
+    import dis
+
+    return frozenset(ins.argval for ins in dis.get_instructions(code) if ins.opname in ("LOAD_GLOBAL", "LOAD_NAME"))
+
+
 def _same_globals(fn: Any, reference: Any) -> bool:
     """True when every global name that the code of `reference` loads is the very same object for `fn`, with the
     same builtins: a function can be rebuilt from trusted code with globals of its own."""
-    import dis
-
     if getattr(fn, "__builtins__", None) is not getattr(reference, "__builtins__", None):
         return False
-    names = {ins.argval for ins in dis.get_instructions(reference.__code__) if ins.opname in ("LOAD_GLOBAL", "LOAD_NAME")}
+    names = _loaded_globals(reference.__code__)
     return all(fn.__globals__.get(name, _NO_GLOBAL) is reference.__globals__.get(name, _NO_GLOBAL) for name in names)
 
 
+@functools.lru_cache(maxsize=256)
 def _reference_dataclass_repr(names: Tuple[str, ...]) -> Any:
     """The __repr__ that dataclasses writes for a class whose repr fields are `names`, or None when it cannot write
-    one (a name that is not an identifier)."""
+    one (a name that is not an identifier). Kept per field names: it depends only on them, and writing it is slow."""
     import dataclasses
 
     try:
@@ -2896,21 +2881,10 @@ def custom_text_form(val: Any) -> bool:
     standard library are not counted. The __repr__ that attrs writes is counted: nothing that a class cannot also
     set tells it apart from a hand-written one, and a per-attribute repr callable runs code of its own.
     """
-    klass = type(val)
     try:
-        cached = _text_cache.get(klass)
-    except TypeError:
-        cached = None
-    if cached is None:
-        try:
-            cached = _class_defines_text(klass)
-        except Exception:
-            cached = True
-        try:
-            _text_cache[klass] = cached
-        except TypeError:
-            pass
-    return cached
+        return _class_defines_text(type(val))
+    except Exception:
+        return True
 
 
 def _object_names(val: Any) -> List[str]:

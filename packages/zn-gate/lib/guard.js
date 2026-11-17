@@ -56,6 +56,7 @@ class Unscannable extends Error {}
 // a typed array getter, Buffer.prototype.toString...) cannot change what is copied or read.
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ReflectGet = Reflect.get;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -255,6 +256,8 @@ function prototypeModified(protos) {
 
 const MODIFIED_PROTOTYPE_REASON = 'a built-in prototype was modified (for example Object.prototype.toJSON), so the result '
   + 'could turn into text that was not checked';
+const MODIFIED_ARGUMENTS_REASON = 'a built-in prototype or function was modified (for example Object.entries or '
+  + 'String.prototype.toLowerCase), so the arguments could hold text that the check would not see';
 
 function isErrorStack(key, d) {
   return key === 'stack' && ERROR_STACK !== undefined && ERROR_STACK.get !== undefined
@@ -366,6 +369,16 @@ function copiedBytes(buffer, offset, length) {
   }
 }
 
+/** A fresh Uint8Array holding a copy of the bytes a DataView shows (Unscannable when detached). */
+function dataViewBytes(view) {
+  try {
+    return copiedBytes(ReflectApply(DATA_VIEW_BUFFER, view, []), ReflectApply(DATA_VIEW_OFFSET, view, []),
+      ReflectApply(DATA_VIEW_LENGTH, view, []));
+  } catch {
+    throw new Unscannable(); // a detached buffer
+  }
+}
+
 /** The UTF-8 text of a Uint8Array (or Buffer), decoded by the decoder taken at load. */
 function utf8(bytes) {
   // The decoder refuses a view of shared memory: it reads a private copy of those bytes instead.
@@ -474,13 +487,7 @@ function snapshotOf(data, maxDepth, memo, state) {
     return remember(ReflectApply(TYPED_ARRAY_BUFFER, bytes, []));
   }
   if (isDataView(data)) {
-    let bytes;
-    try {
-      bytes = copiedBytes(ReflectApply(DATA_VIEW_BUFFER, data, []), ReflectApply(DATA_VIEW_OFFSET, data, []),
-        ReflectApply(DATA_VIEW_LENGTH, data, []));
-    } catch {
-      throw new Unscannable(); // a detached buffer
-    }
+    const bytes = dataViewBytes(data);
     push(state.texts, utf8(bytes));
     return remember(new DATA_VIEW(ReflectApply(TYPED_ARRAY_BUFFER, bytes, [])));
   }
@@ -577,41 +584,88 @@ const HIDDEN_ACCESSORS_REASON = 'An object shows values through getters, setters
   + 'without running its code; return its data as a plain object instead';
 
 /**
- * Every string in a nested structure, object keys included. Walks arrays, sets,
- * maps (keys and values) and plain objects, and decodes Buffer / Uint8Array as
- * UTF-8. Throws NestingTooDeep instead of skipping content below the depth
- * limit, so callers can fail closed. A container that contains itself is walked
- * once.
+ * Calls `visit(key, value)` for each listed (enumerable) string-keyed own property of `data`, in the
+ * order Object.entries lists them and read as it reads them (a getter or a Proxy trap runs), through
+ * the built-in functions taken at load. With `skipIndex`, index keys are left out.
  */
-function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = []) {
-  if (typeof data === 'string') { out.push(data); return out; }
-  if (isUint8Array(data)) { out.push(utf8(data)); return out; }
-  let children;
-  if (Array.isArray(data) || data instanceof Set) {
-    children = Array.from(data);
-  } else if (data instanceof Map) {
-    children = [];
-    for (const [k, v] of data) children.push(k, v);
-  } else if (data && typeof data === 'object') {
-    children = [];
-    for (const [k, v] of Object.entries(data)) children.push(k, v);
-  } else {
+function eachListed(data, skipIndex, visit) {
+  const keys = ReflectOwnKeys(data);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (typeof key !== 'string' || (skipIndex && isIndexKey(key))) continue;
+    const d = ObjectGetOwnPropertyDescriptor(data, key);
+    if (d !== undefined && d.enumerable) visit(key, ReflectGet(data, key));
+  }
+}
+
+/** The text an object holds in its internal slots (bytes as UTF-8, a String object), or undefined. */
+function slotText(data) {
+  if (isUint8Array(data)) return utf8(data);
+  if (isStringObject(data)) return ReflectApply(STRING_VALUE, data, []);
+  if (isAnyArrayBuffer(data)) return utf8(copiedBytes(data));
+  if (isDataView(data)) return utf8(dataViewBytes(data));
+  return undefined;
+}
+
+const SET_PROTOTYPE = Set.prototype;
+const MAP_PROTOTYPE = Map.prototype;
+
+/**
+ * Every string in a nested structure, object keys included. Walks arrays (their elements, then their
+ * other listed keys), sets, maps (keys and values) and other objects (their listed string keys and
+ * values, as Object.entries lists them), and decodes a Buffer, Uint8Array, ArrayBuffer or DataView as
+ * UTF-8 (a String object is its text). It reads only through the built-in functions taken when this
+ * module was loaded, never through an iterator or a method of the value or of a built-in prototype,
+ * so neither the value nor a built-in replaced later decides what is listed. Throws NestingTooDeep
+ * instead of skipping content below the depth limit, so callers can fail closed, and Unscannable for
+ * a Proxy of a Set or a Map (whose content cannot be listed without running its code). A container
+ * that contains itself is walked once.
+ */
+function extractStrings(data, maxDepth = MAX_DEPTH, path = new WEAK_SET_CLASS(), out = []) {
+  if (typeof data === 'string') { push(out, data); return out; }
+  if (data === null || typeof data !== 'object') return out;
+  const text = slotText(data);
+  if (text !== undefined) push(out, text);
+  // A typed array holds bytes or numbers only; listing its keys would list every element.
+  if (isTypedArray(data)) return out;
+  const array = ArrayIsArray(data);
+  // Index keys of an array or a String object are its elements, listed once.
+  const skipIndex = array || text !== undefined;
+  if (maxDepth <= 0) {
+    // Bytes and text are read whole at any depth; anything they or a container hold is not.
+    if (text === undefined) throw new NestingTooDeep();
+    eachListed(data, skipIndex, () => { throw new NestingTooDeep(); });
     return out;
   }
-  if (maxDepth <= 0) throw new NestingTooDeep();
-  if (path.has(data)) return out;
-  path.add(data);
+  if (ReflectApply(WEAK_SET_HAS, path, [data])) return out;
+  ReflectApply(WEAK_SET_ADD, path, [data]);
   try {
-    // Collected into one shared list: spreading a large child list into push() overflows the call stack.
-    for (const child of children) extractStrings(child, maxDepth - 1, path, out);
+    const visit = (child) => { extractStrings(child, maxDepth - 1, path, out); };
+    if (array) {
+      // By index up to the length, as the built-in array iterator reads it: never through an
+      // iterator of the array itself, which could list other values than the tool reads.
+      const length = ReflectGet(data, 'length');
+      if (typeof length !== 'number') throw new Unscannable();
+      for (let i = 0; i < length; i++) visit(ReflectGet(data, i));
+    } else if (isSet(data)) {
+      eachOf(data, visit);
+    } else if (isMap(data)) {
+      eachOf(data, (entry) => { visit(entry[0]); visit(entry[1]); });
+    } else if (isProxy(data) && (inChain(data, SET_PROTOTYPE) || inChain(data, MAP_PROTOTYPE))) {
+      throw new Unscannable();
+    }
+    eachListed(data, skipIndex, (key, value) => { visit(key); visit(value); });
     return out;
   } finally {
-    path.delete(data);
+    ReflectApply(WEAK_SET_DELETE, path, [data]);
   }
 }
 
 /**
- * extractStrings, or a block assessment when the payload is nested too deeply to check.
+ * extractStrings, or a block assessment when the payload is nested too deeply to check, or when a
+ * built-in the check relies on was modified since this module was loaded (intrinsicsModified): before
+ * the strings are read, and for arguments again after (a getter or a Proxy trap of the arguments runs
+ * while they are read, and the rules read the strings through those built-ins).
  * With snapshot (tool results), the strings are read from snapshotOf(data), returned as
  * `snapshot` (see snapshotOf), and a value that cannot be read without running its code is a
  * block too, as is a check run while a built-in it relies on was modified since this module was
@@ -620,7 +674,12 @@ function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet(), out = 
  */
 function stringsOrBlock(data, what, snapshot = false) {
   try {
-    if (!snapshot) return { strings: extractStrings(data, MAX_DEPTH, new WeakSet(), []) };
+    if (!snapshot) {
+      if (intrinsicsModified()) throw new Unscannable(MODIFIED_ARGUMENTS_REASON);
+      const strings = extractStrings(data, MAX_DEPTH, new WEAK_SET_CLASS(), []);
+      if (intrinsicsModified()) throw new Unscannable(MODIFIED_ARGUMENTS_REASON);
+      return { strings };
+    }
     if (intrinsicsModified()) throw new Unscannable(MODIFIED_PROTOTYPE_REASON);
     const state = { texts: [], protos: new SET_CLASS() };
     const copy = snapshotOf(data, MAX_DEPTH, new MAP_CLASS(), state);
@@ -629,14 +688,7 @@ function stringsOrBlock(data, what, snapshot = false) {
     for (let i = 0; i < state.texts.length; i++) push(strings, state.texts[i]);
     return { strings, snapshot: copy };
   } catch (e) {
-    if (e instanceof Unscannable) {
-      return {
-        block: {
-          allowed: false, verdict: 'block', confidence: 1.0, rule: 'type:unscannable',
-          reason: `${what}: ${e.message || HIDDEN_ACCESSORS_REASON}`,
-        },
-      };
-    }
+    if (e instanceof Unscannable) return { block: unscannableBlock(what, e.message || HIDDEN_ACCESSORS_REASON) };
     if (!(e instanceof NestingTooDeep)) throw e;
     return {
       block: {
@@ -645,6 +697,10 @@ function stringsOrBlock(data, what, snapshot = false) {
       },
     };
   }
+}
+
+function unscannableBlock(what, why) {
+  return { allowed: false, verdict: 'block', confidence: 1.0, rule: 'type:unscannable', reason: `${what}: ${why}` };
 }
 
 function allow(advisory, extra) {
@@ -663,8 +719,8 @@ function checkToolCall(toolName, args, opts = {}) {
   let advisory = null;
   const { strings, block } = stringsOrBlock(args, 'Arguments');
   if (block) return block;
-  for (const s of strings) {
-    const res = evaluate(s, opts);
+  for (let i = 0; i < strings.length; i++) {
+    const res = evaluate(strings[i], opts);
     if (res.verdict === 'block') return { allowed: false, ...res };
     advisory = advisory || res.advisory;
   }
@@ -780,7 +836,11 @@ function guardTool(fn, opts = {}) {
       // can only show what was checked. A primitive is its own copy. Masking rebuilds that copy.
       out = snapshot;
     }
-    return opts.maskSecrets ? sanitizeToolResult(out).sanitized : out;
+    if (!opts.maskSecrets) return out;
+    // Masking walks the value with Object.entries and Array.prototype.map: a replaced one could
+    // keep a credential out of the walk, so the value is not returned unmasked.
+    if (intrinsicsModified()) return blocked(unscannableBlock('Result', MODIFIED_PROTOTYPE_REASON), name + ':result', res).value;
+    return sanitizeToolResult(out).sanitized;
   };
 
   const isAsync = fn.constructor && fn.constructor.name === 'AsyncFunction';
