@@ -219,8 +219,16 @@ impl AuditVault {
     fn open_vault(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
 
+        // Create the file owner-only before SQLite does (it would use the umask).
+        crate::private_file::prepare_database_file(std::path::Path::new(db_path))
+            .map_err(|e| anyhow!("zn cannot protect the audit database {db_path}: {e}"))?;
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!(audit_open_problem(db_path, &e.to_string())))?;
+
+        // Files left by an older version (-wal, -shm, -journal) take the mode of
+        // the main file from now on; restrict the ones that exist already.
+        crate::private_file::restrict_database_sidecars(std::path::Path::new(db_path))
+            .map_err(|e| anyhow!("zn cannot protect the audit database {db_path}: {e}"))?;
 
         // Wait for other processes that have the file open (the first start
         // after an upgrade compacts the file and needs a write lock).
@@ -1143,6 +1151,43 @@ mod tests {
 
     fn temp_db_path() -> String {
         format!("test_audit_{}.db", Uuid::new_v4())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_database_and_its_side_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &str| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        vault
+            .log(AuditEntry::new("TOOL_CALL", "tool", "ALLOWED"))
+            .ok();
+        assert_eq!(mode(&path), 0o600);
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let side = format!("{path}{suffix}");
+            if std::path::Path::new(&side).exists() {
+                assert_eq!(mode(&side), 0o600, "{suffix}");
+            }
+        }
+        drop(vault);
+        fs::remove_file(&path).ok();
+        fs::remove_file(format!("{path}-wal")).ok();
+        fs::remove_file(format!("{path}-shm")).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_older_readable_audit_database_is_restricted_on_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_db_path();
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o600);
+        drop(vault);
+        fs::remove_file(&path).ok();
     }
 
     #[test]

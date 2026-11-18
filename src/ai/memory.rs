@@ -222,9 +222,11 @@ impl VectorMemory {
 
     /// Opens the database and brings its schema to `SCHEMA_VERSION`.
     fn open(path: &Path, busy_timeout: Duration) -> Result<Connection> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            crate::private_file::create_private_dir(dir)?;
         }
+        // Owner-only from the first byte: SQLite would use the umask.
+        crate::private_file::prepare_database_file(path)?;
         let mut conn = Connection::open(path)?;
         conn.busy_timeout(busy_timeout)?;
         // Overwrite deleted and replaced content with zeros, so text that
@@ -236,6 +238,7 @@ impl VectorMemory {
         if !mode.eq_ignore_ascii_case("wal") {
             conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0))?;
         }
+        crate::private_file::restrict_database_sidecars(path)?;
         let tx = Transaction::new(&mut conn, TransactionBehavior::Immediate)?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
@@ -729,6 +732,41 @@ mod tests {
         let d = std::env::temp_dir().join(format!("zn-mem-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn database_files_and_folder_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+        let dir = temp_dir("private-files").join("data").join("vectors");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        m.store(NS, "a", "x", &[1.0, 0.0]).await.unwrap();
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&m.db_path()), 0o600);
+        for suffix in ["-wal", "-shm"] {
+            let side = PathBuf::from(format!("{}{suffix}", m.db_path().display()));
+            assert!(side.exists(), "{suffix} file is expected in WAL mode");
+            assert_eq!(mode(&side), 0o600, "{suffix}");
+        }
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_older_readable_memory_file_is_restricted_on_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("old-readable");
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        std::fs::write(m.db_path(), b"").unwrap();
+        std::fs::set_permissions(m.db_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        m.store(NS, "a", "x", &[1.0, 0.0]).await.unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode(&m.db_path()), 0o600);
+        assert_eq!(mode(&dir), 0o700);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     async fn texts_in(m: &VectorMemory, ns: &str, agent: &str, dim: usize) -> Vec<String> {

@@ -109,7 +109,7 @@ fn load_ref_key(dir: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
     let existing = match read_private_file(&path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            std::fs::create_dir_all(dir)?;
+            crate::private_file::create_private_dir(dir)?;
             let key = new_key();
             match create_private_file_new(&path, &key) {
                 Ok(()) => return Ok((key, false)),

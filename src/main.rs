@@ -317,6 +317,8 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Validate configuration
     zn_config.validate()?;
+    // In production a database file that cannot be made owner-only stops the start.
+    zn::private_file::set_strict_database_files(zn_config.environment == "production");
 
     // Initialize Prometheus metrics
     if let Err(e) = metrics::init() {
@@ -525,7 +527,7 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initialize Neural Memory (SQLite)
     let vector_db_path = "data/vectors";
-    std::fs::create_dir_all(vector_db_path).ok();
+    zn::private_file::create_private_dir(std::path::Path::new(vector_db_path)).ok();
     let memory = Arc::new(
         zn::ai::VectorMemory::new(
             vector_db_path,
@@ -728,6 +730,8 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
         eprintln!("Warning: {notice}");
     }
 
+    zn::private_file::set_strict_database_files(config.environment == "production");
+
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
         gas_limit: config.engine.gas_limit,
@@ -783,7 +787,7 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
 
     // Initialize vector memory
     let vector_db_path = "data/vectors";
-    std::fs::create_dir_all(vector_db_path).ok();
+    zn::private_file::create_private_dir(std::path::Path::new(vector_db_path)).ok();
     let memory = Arc::new(
         zn::ai::VectorMemory::new(
             vector_db_path,

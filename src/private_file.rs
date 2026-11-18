@@ -329,6 +329,230 @@ fn create_temp(dir: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
+// ---------------------------------------------------------------------------
+// Database files (SQLite)
+// ---------------------------------------------------------------------------
+//
+// The audit database (`zn.db`) and the vector memory files
+// (`data/vectors/*.sqlite3`) are opened by SQLite, which creates a new file with
+// the process umask (usually 0644: readable by every local account), and its
+// `-wal`, `-shm` and `-journal` files copy the mode of the main file. The
+// functions below make the files owner-only before SQLite writes anything:
+//
+// - A new database is created through [`create_private_file_new`] as an empty
+//   file (a valid empty SQLite database) and SQLite then opens that file.
+// - A database folder that zn creates gets mode 0700 on Unix (Windows keeps the
+//   inherited folder access list; this module has no helper to change it).
+// - An existing file or folder that group or others can access, and that the
+//   current user owns, is changed to 0600 (files) or 0700 (folders) on Unix, with
+//   a warning that names the path and the old mode. A file that cannot be fixed
+//   (another owner, a link, a file system without Unix permissions) is reported
+//   with a warning, or refused when strict mode is on ([`set_strict_database_files`],
+//   which the gateway turns on when `environment` is `production`).
+// - On Windows an existing database whose access list is not owner-only cannot
+//   be changed here: it is reported the same way. SQLite creates `-wal` and
+//   `-shm` with the access list inherited from the folder, so on Windows keep the
+//   database folder private.
+
+static STRICT_DATABASE_FILES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Turn strict mode for database files on or off. When it is on, a database
+/// file or folder that cannot be made owner-only is refused instead of reported
+/// with a warning.
+pub fn set_strict_database_files(strict: bool) {
+    STRICT_DATABASE_FILES.store(strict, Ordering::Relaxed);
+}
+
+fn strict_database_files() -> bool {
+    STRICT_DATABASE_FILES.load(Ordering::Relaxed)
+}
+
+/// A file or folder that is not owner-only and cannot be fixed: warn, or refuse
+/// in strict mode.
+fn unfixed(strict: bool, path: &Path, reason: &str) -> io::Result<()> {
+    let msg = format!(
+        "{} can be read by other accounts and zn could not restrict it: {reason}. Make it owner-only (on Unix: chmod 600 for a file, chmod 700 for a folder), or move it to a folder you own",
+        path.display()
+    );
+    if strict {
+        Err(denied(msg))
+    } else {
+        tracing::warn!("{msg}");
+        Ok(())
+    }
+}
+
+/// True for the names SQLite takes for something that is not a file on disk.
+fn is_special_database_name(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.is_empty() || s == ":memory:" || s.starts_with("file:")
+}
+
+/// Create `dir` and its missing parents so that only the current user can use
+/// the ones created (mode 0700 on Unix). An existing folder that group or others
+/// can access is changed to 0700 when the current user owns it. See the section
+/// comment above for what happens when that fails.
+pub fn create_private_dir(dir: &Path) -> io::Result<()> {
+    create_private_dir_with(dir, strict_database_files())
+}
+
+fn create_private_dir_with(dir: &Path, strict: bool) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+        tighten_unix(dir, 0o700, true, strict)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = strict;
+        fs::create_dir_all(dir)
+    }
+}
+
+/// Make the SQLite database at `path` owner-only before SQLite opens it: create
+/// it empty with the private helper when it does not exist, restrict an existing
+/// one when it can be done. A `:memory:` or `file:` name is left alone. If the
+/// folder is missing or not writable the file is not created here, so that
+/// SQLite reports the problem.
+pub fn prepare_database_file(path: &Path) -> io::Result<()> {
+    prepare_database_file_with(path, strict_database_files())
+}
+
+fn prepare_database_file_with(path: &Path, strict: bool) -> io::Result<()> {
+    if is_special_database_name(path) {
+        return Ok(());
+    }
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            match create_private_file_new(path, b"") {
+                Ok(()) => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                // Let SQLite report a missing or read-only folder.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    return Ok(())
+                }
+                Err(e) => return unfixed(strict, path, &e.to_string()),
+            }
+        }
+        Err(e) => return Err(e),
+        Ok(_) => {}
+    }
+    restrict_existing_file(path, strict)
+}
+
+fn restrict_existing_file(path: &Path, strict: bool) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        return unfixed(strict, path, "it is a link, which zn does not follow");
+    }
+    if meta.is_dir() {
+        // SQLite reports a folder in place of the file with its own message.
+        return Ok(());
+    }
+    if !meta.is_file() {
+        return Err(not_regular(path));
+    }
+    #[cfg(unix)]
+    {
+        tighten_unix(path, 0o600, false, strict)
+    }
+    #[cfg(not(unix))]
+    {
+        match verify_private(path) {
+            Ok(()) => Ok(()),
+            Err(e) => unfixed(strict, path, &e.to_string()),
+        }
+    }
+}
+
+/// Restrict the `-wal`, `-shm` and `-journal` files of the database at `path`
+/// that exist now. SQLite gives them the mode of the main file, so this only
+/// matters for files left by an older version or created in another way. Does
+/// nothing on Windows (see the section comment above).
+pub fn restrict_database_sidecars(path: &Path) -> io::Result<()> {
+    restrict_database_sidecars_with(path, strict_database_files())
+}
+
+fn restrict_database_sidecars_with(path: &Path, strict: bool) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        if is_special_database_name(path) {
+            return Ok(());
+        }
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(suffix);
+            let side = PathBuf::from(name);
+            match fs::symlink_metadata(&side) {
+                Ok(meta) if meta.is_file() => tighten_unix(&side, 0o600, false, strict)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, strict);
+        Ok(())
+    }
+}
+
+/// Unix: when group or others can access `path` and the current user owns it,
+/// change its mode to `want` and say so; otherwise report it as unfixed.
+#[cfg(unix)]
+fn tighten_unix(path: &Path, want: u32, is_dir: bool, strict: bool) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = if is_dir {
+        fs::metadata(path)?
+    } else {
+        fs::symlink_metadata(path)?
+    };
+    let mode = meta.mode() & 0o7777;
+    if mode & 0o077 == 0 {
+        return Ok(());
+    }
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    if meta.uid() != euid {
+        return unfixed(
+            strict,
+            path,
+            &format!(
+                "mode {mode:04o}, owned by uid {} and not by the current user (uid {euid})",
+                meta.uid()
+            ),
+        );
+    }
+    if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(want)) {
+        return unfixed(strict, path, &format!("mode {mode:04o}, chmod failed: {e}"));
+    }
+    let now = fs::metadata(path)?.mode() & 0o7777;
+    if now & 0o077 != 0 {
+        return unfixed(
+            strict,
+            path,
+            &format!(
+                "mode {mode:04o} and it stays {now:04o} after chmod (the file system does not keep Unix permissions)"
+            ),
+        );
+    }
+    tracing::warn!(
+        "{} was accessible to other accounts (mode {mode:04o}); changed to {want:04o}",
+        path.display()
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 mod sys {
     use super::{denied, link_refused, not_regular};
@@ -1467,5 +1691,142 @@ mod tests {
             verify_private(&path).unwrap();
             assert_eq!(icacls_entries(&path).len(), 1);
         }
+    }
+}
+
+#[cfg(test)]
+mod database_file_tests {
+    use super::*;
+
+    #[test]
+    fn special_names_are_left_alone() {
+        for name in [":memory:", "", "file:zn.db?mode=memory"] {
+            prepare_database_file_with(Path::new(name), true).unwrap();
+        }
+        assert!(!Path::new("file:zn.db?mode=memory").exists());
+    }
+
+    #[test]
+    fn a_missing_folder_is_left_for_sqlite_to_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-such-folder").join("zn.db");
+        prepare_database_file_with(&path, true).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_new_database_is_created_empty_and_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zn.db");
+        prepare_database_file_with(&path, true).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+        verify_private(&path).unwrap();
+        // A second call finds a private file and changes nothing.
+        prepare_database_file_with(&path, true).unwrap();
+        verify_private(&path).unwrap();
+    }
+
+    #[cfg(unix)]
+    mod unix {
+        use super::*;
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        fn mode(path: &Path) -> u32 {
+            fs::metadata(path).unwrap().permissions().mode() & 0o7777
+        }
+
+        #[test]
+        fn an_existing_readable_database_is_restricted() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("zn.db");
+            fs::write(&path, b"").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            // Even in strict mode a file the user owns is fixed, not refused.
+            prepare_database_file_with(&path, true).unwrap();
+            assert_eq!(mode(&path), 0o600);
+        }
+
+        #[test]
+        fn a_new_database_is_0600_whatever_the_umask() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("zn.db");
+            prepare_database_file_with(&path, false).unwrap();
+            assert_eq!(mode(&path), 0o600);
+        }
+
+        #[test]
+        fn a_link_is_reported_or_refused_and_never_followed() {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("real.db");
+            fs::write(&target, b"").unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+            let link = dir.path().join("zn.db");
+            symlink(&target, &link).unwrap();
+            let err = prepare_database_file_with(&link, true).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+            prepare_database_file_with(&link, false).unwrap();
+            assert_eq!(mode(&target), 0o644, "the destination was not touched");
+        }
+
+        #[test]
+        fn a_folder_in_place_of_the_database_is_left_for_sqlite_to_report() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("zn.db");
+            fs::create_dir(&path).unwrap();
+            prepare_database_file_with(&path, true).unwrap();
+            assert!(path.is_dir());
+        }
+
+        #[test]
+        fn sidecar_files_are_restricted() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("zn.db");
+            for suffix in ["-wal", "-shm", "-journal"] {
+                let side = dir.path().join(format!("zn.db{suffix}"));
+                fs::write(&side, b"x").unwrap();
+                fs::set_permissions(&side, fs::Permissions::from_mode(0o666)).unwrap();
+            }
+            restrict_database_sidecars_with(&path, true).unwrap();
+            for suffix in ["-wal", "-shm", "-journal"] {
+                assert_eq!(mode(&dir.path().join(format!("zn.db{suffix}"))), 0o600);
+            }
+            // No sidecar files: nothing to do, nothing created.
+            let other = dir.path().join("other.db");
+            restrict_database_sidecars_with(&other, true).unwrap();
+            assert!(!dir.path().join("other.db-wal").exists());
+        }
+
+        #[test]
+        fn a_new_database_folder_is_0700_with_its_parents() {
+            let dir = tempfile::tempdir().unwrap();
+            let leaf = dir.path().join("data").join("vectors");
+            create_private_dir_with(&leaf, true).unwrap();
+            assert_eq!(mode(&leaf), 0o700);
+            assert_eq!(mode(&dir.path().join("data")), 0o700);
+        }
+
+        #[test]
+        fn an_existing_open_folder_is_restricted() {
+            let dir = tempfile::tempdir().unwrap();
+            let leaf = dir.path().join("vectors");
+            fs::create_dir(&leaf).unwrap();
+            fs::set_permissions(&leaf, fs::Permissions::from_mode(0o755)).unwrap();
+            create_private_dir_with(&leaf, true).unwrap();
+            assert_eq!(mode(&leaf), 0o700);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_new_database_has_an_owner_only_access_list() {
+        // The same check as the Unix tests make with modes: the file is created
+        // through the helper, so `verify_private` (one owner-only entry) passes
+        // from the first moment. Existing files that inherited a wider list are
+        // reported, not changed, so there is no Windows counterpart of the
+        // chmod tests.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zn.db");
+        prepare_database_file_with(&path, true).unwrap();
+        verify_private(&path).unwrap();
     }
 }

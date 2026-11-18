@@ -46,6 +46,12 @@ Only then does it write the file. It writes to a temporary file in the policy di
 
 Known limits that remain, because the gateway is not distributed: bans and the loop breaker follow the agent id that the message gives, inside its namespace, so a client that changes its agent id on every call starts each time with a clean record (the fixed rules and policies still check every call; give each client its own namespace to keep it apart); the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Files the gateway writes
+
+Unless you set another place, the gateway writes in the folder you start it in: the audit database `zn.db` (`--db-path`, `ZN_DB_PATH`), the key files `zn-superadmin-key.txt` and `zn-mcp-ws-token.txt` next to it, and a `data` folder with `ref.key` and `vectors/`. They hold call metadata, a vector of each call and keys, so do not commit them or keep them in a folder that other people can read.
+
+The audit database (with its `-wal`, `-shm` and `-journal` files) and the vector memory files are created so that only your user can read them: mode 0600 for the files and 0700 for the `data` and `data/vectors` folders on Unix, and an owner-only access list for a new database file on Windows. A database file or folder from an earlier version that other accounts can read is changed to 0600 or 0700 at start when you own it, and a warning names it. When it cannot be changed (it belongs to another user, it is a link, the file system keeps no Unix permissions, or it is an existing Windows file with a wider access list), the gateway warns; with `ZN_ENV=production` it refuses to use that file instead (for the audit database, the gateway does not start). On Windows, SQLite creates the `-wal` and `-shm` files with the access list of their folder, so keep the database folder private there.
+
 ## Audit payloads
 
 By default the audit database keeps only metadata for each call: event, time, tool name, status, matched policy, agent and namespace. The request payload is not stored. To keep payloads, set `audit.store_payloads = true` (or `ZN_AUDIT_STORE_PAYLOADS=1`); this needs an encryption key (`ZN_DB_KEY`, or a KMS key) in every environment, and the gateway refuses to start without one. Payloads are scrubbed before they are written. Records written by earlier versions stay readable.
