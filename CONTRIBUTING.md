@@ -30,7 +30,7 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 
 A short list of what a pull request needs. Each step points to the section below that explains it.
 
-1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
+1. Have Node.js 20.19 or later and Python 3.10 or later ([Prerequisites](#prerequisites)). Users of zn-gate need only Node.js 18.
 2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
 3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
 4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
@@ -50,7 +50,7 @@ A short list of what a pull request needs. Each step points to the section below
 ## Development Setup
 
 ### Prerequisites
-- Node.js >= 18.0.0
+- Node.js 20.19 or later, to work on the repository. The Markdown lint and the plugin launch test (`node plugins/tools/test-launch.js`) need it, and they fail on Node.js 18. Users of zn-gate need only Node.js 18 or later; that is the `engines` value of the package. Ubuntu's own `nodejs` package is version 18, which is too old here: install a newer one with [nvm](https://github.com/nvm-sh/nvm#installing-and-updating) (`nvm install 22`) or with the [NodeSource](https://github.com/nodesource/distributions) setup script.
 - Python >= 3.10
 - (Optional, legacy Rust gateway) Rust stable, `protoc` 29 or later
 
