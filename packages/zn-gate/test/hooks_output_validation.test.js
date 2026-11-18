@@ -20,7 +20,7 @@ const { tempDir } = require('./helpers/tmp');
 const ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'cli.js');
 const RUNNER = path.join(ROOT, 'lib', 'hooks', 'runner.js');
-const { hasPosixSh: posix } = require('./helpers/posix_sh');
+const { skipUnlessPosixSh } = require('./helpers/posix_sh');
 
 // A Claude Code PreToolUse event that zn answers with a deny on stdout: reading zn's own config file.
 function denyEvent(home) {
@@ -146,7 +146,7 @@ const GOOD = "process.stdout.write(JSON.stringify({ hookSpecificOutput: { permis
 const ALLOW = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok');\n";
 
 for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]]) {
-  test('posix launcher (' + name + '): a runner that prints "{" and exits 0 is a failure: a blocking event is blocked with the repair message', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): a runner that prints "{" and exits 0 is a failure: a blocking event is blocked with the repair message', { skip: skipUnlessPosixSh() }, async (t) => {
     const file = writeScript(t, 'claude-code', PARTIAL, opts);
     for (const ev of ['PreToolUse', 'UserPromptSubmit']) {
       const r = await runLauncher(file, ev, '{}');
@@ -159,7 +159,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session/);
   });
 
-  test('posix launcher (' + name + '): an empty answer with no confirmation is blocked; the same answer with the confirmation is an allow', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): an empty answer with no confirmation is blocked; the same answer with the confirmation is an allow', { skip: skipUnlessPosixSh() }, async (t) => {
     const bad = writeScript(t, 'claude-code', EMPTY_NO_ACK, opts);
     const r = await runLauncher(bad, 'PreToolUse', '{}');
     assert.equal(r.status, 2);
@@ -170,7 +170,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     assert.equal(r2.stdout, '');
   });
 
-  test('posix launcher (' + name + '): a confirmed full answer passes through unchanged', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): a confirmed full answer passes through unchanged', { skip: skipUnlessPosixSh() }, async (t) => {
     const file = writeScript(t, 'claude-code', GOOD, opts);
     const r = await runLauncher(file, 'PreToolUse', '{}');
     assert.equal(r.status, 0, r.stderr);
@@ -178,7 +178,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
   });
 
   // The home of the runner on Windows comes from USERPROFILE, not HOME: without it the runner looked in another home, saw no zn state and allowed the read (the launcher then exited 0 with no output, which is not a launcher gap).
-  test('posix launcher (' + name + '): the Daybreak case: the real runner cannot write its answer (EPIPE), so the launcher blocks instead of accepting status 0', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): the Daybreak case: the real runner cannot write its answer (EPIPE), so the launcher blocks instead of accepting status 0', { skip: skipUnlessPosixSh() }, async (t) => {
     const dir = tempDir(t, 'zn-ov-real-');
     const file = path.join(dir, 'launcher.sh');
     fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, RUNNER, opts), { mode: 0o755 });
@@ -198,7 +198,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
   });
 }
 
-test('posix launcher: the confirmation file is removed when the launcher ends', { skip: !posix }, async (t) => {
+test('posix launcher: the confirmation file is removed when the launcher ends', { skip: skipUnlessPosixSh() }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-tmp-');
   const file = writeScript(t, 'claude-code', GOOD);
   for (const body of [GOOD, PARTIAL]) {
@@ -209,13 +209,13 @@ test('posix launcher: the confirmation file is removed when the launcher ends', 
   }
 });
 
-test('posix launcher: no confirmation file possible (unwritable temp folder): nothing is accepted as done, the call is blocked', { skip: !posix }, (t) => {
+test('posix launcher: no confirmation file possible (unwritable temp folder): nothing is accepted as done, the call is blocked', { skip: skipUnlessPosixSh() }, (t) => {
   const file = writeScript(t, 'claude-code', GOOD);
   const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: '/nonexistent/zn-no-tmp' } });
   assert.equal(r.status, 2);
 });
 
-test('posix launcher: Antigravity (deny JSON on stdout) with a runner that prints "{": the launcher prints its own complete deny JSON', { skip: !posix }, async (t) => {
+test('posix launcher: Antigravity (deny JSON on stdout) with a runner that prints "{": the launcher prints its own complete deny JSON', { skip: skipUnlessPosixSh() }, async (t) => {
   const file = writeScript(t, 'antigravity', PARTIAL);
   const r = await runLauncher(file, 'PreToolUse', '{}');
   assert.equal(r.status, 0);
@@ -260,12 +260,17 @@ test('windows (real PowerShell): a runner that prints "{" and exits 0 does not c
 });
 
 for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]]) {
-  test('posix launcher (' + name + '): the Daybreak case through the real runner: EPIPE on the answer is blocked, not accepted as status 0', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): the Daybreak case through the real runner: EPIPE on the answer is blocked, not accepted as status 0', { skip: skipUnlessPosixSh() }, async (t) => {
     const dir = tempDir(t, 'zn-ov-cli-');
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
-    fs.symlinkSync(process.execPath, path.join(bin, 'node'));
-    fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec "' + process.execPath + '" "' + CLI + '" "$@"\n', { mode: 0o755 });
+    // A symlink to node needs a privilege on Windows (EPERM without Developer Mode); a one-line sh wrapper does the same job there.
+    const sp = (p) => p.replace(/\\/g, '/');
+    try { fs.symlinkSync(process.execPath, path.join(bin, 'node')); } catch (e) {
+      if (process.platform !== 'win32') throw e;
+      fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexec "' + sp(process.execPath) + '" "$@"\n', { mode: 0o755 });
+    }
+    fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec "' + sp(process.execPath) + '" "' + sp(CLI) + '" "$@"\n', { mode: 0o755 });
     const file = path.join(dir, 'launcher.sh');
     // The launcher checks and runs zn-gate's own runner (it no longer falls back to `zn hook` from the PATH).
     fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js'), opts), { mode: 0o755 });
@@ -309,7 +314,7 @@ function runPlanted(file, tmp, plant) {
   return spawnSync('/bin/sh', [wrapper, file], { input: '{}', encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: tmp, ZN_PLANT: plant } });
 }
 
-test('posix launcher (no mktemp): a FIFO and a link planted at the predictable names are skipped; the answer is the runner\'s', { skip: !posix }, (t) => {
+test('posix launcher (no mktemp): a FIFO and a link planted at the predictable names are skipped; the answer is the runner\'s', { skip: skipUnlessPosixSh() }, (t) => {
   const tmp = tempDir(t, 'zn-ov-plant-');
   const file = noMktempScript(t, GOOD);
   const r = runPlanted(file, tmp, 'mkfifo "$TMPDIR/zn-$n.$$.1"; ln -s /dev/null "$TMPDIR/zn-$n.$$.2"');
@@ -317,7 +322,7 @@ test('posix launcher (no mktemp): a FIFO and a link planted at the predictable n
   assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
 });
 
-test('posix launcher (no mktemp): every name taken by a FIFO: blocked at once, no hang', { skip: !posix }, (t) => {
+test('posix launcher (no mktemp): every name taken by a FIFO: blocked at once, no hang', { skip: skipUnlessPosixSh() }, (t) => {
   const tmp = tempDir(t, 'zn-ov-plant-');
   const file = noMktempScript(t, GOOD);
   const r = runPlanted(file, tmp, 'for i in 1 2 3 4 5 6; do mkfifo "$TMPDIR/zn-$n.$$.$i"; done');
@@ -325,7 +330,7 @@ test('posix launcher (no mktemp): every name taken by a FIFO: blocked at once, n
   assert.match(r.stderr, /so this was blocked/);
 });
 
-test('posix launcher (with mktemp): a FIFO at the old predictable name changes nothing', { skip: !posix }, (t) => {
+test('posix launcher (with mktemp): a FIFO at the old predictable name changes nothing', { skip: skipUnlessPosixSh() }, (t) => {
   const tmp = tempDir(t, 'zn-ov-plant-');
   const file = writeScript(t, 'claude-code', GOOD);
   const r = runPlanted(file, tmp, 'mkfifo "$TMPDIR/zn-$n.$$.1"');
@@ -335,7 +340,7 @@ test('posix launcher (with mktemp): a FIFO at the old predictable name changes n
 
 // ---- with the hook supervisor ----
 
-test('posix launcher + supervisor: a post-tool event the check could not finish gets the supervisor\'s withheld notice, not the launcher\'s warning', { skip: !posix }, async (t) => {
+test('posix launcher + supervisor: a post-tool event the check could not finish gets the supervisor\'s withheld notice, not the launcher\'s warning', { skip: skipUnlessPosixSh() }, async (t) => {
   const dir = tempDir(t, 'zn-ov-sup-');
   const file = path.join(dir, 'launcher.sh');
   fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, RUNNER, {}), { mode: 0o755 });
@@ -354,7 +359,7 @@ test('posix launcher + supervisor: a post-tool event the check could not finish 
   assert.ok(JSON.parse(r.stdout.trim()), 'a complete JSON answer');
 });
 
-test('posix launcher: a status 0 without the confirmation (an older zn on the PATH) gets its own message that says how to fix it', { skip: !posix }, async (t) => {
+test('posix launcher: a status 0 without the confirmation (an older zn on the PATH) gets its own message that says how to fix it', { skip: skipUnlessPosixSh() }, async (t) => {
   const file = writeScript(t, 'claude-code', EMPTY_NO_ACK);
   const r = await runLauncher(file, 'PreToolUse', '{}');
   assert.equal(r.status, 2);
@@ -383,7 +388,7 @@ const MODES = [
 
 for (const [mode, opts, edit] of MODES) {
   for (const [pathName, PATHV] of [['the usual PATH', process.env.PATH], ['an empty PATH', '']]) {
-    test('posix launcher, ' + mode + ', ' + pathName + ': no private file is left behind after any answer', { skip: !posix }, (t) => {
+    test('posix launcher, ' + mode + ', ' + pathName + ': no private file is left behind after any answer', { skip: skipUnlessPosixSh() }, (t) => {
       for (const [name, body, check] of HOOKS) {
         const tmp = tempDir(t, 'zn-ov-clean-');
         const file = writeScript(t, 'claude-code', body, opts);
@@ -404,7 +409,7 @@ for (const [mode, opts, edit] of MODES) {
   }
 }
 
-test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
+test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: skipUnlessPosixSh() }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
   const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
   const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp } });
@@ -417,7 +422,7 @@ test('posix launcher, no deadline: a TERM while the hook runs answers with the b
   assert.deepEqual(zfiles(tmp), []);
 });
 
-test('posix launcher with a deadline and an empty PATH still runs the hook (its private files do not depend on the PATH)', { skip: !posix }, (t) => {
+test('posix launcher with a deadline and an empty PATH still runs the hook (its private files do not depend on the PATH)', { skip: skipUnlessPosixSh() }, (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-strict-');
   const file = writeScript(t, 'zcode', GOOD, { deadlineS: 5 });
   const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp } });
@@ -443,7 +448,7 @@ function plantProject(t) {
 }
 
 for (const [mode, opts, edit] of MODES) {
-  test('posix launcher, ' + mode + ': rm, mktemp, cat and other commands planted in the project are never run, whatever relative entry the PATH has', { skip: !posix }, (t) => {
+  test('posix launcher, ' + mode + ': rm, mktemp, cat and other commands planted in the project are never run, whatever relative entry the PATH has', { skip: skipUnlessPosixSh() }, (t) => {
     const { proj, mark } = plantProject(t);
     const gone = path.join(tempDir(t, 'zn-ov-planted-gone-'), 'launcher.sh');
     fs.writeFileSync(gone, launcher.unixScript('claude-code', '/nonexistent/node', '/nonexistent/runner.js', opts), { mode: 0o755 });
@@ -462,7 +467,7 @@ for (const [mode, opts, edit] of MODES) {
   });
 }
 
-test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
+test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: skipUnlessPosixSh() }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
   const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
@@ -560,7 +565,7 @@ test('windows (real PowerShell): the fallback runs the real zn.cmd, and the node
 
 // ---- no rm, mktemp or cat in the usual system folders (NixOS, Guix): the private files are still removed ----
 
-test('posix launcher without /bin/rm, mktemp or cat in the system folders: no private file is left, and nothing is taken from the PATH', { skip: !posix }, (t) => {
+test('posix launcher without /bin/rm, mktemp or cat in the system folders: no private file is left, and nothing is taken from the PATH', { skip: skipUnlessPosixSh() }, (t) => {
   const strip = (text) => text
     .replace('/bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm', '/nonexistent/rm')
     .replace('/usr/bin/mktemp /bin/mktemp /run/current-system/sw/bin/mktemp /run/current-system/profile/bin/mktemp', '/nonexistent/mktemp')
@@ -586,7 +591,7 @@ test('posix launcher without /bin/rm, mktemp or cat in the system folders: no pr
 
 // ---- a TMPDIR whose path starts with "-": rm, cat and node never read a private file name as an option ----
 
-test('posix launcher with a TMPDIR that starts with "-": the answer passes and no private file is left, with or without rm', { skip: !posix }, (t) => {
+test('posix launcher with a TMPDIR that starts with "-": the answer passes and no private file is left, with or without rm', { skip: skipUnlessPosixSh() }, (t) => {
   const strip = (text) => text.replace('/bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm', '/nonexistent/rm');
   for (const [mode, opts, edit] of MODES) {
     for (const noRm of [false, true]) {
