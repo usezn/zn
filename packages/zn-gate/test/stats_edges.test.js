@@ -113,10 +113,12 @@ test('record keeps a day exactly 90 days old and drops the day before it', () =>
   assert.ok(!days.includes(before));
 });
 
-test('record leaves no temporary files and gives the file mode 0600', { skip: process.platform === 'win32' }, () => {
+test('record leaves no temporary files and gives the file mode 0600', () => {
   reset();
   stats.record({ checked: 1 }, { file });
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.ok(fs.statSync(file).size > 0);
+  // Windows keeps no POSIX mode bits (access is by ACL), so the mode is only checked elsewhere.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(fs.readdirSync(home).filter((f) => f.endsWith('.tmp')).length, 0);
 });
 

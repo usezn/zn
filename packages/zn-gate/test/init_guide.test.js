@@ -554,10 +554,11 @@ test('guide: any other npm failure keeps the plain message', posixOnly, async (t
   assert.match(out2.text(), /Run it yourself/);
 });
 
-test('permissionFailure: a global folder that is not writable counts, a missing one does not', posixOnly, (t) => {
+test('permissionFailure: a global folder that is not writable counts, a missing one does not', (t) => {
   const { permissionFailure } = _internal;
   assert.equal(permissionFailure('', ''), false);
-  assert.equal(permissionFailure('npm ERR! EPERM: operation not permitted', ''), true);
+  // A POSIX check by design: on Windows it never reports a permission failure.
+  assert.equal(permissionFailure('npm ERR! EPERM: operation not permitted', ''), process.platform !== 'win32');
   assert.equal(permissionFailure('', path.join(tempDir(t, 'zn-prefix-'), 'does-not-exist')), false);
   assert.equal(permissionFailure('', tempDir(t, 'zn-prefix-')), false);
 });

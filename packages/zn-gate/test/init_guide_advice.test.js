@@ -88,19 +88,20 @@ test('permissionAdvice: the shell picks the profile file', () => {
   assert.ok(permissionAdvice({ env: { SHELL: '/bin/zsh' } }).includes('>> ~/.zshrc'));
 });
 
-const posixOnly = { skip: process.platform === 'win32' };
+// permissionFailure is a POSIX check by design: on Windows it never reports one, and the tests assert exactly that.
+const counts = process.platform !== 'win32';
 
 for (const code of ['EACCES', 'EPERM']) {
-  test('permissionFailure: ' + code + ' in the output counts', posixOnly, () => {
-    assert.equal(permissionFailure('npm ERR! code ' + code, ''), true);
+  test('permissionFailure: ' + code + ' in the output counts', () => {
+    assert.equal(permissionFailure('npm ERR! code ' + code, ''), counts);
   });
 }
 
-test('permissionFailure: "permission denied" counts in any letter case', posixOnly, () => {
-  assert.equal(permissionFailure('mkdir: Permission Denied', ''), true);
+test('permissionFailure: "permission denied" counts in any letter case', () => {
+  assert.equal(permissionFailure('mkdir: Permission Denied', ''), counts);
 });
 
-test('permissionFailure: unrelated output does not count', posixOnly, () => {
+test('permissionFailure: unrelated output does not count', () => {
   assert.equal(permissionFailure('npm ERR! code E404', ''), false);
   assert.equal(permissionFailure(undefined, undefined), false);
 });

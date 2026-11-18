@@ -28,12 +28,14 @@ test('writeFileAtomic creates a file, replaces it and leaves no temp file', () =
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('writeFileAtomic uses mode 0600 by default', { skip: process.platform === 'win32' }, () => {
+test('writeFileAtomic uses mode 0600 by default', () => {
   const dir = tmp();
   try {
     const f = path.join(dir, 'secret.txt');
     writeFileAtomic(f, 'x');
-    assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'x');
+    // Windows keeps no POSIX mode bits (access is by ACL), so the mode is only checked elsewhere.
+    if (process.platform !== 'win32') assert.equal(fs.statSync(f).mode & 0o777, 0o600);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
