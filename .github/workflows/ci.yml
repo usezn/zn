@@ -551,7 +551,7 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         working-directory: ${{ runner.temp }}/smoke
         run: >-
-          node -e "require('zn-gate/lib/vault/store.js').generateIdentity()
+          node -e "require('./node_modules/zn-gate/lib/vault/store.js').generateIdentity()
           .then((r) => { if (!/^age1/.test(r.recipient)) process.exit(1); console.log('vault crypto OK'); })
           .catch((e) => { console.error(e); process.exit(1); })"
       - name: Upload tarball

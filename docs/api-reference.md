@@ -181,6 +181,7 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 ### `sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`
 
 - Also exported from `zn-gate/lib/client`, so `require('zn-gate')` gives them too (the package `main` is `lib/client.js`). The `lib/rules` and `lib/evidence` paths keep working.
+- The import paths that are supported are `zn-gate`, `zn-gate/lib/client`, `zn-gate/lib/rules`, `zn-gate/lib/evidence`, `zn-gate/lib/guard` (each with or without `.js`) and `zn-gate/package.json`. Other files under `lib/` are internal: the package `exports` map refuses them, and they can change in any release.
 
 ### `logEvidence(event, filePath, options)`
 

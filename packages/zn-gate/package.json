@@ -36,6 +36,45 @@
   "type": "commonjs",
   "main": "lib/client.js",
   "types": "lib/client.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./lib/client": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./lib/client.js": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./lib/rules": {
+      "types": "./lib/rules.d.ts",
+      "default": "./lib/rules.js"
+    },
+    "./lib/rules.js": {
+      "types": "./lib/rules.d.ts",
+      "default": "./lib/rules.js"
+    },
+    "./lib/evidence": {
+      "types": "./lib/evidence.d.ts",
+      "default": "./lib/evidence.js"
+    },
+    "./lib/evidence.js": {
+      "types": "./lib/evidence.d.ts",
+      "default": "./lib/evidence.js"
+    },
+    "./lib/guard": {
+      "types": "./lib/guard.d.ts",
+      "default": "./lib/guard.js"
+    },
+    "./lib/guard.js": {
+      "types": "./lib/guard.d.ts",
+      "default": "./lib/guard.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "postinstall": "node lib/agents/refresh.js",
     "test": "node test/run-all.js",

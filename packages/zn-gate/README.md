@@ -363,7 +363,7 @@ npx -y zn-gate evidence --tail 20
 
 ## What the code API checks (and what it does not)
 
-`require('zn-gate/lib/rules')` gives you `evaluate(text)` and `sanitizeToolResult(name, text)`. They are a text check: `evaluate` looks for prompt-injection wording and for names of secret files (`~/.ssh/id_rsa`, `.env`) in the string you pass, and `sanitizeToolResult` checks and cleans what a tool returned. They do not parse a shell command and they do not know what a tool would do.
+`require('zn-gate/lib/rules')` gives you `evaluate(text)` and `sanitizeToolResult(name, text)`. Only `zn-gate`, `zn-gate/lib/client`, `zn-gate/lib/rules`, `zn-gate/lib/evidence` and `zn-gate/lib/guard` are supported import paths; the other files under `lib/` are internal. They are a text check: `evaluate` looks for prompt-injection wording and for names of secret files (`~/.ssh/id_rsa`, `.env`) in the string you pass, and `sanitizeToolResult` checks and cleans what a tool returned. They do not parse a shell command and they do not know what a tool would do.
 
 | Input to `evaluate` | Result |
 |---|---|

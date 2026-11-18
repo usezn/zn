@@ -1,0 +1,2 @@
+### Changed
+- The Node.js package now lists the import paths it supports in an `exports` map: `zn-gate`, `zn-gate/lib/client`, `zn-gate/lib/rules`, `zn-gate/lib/evidence`, `zn-gate/lib/guard` (with or without `.js`) and `zn-gate/package.json`, all with their types. Potentially breaking: any other deep import, such as `require('zn-gate/lib/hooks/runner')`, now fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. The command line, the installed agent hooks and the plugin are not affected, because they start the package by file path.
