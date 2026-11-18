@@ -1,12 +1,16 @@
 # Version updates go to the integration branch. Security updates always
 # target the default branch (GitHub behaviour).
 version: 2
+# Version updates wait 7 days after a release is published, so a bad release is usually pulled before it is proposed.
+# Security updates ignore the cooldown.
 updates:
   - package-ecosystem: cargo
     directory: "/"
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     # fuzz/ is not a Dependabot entry: its updates edit the root Cargo.toml
     # without fuzz/Cargo.lock, so they can never pass "cargo build --locked".
@@ -26,6 +30,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 2
     groups:
       npm:
@@ -37,6 +43,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       npm:
@@ -48,6 +56,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # Security updates only. The release pins zn-gate and writes
     # scripts/zn-gate.lock.json (plugins/tools/pin-release.js); a version bump
     # from Dependabot would leave that lock out of sync.
@@ -64,6 +74,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 2
 
   - package-ecosystem: pip
@@ -71,6 +83,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     # The package declares minimum versions. Raise one only when the new
     # version no longer fits the range, instead of raising every lower bound.
@@ -92,6 +106,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # Security updates only. The requirement files here are generated with uv
     # and some minimum versions are deliberate (ci-framework-test-requirements-oldest.txt).
     open-pull-requests-limit: 0
@@ -105,6 +121,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 2
     groups:
       pip:
@@ -116,6 +134,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -125,6 +145,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 2
 
   - package-ecosystem: npm
@@ -132,6 +154,8 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 2
     groups:
       lint-tooling:
