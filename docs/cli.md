@@ -134,7 +134,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 
 ### `init`
 
-```bash
+```text
 zn-gate init
 zn-gate init --wrap-mcp [--dry-run] [--shadow] [--revert]
 ```
@@ -153,7 +153,7 @@ Exit codes: `0` done, or every agent found is already protected. `1` no supporte
 
 ### `uninstall`
 
-```bash
+```text
 zn-gate uninstall [--dry-run]
 ```
 
@@ -221,7 +221,7 @@ Prints the version and the versions of the rules. Exit code `0`. `-v`, `-V` and 
 
 ### `connect`
 
-```bash
+```text
 zn-gate connect [--reconnect]
 ```
 
@@ -235,7 +235,7 @@ Exit codes: `0` connected (or already connected), `1` nothing was saved (you sai
 
 ### `disconnect`
 
-```bash
+```text
 zn-gate disconnect [--revoke | --no-revoke]
 ```
 
@@ -249,7 +249,7 @@ Exit codes: `0` the local setting was removed (or there was nothing to remove), 
 
 ### `scan`
 
-```bash
+```text
 zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--allow-partial]
 zn-gate scan --package <name>[@version]
 ```
@@ -276,7 +276,7 @@ A scan never reports a clean result for something it could not read. A folder it
 
 ### `audit`
 
-```bash
+```text
 zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home] [--approve]
 ```
 
@@ -293,7 +293,7 @@ Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2
 
 ### `reach`
 
-```bash
+```text
 zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]
 zn-gate reach --history [--json] [--max-seconds N]
 ```
@@ -307,7 +307,7 @@ Exit codes: `0` done, `1` findings meet `--fail-on`, `2` wrong usage or a failur
 
 ### `analyze`
 
-```bash
+```text
 zn-gate analyze "<text>"
 ```
 
@@ -354,7 +354,7 @@ Aliases: `secrets`.
 
 #### `secret set`
 
-```bash
+```text
 zn-gate secret set NAME [--clipboard] [--force] [--mode proxy|env|file] [--host api.example.com] [--command psql] [--in header|query|body]
 ```
 
@@ -382,7 +382,7 @@ Aliases: `secret remove`.
 
 #### `secret allow`
 
-```bash
+```text
 zn-gate secret allow NAME [--host api.example.com] [--command psql] [--in header|query|body] [--mode proxy|env|file] [--replace]
 ```
 
@@ -398,7 +398,7 @@ Approves the first use of a secret by a command that is already allowed. It is c
 
 #### `secret import`
 
-```bash
+```text
 zn-gate secret import [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force]
 ```
 
@@ -406,7 +406,7 @@ Copies the secret values of a `.env` file (default `.env`) into the vault. The f
 
 #### `secret adopt`
 
-```bash
+```text
 zn-gate secret adopt AWS_KEY_1 --name AWS_PROD [--host H] [--command C]
 ```
 
@@ -414,7 +414,7 @@ Stores a value that the scrubber detected (named like `AWS_KEY_1`) as a named se
 
 #### `secret log`
 
-```bash
+```text
 zn-gate secret log [--since 1h]
 ```
 
@@ -442,7 +442,7 @@ Exit codes (both commands): `0` done (also when there was nothing to move, or wi
 
 #### `env shadow`
 
-```bash
+```text
 zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
 ```
 
@@ -472,7 +472,7 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 
 ### `unlock`
 
-```bash
+```text
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
@@ -508,7 +508,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 
 #### `vault log`
 
-```bash
+```text
 zn-gate vault log [--since 1h]
 ```
 
@@ -516,7 +516,7 @@ Shows the vault audit log of secret use: every record, unless `--since` limits i
 
 #### `vault log export`
 
-```bash
+```text
 zn-gate vault log export --otlp [--since 7d] [--out file] [--unverified]
 ```
 
@@ -532,7 +532,7 @@ Checks the chain and signatures of the vault audit log. If the check fails, it s
 
 #### `vault forget`
 
-```bash
+```text
 zn-gate vault forget [dir]
 ```
 
@@ -548,7 +548,7 @@ The way out when you lost the vault passphrase. It sets the old vault aside in a
 
 #### `vault purge`
 
-```bash
+```text
 zn-gate vault purge [--yes]
 ```
 
@@ -629,7 +629,7 @@ Aliases: `mcp-shield`, `wrap`.
 
 ### `evidence`
 
-```bash
+```text
 zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] [--output file]] [--tail 20]
 ```
 
@@ -645,7 +645,7 @@ Aliases: `logs`, `export`.
 
 ### `why`
 
-```bash
+```text
 zn-gate why [<id>]
 ```
 
@@ -655,7 +655,7 @@ The command only reads the log: it changes nothing and uses no network. If the l
 
 ### `stats`
 
-```bash
+```text
 zn-gate stats [--days 30] [--json]
 zn-gate stats share on|off|status|show
 ```
@@ -716,7 +716,7 @@ Shows exactly what would be sent, and where.
 
 ### `report`
 
-```bash
+```text
 zn-gate report [--since 7d] [--json] [--no-team-line]
 ```
 
@@ -759,7 +759,7 @@ Connects this machine to your organization with the join token your admin gave y
 
 #### `team status`
 
-```bash
+```text
 zn-gate team status [--json] [--rules]
 ```
 
@@ -783,7 +783,7 @@ Disconnects this machine from the organization. It first tells the server to rev
 
 #### `team managed-config`
 
-```bash
+```text
 zn-gate team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]
 ```
 
