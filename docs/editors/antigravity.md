@@ -125,6 +125,8 @@ This checks the hooks. To check the MCP server too, restart Antigravity and ask 
 
 ## Uninstall
 
+If you prefer to remove it by hand, see [the files zn-gate writes in each editor](remove-by-hand.md#google-antigravity).
+
 In your own terminal, in this order (the same order `npx -y zn-gate uninstall` uses):
 
 1. If you ran `npx -y zn-gate init --wrap-mcp`, put back the MCP settings files first: `npx -y zn-gate init --revert`. Do this before the next step: a saved copy put back after the hooks are removed could bring the zn-gate server back.

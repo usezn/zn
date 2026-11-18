@@ -80,6 +80,8 @@ Fix the JSON or the file permissions, then run the check again.
 
 ## Uninstall
 
+If you prefer to remove it by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).
+
 In your own terminal:
 
 ```bash

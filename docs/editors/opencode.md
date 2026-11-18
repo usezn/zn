@@ -76,6 +76,8 @@ For OpenCode, this checks zn's rules — the hook runner the plugin drives. The 
 
 ## Uninstall
 
+If you prefer to remove it by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).
+
 In your own terminal:
 
 ```bash

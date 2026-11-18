@@ -100,6 +100,8 @@ Restart Cline, then ask the agent to call `zn_status` (or look for the zn-gate t
 
 ## Uninstall
 
+If you prefer to remove it by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).
+
 Open the settings file you edited in Install, delete the `zn-gate` entry (and any wrapper you added around another MCP server with `zn-gate shield`, putting back its original command), save the file and restart Cline. No other part of zn-gate is installed by these steps, and none of this changes your code. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally. See [Remove zn-gate](../uninstall.md).
 
 ## Troubleshooting

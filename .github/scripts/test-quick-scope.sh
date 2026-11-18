@@ -54,6 +54,7 @@ check pull_request next .github/scripts/check-docs-examples-commands.mjs "change
 check pull_request next .github/scripts/check-docs-examples-names.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-examples-sections.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-titles.mjs "changelog markdownlint"
+check pull_request next .github/scripts/check-docs-reachable.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-cli-headings.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-cheatsheet-commands.mjs "changelog markdownlint"
 check pull_request next .github/scripts/summarize-docs-pages.mjs "changelog markdownlint"

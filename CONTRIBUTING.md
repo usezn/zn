@@ -221,6 +221,7 @@ A short list for a pull request that changes only documentation: a page under `d
 - [ ] The docs tests pass: `node --test packages/zn-gate/test/docs_*.test.js packages/zn-gate/test/docs-env-vars.test.js packages/zn-gate/test/install_docs_match.test.js`. They need no install.
 - [ ] Markdown lint passes: `.github/markdownlint/node_modules/.bin/markdownlint-cli2`, after `npm ci --prefix .github/markdownlint --ignore-scripts` the first time.
 - [ ] No two pages under `docs/` share a first-level title: `node .github/scripts/check-docs-titles.mjs`.
+- [ ] Every page under `docs/` is linked from `docs/README.md` or from a page it links to: `node .github/scripts/check-docs-reachable.mjs`.
 - [ ] Every command in `docs/examples/` is one that `docs/cli.md` documents: `node .github/scripts/check-docs-examples-commands.mjs`.
 - [ ] If you touched a version number, a count, the list of agents, the license or the install command, the facts still agree everywhere: `node .github/scripts/check-public-facts.mjs`.
 - [ ] A change that users notice in a package, the plugin or the Action has a fragment in `changelog.d/`. A change to pages under `docs/` or to a README needs none. To check: `node .github/scripts/changelog.mjs check --base origin/<base>` after `git fetch origin <base>`, where `<base>` is the branch your pull request targets.

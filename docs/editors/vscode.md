@@ -118,6 +118,8 @@ MCP server (optional): restart VS Code, then ask the agent to call `zn_status` (
 
 ## Uninstall
 
+If you prefer to remove it by hand, see [the files zn-gate writes in each editor](remove-by-hand.md#github-copilot-vs-code-cli).
+
 Run `zn hooks uninstall copilot` (add `--project` if you installed it in a project): it removes `zn-gate.json` and leaves other hooks alone. If you added the MCP server, open the settings file you edited in Install, delete the `zn-gate` entry (and any wrapper you added around another MCP server with `zn-gate shield`, putting back its original command), save the file and restart VS Code. None of this changes your code. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally. See [Remove zn-gate](../uninstall.md).
 
 ## Troubleshooting

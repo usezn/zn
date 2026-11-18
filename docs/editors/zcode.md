@@ -30,6 +30,8 @@ Run `npx -y zn-gate check` in your own terminal to see that the hook works on yo
 
 ## Uninstall
 
+If you prefer to remove it by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).
+
 In your own terminal, run:
 
 ```bash
