@@ -36,9 +36,19 @@ function znHome() {
  */
 let realHomeForTests = null;
 function userHome() {
+  const home = accountHome();
+  return home ? path.join(home, '.zn') : null;
+}
+
+/*
+ * The home folder of the operating-system account (the folder that holds the .zn of userHome()), resolved, or null.
+ * The hook policy protects this folder's .zn as well as the one under HOME, so the settings the runner reads from here
+ * stay out of an agent's reach when HOME or USERPROFILE names another folder.
+ */
+function accountHome() {
   try {
     const home = realHomeForTests ? realHomeForTests() : os.userInfo().homedir;
-    return typeof home === 'string' && home ? path.join(path.resolve(home), '.zn') : null;
+    return typeof home === 'string' && home ? path.resolve(home) : null;
   } catch (_) {
     return null;
   }
@@ -289,5 +299,5 @@ function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Da
     .map(([id, count]) => ({ id, name: TOP_RULE_NAME, count }));
 }
 
-module.exports = { topRules, TOP_RULES_DAYS, znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+module.exports = { topRules, TOP_RULES_DAYS, znHome, userHome, accountHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
   percentile, latencySummary, latencyReport, LATENCY_KEEP };

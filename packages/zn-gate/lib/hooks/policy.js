@@ -355,17 +355,24 @@ function agentContext(home, cwd, env) {
   // Plugin folders under a moved configuration folder (the folder names there do not match the patterns): built from
   // the keys already resolved for that folder, so no other file system call.
   const plugins = new Set();
-  // The home folder as typed and where it really leads (a linked home), for ~/.zn and the home plugin folders. A
-  // relative HOME names no real place: the user's own home folder from the system is used as well.
+  // The home folder as typed and where it really leads (a linked home), for ~/.zn and the home plugin folders. The
+  // operating-system account's own home folder is always added as well (stats.accountHome, the same folder the hook
+  // runner reads its settings from): HOME or USERPROFILE may name another folder (a container, a project's agent
+  // environment), and the settings file there must stay protected. A relative HOME names no real place at all.
   const homes = new Set(rootKeysOf(path.resolve(home)));
-  if (!path.isAbsolute(String(home))) {
-    try { for (const k of rootKeysOf(os.userInfo().homedir)) homes.add(k); } catch (_) { /* no user record */ }
+  const bases = [home];
+  const account = require('../stats').accountHome();
+  if (account) {
+    for (const k of rootKeysOf(account)) homes.add(k);
+    if (account !== path.resolve(home)) bases.push(account);
   }
   // Where each plugin folder and plugin state entry under the home folder really is: a linked configuration folder
   // (dotfiles) or plugin folder puts them outside the home folder, where the home-relative patterns do not see them.
   const state = new Set();
-  for (const r of HOME_PLUGIN_TREES) for (const k of keysOf(path.join(home, r))) plugins.add(k);
-  for (const r of HOME_PLUGIN_STATE) for (const k of keysOf(path.join(home, r))) state.add(k);
+  for (const b of bases) {
+    for (const r of HOME_PLUGIN_TREES) for (const k of keysOf(path.join(b, r))) plugins.add(k);
+    for (const r of HOME_PLUGIN_STATE) for (const k of keysOf(path.join(b, r))) state.add(k);
+  }
   if (env.CODEX_HOME) {
     for (const k of keysOf(at(env.CODEX_HOME))) { dirs.add(k); plugins.add(k + '/plugins'); }
     for (const k of keysOf(path.join(at(env.CODEX_HOME), 'plugins'))) plugins.add(k);
