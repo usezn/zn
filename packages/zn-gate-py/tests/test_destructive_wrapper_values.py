@@ -57,9 +57,21 @@ def test_unsure_marking(cmd, name, expected):
     assert info.get("unsure", False) is expected
 
 
-def test_many_later_words_stay_within_budget():
-    cmd = "nice --adj 5 echo " + "rm sh find dd " * 4000
+def _cpu_seconds(cmd):
     t0 = time.process_time()
-    r = check_command(cmd)
-    assert time.process_time() - t0 < 3.0
-    assert r.verdict == "block"
+    check_command(cmd)
+    return time.process_time() - t0
+
+
+def test_many_later_words_stay_within_budget():
+    """4x the words must cost about 4x the CPU (a quadratic scan would cost about 16x). The check compares two sizes
+    measured in the same process, so it does not depend on how fast the CI runner is."""
+    def build(n):
+        return "nice --adj 5 echo " + "rm sh find dd " * n
+
+    assert check_command(build(4000)).verdict == "block"
+    small_in, large_in = build(1000), build(4000)
+    check_command(build(250))  # warm-up: compiled patterns and caches are paid outside the measurement
+    small = min(_cpu_seconds(small_in), _cpu_seconds(small_in))
+    large = min(_cpu_seconds(large_in), _cpu_seconds(large_in))
+    assert large < 8 * max(small, 1e-6), f"4x the input took {large / max(small, 1e-6):.1f}x the CPU ({small:.3f} s -> {large:.3f} s)"
