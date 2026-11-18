@@ -288,7 +288,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 
 **Nothing, by default.**
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3.1 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
 
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
