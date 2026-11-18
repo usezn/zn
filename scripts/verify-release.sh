@@ -5,8 +5,11 @@
 # commands that document names. Download it from the release tag and read it
 # before you run it. Do not pipe it to a shell.
 #
-# Exit status: 0 only if every step passed. A step that cannot run (a tool is
-# missing) counts as NOT verified and makes the exit status non-zero.
+# Exit status: 0 only if no step failed and none was left unchecked. A step that
+# cannot run (a tool is missing, or gh is not logged in) counts as NOT verified
+# and makes the exit status non-zero. A WARN (npm reports a problem with a
+# dependency of zn-gate, not with zn-gate itself) is printed and counted but
+# does not change the exit status.
 set -euo pipefail
 
 REPO="usezn/zn"
@@ -23,6 +26,10 @@ Verifies the published zn-gate release VERSION (for example 1.14.1).
   --keep DIR  download the release files into DIR (new or empty) and keep them;
               without it they go to a temporary directory that is removed on exit
   -h          show this help
+
+Step 2 needs gh to be logged in (gh auth login, or GH_TOKEN set; a read-only
+token of any GitHub account is enough). Without it that step is SKIPPED and the
+run is NOT verified; step 3 does not need an account.
 
 Tools used: gh, npm, sha256sum (or shasum), cosign or sigstore-python, and
 pypi-attestations. A tool that is missing means that step is not verified.
@@ -156,6 +163,7 @@ fi
 FAILED=0
 UNCHECKED=0
 PASSED=0
+WARNED=0
 
 show() {
   printf '  $'
@@ -176,6 +184,16 @@ fail() {
 cannot() {
   echo "[$1] $2 ... CANNOT CHECK ($3): NOT VERIFIED"
   UNCHECKED=$((UNCHECKED + 1))
+}
+
+skipped() {
+  echo "[$1] $2 ... SKIPPED ($3): NOT VERIFIED"
+  UNCHECKED=$((UNCHECKED + 1))
+}
+
+warn() {
+  echo "[$1] $2 ... WARN ($3)"
+  WARNED=$((WARNED + 1))
 }
 
 have() { command -v "$1" > /dev/null 2>&1; }
@@ -250,8 +268,11 @@ N2="GitHub artifact attestations"
 if [ "$PRINT" -eq 1 ]; then
   echo "[$S2] $N2 (each of: $TGZ $SDIST $WHEEL SHA256SUMS, and the SBOMs if the release has them)"
   show gh attestation verify "$WORK/$TGZ" --repo "$REPO" --signer-workflow "$SIGNER_WORKFLOW" --source-ref "refs/tags/${TAG}"
+  echo "  (needs gh logged in: gh auth login, or GH_TOKEN set; without it this step is skipped and step 3 is the check that needs no account)"
 elif [ "$DOWNLOADED" -ne 1 ]; then
   if [ "$DL_REASON" = "gh missing" ]; then cannot "$S2" "$N2" "gh missing"; else fail "$S2" "$N2" "$DL_REASON"; fi
+elif ! gh auth status > /dev/null 2>&1; then
+  skipped "$S2" "$N2" "gh is not logged in; run gh auth login or set GH_TOKEN, or rely on step 3"
 else
   att_files=("$TGZ" "$SDIST" "$WHEEL" "SHA256SUMS")
   for f in "$SBOM_NPM" "$SBOM_PY"; do
@@ -317,12 +338,34 @@ else
   printf '{"name":"zn-gate-verify","version":"0.0.0","private":true}\n' > "$NPM_DIR/package.json"
   npm_reason=""
   npm_cannot=""
+  npm_warn=""
+  # npm audit signatures lists the packages it could not verify, one per line as name@version.
+  # Only when all of them are dependencies (never zn-gate itself) is it a warning: the checks
+  # below still run, and a warning is never reported as PASS. Returns 0 when it is a failure.
+  npm_audit_is_fatal() {
+    if (cd "$NPM_DIR" && attempt npm npm audit signatures --registry=https://registry.npmjs.org/); then
+      return 1
+    fi
+    local pkgs
+    pkgs="$(grep -oE '^[[:space:]]*(@[a-z0-9._~-]+/)?[a-z0-9._~-]+@[0-9][^[:space:]]*' "$OUT" | tr -d ' 	' | sort -u || true)"
+    if [ -z "$pkgs" ]; then
+      npm_reason="npm audit signatures failed"
+    elif printf '%s
+' "$pkgs" | grep -Fxq "zn-gate@${VERSION}"; then
+      npm_reason="npm audit signatures does not verify zn-gate@${VERSION} itself"
+    else
+      npm_warn="npm audit signatures exits non-zero for a dependency, not for zn-gate itself: $(printf '%s' "$pkgs" | tr '
+' ' ')(see step 4 in docs/verify-release.md)"
+      return 1
+    fi
+    return 0
+  }
   if ! (cd "$NPM_DIR" && attempt npm npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ "zn-gate@${VERSION}"); then
     npm_reason="npm install of zn-gate@${VERSION} failed"
   elif ! grep -Fq "\"version\": \"${VERSION}\"" "$NPM_DIR/node_modules/zn-gate/package.json" 2> /dev/null; then
     npm_reason="the installed package is not version ${VERSION}"
-  elif ! (cd "$NPM_DIR" && attempt npm npm audit signatures --registry=https://registry.npmjs.org/); then
-    npm_reason="npm audit signatures failed"
+  elif npm_audit_is_fatal; then
+    :
   elif ! (cd "$NPM_DIR" && npm view "zn-gate@${VERSION}" dist.attestations --registry=https://registry.npmjs.org/ > "$OUT" 2>&1) || ! grep -q '[^[:space:]]' "$OUT"; then
     npm_reason="npm shows no attestations for zn-gate@${VERSION}"
   elif [ "$DOWNLOADED" -ne 1 ]; then
@@ -360,6 +403,8 @@ else
     fail "$S4" "$N4" "$npm_reason"
   elif [ -n "$npm_cannot" ]; then
     cannot "$S4" "$N4" "$npm_cannot"
+  elif [ -n "$npm_warn" ]; then
+    warn "$S4" "$N4" "$npm_warn"
   else
     pass "$S4" "$N4"
   fi
@@ -397,7 +442,11 @@ if [ "$PRINT" -eq 1 ]; then
   exit 0
 fi
 if [ "$FAILED" -eq 0 ] && [ "$UNCHECKED" -eq 0 ]; then
-  echo "VERIFIED: zn-gate ${VERSION}: all 5 checks passed. This shows the files were produced by ${SIGNER} of ${REPO} at ${TAG} and were not changed since. It does not show the source or the build pipeline was free of mistakes or malicious changes: see \"What this does and does not prove\" in docs/verify-release.md."
+  if [ "$WARNED" -gt 0 ]; then
+    echo "VERIFIED WITH WARNING: zn-gate ${VERSION}: ${PASSED} checks passed and ${WARNED} gave a warning (read it above: npm named a dependency, not zn-gate itself; the npm tarball was still compared with the signed release file). See step 4 in docs/verify-release.md."
+  else
+    echo "VERIFIED: zn-gate ${VERSION}: all 5 checks passed. This shows the files were produced by ${SIGNER} of ${REPO} at ${TAG} and were not changed since. It does not show the source or the build pipeline was free of mistakes or malicious changes: see \"What this does and does not prove\" in docs/verify-release.md."
+  fi
   exit 0
 fi
 echo "NOT VERIFIED: zn-gate ${VERSION}: ${PASSED} passed, ${FAILED} failed, ${UNCHECKED} could not be checked. Do not install these files on the strength of this run; see \"If something does not match\" and \"What this does and does not prove\" in docs/verify-release.md."

@@ -15,7 +15,7 @@ const SCRIPT = process.env.VERIFY_RELEASE_SCRIPT ||
   path.resolve(__dirname, '..', '..', '..', 'scripts', 'verify-release.sh');
 const skip = process.platform === 'win32' ? 'the script needs a POSIX shell' : false;
 
-const SYSTEM_TOOLS = ['bash', 'mktemp', 'rm', 'ls', 'awk', 'grep', 'sed', 'tail', 'mkdir', 'cat', 'tr'];
+const SYSTEM_TOOLS = ['bash', 'mktemp', 'rm', 'ls', 'awk', 'grep', 'sed', 'tail', 'mkdir', 'cat', 'tr', 'sort'];
 
 function findSystemTool(name) {
   for (const dir of ['/usr/bin', '/bin']) {
@@ -41,6 +41,9 @@ case "$1 $2" in
     case ",$FAKE_FAIL," in *,nosums,*) : > "$dir/SHA256SUMS";; *)
       { echo "aa  zn-gate-$FAKE_VERSION.tgz"; echo "bb  zn_gate-$FAKE_PYVERSION.tar.gz"; echo "cc  zn_gate-$FAKE_PYVERSION-py3-none-any.whl"; } > "$dir/SHA256SUMS";;
     esac
+    exit 0;;
+  "auth status")
+    case ",$FAKE_FAIL," in *,noauth,*) echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4;; esac
     exit 0;;
   "attestation verify")
     case ",$FAKE_FAIL," in *,attest,*) echo "no matching attestation" >&2; exit 1;; esac
@@ -86,6 +89,10 @@ case "$1" in
     exit 0;;
   audit)
     case ",$FAKE_FAIL," in *,npm_audit,*) echo "invalid signature" >&2; exit 1;; esac
+    case ",$FAKE_FAIL," in *,npm_audit_dep,*)
+      printf 'audited 9 packages in 1s\n\n8 packages have verified registry signatures\n\n1 package has an invalid attestation:\n\nage-encryption@0.3.1 (https://registry.npmjs.org/age-encryption/-/age-encryption-0.3.1.tgz)\n\nSomeone might have tampered with this package since it was published on the registry!\n'; exit 1;; esac
+    case ",$FAKE_FAIL," in *,npm_audit_self,*)
+      printf '1 package has an invalid attestation:\n\nzn-gate@%s (https://registry.npmjs.org/zn-gate)\n' "$FAKE_VERSION"; exit 1;; esac
     exit 0;;
   view)
     case "$*" in *dist.integrity*) echo "sha512-FAKE"; exit 0;; esac
@@ -241,6 +248,47 @@ test('a failed download and a SHA256SUMS without the files are failures', { skip
   try {
     assert.notStrictEqual(r.status, 0, r.out);
     assert.match(r.out, /\[1\/5\][^\n]* FAIL \(release files or SHA256SUMS entries are missing/);
+  } finally { cleanup(r); }
+});
+
+test('gh not logged in: step 2 is SKIPPED (not FAIL), one clear line, no raw gh message, non-zero', { skip }, () => {
+  const r = run(['1.14.1'], { fail: ['noauth'] });
+  try {
+    assert.notStrictEqual(r.status, 0, r.out);
+    assert.match(r.out, /\[2\/5\][^\n]* \.\.\. SKIPPED \(gh is not logged in; run gh auth login or set GH_TOKEN, or rely on step 3\): NOT VERIFIED/, r.out);
+    assert.doesNotMatch(r.out, /To get started with GitHub CLI/);
+    assert.strictEqual((r.out.match(/gh auth login/g) || []).length, 1, r.out);
+    assert.doesNotMatch(r.calls, /gh attestation verify/);
+    assert.match(r.out, /NOT VERIFIED: zn-gate 1\.14\.1: 4 passed, 0 failed, 1 could not be checked/);
+    assert.doesNotMatch(r.out, /^VERIFIED/m);
+  } finally { cleanup(r); }
+});
+
+test('a real attestation failure with gh logged in stays FAIL', { skip }, () => {
+  const r = run(['1.14.1'], { fail: ['attest'] });
+  try {
+    assert.match(r.out, /\[2\/5\][^\n]* \.\.\. FAIL/);
+    assert.doesNotMatch(r.out, /SKIPPED/);
+  } finally { cleanup(r); }
+});
+
+test('npm audit signatures failing only for a dependency: WARN naming it, never PASS, other checks still run', { skip }, () => {
+  const r = run(['1.14.1'], { fail: ['npm_audit_dep'] });
+  try {
+    assert.match(r.out, /\[4\/5\][^\n]* \.\.\. WARN \([^)]*age-encryption@0\.3\.1/, r.out);
+    assert.doesNotMatch(r.out, /\[4\/5\][^\n]* \.\.\. PASS/);
+    assert.match(r.out, /^VERIFIED WITH WARNING: zn-gate 1\.14\.1: 4 checks passed and 1 gave a warning/m, r.out);
+    assert.doesNotMatch(r.out, /^VERIFIED: /m);
+    assert.strictEqual(r.status, 0, r.out);
+    assert.match(r.calls, /npm view zn-gate@1\.14\.1 dist\.integrity/);
+  } finally { cleanup(r); }
+});
+
+test('npm audit signatures naming zn-gate itself is a FAIL', { skip }, () => {
+  const r = run(['1.14.1'], { fail: ['npm_audit_self'] });
+  try {
+    assert.notStrictEqual(r.status, 0, r.out);
+    assert.match(r.out, /\[4\/5\][^\n]* \.\.\. FAIL \(npm audit signatures does not verify zn-gate@1\.14\.1 itself/, r.out);
   } finally { cleanup(r); }
 });
 

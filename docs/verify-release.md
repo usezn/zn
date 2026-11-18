@@ -16,6 +16,10 @@ verified tarball. The npm package declares its content as dual-use
 (`contentPolicy` in `package.json`) and explains why in a `DISCLOSURE` file at
 the root of the package.
 
+## What is published
+
+Releases are published to npm and PyPI, and as files on the GitHub Release (see the table below). zn-gate publishes no compiled binary: there is no executable to download, so there is nothing to check for one. The npm package is JavaScript and the Python package is pure Python.
+
 ## One command
 
 [`scripts/verify-release.sh`](../scripts/verify-release.sh) runs the checks of steps 1 to 5 below for a published version and prints `PASS`, `FAIL` or `CANNOT CHECK` for each:
@@ -28,8 +32,10 @@ bash zn/scripts/verify-release.sh 1.14.1
 
 Download the script from the tag you are checking and read it before you run it. Do not pipe it to a shell: a verification tool you run without reading it proves nothing.
 
+- Step 2 needs the GitHub CLI to be logged in (`gh auth login`, or the `GH_TOKEN` environment variable set), even for a public repository. Any GitHub account works and a read-only token is enough. If it is not, the script prints one line, `SKIPPED (gh is not logged in; run gh auth login or set GH_TOKEN, or rely on step 3)`, and marks that step as not verified; step 3 needs no account.
 - It needs `gh`, `npm`, `sha256sum` (or `shasum`), `cosign` (or sigstore-python) and `pypi-attestations`, the tools the steps below name. It installs nothing on your system: step 4 downloads the npm package into a temporary folder, without running its scripts, and the script deletes that folder when it ends.
-- The exit status is 0 only if all five checks pass. A check that cannot run because a tool is missing is reported as `CANNOT CHECK ... NOT VERIFIED` and the exit status is not 0: there is no option to skip a check.
+- The exit status is 0 only if no check failed and none was left unchecked. A check that cannot run because a tool is missing is reported as `CANNOT CHECK ... NOT VERIFIED`, and a step 2 without a GitHub login as `SKIPPED ... NOT VERIFIED`; the exit status is not 0 for either: there is no option to skip a check. A real failure is `FAIL`.
+- If `npm audit signatures` (step 4) exits non-zero only because of a dependency of zn-gate, the script reports `WARN` for step 4 and names the dependency, and the last line says `VERIFIED WITH WARNING`. The exit status is still 0 in that case, because the other checks, including the comparison of the npm tarball with the signed release file, passed. Read the warning: see [step 4](#4-npm).
 - `--print` prints the commands it would run and runs none of them. `--keep DIR` keeps the downloaded files in `DIR`; otherwise they go to a temporary directory that is deleted when the script ends.
 - The version is checked before it is used: it must look like `1.14.1` or `1.15.0-rc.1`, and it must be 1.5.0-beta.2 or later (earlier versions have nothing to verify, see below).
 
@@ -106,7 +112,7 @@ Checksums only prove the files match `SHA256SUMS`. Check the signature on
 
 ## 2. GitHub artifact attestations
 
-With the [GitHub CLI](https://cli.github.com/) 2.49 or later:
+With the [GitHub CLI](https://cli.github.com/) 2.49 or later. Some Linux distributions ship an older one (the `gh` in Ubuntu 24.04's apt repository is 2.45): install the current one from the [official packages](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) or the [GitHub releases](https://github.com/cli/cli/releases). The command needs a GitHub login, even for a public repository: run `gh auth login`, or set `GH_TOKEN` to a token of any GitHub account (a read-only token is enough). Without a login it stops with "To get started with GitHub CLI, please run: gh auth login" and exit status 4. If you would rather not use an account, step 3 verifies the same files with Sigstore and needs none.
 
 ```sh
 gh attestation verify zn-gate-1.12.0.tgz \
@@ -163,7 +169,18 @@ npm audit signatures
 ```
 
 It checks the registry signatures and the provenance attestations of the
-installed packages. You can also look at the attestations directly:
+installed packages, including the dependencies of zn-gate, so it can exit with
+an error and a "tampered" warning that names a dependency. For example, it
+can report an invalid attestation for the dependency `age-encryption@0.3.1`
+while zn-gate itself and the other dependencies verify. That warning is about
+that dependency's own provenance attestation (published by its maintainers),
+not about zn-gate's signature or provenance, but do not ignore it: it is the
+registry telling you a package you install has an attestation that does not
+verify. `verify-release.sh` reports it as `WARN` and names the package. To
+check zn-gate's own package, use the two commands below: the attestations of
+`zn-gate@<version>` must be present, and the SHA-512 of the release file that
+steps 1 to 3 verified must equal the integrity the registry shows. You can also
+look at the attestations directly:
 
 ```sh
 npm view zn-gate@1.5.0 dist.attestations
