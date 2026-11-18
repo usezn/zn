@@ -7,8 +7,36 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+/// A URL as it is safe to print: scheme and host only. A webhook URL is a
+/// secret (the path or query usually holds the token), and user info before
+/// the host can hold a password. Anything that does not look like a URL with
+/// a scheme prints as `<redacted>`.
+pub fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.trim().split_once("://") else {
+        return "<redacted>".to_string();
+    };
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+    {
+        return "<redacted>".to_string();
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    if host.is_empty() {
+        return "<redacted>".to_string();
+    }
+    if end < rest.len() {
+        format!("{scheme}://{host}/<redacted>")
+    } else {
+        format!("{scheme}://{host}")
+    }
+}
+
 /// Webhook configuration
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct WebhookConfig {
     /// Webhook URL to send alerts to
     pub url: String,
@@ -24,6 +52,20 @@ pub struct WebhookConfig {
     /// Whether this webhook is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+/// Debug output keeps the scheme and host of the URL and hides the rest, so a
+/// `{:?}` of the configuration never prints the webhook token.
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookConfig")
+            .field("url", &redact_url(&self.url))
+            .field("webhook_type", &self.webhook_type)
+            .field("event_filter", &self.event_filter)
+            .field("status_filter", &self.status_filter)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 fn default_webhook_type() -> WebhookType {
@@ -216,6 +258,40 @@ pub async fn send_alert(tx: &mpsc::Sender<AlertPayload>, alert: AlertPayload) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webhook_debug_hides_the_path_and_the_query() {
+        let url = "https://hooks.example.com/services/T0000/B0000/fake-webhook-token?key=fake-query-secret";
+        let c = cfg(url, WebhookType::Slack);
+        let out = format!("{:?} {:#?}", c, c);
+        assert!(!out.contains("fake-webhook-token"), "{out}");
+        assert!(!out.contains("fake-query-secret"), "{out}");
+        assert!(!out.contains("T0000"), "{out}");
+        assert!(
+            out.contains("https://hooks.example.com/<redacted>"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn redact_url_keeps_scheme_and_host_only() {
+        assert_eq!(redact_url("https://example.com"), "https://example.com");
+        assert_eq!(
+            redact_url("https://example.com/"),
+            "https://example.com/<redacted>"
+        );
+        assert_eq!(
+            redact_url("https://user:fake-pass@example.com:8443/a/b?c=d#e"),
+            "https://example.com:8443/<redacted>"
+        );
+        assert_eq!(
+            redact_url("https://example.com?token=fake"),
+            "https://example.com/<redacted>"
+        );
+        assert_eq!(redact_url("fake-token-without-scheme"), "<redacted>");
+        assert_eq!(redact_url(""), "<redacted>");
+        assert_eq!(redact_url("https:///path-only"), "<redacted>");
+    }
 
     #[test]
     fn test_webhook_config_defaults() {
