@@ -40,6 +40,7 @@ const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath } = require('../shell-quote');
 const { winCommandText } = require('../zn-command');
+const { shScrubLines, psScrub } = require('../loader-env');
 
 // Events where exit 2 with a reason on stderr is the documented block.
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
@@ -255,6 +256,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '#!/bin/sh',
     '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
     '# Runs the zn hook; if the Node.js or zn-gate it was installed with is gone, it blocks instead of letting the call run.',
+    ...shScrubLines(),
     'ZN_EVENT="${1:-}"',
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
@@ -1106,7 +1108,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   if (deadlineS) {
     // zr runs the command as a child with the hook input passed on (stdin) and its output left alone; after the deadline the
     // child and everything it started are killed (taskkill /T) and zr gives -1, which falls through to the block below.
-    const zr = 'function zr($f, $a) { $rc = -1; try { $i = [System.Diagnostics.ProcessStartInfo]::new(); $i.FileName = $f; $i.Arguments = $a; $i.UseShellExecute = $false; ' +
+    const zr = 'function zr($f, $a) { $rc = -1; try { $i = [System.Diagnostics.ProcessStartInfo]::new($f, $a); $i.UseShellExecute = $false; ' +
       '$i.RedirectStandardInput = $true; $sw = [System.Diagnostics.Stopwatch]::StartNew(); $p = [System.Diagnostics.Process]::Start($i); ' +
       'try { $c = [Console]::OpenStandardInput().CopyToAsync($p.StandardInput.BaseStream); [void]$c.Wait(' + deadlineS * 1000 + ') } catch {}; ' +
       'try { $p.StandardInput.Close() } catch {}; ' +
@@ -1115,12 +1117,12 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
     const zleave = jsonDeny
       ? 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx 0 }'
       : 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx $rc }';
-    return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + zr +
+    return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + ZF + zr +
       "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
       "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
       'if ($zt -eq 1) { ' + tailOf(winCommandText(crashText(agentId), 'win32'), winCommandText(crashWarnText(), 'win32')) + ' }; ' + tail + ' # zn hook ' + agentId;
   }
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + ZF +
     "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
     "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     tail + ' # zn hook ' + agentId;
@@ -1130,7 +1132,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
 // only when it held ok. zx removes it and leaves. When the file cannot be made nothing is accepted as done (zk is always false).
 const ZK = "$za = $null; try { $za = [System.IO.Path]::GetTempFileName(); $env:ZN_HOOK_ACK = $za } catch {}; " +
   "function zk { $ok = $false; try { if ($za) { $ok = ([System.IO.File]::ReadAllText($za) -eq 'ok'); [System.IO.File]::WriteAllText($za, '') } } catch {}; return $ok }; " +
-  "function zx($c) { try { if ($za) { [System.IO.File]::Delete($za) } } catch {}; exit $c }; function zd { try { if ($za) { [System.IO.File]::Delete($za) } } catch {} }; ";
+  "function zx($c) { zd; exit $c }; function zd { try { if ($za) { [System.IO.File]::Delete($za) } } catch {} }; ";
 
 /** windowsScriptRaw plus the ack file: every exit of the script removes it (zx), a 0 is accepted only with the ack (zk). */
 function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {

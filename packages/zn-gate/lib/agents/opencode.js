@@ -46,6 +46,7 @@ const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
 const { cliName } = require('../zn-command');
+const { LOADER_SOURCE } = require('../loader-env');
 
 const id = 'opencode';
 const PLUGIN_FILE = 'zn-gate.js';
@@ -177,7 +178,7 @@ function pluginSource(opts = {}) {
   // the PATH keeps only its absolute entries, and cmd.exe does not look in the
   // current directory first.
   const shell = project ? 'process.platform === "win32"' : 'false';
-  const env = project ? 'projectEnv()' : 'process.env';
+  const env = project ? 'hookEnv(projectEnv())' : 'hookEnv(process.env)';
   const projectEnvSource = project ? `
 // The environment of \`zn\`: the PATH without its relative or empty entries, and
 // on Windows no search of the current directory by cmd.exe.
@@ -202,7 +203,17 @@ function projectEnv() {
 import { spawn } from "node:child_process";
 
 ${launch}
-${projectEnvSource}const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
+${projectEnvSource}
+// Variables that make Node.js or the dynamic loader load code of the caller's choosing (NODE_OPTIONS=--require, LD_PRELOAD
+// and the like) are not passed to the hook: a project can set the environment of OpenCode, and such code would run inside
+// the hook itself. NODE_EXTRA_CA_CERTS and the proxy settings are passed.
+const LOADER_VAR = new RegExp(${JSON.stringify(LOADER_SOURCE)}, "i");
+function hookEnv(base) {
+  const env = {};
+  for (const [k, v] of Object.entries(base)) if (!LOADER_VAR.test(k)) env[k] = v;
+  return env;
+}
+const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
 const ACTIONS = ["none", "deny", "error", "args", "output"];
