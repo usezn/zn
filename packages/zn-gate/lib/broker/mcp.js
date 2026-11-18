@@ -371,7 +371,7 @@ function createSecretsServer(opts = {}) {
       } else if (approvedAt !== null && real !== approvedAt) {
         why = 'it is not the location the user approved';
       } else {
-        where = gitStatusOf(real);
+        where = gitStatusOf(real, cwd);
         if (where !== 'ignored' && where !== 'outside') why = 'it is tracked by git (it could be committed)';
       }
     } catch (err) {
@@ -416,7 +416,7 @@ function createSecretsServer(opts = {}) {
       : !insideProject(out) ? 'the file is outside the project'
         : dest && dest.kind === 'credential' ? 'the file is a credential file'
           : null;
-    const where = gitStatusOf(out);
+    const where = gitStatusOf(out, cwd);
     if (where !== 'ignored' && where !== 'outside') {
       return denied(out + ' is ' + (where === 'unknown' ? 'in an unknown git state (git not available)' : 'tracked by git (it could be committed)') +
         '. Secret values are only written to git-ignored files or outside the repository.');

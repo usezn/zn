@@ -35,16 +35,17 @@ function existingDir(p) {
  *   outside: not inside any git work tree
  *   unknown: git is not available; callers treat it as 'tracked'
  */
-function gitStatusOf(file) {
+function gitStatusOf(file, cwd) {
   const abs = path.resolve(file);
   const dir = existingDir(path.dirname(abs));
   // git from the absolute PATH entries only: this runs inside hooks, whose current folder is the project.
   const exe = require('../exe');
-  const git = exe.findProgram('git');
+  // cwd: the folder the event comes from, so the project-folder filter does not depend on this process's folder.
+  const git = exe.findProgram('git', process.env, cwd);
   if (!git) return 'unknown';
   // English messages (to tell "not a repository" from other failures), and no fsmonitor: core.fsmonitor in the
   // repository's own .git/config names a program that git would otherwise run.
-  const env = { ...exe.programEnv(), LC_ALL: 'C', LANGUAGE: 'C' };
+  const env = { ...exe.programEnv(process.env, process.platform, cwd), LC_ALL: 'C', LANGUAGE: 'C' };
   const run = (args) => spawnSync(git, ['-c', 'core.fsmonitor=false', '-C', dir, ...args], { encoding: 'utf8', windowsHide: true, env });
   const top = run(['rev-parse', '--show-toplevel']);
   if (top.error) return 'unknown';

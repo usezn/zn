@@ -910,7 +910,7 @@ async function decidePre(ev, d, agentId, opts) {
     const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
     const withMarkers = input.texts.filter((t) => markers.findMarkers(t.value).length);
     if (withMarkers.length === 0) return asked({ decision: 'allow' });
-    const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path)) : 'unknown';
+    const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path), ev.cwd) : 'unknown';
     const destination = status === 'ignored' || status === 'outside' ? 'write_ignored' : 'write_tracked';
     const ctx = await ctxFor(ev, d, agentId, destination);
     const updates = [];
