@@ -158,6 +158,8 @@ function clearUnlockFailures(opts) {
  */
 function hintForUnlockError(err, opts) {
   if (err && err.reason === keychain.WRONG_PASSPHRASE) return recordUnlockFailure(opts);
+  // A broken install says to reinstall; it is not a vault problem and must not point at the reset.
+  if (err && err.znInstall === true) return null;
   clearUnlockFailures(opts);
   // A damaged-file message already says what to do and links the page: do not say it twice.
   if (err && /vault reset/.test(String(err.message))) return null;

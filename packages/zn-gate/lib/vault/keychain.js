@@ -324,6 +324,8 @@ async function loadIdentity(opts) {
     } catch (err) {
       // age reports a wrong passphrase as "no identity matched"; a damaged file fails earlier
       // (bad header, bad tag). Only the first is a passphrase failure, so only it sets `reason`.
+      // An install or runtime failure (the age library did not load) says nothing about the file: pass it on.
+      if (store.isInstallError(err)) throw err.znInstall ? err : store.installError(err);
       if (err && /no identity matched/i.test(String(err.message))) {
         const e = znError(CODES.LOCKED, 'wrong passphrase, or vault file identity.age is corrupted');
         e.reason = WRONG_PASSPHRASE;

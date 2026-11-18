@@ -267,6 +267,14 @@ function vaultDamaged(file, what, detail, env = process.env) {
     'so the secrets saved in it are lost. More: ' + TROUBLESHOOTING_URL + more;
 }
 
+/* The bundled encryption library did not load: the install is incomplete. The vault is not damaged. `detail` shows only with ZN_VERBOSE=1 or DEBUG=zn. */
+function vaultInstallBroken(detail, env = process.env) {
+  const more = detail && isVerbose(env) ? ' Detail: ' + String(detail).slice(0, 120) + '.' : '';
+  return 'The zn-gate installation is incomplete: a part it needs to open the vault did not load. ' +
+    'Your vault is not damaged and nothing was changed. Reinstall zn-gate with `npm install -g zn-gate`, then run this command again. ' +
+    'Do not reset the vault. More: ' + TROUBLESHOOTING_URL + more;
+}
+
 /* ------------------------------ MCP pins ------------------------------ */
 
 const PINS_USAGE_APPROVE = 'usage: zn-gate pins approve <server>|--all';
@@ -368,5 +376,5 @@ module.exports = {
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_POLICY_UNVERIFIED, TEAM_INVALID_ORG_KEY,
   teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
   TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
-  DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
+  DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged, vaultInstallBroken,
 };

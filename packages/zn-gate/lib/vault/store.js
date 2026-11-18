@@ -109,15 +109,51 @@ function ensureLayout(opts) {
 /* ------------------------------------------------------------------ */
 
 let agePromise = null;
+let ageLoader = () => import('age-encryption');
+
+/* True for a failure of the install or the runtime, not of the vault: the bundled age library is
+ * missing or does not load, or the runtime has no WebCrypto. A wrong passphrase or a damaged
+ * file is never this. */
+function isInstallError(err) {
+  if (!err) return false;
+  if (err.znInstall === true) return true;
+  const code = String(err.code || '');
+  if (code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND' || code === 'ERR_REQUIRE_ESM' ||
+      code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_UNKNOWN_FILE_EXTENSION') return true;
+  const msg = String(err.message || '');
+  if (err instanceof TypeError && /is not a (function|constructor)|getRandomValues/.test(msg)) return true;
+  return /Cannot find (package|module) /i.test(msg);
+}
+
+function installError(cause) {
+  const err = new Error(require('../messages').vaultInstallBroken(cause && cause.message));
+  err.znInstall = true;
+  return err;
+}
+
 function loadAge() {
   if (!agePromise) {
     // Node 18 has WebCrypto but not as a global; age-encryption expects one.
     if (!globalThis.crypto || !globalThis.crypto.getRandomValues) {
       globalThis.crypto = require('crypto').webcrypto;
     }
-    agePromise = import('age-encryption');
+    agePromise = Promise.resolve().then(() => {
+      if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function') {
+        throw new Error('this Node.js has no WebCrypto');
+      }
+      return ageLoader();
+    }).catch((err) => {
+      agePromise = null;
+      throw installError(err);
+    });
   }
   return agePromise;
+}
+
+/* Test seam: replace how the age library is loaded; call with no argument to restore. */
+function _useAgeLoader(fn) {
+  agePromise = null;
+  ageLoader = fn || (() => import('age-encryption'));
 }
 
 async function generateIdentity() {
@@ -202,6 +238,7 @@ async function readEncrypted(file, identity) {
   try {
     text = await decryptWith(identity, new Uint8Array(buf));
   } catch (err) {
+    if (isInstallError(err)) throw err.znInstall ? err : installError(err);
     throw znError(CODES.LOCKED, require('../messages').vaultDamaged(path.basename(file),
       'is corrupted or was encrypted to another key', (err && err.message) || err));
   }
@@ -312,6 +349,9 @@ module.exports = {
   ensureLayout,
   ensurePrivateDir,
   loadAge,
+  isInstallError,
+  installError,
+  _useAgeLoader,
   generateIdentity,
   recipientOf,
   encryptTo,
