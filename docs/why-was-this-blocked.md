@@ -94,6 +94,18 @@ zn: this command is too long for zn to check (over 100 KB), so it was blocked. N
 
 More in [the troubleshooting guide](troubleshooting.md#a-command-patch-or-output-was-too-big-or-too-complicated-to-check).
 
+## A record you did not expect, after `check` or `test`
+
+On a machine where you have only run `zn-gate check` or `zn-gate test`, `zn why` can already explain a block that you never saw. It is a record left by zn-gate's own self-test: both commands ask the hooks about a fake key and a few ordinary files, and the hooks write what they decided to the evidence log. The record looks like a real one, for example:
+
+```text
+zn blocked this at 2026-11-18T10:55:46.701Z (UTC).
+  What:    a tool call, checked by the zn hook before it ran, tool "read" (agent: zcode)
+  Rule:    hook-pre_tool-policy
+```
+
+The agent name in it can be one you do not use. It is harmless: nothing was blocked for you, no file was read, and no value was stored. It is in the log only because the self-test ran. Records from your own agents appear next to it as you work, and `zn-gate evidence --tail 20` shows them all.
+
 ## Still stuck?
 
 - The [troubleshooting guide](troubleshooting.md) lists the messages people meet first, and the [block and warn reasons](troubleshooting.md#block-and-warn-reasons-by-family) explain the rest.
