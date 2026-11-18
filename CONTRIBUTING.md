@@ -52,7 +52,7 @@ A short list of what a pull request needs. Each step points to the section below
 ### Prerequisites
 - Node.js 20.19 or later, to work on the repository. The Markdown lint and the plugin launch test (`node plugins/tools/test-launch.js`) need it, and they fail on Node.js 18. Users of zn-gate need only Node.js 18 or later; that is the `engines` value of the package. Ubuntu's own `nodejs` package is version 18, which is too old here: install a newer one with [nvm](https://github.com/nvm-sh/nvm#installing-and-updating) (`nvm install 22`) or with the [NodeSource](https://github.com/nodesource/distributions) setup script.
 - Python >= 3.10, with `venv` and `pip` (on Debian and Ubuntu: `sudo apt install python3-venv python3-pip`)
-- (Optional, legacy Rust gateway) Rust stable, `protoc` 29 or later
+- (Optional, legacy Rust gateway) Rust 1.95 or later and `protoc`: see [Rust toolchain](#rust-toolchain-optional)
 
 ### Python environment
 
@@ -64,6 +64,18 @@ python3 -m venv .venv
 ```
 
 On Windows PowerShell, run `python -m venv .venv` and then `.venv\Scripts\Activate.ps1`, and use `python` where this page says `python3`.
+
+### Rust toolchain (optional)
+
+You need this only to change the legacy Rust gateway in `src/`. On Debian and Ubuntu:
+
+```bash
+sudo apt install build-essential pkg-config protobuf-compiler unzip
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c rustfmt -c clippy
+. "$HOME/.cargo/env"
+```
+
+The minimum Rust version is `rust-version` in `Cargo.toml` (1.95); CI tests 1.95 and 1.99.0. A C compiler (`build-essential`) is needed to link. `protoc` 3.21.12 from Ubuntu 24.04 was enough for `cargo build --locked`; CI uses `protoc` 29.3, and we ran clippy and the tests with that version. To install 29.3 yourself, download `protoc-29.3-linux-x86_64.zip` from the [protobuf releases](https://github.com/protocolbuffers/protobuf/releases/tag/v29.3), unpack it with `unzip` and set `PROTOC` to the `bin/protoc` inside. See also [docs/rust-core.md](docs/rust-core.md#build-it-yourself).
 
 ### Running Tests Locally
 
@@ -126,7 +138,7 @@ Windows notes: use PowerShell, and run each command on its own line (Windows Pow
 | scrubber + vault | `cd packages/zn-gate`, `npm ci --ignore-scripts`, then `node test/contract.test.js`, `node test/scrub_patterns.test.js`, `node test/scrub_structured.test.js`, `node test/scrub_exact.test.js`, `node test/scrub_engine.test.js`, `node test/vault.test.js` | Same | Same. The CLI smoke step and the native keychain steps run only in CI. |
 | Python package (build, twine check, install) | `python -m build --no-isolation packages/zn-gate-py --outdir dist-check`, `python -m twine check --strict dist-check/*`, `python -I .github/scripts/check-python-pack.py dist-check/*.whl dist-check/*.tar.gz` | Install the tools first with `python3 -m pip install build twine` | Runs in CI. The workflow also rebuilds twice and compares checksums with bash tools. |
 | npm package (pack, inspect, install) | `cd packages/zn-gate`, `npm ci --ignore-scripts`; from the root, `node .github/scripts/prune-bundled-sources.js packages/zn-gate`; then `mkdir -p <dir>`, `cd packages/zn-gate`, `npm pack --json --pack-destination <dir> > <dir>/pack.json`; from the root, `node .github/scripts/check-npm-pack.js <dir>/pack.json packages/zn-gate` | Same | Runs in CI. The workflow checks the tarball with bash. |
-| build, test, clippy, fmt (Rust) | `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, `cargo test --locked` | Needs Rust stable and `protoc` 29 or later | Same commands, if you install Rust and `protoc`. CI runs them on Ubuntu. |
+| build, test, clippy, fmt (Rust) | `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, `cargo test --locked` | Needs Rust 1.95 or later and `protoc` ([Rust toolchain](#rust-toolchain-optional)) | Same commands, if you install Rust and `protoc`. CI runs them on Ubuntu. |
 
 CI skips the Node.js, Python, leak bench, scrubber and package checks (they report success) when a pull request changes only documentation or only the Rust gateway.
 

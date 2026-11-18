@@ -195,7 +195,8 @@ To avoid the download:
 
 1. Install the prerequisites:
    - Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
-   - `protoc` 29 or later
+   - `protoc` 3.21 or later (CI uses 29.3)
+   - a C compiler and linker (`build-essential` on Debian and Ubuntu)
    - OpenSSL / libssl-dev
 2. Build the gateway from the repository root:
 
