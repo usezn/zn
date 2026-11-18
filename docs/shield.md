@@ -177,6 +177,33 @@ If the pins file of a server cannot be read or written, the shield treats every 
 
 Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your account on Linux and macOS. Each file holds the program name, its arguments with secrets removed, and the tool names with their fingerprints (one for the whole tool and one each for its text, its parameters and its other fields). It never holds tool text.
 
+## What the shield messages mean
+
+The shield prints its messages on stderr, which your agent or editor shows in its log for the MCP server. Each starts with a label in square brackets. Texts are copied as zn-gate prints them; a part in angle brackets is a blank that zn fills in. A name after `Rule:` says what kind of text it was (see [the rules table](troubleshooting.md#what-a-rule-name-means)). In shadow mode the shield only reports and passes the text on.
+
+| Label and text | Cause | What to do |
+|---|---|---|
+| `[zn-shield BLOCKED REQUEST] Prompt injection detected in arguments for tool '<tool>'. Rule: <rule>` | Your agent was about to send a tool call whose arguments carry text that tries to give orders. The call was not sent. | Find out where the agent got that text (a web page, a file, another tool). Do not retry with reworded text. |
+| `[zn-shield BLOCKED REQUEST] A message from the client was not sent ...`, `A line from the client that is not valid JSON was not sent ...`, `A batch from the client holds something that is not a message ...` | A message from your agent was too large, too deeply nested, not valid JSON or a malformed batch, so it could not be checked. | Usually a bug in the agent or a very large call. Send less data in one call. |
+| `[zn-shield BLOCKED TOOL DESCRIPTION] Poisoned tool description in '<tool>'. Rule: <rule>` | The server's description of a tool carries an injection. The tool's text was neutralized. | Do not trust that server. Remove it, or ask its author. |
+| `[zn-shield BLOCKED PARAMETER DESCRIPTION] Poisoned parameter '<label>' in tool '<tool>'. Rule: <rule>` | A parameter name or description of a tool carries an injection. | Same as above. |
+| `[zn-shield BLOCKED TOOL] Tool '<tool>' has an ... with a name, key or other schema string that carries a prompt injection, so it was not passed on.` and `... too deep or too large for zn-gate to check (limit: 32 levels or 5000 entries), so it was not passed on unchecked.` | A tool's schema carries an injection, or it is too big to check. The tool was not passed on. | Remove the server, or ask its author to simplify the tool. |
+| `[zn-shield BLOCKED TOOL NAME] tools/list: <n> tool(s) removed because the tool name could not be passed on safely.` and `... because the list is over the 5000-tool limit zn-gate checks.` | Some tool names contain characters zn cannot pass on safely, or the list is far too long. | Ask the server's author to use plain names, or use a server with fewer tools. |
+| `[zn-shield BLOCKED SERVER MESSAGE] <what> Rule: <rule>` | Text the server sent (a notification, a resource, an error, instructions...) carries an injection. It was replaced by a notice. | Do not trust that server. |
+| `[zn-shield BLOCKED SERVER MESSAGE] ... is too large to check in full (<n> MB; the limit is 32 MB).` | One text from the server was larger than the limit and was blocked. | Ask for less data. |
+| `[zn-shield BLOCKED SERVER MESSAGE] A line from the server that is not valid JSON was dropped (<n> characters). An MCP server must send one JSON message per line.` and `A line from the server was dropped: <why>.` | The server broke the protocol or sent a line that could not be checked. | The server is faulty. Update it, or report it to its author. |
+| `[zn-shield BLOCKED SERVER MESSAGE] <n> more blocked text(s) in the same message were not logged one by one (<per rule counts>)` | One message held more than 50 blocked texts. The others were handled the same way but only counted. | Read the counts. This many in one message means a hostile or broken server. |
+| `[zn-shield BLOCKED RESPONSE] Indirect prompt injection detected in output of tool '<tool>'. Rule: <rule>` | A tool's reply carries text that tries to instruct the agent. | Treat the source of the output with care. Do not ask the agent to bring the text back. |
+| `[zn-shield BLOCKED RESPONSE] Output of tool '<tool>' is too large to check in full (<n> MB; the limit is 32 MB). Ask the tool for a smaller result.` and `... is mostly invisible characters. Rule: size:invisible` | A reply was too big to check, or it was mostly invisible characters. | Ask for a smaller part, such as a page or a line range. |
+| `[zn-shield TOOL SHADOWING] <tools>: ...` (four wordings) | A tool has the same name as an approved tool of another server, a name that looks like one, a text that names a tool of another server, or a text too long to check for that. The agent may call the wrong tool. | Check that both servers are yours, and read the text of the tool. See [tool shadowing](#tool-shadowing). |
+| `[zn-shield TOOLS CHANGED] <tools>: new or changed since the tools of this server were approved. Review them, then run in your own terminal: zn-gate pins approve <key>` | The server now lists tools that are new or different since you approved them. | Look at the change, then approve it in your own terminal (see [Approving a change](#approve-a-change)). |
+| `[zn-shield TOOLS REFUSED] The server lists more than one tool named <name> ... These cannot be approved; the server has to fix its tool list.` | A duplicate name, or tools without a valid name. | You cannot approve these. The server's author has to fix the list. |
+| `[zn-shield] Pinned the tools of a new MCP server (<key>): <label>` | A notice, not a problem: the first list of a new server is trusted and saved. | Nothing. A change later is flagged. |
+| `[zn-shield] Could not read or write the MCP tool pins in <folder> (<reason>). Every tool of this list is treated as unapproved ...` | The pins folder cannot be used, so the shield cannot tell what you approved. | Fix the permissions or the disk space of that folder, then restart your agent. Approving does not help before that. |
+| `[zn-shield] A line from the server was not checked (<why>); shadow mode passes it on unchecked.` and the similar lines for the client | Shadow mode only: a line could not be checked, and it was passed on anyway. | Read the reason. When you are ready to enforce, run the server without `--shadow`. |
+
+Every blocked text also goes into your [evidence log](cli.md#evidence). When a message does not appear here, see [Troubleshooting zn-gate](troubleshooting.md).
+
 ## Limits
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
