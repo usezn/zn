@@ -11,7 +11,9 @@
 # Any error while listing the files means true: when in doubt, run the checks.
 set -uo pipefail
 
-out() { echo "rust=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "rust=$1" >> "$GITHUB_OUTPUT"; exit 0; }
+out() {
+  [ "$1" = false ] && echo "skipped: no Rust file changed, so this check reports success without running. This is expected."
+  echo "rust=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "rust=$1" >> "$GITHUB_OUTPUT"; exit 0; }
 
 case "${EVENT_NAME:-}" in pull_request|merge_group) ;; *) out true ;; esac
 [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || out true

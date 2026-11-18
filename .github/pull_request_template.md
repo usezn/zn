@@ -6,6 +6,8 @@
 
 ## Checklist
 
+Required checks that show **Skipped** on this pull request are expected: the full suite runs in the merge queue. See [Continuous integration](CONTRIBUTING.md#continuous-integration-ci).
+
 - [ ] The pull request targets `next`.
 - [ ] I ran the required checks that apply (see "Run the required checks locally" in CONTRIBUTING.md).
 - [ ] Tests cover the change: `npm test` in `packages/zn-gate` and, if you touched the Python package, `python -m pytest tests/` in `packages/zn-gate-py`.

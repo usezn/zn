@@ -86,7 +86,7 @@ Each pull request into `next` runs automated checks on GitHub. Eleven checks are
 - Public facts
 - build, test, clippy, fmt
 
-To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js, Python and Rust test checks report success at once without running. Add the label `full-ci` to your pull request to run them there; run the tests locally before you push. `cargo audit` also runs on every pull request: it checks the Rust dependencies only when the pull request changes `Cargo.lock`, `Cargo.toml`, `.cargo/audit.toml` or its own workflow file, and passes at once otherwise. A pull request that changes only documentation skips most code checks, which also report success.
+To keep pull requests fast, the full test suite runs in the merge queue, not on every push. On a pull request into `next`, the Node.js 18.x, 22.x and 24.x, Python 3.12 and `build, test, clippy, fmt` checks show as **Skipped** without running. GitHub counts a skipped required check as passed, so that is expected. Run the tests locally before you push. To run them on the pull request, a maintainer adds the label `full-ci`. Only people with triage access can add labels, so ask a maintainer in a comment if you need the full suite before the merge queue. `cargo audit` also runs on every pull request: it checks the Rust dependencies only when the pull request changes `Cargo.lock`, `Cargo.toml`, `.cargo/audit.toml` or its own workflow file, and passes at once otherwise.
 
 Only `next` has a merge queue; `main` does not. When a maintainer adds an approved pull request to the queue, the queue builds it on top of the pull requests ahead of it, runs the required checks on that combined result, and merges up to five pull requests at a time, in order. If a required check fails there, the pull request leaves the queue. Fix the problem, push a commit, and ask a maintainer to queue it again.
 
@@ -95,6 +95,8 @@ Nine more checks are **not required**, so they do not block a merge: Changelog, 
 If a check fails, open it from the Checks tab of the pull request. The first failed step shows the problem.
 
 Checks run again each time you push a commit, and a new push cancels a run still in progress. Without write access you cannot rerun a check yourself, so push a new commit to get a fresh run, for example an empty one with `git commit --allow-empty -m "Rerun checks"`. A maintainer with write access can open the run and choose "Re-run failed jobs".
+
+A check marked **Skipped** is not pending: it is expected on this pull request, as described above. A check that stays **Pending** usually has one of two causes. The first pull request from a fork waits for a maintainer to approve the workflow runs. A draft pull request does not start the required checks, except Public facts. See [Your first pull request and draft pull requests](#your-first-pull-request-and-draft-pull-requests). If neither applies, or the check is still pending after the run was approved, ask a maintainer to look at it on the Checks tab.
 
 For what each check covers and how to run it on your own machine, see [Run the required checks locally](#run-the-required-checks-locally).
 
@@ -117,7 +119,7 @@ Windows notes: use PowerShell, and run each command on its own line (Windows Pow
 | npm package (pack, inspect, install) | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm pack --json --pack-destination <dir> > <dir>/pack.json`, then from the root `node .github/scripts/check-npm-pack.js <dir>/pack.json packages/zn-gate` | Same | Runs in CI. The workflow checks the tarball with bash. |
 | build, test, clippy, fmt (Rust) | `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, `cargo test --locked` | Needs Rust stable and `protoc` 29 or later | Same commands, if you install Rust and `protoc`. CI runs them on Ubuntu. |
 
-CI skips the Node.js, Python, leak bench, scrubber and package checks (they report success) when a pull request changes only documentation or only the Rust gateway.
+For a pull request that changes only documentation or only the Rust gateway, the Lint, package, leak bench and scrubber + vault checks skip their steps and report success. The Node.js, Python and Rust test checks follow the `full-ci` rule above.
 
 ### Lint commands
 

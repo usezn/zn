@@ -15,7 +15,9 @@
 # Any error while listing the files means true: when in doubt, run the checks.
 set -uo pipefail
 
-out() { echo "run=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$1" >> "$GITHUB_OUTPUT"; exit 0; }
+out() {
+  [ "$1" = false ] && [ "${SKIP_LEG:-false}" != "true" ] && echo "skipped: no changed file is read by these checks (for example, documentation only), so this check reports success without running. This is expected."
+  echo "run=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$1" >> "$GITHUB_OUTPUT"; exit 0; }
 
 [ "${EVENT_NAME:-}" = "pull_request" ] || out true
 [ "${FULL:-false}" = "true" ] && out true
