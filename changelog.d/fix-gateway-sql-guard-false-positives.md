@@ -1,0 +1,2 @@
+### Fixed
+- The gateway's SQL injection check no longer blocks ordinary text such as `Order #1234`, `Section 3 -- Results`, `--help`, code comments, or plain sentences with "update set", "delete from" or "insert into". Comment marks and those statements are matched only in the shape they have in an injection, and full-width punctuation, letters and spaces are folded to ASCII first, so look-alike characters do not step around the check.
