@@ -53,6 +53,12 @@ fn endpoint_for_log(endpoint: &str) -> String {
     }
 }
 
+/// A network error as it may appear in a log line. reqwest's text names the request URL, which
+/// can carry a token in its path or query, so the URL is dropped from the error first.
+fn network_error_for_log(e: reqwest::Error) -> String {
+    e.without_url().to_string()
+}
+
 /// Longest wait between retries of a failing endpoint.
 pub const BACKOFF_MAX: Duration = Duration::from_secs(120);
 
@@ -440,7 +446,7 @@ impl SiemExporter {
                 false
             }
             Err(e) => {
-                error!("SIEM export network error: {}", e);
+                error!("SIEM export network error: {}", network_error_for_log(e));
                 false
             }
         }
@@ -1086,6 +1092,27 @@ mod tests {
             endpoint_for_log("http://[2001:db8::1]:9000/x?t=1"),
             "http://[2001:db8::1]:9000"
         );
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_error_does_not_name_the_url_or_its_token() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let path = "/ingest/pathtoken-FAKE0000?key=querytoken-FAKE0000";
+        let url = format!("http://127.0.0.1:{port}{path}");
+        let err = reqwest::Client::new()
+            .post(&url)
+            .send()
+            .await
+            .expect_err("nothing is listening on the port");
+        // Without the fix the plain text of the error names the whole URL.
+        let plain = err.to_string();
+        assert!(plain.contains("querytoken-FAKE0000"), "plain: {plain}");
+        let shown = network_error_for_log(err);
+        assert!(!shown.contains("pathtoken-FAKE0000"), "shown: {shown}");
+        assert!(!shown.contains("querytoken-FAKE0000"), "shown: {shown}");
+        assert!(!shown.contains("/ingest"), "shown: {shown}");
     }
 
     #[tokio::test]
