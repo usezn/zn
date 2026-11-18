@@ -19,6 +19,8 @@ The table lists each agent zn-gate supports and what was checked for it in the l
 
 For Claude Code, Codex CLI and Cursor, the 1.15.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
 
+The table above is about the latest release only. "Not tested in this release" does not mean an agent was never tested: the last agent version recorded for each agent (Codex CLI 0.163.0, OpenCode 1.19.3, Antigravity `agy` CLI 1.4.7, GitHub Copilot CLI 1.0.98, Gemini CLI 0.64.0, ZCode desktop app 3.16.3) is listed under "What has been tested" below. No agent version is recorded for Claude Code or Cursor.
+
 ## Limits at a glance
 
 - An event zn cannot read is refused, except the Codex `Stop` event, which is never blocked.

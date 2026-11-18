@@ -4,6 +4,8 @@ A short list of the steps for each of the eight agents zn-gate can install hooks
 
 Verifying is the same for every agent that has hooks: `npx -y zn-gate check` makes a temporary folder with a fake `.env` file, asks the hook to read it, and reports whether it was blocked. See [Check that it works](check.md). To remove everything at once, run `npx -y zn-gate uninstall`: see [Remove zn-gate](uninstall.md). To move from one agent to another, follow the [switching agents checklist](examples/switching-agents-checklist.md).
 
+For the agent version each one was last tested with, see [Agent compatibility](compat.md).
+
 ## Symptoms for hooks
 
 If the hooks of an agent do not seem to work, start with the page of that agent. Each one has a symptom section; ZCode has none yet, so use the general list.
