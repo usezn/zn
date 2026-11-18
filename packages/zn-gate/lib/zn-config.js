@@ -145,6 +145,53 @@ const HOOK_KEYS = {
   egressAllowHosts: { types: ['array'], expect: 'a list of host names' },
 };
 
+// Every other key under "hooks" that zn reads (checked where it is used, not here).
+const OTHER_HOOK_KEYS = ['packageInstallCheck', 'packageInstallAllow', 'packageInstallNewDays', 'packageInstallNotices'];
+// The top-level keys of the file that zn reads.
+const TOP_KEYS = ['hooks', 'mcpPinning', 'stats', 'cloud'];
+// Text values a setting accepts (compared in lower case). Other text is read as the default, which is the stricter reading.
+const ENUMS = {
+  agentInstructionWrites: ['ask', 'deny', 'off', 'allow'],
+  egressCheck: ['ask', 'deny', 'off', 'allow'],
+  stopReview: ['warn', 'block'],
+  packageInstallCheck: ['off', 'offline', 'online'],
+  whenUnavailable: ['deny', 'allow'],
+  failMode: ['open', 'closed'],
+};
+const MCP_PINNING = ['off', 'warn', 'block'];
+
+function distance(a, b) {
+  let prev = [];
+  for (let j = 0; j <= b.length; j++) prev.push(j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** The known name closest to `key` (at most 2 edits, ignoring letter case), or null. */
+function closest(key, names) {
+  const k = String(key).toLowerCase();
+  let best = null;
+  let bestD = 3;
+  for (const n of names) {
+    const d = distance(k, n.toLowerCase());
+    if (d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+function unknownKeyProblem(key, names, where) {
+  const near = closest(key, names);
+  return where + ' has "' + key + '", which zn does not read, so it does nothing' + (near ? '. Did you mean "' + near + '"?' : '. The settings zn reads here are: ' + names.join(', ') + '.');
+}
+
+function enumProblem(key, v, values) {
+  return '"' + key + '" is "' + v + '", which is not one of ' + values.map((x) => '"' + x + '"').join(', ') + '; zn ignored it and used the default.';
+}
+
 function typeName(v) {
   return v === null ? 'null' : Array.isArray(v) ? 'a list' : typeof v === 'string' ? 'text' : typeof v === 'boolean' ? 'a true/false value' : typeof v === 'number' ? 'a number' : 'an object';
 }
@@ -161,8 +208,11 @@ function typeOk(spec, v) {
 function sanitizeHooks(hooks) {
   const out = {};
   const problems = [];
+  const known = Object.keys(HOOK_KEYS).concat(OTHER_HOOK_KEYS);
   for (const [key, v] of Object.entries(hooks)) {
     const spec = HOOK_KEYS[key];
+    if (!spec && !OTHER_HOOK_KEYS.includes(key)) problems.push(unknownKeyProblem(key, known, '"hooks"'));
+    if (ENUMS[key] && typeof v === 'string' && !ENUMS[key].includes(v.toLowerCase())) problems.push(enumProblem(key, v, ENUMS[key]));
     if (!spec || typeOk(spec, v)) { out[key] = v; continue; }
     const isTrueText = typeof v === 'string' && v.trim().toLowerCase() === 'true';
     if (spec.raise && isTrueText) {
@@ -182,6 +232,14 @@ function sanitizeHooks(hooks) {
 function sanitize(cfg) {
   const problems = [];
   const data = Object.assign({}, cfg);
+  for (const key of Object.keys(cfg)) {
+    if (!TOP_KEYS.includes(key)) problems.push(unknownKeyProblem(key, TOP_KEYS, 'the top level of the file'));
+  }
+  if ('mcpPinning' in cfg) {
+    const m = cfg.mcpPinning;
+    if (typeof m !== 'string') problems.push('"mcpPinning" is ' + typeName(m) + ' but must be one of ' + MCP_PINNING.map((x) => '"' + x + '"').join(', ') + '; zn ignored it and used the default.');
+    else if (!MCP_PINNING.includes(m.trim().toLowerCase())) problems.push(enumProblem('mcpPinning', m, MCP_PINNING));
+  }
   if ('hooks' in cfg) {
     if (isObj(cfg.hooks)) {
       const r = sanitizeHooks(cfg.hooks);
