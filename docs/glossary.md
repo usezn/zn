@@ -2,7 +2,7 @@
 
 Short meanings of words used in the zn-gate docs.
 
-**Coding agent**: a program such as Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, or the experimental Gemini CLI that reads your files and runs commands for you.
+**Coding agent** (or just **agent**): a program such as Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, or the experimental Gemini CLI that reads your files and runs commands for you.
 
 **Terminal**: the window where you type commands. Run zn-gate's setup commands in your own terminal, not through an agent.
 
@@ -29,6 +29,12 @@ Short meanings of words used in the zn-gate docs.
 **Proxy** (`shield`): a layer that sits between your agent and an MCP server and checks what passes through.
 
 **Prompt injection**: text that tries to make an agent ignore your instructions, for example hidden inside a file or a web page.
+
+**Rule**: one check that zn-gate runs on text or on an action, such as "this looks like an AWS key". When zn-gate blocks something, the message names the rule that fired, for example `(rule: secret-file:dotenv)`. [Why was this blocked?](why-was-this-blocked.md) shows how to read it.
+
+**Policy**: the settings that say which actions zn-gate allows, asks about or blocks. zn-gate's built-in rules apply on every machine. With [zn Team](team.md), an organization can also publish one policy for all its developers. If you are not on a team, you have no team policy.
+
+**Gateway**: the usezn.com service that the optional [cloud check](connect.md) talks to. The local checks never use it. A message that says "Gateway responded with HTTP ..." comes from it.
 
 **Keychain**: the password store of your operating system.
 
@@ -90,13 +96,13 @@ Short meanings of words used in the zn-gate docs.
 
 **Protocol version**: the dated edition of the MCP standard that a client and a server agree to use, for example `2025-11-25`. See [Agent compatibility](compat.md).
 
-**Vault audit log**: the local record of what the vault did, such as which secret was used, unlock and reset. It is the file `~/.zn/audit.jsonl` and never holds secret values. Read it with `zn vault log`. See [Secrets](secrets.md) and [Files and folders](files-and-folders.md).
+**Vault log** (also called the vault audit log): the local record of what the vault did, such as which secret was used, unlock and reset. It is the file `~/.zn/audit.jsonl` and never holds secret values. Read it with `zn vault log`. It is not the evidence log. See [Secrets](secrets.md) and [Files and folders](files-and-folders.md).
 
-**Decision log**: the local record of what zn-gate allowed or blocked. It is the file `~/.zn/evidence.jsonl`, also called the evidence log. Check it with `zn-gate evidence --verify`. See [How the log works](architecture.md).
+**Evidence log** (`evidence`): the local record of what zn-gate decided. It is the file `~/.zn/evidence.jsonl`, with one record for each decision, and each record is chained to the one before it. Some pages and command output call it the decision log or the ledger; it is the same file. Check it with `zn-gate evidence --verify`, and read the last block with `zn-gate why`. It is not the vault log. See [How the log works](architecture.md).
 
 **`zn audit`**: a command that reviews the agent configuration of a repository before you open it. It has nothing to do with the vault audit log. See [Audit](audit.md).
 
-**Hash chain**: a way to make a log tamper-evident. Each record includes a fingerprint of the one before it, so a changed or deleted record breaks the chain. `vault verify` checks the vault audit log and `evidence --verify` checks the decision log.
+**Hash chain**: a way to make a log tamper-evident. Each record includes a fingerprint of the one before it, so a changed or deleted record breaks the chain. `vault verify` checks the vault audit log and `evidence --verify` checks the evidence log.
 
 **SARIF**: a standard JSON format for reports of findings, which code hosts and CI tools can show.
 
@@ -115,8 +121,6 @@ Short meanings of words used in the zn-gate docs.
 **Launcher script**: the small script under `~/.zn/hooks` that an agent's hook goes through. It is shared by every profile of the same agent on your machine, so `hooks uninstall` leaves it in place. See [the command list](cli.md#hooks-uninstall) and [Check that it works](check.md).
 
 **Fail on** (`--fail-on`): the lowest severity of a finding that makes `audit` or `reach` exit with `1`. For `audit` it is `low`, `medium`, `high` (default), `critical` or `none`; for `reach` the default is `none`, so it is a report. See the [command list](cli.md).
-
-**Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [command list](cli.md).
 
 **Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`.
 
