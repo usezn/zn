@@ -205,7 +205,10 @@ pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
             return JsonRpcValidation::Error {
                 id: request.id,
                 code: jsonrpc_error::INVALID_REQUEST,
-                message: format!("Invalid Request: jsonrpc must be '2.0', got '{}'", version),
+                message: format!(
+                    "Invalid Request: jsonrpc must be '2.0', got '{}'",
+                    crate::scrubber::Scrubber::sanitize_for_log(version)
+                ),
             };
         }
     }
@@ -303,6 +306,22 @@ pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_rejected_jsonrpc_version_is_escaped_and_cut_in_the_message() {
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0\nFORGED \u001b[31m{}","id":1,"method":"tools/call","params":{{"name":"x"}}}}"#,
+            "v".repeat(5000)
+        );
+        match validate_jsonrpc(&frame) {
+            JsonRpcValidation::Error { message, .. } => {
+                assert!(!message.chars().any(|c| c.is_control()), "{message:?}");
+                assert!(message.len() < 600, "{}", message.len());
+                assert!(message.contains("[truncated"), "{message}");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
     use super::*;
     use serde_json::json;
 

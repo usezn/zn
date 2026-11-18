@@ -847,6 +847,9 @@ fn iban_valid(raw: &str) -> bool {
     rem == 1
 }
 
+/// Longest client-controlled string kept in a log line, in characters.
+pub const LOG_FIELD_MAX_CHARS: usize = 256;
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -883,6 +886,41 @@ impl Scrubber {
         output = replace_spans(&output, &nanp_spans(&output), "[PHONE_REDACTED]");
 
         output
+    }
+
+    /// Make a string that a client controls safe to put in a log line: control characters (newline, carriage
+    /// return, ESC and the rest of C0/C1, line and paragraph separators, bidi overrides) are written as escapes,
+    /// so a value cannot start a forged log line or drive the terminal, and anything past
+    /// `LOG_FIELD_MAX_CHARS` characters is cut with a marker that says how long it was.
+    pub fn sanitize_for_log(input: &str) -> String {
+        let mut out = String::new();
+        for (n, c) in input.chars().enumerate() {
+            if n >= LOG_FIELD_MAX_CHARS {
+                out.push_str(&format!(
+                    "...[truncated, {} characters in all]",
+                    input.chars().count()
+                ));
+                break;
+            }
+            match c {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control()
+                    || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') =>
+                {
+                    out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    /// What a log line may say about a client-controlled string: redacted like `redact_for_log`, then escaped
+    /// and cut by `sanitize_for_log`.
+    pub fn log_safe(input: &str) -> String {
+        Self::sanitize_for_log(&Self::redact_for_log(input))
     }
 
     /// Redact text before it is written to a log or to the audit database.
@@ -955,6 +993,44 @@ impl Scrubber {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sanitize_for_log_escapes_control_characters() {
+        let out =
+            Scrubber::sanitize_for_log("a\nFORGED line\r\x1b[31mred\x07\t\u{85}\u{2028}\u{202e}b");
+        assert!(!out.chars().any(|c| c.is_control()), "{out:?}");
+        assert!(
+            !out.contains('\u{2028}') && !out.contains('\u{202e}'),
+            "{out:?}"
+        );
+        assert!(out.contains("\\n") && out.contains("\\u{001b}"), "{out:?}");
+        assert_eq!(
+            Scrubber::sanitize_for_log("plain text, 2026-11"),
+            "plain text, 2026-11"
+        );
+    }
+
+    #[test]
+    fn sanitize_for_log_cuts_long_values_with_a_marker() {
+        let long = "v".repeat(2 << 20);
+        let out = Scrubber::sanitize_for_log(&long);
+        assert!(out.len() < 400, "{}", out.len());
+        assert!(out.starts_with(&"v".repeat(LOG_FIELD_MAX_CHARS)));
+        assert!(
+            out.ends_with("[truncated, 2097152 characters in all]"),
+            "{out}"
+        );
+        let exact = "x".repeat(LOG_FIELD_MAX_CHARS);
+        assert_eq!(Scrubber::sanitize_for_log(&exact), exact);
+    }
+
+    #[test]
+    fn log_safe_redacts_before_it_cuts() {
+        let key = "AKIAIOSFODNN7EXAMPLE";
+        let padded = format!("{}{key}", "p".repeat(LOG_FIELD_MAX_CHARS - 4));
+        let out = Scrubber::log_safe(&padded);
+        assert!(!out.contains("AKIAIOS"), "{out}");
+    }
+
     use super::*;
 
     #[test]

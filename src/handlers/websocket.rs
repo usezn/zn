@@ -57,7 +57,10 @@ pub async fn mcp_handler(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
     if !shield::McpShield::validate_origin(origin, &state.config.security.allowed_origins) {
-        tracing::warn!("Blocked Unauthorized WebSocket Origin: {}", origin);
+        tracing::warn!(
+            "Blocked Unauthorized WebSocket Origin: {}",
+            crate::scrubber::Scrubber::log_safe(origin)
+        );
         return (axum::http::StatusCode::FORBIDDEN, "Origin not allowed").into_response();
     }
 

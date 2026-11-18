@@ -1078,8 +1078,11 @@ async fn process_mcp_message(
             // What reaches the logs and the audit database: both come from the
             // message, so they are redacted like the arguments. Matching and
             // forwarding keep using the originals.
-            let tool_log = Scrubber::redact_for_log(&tool_name);
-            let agent_log = Scrubber::redact_for_log(&agent_id_str);
+            // `tool_log` and `agent_log` go in log lines: the client chose both, so they are also escaped and cut.
+            // The audit row keeps the redacted tool name as it was (`tool_audit`).
+            let tool_audit = Scrubber::redact_for_log(&tool_name);
+            let tool_log = Scrubber::log_safe(&tool_name);
+            let agent_log = Scrubber::log_safe(&agent_id_str);
             let rep_key = reputation_key(&memory_namespace, &agent_id_str);
 
             // A tool of an MCP server that was left out when the servers file
@@ -1463,7 +1466,7 @@ async fn process_mcp_message(
                 id: Uuid::new_v4().to_string(),
                 timestamp: Utc::now().to_rfc3339(),
                 event: "TOOL_CALL".to_string(),
-                tool_name: tool_log.clone(),
+                tool_name: tool_audit.clone(),
                 status: status.clone(),
                 policy_match: policy_match.clone(),
                 payload: zn::audit::payload_if_enabled(
@@ -1483,7 +1486,7 @@ async fn process_mcp_message(
             // any TOOL_CALL row exists, so no row says ALLOWED for a denied call.
             let mut audit_written = true;
             if let Some(nn) = nearest_neighbor_entry {
-                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_log, "AUDIT")
+                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_audit, "AUDIT")
                     .with_nearest_neighbor(nn.clone())
                     .with_namespace(&memory_namespace)
                     .with_agent_id(&agent_id_str);
@@ -1566,11 +1569,7 @@ async fn process_mcp_message(
         }
         JsonRpcValidation::PassThrough => Ok(Some(scrubbed_line)),
         JsonRpcValidation::Error { id, code, message } => {
-            log::warning(format!(
-                "JSON-RPC error: {}",
-                Scrubber::redact_for_log(&message)
-            ))
-            .ok();
+            log::warning(format!("JSON-RPC error: {}", Scrubber::log_safe(&message))).ok();
             Ok(Some(jsonrpc_error_response(id, code, &message)))
         }
     }
@@ -1589,7 +1588,11 @@ async fn mcp_ws_handler(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
     if !shield::McpShield::validate_origin(origin, &state.config.security.allowed_origins) {
-        log::warning(format!("Blocked Unauthorized WebSocket Origin: {}", origin)).ok();
+        log::warning(format!(
+            "Blocked Unauthorized WebSocket Origin: {}",
+            Scrubber::log_safe(origin)
+        ))
+        .ok();
         return (axum::http::StatusCode::FORBIDDEN, "Origin not allowed").into_response();
     }
 
