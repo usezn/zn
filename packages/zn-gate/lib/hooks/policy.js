@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.29';
+const POLICY_RULES_VERSION = '2026-11-16.37';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1120,6 +1120,25 @@ const TOO_MANY_TARGETS_NOTICE = {
   deny: 'zn: this command names too many files to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to split the command or run it themselves.',
 };
 
+// Interpreter code that zn cannot read in full (over the scan cap, or a target built with escapes) gets the same decision.
+const UNREADABLE_CODE_NOTICES = {
+  long: {
+    file: 'code too long',
+    ask: 'zn: the code in this command is too long for zn to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+    deny: 'zn: the code in this command is too long for zn to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to split the command or run it themselves.',
+  },
+  name: {
+    file: 'unreadable file name',
+    ask: 'zn: this command writes to a file whose name zn cannot read from the code, so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+    deny: 'zn: this command writes to a file whose name zn cannot read from the code, so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to spell the file name plainly.',
+  },
+  target: {
+    file: 'unclear file target',
+    ask: 'zn: this code writes to a file that zn cannot tell from the code (the name is held in a variable or built at run time), so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+    deny: 'zn: this code writes to a file that zn cannot tell from the code (the name is held in a variable or built at run time), so it cannot check whether it is a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to name the file plainly in the code.',
+  },
+};
+
 // Words that run the next command: the command word is the first one after them (and their options).
 // Each maps to the options that take a value.
 const INSTRUCTION_WRAPPERS = new Map([
@@ -1185,6 +1204,204 @@ function downloadTargets(name, rest) {
   return out;
 }
 
+// Instruction files written by code an interpreter runs from its command line (python -c, node -e). Only a QUOTED
+// file name given straight to a write call counts; a name held in a variable is not followed. Every quantifier is
+// bounded, so the scan is linear in the code (at most ONELINER_CODE_MAX characters of it).
+const ONELINER_CODE_MAX = 20000;
+// The name may hold backslashes (a Windows path: r'.\AGENTS.md', 'C:\\proj\\CLAUDE.md'); they are read as separators.
+// Groups: 1 the string prefix, 2 the quote, 3 the name.
+const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?([rRbBuUfF]{0,2})(['"])([^'"\r\n]{1,300})\2`;
+// A Python f-string with a replacement field ({...}) builds its text when the code runs: it is not a literal name.
+const ONELINER_FSTRING_PREFIX_RE = /^[rR]?[fF][rR]?$/;
+function oneLinerInterpolated(prefix, body) {
+  return ONELINER_FSTRING_PREFIX_RE.test(prefix) && body.includes('{');
+}
+// open('NAME', 'w') and io.open(...): a write only when the mode is a literal holding w, a, x or +.
+// Path('NAME').open('w'), also pathlib.Path(...).
+// Path('NAME').write_text(...) and .write_bytes(...).
+// fs.writeFileSync / writeFile / appendFile(Sync) / createWriteStream, also fs.promises.* and fsp.*.
+let oneLinerPatterns = null;
+/** The python -c / node -e write-call patterns, compiled on first use so a hook that checks no one-liner never builds them. */
+function oneLinerRes() {
+  if (!oneLinerPatterns) {
+    oneLinerPatterns = {
+      ONELINER_PY_OPEN_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])open\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
+      ONELINER_PY_PATH_OPEN_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}open\s{0,20}\(`, 'g'),
+      ONELINER_PY_WRITE_RE: new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}write_(?:text|bytes)\b`, 'g'),
+      PY_OPEN_HEAD: /(?<![A-Za-z0-9_])open\s{0,20}\(/g,
+      PY_METHOD_HEAD: /\.\s{0,20}(?:open|write_text|write_bytes)\s{0,20}\(/g,
+      NODE_OPEN_HEAD: /(?<![A-Za-z0-9_$])openSync\s{0,20}\(|(?:(?<![A-Za-z0-9_$])(?:fs|fsp|promises)|\))\s{0,20}\.\s{0,20}open\s{0,20}\(/g,
+      ONELINER_NODE_OPEN_RE: new RegExp(String.raw`(?:(?<![A-Za-z0-9_$])openSync|(?:(?<![A-Za-z0-9_$])(?:fs|fsp|promises)|\))\s{0,20}\.\s{0,20}open)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
+      NODE_HEAD: /(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(/g,
+      ONELINER_NODE_RE: new RegExp(String.raw`(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g'),
+    };
+  }
+  return oneLinerPatterns;
+}
+// Backslash escapes that spell other characters (\x41, \u0041, \N{...}, octal): the name they build cannot be read without running the code.
+const ONELINER_NAME_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f{]|U[0-9A-Fa-f]|N\{|[0-7]{3})/;
+
+/** A quoted name from one-liner code as a path: Windows separators (single or doubled) become slashes. */
+function oneLinerNamePath(name) {
+  return name.replace(/\\+/g, '/');
+}
+
+// A call's first argument is a plain quoted string (an optional file= keyword and string prefix allowed).
+// An f-string with a replacement field is not one.
+const ONELINER_LITERAL_ARG_RE = /^\s{0,20}(?:file\s{0,20}=\s{0,20})?(?![rR]?[fF][rR]?(['"])[^'"\r\n]{0,300}\{)[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\2\s{0,20}[,)]/;
+
+/**
+ * The top-level arguments of the call whose "(" just ended at `at` (at most 400 characters read). Brackets inside
+ * quoted strings ('...', "...", `...`, with backslash escapes) do not count, so a path such as 'foo)/x' stays one
+ * argument. A string still open at the end of the window leaves the last argument unfinished, which the callers
+ * read as an unknown mode.
+ */
+function callArguments(text, at) {
+  const end = Math.min(text.length, at + 400);
+  const args = [];
+  let depth = 0;
+  let from = at;
+  let closed = at;
+  let quote = null;
+  for (let i = at; i < end; i++) {
+    const ch = text[i];
+    if (quote !== null) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      if (depth === 0) { args.push(text.slice(from, i)); closed = i + 1; return { args, end: closed }; }
+      depth--;
+    } else if (ch === ',' && depth === 0) { args.push(text.slice(from, i)); from = i + 1; }
+  }
+  args.push(text.slice(from, end));
+  return { args, end };
+}
+
+/**
+ * What a Python open call's arguments say about writing: 'write' (a literal mode with w, a, x or +), 'read' (no
+ * mode, or a literal one without them) or 'unknown' (a mode held in a variable or an expression, an unpacked
+ * argument, or a literal that is not a mode). `skip` is how many positional arguments come before the mode.
+ */
+function callModeState(args, skip) {
+  const literal = /^\s{0,20}[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1\s{0,20}$/;
+  let mode = null;
+  let unknown = false;
+  for (const a of args) {
+    if (/^\s{0,20}\*/.test(a)) { unknown = true; continue; }
+    const kw = /^\s{0,20}mode\s{0,20}=(?!=)([\s\S]*)$/.exec(a);
+    if (kw) {
+      const lit = literal.exec(kw[1]);
+      if (lit) mode = lit[2]; else unknown = true;
+    }
+  }
+  if (mode === null && !unknown && args.length > skip) {
+    const a = args[skip];
+    if (/^\s*$/.test(a) || /^\s{0,20}[A-Za-z_][A-Za-z0-9_]{0,40}\s{0,20}=(?!=)/.test(a)) {
+      // no mode given (a keyword such as encoding= is not the mode)
+    } else {
+      const lit = literal.exec(a);
+      if (lit) mode = lit[2]; else unknown = true;
+    }
+  }
+  if (mode !== null && /[wax+]/.test(mode)) return 'write';
+  return unknown ? 'unknown' : 'read';
+}
+
+/** The same for fs.openSync / fs.open: the flags are the second argument ('r' when absent). */
+function nodeFlagsState(args) {
+  if (args.some((a) => /^\s{0,20}\.\.\./.test(a))) return 'unknown';
+  if (args.length < 2 || /^\s*$/.test(args[1])) return 'read';
+  const lit = /^\s{0,20}(['"])([A-Za-z+]{1,3})\1\s{0,20}$/.exec(args[1]);
+  if (!lit) return 'unknown';
+  return /[wax+]/.test(lit[2]) ? 'write' : 'read';
+}
+
+/**
+ * Whether the code calls a recognised write (open with a writing mode, write_text, write_bytes, fs.writeFile and
+ * relatives) on a target that is not a quoted string, so the file it writes cannot be told without running it.
+ */
+function hasUnquotedWriteTarget(kind, text) {
+  const res = oneLinerRes();
+  if (kind === 'node') {
+    for (const m of text.matchAll(res.NODE_HEAD)) {
+      if (!ONELINER_LITERAL_ARG_RE.test(text.slice(m.index + m[0].length, m.index + m[0].length + 340))) return true;
+    }
+    for (const m of text.matchAll(res.NODE_OPEN_HEAD)) {
+      const at = m.index + m[0].length;
+      if (nodeFlagsState(callArguments(text, at).args) !== 'read' && !ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+    }
+    return false;
+  }
+  for (const m of text.matchAll(res.PY_OPEN_HEAD)) {
+    const at = m.index + m[0].length;
+    if (m.index > 0 && text[m.index - 1] === '.') continue; // a method call: handled below
+    const { args } = callArguments(text, at);
+    if (callModeState(args, 1) !== 'read' && !ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+  }
+  for (const m of text.matchAll(res.PY_METHOD_HEAD)) {
+    const at = m.index + m[0].length;
+    const name = /(open|write_text|write_bytes)/.exec(m[0])[1];
+    // open as io.open or codecs.open takes the file first; other receivers (Path(...).open, a variable) give the mode first.
+    const before = text.slice(Math.max(0, m.index - 12), m.index);
+    const fileFirst = name === 'open' && /(?:^|[^A-Za-z0-9_])(?:io|codecs|builtins)$/.test(before);
+    if (name === 'open' && callModeState(callArguments(text, at).args, fileFirst ? 1 : 0) === 'read') continue;
+    if (fileFirst) {
+      if (!ONELINER_LITERAL_ARG_RE.test(text.slice(at, at + 340))) return true;
+    } else if (!/Path\s{0,20}\(\s{0,20}(?![rR]?[fF][rR]?(['"])[^'"\r\n]{0,300}\{)[rRbBuUfF]{0,2}(['"])[^'"\r\n]{1,300}\2\s{0,20}\)\s{0,20}$/.test(text.slice(Math.max(0, m.index - 340), m.index))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The quoted file names that python -c or node -e code writes to (a read, or a name that is not quoted, is left out).
+ * `.undecidable` is set to 'long' when the code is longer than the scan covers, to 'name' when a quoted target is
+ * spelled with escapes that build another name, or to 'target' when a write call names its file in a variable or
+ * expression: none of these can be shown to leave the instruction files alone.
+ */
+function oneLinerWriteTargets(kind, code) {
+  const whole = String(code);
+  const text = whole.slice(0, ONELINER_CODE_MAX);
+  const out = [];
+  if (whole.length > ONELINER_CODE_MAX) out.undecidable = 'long';
+  // One more than the check budget is collected, so a scan the cap cut short reads as over budget downstream.
+  const full = () => out.length > INSTRUCTION_CHECKS_MAX;
+  const res = oneLinerRes();
+  if (kind === 'node') {
+    for (const m of text.matchAll(res.ONELINER_NODE_RE)) { out.push(m[3]); if (full()) break; }
+    // fs.openSync(NAME, flags): flags that are not a literal are as unknown as a mode in a variable.
+    for (const m of text.matchAll(res.ONELINER_NODE_OPEN_RE)) {
+      if (nodeFlagsState(callArguments(text, m.index + m[0].indexOf('(') + 1).args) !== 'read') out.push(m[3]);
+      if (full()) break;
+    }
+  } else if (kind === 'py') {
+    // An f-string with a replacement field is left out here: hasUnquotedWriteTarget reads it as a target it cannot tell.
+    for (const m of text.matchAll(res.ONELINER_PY_WRITE_RE)) {
+      if (!oneLinerInterpolated(m[1], m[3])) out.push(m[3]);
+      if (full()) break;
+    }
+    for (const m of text.matchAll(res.ONELINER_PY_OPEN_RE)) {
+      if (callModeState(callArguments(text, m.index + m[0].indexOf('(') + 1).args, 1) !== 'read' && !oneLinerInterpolated(m[1], m[3])) out.push(m[3]);
+      if (full()) break;
+    }
+    for (const m of text.matchAll(res.ONELINER_PY_PATH_OPEN_RE)) {
+      if (callModeState(callArguments(text, m.index + m[0].length).args, 0) !== 'read' && !oneLinerInterpolated(m[1], m[3])) out.push(m[3]);
+      if (full()) break;
+    }
+  }
+  if (!out.undecidable && (kind === 'node' || kind === 'py') && hasUnquotedWriteTarget(kind, text)) out.undecidable = 'target';
+  for (let i = 0; i < out.length; i++) {
+    if (ONELINER_NAME_ESCAPE_RE.test(out[i]) && !out.undecidable) out.undecidable = 'name';
+    out[i] = oneLinerNamePath(out[i]);
+  }
+  return out;
+}
+
 const PS_COPY_MOVE = new Set(['copy', 'move', 'copy-item', 'move-item']);
 
 /** The value of PowerShell's -Destination (any unambiguous prefix, also -Destination:value), or null. */
@@ -1238,7 +1455,20 @@ function instructionWriteInWords(readings, opts) {
       const at = commandWordAt(seg, progs);
       const candidates = [];
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
-      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
+      const oneLiner = at >= 0 && /^(?:py|python|pypy|node)/.test(progs[at]) ? require('../destructive').interpreterKind(progs[at]) : '';
+      if (oneLiner === 'py' || oneLiner === 'node') {
+        // python -c / node -e: a quoted instruction file name given to a write call in the code.
+        for (const code of require('../destructive').interpreterCode(oneLiner, seg.slice(at + 1).map((x) => x.text))) {
+          const found = oneLinerWriteTargets(oneLiner, code);
+          // A real instruction file named in the code is reported first; code zn cannot read in full is asked about after it.
+          for (const t of found) {
+            const n = instructionWriteNotice(t, opts);
+            if (n) return n;
+          }
+          if (found.undecidable) return UNREADABLE_CODE_NOTICES[found.undecidable];
+          candidates.push(...found);
+        }
+      } else if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
         candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
       } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
         const name = progs[at];

@@ -191,6 +191,10 @@ To avoid the download:
 - `ZN_NEURAL_MODEL_PATH=/path/to/folder` (or `neural.model_path` in `zn.json`): the gateway loads the model from that folder. Nothing is downloaded if the three files there match their hashes, so a local copy must be byte-identical.
 - `HF_ENDPOINT=<your-mirror-url>`: the gateway downloads from that server instead of huggingface.co. The server must serve the same paths, `<endpoint>/sentence-transformers/all-MiniLM-L6-v2/resolve/<commit>/<file>`.
 
+## MCP servers on Windows
+
+A server started with `npx` or `uvx` runs through a `.cmd` file on Windows. The gateway finds it on your `PATH` (using `PATHEXT`), so a bare `npx` works. It does not look in the current folder or in a relative `PATH` entry (such as `.` or `C:bin`), only in absolute ones. The one exception is a gateway started in your home folder: your home folder is not a project, so the current folder is not treated as untrusted there and `PATH` folders under it are searched. If the program is not found, the error names it. Because a `.cmd` file runs through `cmd.exe`, the gateway refuses to start it with an argument that has `&`, `|`, `<`, `>`, `^`, `%`, `(`, `)`, a double quote (`"`), a line break (CR or LF) or a NUL character, and says which one. Spaces are fine.
+
 ## Build it yourself
 
 1. Install the prerequisites:

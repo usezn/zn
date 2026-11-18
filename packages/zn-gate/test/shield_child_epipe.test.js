@@ -87,3 +87,35 @@ test('any other error on the server input stops the shield with exit 1 and stops
   try { process.kill(pid, 0); } catch (_) { alive = false; }
   assert.equal(alive, false, 'the server was left running');
 });
+
+// On macOS a write to a server that has gone can fail with EPROTOTYPE or ECONNRESET instead of EPIPE. Each is the same
+// event: the shield keeps going and passes on the server's own exit code.
+for (const code of ['EPROTOTYPE', 'ECONNRESET']) {
+  test('a ' + code + ' on the server input is a closed input like EPIPE: the server exit code is kept', async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-shield-closed-'));
+    t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    const preload = path.join(home, 'preload.js');
+    fs.writeFileSync(preload, `
+      const cp = require('child_process');
+      const real = cp.spawn;
+      cp.spawn = function (...a) {
+        const c = real.apply(this, a);
+        if (c.stdin) setTimeout(() => c.stdin.emit('error', Object.assign(new Error('write ${code}'), { code: '${code}' })), 200);
+        return c;
+      };
+    `);
+    const r = await new Promise((resolve) => {
+      const p = spawn(process.execPath, [cli, 'shield', '--', process.execPath, '-e', 'setTimeout(() => process.exit(3), 1200)'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: '', NODE_OPTIONS: '--require ' + preload },
+      });
+      let stderr = '';
+      p.stderr.on('data', (d) => { stderr += d; });
+      p.stdout.resume();
+      const timer = setTimeout(() => p.kill('SIGKILL'), 8000);
+      p.on('exit', (c, signal) => { clearTimeout(timer); resolve({ code: c, signal, stderr }); });
+    });
+    assert.doesNotMatch(r.stderr, /Could not send input/, r.stderr);
+    assert.equal(r.code, 3);
+  });
+}

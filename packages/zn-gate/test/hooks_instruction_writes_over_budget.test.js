@@ -76,3 +76,22 @@ test('a command that only reads many files (not a writer) is still allowed', asy
   const env = setup(t);
   assert.equal((await decide(env, 'cat ' + names(100))).decision, 'allow');
 });
+
+// python -c code that opens N files for writing: the scanner collects at most one more than the budget, so a capped
+// scan cannot read as an exact fit.
+const pyOpens = (n, last) => 'python3 -c "' + Array.from({ length: n }, (_, i) => "open('b" + i + "','w')").concat(last ? ["open('" + last + "','w')"] : []).join(';') + '"';
+
+test('python -c: 64 benign write targets are allowed; a protected 65th target asks (deny in strict)', async (t) => {
+  const env = setup(t);
+  assert.equal((await decide(env, pyOpens(64))).decision, 'allow');
+  const r = await decide(env, pyOpens(64, 'CLAUDE.md'));
+  assert.equal(r.decision, 'ask');
+  assert.match(r.reason, /CLAUDE\.md/);
+  const strict = await decide(setup(t, { hooks: { strict: true } }), pyOpens(64, 'CLAUDE.md'));
+  assert.equal(strict.decision, 'deny');
+});
+
+test('python -c: 65 benign write targets are over budget and ask (deny in strict)', async (t) => {
+  assert.equal((await decide(setup(t), pyOpens(65))).decision, 'ask');
+  assert.equal((await decide(setup(t, { hooks: { strict: true } }), pyOpens(65))).decision, 'deny');
+});

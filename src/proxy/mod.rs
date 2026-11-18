@@ -20,6 +20,8 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
+pub mod command;
+
 /// Maximum time to wait for a pong when checking a WebSocket connection.
 const WS_HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -140,7 +142,8 @@ impl McpConnection {
 
             info!(mcp = %name, command = %command, "Spawning MCP server");
 
-            let mut cmd = Command::new(command);
+            let program = Self::program_for_spawn(command, &config.args)?;
+            let mut cmd = Command::new(&program);
             cmd.args(&config.args)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
@@ -261,6 +264,23 @@ impl McpConnection {
             }
         }
         Ok(())
+    }
+
+    /// The program to start. On Windows a bare `npx` or `uvx` is a `.cmd` shim that the standard
+    /// library does not find, so it is looked up on PATH with PATHEXT; a `.cmd` or `.bat` target
+    /// gets no arguments that `cmd.exe` would read as commands. Elsewhere the command is used as is.
+    #[cfg(windows)]
+    fn program_for_spawn(command: &str, args: &[String]) -> Result<String> {
+        let program = command::resolve_for_spawn(command).map_err(|e| anyhow!(e))?;
+        if command::is_batch_file(&program) {
+            command::check_batch_args(&program, args).map_err(|e| anyhow!(e))?;
+        }
+        Ok(program)
+    }
+
+    #[cfg(not(windows))]
+    fn program_for_spawn(command: &str, _args: &[String]) -> Result<String> {
+        Ok(command.to_string())
     }
 
     fn is_safe_env_var(name: &str) -> bool {
@@ -658,6 +678,27 @@ impl McpPool {
 mod tests {
     use super::*;
 
+    /// Serializes tests that read or change process-wide environment variables (PATH).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Restores PATH when dropped, also when the test panics.
+    #[cfg(windows)]
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    #[cfg(windows)]
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(old) => std::env::set_var("PATH", old),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
     #[test]
     fn test_validate_command_allowed() {
         assert!(validate_command("node").is_ok());
@@ -978,6 +1019,7 @@ Content-Length: 0
 
     #[test]
     fn skipped_servers_are_recorded_with_a_reason_and_matched_by_tool_name() {
+        let _env = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("mcp_servers.json");
         std::fs::write(
@@ -1007,6 +1049,7 @@ Content-Length: 0
 
     #[test]
     fn a_server_with_a_disallowed_command_is_skipped_with_a_notice() {
+        let _env = env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("mcp_servers.json");
         std::fs::write(
@@ -1025,6 +1068,7 @@ Content-Length: 0
 
     #[test]
     fn a_broken_servers_file_is_reported_not_hidden() {
+        let _env = env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("mcp_servers.json");
         std::fs::write(&file, "{").expect("write");
@@ -1036,6 +1080,54 @@ Content-Length: 0
             msg.contains("mcp_servers.json") && msg.contains("ends too early"),
             "{msg}"
         );
+    }
+
+    /// Windows only: a bare `npx` is a `.cmd` shim. The proxy must find it on PATH and start it,
+    /// and must refuse an argument that cmd.exe would read as a command.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn a_bare_npx_resolves_to_its_cmd_shim_and_starts() {
+        let _env = env_lock();
+        let dir = std::env::temp_dir().join(format!("zn-npx-shim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("npx.cmd"),
+            "@echo off\r\nset /p line=\r\necho {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"shim\":true}}\r\n",
+        )
+        .unwrap();
+        let old_path = std::env::var_os("PATH");
+        let _restore = PathGuard(old_path.clone());
+        let mut paths = vec![dir.clone()];
+        if let Some(old) = &old_path {
+            paths.extend(std::env::split_paths(old));
+        }
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+
+        let config = |args: Vec<String>| McpServerConfig {
+            command: Some("npx".to_string()),
+            args,
+            env: HashMap::new(),
+            url: None,
+        };
+        let started = McpConnection::connect(
+            "shim",
+            &config(vec!["--name".to_string(), "two words".to_string()]),
+        )
+        .await;
+        let refused = McpConnection::connect("shim", &config(vec!["a&calc".to_string()])).await;
+
+        let mut conn = started.expect("npx.cmd is found through PATH and PATHEXT");
+        let answer = conn.send_request("{}").await.unwrap();
+        conn.shutdown().await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(answer.contains("shim"), "{answer}");
+        let err = refused
+            .err()
+            .expect("an argument with & is refused")
+            .to_string();
+        assert!(err.contains("cmd.exe"), "{err}");
     }
 }
 

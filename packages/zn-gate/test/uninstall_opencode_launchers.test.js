@@ -88,7 +88,8 @@ test('uninstall: the launcher scripts of every agent and the empty folder are re
   for (const d of ['.claude', '.codex', '.cursor', '.gemini']) fs.mkdirSync(path.join(m.home, d), { recursive: true });
   for (const id of ['claude-code', 'codex', 'cursor', 'gemini']) install(m, id);
   // On Windows only Claude Code keeps a launcher script: Codex, Cursor and Gemini CLI get an inline PowerShell command.
-  assert.ok(fs.readdirSync(hooksDir(m)).length >= (process.platform === 'win32' ? 1 : 4));
+  const expected = (process.platform === 'win32' ? ['claude-code'] : ['claude-code', 'codex', 'cursor', 'gemini']).map((id) => 'zn-hook-' + id + '.sh');
+  assert.deepEqual(fs.readdirSync(hooksDir(m)).sort(), expected.sort());
   const dry = io(m);
   assert.equal(await dispatch('uninstall', ['--dry-run'], dry.o), 0);
   assert.ok(dry.out().includes(launcherOf(m, 'claude-code')), dry.out());

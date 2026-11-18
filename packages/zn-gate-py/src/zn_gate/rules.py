@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-16.34
+RULES_VERSION: 2026-11-16.36
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-16.34"
+RULES_VERSION = "2026-11-16.36"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -518,7 +518,41 @@ _IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
 }
 
 
+# Node compiles these patterns with the "iu" flags (simple case folding). Python's
+# re.IGNORECASE also folds dotless i (U+0131) and dotted capital I (U+0130) to "i",
+# which simple case folding does not. The two letters are swapped for a private-use
+# character of the same length (so the {0,N} windows are unchanged) before matching,
+# which gives the same result as Node on raw text. The normalised text, where both
+# letters read as "i", is also checked by evaluate() (it matches the rules on the
+# normalised, stripped and raw views), so texts that use them are still flagged;
+# test_rules_identity_request.py pins this end to end.
+_NO_I_FOLD = str.maketrans({'\u0131': '\ue000', '\u0130': '\ue000'})
+
+
+# The two membership scans and the translation run once per text in one evaluation: both identity rules check the
+# same views, so the result is kept by identity of the text (the entry holds the text, so its id cannot be reused)
+# and dropped when the evaluation ends. Short texts are not kept: their scan costs less than the lookup.
+# Outside an evaluation (a direct call of a tester) nothing is kept, so the table cannot grow without bound.
+_I_FOLD_MEMO: Dict[int, Tuple[str, str]] = {}
+_I_FOLD_MEMO_MIN = 4096
+_i_fold_depth = 0
+
+
+def _no_i_fold(text: str) -> str:
+    if len(text) < _I_FOLD_MEMO_MIN or _i_fold_depth <= 0:
+        if '\u0131' in text or '\u0130' in text:
+            return text.translate(_NO_I_FOLD)
+        return text
+    hit = _I_FOLD_MEMO.get(id(text))
+    if hit is not None and hit[0] is text:
+        return hit[1]
+    out = text.translate(_NO_I_FOLD) if ('\u0131' in text or '\u0130' in text) else text
+    _I_FOLD_MEMO[id(text)] = (text, out)
+    return out
+
+
 def _identity_test(rule_id: str, text: str) -> bool:
+    text = _no_i_fold(text)
     for prefilter in IDENTITY_PREFILTERS[rule_id]:
         if prefilter.search(text) is None:
             return False
@@ -1019,6 +1053,16 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 
 
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
+    global _i_fold_depth
+    _i_fold_depth += 1
+    try:
+        return _evaluate_uncached_views(input_text, strict)
+    finally:
+        _i_fold_depth -= 1
+        _I_FOLD_MEMO.clear()
+
+
+def _evaluate_uncached_views(input_text: str, strict: bool = False) -> Assessment:
     global _folded_cache, _evaluating
     _evaluating += 1
     try:

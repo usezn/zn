@@ -257,10 +257,12 @@ function startMcpShield(command, args, options = {}) {
     process.exit(1);
   });
 
-  // The server can exit (or close its input) while the client is still sending: the write then fails with EPIPE.
+  // The server can exit (or close its input) while the client is still sending: the write then fails with EPIPE
+  // (EPROTOTYPE or ECONNRESET on macOS, where the pipe to the server is a socket pair).
   // That is not an error of its own; the exit handler below passes on the server's exit code.
+  const INPUT_CLOSED_CODES = new Set(['EPIPE', 'EPROTOTYPE', 'ECONNRESET', 'ERR_STREAM_DESTROYED', 'EOF']);
   child.stdin.on('error', (err) => {
-    if (err && (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED' || err.code === 'EOF')) {
+    if (err && INPUT_CLOSED_CODES.has(err.code)) {
       log(`Wrapped server stopped reading its input (${err.code})`);
       process.stdin.pause();
       return;
