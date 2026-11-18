@@ -1,6 +1,7 @@
 """The messages printed for commands that live only in the npm package."""
 import re
 import unittest
+from unittest import mock
 
 from zn_gate.cli import (
     NPM_ONLY_COMMANDS,
@@ -21,6 +22,13 @@ class TestNpmOnlyMessage(unittest.TestCase):
             self.assertIn("is in the npm package", msg)
             self.assertIn(npx_name() + " -y zn-gate init", msg)
             self.assertTrue(msg.endswith("\n"), repr(msg))
+
+    def test_message_names_gemini_cli(self):
+        for available in (True, False):
+            with mock.patch("zn_gate.cli.node_available", return_value=available):
+                for cmd in sorted(NPM_ONLY_COMMANDS):
+                    msg = npm_only_message(cmd)
+                    self.assertIn("experimental Gemini CLI", msg, msg)
 
 
 class TestNpmOnlySimpleMessage(unittest.TestCase):

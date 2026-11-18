@@ -960,7 +960,7 @@ def npm_only_message(command: str) -> str:
             f"zn-gate {command} is in the npm package, not in this Python package.\n"
             "The Python package protects agents you build yourself (LangChain, CrewAI, "
             "LlamaIndex or plain tool calling).\n"
-            "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, "
+            "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI, "
             "install Node.js 18 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
             "from https://nodejs.org, then follow the install steps at https://github.com/usezn/zn#install\n"
         )
@@ -968,7 +968,7 @@ def npm_only_message(command: str) -> str:
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
         "LlamaIndex or plain tool calling).\n"
-        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, run this in your own "
+        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI, run this in your own "
         "terminal (it needs Node.js 18 or later):\n"
         f"  {npx_name()} -y zn-gate init\n"
     )
