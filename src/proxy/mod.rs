@@ -101,7 +101,7 @@ impl McpConnection {
 
             loop {
                 attempts += 1;
-                info!(mcp = %name, url = %url, attempt = attempts, "Connecting to MCP via WebSocket");
+                info!(mcp = %name, url = %crate::webhooks::redact_url(url), attempt = attempts, "Connecting to MCP via WebSocket");
 
                 match connect_async(url).await {
                     Ok((ws_stream, _)) => {
@@ -116,7 +116,7 @@ impl McpConnection {
                             error!(mcp = %name, "Failed to connect after {} attempts: {}", max_attempts, e);
                             return Err(anyhow!(crate::user_errors::mcp_not_reached(
                                 name,
-                                url,
+                                &crate::webhooks::redact_url(url),
                                 max_attempts,
                                 &e.to_string()
                             )));

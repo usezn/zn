@@ -9,6 +9,46 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+/// A URL as it is safe to print: scheme and host only. A webhook URL is a
+/// secret (the path or query usually holds the token), and user info before
+/// the host can hold a password. Anything that does not look like a URL with
+/// a scheme prints as `<redacted>`.
+pub fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.trim().split_once("://") else {
+        return "<redacted>".to_string();
+    };
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+    {
+        return "<redacted>".to_string();
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    if host.is_empty() {
+        return "<redacted>".to_string();
+    }
+    if end < rest.len() {
+        format!("{scheme}://{host}/<redacted>")
+    } else {
+        format!("{scheme}://{host}")
+    }
+}
+
+/// The log line for a webhook that could not be sent: the redacted URL and the
+/// error, which `send_webhook` has already stripped of the request URL.
+fn send_failure_line(url: &str, err: &anyhow::Error) -> String {
+    format!("Failed to send webhook to {}: {}", redact_url(url), err)
+}
+
+/// The log line for a webhook that answered with a non-success status: the
+/// redacted URL and the status only, never the response body.
+fn bad_status_line(url: &str, status: reqwest::StatusCode) -> String {
+    format!("Webhook to {} returned status {}", redact_url(url), status)
+}
+
 /// Alerts the gateway keeps waiting for the dispatcher. A full queue drops the new alert.
 pub const INCOMING_QUEUE_CAPACITY: usize = 1024;
 /// Alerts kept waiting for one endpoint. A slow endpoint fills only its own queue.
@@ -151,7 +191,7 @@ impl WebhookManager {
             tokio::spawn(async move {
                 while let Some(alert) = endpoint_rx.recv().await {
                     if let Err(e) = worker.send_webhook(&worker_config, &alert).await {
-                        error!("Failed to send webhook to {}: {}", worker_config.url, e);
+                        error!("{}", send_failure_line(&worker_config.url, &e));
                     }
                 }
             });
@@ -176,7 +216,7 @@ impl WebhookManager {
                         note_dropped("the queue of an endpoint");
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        warn!("Webhook worker for {} has stopped", config.url);
+                        warn!("Webhook worker for {} has stopped", redact_url(&config.url));
                     }
                 }
             }
@@ -201,17 +241,13 @@ impl WebhookManager {
             .timeout(config.timeout())
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(reqwest::Error::without_url)?;
 
         if response.status().is_success() {
-            info!("Webhook sent successfully to {}", config.url);
+            info!("Webhook sent successfully to {}", redact_url(&config.url));
         } else {
-            warn!(
-                "Webhook to {} returned status {}: {}",
-                config.url,
-                response.status(),
-                response.text().await.unwrap_or_default()
-            );
+            warn!("{}", bad_status_line(&config.url, response.status()));
         }
 
         Ok(())
@@ -486,6 +522,64 @@ mod tests {
         let (mgr, _rx) = WebhookManager::new(vec![]);
         assert!(mgr.send_webhook(&config, &alert("DENIED")).await.is_ok());
         assert_eq!(bodies.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn redact_url_keeps_scheme_and_host_only() {
+        assert_eq!(redact_url("https://example.com"), "https://example.com");
+        assert_eq!(
+            redact_url("https://example.com/"),
+            "https://example.com/<redacted>"
+        );
+        assert_eq!(
+            redact_url("https://user:fake-pass@example.com:8443/a/b?c=d#e"),
+            "https://example.com:8443/<redacted>"
+        );
+        assert_eq!(
+            redact_url("https://example.com?token=fake"),
+            "https://example.com/<redacted>"
+        );
+        assert_eq!(redact_url("fake-token-without-scheme"), "<redacted>");
+        assert_eq!(redact_url(""), "<redacted>");
+        assert_eq!(redact_url("https:///path-only"), "<redacted>");
+    }
+
+    #[test]
+    fn bad_status_line_has_no_url_path_query_or_body() {
+        let url = "https://user:fake-pass@hooks.example.com/services/fake-token?key=fake-secret";
+        let line = bad_status_line(url, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            line,
+            "Webhook to https://hooks.example.com/<redacted> returned status 500 Internal Server Error"
+        );
+        for secret in ["fake-pass", "fake-token", "fake-secret", "services"] {
+            assert!(!line.contains(secret), "{line}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failure_line_has_no_url_path_or_query() {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let url = format!("http://127.0.0.1:{port}/hook/fake-token?key=fake-secret");
+        let config = cfg(&url, WebhookType::Generic);
+        let (mgr, _rx) = WebhookManager::new(vec![]);
+        let err = mgr
+            .send_webhook(&config, &alert("DENIED"))
+            .await
+            .unwrap_err();
+        let line = send_failure_line(&url, &err);
+        for secret in ["fake-token", "fake-secret", "/hook", "key="] {
+            assert!(!line.contains(secret), "{line}");
+        }
+        assert!(
+            line.starts_with(&format!(
+                "Failed to send webhook to http://127.0.0.1:{port}/<redacted>: "
+            )),
+            "{line}"
+        );
     }
 
     #[tokio::test]

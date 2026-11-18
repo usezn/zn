@@ -440,7 +440,7 @@ impl SiemExporter {
                 false
             }
             Err(e) => {
-                error!("SIEM export network error: {}", e);
+                error!("SIEM export network error: {}", e.without_url());
                 false
             }
         }
@@ -449,6 +449,20 @@ impl SiemExporter {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn network_error_log_line_has_no_url() {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let url = format!("http://127.0.0.1:{port}/ingest/fake-token?key=fake-secret");
+        let err = reqwest::Client::new().post(&url).send().await.unwrap_err();
+        let shown = err.without_url().to_string();
+        for secret in ["fake-token", "fake-secret", "/ingest", "127.0.0.1"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
+    }
+
     #[test]
     fn endpoint_log_line_has_no_credentials_path_or_query() {
         let shown = super::endpoint_for_log(
