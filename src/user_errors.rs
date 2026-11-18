@@ -214,6 +214,13 @@ pub fn mcp_file_unreadable(file: &str, reason: &str) -> String {
     )
 }
 
+/// The MCP servers file names one server twice: zn cannot tell which entry is meant, so it refuses the whole file.
+pub fn mcp_server_duplicate(server: &str, file: &str) -> String {
+    format!(
+        "zn could not read the MCP servers file {file}: the server \"{server}\" is listed more than once. Keep one entry for it and remove the other. No MCP servers are loaded from it until it is fixed."
+    )
+}
+
 /// A WebSocket MCP server did not answer.
 pub fn mcp_not_reached(server: &str, url: &str, attempts: u32, reason: &str) -> String {
     format!(

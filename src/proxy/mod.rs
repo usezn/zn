@@ -317,6 +317,43 @@ async fn read_upstream_line<R: AsyncBufRead + Unpin>(
 /// A connection slot: empty until the first successful connect.
 type ConnectionSlot = Arc<Mutex<Option<McpConnection>>>;
 
+/// The top level of an MCP servers file, read only for the names of its servers.
+#[derive(Deserialize)]
+struct RawServersFile {
+    #[serde(rename = "mcpServers", default)]
+    servers: Option<ServerNames>,
+}
+
+/// The names of the entries of "mcpServers", in file order (values are skipped).
+struct ServerNames(Vec<String>);
+
+impl<'de> Deserialize<'de> for ServerNames {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct NamesVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for NamesVisitor {
+            type Value = ServerNames;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object of MCP servers")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<ServerNames, A::Error> {
+                let mut names = Vec::new();
+                while let Some((name, _)) = map.next_entry::<String, serde::de::IgnoredAny>()? {
+                    names.push(name);
+                }
+                Ok(ServerNames(names))
+            }
+        }
+
+        deserializer.deserialize_map(NamesVisitor)
+    }
+}
+
 /// Pool of MCP server connections
 pub struct McpPool {
     /// Server configurations
@@ -453,6 +490,18 @@ impl McpPool {
             };
             anyhow!(crate::user_errors::mcp_file_unreadable(path, &reason))
         })?;
+
+        // serde_json keeps only the last of two equal keys, so the names are checked before that happens.
+        // A file that is valid JSON but not shaped like this (no object of servers) has no names to check.
+        if let Some(ServerNames(names)) = serde_json::from_str::<RawServersFile>(&content)
+            .ok()
+            .and_then(|raw| raw.servers)
+        {
+            let mut seen = std::collections::HashSet::new();
+            if let Some(dup) = names.iter().find(|n| !seen.insert(n.as_str())) {
+                return Err(anyhow!(crate::user_errors::mcp_server_duplicate(dup, path)));
+            }
+        }
 
         let mut configs = HashMap::new();
         let mut notices = Vec::new();
@@ -1036,6 +1085,45 @@ Content-Length: 0
             msg.contains("mcp_servers.json") && msg.contains("ends too early"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn a_duplicate_server_name_refuses_the_file_and_names_the_server() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers": {
+                "docs": {"command": "npx", "args": ["first"]},
+                "other": {"command": "npx"},
+                "docs": {"command": "npx", "args": ["second"]}
+            }}"#,
+        )
+        .expect("write");
+        let err = McpPool::from_config_file(file.to_str().expect("utf8"))
+            .err()
+            .expect("a duplicate name must not load");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("\"docs\"") && msg.contains("more than once"),
+            "{msg}"
+        );
+        assert!(msg.contains("mcp_servers.json"), "{msg}");
+    }
+
+    #[test]
+    fn distinct_server_names_still_load() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers": {"docs": {"command": "npx"}, "other": {"command": "npx"}}}"#,
+        )
+        .expect("write");
+        let pool = McpPool::from_config_file(file.to_str().expect("utf8")).expect("loads");
+        let mut names = pool.list_mcps();
+        names.sort();
+        assert_eq!(names, vec!["docs".to_string(), "other".to_string()]);
     }
 }
 
