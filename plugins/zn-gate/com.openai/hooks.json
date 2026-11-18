@@ -2,9 +2,17 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(Bash|apply_patch)$",
+        "matcher": "^(Bash|apply_patch|mcp__.+)$",
         "hooks": [
           { "type": "command", "command": "/bin/sh \"$PLUGIN_ROOT/scripts/zn-node.sh\" PreToolUse hook codex", "commandWindows": "echo zn: the zn-gate plugin does not run on Windows, so this call was blocked. Turn the plugin off and use zn hooks install codex instead. 1>&2 & exit 2", "timeout": 30, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "^(Bash|apply_patch|mcp__.+)$",
+        "hooks": [
+          { "type": "command", "command": "/bin/sh \"$PLUGIN_ROOT/scripts/zn-node.sh\" PermissionRequest hook codex", "commandWindows": "echo zn: the zn-gate plugin does not run on Windows, so this call was blocked. Turn the plugin off and use zn hooks install codex instead. 1>&2 & exit 2", "timeout": 30, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],

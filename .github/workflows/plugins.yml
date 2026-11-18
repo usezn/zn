@@ -114,6 +114,9 @@ jobs:
       - name: Claude Code plugin hook tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-claude-plugin-hooks.js
+      - name: Plugin and init parity tests
+        if: steps.scope.outputs.run == 'true'
+        run: node plugins/tools/test-plugin-init-parity.js
       - name: Pin commit lookup tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-pin-commit.js
