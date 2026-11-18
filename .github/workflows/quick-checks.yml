@@ -157,6 +157,9 @@ jobs:
       - name: Workflow header - every workflow starts with a comment line
         if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
         run: node .github/scripts/check-workflow-first-line.mjs
+      - name: Trusted CI files guard - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/trusted-ref-guard.test.mjs
       # Workflow timeouts: every job of a workflow sets timeout-minutes (a stuck job would run for 6 hours).
       - name: Workflow timeouts - test the check
         if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}

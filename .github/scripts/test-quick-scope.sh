@@ -85,6 +85,7 @@ check pull_request next .github/scripts/check-changelog-dates.mjs "changelog mar
 check pull_request next .github/scripts/check-workflow-header.mjs "changelog wfheader"
 check pull_request next .github/scripts/check-workflow-first-line.mjs "changelog wfheader"
 check pull_request next .github/scripts/changed-workflows-summary.mjs "changelog wfheader"
+check pull_request next .github/scripts/trusted-ref-guard.mjs "changelog wfheader"
 check pull_request next .github/scripts/check-timeouts.mjs "changelog timeouts"
 check pull_request next .github/scripts/check-workflow-format.mjs "changelog wfformat"
 check pull_request next action.yml "changelog markdownlint actioninputs"

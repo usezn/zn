@@ -106,7 +106,7 @@ while IFS= read -r f; do
     *.sh) run[shellcheck]=true ;;
   esac
   case "$f" in
-    .github/workflows/*|.github/scripts/check-workflow-header*|.github/scripts/check-workflow-first-line*|.github/scripts/changed-workflows-summary*) run[wfheader]=true ;;
+    .github/workflows/*|.github/scripts/check-workflow-header*|.github/scripts/check-workflow-first-line*|.github/scripts/changed-workflows-summary*|.github/scripts/trusted-ref-guard*) run[wfheader]=true ;;
   esac
   case "$f" in
     .github/workflows/*|.github/scripts/check-timeouts*|.github/scripts/check-heavy-jobs-gating*) run[timeouts]=true ;;
