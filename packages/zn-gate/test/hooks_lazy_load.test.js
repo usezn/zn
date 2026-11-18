@@ -91,13 +91,13 @@ test('the compile cache is skipped when the directory is open to other users', {
   assert.equal(cc.enable({ ZN_HOME: home }), null);
 });
 
-test('the compile cache is skipped when its directory is a link, or when turned off', { skip: process.platform === 'win32' }, () => {
+test('the compile cache is skipped when its directory is a link, or when turned off', () => {
   const base = tmp();
   const elsewhere = path.join(base, 'elsewhere');
   fs.mkdirSync(elsewhere, { mode: 0o700 });
   const home = path.join(base, 'zhome');
   fs.mkdirSync(path.join(home, 'cache'), { recursive: true, mode: 0o700 });
-  fs.symlinkSync(elsewhere, path.join(home, 'cache', 'compile'));
+  fs.symlinkSync(elsewhere, path.join(home, 'cache', 'compile'), process.platform === 'win32' ? 'junction' : undefined); // a junction needs no privilege on Windows
   assert.equal(cc.enable({ ZN_HOME: home }), null);
   assert.equal(cc.enable({ ZN_HOME: path.join(base, 'other'), ZN_NO_COMPILE_CACHE: '1' }), null);
 });

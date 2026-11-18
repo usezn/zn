@@ -343,12 +343,14 @@ test('rule files deep in .amazonq/rules are recorded; a folder below the search 
   assert.ok(Object.keys(s).some((k) => k.startsWith('.amazonq/rules/a/b/c/d/e/f/g/h') && k.endsWith('#unreadable')), 'past the depth is recorded');
 });
 
-test('a symlinked rules subfolder is followed inside the project and recorded when it leaves it', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, (t) => {
+test('a symlinked rules subfolder is followed inside the project and recorded when it leaves it', (t) => {
   const dir = project(t, { 'docs/rules/team.md': '# Team\n', '.amazonq/rules/own.md': '# Own\n' });
-  fs.symlinkSync(path.join(dir, 'docs/rules'), path.join(dir, '.amazonq/rules/linked'));
+  // A directory junction stands in for a symbolic link on Windows: it needs no privilege.
+  const linkType = process.platform === 'win32' ? 'junction' : undefined;
+  fs.symlinkSync(path.join(dir, 'docs/rules'), path.join(dir, '.amazonq/rules/linked'), linkType);
   const outside = tempDir(t, 'zn-baseline-out-');
   fs.writeFileSync(path.join(outside, 'x.md'), '# X\n');
-  fs.symlinkSync(outside, path.join(dir, '.amazonq/rules/away'));
+  fs.symlinkSync(outside, path.join(dir, '.amazonq/rules/away'), linkType);
   const s = extractSurface(dir);
   assert.ok(s['.amazonq/rules/linked/team.md#file'], 'a link inside the project is followed');
   assert.ok(s['.amazonq/rules/away#unreadable'], 'a link leaving the project is recorded');
@@ -367,11 +369,12 @@ test('past the cap a content change is found even with the same size and the old
   assert.notEqual(extractSurface(dir)['.opencode/plugin#over-cap'], before);
 });
 
-test('links back to a folder already walked are recorded once and not walked again', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, (t) => {
+test('links back to a folder already walked are recorded once and not walked again', (t) => {
   const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
   const rules = path.join(dir, '.amazonq/rules');
-  for (let i = 0; i < 10; i++) fs.symlinkSync(rules, path.join(rules, 'loop' + i));
-  fs.symlinkSync(path.join(dir, '.amazonq'), path.join(rules, 'team', 'up'));
+  const linkType = process.platform === 'win32' ? 'junction' : undefined; // a directory junction needs no privilege on Windows
+  for (let i = 0; i < 10; i++) fs.symlinkSync(rules, path.join(rules, 'loop' + i), linkType);
+  fs.symlinkSync(path.join(dir, '.amazonq'), path.join(rules, 'team', 'up'), linkType);
   const started = Date.now();
   const s = extractSurface(dir);
   assert.ok(Date.now() - started < 5000, 'the walk stays fast');

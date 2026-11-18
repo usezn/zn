@@ -60,11 +60,12 @@ test('realTargetOf keeps missing names as typed below an existing directory', ()
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('realTargetOf resolves a symlinked directory, also for a file not yet created', { skip: process.platform === 'win32' }, () => {
+test('realTargetOf resolves a symlinked directory, also for a file not yet created', () => {
   const dir = tmp();
   try {
     fs.mkdirSync(path.join(dir, 'real'));
-    fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'));
+    // A directory junction stands in for a symbolic link on Windows: it needs no privilege.
+    fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'), process.platform === 'win32' ? 'junction' : undefined);
     assert.equal(realTargetOf(path.join(dir, 'link', 'new.txt')), path.join(dir, 'real', 'new.txt'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

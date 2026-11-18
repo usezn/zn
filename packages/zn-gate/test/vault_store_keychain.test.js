@@ -136,12 +136,12 @@ test('ensurePrivateDir closes a directory that was open to group and others', { 
   assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
 });
 
-test('ensurePrivateDir refuses a symbolic link in place of a directory', { skip: !POSIX && 'symlinks need privileges on Windows' }, (t) => {
+test('ensurePrivateDir refuses a symbolic link in place of a directory', (t) => {
   const home = tmpHome(t);
   const real = path.join(home, 'real');
   fs.mkdirSync(real);
   const link = path.join(home, 'link');
-  fs.symlinkSync(real, link);
+  fs.symlinkSync(real, link, POSIX ? undefined : 'junction'); // a junction needs no privilege on Windows
   assert.throws(() => store.ensurePrivateDir(link), (e) => e.code === 'ZN_POLICY_DENIED' && /not a directory/.test(e.message));
 });
 

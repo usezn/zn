@@ -84,11 +84,12 @@ test('an error while checking a task blocks it', () => {
   assert.equal(copilot.commandScan(input, 42).bad, true);
 });
 
-test('a task folder that does not exist yet stays inside a workspace reached through a link', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, (t) => {
+test('a task folder that does not exist yet stays inside a workspace reached through a link', (t) => {
   const real = tempDir(t, 'zn-task-real-');
   const linkParent = tempDir(t, 'zn-task-link-');
   const ws = require('path').join(linkParent, 'ws');
-  require('fs').symlinkSync(real, ws);
+  // A directory junction stands in for a symbolic link on Windows: it needs no privilege.
+  require('fs').symlinkSync(real, ws, process.platform === 'win32' ? 'junction' : undefined);
   const r = copilot.commandScan({ task: { label: 'x', type: 'shell', command: 'echo hello', options: { cwd: '${workspaceFolder}/new/sub' } } }, ws);
   assert.equal(r.bad, false);
   const out = copilot.commandScan({ task: { label: 'x', type: 'shell', command: 'echo hello', options: { cwd: '${workspaceFolder}/../elsewhere' } } }, ws);
