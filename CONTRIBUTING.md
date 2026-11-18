@@ -33,7 +33,7 @@ A short list of what a pull request needs. Each step points to the section below
 1. Have Node.js 20.19 or later and Python 3.10 or later ([Prerequisites](#prerequisites)). Users of zn-gate need only Node.js 18.
 2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
 3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
-4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
+4. If you changed the Python package, run its tests too: `python3 -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
 5. If you changed a detection rule, change it in both packages, add a positive and a negative test case, and bump the version ([Adding New Rules](#adding-new-rules), [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
 6. If users will notice the change, add a fragment file in `changelog.d/` and leave `CHANGELOG.md` alone ([Changelog](#changelog)).
 7. Update the docs that the change touches, and keep any marked snippet runnable ([Runnable doc snippets](#runnable-doc-snippets)).
@@ -51,8 +51,19 @@ A short list of what a pull request needs. Each step points to the section below
 
 ### Prerequisites
 - Node.js 20.19 or later, to work on the repository. The Markdown lint and the plugin launch test (`node plugins/tools/test-launch.js`) need it, and they fail on Node.js 18. Users of zn-gate need only Node.js 18 or later; that is the `engines` value of the package. Ubuntu's own `nodejs` package is version 18, which is too old here: install a newer one with [nvm](https://github.com/nvm-sh/nvm#installing-and-updating) (`nvm install 22`) or with the [NodeSource](https://github.com/nodesource/distributions) setup script.
-- Python >= 3.10
+- Python >= 3.10, with `venv` and `pip` (on Debian and Ubuntu: `sudo apt install python3-venv python3-pip`)
 - (Optional, legacy Rust gateway) Rust stable, `protoc` 29 or later
+
+### Python environment
+
+Create a virtual environment once, and activate it in every new terminal before you run a Python command. Debian and Ubuntu have no `python` command, no `pip` and an externally managed system Python; the environment gives you all three.
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+```
+
+On Windows PowerShell, run `python -m venv .venv` and then `.venv\Scripts\Activate.ps1`, and use `python` where this page says `python3`.
 
 ### Running Tests Locally
 
@@ -66,7 +77,7 @@ This runs the full unit test suite, shield proxy tests, auto-shielding init test
 #### Python (`packages/zn-gate-py`)
 ```bash
 cd packages/zn-gate-py
-python -m pip install -e .
+python3 -m pip install -e .
 python -m pytest tests/ -v
 ```
 
@@ -107,13 +118,13 @@ Windows notes: use PowerShell, and run each command on its own line (Windows Pow
 | Check | Commands | Linux and macOS | Windows (PowerShell) |
 | --- | --- | --- | --- |
 | Node.js 18, 22 and 24 tests and benchmarks | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/integration/test_agent_workflows.js`; then, from the root, `node bench/bench_node.js` | Same | Same. Only your installed Node.js version runs; CI runs 18, 22 and 24. |
-| Python 3.12 tests and benchmarks | `python -m pip install --require-hashes -r .github/ci-test-requirements.txt`, `python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py`, `cd packages/zn-gate-py`, `python -m pytest tests/ -v`; then, from the root, `python bench/bench_python.py` | Same | Same |
+| Python 3.12 tests and benchmarks | `python3 -m pip install --require-hashes -r .github/ci-test-requirements.txt`, `python3 -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py`, `cd packages/zn-gate-py`, `python -m pytest tests/ -v`; then, from the root, `python bench/bench_python.py` | Same | Same |
 | Lint (eslint, ruff, mypy) | See the Lint commands below | Same | Same, with `eslint.cmd` |
 | Public facts | `node .github/scripts/check-public-facts.mjs`, `cd packages/zn-gate`, `npm run check:rules`; for a pull request also `git fetch origin next` and `node .github/scripts/check-rule-versions.mjs origin/next` | Same | Same |
 | leak bench | `bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh`, `node packages/zn-gate/test/fixtures/benign/build_manifest.js --verify`, `node bench/rules_fp_gate.js`, `node packages/zn-gate/test/fixtures/fake_secrets.js --selftest`, `node bench/leak_bench.js --require-engine --json leak_bench_results.json` | Same | The corpus download is a bash script (needs `bash`, `curl`, `tar`): run it in Git Bash, or let CI run this check. The `node` commands run in PowerShell. |
 | Windows (Node.js 22) | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/vault.test.js`; then, from the root, `node plugins/tools/test-launch.js` | Same | Same, with Node.js 22 installed. This is the check that runs the suite on Windows; the native keychain step of `node test/vault.test.js` needs `ZN_TEST_NATIVE_KEYCHAIN=1` and runs only in CI. |
 | scrubber + vault | `cd packages/zn-gate`, `npm ci --ignore-scripts`, then `node test/contract.test.js`, `node test/scrub_patterns.test.js`, `node test/scrub_structured.test.js`, `node test/scrub_exact.test.js`, `node test/scrub_engine.test.js`, `node test/vault.test.js` | Same | Same. The CLI smoke step and the native keychain steps run only in CI. |
-| Python package (build, twine check, install) | `python -m build --no-isolation packages/zn-gate-py --outdir dist-check`, `python -m twine check --strict dist-check/*`, `python -I .github/scripts/check-python-pack.py dist-check/*.whl dist-check/*.tar.gz` | Needs `build` and `twine` installed | Runs in CI. The workflow also rebuilds twice and compares checksums with bash tools. |
+| Python package (build, twine check, install) | `python -m build --no-isolation packages/zn-gate-py --outdir dist-check`, `python -m twine check --strict dist-check/*`, `python -I .github/scripts/check-python-pack.py dist-check/*.whl dist-check/*.tar.gz` | Install the tools first with `python3 -m pip install build twine` | Runs in CI. The workflow also rebuilds twice and compares checksums with bash tools. |
 | npm package (pack, inspect, install) | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm pack --json --pack-destination <dir> > <dir>/pack.json`, then from the root `node .github/scripts/check-npm-pack.js <dir>/pack.json packages/zn-gate` | Same | Runs in CI. The workflow checks the tarball with bash. |
 | build, test, clippy, fmt (Rust) | `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, `cargo test --locked` | Needs Rust stable and `protoc` 29 or later | Same commands, if you install Rust and `protoc`. CI runs them on Ubuntu. |
 
@@ -127,7 +138,7 @@ npm ci --ignore-scripts
 cd ../../packages/zn-gate
 ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
 cd ../zn-gate-py
-python -m pip install --require-hashes -r ../../.github/ci-test-requirements.txt
+python3 -m pip install --require-hashes -r ../../.github/ci-test-requirements.txt
 python -m ruff check .
 python -m mypy
 python -m mypy --strict src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py src/zn_gate/client.py src/zn_gate/evidence.py typing_check/check_public_api.py
