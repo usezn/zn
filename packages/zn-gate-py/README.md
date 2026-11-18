@@ -244,20 +244,36 @@ def query_knowledge_base(query: str) -> str:
 
 Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it, and the OpenAI Agents SDK and Pydantic AI helpers say which package to install if it is missing (`pip install openai-agents` or `pip install pydantic-ai`).
 
+Google ADK, with google-adk installed:
+
 ```python
-from zn_gate.integrations import adk_tool_callbacks, openai_agents_tool_guardrails, guard_pydantic_ai_toolset
+from zn_gate.integrations import adk_tool_callbacks
 
-# Google ADK: LlmAgent(..., before_tool_callback=before, after_tool_callback=after)
+# LlmAgent(..., before_tool_callback=before, after_tool_callback=after)
 before, after = adk_tool_callbacks()
-
-# OpenAI Agents SDK: @function_tool(tool_input_guardrails=inputs, tool_output_guardrails=outputs)
-# (the same lists also go on MCPServerStdio and the other MCP servers)
-inputs, outputs = openai_agents_tool_guardrails()
-
-# Pydantic AI: Agent(model, toolsets=[guard_pydantic_ai_toolset(toolset)])
 ```
 
-All three take `on_block` (`"return"` by default: the model gets a zn-gate message instead of the tool's result; `"raise"` stops the run), `mask_secrets`, `check_result`, `block_truncated` and `fallback`. Verified against google-adk 2.12.0, openai-agents 0.24.0 and pydantic-ai-slim 2.58.0.
+OpenAI Agents SDK, with openai-agents installed:
+
+```python
+from zn_gate.integrations import openai_agents_tool_guardrails
+
+# @function_tool(tool_input_guardrails=inputs, tool_output_guardrails=outputs)
+# (the same lists also go on MCPServerStdio and the other MCP servers)
+inputs, outputs = openai_agents_tool_guardrails()
+```
+
+Pydantic AI, with pydantic-ai installed:
+
+```python
+from zn_gate.integrations import guard_pydantic_ai_toolset
+
+# Agent(model, toolsets=[guard_pydantic_ai_toolset(toolset)])
+```
+
+All three take `on_block` (`"return"` by default: the model gets a zn-gate message instead of the tool's result; `"raise"` stops the run), `mask_secrets`, `check_result`, `block_truncated` and `fallback`. Verified against google-adk 2.14.1, openai-agents 0.25.0 and pydantic-ai-slim 2.70.0 on Python 3.12 and 3.14. The same check also passed on the latest LangChain (langchain 1.5.1), LlamaIndex (llama-index-core 0.14.26) and CrewAI (crewai 1.15.42) integrations.
+
+The OpenAI Agents SDK sends traces of its runs to OpenAI by default; set `OPENAI_AGENTS_DISABLE_TRACING=1` in the environment to turn that off.
 
 What is not covered:
 
