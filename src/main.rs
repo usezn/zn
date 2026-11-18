@@ -698,7 +698,10 @@ async fn start_proxy(args: Args) -> Result<()> {
                     .to_string(),
             ),
             zn::bounded_line::BoundedLine::Line(line) => {
-                process_mcp_message(&line, &state, None).await.ok().flatten()
+                zn::panic_guard::deny_on_panic(&line, process_mcp_message(&line, &state, None))
+                    .await
+                    .ok()
+                    .flatten()
             }
         };
         if let Some(response) = response {
@@ -1632,7 +1635,12 @@ async fn handle_ws_socket(
 
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
-            match process_mcp_message(&text, &state, Some(namespace.clone())).await {
+            match zn::panic_guard::deny_on_panic(
+                &text,
+                process_mcp_message(&text, &state, Some(namespace.clone())),
+            )
+            .await
+            {
                 Ok(Some(response)) => {
                     if let Err(e) = sender.send(Message::Text(response.into())).await {
                         tracing::error!("WS send error: {}", e);

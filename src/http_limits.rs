@@ -388,7 +388,9 @@ pub async fn serve_limited(listener: TcpListener, app: Router, limits: ServeLimi
             limits.body_idle_timeout,
             body_idle_timeout,
         ))
-        .layer(middleware::from_fn(mark_served));
+        .layer(middleware::from_fn(mark_served))
+        // Outermost, so a panic in any handler or layer is a 500 for that request only.
+        .layer(crate::panic_guard::layer());
     let slots = Arc::new(Semaphore::new(limits.max_connections.max(1)));
     let registry: SharedRegistry = Arc::new(Mutex::new(Registry::default()));
     loop {
@@ -464,6 +466,12 @@ mod tests {
     const POLL: Duration = Duration::from_millis(10);
     const GET_DENIED: &[u8] = b"GET /denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
+    const GET_BOOM: &[u8] = b"GET /boom HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+    async fn boom() -> &'static str {
+        panic!("test panic in a handler")
+    }
+
     async fn ws_echo(ws: WebSocketUpgrade) -> impl IntoResponse {
         ws.on_upgrade(|mut socket| async move {
             while let Some(Ok(msg)) = socket.recv().await {
@@ -535,6 +543,7 @@ mod tests {
                 }),
             )
             .route("/denied", get(|| async { StatusCode::UNAUTHORIZED }))
+            .route("/boom", get(boom))
             .route("/ws", get(ws_echo))
             .route(
                 "/flood",
@@ -566,6 +575,24 @@ mod tests {
         let mut buf = [0u8; 64];
         let read = tokio::time::timeout(BOUND, c.read(&mut buf)).await;
         matches!(read, Ok(Ok(0)) | Ok(Err(_)))
+    }
+
+    #[tokio::test]
+    async fn a_panicking_handler_is_a_500_and_the_server_keeps_serving() {
+        let addr = spawn(ServeLimits::default()).await;
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        let line = request(&mut c, GET_BOOM).await;
+        assert!(
+            line.contains(" 500 "),
+            "a panic must be refused with a 500: {line}"
+        );
+        // The same connection and a new one both still get answers.
+        assert!(request(&mut c, GET_HEALTH).await.contains(" 200 "));
+        for _ in 0..3 {
+            let mut other = TcpStream::connect(addr).await.unwrap();
+            assert!(request(&mut other, GET_BOOM).await.contains(" 500 "));
+            assert!(request(&mut other, GET_HEALTH).await.contains(" 200 "));
+        }
     }
 
     #[tokio::test]

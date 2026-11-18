@@ -40,7 +40,7 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
-tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
+tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout", "catch-panic"] }
 # Already in the tree through axum; named here to run the management API with read timeouts.
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
@@ -118,5 +118,8 @@ paste = { path = "tools/paste-shim" }
 strip = true
 opt-level = "z"
 lto = true
+# Unwinding (not abort) lets one panicking request be refused without ending the process; see src/panic_guard.rs.
+panic = "unwind"
+# Integer overflow in a size or bound check panics (a refused request) instead of wrapping silently.
+overflow-checks = true
 codegen-units = 1
-panic = "abort"
