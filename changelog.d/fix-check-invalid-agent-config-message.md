@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate check` and `zn-gate check --hooks` now name an agent config file that is not valid JSON (with the line of the error) or that your user may not read, and say to fix or move that file before running `zn hooks install`. Before, they said the agent was "not set up" and repeated an install command that fails on that file, and the "broken" count in the summary line disagreed with the line above it.

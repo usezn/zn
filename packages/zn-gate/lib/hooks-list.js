@@ -55,7 +55,9 @@ function jsonFileRows(spec, ctx, file, scope, text) {
   let tree;
   try { tree = JSON.parse(text); } catch (err) { tree = undefined; }
   if (tree === undefined || tree === null || typeof tree !== 'object') {
-    return [{ event: '-', command: '', status: 'BROKEN', reason: 'the file is not valid JSON, so ' + spec.name + ' cannot read its hooks and zn cannot add its own', scope }];
+    const f = require('./check')._internal.configFileFault(spec, file, { text });
+    if (!f) return [];
+    return [{ event: '-', command: '', status: 'BROKEN', reason: f.problem, fixText: f.fix, scope }];
   }
   const ours = [];
   for (const e of hookEntries(tree, spec.id, { withDisabled: true })) {
@@ -134,12 +136,13 @@ function listHooks(opts = {}) {
         const read = readText(file);
         if (!read) continue;
         let rows;
-        if (read.tooBig || read.unreadable) rows = [{ event: '-', command: '', status: 'BROKEN', reason: 'the file cannot be read (too large or no access)', scope }];
+        if (read.unreadable) { const f = check._internal.configFileFault(spec, file, read); rows = [{ event: '-', command: '', status: 'BROKEN', reason: f.problem, fixText: f.fix, scope }]; }
+        else if (read.tooBig) rows = [{ event: '-', command: '', status: 'BROKEN', reason: 'the file cannot be read (too large)', scope }];
         else if (spec.id === 'opencode') rows = opencodeRows(file, scope, read.text);
         else rows = jsonFileRows(spec, ctx, file, scope, read.text);
         if (!rows.length) continue;
         for (const r of rows) {
-          r.fix = fixFor(spec.id, scope);
+          r.fix = r.fixText || fixFor(spec.id, scope);
           counts[r.status.toLowerCase()]++;
         }
         entry.files.push({ file, scope, rows });
@@ -175,7 +178,7 @@ function report({ agents, counts }, write) {
       // One explanation per distinct problem, not one per event.
       for (const r of why.values()) {
         w('  ' + r.status + ': ' + r.reason + '.\n');
-        w('    Fix: run `' + r.fix + '` in your own terminal.\n');
+        w('    Fix: ' + (r.fixText || 'run `' + r.fix + '` in your own terminal') + '.\n');
       }
     }
   }

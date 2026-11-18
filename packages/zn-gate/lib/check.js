@@ -153,6 +153,43 @@ const AGENTS = [
   },
 ];
 
+/* Line number of a JSON.parse error (Node 20 and later say "line N column M", older ones "position N"), or null. */
+function jsonErrorLine(text, err) {
+  const m = /\(line (\d+) column \d+\)/.exec(String(err && err.message));
+  if (m) return Number(m[1]);
+  const p = /at position (\d+)/.exec(String(err && err.message));
+  return p ? text.slice(0, Number(p[1])).split('\n').length : null;
+}
+
+/* Read an agent's config file for the setup checks: {text}, {unreadable: true} (no permission) or null (not there). */
+function readConfigText(file) {
+  try {
+    return { text: fs.readFileSync(file, 'utf8').replace(/^﻿/, '') };
+  } catch (err) {
+    return err && (err.code === 'EACCES' || err.code === 'EPERM') ? { unreadable: true } : null;
+  }
+}
+
+/* What is wrong with an agent's config file when zn cannot work with it: {problem, fix} for a file that is not valid
+   JSON or that this user may not read, null otherwise. `read` is what readConfigText gave. Running `zn hooks install`
+   on such a file fails ("left unchanged"), so the fix says to repair or move the file first. */
+function configFileFault(spec, file, read) {
+  if (!read) return null;
+  const fix = 'fix or move this file (' + file + '), then run `zn hooks install ' + spec.id + '` in your own terminal';
+  if (read.unreadable) {
+    return { problem: file + ' cannot be read (no permission for this user), so ' + spec.name + ' may not be able to use its hooks and zn cannot check or add its own', fix: 'give your user read and write access to ' + file + ' (or move the file), then run `zn hooks install ' + spec.id + '` in your own terminal' };
+  }
+  if (spec.id === 'opencode' || !read.text.trim()) return null; // an empty file is fine: zn writes into it
+  try {
+    const tree = JSON.parse(read.text);
+    if (tree !== null && typeof tree === 'object') return null;
+    return { problem: file + ' is not a JSON object, so ' + spec.name + ' cannot read its hooks and zn cannot add its own', fix };
+  } catch (err) {
+    const line = jsonErrorLine(read.text, err);
+    return { problem: file + ' is not valid JSON' + (line ? ' (at line ' + line + ')' : '') + ', so ' + spec.name + ' cannot read its hooks and zn cannot add its own', fix };
+  }
+}
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
@@ -1185,6 +1222,11 @@ async function checkAgent(spec, ctx) {
     res.where = userFile;
     if (installed) { res.fix = h.fix; res.via = 'hooks'; res.problem = h.problem; live = h.live; res.notes.push(...h.notes); }
   }
+  // A config file zn cannot read or parse: no hook can be seen in it, and `zn hooks install` would fail on it too.
+  if (!installed && !res.problem) {
+    const fault = configFileFault(spec, userFile, readConfigText(userFile));
+    if (fault) { installed = true; res.where = userFile; res.problem = fault.problem; res.fix = fault.fix; res.configFault = true; }
+  }
   // zn installed by the organization (managed settings, enterprise hooks.json, requirements.toml). Read-only.
   const managed = managedFor(spec.id, ctx);
   if (managed) {
@@ -1613,4 +1655,4 @@ function toJson({ results, removed, warnings }, opts = {}) {
   };
 }
 
-module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, configFileFault, readConfigText, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
