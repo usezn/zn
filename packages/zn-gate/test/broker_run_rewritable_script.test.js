@@ -16,6 +16,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
 
 const POSIX = process.platform !== 'win32';
+const POSIX_ONLY = 'POSIX only: it relies on file modes, owners and #! scripts; Windows uses ACLs, covered by the Windows scriptRisk tests at the end of this file';
 const PG = generateAll(778, { perType: 1, piiPerType: 1 }).secrets.find((s) => s.type === 'postgres_connection_string').sensitive;
 
 function sink() {
@@ -60,10 +61,11 @@ const TIGHT = POSIX && ancestorsAreTight(__dirname); // package folder (zn run i
 const TIGHT_TMP = POSIX && ancestorsAreTight(require('os').tmpdir());
 const NOT_ROOT = POSIX && process.getuid() !== 0;
 
-test('openExecutable tells a `#!` script from a native program', { skip: !POSIX }, (t) => {
+test('openExecutable tells a script from a native program', (t) => {
   const dir = scratch(t);
-  const s = path.join(dir, 's.sh');
-  fs.writeFileSync(s, '#!/bin/sh\necho hi\n', { mode: 0o755 });
+  // POSIX: a `#!` first line. Windows: a .cmd or .bat extension.
+  const s = path.join(dir, POSIX ? 's.sh' : 's.cmd');
+  fs.writeFileSync(s, POSIX ? '#!/bin/sh\necho hi\n' : '@echo hi\r\n', { mode: 0o755 });
   const a = exe.openExecutable(s);
   const b = exe.openExecutable(fs.realpathSync(process.execPath));
   try {
@@ -72,7 +74,7 @@ test('openExecutable tells a `#!` script from a native program', { skip: !POSIX 
   } finally { fs.closeSync(a.fd); fs.closeSync(b.fd); }
 });
 
-test('scriptRisk: a script only you can write passes with a warning', { skip: !TIGHT_TMP || !NOT_ROOT }, (t) => {
+test('scriptRisk: a script only you can write passes with a warning', { skip: (!POSIX && POSIX_ONLY) || (!TIGHT_TMP && 'a folder above the temp folder is writable by others') || (!NOT_ROOT && 'runs as root: root owns the script') }, (t) => {
   const dir = scratchTmp(t);
   const s = path.join(dir, 's.sh');
   fs.writeFileSync(s, '#!/bin/sh\necho hi\n', { mode: 0o755 });
@@ -81,13 +83,13 @@ test('scriptRisk: a script only you can write passes with a warning', { skip: !T
   assert.ok(r.warn, 'warns');
 });
 
-test('scriptRisk: a native program and a missing descriptor are not scripts', { skip: !POSIX }, () => {
+test('scriptRisk: a native program and a missing descriptor are not scripts', () => {
   const b = exe.openExecutable(fs.realpathSync(process.execPath));
   try { assert.equal(exe.scriptRisk(b, process.execPath), null); } finally { fs.closeSync(b.fd); }
-  assert.equal(exe.scriptRisk(null, '/x'), null);
+  assert.equal(exe.scriptRisk(null, path.join(path.sep, 'x')), null);
 });
 
-test('scriptRisk: a group- or other-writable script is refused', { skip: !POSIX }, (t) => {
+test('scriptRisk: a group- or other-writable script is refused', { skip: !POSIX && POSIX_ONLY }, (t) => {
   const dir = scratch(t);
   for (const mode of [0o775, 0o757, 0o777, 0o770 | 0o002]) {
     const s = path.join(dir, 's' + mode.toString(8) + '.sh');
@@ -104,7 +106,7 @@ test('scriptRisk: a group- or other-writable script is refused', { skip: !POSIX 
 
 // As root the script belongs to the current user and scriptRisk has nothing to say about it (null, like a script in /usr/bin),
 // so there is no refusal to assert on; root also bypasses the file permission checks this test is about.
-test('scriptRisk: a group- or other-writable folder above the script is refused, a sticky one is not', { skip: !TIGHT_TMP || (!NOT_ROOT && 'runs as root: root owns the script, so scriptRisk reports nothing to refuse') }, (t) => {
+test('scriptRisk: a group- or other-writable folder above the script is refused, a sticky one is not', { skip: (!POSIX && POSIX_ONLY) || (!TIGHT_TMP && 'a folder above the temp folder is writable by others') || (!NOT_ROOT && 'runs as root: root owns the script, so scriptRisk reports nothing to refuse') }, (t) => {
   const dir = scratchTmp(t);
   const sub = path.join(dir, 'sub');
   fs.mkdirSync(sub);
@@ -120,7 +122,7 @@ test('scriptRisk: a group- or other-writable folder above the script is refused,
   assert.equal(risk(s).deny, null);
 });
 
-test('scriptRisk: a script owned by another non-root account is refused', { skip: !TIGHT_TMP || !NOT_ROOT }, (t) => {
+test('scriptRisk: a script owned by another non-root account is refused', { skip: (!POSIX && POSIX_ONLY) || (!TIGHT_TMP && 'a folder above the temp folder is writable by others') || (!NOT_ROOT && 'runs as root: root owns the script') }, (t) => {
   const dir = scratchTmp(t);
   const s = path.join(dir, 's.sh');
   fs.writeFileSync(s, '#!/bin/sh\n', { mode: 0o755 });
@@ -130,7 +132,7 @@ test('scriptRisk: a script owned by another non-root account is refused', { skip
   try { assert.match(exe.scriptRisk(a, s).deny, /belongs to another account/); } finally { process.getuid = real; fs.closeSync(a.fd); }
 });
 
-test('scriptRisk: a root-owned script under /usr/bin passes silently', { skip: !POSIX || process.getuid() === 0 }, () => {
+test('scriptRisk: a root-owned script under /usr/bin passes silently', { skip: (!POSIX && POSIX_ONLY) || (process.getuid() === 0 && 'runs as root') }, () => {
   let found = null;
   for (const d of ['/usr/bin', '/bin']) {
     let names = [];
@@ -173,7 +175,7 @@ async function runTool(dir, opts) {
   return { code, err: err.text(), ran: fs.existsSync(marker), vault };
 }
 
-test('zn run refuses a group-writable script, audits it, and starts nothing', { skip: !POSIX }, async (t) => {
+test('zn run refuses a group-writable script, audits it, and starts nothing', { skip: !POSIX && POSIX_ONLY }, async (t) => {
   const r = await runTool(scratch(t), { mode: 0o775 });
   assert.equal(r.code, 77, r.err);
   assert.match(r.err, /others can rewrite/);
@@ -181,7 +183,7 @@ test('zn run refuses a group-writable script, audits it, and starts nothing', { 
   assert.ok(r.vault.auditLog.some((e) => e.decision === 'deny' && /group or others/.test(e.reason)));
 });
 
-test('zn run starts your own script (0755) with a warning and an audit note', { skip: !TIGHT || process.getuid() === 0 }, async (t) => {
+test('zn run starts your own script (0755) with a warning and an audit note', { skip: (!POSIX && POSIX_ONLY) || (!TIGHT && 'a folder above the package is writable by others') || (process.getuid() === 0 && 'runs as root') }, async (t) => {
   const r = await runTool(scratch(t), { mode: 0o755 });
   assert.equal(r.code, 0, r.err);
   assert.ok(r.ran, 'the script was started');
@@ -189,7 +191,7 @@ test('zn run starts your own script (0755) with a warning and an audit note', { 
   assert.ok(r.vault.auditLog.some((e) => e.decision === 'allow' && /script writable by the current user/.test(e.reason)));
 });
 
-test('zn run still starts a native program with a secret, without a warning', { skip: !POSIX }, async () => {
+test('zn run still starts a native program with a secret, without a warning', { skip: !POSIX && POSIX_ONLY }, async () => {
   const vault = createFakeVault({ withApprovals: true });
   const NODE = path.basename(process.execPath);
   await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: [NODE] });

@@ -13,6 +13,7 @@ const { runBroker, parseRunArgs, prepare, argvMarkers } = require('../lib/broker
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
+const { skipUnless, linkDir } = require('./helpers/links');
 
 const FAKE = generateAll(777, { perType: 1, piiPerType: 1 });
 const PG = FAKE.secrets.find((s) => s.type === 'postgres_connection_string').sensitive;
@@ -44,7 +45,7 @@ test('marker names: valid, reserved and invalid', () => {
   assert.equal(markers.substitute('x __ZN_A__ __ZN_B__', new Map([['A', '1']])), 'x 1 __ZN_B__');
 });
 
-test('a program inside the project is refused, also when the project is reached through a symlink', { skip: process.platform === 'win32' }, () => {
+test('a program inside the project is refused, also when the project is reached through a link', { skip: skipUnless('dir') }, () => {
   // Under the package, not the temp dir: programs in the temp dir are refused anyway.
   const base = fs.mkdtempSync(path.join(__dirname, 'zn-exe-'));
   try {
@@ -53,17 +54,22 @@ test('a program inside the project is refused, also when the project is reached 
     const outside = path.join(base, 'outside');
     fs.mkdirSync(path.join(real, 'bin'), { recursive: true });
     fs.mkdirSync(outside);
-    fs.symlinkSync(real, link);
-    const tool = path.join(real, 'bin', 'tool');
-    const other = path.join(outside, 'tool');
-    fs.writeFileSync(tool, '#!/bin/sh\n', { mode: 0o755 });
-    fs.writeFileSync(other, '#!/bin/sh\n', { mode: 0o755 });
-    fs.symlinkSync(other, path.join(real, 'bin', 'alias'));
+    linkDir(real, link); // a junction on Windows (no privilege needed), a symlink elsewhere
+    const name = process.platform === 'win32' ? 'tool.cmd' : 'tool';
+    const body = process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n';
+    const tool = path.join(real, 'bin', name);
+    const other = path.join(outside, name);
+    fs.writeFileSync(tool, body, { mode: 0o755 });
+    fs.writeFileSync(other, body, { mode: 0o755 });
     assert.match(markers.checkResolvedExecutable(tool, link), /inside the project/);
     assert.match(markers.checkResolvedExecutable(tool, real), /inside the project/);
-    // A link inside the project that points at a program elsewhere is still a project name.
-    assert.match(markers.checkResolvedExecutable(path.join(real, 'bin', 'alias'), real), /inside the project/);
     assert.equal(markers.checkResolvedExecutable(other, link), null);
+    // A link inside the project that points at a program elsewhere is still a project name. A file symlink needs
+    // privileges on Windows, so that part runs only where the machine can create one.
+    if (skipUnless('file') === false) {
+      fs.symlinkSync(other, path.join(real, 'bin', 'alias'));
+      assert.match(markers.checkResolvedExecutable(path.join(real, 'bin', 'alias'), real), /inside the project/);
+    }
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }

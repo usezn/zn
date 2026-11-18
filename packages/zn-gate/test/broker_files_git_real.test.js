@@ -13,7 +13,7 @@ const { gitStatusOf, realTargetOf } = require('../lib/broker/files');
 
 const haveGit = !spawnSync('git', ['--version']).error;
 const git = (cwd, ...args) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
-const noLinks = process.platform === 'win32';
+const { skipUnless, linkDir } = require('./helpers/links');
 
 function tmp() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-files-real-')));
@@ -77,19 +77,19 @@ test('gitStatusOf: a relative path is resolved before it is checked', { skip: !h
   }
 });
 
-test('gitStatusOf: a path below a linked folder is judged where the link points', { skip: (!haveGit && 'git is not installed') || (noLinks && 'symbolic links need privileges on Windows') }, () => {
+test('gitStatusOf: a path below a linked folder is judged where the link points', { skip: (!haveGit && 'git is not installed') || skipUnless('dir') }, () => {
   const repo = initRepo();
   const plain = tmp();
   try {
     if (git(plain, 'rev-parse', '--show-toplevel').status === 0) return;
-    fs.symlinkSync(plain, path.join(repo, 'link'));
+    linkDir(plain, path.join(repo, 'link'));
     // git is run in the folder the link points to, so the repository that holds the link does not count.
     const out = gitStatusOf(path.join(repo, 'link', 'new.txt'));
     assert.equal(out, 'outside');
   } finally { rm(repo, plain); }
 });
 
-test('realTargetOf: a symlink to a file resolves to the file', { skip: noLinks && 'symbolic links need privileges on Windows' }, () => {
+test('realTargetOf: a symlink to a file resolves to the file', { skip: skipUnless('file') }, () => {
   const dir = tmp();
   try {
     fs.writeFileSync(path.join(dir, 'real.txt'), 'x');
@@ -98,20 +98,20 @@ test('realTargetOf: a symlink to a file resolves to the file', { skip: noLinks &
   } finally { rm(dir); }
 });
 
-test('realTargetOf: a link to a folder that is missing keeps the typed path', { skip: noLinks && 'symbolic links need privileges on Windows' }, () => {
+test('realTargetOf: a link to a folder that is missing keeps the typed path', { skip: skipUnless('danglingDir') }, () => {
   const dir = tmp();
   try {
-    fs.symlinkSync(path.join(dir, 'gone'), path.join(dir, 'dangling'));
+    linkDir(path.join(dir, 'gone'), path.join(dir, 'dangling'));
     const typed = path.join(dir, 'dangling', 'x.txt');
     assert.equal(realTargetOf(typed), path.join(dir, 'dangling', 'x.txt'));
   } finally { rm(dir); }
 });
 
-test('realTargetOf: links and missing names in the middle of a path', { skip: noLinks && 'symbolic links need privileges on Windows' }, () => {
+test('realTargetOf: links and missing names in the middle of a path', { skip: skipUnless('dir') }, () => {
   const dir = tmp();
   try {
     fs.mkdirSync(path.join(dir, 'real', 'sub'), { recursive: true });
-    fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'));
+    linkDir(path.join(dir, 'real'), path.join(dir, 'link'));
     assert.equal(realTargetOf(path.join(dir, 'link', 'sub', 'a', 'b.txt')), path.join(dir, 'real', 'sub', 'a', 'b.txt'));
     assert.equal(realTargetOf(path.join(dir, 'link', 'sub')), path.join(dir, 'real', 'sub'));
   } finally { rm(dir); }
