@@ -3,14 +3,16 @@
 // The hook launchers run the hook only while the installed zn-gate files match the digest they recorded. The launcher
 // refresh (lib/agents/refresh.js, the postinstall step) and a reinstall or rebuild of zn-gate record the files as they are
 // now, so an agent that changed a file of the package could make the launchers trust it. Like `zn hooks install`, these
-// commands are the user's: the agent gets a deny with the next step. Only the policy is checked here: nothing is run.
+// commands are the user's: the agent gets a deny with the next step. Only the policy is checked here: nothing is run, and
+// every path is an obviously made-up prefix.
 
 process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const policy = require('../lib/hooks/policy');
 
-const PREFIX = '/home/user/.nvm/versions/node/v22.0.0/lib/node_modules/zn-gate';
+const PREFIX = '/opt/example-prefix/lib/node_modules/zn-gate';
+const WIN_PREFIX = 'C:\\example\\prefix\\node_modules\\zn-gate';
 
 test('an agent may not run the hook launcher refresh, in any spelling', () => {
   for (const c of [
@@ -22,13 +24,32 @@ test('an agent may not run the hook launcher refresh, in any spelling', () => {
     'nodejs ' + PREFIX + '/lib/agents/refresh.cjs',
     'bun ' + PREFIX + '/lib/agents/refresh.js',
     'node -r ' + PREFIX + '/lib/agents/refresh.js -e 0',
+    'node --require=' + PREFIX + '/lib/agents/refresh.js -e 0',
     'node -e "require(\'' + PREFIX + '/lib/agents/refresh.js\').main()"',
     'node -e "const x = 1; require(\'' + PREFIX + '/lib/agents/refresh\').main()"',
     'node -e "require(\'' + PREFIX + '/lib/agents/launcher\').writeLauncher(\'claude-code\', process.execPath, \'r\')"',
     'node --input-type=module -e "import(\'' + PREFIX + '/lib/agents/refresh.js\')"',
-    'node.exe C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\zn-gate\\lib\\agents\\refresh.js',
+    'node.exe ' + WIN_PREFIX + '\\lib\\agents\\refresh.js',
     'node ' + PREFIX + '/lib/agents/re""fresh.js',
     'echo ok; node ' + PREFIX + '/lib/agents/refresh.js',
+    // Path spellings that name the same file.
+    'node ' + PREFIX + '/lib/./agents/refresh.js',
+    'node ' + PREFIX + '/lib/agents/../agents/refresh.js',
+    'node ' + PREFIX + '/lib//agents///refresh.js',
+    'node ' + PREFIX + '/bin/../lib/agents/./refresh.js',
+    'node ' + PREFIX + '/LIB/Agents/Refresh.JS',
+    'node.exe ' + WIN_PREFIX + '\\lib\\.\\agents\\..\\agents\\REFRESH.js',
+    // A cd, pushd or Set-Location earlier in the same command.
+    'cd ' + PREFIX + '/lib/agents && node refresh.js',
+    'cd ' + PREFIX + '/lib/agents; node ./refresh.js',
+    'cd ' + PREFIX + '/lib && node agents/refresh',
+    'cd ' + PREFIX + ' && cd lib/agents && node refresh.js',
+    'cd ' + PREFIX + '/lib/agents/../agents && node refresh.js',
+    'pushd ' + PREFIX + '/lib/agents && node refresh.js && popd',
+    '(cd ' + PREFIX + '/lib/agents && node launcher.js)',
+    'cd ' + PREFIX + '/lib/agents && node -e "require(\'./refresh\').main()"',
+    'Set-Location ' + WIN_PREFIX + '\\lib\\agents; node refresh.js',
+    'cd /d ' + WIN_PREFIX + '\\lib\\agents && node refresh.js',
   ]) {
     const d = policy.bashDenial(c) || '';
     assert.match(d, /zn blocked this: the hook launcher refresh/, c);
@@ -46,7 +67,8 @@ test('an agent may not install, update, rebuild or link zn-gate with a package m
     'npm.cmd install -g zn-gate', '"npm" i -g "zn-gate"', 'npm i -g zn-ga""te', 'npx npm install -g zn-gate', 'echo ok && npm install -g zn-gate',
   ]) {
     const d = policy.bashDenial(c) || '';
-    assert.match(d, /zn blocked this: installing, updating, rebuilding or removing the zn-gate package/, c);
+    assert.match(d, /zn blocked this: installing, updating, rebuilding or linking the zn-gate package/, c);
+    assert.doesNotMatch(d, /removing/, c);
     assert.match(d, /their own terminal/, c);
   }
 });
@@ -56,7 +78,10 @@ test('reading the files and other package commands stay allowed', () => {
     'npm test', 'npm install', 'npm ci', 'npm install lodash', 'npm i -D typescript', 'npm run build', 'npm run postinstall', 'npm ls zn-gate', 'npm view zn-gate version',
     'npm outdated -g zn-gate', 'npm audit', 'pnpm install', 'yarn add react', 'npx -y zn-gate audit', 'zn-gate --version',
     'cat ' + PREFIX + '/lib/agents/refresh.js', 'grep -n main lib/agents/refresh.js', 'less lib/agents/launcher.js', 'sed -n 1,20p lib/agents/refresh.js',
+    'cat ' + PREFIX + '/lib/./agents/../agents/refresh.js', 'cd ' + PREFIX + '/lib/agents && cat refresh.js', 'cd ' + PREFIX + '/lib/agents && grep main refresh.js',
     'node --test test/hooks_launcher_refresh.test.js', 'node lib/agents/other.js', 'node scripts/refresh.js', 'git diff lib/agents/refresh.js',
+    'node lib/agents/refresher.js', 'node src/agents/refresh.js', 'cd /opt/example-prefix/other-tool/scripts && node refresh.js', 'node refresh.js',
+    'cd ' + PREFIX + '/lib/agents && cd /opt/example-prefix/other-tool && node refresh.js', 'node ' + PREFIX + '/lib/agents/../refresh.js',
     'cd packages/zn-gate && npm install', 'npm install some-zn-gate-plugin', 'npm i zn-gate-helper', 'npm uninstall -g zn-gate', 'npm rm -g zn-gate',
     'git commit -m "docs: run npm update -g zn-gate"', 'echo node lib/agents/refresh.js', 'git log --grep="npm i -g zn-gate"',
   ]) {
@@ -65,7 +90,7 @@ test('reading the files and other package commands stay allowed', () => {
 });
 
 test('the same commands are refused from PowerShell', () => {
-  for (const c of ['npm install -g zn-gate', '& node "' + PREFIX + '/lib/agents/refresh.js"']) {
+  for (const c of ['npm install -g zn-gate', '& node "' + PREFIX + '/lib/agents/refresh.js"', 'Set-Location ' + WIN_PREFIX + '\\lib\\agents; node .\\refresh.js']) {
     assert.match(policy.bashDenial(c, { powershell: true }) || '', /zn blocked this/, c);
   }
 });
@@ -77,6 +102,8 @@ test('a long command is checked in linear time', () => {
   assert.equal(policy.adminCommand('npm ' + 'install '.repeat(10000)), null);
   assert.equal(policy.adminCommand(('npm exec ' + '-- '.repeat(20)).repeat(1500)), null);
   assert.equal(policy.adminCommand(('sudo npm x ' + 'b'.repeat(50) + ' ').repeat(1500) + ' zn-gate'), null);
+  assert.equal(policy.adminCommand(('cd ' + '../'.repeat(50) + 'x; ').repeat(500) + 'node refresh.js'), null);
+  assert.equal(policy.adminCommand('node ' + 'refresh/'.repeat(5000) + 'x.js'), null);
   assert.equal(policy.adminCommand('npm' + ' -a b'.repeat(15000) + ' install -g zn-gate'), 'zn-gate package', 'padding does not hide it');
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.ok(ms < 1000, 'took ' + ms + ' ms');
