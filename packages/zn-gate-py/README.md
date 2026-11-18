@@ -342,6 +342,11 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package, and keeps the evidence ledger there. In the npm package it also covers the hook settings (`config.json`) and the secret request list.
 - Project files: this package does not read `.znrules` or `zn.config.json`. Custom rules and the `strict` setting in those files apply only to the npm package (its CLI, agent hooks and Node.js library). In Python, turn strict mode on with `strict=True` or `ZN_STRICT=1`.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
+- `ZN_LONG_INPUT`: `windows` (default) or `off`. Used only with `ZN_CLOUD=1`: `windows` has the cloud classifier check overlapping 512-token windows of a text over 1,000 characters; `off` checks only the first 512 tokens.
+- `CLAUDE_CONFIG_DIR`: the Claude Code config folder that `zn-gate reach --history` reads, instead of `~/.claude`.
+- `CODEX_HOME`: the Codex CLI config folder that `zn-gate reach --history` reads, instead of `~/.codex`.
+- `XDG_CONFIG_HOME`: on Linux, the folder where `zn-gate scan --include-home` looks for the Claude Desktop config, instead of `~/.config`.
+- `APPDATA`: on Windows, the folder where `zn-gate scan --include-home` looks for the Claude Desktop config, instead of `AppData\Roaming` in your home folder.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output uses short ASCII markers such as `[ok]`, `[!]` and `[+]` in place of its symbols; the status words (ALLOW, BLOCK, clean, ...) stay. Piped output and runs with `CI` set (any non-empty value) use the same markers.
 
 ## Examples
