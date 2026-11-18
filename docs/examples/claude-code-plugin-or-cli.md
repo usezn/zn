@@ -9,7 +9,7 @@ Run every command in your own terminal, not through your agent.
 | | The plugin | The command-line install |
 | - | - | - |
 | Install | `claude plugin marketplace add usezn/zn#v1.15.0`, then `claude plugin install zn-gate@usezn` | `zn hooks install claude-code` |
-| Needs | Git and Claude Code 2.1.295 or later; Node.js 20.19 or later | Node.js 18 or later works for the hooks and the CLI |
+| Needs | Git and Claude Code 2.1.295 or later; a Node.js version the plugin supports ([Node.js requirements](../compat.md#nodejs-requirements)) | A Node.js version the CLI supports ([Node.js requirements](../compat.md#nodejs-requirements)) |
 | Verify | `npx -y zn-gate check` | `npx -y zn-gate check` |
 | Remove | `claude plugin uninstall zn-gate@usezn` | `zn hooks uninstall claude-code` |
 
@@ -17,9 +17,9 @@ Do not keep both set up at the same time: the plugin and the hooks of `zn hooks 
 
 ## What each way needs
 
-**The plugin** needs Git and Claude Code 2.1.295 or later, and Node.js 20.19 or later. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)).
+**The plugin** needs Git and Claude Code 2.1.295 or later, and a Node.js version the plugin supports ([Node.js requirements](../compat.md#nodejs-requirements)).
 
-**The command-line install** needs zn-gate 1.5 or later from npm (`npm install -g zn-gate`); Node.js 18 or later works for the hooks and the CLI.
+**The command-line install** needs zn-gate 1.5 or later from npm (`npm install -g zn-gate`); the Node.js versions it supports are in the [Node.js requirements](../compat.md#nodejs-requirements).
 
 ## Install the plugin
 

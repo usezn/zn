@@ -39,7 +39,7 @@
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (steps in [docs/first-5-minutes.md](docs/first-5-minutes.md#before-you-start)). With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. Which Node.js versions you need, which one is recommended and which ones still get security fixes is in the [Node.js requirements](docs/compat.md#nodejs-requirements); install Node.js from [nodejs.org](https://nodejs.org/). On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is too old, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (steps in [docs/first-5-minutes.md](docs/first-5-minutes.md#before-you-start)). With a Node.js older than the minimum, the `zn-gate` and `zn` commands stop and say how to install it.
 
 No internet on this computer? See [Install on a machine without internet](docs/install-matrix.md#install-on-a-machine-without-internet).
 
@@ -65,7 +65,7 @@ npx -y zn-gate init
 `init` does this:
 
 - It finds the seven coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
-- For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
+- For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is too old for the plugin), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
 
@@ -97,7 +97,7 @@ New here? [First 5 minutes](docs/first-5-minutes.md). All the guides: [docs inde
 
 **One agent at a time** (the same steps `init` runs):
 
-**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
+**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin has its own Node.js minimum ([Node.js requirements](docs/compat.md#nodejs-requirements)). With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
 claude plugin marketplace add usezn/zn#v1.15.0
@@ -162,7 +162,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (or the experimental Gemini CLI), run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (or the experimental Gemini CLI), run `npx -y zn-gate init` ([Node.js requirements](docs/compat.md#nodejs-requirements)).
 
 For LangChain and LangGraph, `ZnGuardCallbackHandler` stops the run when it blocks a prompt, a tool call or a tool output, and `guard_langchain_tool(tool)` wraps a tool so its arguments are checked before it runs and its output is checked and masked before the model reads it. A callback cannot change what a tool returns, so the handler with `mask_secrets=True` (default) also stops the run on a secret in a tool output (it fails closed); to hide secrets and keep going, wrap the tool and create the handler with `mask_secrets=False`. See the [Python package guide](packages/zn-gate-py/README.md#langchain--langgraph).
 
@@ -458,7 +458,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ### pre-commit
 
-Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.15.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.15.0 ...`), so the `rev` you pin decides which version runs on every commit. The scan hook reads the whole repository, so a file of 2 MiB or more makes it exit 3; to accept skipped files, add `args: [--allow-partial]` to the `zn-gate-scan` hook.
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs a supported Node.js, see the [Node.js requirements](docs/compat.md#nodejs-requirements); ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.15.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.15.0 ...`), so the `rev` you pin decides which version runs on every commit. The scan hook reads the whole repository, so a file of 2 MiB or more makes it exit 3; to accept skipped files, add `args: [--allow-partial]` to the `zn-gate-scan` hook.
 
 ### Repository layout
 

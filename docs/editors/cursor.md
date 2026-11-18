@@ -6,7 +6,7 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
+1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number, go on. Which Node.js versions you need is in the [Node.js requirements](../compat.md#nodejs-requirements). If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
 2. **Install zn-gate and turn on its protection for Cursor.** Paste each line in the same terminal and press Enter after each one:
 
    ```bash
@@ -117,7 +117,7 @@ In your own terminal, in this order (the same order `npx -y zn-gate uninstall` u
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **`node: command not found`, or Node.js is too old** (see the [Node.js requirements](../compat.md#nodejs-requirements)): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **The zn-gate tools do not appear in Cursor:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Cursor.
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).

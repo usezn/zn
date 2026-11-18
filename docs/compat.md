@@ -19,6 +19,20 @@ The table lists each agent zn-gate supports and what was checked for it in the l
 
 For Claude Code, Codex CLI and Cursor, the 1.15.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
 
+## Node.js requirements
+
+This is the one place that lists the Node.js versions. Other pages link here instead of repeating a number.
+
+| What | Node.js version | Where it comes from |
+|---|---|---|
+| zn-gate command line, hooks and MCP server (the npm package) | 18 or later | The `engines` field of the npm package (`>=18`) and the check at the start of `bin/cli.js`. On an older Node.js the `zn-gate` and `zn` commands stop and print how to install a newer one; a hook, `zn run` or MCP server that an agent starts keeps running and prints a warning. CI runs the unit tests on 18, 20, 22, 24 and 26. |
+| Claude Code plugin | 20.19 or later on the 20 line, 21.7 or later on the 21 line, any 22 or later | `pluginNodeOk` in `lib/check.js`. The plugin needs the module-loader constant that arrives in 20.12 and 21.7, and its locked dependencies (`@noble/*`) declare 20.19 or later. On an older Node.js, `npx -y zn-gate init` sets up zn's hooks for Claude Code instead of the plugin. |
+| Recommended | Node.js 22 LTS | What the README and the setup pages tell you to install. For security, use at least the first patched release of a supported line (22.23.4, 24.22.1 or 26.12.1 from the October 2026 security releases); Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. `zn-gate check` and `zn-gate status` warn about this and never block. The list is in `lib/node-support.js`. |
+| Contributing to zn-gate | 20.19 or later to run the tests with coverage; 22 or later for the Markdown lint | The coverage tool `c8` 12.0.0 declares `^20.19.0 \|\| ^22.12.0 \|\| >=23`, and the pinned Markdown lint tool `markdownlint-cli2` 0.24.0 declares `>=22`. The unit tests also run on 18 in CI, so a fix for a user on 18 can be checked there. See [CONTRIBUTING](../CONTRIBUTING.md). |
+| Python package (`pip install zn-gate`) | No Node.js needed | It does not install hooks; for the coding agents use the npm package. |
+
+Third-party tools have their own minimum: for example, the Gemini CLI needs Node.js 20 or later (see its own documentation).
+
 ## Limits at a glance
 
 - An event zn cannot read is refused, except the Codex `Stop` event, which is never blocked.

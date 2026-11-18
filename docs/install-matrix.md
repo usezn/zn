@@ -45,15 +45,15 @@ agent's hook to read it, and deletes the folder. If it says `NOT protected`, see
 |---|---|---|
 | Windows | Documented per agent in the Windows row of [compat.md](compat.md). Claude Code is supported, including its PowerShell tool (2.1.299 or later). Codex CLI and OpenCode have one end-to-end run each on Windows Server 2022; Cursor is not tested; Antigravity is not verified by us. | `npx -y zn-gate check`. If PowerShell says "running scripts is disabled on this system", use `npx.cmd -y zn-gate check` |
 | macOS | No separate install steps. The same commands apply; compat.md mentions macOS only for managed settings paths and for how approved programs are started. | `npx -y zn-gate check` |
-| Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
+| Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is too old, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
 
-Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. The npm package declares Node.js 18 or later in the `engines` field of its package.json. Using only the Python package (`pip install zn-gate`, without the hooks) does not need Node.js. Without `npx`, install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
+Which Node.js versions you need, which one is recommended and which ones still get security fixes is in the [Node.js requirements](compat.md#nodejs-requirements); install Node.js from [nodejs.org](https://nodejs.org/). Using only the Python package (`pip install zn-gate`, without the hooks) does not need Node.js. Without `npx`, install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
 
 ## Install on a machine without internet
 
 Use these steps on a computer that cannot reach the internet. You need a second computer with internet access, and a way to copy one file between them, such as a USB stick.
 
-Node.js must already be installed on the offline computer, because installing it also needs the internet. Download the Node.js 22 LTS installer on the computer with internet, copy it over and install it first. The Claude Code plugin needs Node.js 20.19 or later; the hooks and the command line work on 18 or later.
+Node.js must already be installed on the offline computer, because installing it also needs the internet. Download the Node.js 22 LTS installer on the computer with internet, copy it over and install it first. The versions the plugin and the command line need are in the [Node.js requirements](compat.md#nodejs-requirements).
 
 **1. On a computer with internet**, download the package file:
 

@@ -4,7 +4,7 @@ Set up zn-gate in Zed in two minutes: add it as an MCP server, and what zn-gate 
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Zed.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Which Node.js versions you need is in the [Node.js requirements](../compat.md#nodejs-requirements). If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Zed.
 2. Open the Command Palette (**Ctrl+Shift+P**, or **Cmd+Shift+P** on a Mac), type **zed: open settings file** and press Enter.
 3. Paste this:
 
@@ -106,7 +106,7 @@ Open the settings file you edited in Install, delete the `zn-gate` entry (and an
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **`node: command not found`, or Node.js is too old** (see the [Node.js requirements](../compat.md#nodejs-requirements)): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **The zn-gate tools do not appear in Zed:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Zed. If they still do not appear, see [The zn-gate MCP server does not start](#the-zn-gate-mcp-server-does-not-start).
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
@@ -116,7 +116,7 @@ Open the settings file you edited in Install, delete the `zn-gate` entry (and an
 If Zed lists `zn-gate` as an MCP server but it never starts, or the zn-gate tools stay missing after a restart, these are the three most common causes. To see why Zed could not start it, open the Command Palette, type **zed: open log** and press Enter, then search the log for `zn-gate`. Run the commands below in your own terminal, not through your AI agent.
 
 1. **Zed cannot find `npx`, or Node.js is too old.**
-   - **Check:** run `node --version` and `npx --version`. `node --version` must show 18 or later. Then run `which npx` (macOS and Linux) or `where.exe npx` (Windows; in PowerShell, plain `where` is a different command) to see where `npx` is.
+   - **Check:** run `node --version` and `npx --version`. `node --version` must show a version in the [Node.js requirements](../compat.md#nodejs-requirements). Then run `which npx` (macOS and Linux) or `where.exe npx` (Windows; in PowerShell, plain `where` is a different command) to see where `npx` is.
    - **Fix:** if either command fails, install the **LTS** version from [nodejs.org](https://nodejs.org/), then quit Zed completely and open it again: a Zed window opened before the install does not see the new `npx`. If you installed Node.js with a version manager such as nvm, Zed may not see it: replace `"npx"` in the `"command"` line with the full path that `which npx` or `where.exe npx` printed. See [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 2. **The settings file cannot be read, or the entry is in the wrong place.**
    - **Check:** open the settings file again (**zed: open settings file**). The `zn-gate` entry must sit inside one `"context_servers"` section at the top level of the file, and the file must have exactly one `"context_servers"` key. Look for a missing comma or brace next to the lines you pasted.

@@ -30,7 +30,7 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 
 A short list of what a pull request needs. Each step points to the section below that explains it.
 
-1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
+1. Have a Node.js version from the [contributor row of the requirements table](docs/compat.md#nodejs-requirements) and Python 3.10 or later ([Prerequisites](#prerequisites)).
 2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
 3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
 4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
@@ -50,7 +50,7 @@ A short list of what a pull request needs. Each step points to the section below
 ## Development Setup
 
 ### Prerequisites
-- Node.js >= 18.0.0
+- Node.js: see [Node.js requirements](docs/compat.md#nodejs-requirements) (the contributor minimum is higher than the one for users)
 - Python >= 3.10
 - (Optional, legacy Rust gateway) Rust stable, `protoc` 29 or later
 

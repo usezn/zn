@@ -24,7 +24,7 @@ Each step is explained below. Windows PowerShell notes are in [Install your agen
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is older than 20.19). For Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot and the experimental Gemini CLI it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
+`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is too old for the plugin). For Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot and the experimental Gemini CLI it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
 
 Want to look first? `npx -y zn-gate reach` lists what your agents can reach (secret names, credential files, MCP servers). It changes nothing and sends nothing. See [reach](reach.md).
 
@@ -134,13 +134,13 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 
 > **Checklist**
 >
-> - **Node.js:** Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later.
+> - **Node.js:** Which Node.js versions you need, which one is recommended and which ones still get security fixes is in the [Node.js requirements](compat.md#nodejs-requirements); install Node.js from [nodejs.org](https://nodejs.org/).
 > - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
 > - **No account and no API key** are needed.
 
-Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command on this page in your own terminal, not through your agent.
+Which Node.js versions you need, which one is recommended and which ones still get security fixes is in the [Node.js requirements](compat.md#nodejs-requirements); install Node.js from [nodejs.org](https://nodejs.org/). If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command on this page in your own terminal, not through your agent.
 
-On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is too old, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
 
 ```bash
 sudo apt-get install -y curl

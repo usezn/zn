@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (the Node.js versions it needs are in the [Node.js requirements](https://github.com/usezn/zn/blob/main/docs/compat.md#nodejs-requirements)): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -55,7 +55,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (or the experimental Gemini CLI), run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (or the experimental Gemini CLI), run `npx -y zn-gate init` ([Node.js requirements](https://github.com/usezn/zn/blob/main/docs/compat.md#nodejs-requirements)).
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 

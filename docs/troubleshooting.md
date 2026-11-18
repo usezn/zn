@@ -1312,7 +1312,7 @@ The `zn-gate` command of the Python package protects agents you build yourself. 
 
 **What happened:** you ran a command that only the npm package has, such as `init`, `hooks`, `report`, `connect` or `disconnect`. Nothing was changed. The message prints the command that works.
 
-**What to do:** run it with Node.js 18 or later, for example `npx -y zn-gate init`. To see the help of the npm package, run `npx -y zn-gate --help`.
+**What to do:** run it with a supported Node.js ([Node.js requirements](compat.md#nodejs-requirements)), for example `npx -y zn-gate init`. To see the help of the npm package, run `npx -y zn-gate --help`.
 
 #### "Error: target path not found"
 

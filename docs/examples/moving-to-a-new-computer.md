@@ -17,7 +17,7 @@ On the new computer, in your own terminal:
 npm install -g zn-gate
 ```
 
-Node.js 18 or later works for the hooks and the command line. The Claude Code plugin needs Node.js 20.19 or later.
+Which Node.js versions you need is in the [Node.js requirements](../compat.md#nodejs-requirements).
 
 ## 2. Set up your agents
 
