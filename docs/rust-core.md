@@ -209,6 +209,99 @@ To avoid the download:
    ./target/release/zn --help
    ```
 
+## Command line
+
+Run the gateway with `zn <command>`. These are the options that exist today.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `zn start` | Starts the gateway: the management API and the MCP proxy. |
+| `zn dashboard` | Opens the terminal dashboard. It needs the management API key (`--api-key` or `ZN_API_KEY`), or it stops and says so. |
+| `zn init` | Writes a `zn.json` with the default settings in the current folder. Keys and tokens are left out of it; keep them in the environment. |
+| `zn analyze "text"` | Scores a text and prints the result as JSON. Without text, it reads standard input (up to 64 KB). |
+| `zn mcp` | Runs as an MCP server over standard input and output, with the tools `analyze_prompt` and `version`. |
+| `zn shield scan` | Looks for MCP services on this machine that are exposed on `0.0.0.0` and reports them. |
+
+Older spellings still work: `zn --start` (or `-s`) is the same as `zn start`, and `zn --dashboard` (or `-d`) is the same as `zn dashboard`. `zn` with nothing after it only prints a hint.
+
+### Options
+
+These options work with every command, before or after it.
+
+| Option | Meaning |
+|---|---|
+| `--port <number>` | The management API port. Default 9090. For `zn dashboard`, the port of the gateway to connect to. |
+| `--config <file>`, `-c <file>` | Use this settings file. |
+| `--api-key <key>` | The management API key. For `zn dashboard`, the key it sends. |
+| `--db-path <file>` | Where the audit database lives. Default `zn.db`. |
+
+`--port`, `--api-key` and `--db-path` win over the matching environment variable (`ZN_PORT`, `ZN_API_KEY`, `ZN_DB_PATH`), and an environment variable wins over the settings file. So the order is: option, then environment, then settings file, then the default.
+
+An API key given with `--api-key` can show up in the process list and in your shell history. Prefer `ZN_API_KEY`.
+
+### Settings file
+
+Without `--config`, the gateway looks in the current folder for `zn.json`, then `zn.config.json`, then `.zn.json`, and reads the first one it finds. If there is none, it uses the defaults. With `--config`, the file must exist and its name must end in `.json`, or the gateway stops and says what to fix.
+
+Unknown keys are handled in two ways:
+
+- In a section that turns a protection on or tunes it (`security`, `audit`, `engine`, `kms`, `neural`, `fusion`, `managed_rules`, `loop_breaker`, `consensus` and `guardrails`), an unknown key is an error and the gateway does not start. A typo there would silently weaken the setting. The message names the key and suggests the closest valid one.
+- Anywhere else, an unknown key only prints a warning and is ignored.
+
+## Environment variables
+
+Environment variables override the settings file. The table lists the variables that are not described in another section. Where a section already covers one, the last column links to it.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ZN_ENV` | `development` | `production` turns on the stricter start-up checks below. Any other value is treated as not production. The value is case-sensitive. |
+| `ZN_PORT` | `9090` | Management API port. A value that is not a valid port is ignored with a warning. `--port` wins. |
+| `ZN_ALLOWED_ORIGINS` | `http://localhost:5173`, `http://localhost:9090`, `http://127.0.0.1:5173`, `http://127.0.0.1:9090` | Browser origins allowed to call the management API. A comma-separated list that replaces the defaults. Spaces around each item are ignored. |
+| `RUST_LOG` | `info` | Log level and filters, in the usual Rust `tracing` format, for example `debug`. A value that cannot be read falls back to `info`. Logs go to the error stream. |
+| `ZN_OTLP_ENDPOINT` | unset | Base URL of an OpenTelemetry collector. The gateway sends traces to this URL plus `/v1/traces`. When it is unset, the standard `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` is used, and then `http://localhost:4318/v1/traces`. |
+| `ZN_GAS_LIMIT` | `10000000` | Work budget for one WASM policy run. A value that is not a whole number is ignored. |
+| `ZN_MEMORY_LIMIT` | `128` | Memory limit for WASM policies, in MB. An invalid value is ignored. |
+| `ZN_TIMEOUT` | `1000` | Time limit for one WASM policy run, in milliseconds. An invalid value is ignored. |
+| `ZN_POLICY_HASHES` | unset | Comma-separated SHA-256 hashes (lowercase hex, no spaces) of the policy files that may load. When it is unset, any policy is accepted and the gateway warns about it at start. |
+| `ZN_SIGNING_PUBLIC_KEY` | unset | Ed25519 public key (32 bytes, as hex) used to check policy signatures. A key that is not valid hex of that size stops the gateway. See also [post-quantum policy signatures](#post-quantum-policy-signatures). |
+| `ZN_SIEM_ENDPOINT` | unset | HTTP or HTTPS address that audit events are exported to. |
+| `ZN_SIEM_TOKEN` | unset | Token sent to the SIEM endpoint. |
+| `ZN_KMS_TYPE` | `local` | `aws` takes the data key from AWS KMS (see [AWS KMS data key](#aws-kms-data-key)). Any other value is treated as `local`. |
+| `ZN_KMS_REGION` | unset | Stored in the settings as `kms.region`. The gateway does not pass it to the AWS client, so set the AWS region the usual AWS way (for example `AWS_REGION`). |
+| `ZN_NEURAL_ENABLED` | `true` | Turns the neural check on or off. Read more strictly than the on/off settings below. |
+| `ZN_NEURAL_THRESHOLD` | `1.2` | Threshold for the neural anomaly score. An invalid value is ignored. |
+| `ZN_PARANOIA_LEVEL` | `1` | From 1 (relaxed) to 5 (paranoid). A whole number outside that range is moved to the nearest end (0 becomes 1, 9 becomes 5). A value that is not a number from 0 to 255 is ignored. |
+| `ZN_MIN_SAMPLES` | `50` | How many calls the false-positive guard needs before it can decide to roll back. An invalid value is ignored. |
+| `ZN_FPR_MARGIN` | `0.02` | How far above the control group the false-positive rate may go before the guard rolls back. An invalid value is ignored. |
+| `ZN_NEAREST_NEIGHBOR_AUDIT` | `true` | Logs the closest earlier call next to each neural result (see [Audit payloads](#audit-payloads)). Read more strictly than the on/off settings below. |
+
+Other variables are described where they matter: `ZN_API_KEY` and `ZN_JWT_SECRET` in [Management API authentication](#management-api-authentication), `ZN_MCP_WS_TOKEN` there too, `ZN_DB_KEY` in [Audit payloads](#audit-payloads), `ZN_DB_PATH` (the audit database file, `zn.db` by default), `ZN_KMS_KEY_ID`, `ZN_KMS_ALLOW_CONFIG_FALLBACK` and `ZN_KMS_RECOVER_NEW_DATA_KEY` in [AWS KMS data key](#aws-kms-data-key) and [KMS key and the config fallback](#kms-key-and-the-config-fallback), the `ZN_MEMORY_MAX_*` limits in [Vector memory limits](#vector-memory-limits), and `ZN_FAST_BOOT`, `ZN_NEURAL_MODEL_PATH` and `HF_ENDPOINT` in [Model download on first start](#model-download-on-first-start).
+
+`ZN_API_KEY` here is the management API key of this gateway. It is not the cloud API key that the [README](../README.md#configuration) lists for `zn-gate`. The two are unrelated, and this gateway never contacts the cloud.
+
+### Production mode
+
+With `ZN_ENV=production`, the gateway checks two things when it starts:
+
+- It will not start without an audit encryption key. The key must come from `ZN_DB_KEY` (or from the settings file with `audit.encryption_enabled` on). A KMS key alone does not satisfy this check. The error says: "Audit log encryption is MANDATORY in production. Please set ZN_DB_KEY."
+- Without an API key, it starts but logs a warning that the management API is unprotected. Set `ZN_API_KEY`.
+
+### On and off values
+
+Four variables read a yes or no value in a strict way: `ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRITE`, `ZN_NEURAL_BLOCKING` and `ZN_GUARDRAILS_ALERT_ONLY`. They accept `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off`, in any capitalisation, and stop the gateway on anything else. The [Audit payloads](#audit-payloads) section explains this.
+
+Three other variables are read differently. Do not assume they take the same words:
+
+| Variable | What counts as on | What counts as off |
+|---|---|---|
+| `ZN_KMS_ALLOW_CONFIG_FALLBACK` | `1`, `true`, `TRUE` or `True` | Everything else, including `yes`, `on` and an empty value |
+| `ZN_KMS_RECOVER_NEW_DATA_KEY` | `1` or `true`, in any capitalisation, spaces around it ignored | Everything else |
+| `ZN_NEURAL_ENABLED` and `ZN_NEAREST_NEIGHBOR_AUDIT` | Anything that is not exactly `true` or `false`, so `1`, `yes`, `on` and a typo all mean on | Only the exact lowercase word `false` |
+
+So `ZN_NEURAL_ENABLED=0` or `ZN_NEURAL_ENABLED=off` does not turn the neural check off. Use `false`.
+
 ## Running in Docker
 
 The root `Dockerfile` builds a small distroless image (nothing is published; build it yourself):

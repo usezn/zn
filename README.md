@@ -326,7 +326,7 @@ We only publish numbers we can reproduce, with the method next to them.
 | Variable | Default | Effect |
 |---|---|---|
 | `ZN_CLOUD` | off | `1` lets prompt analysis also query the cloud classifier. Requires `ZN_API_KEY`. |
-| `ZN_API_KEY` | unset | API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`. |
+| `ZN_API_KEY` | unset | API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`. This is not the management key of the legacy Rust gateway, which reads a variable of the same name (see [docs/rust-core.md](docs/rust-core.md#environment-variables)). |
 | `ZN_LOCAL_ONLY` | unset | `true` forces local-only, even with `ZN_CLOUD=1`. |
 | `ZN_STAGE` / `ZN_API_URL` | `v30` | Cloud endpoint selection. |
 
