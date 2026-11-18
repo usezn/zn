@@ -685,7 +685,7 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
-        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner - Scanned {scanned} files")
+        print(f"\n{_lead(SHIELD)}zn-gate Scan - Scanned {scanned} files")
         if nothing:
             print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:

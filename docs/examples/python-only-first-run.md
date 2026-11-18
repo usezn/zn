@@ -40,7 +40,7 @@ echo "exit code: $?"
 The output looks like this:
 
 ```text
-[+] zn-gate Security Scanner - Scanned 1 files
+[+] zn-gate Scan - Scanned 1 files
 [!] Found 1 secrets and 0 threat vectors:
 
   demo-project/.env:1 Secret found [secret:aws_access_key] Exposed credential detected by DLP filter

@@ -56,7 +56,7 @@ class TestCliLegacyCodePage(unittest.TestCase):
         proc = _run_cli(["scan", self.path, "--format", "text"], "cp1252")
         self._assert_no_crash(proc, 1)
         out = proc.stdout.decode("cp1252")
-        self.assertIn("[+] zn-gate Security Scanner", out)
+        self.assertIn("[+] zn-gate Scan", out)
         self.assertIn("[!] Found 0 secrets and 2 threat vectors", out)
 
     def test_scan_github_and_json_on_cp1252(self):
@@ -87,7 +87,7 @@ class TestCliLegacyCodePage(unittest.TestCase):
         proc = _run_cli(["scan", self.path, "--format", "text"], "utf-8")
         self._assert_no_crash(proc, 1)
         out = proc.stdout.decode("utf-8")
-        self.assertIn("[+] zn-gate Security Scanner", out)
+        self.assertIn("[+] zn-gate Scan", out)
         self.assertIn("[!] Found 0 secrets and 2 threat vectors", out)
         self.assertIn("\u5ffd\u7565", out)
 

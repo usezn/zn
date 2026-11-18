@@ -616,7 +616,7 @@ async function handleScan(targetPath, options) {
     }
   }
   if (format === 'text') process.stdout.write(`
-${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
+${sym(process.env, '🛡️', undefined, '  ')}zn-gate Scan
 Target  : ${safeText(options.targetLabel || resolved)}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
 Files   : ${files.length} file(s) queued for audit\n

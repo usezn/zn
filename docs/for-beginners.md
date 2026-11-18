@@ -89,7 +89,7 @@ You can see zn-gate catch a secret without risking anything. The steps below use
 The output below is what the zn-gate CLI prints for this folder (checked against the repository code), with one change: the `Target` line shows `<your folder>` where your run prints the full path of the test folder.
 
 ```text
-[+]  zn-gate Static Security Audit
+[+]  zn-gate Scan
 Target  : <your folder>
 Scope   : Prompt templates, docs, configs (use --code to scan source)
 Files   : 1 file(s) queued for audit
@@ -111,7 +111,7 @@ Status       : Move the secrets out of these files (see "Next" for each one)
 
 ### What each part means
 
-- **`zn-gate Static Security Audit`**: the name of the check. It only reads files. It does not run anything from them.
+- **`zn-gate Scan`**: the name of the command that ran. It only reads files. It does not run anything from them.
 - **`Target`**: the folder it checked. **`Scope`**: the kinds of files it reads by default, here text, docs and config files. `.env` is a config file, so it is read.
 - **`Files : 1 file(s)`**: the one file in the folder, `.env`.
 - **`[x] .env:1 Secret found`**: the file and the line number where it found a secret. The `[x]` marks a finding.
