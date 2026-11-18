@@ -1427,10 +1427,13 @@ On macOS (Node.js from nodejs.org) and on Linux (Node.js from your distribution)
 
 ```sh
 mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+# bash (most Linux, including Ubuntu and Debian)
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
+# zsh (macOS)
 echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
-Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+Run the line for the shell you use (bash on most Linux, zsh on macOS). Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
 
 ### init says there is no internet connection
 
