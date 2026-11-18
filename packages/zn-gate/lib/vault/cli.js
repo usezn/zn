@@ -374,7 +374,8 @@ async function auditVerifyCmd(args) {
     }
     const r = await c.auditVerify();
     if (r.ok) { out('Audit log OK: ' + r.records + ' records, chain and MACs verified.'); return 0; }
-    process.stderr.write(messages.auditFailed(r.line || r.records, r.error) + '\n');
+    // The reason and the line of the file, always; an older running vault sends no `why`, so its error text is the reason.
+    process.stderr.write(messages.auditCheckFailed(r.why || r.error, r.fileLine, r.why ? r.error : undefined) + '\n');
     if (r.repairHint) process.stderr.write(r.repairHint + '\n');
     else if (r.tampered) {
       process.stderr.write('The vault keeps this warning until you look into it. Keep a copy of the audit log as evidence, then, in your own terminal, run `' + znCommand('vault verify --acknowledge') + '` to accept the log as it is now.\n');

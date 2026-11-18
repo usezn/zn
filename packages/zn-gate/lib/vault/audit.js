@@ -62,7 +62,8 @@ function macOf(key, record) {
 
 /*
  * forEachLine(file, fn, {chunkSize, maxLine}) -> boolean (false when the file does not exist)
- * Reads the file in chunks and calls fn(line, lineNo) for every non-empty line,
+ * Reads the file in chunks and calls fn(line, lineNo, fileLine) for every non-empty line
+ * (lineNo counts the non-empty lines, fileLine is the 1-based line number in the file),
  * so a log of any size is never held in one string (a single string over
  * ~512 MiB throws ERR_STRING_TOO_LONG). A line longer than maxLine bytes
  * (default 4 MiB; the daemon never writes one) is handed over as null.
@@ -85,10 +86,12 @@ function forEachLine(file, fn, opts) {
     let partLen = 0;
     let tooLong = false;
     let lineNo = 0;
+    let fileLine = 0;
     const emit = (bytes) => {
+      fileLine += 1;
       if (!tooLong && bytes.length === 0) return false;
       lineNo += 1;
-      return fn(tooLong ? null : bytes.toString('utf8'), lineNo) === true;
+      return fn(tooLong ? null : bytes.toString('utf8'), lineNo, fileLine) === true;
     };
     for (;;) {
       const want = Math.min(chunkSize, limit - readSoFar);
@@ -223,8 +226,11 @@ function verify(opts) {
   let failure = null;
   const fileHash = crypto.createHash('sha256');
   let fileBytes = 0;
-  const fail = (line, error) => { failure = { ok: false, records: line - 1, line, error }; return true; };
-  const exists = forEachLine(o.file, (text, line) => {
+  let at = 0;       // line number in the file of the record being checked
+  let lastAt = 0;   // line number in the file of the last record that verified
+  const fail = (line, error) => { failure = { ok: false, records: line - 1, line, fileLine: at, kind: failureKind(error), error }; return true; };
+  const exists = forEachLine(o.file, (text, line, fileLine) => {
+    at = fileLine;
     let rec;
     try { rec = JSON.parse(text); } catch (err) { rec = undefined; }
     if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return fail(line, 'unparseable record');
@@ -238,22 +244,61 @@ function verify(opts) {
     prev = mac;
     seq = rec.seq;
     count = line;
+    lastAt = fileLine;
     if (cp && seq === cp.seq && mac !== cp.mac) {
       return fail(line, 'log differs from the vault checkpoint (record ' + seq + ' has a different MAC)');
     }
     return false;
   }, { chunkSize: o.chunkSize, maxLine: o.maxLine, bytes: o.bytes, onChunk: (b, n) => { fileHash.update(b.subarray(0, n)); fileBytes += n; } });
   if (!exists) {
-    if (cp) return { ok: false, records: 0, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
+    if (cp) return { ok: false, records: 0, fileLine: 0, kind: 'truncated', expected: cp.seq, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
     // No log yet (a vault that has not written a record): with opts.hash the checked bytes are the empty input.
     return o.hash === true ? { ok: true, records: 0, sha256: fileHash.digest('hex'), bytes: 0 } : { ok: true, records: 0 };
   }
   if (failure) return failure;
   if (cp && seq < cp.seq) {
-    return { ok: false, records: count, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
+    return { ok: false, records: count, fileLine: lastAt, kind: 'truncated', expected: cp.seq, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
   }
   // With opts.hash: also the sha256 and size of the exact bytes that were checked (a caller that reads the file later can tell whether it changed).
   return o.hash === true ? { ok: true, records: count, sha256: fileHash.digest('hex'), bytes: fileBytes } : { ok: true, records: count };
+}
+
+/* The kind of a verify failure, from its error text (the texts are also what older tamper marks store). */
+function failureKind(error) {
+  const e = String(error || '');
+  if (e.startsWith('unparseable record')) return 'cut';
+  if (e.startsWith('bad mac')) return 'bad_mac';
+  if (e.startsWith('broken chain')) return 'broken_chain';
+  if (e.startsWith('bad sequence')) return 'sequence_gap';
+  if (e.startsWith('log differs from the vault checkpoint')) return 'checkpoint';
+  if (e.startsWith('log truncated')) return 'truncated';
+  return 'other';
+}
+
+const REASONS = {
+  cut: 'the line is cut or is not a record (a write stopped by a crash, a power loss or a full disk, or bytes added by someone else)',
+  bad_mac: 'the record does not carry a valid MAC: it was edited, or it was written with the key of another vault',
+  broken_chain: 'the record does not link to the record before it: a record was removed, moved or added',
+  sequence_gap: 'the record has the wrong sequence number: records are missing or repeated',
+  checkpoint: 'the record differs from the checkpoint the vault saved: the log was rewritten from this record on',
+};
+
+/*
+ * describeFailure(r) -> {reason, fileLine} for a failed verify result, in plain words.
+ * fileLine is the 1-based line number in the file (null when no line can be named).
+ * A truncated log names the line it ends at and how many records the vault expects.
+ */
+function describeFailure(r) {
+  const o = r || {};
+  const kind = o.kind || failureKind(o.error);
+  const fileLine = Number.isInteger(o.fileLine) && o.fileLine > 0 ? o.fileLine : null;
+  if (kind === 'truncated') {
+    const expects = Number.isInteger(o.expected) ? o.expected : (/expects (\d+)/.exec(String(o.error || '')) || [])[1];
+    const ends = fileLine ? 'it ends at line ' + fileLine + ' with ' + (o.records || 0) + ' records' : 'it is empty or missing';
+    return { reason: 'the log is shorter than the vault remembers: ' + ends + (expects ? ', the vault expects ' + expects : ''), fileLine };
+  }
+  if (REASONS[kind]) return { reason: REASONS[kind], fileLine };
+  return { reason: String(o.error || 'verification failed'), fileLine };
 }
 
 /*
@@ -400,4 +445,4 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, checkHead, read, sanitize, lastRecord, forEachLine, tailLine, checkCutTail, repairCutTail, FIELDS, GENESIS };
+module.exports = { append, verify, checkHead, read, sanitize, lastRecord, forEachLine, tailLine, checkCutTail, repairCutTail, describeFailure, FIELDS, GENESIS };

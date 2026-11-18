@@ -45,8 +45,9 @@ test('zn secret log prints the same as zn vault log; zn audit --since and zn aud
   const v = zn(home, ['vault', 'log']);
   const s = zn(home, ['secret', 'log']);
   assert.strictEqual(s.stdout, v.stdout);
-  assert.strictEqual(v.stderr, '');
-  assert.strictEqual(s.stderr, '');
+  // The vault is locked: both say first, on stderr, that the log is not verified.
+  assert.strictEqual(s.stderr, v.stderr);
+  assert.match(v.stderr, /^not verified: the vault is locked/);
   // `zn audit` reviews agent configs now; the old log forms are a usage error with a pointer.
   for (const args of [['audit', '--since', '1h'], ['audit', 'log']]) {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: home, env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn') }, encoding: 'utf8', timeout: 30000 });
@@ -67,7 +68,7 @@ test('--since filters the log in both commands', (t) => {
     assert.match(all.stdout, /OLD_SECRET/);
     assert.match(all.stdout, /NEW_SECRET/);
     const r = zn(home, [...cmd, '--since', '1h']);
-    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.status, 3, r.stderr);
     assert.doesNotMatch(r.stdout, /OLD_SECRET/);
     assert.match(r.stdout, /NEW_SECRET/);
     assertNotice(cmd, r);
@@ -81,14 +82,16 @@ test('zn vault with an unknown subcommand still prints the usage with zn vault l
   assert.match(r.stderr, /vault log \[--since 1h\]/);
 });
 
-test('the log lists records of a locked vault and says the chain was not checked', (t) => {
+test('the log of a locked vault: listed, but "not verified" comes first and the exit code is 3, not 0', (t) => {
   const home = tempDir(t, 'zn-audit-');
   fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
+  // A record nobody can check (its MAC is fake): a locked vault must not let it pass as a success.
   const rec = { seq: 1, ts: new Date().toISOString(), decision: 'allow', secret: 'DB_PASSWORD', mode: 'run', agent: 'claude-code', tool: 'Bash', prev: '0', mac: '00' };
   fs.writeFileSync(path.join(home, '.zn', 'audit.jsonl'), JSON.stringify(rec) + '\n');
   for (const cmd of LOG_COMMANDS) {
     const r = zn(home, cmd);
-    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.status, 3, r.stderr);
+    assert.match(r.stderr.split('\n')[0], /^not verified: the vault is locked \(run `.*unlock`, then `.*vault verify`\)$/);
     assert.match(r.stdout, /DB_PASSWORD/);
     assert.match(r.stdout, /chain: not checked/);
     assertNotice(cmd, r);
@@ -171,7 +174,8 @@ test('a large log is printed completely through a pipe by both commands', async 
       child.on('close', (status) => resolve({ status, stdout, stderr }));
     });
     const out = r.stdout.split('\n').filter(Boolean);
-    assert.strictEqual(r.status, 0, r.stderr);
+    // Locked vault: printed in full, but not verified (exit 3; the warning is on stderr, so stdout keeps its lines).
+    assert.strictEqual(r.status, 3, r.stderr);
     assert.strictEqual(out.length, N + 1, cmd.join(' ') + ': ' + out.length + ' lines');
     assert.match(out[N], /^chain: /, cmd.join(' '));
   }

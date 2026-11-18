@@ -161,6 +161,13 @@ function auditFailed(record, error, env) {
     'More: ' + TROUBLESHOOTING_URL + verboseDetail(error, env);
 }
 
+/* `zn vault verify` on a log that fails: the reason and the line of the file, always (not only in verbose mode). */
+function auditCheckFailed(reason, fileLine, error, env) {
+  const where = Number.isInteger(fileLine) && fileLine > 0 ? ' (line ' + fileLine + ' of ~/.zn/audit.jsonl)' : '';
+  return 'The audit log did not pass its check: ' + String(reason || 'verification failed') + where + '. ' +
+    'Do not delete or edit it: it is the proof of what happened. More: ' + TROUBLESHOOTING_URL + verboseDetail(error, env);
+}
+
 /* Why a running vault locked itself, in words. */
 function vaultLockedBecause(reason, idleMinutes) {
   if (reason === 'idle') return 'Vault locked: it was not used for ' + idleMinutes + ' min.';
@@ -361,7 +368,7 @@ module.exports = {
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,
   keychainProblem, secretToolMissing, powershellMissing, keychainHelperFailed, keychainLostKey,
-  verboseDetail, vaultStartTimeout, vaultStartExited, vaultNotAnswering, auditFailed, vaultLockedBecause,
+  verboseDetail, vaultStartTimeout, vaultStartExited, vaultNotAnswering, auditFailed, auditCheckFailed, vaultLockedBecause,
   CONNECT_KEY_ON_COMMAND_LINE, CONNECT_CANCELLED, CONNECT_NOT_A_KEY, CONNECT_REJECTED,
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,

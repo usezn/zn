@@ -340,7 +340,7 @@ Accepts the changed or new tools of one server, or of every server with `--all`.
 
 Secret values stay on this machine in an encrypted vault; agents only see markers such as `__ZN_AWS_KEY__`. Commands that add, change or remove a value need an interactive terminal and refuse to run inside an agent. A value is never accepted as an argument. [Walkthrough](secrets.md).
 
-The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, `1` another error, `64` wrong usage, `77` refused on purpose.
+The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, `1` another error, `64` wrong usage, `77` refused on purpose. `vault log` also exits `3` when it printed a log it could not verify (see [`vault log`](#vault-log)).
 
 ### `secret`
 
@@ -512,7 +512,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the vault audit log of secret use: every record, unless `--since` limits it. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
+Shows the vault audit log of secret use: every record, unless `--since` limits it. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked: the log is printed, the first line (on stderr) says `not verified: the vault is locked`, and the command exits `3`, so a script never takes an unchecked log for a verified one. To check it, run `zn unlock`, then `zn vault verify`. With no log yet it exits `0`. The other exit codes follow the secrets commands above.
 
 #### `vault log export`
 
@@ -528,7 +528,7 @@ Writes the vault audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file,
 zn-gate vault verify
 ```
 
-Checks the chain and signatures of the vault audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
+Checks the chain and signatures of the vault audit log. If the check fails, it says what is wrong (a cut line, a record with a bad MAC because it was edited or comes from another vault, a broken chain link, a gap in the sequence numbers, a record that differs from the vault's checkpoint, a log shorter than the vault remembers) and on which line of `~/.zn/audit.jsonl`, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
 #### `vault forget`
 

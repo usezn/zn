@@ -489,6 +489,31 @@ function makeOps(state, ctl) {
     return appendChecked(state, event, { knownValues: state.knownValues() });
   }
 
+  /* A change to the stored secrets and its audit record go together. change() edits the
+   * secrets in memory (the entries in `names` and the approvals); when the record cannot be
+   * written (a full disk, a cut last line, an IO error), the change is undone before the
+   * error goes back to the caller, so neither the 60 s flush nor the lock ever saves a
+   * change that has no record in the log. Runs inside state.serial. */
+  function changeWithRecord(names, change, event) {
+    const secrets = state.secrets;
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    const before = names.map((n) => [n, own(secrets.secrets, n), own(secrets.secrets, n) ? Object.assign({}, secrets.secrets[n]) : undefined]);
+    const hadApprovals = own(secrets, 'approvals');
+    const approvals = secrets.approvals && typeof secrets.approvals === 'object' ? Object.assign({}, secrets.approvals) : secrets.approvals;
+    change();
+    try {
+      return writeAudit(event);
+    } catch (err) {
+      for (const [n, had, value] of before) {
+        if (had) secrets.secrets[n] = value;
+        else delete secrets.secrets[n];
+      }
+      if (hadApprovals) secrets.approvals = approvals;
+      else delete secrets.approvals;
+      throw err;
+    }
+  }
+
   const team = makeTeamOps({ state, writeAudit, verifyChain: () => chainStatus(state), confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
 
   const localOf = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
@@ -739,9 +764,10 @@ function makeOps(state, ctl) {
         // The same value again is not a new secret: it keeps its generation and its approvals.
         const sameValue = !!prev && typeof prev.generation === 'string' && prev.generation !== '' && prev.value === value;
         const generation = sameValue ? prev.generation : newGeneration();
-        if (!sameValue) dropApprovalsOf(secrets, n);
-        secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
-        await writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: prev ? 'updated' : 'created' });
+        changeWithRecord([n], () => {
+          if (!sameValue) dropApprovalsOf(secrets, n);
+          secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
+        }, { secret: n, mode: 'set', decision: 'allow', reason: prev ? 'updated' : 'created' });
         await state.saveSecrets();
         return true;
       });
@@ -780,9 +806,10 @@ function makeOps(state, ctl) {
         if (!prev) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + n + ' in your own terminal, or, if you are an agent, ask the user to do it.');
         const merged = proposed(prev);
         if (widening(prev, merged).some((x) => !adds.includes(x))) throw znError(CODES.POLICY_DENIED, 'the policy changed while waiting for confirmation; try again. Next step: run the request again.');
-        secrets.secrets[n] = Object.assign(merged, { value: prev.value, created: prev.created, lastUsed: prev.lastUsed || null });
-        if (prev.generation) secrets.secrets[n].generation = prev.generation;
-        writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: adds.length ? 'policy_widened_confirmed' : 'policy_updated' });
+        changeWithRecord([n], () => {
+          secrets.secrets[n] = Object.assign(merged, { value: prev.value, created: prev.created, lastUsed: prev.lastUsed || null });
+          if (prev.generation) secrets.secrets[n].generation = prev.generation;
+        }, { secret: n, mode: 'set', decision: 'allow', reason: adds.length ? 'policy_widened_confirmed' : 'policy_updated' });
         await state.saveSecrets();
         return true;
       });
@@ -863,10 +890,11 @@ function makeOps(state, ctl) {
         const current = secrets.secrets[String(secret)];
         if (!current) throw znError(CODES.NOT_FOUND, 'no secret named ' + secret + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + secret + ' in your own terminal, or, if you are an agent, ask the user to do it.');
         if ((current.generation || null) !== generationAsked) throw znError(CODES.POLICY_DENIED, 'the secret changed while waiting for confirmation. Next step: run the command again.');
-        if (!current.generation) current.generation = newGeneration();
-        if (!secrets.approvals || typeof secrets.approvals !== 'object') secrets.approvals = {};
-        secrets.approvals[key] = { ts: new Date().toISOString(), exe: exePath, fp, gen: current.generation };
-        writeAudit({ secret: String(secret), mode: 'env', argv0, decision: 'ask:yes', reason: changed ? 'changed_exe_reapproved' : 'first_use_approved' });
+        changeWithRecord([String(secret)], () => {
+          if (!current.generation) current.generation = newGeneration();
+          if (!secrets.approvals || typeof secrets.approvals !== 'object') secrets.approvals = {};
+          secrets.approvals[key] = { ts: new Date().toISOString(), exe: exePath, fp, gen: current.generation };
+        }, { secret: String(secret), mode: 'env', argv0, decision: 'ask:yes', reason: changed ? 'changed_exe_reapproved' : 'first_use_approved' });
         await state.saveSecrets();
         return true;
       });
@@ -936,9 +964,10 @@ function makeOps(state, ctl) {
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         if (!Object.prototype.hasOwnProperty.call(secrets.secrets, n)) return false;
-        delete secrets.secrets[n];
-        dropApprovalsOf(secrets, n);
-        await writeAudit({ secret: n, mode: 'remove', decision: 'allow' });
+        changeWithRecord([n], () => {
+          delete secrets.secrets[n];
+          dropApprovalsOf(secrets, n);
+        }, { secret: n, mode: 'remove', decision: 'allow' });
         await state.saveSecrets();
         return true;
       });
@@ -988,9 +1017,10 @@ function makeOps(state, ctl) {
         const secrets = await state.loadSecrets();
         if (secrets.secrets[n]) throw znError(CODES.POLICY_DENIED, n + ' already exists. Next step: pick another name.');
         // A new secret gets its own generation, as setSecret gives one: an approval never carries over from an older secret of that name.
-        dropApprovalsOf(secrets, n);
-        secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation: newGeneration(), created: new Date().toISOString(), lastUsed: null });
-        await writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: 'adopted' });
+        changeWithRecord([n], () => {
+          dropApprovalsOf(secrets, n);
+          secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation: newGeneration(), created: new Date().toISOString(), lastUsed: null });
+        }, { secret: n, mode: 'set', decision: 'allow', reason: 'adopted' });
         await state.saveSecrets();
         return true;
       });
@@ -1060,10 +1090,15 @@ function makeOps(state, ctl) {
       // Only the last line is cut and the rest verifies: name the repair, not --acknowledge (which needs a whole chain).
       const cut = cutTailOf(state);
       const repairHint = cut.cut && cut.ok ? 'Only the last line of the log is cut (a crash or a full disk while writing); every record before it verifies. Next step: zn lock, then zn unlock ' + REPAIR_TAIL_FLAG + '.' : undefined;
+      // why and fileLine: what is wrong, in plain words, and on which line of the file (always shown by zn vault verify).
+      // The log as it is now names the line; a log that verifies now under an older warning names that warning.
+      const d = !r.ok && r.kind ? audit.describeFailure(r) : { reason: 'the log was changed behind the vault (noticed ' + t.at + '): ' + t.reason, fileLine: null };
       return Object.assign({}, r, {
         ok: false,
         tampered: true,
         error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
+        why: d.reason,
+        fileLine: d.fileLine,
         repairHint,
       });
     },

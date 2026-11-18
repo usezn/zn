@@ -474,6 +474,9 @@ async function audit(args, io) {
     out(io, 'The log is not shown because it did not verify. Keep a copy of ~/.zn/audit.jsonl as evidence and run `' + znCommand('vault verify') + '`.');
     return 1;
   }
+  // A locked vault cannot check the log: say so first (stderr, so the record lines on stdout keep their format).
+  const unverified = !verified && auditLogExists();
+  if (unverified) io.stderr.write(notVerifiedLine() + '\n');
   if (verified) records = verified.events;
   else records = await reader({ since: flags.since });
   for (const r of records || []) {
@@ -481,8 +484,22 @@ async function audit(args, io) {
   }
   const chain = await auditChain();
   out(io, chain.line);
-  // Same exit code as `zn vault verify` for a broken chain; "not checked" is not an error.
-  return chain.broken ? 1 : 0;
+  // Same exit code as `zn vault verify` for a broken chain. A log that was shown without being checked exits 3
+  // (as a scan that could not read everything), so a script never takes an unchecked log for a verified one.
+  if (chain.broken) return 1;
+  return (unverified || chain.unchecked) && auditLogExists() ? NOT_VERIFIED_EXIT : 0;
+}
+
+/* `zn vault log` showed a log nobody could verify (the vault is locked or did not answer). */
+const NOT_VERIFIED_EXIT = 3;
+
+function notVerifiedLine() {
+  return 'not verified: the vault is locked (run `' + znCommand('unlock') + '`, then `' + znCommand('vault verify') + '`)';
+}
+
+/* Is there an audit log at all? With none there is nothing to show and nothing to verify. */
+function auditLogExists() {
+  try { return fs.statSync(require('../vault/store').paths({}).auditFile).size > 0; } catch (err) { return false; }
 }
 
 /** Verified read through the unlocked vault; null when the vault is locked or unreachable.
@@ -506,14 +523,15 @@ async function auditChain() {
   try {
     client = require('../vault/client').createClient({});
     if (!(await client.isUnlocked())) {
-      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `' + znCommand('unlock') + '`, then `' + znCommand('vault verify') + '`)' };
+      return { broken: false, unchecked: true, line: 'chain: not checked: the vault is locked or unreachable (run `' + znCommand('unlock') + '`, then `' + znCommand('vault verify') + '`)' };
     }
     const v = await client.auditVerify();
     if (v && v.ok) return { broken: false, line: 'chain: valid, ' + v.records + ' records' };
+    if (v && v.why) return { broken: true, line: 'chain: BROKEN: ' + v.why + (v.fileLine ? ' (line ' + v.fileLine + ')' : '') };
     const where = v && v.line ? ' (record ' + v.line + ')' : '';
     return { broken: true, line: 'chain: BROKEN: ' + ((v && v.error) || 'verification failed') + where };
   } catch (err) {
-    return { broken: false, line: 'chain: not checked: ' + (err && err.message ? err.message : String(err)) };
+    return { broken: false, unchecked: true, line: 'chain: not checked: ' + (err && err.message ? err.message : String(err)) };
   } finally {
     if (client) client.close();
   }

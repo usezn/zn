@@ -373,7 +373,7 @@ The mistakes below come up most with the vault and with `zn env shadow`. Run eac
 |---|---|
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
-| `zn vault log` | Local vault audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. With the vault unlocked it checks the whole chain first and shows nothing if the check fails (the vault stores a warning); with the vault locked it says the chain was not checked. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
+| `zn vault log` | Local vault audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. With the vault unlocked it checks the whole chain first and shows nothing if the check fails (the vault stores a warning); with the vault locked it prints the log, says first that it is not verified and exits `3`. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
 | `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. An unlocked vault checks the chain first and refuses to export a log that does not verify; a locked vault cannot, so the export is refused unless you add `--unverified`, and then it warns that it is not a verified copy; `--out` refuses a symbolic link. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
 | `zn vault verify` | Check the vault audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age`, with or without its older `audit.jsonl`, is not detected. After a power loss the check can report a false alarm |
 | `zn lock` | Lock the vault now |
@@ -490,6 +490,33 @@ organization's policy and uploads the audit log. So the vault does not travel.
 On the new computer, install zn-gate, run `zn unlock`, and store your values
 again with `zn secret set NAME` or `zn env shadow .env`. Keep the originals in
 your own password manager so you can do this.
+
+**What can the vault audit log not prove?**
+The vault remembers the last record of the log (a checkpoint inside the
+encrypted vault). It saves that checkpoint every 60 seconds and when it locks.
+If the vault stops without locking (the process is killed, the computer loses
+power or crashes), the records written after the last saved checkpoint, up to
+about a minute of them, can be removed from the end of the log and neither
+`zn unlock` nor `zn vault verify` notices. Every other change is reported: an
+edited, removed, reordered or added record anywhere in the log, and a log that
+ends before the checkpoint. Restoring an older `secrets.age` together with its
+older log is not detected either. Lock the vault with `zn lock` when you stop
+working, so the checkpoint is saved.
+
+**The last line of the audit log is cut. What happened, and what does the repair do?**
+A crash, a power loss or a full disk while the vault was writing a record can
+leave the last line half written. `zn unlock` then refuses, says so, and names
+`zn unlock --repair-cut-audit-tail`. With that option, and only when every
+record before the cut line verifies and reaches the vault's checkpoint, zn
+moves the bytes of the cut line, unchanged, to a file next to the log
+(`audit.jsonl.cut-<time>`, which zn never deletes), adds a record with their
+sha256 and size to the log, and unlocks with all your secrets; the chain goes on
+after that record. If anything else in the log changed as well, the repair is
+refused and the log stays as it is: the message names how to keep it as
+evidence and start a new log without losing your secrets. While the vault is
+unlocked, a cut last line makes every change to the secrets fail with the same
+hint, and the change is not kept: zn never saves a change without its audit
+record.
 
 Words you do not know? See the [glossary](glossary.md).
 
