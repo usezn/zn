@@ -176,6 +176,13 @@ pub fn invalid_bool_env(var: &str, value: &str) -> String {
     )
 }
 
+/// A number-of-days environment setting holds something else: zn stops instead of guessing.
+pub fn invalid_days_env(var: &str, value: &str, max: u32) -> String {
+    format!(
+        "{var}=\"{value}\" is not a valid number of days, so zn did not start. Use a whole number from 1 to {max} (digits only), or leave {var} unset or empty to keep every audit record."
+    )
+}
+
 /// `ZN_PORT` is not a port number, so the port from the settings is kept.
 pub fn invalid_port_env(value: &str, fallback: u16) -> String {
     format!(

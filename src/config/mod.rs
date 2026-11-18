@@ -346,6 +346,12 @@ pub struct AuditConfig {
     /// goes on.
     #[serde(default)]
     pub require_write: bool,
+
+    /// Delete audit records older than this many days, at start and then
+    /// every hour. Off by default (`None`): the audit log is kept for ever.
+    /// Must be greater than 0 when set (`ZN_AUDIT_RETENTION_DAYS`).
+    #[serde(default)]
+    pub retention_days: Option<u32>,
 }
 
 impl Default for AuditConfig {
@@ -357,6 +363,7 @@ impl Default for AuditConfig {
             encryption_key: std::env::var("ZN_DB_KEY").ok(),
             store_payloads: false,
             require_write: false,
+            retention_days: None,
         }
     }
 }
@@ -988,6 +995,9 @@ impl ZnConfig {
         if let Some(v) = bool_env("ZN_AUDIT_REQUIRE_WRITE", get)? {
             self.audit.require_write = v;
         }
+        if let Some(v) = days_env("ZN_AUDIT_RETENTION_DAYS", get)? {
+            self.audit.retention_days = Some(v);
+        }
         if let Some(v) = bool_env("ZN_NEURAL_BLOCKING", get)? {
             self.neural.active_blocking = v;
         }
@@ -1038,6 +1048,16 @@ impl ZnConfig {
             return Err(anyhow!(
                 "Audit log encryption is MANDATORY in production. Please set ZN_DB_KEY."
             ));
+        }
+
+        if let Some(days) = self.audit.retention_days {
+            if !(1..=MAX_RETENTION_DAYS).contains(&days) {
+                return Err(anyhow!(
+                    "audit.retention_days must be a whole number of days from 1 to {} (or left out to keep every record), but it is {}.",
+                    MAX_RETENTION_DAYS,
+                    days
+                ));
+            }
         }
 
         if self.audit.store_payloads
@@ -1095,6 +1115,41 @@ fn parse_bool_flag(var: &str, raw: &str) -> Result<Option<bool>> {
         "1" | "true" | "yes" | "on" => Ok(Some(true)),
         "0" | "false" | "no" | "off" => Ok(Some(false)),
         _ => Err(anyhow!(crate::user_errors::invalid_bool_env(var, value))),
+    }
+}
+
+/// Longest retention that is accepted: 100 years. A larger number is a typo, not a policy.
+const MAX_RETENTION_DAYS: u32 = 36_500;
+
+/// Reads a whole number of days. Digits only (no sign, no decimals, no unit), spaces around
+/// the value are ignored. `None` means keep the default: the value is empty or blank. Anything
+/// else, including 0, is an error naming the variable, so a typo can never leave the setting
+/// at a different value than the one asked for.
+fn parse_days(var: &str, raw: &str) -> Result<Option<u32>> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let bad = || {
+        anyhow!(crate::user_errors::invalid_days_env(
+            var,
+            value,
+            MAX_RETENTION_DAYS
+        ))
+    };
+    if !value.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    match value.parse::<u32>() {
+        Ok(n) if (1..=MAX_RETENTION_DAYS).contains(&n) => Ok(Some(n)),
+        _ => Err(bad()),
+    }
+}
+
+fn days_env(var: &str, get: &dyn Fn(&str) -> Option<String>) -> Result<Option<u32>> {
+    match get(var) {
+        Some(raw) => parse_days(var, &raw),
+        None => Ok(None),
     }
 }
 
@@ -1850,6 +1905,77 @@ mod bool_flag_tests {
             "ZN_GUARDRAILS_ALERT_ONLY" => config.guardrails.alert_only,
             _ => unreachable!("{var}"),
         }
+    }
+
+    #[test]
+    fn retention_is_off_by_default() {
+        assert_eq!(AuditConfig::default().retention_days, None);
+        let parsed: AuditConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(parsed.retention_days, None);
+        assert_eq!(
+            apply("ZN_AUDIT_RETENTION_DAYS", None)
+                .unwrap()
+                .audit
+                .retention_days,
+            None
+        );
+        for blank in ["", "  "] {
+            let cfg = apply("ZN_AUDIT_RETENTION_DAYS", Some(blank)).unwrap();
+            assert_eq!(cfg.audit.retention_days, None, "{blank:?}");
+        }
+        assert!(ZnConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn retention_days_come_from_the_environment() {
+        for (raw, days) in [
+            ("30", 30),
+            (" 7 ", 7),
+            ("1", 1),
+            ("36500", 36_500),
+            ("0030", 30),
+        ] {
+            let cfg = apply("ZN_AUDIT_RETENTION_DAYS", Some(raw)).unwrap();
+            assert_eq!(cfg.audit.retention_days, Some(days), "{raw:?}");
+            assert!(cfg.validate().is_ok(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_retention_values_stop_the_start() {
+        for bad in [
+            "0",
+            "-1",
+            "+5",
+            "1.5",
+            "1e2",
+            "ten",
+            "30d",
+            "36501",
+            "4294967296",
+            "99999999999999999999",
+            "3 0",
+            "0x10",
+        ] {
+            let err = apply("ZN_AUDIT_RETENTION_DAYS", Some(bad))
+                .expect_err(bad)
+                .to_string();
+            assert!(err.contains("ZN_AUDIT_RETENTION_DAYS"), "{bad}: {err}");
+            assert!(err.contains("did not start"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_zero_or_huge_retention_in_the_file_fails_validation() {
+        for bad in [0u32, 36_501, u32::MAX] {
+            let mut cfg = ZnConfig::default();
+            cfg.audit.retention_days = Some(bad);
+            let err = cfg.validate().expect_err("bad retention").to_string();
+            assert!(err.contains("audit.retention_days"), "{bad}: {err}");
+        }
+        let mut cfg = ZnConfig::default();
+        cfg.audit.retention_days = Some(90);
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

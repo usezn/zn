@@ -52,6 +52,7 @@ struct PersistedAudit<'a> {
     encryption_enabled: bool,
     store_payloads: bool,
     require_write: bool,
+    retention_days: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -94,6 +95,7 @@ impl<'a> PersistedConfig<'a> {
             encryption_key: _,
             store_payloads,
             require_write,
+            retention_days,
         } = &c.audit;
         let KmsConfig {
             kms_type,
@@ -117,6 +119,7 @@ impl<'a> PersistedConfig<'a> {
                 encryption_enabled: *encryption_enabled,
                 store_payloads: *store_payloads,
                 require_write: *require_write,
+                retention_days: *retention_days,
             },
             webhook_refs: c
                 .webhooks

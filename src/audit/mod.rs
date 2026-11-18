@@ -404,17 +404,7 @@ impl AuditVault {
             |r| r.get(0),
         )?;
         if vacuum_pending > 0 {
-            conn.execute_batch("VACUUM;")
-                .map_err(|e| anyhow!("Failed to compact the audit database: {}", e))?;
-            let (busy, log, done): (i64, i64, i64) =
-                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-                })?;
-            if busy != 0 || log != done {
-                return Err(anyhow!(
-                    "audit database log checkpoint incomplete after compaction; retrying on the next start"
-                ));
-            }
+            compact_database(&conn)?;
             conn.execute(
                 "DELETE FROM metadata WHERE key = 'neighbours_vacuum_pending'",
                 [],
@@ -494,6 +484,60 @@ impl AuditVault {
         debug!("Audited event: {} by tool {}", entry.event, entry.tool_name);
         metrics::record_audit_entry();
         Ok(())
+    }
+
+    /// Delete the audit records older than `retention_days` days (see `prune_before`), then compact
+    /// the file when more than a tenth of it is free pages. Used at start and every hour.
+    pub fn apply_retention(&self, retention_days: u32) -> Result<RetentionReport> {
+        let cutoff = Utc::now() - chrono::Duration::days(i64::from(retention_days));
+        self.prune_before(cutoff)
+    }
+
+    /// Delete every `audit_logs` row whose timestamp is before `cutoff`, in batches so that the
+    /// connection is free for new records between them, with `secure_delete` on so the deleted text
+    /// is zeroed in the file. Rows whose timestamp cannot be read are kept. The audit table has no
+    /// hash chain or sequence that a gap could break (ids are random, the key check lives in the
+    /// `metadata` table, the tenants table is not touched), so no anchor row is needed; instead one
+    /// `AUDIT_RETENTION` record states how many rows went and the cutoff, so a deletion is itself
+    /// recorded. The file is compacted (VACUUM, then a log checkpoint) when over 10% of its pages
+    /// are free.
+    pub fn prune_before(&self, cutoff: chrono::DateTime<Utc>) -> Result<RetentionReport> {
+        let cutoff_text = cutoff.to_rfc3339();
+        let mut deleted = 0usize;
+        loop {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+            conn.execute_batch("PRAGMA secure_delete = ON;")?;
+            let n = conn.execute(
+                "DELETE FROM audit_logs WHERE rowid IN (
+                     SELECT rowid FROM audit_logs
+                     WHERE julianday(timestamp) < julianday(?1) LIMIT ?2)",
+                params![cutoff_text, RETENTION_BATCH as i64],
+            )?;
+            deleted += n;
+            if n < RETENTION_BATCH {
+                break;
+            }
+        }
+        if deleted > 0 {
+            let mut marker = AuditEntry::new("AUDIT_RETENTION", "audit", "ALLOWED")
+                .with_policy(format!("pruned {deleted} records older than {cutoff_text}"));
+            marker.payload = None;
+            self.log(marker)?;
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        let compacted = if free_page_share_over_a_tenth(&conn)? {
+            compact_database(&conn)?;
+            true
+        } else {
+            false
+        };
+        Ok(RetentionReport { deleted, compacted })
     }
 
     /// Retrieve recent audit logs from the database
@@ -701,6 +745,71 @@ const NONCE_LEN: usize = 12;
 
 /// Draw a fresh 12-byte nonce from the cryptographically secure,
 /// OS-seeded random generator (`rand::rng()`).
+/// Rows deleted per statement by the retention pass.
+const RETENTION_BATCH: usize = 5_000;
+
+/// How often the retention pass runs after the one at start.
+pub const RETENTION_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// What one retention pass did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionReport {
+    /// Rows deleted.
+    pub deleted: usize,
+    /// True when the file was compacted afterwards.
+    pub compacted: bool,
+}
+
+/// True when more than a tenth of the database pages are free.
+fn free_page_share_over_a_tenth(conn: &Connection) -> Result<bool> {
+    let total: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+    let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+    Ok(total > 0 && free * 10 > total)
+}
+
+/// VACUUM the file and truncate the write-ahead log, so freed text does not stay in the file.
+fn compact_database(conn: &Connection) -> Result<()> {
+    conn.execute_batch("VACUUM;")
+        .map_err(|e| anyhow!("Failed to compact the audit database: {}", e))?;
+    let (busy, log, done): (i64, i64, i64) =
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+    if busy != 0 || log != done {
+        return Err(anyhow!(
+            "audit database log checkpoint incomplete after compaction; retrying on the next start"
+        ));
+    }
+    Ok(())
+}
+
+/// Run the retention pass now and then every `RETENTION_INTERVAL`, for as long as the process
+/// lives. A failed pass is logged and tried again at the next tick; it never stops the gateway.
+pub fn spawn_retention(vault: Arc<AuditVault>, retention_days: u32) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(RETENTION_INTERVAL);
+        loop {
+            tick.tick().await;
+            let v = vault.clone();
+            match tokio::task::spawn_blocking(move || v.apply_retention(retention_days)).await {
+                Ok(Ok(r)) if r.deleted > 0 => info!(
+                    "Audit retention removed {} records older than {} days{}",
+                    r.deleted,
+                    retention_days,
+                    if r.compacted {
+                        " and compacted the file"
+                    } else {
+                        ""
+                    }
+                ),
+                Ok(Ok(_)) => debug!("Audit retention found nothing to remove"),
+                Ok(Err(e)) => warn!("Audit retention failed, will retry: {e:#}"),
+                Err(e) => warn!("Audit retention task failed: {e}"),
+            }
+        }
+    });
+}
+
 fn random_nonce_bytes() -> [u8; NONCE_LEN] {
     use rand::Rng;
     let mut nonce = [0u8; NONCE_LEN];
@@ -1143,6 +1252,163 @@ mod tests {
 
     fn temp_db_path() -> String {
         format!("test_audit_{}.db", Uuid::new_v4())
+    }
+
+    fn log_at(vault: &AuditVault, age_days: i64, tool: &str) -> String {
+        let mut e = AuditEntry::new("TOOL_CALL", tool, "ALLOWED");
+        e.timestamp = (Utc::now() - chrono::Duration::days(age_days)).to_rfc3339();
+        let id = e.id.clone();
+        vault.log(e).unwrap();
+        id
+    }
+
+    fn tools(vault: &AuditVault) -> Vec<String> {
+        let mut v: Vec<String> = vault
+            .get_recent(1000)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event == "TOOL_CALL")
+            .map(|e| e.tool_name)
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn retention_removes_only_the_old_rows() {
+        let (_dir, vault) = scratch_vault();
+        log_at(&vault, 40, "old_a");
+        log_at(&vault, 31, "old_b");
+        log_at(&vault, 29, "new_a");
+        log_at(&vault, 0, "new_b");
+        let report = vault.apply_retention(30).unwrap();
+        assert_eq!(report.deleted, 2);
+        assert_eq!(tools(&vault), vec!["new_a", "new_b"]);
+        // The deletion is itself recorded, once, and a second pass has nothing to do.
+        let notes: Vec<_> = vault
+            .get_recent(1000)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event == "AUDIT_RETENTION")
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0]
+            .policy_match
+            .as_deref()
+            .unwrap()
+            .starts_with("pruned 2 records"));
+        assert_eq!(vault.apply_retention(30).unwrap().deleted, 0);
+        assert_eq!(vault.count().unwrap(), 3);
+    }
+
+    #[test]
+    fn retention_handles_more_rows_than_one_batch_and_keeps_the_tenants_table() {
+        let (_dir, vault) = scratch_vault();
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute("CREATE TABLE tenants_probe (id TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO tenants_probe VALUES ('t1')", [])
+                .unwrap();
+        }
+        for i in 0..(RETENTION_BATCH + 25) {
+            log_at(&vault, 100, &format!("old_{i}"));
+        }
+        log_at(&vault, 1, "keep");
+        let report = vault.apply_retention(30).unwrap();
+        assert_eq!(report.deleted, RETENTION_BATCH + 25);
+        assert_eq!(tools(&vault), vec!["keep"]);
+        let conn = vault.get_connection();
+        let conn = conn.lock().unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tenants_probe", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn retention_keeps_rows_with_an_unreadable_timestamp() {
+        let (_dir, vault) = scratch_vault();
+        let id = log_at(&vault, 0, "odd");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "UPDATE audit_logs SET timestamp = 'not a date' WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        }
+        assert_eq!(vault.apply_retention(1).unwrap().deleted, 0);
+        assert_eq!(tools(&vault), vec!["odd"]);
+    }
+
+    #[test]
+    fn nothing_is_removed_unless_retention_runs() {
+        let (_dir, vault) = scratch_vault();
+        log_at(&vault, 4000, "ancient");
+        log_at(&vault, 0, "fresh");
+        // Opening again (what a restart does) changes nothing: retention is a separate call.
+        let path = vault.db_path().to_string();
+        drop(vault);
+        let vault = AuditVault::new(&path, None).unwrap();
+        assert_eq!(tools(&vault), vec!["ancient", "fresh"]);
+        assert_eq!(vault.count().unwrap(), 2);
+    }
+
+    #[test]
+    fn an_encrypted_vault_still_verifies_its_key_after_a_prune() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.db").to_string_lossy().into_owned();
+        {
+            let vault = AuditVault::new(&path, Some("correct passphrase")).unwrap();
+            for age in [90, 60, 0] {
+                let mut e = AuditEntry::new("TOOL_CALL", format!("t{age}"), "ALLOWED")
+                    .with_payload("secret-looking-text-0000");
+                e.timestamp = (Utc::now() - chrono::Duration::days(age)).to_rfc3339();
+                vault.log(e).unwrap();
+            }
+            assert_eq!(vault.apply_retention(30).unwrap().deleted, 2);
+            assert_eq!(vault.count().unwrap(), 2); // the kept row and the retention record
+        }
+        // Verification at open: the right key opens, the kept payload still decrypts.
+        let vault = AuditVault::new(&path, Some("correct passphrase")).unwrap();
+        let kept = vault
+            .get_recent(100)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.tool_name == "t0")
+            .unwrap();
+        assert_eq!(kept.payload.as_deref(), Some("secret-looking-text-0000"));
+        // Prune the last encrypted row too: the key check in the metadata still refuses a wrong key.
+        assert_eq!(vault.apply_retention(1).unwrap().deleted, 0);
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute("DELETE FROM audit_logs", []).unwrap();
+        }
+        drop(vault);
+        assert!(AuditVault::new(&path, Some("a different passphrase")).is_err());
+        assert!(AuditVault::new(&path, Some("correct passphrase")).is_ok());
+    }
+
+    #[test]
+    fn deleted_text_does_not_stay_in_the_file() {
+        let (_dir, vault) = scratch_vault();
+        let marker = "retention-marker-text-0000";
+        for i in 0..200 {
+            let mut e = AuditEntry::new("TOOL_CALL", format!("{marker}-{i}"), "ALLOWED");
+            e.timestamp = (Utc::now() - chrono::Duration::days(90)).to_rfc3339();
+            vault.log(e).unwrap();
+        }
+        log_at(&vault, 0, "fresh");
+        let report = vault.apply_retention(30).unwrap();
+        assert_eq!(report.deleted, 200);
+        assert!(report.compacted, "most pages are free after this prune");
+        let path = vault.db_path().to_string();
+        assert!(!file_bytes_contain(&path, marker));
+        assert!(!file_bytes_contain(&format!("{path}-wal"), marker));
     }
 
     #[test]

@@ -433,6 +433,11 @@ async fn start_proxy(args: Args) -> Result<()> {
         AuditVault::new(&zn_config.audit.db_path, db_key.as_deref())?
             .with_payload_storage(zn_config.audit.store_payloads),
     );
+    // Optional age limit of the audit log: one pass now, then every hour.
+    if let Some(days) = zn_config.audit.retention_days {
+        tracing::info!("Audit retention is on: records older than {days} days are deleted");
+        zn::audit::spawn_retention(vault.clone(), days);
+    }
 
     // Initialize Tenant Store
     // A generated SuperAdmin key is written next to the audit database,
