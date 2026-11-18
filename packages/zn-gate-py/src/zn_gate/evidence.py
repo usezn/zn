@@ -451,6 +451,18 @@ def _serialize(record: Dict[str, Any], ascii_only: bool = False, js_numbers: boo
     return text if ascii_only else _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
 
 
+def _normalise_numbers(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Gives every whole number the spelling JavaScript gives it (5.0 as 5), so a ledger line that
+    spells a whole number with a fraction verifies in both packages. Only the spelling changes: a
+    different value still fails the hash, and booleans are left alone (true is not 1)."""
+    out: Dict[str, Any] = {}
+    for k, v in record.items():
+        if isinstance(v, float) and math.isfinite(v) and v.is_integer() and abs(v) < 1e21:
+            v = int(v)
+        out[k] = v
+    return out
+
+
 def _canonical(record: Dict[str, Any]) -> str:
     """Canonical serialization of a record for hashing: compact JSON with UTF-8 left as is, lone
     surrogates escaped and numbers written as JavaScript writes them (0.00001, not 1e-05), byte
@@ -668,10 +680,7 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
             }
 
         recorded_hash = rec.get("record_hash")
-        base_record = {k: v for k, v in rec.items() if k != "record_hash"}
-        # Ensure confidence preserves whole number integer representation if whole
-        if "confidence" in base_record and isinstance(base_record["confidence"], (int, float)) and float(base_record["confidence"]).is_integer():
-            base_record["confidence"] = int(base_record["confidence"])
+        base_record = _normalise_numbers({k: v for k, v in rec.items() if k != "record_hash"})
             
         # Records written by the Node package or an older version may differ in how non-ASCII
         # text is written: accept both canonical forms.
