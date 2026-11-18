@@ -51,3 +51,86 @@ pub fn write_policy_file(path: &Path, data: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::write_policy_file;
+
+    fn names(dir: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_missing_directory_is_an_error_and_creates_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("absent").join("p.wasm");
+        let err = write_policy_file(&path, b"x").unwrap_err().to_string();
+        assert!(
+            err.starts_with("Failed to create a temporary policy file"),
+            "{err}"
+        );
+        assert!(!root.path().join("absent").exists());
+        assert!(names(root.path()).is_empty());
+    }
+
+    #[test]
+    fn empty_data_writes_an_empty_file_and_replaces_older_content() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("p.wasm");
+        write_policy_file(&path, b"old").unwrap();
+        write_policy_file(&path, b"").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), Vec::<u8>::new());
+        assert_eq!(names(root.path()), vec!["p.wasm".to_string()]);
+    }
+
+    #[test]
+    fn binary_data_is_written_byte_for_byte() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("p.wasm");
+        let data = [0u8, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 0xff, 0xfe];
+        write_policy_file(&path, &data).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), data);
+    }
+
+    #[test]
+    fn a_target_that_cannot_be_replaced_fails_and_leaves_no_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("p.wasm");
+        std::fs::create_dir(&path).unwrap();
+        let err = write_policy_file(&path, b"x").unwrap_err().to_string();
+        assert!(err.starts_with("Failed to save policy file"), "{err}");
+        assert!(path.is_dir());
+        assert_eq!(names(root.path()), vec!["p.wasm".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_refused_with_its_own_message_and_its_target_is_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target.wasm");
+        std::fs::write(&target, b"keep").unwrap();
+        let link = root.path().join("link.wasm");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = write_policy_file(&link, b"x").unwrap_err().to_string();
+        assert!(err.contains("is a symlink"), "{err}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_without_a_directory_is_refused() {
+        let err = write_policy_file(std::path::Path::new("/"), b"x")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has no directory"), "{err}");
+    }
+}

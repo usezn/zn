@@ -1318,4 +1318,31 @@ mod tests {
         assert!(e.list_policies().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn an_empty_policy_file_is_rejected_and_not_registered() {
+        let e = engine();
+        let dir = temp_dir("register-empty");
+        let path = dir.join("empty.wasm");
+        std::fs::write(&path, b"").unwrap();
+        let err = e.register_policy_from_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to compile WASM policy"),
+            "{err}"
+        );
+        assert_eq!(e.policy_count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_all_policies_skips_empty_and_malformed_files_and_keeps_the_valid_one() {
+        let e = engine();
+        let dir = temp_dir("load-bad");
+        std::fs::write(dir.join("empty.wasm"), b"").unwrap();
+        std::fs::write(dir.join("junk.wasm"), b"not a wasm module").unwrap();
+        std::fs::write(dir.join("good.wasm"), simple_policy("(i32.const 1)")).unwrap();
+        e.load_all_policies(&dir).unwrap();
+        assert_eq!(e.list_policies(), vec!["good".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
