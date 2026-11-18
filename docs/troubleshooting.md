@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The eighteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The nineteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -66,6 +66,7 @@ Find the command you ran, then the symptom that matches.
   - ["invalid join token (expected znj_...)" / "No join token given"](#invalid-join-token-expected-znj_--no-join-token-given)
   - ["This join token is expired, already used or not valid"](#this-join-token-is-expired-already-used-or-not-valid)
   - ["Could not reach the zn server"](#could-not-reach-the-zn-server)
+  - [zn-gate cannot reach the cloud](#19-zn-gate-cannot-reach-the-cloud)
   - ["Your admin has not published a policy yet"](#your-admin-has-not-published-a-policy-yet)
   - ["An admin removed this machine from the organization"](#an-admin-removed-this-machine-from-the-organization)
   - ["Your organization is not active on zn right now"](#your-organization-is-not-active-on-zn-right-now)
@@ -74,6 +75,7 @@ Find the command you ran, then the symptom that matches.
 - `connect`
   - [`zn-gate connect` does not accept your key](#7-zn-gate-connect-does-not-accept-your-key)
   - ["will not send the saved key" (TLS settings)](#8-will-not-send-the-saved-key-tls-settings)
+  - [zn-gate cannot reach the cloud](#19-zn-gate-cannot-reach-the-cloud)
 
 ## Symptom index
 
@@ -92,6 +94,7 @@ Find the command you ran, then the symptom that matches.
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
+- [zn-gate cannot reach the cloud](#19-zn-gate-cannot-reach-the-cloud)
 - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
 - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
@@ -450,9 +453,87 @@ zn: its hook cannot start because zn-gate is not installed any more (the Node.js
 1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
 2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs Node.js but no installed zn-gate. See [Remove zn-gate](uninstall.md).
 
+## 19. zn-gate cannot reach the cloud
+
+zn-gate does its checks on your computer, so a lost connection never stops your agent from being checked. The cloud is used only for a few optional things: the cloud check of prompt text (`zn-gate connect`, or `ZN_CLOUD=1` with `ZN_API_KEY`), `zn team` (Team policy and audit upload), and `zn-gate scan --package` (it downloads an npm package from the registry). Each of them prints its own message when the network is the problem. The messages below are copied as zn-gate prints them. A part in angle brackets is a blank that zn fills in.
+
+**Check first:** run `zn-gate status`. It says whether a key is connected and where the key comes from, and it never prints the key. Without a connected key or `ZN_CLOUD=1`, zn-gate never sends your text anywhere.
+
+### When the cloud check of a prompt fails
+
+```text
+[zn-gate] Warning: Cloud gate error (<detail>). <one sentence> The local rules were used instead, so the text was checked on this machine only.
+```
+
+**What it means:** you turned on the cloud check and the call to the cloud failed, so zn-gate checked the text with its local rules only. This line is shown only when `ZN_VERBOSE=1` is set (or `DEBUG=zn`). The sentence after the detail says why. It is one of these:
+
+- `The cloud service did not accept the API key: check ZN_API_KEY.` (HTTP 401 or 403)
+- `The cloud service answered with an error (HTTP <code>): try again later.`
+- `The cloud service took too long to answer: check your network connection.`
+- `The cloud service could not be reached: check your network connection and ZN_API_URL.`
+- `The cloud check failed.`
+
+The result then carries `"fallback": true` and a `cloud_error` field with the detail. The `mode` differs: the npm package prints `"mode": "oss-local"` and the Python package prints `"mode": "oss-local-fallback"`.
+
+**What to do:** nothing is lost: the local rules ran. If you want the cloud check back, fix the cause the sentence names (the key, your connection, or `ZN_API_URL` if you set one) and run the command again. A key saved with `zn-gate connect` is only ever sent to `https://api.usezn.com`; a custom URL is ignored for it.
+
+### When the cloud answered, but its model did not
+
+```text
+[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.
+```
+
+**What it means:** `zn-gate analyze` printed this because the cloud was reached, but the model behind it did not answer, so the cloud decided from its rules alone. The JSON result has `"degraded": true` and `"degraded_reason": "model unavailable, rules only"`. It is a weaker verdict than usual, not an error. The npm and the Python package print the same line.
+
+**What to do:** run the command again a little later. If you read the JSON in a script, treat a `degraded` verdict as less certain than one without it.
+
+### When the saved key cannot be read
+
+```text
+[zn-gate] Connected, but the saved key is not readable (or does not match the marker), so prompts are checked locally only. Run zn-gate status.
+```
+
+**What it means:** `zn-gate connect` recorded that you connected, but the key it saved cannot be read now. For example the system keychain is locked, the vault is locked, or the key was removed. zn-gate prints this once per run (npm package only) and checks prompts on your computer only.
+
+**What to do:** run `zn-gate status`. If it says the key is kept in the zn vault, run `zn unlock` first. If the key is gone, run `zn-gate connect --reconnect` and paste a new analysis-only key. To stop using the cloud check, run `zn-gate disconnect`. More in [connect](connect.md#see-and-change-the-state).
+
+### When `zn team` cannot reach the zn cloud
+
+`zn team join` and `zn team sync` say `Could not reach the zn server` (see [that message](#could-not-reach-the-zn-server)). When you run them with `ZN_VERBOSE=1`, or look at the `Last sync` line of `zn team status`, the cause can read:
+
+```text
+could not reach zn cloud (network error)
+zn cloud did not answer within <N> ms
+```
+
+**What it means:** the first one is a network error before any answer (no connection, a firewall, a proxy). The second one means the server did not answer in time (`<N>` is the wait in milliseconds). A third text, `zn cloud answered HTTP <code>`, means the server did answer, with an error.
+
+**What to do:** check your connection, proxy and VPN, then run the command again. Your policy and your audit records stay on this computer and are sent on the next sync that works.
+
+```text
+[zn] invalid API address: zn cloud URL must use https (http is allowed only for 127.0.0.1, localhost or [::1])
+```
+
+**What it means:** you gave `zn team join --api <address>` an address that starts with `http://`. zn only talks to a server over https. A plain `http://` address is accepted only for your own computer (`127.0.0.1`, `localhost` or `[::1]`), for testing. The same line, with another text after `zn cloud URL`, appears for an address that has a path, a query, credentials, or is not a valid URL.
+
+**What to do:** use the `https://` address your administrator gave you, with no path after the host name, or leave out `--api` to use the default.
+
+### When `scan --package` cannot reach the registry
+
+```text
+zn-gate scan: could not reach the registry for <name>@<version> (<cause>). Nothing was scanned; try again when you are online.
+zn-gate scan: the registry answered HTTP <code> for <name>@<version>. Nothing was scanned.
+```
+
+**What it means:** `zn-gate scan --package <name>` downloads the package from the npm registry (or from the address in `ZN_NPM_REGISTRY`) and could not get it. The first line is a network failure, the second one means the registry answered with an error such as 429 (too many requests) or 503 (temporarily down). Nothing was installed, run or scanned. The command exits with `2`: a package that could not be fetched is never reported as clean.
+
+**What to do:** check your connection, proxy and VPN, wait a minute if the code was 429 or 503, and run the same command again. If you use a company registry, check that `ZN_NPM_REGISTRY` is an `https://` address.
+
+Local checks keep working in all these cases. For the other message you may see when init cannot reach npm, see [12](#12-init-cannot-install-zn-gate-no-internet-connection).
+
 ## Block and warn reasons, by family
 
-Past the eighteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the nineteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
