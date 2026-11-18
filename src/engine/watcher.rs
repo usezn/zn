@@ -57,14 +57,24 @@ impl PolicyWatcher {
                 if event.kind.is_modify() || event.kind.is_create() {
                     for path in event.paths {
                         if path.extension().is_some_and(|ext| ext == "wasm") {
-                            info!("Policy change detected: {:?}", path);
+                            info!(
+                                "Policy change detected: {}",
+                                crate::log_safe::path_for_log(&path)
+                            );
                             // Give some time for the file to be fully written
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                             if let Err(e) = engine.register_policy_from_file(&path) {
-                                error!("Failed to reload policy {:?}: {}", path, e);
+                                error!(
+                                    "Failed to reload policy {}: {}",
+                                    crate::log_safe::path_for_log(&path),
+                                    e
+                                );
                             } else {
-                                info!("Policy successfully reloaded: {:?}", path);
+                                info!(
+                                    "Policy successfully reloaded: {}",
+                                    crate::log_safe::path_for_log(&path)
+                                );
                             }
                         }
                     }

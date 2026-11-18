@@ -411,7 +411,10 @@ impl McpPool {
         for path in &search_paths {
             let path_obj = Path::new(path);
             if path_obj.exists() {
-                info!("Found MCP config at: {}", path);
+                info!(
+                    "Found MCP config at: {}",
+                    crate::log_safe::path_str_for_log(path)
+                );
                 match Self::from_config_file(path) {
                     Ok(mut pool) => {
                         // A broken config at an earlier location is still reported.
@@ -420,7 +423,11 @@ impl McpPool {
                         return Ok(pool);
                     }
                     Err(e) => {
-                        warn!("Failed to load MCP config from {}: {}", path, e);
+                        warn!(
+                            "Failed to load MCP config from {}: {}",
+                            crate::log_safe::path_str_for_log(path),
+                            e
+                        );
                         notices.push(e.to_string());
                         continue;
                     }

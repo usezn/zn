@@ -38,6 +38,7 @@ use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
 use zn::engine::{ZnEngine, ZnEngineConfig};
 use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, ArgSource, JsonRpcValidation};
+use zn::log_safe::{log_safe, path_str_for_log};
 use zn::metrics;
 use zn::proxy::McpPool;
 use zn::scrubber::Scrubber;
@@ -743,7 +744,8 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
     if let Err(e) = engine.load_all_policies(policy_dir) {
         eprintln!(
             "Warning: Failed to load policies from {}: {}",
-            policy_dir, e
+            path_str_for_log(policy_dir),
+            e
         );
     }
     // The engine is dropped here: the analyze path evaluates via
@@ -1078,15 +1080,17 @@ async fn process_mcp_message(
             // What reaches the logs and the audit database: both come from the
             // message, so they are redacted like the arguments. Matching and
             // forwarding keep using the originals.
-            let tool_log = Scrubber::redact_for_log(&tool_name);
-            let agent_log = Scrubber::redact_for_log(&agent_id_str);
+            let tool_log = log_safe(&Scrubber::redact_for_log(&tool_name)).into_owned();
+            let agent_log = log_safe(&Scrubber::redact_for_log(&agent_id_str)).into_owned();
             let rep_key = reputation_key(&memory_namespace, &agent_id_str);
 
             // A tool of an MCP server that was left out when the servers file
             // was loaded is refused with the reason, never passed on as allowed.
             if let Some((server, reason)) = state.pool.skip_reason_for_tool(&tool_name) {
                 log::warning(format!(
-                    "Tool call '{tool_log}' refused: MCP server '{server}' was skipped ({reason})"
+                    "Tool call '{tool_log}' refused: MCP server '{}' was skipped ({})",
+                    log_safe(&server),
+                    log_safe(&reason)
                 ))
                 .ok();
                 return Ok(Some(jsonrpc_error_response(
@@ -1233,7 +1237,8 @@ async fn process_mcp_message(
                 ) {
                     log::warning(format!(
                         "⏳ CONSENSUS REQUIRED: {} (ID: {})",
-                        tool_log, action_id
+                        tool_log,
+                        log_safe(&action_id.to_string())
                     ))
                     .ok();
                     return Ok(Some(jsonrpc_error_response(
@@ -1589,7 +1594,11 @@ async fn mcp_ws_handler(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
     if !shield::McpShield::validate_origin(origin, &state.config.security.allowed_origins) {
-        log::warning(format!("Blocked Unauthorized WebSocket Origin: {}", origin)).ok();
+        log::warning(format!(
+            "Blocked Unauthorized WebSocket Origin: {}",
+            log_safe(origin)
+        ))
+        .ok();
         return (axum::http::StatusCode::FORBIDDEN, "Origin not allowed").into_response();
     }
 
@@ -1635,13 +1644,13 @@ async fn handle_ws_socket(
             match process_mcp_message(&text, &state, Some(namespace.clone())).await {
                 Ok(Some(response)) => {
                     if let Err(e) = sender.send(Message::Text(response.into())).await {
-                        tracing::error!("WS send error: {}", e);
+                        tracing::error!("WS send error: {}", log_safe(&e.to_string()));
                         break;
                     }
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::error!("WS processing error: {}", e);
+                    tracing::error!("WS processing error: {}", log_safe(&e.to_string()));
                 }
             }
         }

@@ -217,7 +217,10 @@ impl AuditVault {
     }
 
     fn open_vault(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
-        info!("Initializing AuditVault at: {}", db_path);
+        info!(
+            "Initializing AuditVault at: {}",
+            crate::log_safe::path_str_for_log(db_path)
+        );
 
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!(audit_open_problem(db_path, &e.to_string())))?;

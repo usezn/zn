@@ -266,8 +266,8 @@ impl SecretVault for AwsKmsVault {
             Err(why) => {
                 if self.recover_new_key {
                     tracing::warn!(
-                        "KMS data key file {:?} is damaged ({}); creating a new key because {} is set",
-                        path,
+                        "KMS data key file {} is damaged ({}); creating a new key because {} is set",
+                        crate::log_safe::path_for_log(path),
                         why,
                         RECOVER_ENV
                     );

@@ -92,7 +92,10 @@ impl PolicyVerifier {
             pk.verify(wasm_bytes, &signature)
                 .map_err(|_| anyhow!("Classic signature mismatch for policy"))?;
 
-            info!("Classic signature (Ed25519) verified for {:?}", wasm_path);
+            info!(
+                "Classic signature (Ed25519) verified for {}",
+                crate::log_safe::path_for_log(wasm_path)
+            );
             verified_at_least_one = true;
         }
 
@@ -121,8 +124,8 @@ impl PolicyVerifier {
                 .map_err(|_| anyhow!("Post-Quantum signature mismatch for policy"))?;
 
             info!(
-                "Post-Quantum signature (ML-DSA-65) verified for {:?}",
-                wasm_path
+                "Post-Quantum signature (ML-DSA-65) verified for {}",
+                crate::log_safe::path_for_log(wasm_path)
             );
             verified_at_least_one = true;
         }

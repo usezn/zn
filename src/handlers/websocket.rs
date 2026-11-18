@@ -57,7 +57,10 @@ pub async fn mcp_handler(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
     if !shield::McpShield::validate_origin(origin, &state.config.security.allowed_origins) {
-        tracing::warn!("Blocked Unauthorized WebSocket Origin: {}", origin);
+        tracing::warn!(
+            "Blocked Unauthorized WebSocket Origin: {}",
+            crate::log_safe::log_safe(origin)
+        );
         return (axum::http::StatusCode::FORBIDDEN, "Origin not allowed").into_response();
     }
 
@@ -104,7 +107,10 @@ async fn handle_socket(socket: axum::extract::ws::WebSocket, _state: WsState, _n
             .to_string();
 
             if let Err(e) = sender.send(Message::Text(response.into())).await {
-                tracing::error!("WS send error: {}", e);
+                tracing::error!(
+                    "WS send error: {}",
+                    crate::log_safe::log_safe(&e.to_string())
+                );
                 break;
             }
         }
@@ -425,5 +431,34 @@ mod tests {
         assert!(logs.contains("Invalid or missing token"), "{logs}");
         assert!(!logs.contains(TOKEN), "configured token leaked: {logs}");
         assert!(!logs.contains(wrong), "provided token leaked: {logs}");
+    }
+
+    #[tokio::test]
+    async fn blocked_origin_is_capped_in_the_log() {
+        let buf = LogBuf::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let addr = spawn_server(test_config(Some(TOKEN))).await;
+        let long_origin = format!("https://{}.example.com", "a".repeat(600));
+        let status = rejected_status(
+            connect(addr, &format!("?token={TOKEN}"), Some(&long_origin), None).await,
+        );
+        assert_eq!(status, 403);
+        let logs = String::from_utf8_lossy(&buf.0.lock().unwrap()).to_string();
+        assert!(
+            logs.contains("Blocked Unauthorized WebSocket Origin"),
+            "{logs}"
+        );
+        assert!(logs.contains("[truncated]"), "{logs}");
+        assert!(
+            !logs.contains(&long_origin),
+            "full origin was logged: {logs}"
+        );
     }
 }

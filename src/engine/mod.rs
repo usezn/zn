@@ -348,15 +348,23 @@ impl ZnEngine {
         }
 
         let hash = Self::compute_hash(bytes);
-        info!("Policy hash for {:?}: {}", path, hash);
+        info!(
+            "Policy hash for {}: {}",
+            crate::log_safe::path_for_log(path),
+            hash
+        );
 
         if self.config.allowed_hashes.contains(&hash) {
-            info!("Policy {:?} passed integrity check", path);
+            info!(
+                "Policy {} passed integrity check",
+                crate::log_safe::path_for_log(path)
+            );
             Ok(())
         } else {
             error!(
-                "Policy {:?} failed integrity check. Hash {} not in allowed list",
-                path, hash
+                "Policy {} failed integrity check. Hash {} not in allowed list",
+                crate::log_safe::path_for_log(path),
+                hash
             );
             Err(anyhow!(
                 "Policy integrity check failed: hash {} not allowed",
