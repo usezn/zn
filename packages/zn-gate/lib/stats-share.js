@@ -34,6 +34,11 @@ function readConfig() {
   return require('./zn-config').readObject(configFile());
 }
 
+/** The settings to change and save back. Throws (code ZN_CONFIG_UNREADABLE) when the file exists but cannot be read. */
+function readConfigForWrite() {
+  return require('./zn-config').readForWrite(configFile());
+}
+
 function writeConfig(cfg) {
   const file = configFile();
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -42,13 +47,16 @@ function writeConfig(cfg) {
   fs.renameSync(tmp, file);
 }
 
+/** Throws (code ZN_CONFIG_UNREADABLE) when the settings file exists but cannot be read. */
+function assertWritable() { readConfigForWrite(); }
+
 function status() {
   const s = readConfig().stats || {};
   return { share: s.share === true, install_id: s.share === true ? s.install_id || null : null, sent_until: s.sent_until || null };
 }
 
 function setShare(on) {
-  const cfg = readConfig();
+  const cfg = readConfigForWrite();
   const prev = cfg.stats || {};
   // A new random id each time sharing is turned on: turning it off and on again unlinks old reports.
   if (on && prev.share === true && prev.install_id) return status();
@@ -136,13 +144,20 @@ async function sendPending({ now = new Date(), print = () => {} } = {}) {
   const sentDays = [];
   const failedDays = [];
   let advance = true;
+  let unreadable = null;
   for (const r of reports) {
     print(r);
     if (await post(r)) {
       sent++;
       sentDays.push(r.day);
       if (advance) {
-        const cfg = readConfig();
+        let cfg;
+        try { cfg = readConfigForWrite(); } catch (e) {
+          // The report went out but the file cannot be updated safely: leave it, and say so at the end.
+          advance = false;
+          unreadable = e.message;
+          continue;
+        }
         cfg.stats = { ...(cfg.stats || {}), sent_until: stats.today(new Date(Date.parse(r.day + 'T00:00:00Z') + 86400000)) };
         writeConfig(cfg);
       }
@@ -152,7 +167,7 @@ async function sendPending({ now = new Date(), print = () => {} } = {}) {
       failedDays.push(r.day);
     }
   }
-  return { sent, failed, sentDays, failedDays };
+  return { sent, failed, sentDays, failedDays, unreadable };
 }
 
-module.exports = { status, setShare, pendingReports, sendPending, ENDPOINT };
+module.exports = { assertWritable, status, setShare, pendingReports, sendPending, ENDPOINT };

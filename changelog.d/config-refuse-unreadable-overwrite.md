@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate connect` and `zn-gate stats share on|off` no longer replace a `~/.zn/config.json` they cannot read (broken JSON, comments, a trailing comma, an empty file). They leave the file untouched, say why, and exit with a non-zero code; nothing is stored in the keychain first. A file with a byte order mark or in UTF-16 still works and is saved back as plain UTF-8 with all its settings.

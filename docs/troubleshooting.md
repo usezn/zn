@@ -469,6 +469,8 @@ The common causes:
 
 **What to do:** fix the file in your editor, then run `zn-gate status` in your own terminal. The line "Settings file" is gone when the file is fine.
 
+`zn-gate connect` and `zn-gate stats share on|off` write to this file. If it cannot be read they stop, print `~/.zn/config.json could not be read (...)`, exit with a non-zero code and leave the file exactly as it is, so your settings are never lost. Fix or remove the file, then run the command again. A file with a byte order mark or in UTF-16 is read normally, and the command saves it back as plain UTF-8 with all its settings.
+
 ## Block and warn reasons, by family
 
 Past the eighteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.

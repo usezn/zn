@@ -91,7 +91,7 @@ test('writing the marker keeps other settings in the file', async () => {
   });
 });
 
-test('malformed file: treated as no marker and replaced on the next save', async () => {
+test('malformed file: treated as no marker, and refused (left as it is) on the next save', async () => {
   await withTempHome(async (home, file) => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     for (const bad of ['{not json', '', 'null', '[]', '"text"', '{"cloud":"x"}', '{"cloud":{"store":"file"}}']) {
@@ -102,8 +102,9 @@ test('malformed file: treated as no marker and replaced on the next save', async
     }
     fs.writeFileSync(file, '{not json');
     cloudKey._use(fakeKeychain());
-    await cloudKey.saveKey(FAKE_KEY);
-    assert.equal(cloudKey.readMarker().store, 'keychain');
+    await assert.rejects(() => cloudKey.saveKey(FAKE_KEY), (e) => e.code === 'ZN_CONFIG_UNREADABLE');
+    assert.equal(fs.readFileSync(file, 'utf8'), '{not json');
+    assert.equal(cloudKey.readMarker(), null);
   });
 });
 

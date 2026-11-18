@@ -154,6 +154,7 @@ async function connect(args, io) {
       + 'Use `zn-gate connect --reconnect` to replace it, or `zn-gate disconnect` to remove it.\n');
     return 0;
   }
+  try { cloudKey.assertConfigWritable(); } catch (e) { c.err(String(e.message) + '\n'); return 1; }
   const store = await cloudKey.availableStore(c.deps);
   if (!store) { c.err(messages.connectNoStore(znCommand('unlock')) + '\n'); return 1; }
 
@@ -198,6 +199,7 @@ async function connect(args, io) {
 
   let where;
   try { where = await cloudKey.saveKey(key, c.deps); } catch (e) {
+    if (e && e.code === 'ZN_CONFIG_UNREADABLE') { c.err(String(e.message) + ' Nothing was kept.\n'); return 1; }
     if (e instanceof cloudKey.NoSecureStore || (e && e.code === 'ZN_NO_SECURE_STORE')) { c.err(messages.connectNoStore(znCommand('unlock')) + '\n'); return 1; }
     c.err(messages.connectSaveFailed(scrub(e && e.message, key)) + '\n');
     return 1;

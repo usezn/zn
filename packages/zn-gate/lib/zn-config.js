@@ -124,6 +124,26 @@ function readJsonFile(file) {
   return { status: 'ok', data, encoding };
 }
 
+/**
+ * For a command that is about to write the file: the object in it ({} when the file is missing).
+ * A file that exists but cannot be read (broken JSON, comments, a trailing comma, empty, not an object) must never be
+ * replaced by a fresh one: that would drop the person's settings. It throws an error with code ZN_CONFIG_UNREADABLE
+ * and leaves the file as it is. A file with a byte order mark or in UTF-16 reads fine and is accepted; the writers
+ * save it back as plain UTF-8 (no mark) with every setting kept.
+ */
+function readForWrite(file) {
+  const r = readJsonFile(file);
+  if (r.status === 'missing') return {};
+  if (r.status === 'ok') return r.data;
+  const e = new Error(unreadableMessage(r.reason));
+  e.code = 'ZN_CONFIG_UNREADABLE';
+  throw e;
+}
+
+function unreadableMessage(reason) {
+  return SHOWN + ' could not be read (' + reason + '). zn left it as it is. Fix or remove it, then run the command again. More: https://usezn.com/docs/zn-gate/troubleshooting/';
+}
+
 /** The object in the file, {} when it is missing or unusable. For readers of settings that only add or describe. */
 function readObject(file) {
   const r = readJsonFile(file);
@@ -226,4 +246,4 @@ function notice(problems) {
   return 'zn: there is a problem with your settings file. ' + problems.join(' ') + ' Run `zn-gate status` to see it again.';
 }
 
-module.exports = { decode, lenientClean, readJsonFile, readObject, sanitizeHooks, sanitize, load, notice, SHOWN };
+module.exports = { decode, lenientClean, readJsonFile, readObject, readForWrite, unreadableMessage, sanitizeHooks, sanitize, load, notice, SHOWN };

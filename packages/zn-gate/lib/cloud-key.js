@@ -151,8 +151,13 @@ function readMarker(file) {
   };
 }
 
+/** Throws (code ZN_CONFIG_UNREADABLE) when the settings file exists but cannot be read; call before storing a key. */
+function assertConfigWritable() {
+  require('./zn-config').readForWrite(configFile());
+}
+
 function writeMarker(marker) {
-  const cfg = readConfig();
+  const cfg = require('./zn-config').readForWrite(configFile());
   cfg.cloud = { store: marker.store, connectedAt: marker.connectedAt || new Date().toISOString(), last4: marker.last4 || undefined };
   writeConfig(cfg);
 }
@@ -234,6 +239,8 @@ class NoSecureStore extends Error {
 /** Store the key and record the marker. Returns the store used. Throws NoSecureStore or the store's error. */
 async function saveKey(key, deps) {
   if (!usableApiKey(key)) throw new Error('not a usable API key');
+  // Before the key goes anywhere: an unreadable settings file would lose the marker and leave a key nobody can find.
+  assertConfigWritable();
   const store = await availableStore(deps);
   if (!store) throw new NoSecureStore();
   if (store === 'keychain') {
@@ -325,6 +332,7 @@ module.exports = {
   last4,
   readMarker,
   forgetMarker,
+  assertConfigWritable,
   isConnected,
   isConnectedAtUserHome,
   availableStore,

@@ -91,6 +91,10 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
   if (o.bad) { out(USAGE); return 2; }
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
+    if (sub === 'on' || sub === 'off') {
+      // Before asking anything: a settings file that cannot be read is never replaced.
+      try { share.assertWritable(); } catch (e) { out(String(e.message) + '\n'); return 1; }
+    }
     if (sub === 'on') {
       if (share.status().share) { out('Sharing pseudonymous daily counts is already on.\n'); return 0; }
       explainShare(out);
@@ -98,12 +102,12 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
         out('Sharing stays off. (It can only be turned on by you, in your own terminal.)\n');
         return 1;
       }
-      share.setShare(true);
+      try { share.setShare(true); } catch (e) { out(String(e.message) + '\n'); return 1; }
       out('Sharing pseudonymous daily counts is on. Counts from today on are sent when you run `zn-gate stats`.\n');
       return 0;
     }
     if (sub === 'off') {
-      share.setShare(false);
+      try { share.setShare(false); } catch (e) { out(String(e.message) + '\n'); return 1; }
       out('Sharing is off. Nothing more is sent; your local counts stay on this machine.\n');
       return 0;
     }
@@ -142,6 +146,7 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
       if (cp.length) out('  Settings file: ' + cp.join(' ') + '\n');
     } catch (_) { /* stats never fail on this */ }
     for (const d of sentDays) out(`  Shared pseudonymous counts for ${d}.\n`);
+    if (res.unreadable) out('  ' + res.unreadable + '\n');
     if (res.failed) out(`  ${res.failed} day(s) could not be shared; they will be tried next time.\n`);
   }
   return 0;
