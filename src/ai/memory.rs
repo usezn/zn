@@ -82,7 +82,7 @@ pub const MAX_LIMIT_FROM_ENV: usize = 100_000_000;
 pub const DEFAULT_MAX_TOTAL_ROWS: usize = 100_000;
 
 /// Version of the on-disk schema, stored in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Namespace given to rows written before rows had one (schema 0 and 1).
 /// Those rows came from every client of the gateway, so they go to the
@@ -212,7 +212,7 @@ impl VectorMemory {
             self.safe_model(),
             self.dim,
             namespace,
-            agent_id
+            crate::ai::agent_ref(agent_id)
         )
     }
 
@@ -257,17 +257,19 @@ impl VectorMemory {
                 |r| r.get(0),
             )?;
             Self::upgrade(&tx)?;
-            cleaned = version < 3 && had_table > 0;
+            Self::hash_agent_ids(&tx)?;
+            cleaned = version < 4 && had_table > 0;
             if !cleaned {
-                tx.execute_batch("PRAGMA user_version = 3;")?;
+                tx.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
             }
         }
         tx.commit()?;
         if cleaned {
-            // Files before schema 3 kept the text of each call. The rows now
-            // hold references; compact the file so the old text does not stay
-            // in free pages or in the log, and only then record schema 3. If
-            // this fails the file is not used, and the next start retries.
+            // Files before schema 3 kept the text of each call, and files before
+            // schema 4 the agent ids as the messages gave them. The rows now hold
+            // references; compact the file so the old values do not stay in free
+            // pages or in the log, and only then record the schema. If this
+            // fails the file is not used, and the next start retries.
             conn.execute_batch("VACUUM;")?;
             // The result of the checkpoint matters: with another reader open
             // it comes back busy and the old text is still in the main file.
@@ -280,7 +282,7 @@ impl VectorMemory {
                     "log checkpoint incomplete (busy {busy}, log {log}, done {done}); retrying on the next open"
                 ));
             }
-            conn.execute_batch("PRAGMA user_version = 3;")?;
+            conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
         }
         Ok(conn)
     }
@@ -315,6 +317,42 @@ impl VectorMemory {
         if left != 0 {
             return Err(anyhow!(
                 "{left} vector rows still hold text after the cleanup"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Replaces every agent id that is not a reference yet with its
+    /// `agent_ref`. Files before schema 4 stored the id the message gave. The
+    /// reference uses the key of this process (`ref.key`, loaded at start), so
+    /// the rows of an agent stay reachable and keep counting toward its limit.
+    fn hash_agent_ids(tx: &Transaction<'_>) -> Result<()> {
+        let ids: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT DISTINCT agent_id FROM memory")?;
+            let mapped = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for id in mapped {
+                let id = id?;
+                if !crate::ai::is_content_ref(&id) {
+                    out.push(id);
+                }
+            }
+            out
+        };
+        for id in ids {
+            tx.execute(
+                "UPDATE memory SET agent_id = ?1 WHERE agent_id = ?2",
+                params![crate::ai::agent_ref(&id), id],
+            )?;
+        }
+        let left: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM memory WHERE NOT (agent_id GLOB 'h:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')",
+            [],
+            |r| r.get(0),
+        )?;
+        if left != 0 {
+            return Err(anyhow!(
+                "{left} vector rows still hold a plain agent id after the conversion"
             ));
         }
         Ok(())
@@ -494,7 +532,8 @@ impl VectorMemory {
         let max_total = i64::try_from(self.max_total_rows).unwrap_or(i64::MAX);
         let busy_timeout = self.busy_timeout;
         let ns = namespace.to_string();
-        let agent = agent_id.to_string();
+        // The file keeps the keyed reference of the agent id, not the id.
+        let agent = crate::ai::agent_ref(agent_id);
         // The file keeps the keyed reference of the text, never the text: a
         // caller cannot store content by mistake.
         let text = crate::ai::content_ref(text);
@@ -588,7 +627,7 @@ impl VectorMemory {
         let path = self.db_path();
         let slot = Arc::clone(&self.conn);
         let ns = namespace.to_string();
-        let agent = agent_id.to_string();
+        let agent = crate::ai::agent_ref(agent_id);
         let query = vector.to_vec();
         let job = tokio::task::spawn_blocking(move || -> Result<Vec<(String, f32)>> {
             let found = Self::with_conn(&slot, &path, false, 1, SEARCH_BUSY_TIMEOUT, |conn| {
@@ -1098,6 +1137,93 @@ mod tests {
 
     fn zn_ref(text: &str) -> String {
         crate::ai::content_ref(text)
+    }
+
+    #[tokio::test]
+    async fn the_file_keeps_a_reference_of_the_agent_id_never_the_id() {
+        let marker = "agent-marker-7c1e@example.com";
+        let dir = temp_dir("agentref");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        m.store(NS, marker, "call", &[1.0]).await.unwrap();
+        m.store(NS, marker, "call two", &[2.0]).await.unwrap();
+        // Lookups use the same reference.
+        assert_eq!(m.search(NS, marker, &[0.0], 5).await.unwrap().len(), 2);
+        assert!(m.search(NS, "other", &[0.0], 5).await.unwrap().is_empty());
+        let raw = Connection::open(m.db_path()).unwrap();
+        let stored: Vec<String> = raw
+            .prepare("SELECT agent_id FROM memory")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(stored, vec![crate::ai::agent_ref(marker); 2]);
+        assert!(crate::ai::is_content_ref(&stored[0]));
+        assert_ne!(crate::ai::agent_ref(marker), crate::ai::content_ref(marker));
+        drop(raw);
+        assert!(
+            !files_contain(&dir, marker),
+            "the agent id reached the files"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn per_agent_limit_counts_by_reference() {
+        let dir = temp_dir("agentcap");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m").with_max_rows(2);
+        for i in 0..5 {
+            m.store(NS, "a", &format!("t{i}"), &[i as f32])
+                .await
+                .unwrap();
+        }
+        m.store(NS, "b", "other", &[0.0]).await.unwrap();
+        assert_eq!(m.search(NS, "a", &[0.0], 10).await.unwrap().len(), 2);
+        assert_eq!(m.search(NS, "b", &[0.0], 10).await.unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn schema_3_rows_with_plain_agent_ids_are_converted_and_stay_reachable() {
+        let marker = "legacy-agent-5b2d@example.com";
+        let dir = temp_dir("agentmigrate");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        // A current file, then put it back to schema 3 with plain agent ids.
+        m.store(NS, "seed", "x", &[1.0]).await.unwrap();
+        drop(VectorMemory::open(&m.db_path(), Duration::from_millis(200)).unwrap());
+        let raw = Connection::open(m.db_path()).unwrap();
+        raw.execute("DELETE FROM memory", []).unwrap();
+        for i in 0..3 {
+            raw.execute(
+                "INSERT INTO memory (namespace, agent_id, text, vector) VALUES (?1, ?2, 'h:0123456789abcdef', ?3)",
+                params![NS, marker, (i as f32).to_le_bytes().to_vec()],
+            )
+            .unwrap();
+        }
+        raw.execute_batch("PRAGMA user_version = 3;").unwrap();
+        drop(raw);
+        assert!(files_contain(&dir, marker), "setup: the id is on disk");
+
+        // A new instance opens the file again and runs the upgrade.
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        warm_up(&m).await;
+        let found = m.search(NS, marker, &[0.0], 10).await.unwrap();
+        assert_eq!(found.len(), 3, "the rows of the agent stay reachable");
+        assert!(
+            !files_contain(&dir, marker),
+            "the plain id is gone from the files"
+        );
+        let raw = Connection::open(m.db_path()).unwrap();
+        let v: i64 = raw
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+        // The per-agent limit sees them as one agent: a new store prunes by reference.
+        drop(raw);
+        let m = m.with_max_rows(3);
+        m.store(NS, marker, "new", &[9.0]).await.unwrap();
+        assert_eq!(m.search(NS, marker, &[0.0], 10).await.unwrap().len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

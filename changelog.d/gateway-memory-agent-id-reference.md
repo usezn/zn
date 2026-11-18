@@ -1,0 +1,2 @@
+### Security
+- The Rust gateway built from `src/` (not part of the npm, PyPI or plugin releases) no longer keeps the agent id of each call in the vector memory files as the message gave it (it can be an email, a user name or a host name). The memory now stores a keyed reference of the id (HMAC-SHA256 under the local `data/ref.key` key, the same kind of reference as for call text) and looks agents up by it, so the per-agent limits work as before. Memory files from earlier versions are converted at the first start and compacted.

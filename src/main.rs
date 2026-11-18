@@ -793,6 +793,15 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
         .with_limits_from_env(),
     );
 
+    // The vector memory looks agents up by a keyed reference: use the same
+    // key as the gateway (`data/ref.key`), or this command would not find them.
+    zn::ai::init_ref_key(std::path::Path::new("data")).map_err(|e| {
+        anyhow!(zn::user_errors::data_folder_problem(
+            std::path::Path::new("data"),
+            &e
+        ))
+    })?;
+
     // Initialize canary deployer
     let canary = Arc::new(zn::ai::CanaryDeployer::new(backend));
 

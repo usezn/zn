@@ -196,6 +196,16 @@ pub fn content_ref(text: &str) -> String {
     content_ref_with_key(ref_key(), text)
 }
 
+/// Keyed reference to an agent id, for the vector memory: `content_ref` of the
+/// id with a fixed prefix, so it never equals the reference of a text and the
+/// same id gives the same reference for as long as `ref.key` stays. The memory
+/// keeps this instead of the id the message gave (an id can be an email, a
+/// user name or a host name), and looks agents up by it, so per-agent limits
+/// work on the reference.
+pub fn agent_ref(agent_id: &str) -> String {
+    content_ref(&format!("agent:{agent_id}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
