@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate <command> --help` (and `-h`) now prints the help of that command instead of the general help, for `init`, `check`, `status`, `test`, `version`, `connect`, `disconnect`, `scan`, `analyze`, `pins`, `secret`, `env`, `run`, `hooks`, `hook`, `secrets-mcp`, `mcp`, `shield`, `evidence`, `why`, `stats`, `stats share`, `report` and their aliases. Each page has the usage, what the command does, its options and an example.

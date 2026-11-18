@@ -348,7 +348,7 @@ The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, 
 zn-gate secret <set|list|rm|allow|approve|import|adopt|log> ...
 ```
 
-Groups the commands below. `zn-gate secret --help` prints the general help of zn-gate, not a page about `secret`, so read this section instead. `zn-gate secret set --help` (and the same with `list`, `rm`, `allow`, `approve`, `import` or `adopt`) prints one short line that lists all the `secret` subcommands. Only `zn-gate secret log --help` has a usage of its own.
+Groups the commands below. `zn-gate secret --help` prints a page about `secret` that lists its subcommands. `zn-gate secret set --help` (and the same with `list`, `rm`, `allow`, `approve`, `import` or `adopt`) prints one short line that lists all the `secret` subcommands. Only `zn-gate secret log --help` has a usage of its own.
 
 Aliases: `secrets`.
 
@@ -436,7 +436,7 @@ Aliases: `secret reveal`.
 zn-gate env <shadow|unshadow> ...
 ```
 
-Groups the two commands below. `zn-gate env --help` prints the general help of zn-gate, not a page about `env`, so read this section instead. `zn-gate env shadow --help` and `zn-gate env unshadow --help` each print their own usage.
+Groups the two commands below. `zn-gate env --help` prints a page about `env` that lists its two commands. `zn-gate env shadow --help` and `zn-gate env unshadow --help` each print their own usage.
 
 Exit codes (both commands): `0` done (also when there was nothing to move, or with `--help`; `env shadow --dry-run` also exits `0` once it has printed the preview), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed. This applies to `--dry-run` too: the preview also needs an interactive terminal, so without one it exits `77` and prints no preview.
 

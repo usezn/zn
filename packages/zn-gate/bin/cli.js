@@ -1175,6 +1175,12 @@ async function main() {
     process.stdout.write(subHelp.join('\n') + '\n');
     return;
   }
+  // Help of the other commands: their own usage, not the general help (-h and --help alike).
+  const cmdHelp = require('../lib/cli-help').helpFor(args);
+  if (cmdHelp) {
+    process.stdout.write(cmdHelp.join('\n') + '\n');
+    return;
+  }
   // zn Team and the OpenTelemetry export of the audit log. exitCode (not
   // process.exit) so a large export is flushed completely through a pipe.
   if (args[0] === 'team') {
