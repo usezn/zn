@@ -485,6 +485,21 @@ default is the current folder, and the path must be a folder.
 - **A `.env` file in a sub-folder is missing from the report**: reach checks one folder. Run it in that folder, or use `npx -y zn-gate scan`.
 - **The report says some files were not checked in time**: the check stops after about 2.5 seconds or 20,000 entries. Run `npx -y zn-gate audit --include-home` to check them all.
 
+## When reach stops with an error
+
+`reach` prints a message that starts with `zn-gate reach:`, then its usage lines, and exits with `2`. Nothing was changed or sent. Each message is copied as zn-gate prints it.
+
+| Message | What it means | What to do |
+|---|---|---|
+| `zn-gate reach: --max-seconds must be a whole number from 1 to 3600` | `--max-seconds` needs a whole number of seconds from 1 to 3600. A word, a decimal such as `1.5`, `0` or a bigger number is refused. | Give a number such as `--max-seconds 300`. |
+| `zn-gate reach: --max-seconds goes with --history` | You used `--max-seconds` without `--history`. | Add `--history`, or leave `--max-seconds` out. |
+| `zn-gate reach: --history reads your home folder: it takes only --json and --max-seconds` | `--history` cannot be combined with a folder, `--sarif`, `--fail-on` or `--remember`. | Run it alone, or with `--json` or `--max-seconds`. |
+| `zn-gate reach: choose one of --json and --sarif` | Both output formats were given. | Pick one. |
+| `zn-gate reach: --fail-on must be one of <levels>` | `--fail-on` was given a value that is not a level. | Use `high`, `medium`, `low` or `none`. |
+| `zn-gate reach: unknown option <option>` | A typo, or an option that `reach` does not have. | Check the spelling against the [options](#flags). |
+| `zn-gate reach: only one folder at a time` | Two folders were given. | Run `reach` once for each folder. |
+| `zn-gate reach: only --history is in the Python package: run npx -y zn-gate reach for the rest` (Python package) | The Python package has only `reach --history`. | Run `npx -y zn-gate reach` for the folder report. |
+
 ## Next steps
 
 - Fix the high findings with the commands the report prints, in this order:
