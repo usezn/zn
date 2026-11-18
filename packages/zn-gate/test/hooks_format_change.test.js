@@ -87,7 +87,8 @@ test('the Claude Code plugin is told to update the plugin', () => {
     encoding: 'utf8',
     env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: home },
   });
-  assert.match(r.stdout, /claude plugin update zn-gate@usezn/);
+  assert.match(r.stdout, /claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn\/zn#v\d+\.\d+\.\d+` and `claude plugin install zn-gate@usezn/);
+  assert.doesNotMatch(r.stdout, /claude plugin update/);
 });
 
 test('truncated or garbage input keeps its own message and does not claim a format change', () => {

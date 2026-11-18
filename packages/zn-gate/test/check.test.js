@@ -118,6 +118,7 @@ test('check: no agent on the machine says so and offers no setup', async (t) => 
   const { s, code } = textOf(res);
   assert.equal(code, 1);
   assert.match(s, /No supported coding agent was found on this machine/);
+  assert.match(s, /Antigravity, GitHub Copilot CLI, Gemini CLI, ZCode desktop app\)/);
   assert.match(s, winCmdRe(/Install one, then run `npx -y zn-gate init`/));
   assert.doesNotMatch(s, winCmdRe(/zn hooks install|plugin install/));
 });

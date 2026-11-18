@@ -15,7 +15,8 @@ test('helpFor answers only the vault commands and env shadow', () => {
   assert.match(helpFor(['vault', '--help'])[0], /^usage: zn vault /);
   assert.match(helpFor(['env', 'shadow', '--help'])[0], /^usage: zn env shadow /);
   assert.equal(helpFor(['vault', 'log', '--help']), null, 'the audit command answers its own help');
-  assert.equal(helpFor(['env', '--help']), null);
+  assert.match(helpFor(['env', '--help'])[0], /^usage: zn env shadow /);
+  assert.match(helpFor(['check', '--help'])[0], /^usage: zn check /);
   assert.equal(helpFor(['reach', '--help']), null);
 });
 
@@ -45,5 +46,14 @@ test('each vault command prints its own help through the CLI, not the general he
     assert.equal(r.status, 0, args.join(' ') + ' exited ' + r.status + ': ' + r.stderr);
     assert.equal(r.stdout.split('\n')[0].startsWith(usage), true, args.join(' ') + ' printed: ' + r.stdout.slice(0, 120));
     assert.doesNotMatch(r.stdout, /zn-gate v\d|^USAGE:/m, args.join(' ') + ' printed the general help');
+  }
+});
+
+test('zn check --help and zn env --help print their own usage through the CLI', () => {
+  for (const args of [['check', '--help'], ['check', '-h'], ['env', '--help']]) {
+    const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
+    assert.equal(r.status, 0, args.join(' '));
+    assert.doesNotMatch(r.stdout, /USAGE:/, args.join(' '));
+    assert.match(r.stdout.split('\n')[0], /^usage: zn (check|env) /, args.join(' '));
   }
 });

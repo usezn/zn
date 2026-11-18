@@ -434,7 +434,7 @@ const AGENT_LABELS = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor:
 function formatChangeStep(agentId) {
   const label = AGENT_LABELS[agentId] || 'the agent';
   const update = agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT
-    ? 'Ask the user to update the zn-gate plugin with `claude plugin update zn-gate@usezn`.'
+    ? 'Ask the user to update the zn-gate plugin in their own terminal: run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#v' + ZN_VERSION + '` and `claude plugin install zn-gate@usezn`, then start a new Claude Code session.'
     : 'Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `' + znCommand('hooks install' + (AGENT_LABELS[agentId] ? ' ' + agentId : '')) + '`.';
   return 'This usually means ' + label + ' changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. ' + update;
 }

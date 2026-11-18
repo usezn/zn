@@ -31,6 +31,20 @@ const HELP = {
     '  team                 shows that a shared team vault is planned, not available yet',
     '  log export --otlp    export the audit log as OpenTelemetry logs [--since 7d] [--out FILE] [--unverified]',
   ],
+  check: [
+    'usage: zn check [--json | --hooks]',
+    'Shows that zn blocks your agent from reading a fake secret. It works in a temporary folder and sends nothing over the network;',
+    'it runs the installed zn hooks, and the only agent program it starts is <agent> --version.',
+    '  --json     the same check as one JSON object, for scripts, CI and support requests',
+    '  --hooks    list every installed zn hook and say if it is OK, stale or broken (reads files only; nothing is run or changed)',
+    'Also: zn doctor.',
+  ],
+  env: [
+    'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME',
+    'shadow moves the secrets of a .env file (default: .env) into the vault and leaves placeholders in the file.',
+    'unshadow puts the values back from the backup that shadow printed.',
+    'Run zn env shadow --help for the options of shadow.',
+  ],
   'env shadow': [
     'usage: zn env shadow [FILE] [--all] [--keys A,B] [--dry-run] [--force] [--mode proxy|env|file] [--host H] [--command C]',
     'Moves the sensitive values of a .env file (default: .env) into the vault and leaves markers in the file.',
@@ -54,6 +68,8 @@ function helpFor(args) {
   if (cmd === 'unlock' || cmd === 'lock') return HELP[cmd];
   if (cmd === 'vault') return sub === 'log' ? null : HELP.vault; // `vault log --help` has its own text
   if (cmd === 'env' && sub === 'shadow') return HELP['env shadow'];
+  if (cmd === 'env' && (!sub || sub.startsWith('-'))) return HELP.env;
+  if (cmd === 'check') return HELP.check;
   return null;
 }
 
