@@ -730,6 +730,42 @@ function checkVscodeTasks(ctx, data) {
   }
 }
 
+// Dev container lifecycle commands. A string runs in a shell, an array is one command line, an object holds named commands that run in parallel.
+const DEVCONTAINER_KEYS = ['initializeCommand', 'onCreateCommand', 'updateContentCommand', 'postCreateCommand', 'postStartCommand', 'postAttachCommand'];
+
+function devcontainerCommands(value) {
+  const one = (v) => (typeof v === 'string' ? v : Array.isArray(v) && v.every((x) => typeof x === 'string') ? v.join(' ') : null);
+  const single = one(value);
+  if (single !== null) return single.trim() ? [{ name: null, text: single }] : [];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const out = [];
+  for (const name of Object.keys(value)) {
+    const text = one(value[name]);
+    if (text !== null && text.trim()) out.push({ name, text });
+  }
+  return out;
+}
+
+function checkDevcontainer(ctx, data) {
+  if (ctx.home) return;
+  for (const key of DEVCONTAINER_KEYS) {
+    if (data[key] === undefined) continue;
+    for (const c of devcontainerCommands(data[key])) {
+      const line = ctx.locate(c.name === null ? [key] : [key, c.name]);
+      const what = 'Dev container ' + key + (c.name === null ? '' : ' "' + c.name + '"');
+      if (checkDownloadRun(ctx, c.text, line, what)) continue;
+      let res = null;
+      try { res = rules().evaluate(c.text, { strict: true }); } catch (_) { res = null; }
+      if (res && res.verdict === 'block' && res.rule !== 'custom:invalid_rules') {
+        ctx.add('ZNA001', 'high', line, what + ' runs automatically and the command rules flag it (' + (res.reason || res.rule) + '): ' + short(c.text, 200));
+      } else if (key === 'initializeCommand') {
+        // It runs on your own machine, outside the container, before the container exists.
+        ctx.add('ZNA001', 'medium', line, what + ' runs on your own machine, outside the container, when the folder is opened in a dev container: ' + short(c.text, 200));
+      }
+    }
+  }
+}
+
 function checkCursorCli(ctx, data) {
   const allow = data.permissions && Array.isArray(data.permissions.allow) ? data.permissions.allow : [];
   for (const entry of allow) {
@@ -1232,6 +1268,7 @@ function classify(rel, isRootLevel) {
   if (has(/(^|\/)\.vscode\/mcp\.json$/)) return rule('vscode-mcp', 'copilot', ['copilot', 'cursor']);
   if (has(/(^|\/)\.vscode\/settings\.json$/)) return rule('vscode-settings', 'copilot', ['copilot', 'cursor']);
   if (has(/(^|\/)\.vscode\/tasks\.json$/)) return rule('vscode-tasks', 'cursor', ['cursor', 'copilot']);
+  if (has(/(^|\/)\.devcontainer\.json$/) || has(/(^|\/)\.devcontainer\/(?:[^/]+\/)?devcontainer\.json$/)) return rule('devcontainer', 'any', AGENTS);
   if (has(/(^|\/)\.codex\/config\.toml$/)) return rule('codex-toml', 'codex');
   if (has(/(^|\/)\.codex\/hooks\.json$/)) return rule('hooks-json', 'codex');
   if (has(/(^|\/)\.cursor\/hooks\.json$/)) return rule('hooks-json', 'cursor');
@@ -1288,7 +1325,7 @@ const SYMLINK_DIRS = EXTENSION_DIRS.map(([re]) => re).concat([
 
 // Directories agents read from. They are visited first, and inside them the
 // SKIP_DIRS list does not apply (a skill may be called "build" or "dist").
-const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
+const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.devcontainer', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
 
 function isAgentDirName(name) {
   return AGENT_DIRS.has(name.toLowerCase());
@@ -1735,6 +1772,7 @@ const CHECKS = {
   'amazonq-agent': checkAmazonqAgent,
   'vscode-settings': checkVscodeSettings,
   'vscode-tasks': checkVscodeTasks,
+  'devcontainer': checkDevcontainer,
   'hooks-json': checkHooksJson,
   'plugin-hooks': checkHooksJson,
   'cursor-cli': checkCursorCli,
@@ -1746,8 +1784,8 @@ const CHECKS = {
 
 // Config kinds that can start commands or redirect the agent: when one of
 // them cannot be parsed, the text is searched for the risky keys instead.
-const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings']);
-const RISKY_JSON_KEY = /"(hooks|command|args|mcpServers|servers|mcp|env|apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|statusLine|enableAllProjectMcpServers|enabledMcpjsonServers|enabledPlugins|extraKnownMarketplaces|permissions?|plugin|provider|runOn|allowedTools|chat\.tools\.(?:global\.)?autoApprove)"\s*:/;
+const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'devcontainer', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings']);
+const RISKY_JSON_KEY = /"(hooks|command|args|mcpServers|servers|mcp|env|apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|statusLine|enableAllProjectMcpServers|enabledMcpjsonServers|enabledPlugins|extraKnownMarketplaces|permissions?|plugin|provider|runOn|initializeCommand|onCreateCommand|updateContentCommand|postCreateCommand|postStartCommand|postAttachCommand|allowedTools|chat\.tools\.(?:global\.)?autoApprove)"\s*:/;
 const RISKY_TOML_KEY = /^\s*(?:\[\s*(?:mcp_servers|model_providers|shell_environment_policy|profiles)\b|(?:notify|approval_policy|sandbox_mode|openai_base_url|chatgpt_base_url|command|args)\s*=)/;
 
 const WRITE_SCOPES = /contents|pull-requests|issues|actions|packages|id-token|deployments|statuses|checks/g;

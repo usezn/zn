@@ -111,7 +111,7 @@ silently:
 | Amazon Q | `.amazonq/mcp.json`, `.amazonq/cli-agents/*.json`, `.amazonq/agents/*.json`, `.amazonq/rules/`, `AGENTS.md` |
 | Copilot / VS Code | `.vscode/mcp.json`, `.vscode/settings.json`, `.vscode/tasks.json`, `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, `AGENTS.md` |
 | Gemini CLI | `.gemini/settings.json`, `.gemini/commands/`, `GEMINI.md` |
-| Any | executables in the audited root, `.github/workflows/*.yml`, `.windsurfrules`, `.clinerules` |
+| Any | executables in the audited root, `.devcontainer/devcontainer.json`, `.devcontainer/<name>/devcontainer.json` and `.devcontainer.json` (the lifecycle commands: `initializeCommand`, `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand`, as a string, an array or named commands), `.github/workflows/*.yml`, `.windsurfrules`, `.clinerules` |
 
 With `--include-home` it also reads `~/.claude/settings.json`, `~/.claude.json`,
 `~/.codex/config.toml`, `~/.cursor/mcp.json`, `~/.cursor/hooks.json`,
@@ -129,7 +129,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 
 | Id | Severity | Finding | Why it matters |
 |---|---|---|---|
-| ZNA001 | high / medium | A command runs automatically from a project config: hooks (Claude Code, Cursor, Codex, Amazon Q, Gemini), `statusLine`, Codex `notify`, OpenCode plugin files, VS Code tasks with `runOn: folderOpen`. Medium for hooks that belong to a plugin (they run only once the plugin is enabled) | Runs with your user's rights as soon as the agent (or a vulnerable version of another agent) acts on the file. CVE-2026-48124. The exact hook `zn hooks install` writes is reported as low ("zn-gate hook"), and only when its interpreter (`node` or `nodejs`) and runner resolve, after following every link, to a real zn-gate installation outside the repository |
+| ZNA001 | high / medium | A command runs automatically from a project config: hooks (Claude Code, Cursor, Codex, Amazon Q, Gemini), `statusLine`, Codex `notify`, OpenCode plugin files, VS Code tasks with `runOn: folderOpen`, dev container lifecycle commands that the command rules flag (high) and `initializeCommand`, which runs on your own machine outside the container (medium). Medium for hooks that belong to a plugin (they run only once the plugin is enabled) | Runs with your user's rights as soon as the agent (or a vulnerable version of another agent) acts on the file. CVE-2026-48124. The exact hook `zn hooks install` writes is reported as low ("zn-gate hook"), and only when its interpreter (`node` or `nodejs`) and runner resolve, after following every link, to a real zn-gate installation outside the repository |
 | ZNA002 | critical | An automatic command downloads code and runs it (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`) | Whoever controls the URL controls your machine, and can change the payload after review |
 | ZNA003 | high (Codex, Amazon Q) / medium / low (zn's own secrets server, verified on disk) | A project MCP server starts a local command | Agents ask before starting project MCP servers, but vulnerable versions did not (CVE-2026-12957, CVE-2025-61260), and the server inherits your environment and credentials |
 | ZNA004 | high / medium | Project settings approve MCP servers in advance (`enableAllProjectMcpServers`, `enabledMcpjsonServers`) | Removes the one prompt that stands between the repository and a running server |
