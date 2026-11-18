@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-18.2';
+const POLICY_RULES_VERSION = '2026-11-18.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1795,7 +1795,9 @@ const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-
  *  - running the package's launcher refresh (lib/agents/refresh.js, the postinstall step) or its launcher writer
  *    (lib/agents/launcher.js) with Node.js, Bun or Deno, or loading either from inline code (node -e). The path is read
  *    the way the file system would: ./ and ../ segments are resolved, case is ignored, and a cd, pushd or Set-Location
- *    earlier in the same command counts (cd <prefix>/lib/agents && node refresh.js);
+ *    earlier in the same command counts (cd <prefix>/lib/agents && node refresh.js). In inline code, string constants
+ *    joined with + ('<prefix>/lib/agents/' + 'refresh.js') are read as one string first, and inline code that names the
+ *    refresh or the launcher writer while it builds a string at run time (a variable, ${...}, .join()) is refused too;
  *  - a package manager that installs, updates, rebuilds or links zn-gate (npm i -g zn-gate, npm rebuild -g zn-gate,
  *    yarn global add zn-gate@1.0.0, npm i -g ./zn-gate-1.16.0.tgz, npm --prefix <...>/node_modules/zn-gate run postinstall,
  *    npm explore -g zn-gate -- ...), also after a cd into an installed zn-gate folder. Removing it (npm uninstall -g
@@ -1865,6 +1867,85 @@ function normalizePathText(p, base) {
 /* The pieces of a word that can be a path: split at quotes, parentheses, commas, semicolons and = (--require=<path>). */
 const pathPieces = (w) => w.split(/["'\x60(),;=]+/).filter(Boolean);
 const isRefreshFile = (piece, base) => REFRESH_HINT_RE.test(piece) && REFRESH_FILE_RE.test(normalizePathText(piece, base));
+/*
+ * Inline code (node -e) can build the file name from string constants: require('<...>/lib/agents/' + 'refresh.js').
+ * foldJsStrings joins each chain of string literals ('a' + "b" + `c`, a template literal without ${...}) into one literal
+ * and decodes the \xHH, \uHHHH and \u{...} escapes in it, so the path checks see the whole name. Literals that are not part
+ * of such a chain and need no decoding stay as written. One pass: each character is read a bounded number of times.
+ */
+const JS_QUOTES = '\'"`';
+const JS_ESCAPE_RE = /^(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|u\{([0-9a-fA-F]{1,6})\})/;
+/* The string literal that starts at text[at]: { end, value, decoded }, or { stop } (where reading stopped) when it is not
+   a plain literal (another quote, a line break or ${ inside it, or no closing quote). */
+function jsLiteralAt(text, at) {
+  const q = text[at];
+  let value = '';
+  let decoded = false;
+  let k = at + 1;
+  for (; k < text.length; k++) {
+    const c = text[k];
+    if (c === q) return { end: k + 1, value, decoded };
+    if (c === '\n' || JS_QUOTES.includes(c) || (q === '`' && c === '$' && text[k + 1] === '{')) break;
+    if (c === '\\') {
+      const nx = text[k + 1];
+      const m = JS_ESCAPE_RE.exec(text.slice(k + 1, k + 10));
+      if (m) {
+        const cp = parseInt(m[1] || m[2] || m[3], 16);
+        if (cp > 0x10ffff) break;
+        value += String.fromCodePoint(cp);
+        decoded = true;
+        k += m[0].length;
+        continue;
+      }
+      if (nx === '\\') { value += '\\'; decoded = true; k++; continue; }
+      if (nx === undefined || nx === '\n' || JS_QUOTES.includes(nx)) break;
+      // Any other escape is kept as written (a Windows path in shell quotes: "C:\example\lib").
+    }
+    value += c;
+  }
+  return { stop: Math.max(k, at + 1) };
+}
+function foldJsStrings(text) {
+  if (!/['"`]/.test(text)) return text;
+  let out = '';
+  let last = 0; // text before this index is already in out
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (!JS_QUOTES.includes(c)) { i++; continue; }
+    const first = jsLiteralAt(text, i);
+    if (first.stop !== undefined) { i = first.stop; continue; }
+    let value = first.value;
+    let changed = first.decoded;
+    let end = first.end;
+    for (;;) {
+      let j = end;
+      while (text[j] === ' ' || text[j] === '\t') j++;
+      if (text[j] !== '+') break;
+      j++;
+      while (text[j] === ' ' || text[j] === '\t') j++;
+      if (text[j] === undefined || !JS_QUOTES.includes(text[j])) break;
+      const next = jsLiteralAt(text, j);
+      if (next.stop !== undefined) break;
+      value += next.value;
+      changed = true;
+      end = next.end;
+    }
+    if (changed) {
+      out += text.slice(last, i) + c + value + c;
+      last = end;
+    }
+    i = end;
+  }
+  return last ? out + text.slice(last) : text;
+}
+/* Inline code that names the refresh or the launcher writer, loads or runs something, and builds a string at run time
+   (+ with a variable, ${...}, .join(), String.fromCharCode, ...): the name it loads cannot be read from the text, so the
+   command is refused. Ordinary inline code (node -e "console.log(1 + 2)") names neither file and is not affected. */
+const INLINE_HINT_RE = /refresh|launcher|lib[\\/]+agents\b/i;
+const INLINE_LOAD_RE = /\b(?:require|import|createRequire|_load|fork|spawn\w*|exec\w*|Worker)\b/;
+const INLINE_DYNAMIC_RE = /["'`]\s*\+|\+\s*["'`]|\$\{|\.\s*(?:join|concat|replace|replaceAll|reverse|split|slice|substring|substr|repeat|map|resolve)\s*\(|\bfromC(?:harCode|odePoint)\b|\batob\s*\(|\bBuffer\s*\.\s*from\b/;
+const DENO_RE = /^(?:.*[\/\\])?deno(?:\.exe)?$/i;
 /* True when the words after a package manager install, update, rebuild, link or explore a package, or run an install script. */
 function pmMutates(rest) {
   let prev = '';
@@ -1876,9 +1957,11 @@ function pmMutates(rest) {
   }
   return false;
 }
-function refreshCommand(text) {
+function refreshCommand(rawText) {
+  // String constants joined in inline code are read as one string: require('<...>/lib/agents/' + 'refresh.js').
+  const text = foldJsStrings(rawText);
   const parts = simpleCommands(text);
-  if (REFRESH_HINT_RE.test(text)) {
+  if (INLINE_HINT_RE.test(text)) {
     let cwd = null; // the folder of the last cd, pushd or Set-Location in this command; null: the agent's own folder
     let inline = false; // a node -e earlier in the command: its code can span several simple commands
     for (const words of parts) {
@@ -1886,7 +1969,7 @@ function refreshCommand(text) {
       if (at >= 0) {
         // node [options] <...>/lib/agents/refresh.js, node -r <...>/launcher.js -e 0, node -e "require('./refresh')" after a cd
         for (let j = at + 1; j < words.length; j++) {
-          if (JS_EVAL_RE.test(words[j])) inline = true;
+          if (JS_EVAL_RE.test(words[j]) || (j === at + 1 && words[j] === 'eval' && DENO_RE.test(bareWord(words[at])))) inline = true;
           for (const piece of pathPieces(words[j])) if (isRefreshFile(piece, cwd)) return 'hooks refresh';
         }
       } else if (inline) {
@@ -1905,6 +1988,8 @@ function refreshCommand(text) {
         if (cwd && cwd.length > 4096) cwd = null;
       }
     }
+    // Inline code that names the refresh or the launcher writer and builds the name it loads at run time.
+    if (inline && INLINE_LOAD_RE.test(text) && INLINE_DYNAMIC_RE.test(text)) return 'hooks refresh';
   }
   const installedDir = ZN_INSTALLED_DIR_RE.test(text);
   for (const words of parts) {
