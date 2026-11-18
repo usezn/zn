@@ -210,8 +210,8 @@ jobs:
     steps:
       # Egress is blocked. The list comes from the outbound calls that the harden-runner log of the v1.16.0
       # run printed for this job: the trusted-publishing upload; the publish action runs as a container image.
-      # *.blob.core.windows.net is where the artifact service keeps the files that upload-artifact and
-      # download-artifact move (the run used productionresultssa1; GitHub picks the account per run).
+      # productionresultssa0..19 are the artifact service accounts that upload-artifact and download-artifact
+      # use (the run used productionresultssa1; GitHub picks the account per run).
       # A new destination fails the run on purpose: add it here after reviewing it.
       - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
@@ -222,7 +222,26 @@ jobs:
             github.com:443
             api.github.com:443
             *.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
+            productionresultssa0.blob.core.windows.net:443
+            productionresultssa1.blob.core.windows.net:443
+            productionresultssa2.blob.core.windows.net:443
+            productionresultssa3.blob.core.windows.net:443
+            productionresultssa4.blob.core.windows.net:443
+            productionresultssa5.blob.core.windows.net:443
+            productionresultssa6.blob.core.windows.net:443
+            productionresultssa7.blob.core.windows.net:443
+            productionresultssa8.blob.core.windows.net:443
+            productionresultssa9.blob.core.windows.net:443
+            productionresultssa10.blob.core.windows.net:443
+            productionresultssa11.blob.core.windows.net:443
+            productionresultssa12.blob.core.windows.net:443
+            productionresultssa13.blob.core.windows.net:443
+            productionresultssa14.blob.core.windows.net:443
+            productionresultssa15.blob.core.windows.net:443
+            productionresultssa16.blob.core.windows.net:443
+            productionresultssa17.blob.core.windows.net:443
+            productionresultssa18.blob.core.windows.net:443
+            productionresultssa19.blob.core.windows.net:443
             upload.pypi.org:443
             fulcio.sigstore.dev:443
             rekor.sigstore.dev:443
@@ -277,8 +296,8 @@ jobs:
     steps:
       # Egress is blocked. The list comes from the outbound calls that the harden-runner log of the v1.16.0
       # run printed for this job: the npm registry, the sparse checkouts and the Sigstore calls of npm provenance.
-      # *.blob.core.windows.net is where the artifact service keeps the files that upload-artifact and
-      # download-artifact move (the run used productionresultssa1; GitHub picks the account per run).
+      # productionresultssa0..19 are the artifact service accounts that upload-artifact and download-artifact
+      # use (the run used productionresultssa1; GitHub picks the account per run).
       # A new destination fails the run on purpose: add it here after reviewing it.
       - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
@@ -289,7 +308,26 @@ jobs:
             github.com:443
             api.github.com:443
             *.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
+            productionresultssa0.blob.core.windows.net:443
+            productionresultssa1.blob.core.windows.net:443
+            productionresultssa2.blob.core.windows.net:443
+            productionresultssa3.blob.core.windows.net:443
+            productionresultssa4.blob.core.windows.net:443
+            productionresultssa5.blob.core.windows.net:443
+            productionresultssa6.blob.core.windows.net:443
+            productionresultssa7.blob.core.windows.net:443
+            productionresultssa8.blob.core.windows.net:443
+            productionresultssa9.blob.core.windows.net:443
+            productionresultssa10.blob.core.windows.net:443
+            productionresultssa11.blob.core.windows.net:443
+            productionresultssa12.blob.core.windows.net:443
+            productionresultssa13.blob.core.windows.net:443
+            productionresultssa14.blob.core.windows.net:443
+            productionresultssa15.blob.core.windows.net:443
+            productionresultssa16.blob.core.windows.net:443
+            productionresultssa17.blob.core.windows.net:443
+            productionresultssa18.blob.core.windows.net:443
+            productionresultssa19.blob.core.windows.net:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
             fulcio.sigstore.dev:443
@@ -312,8 +350,8 @@ jobs:
         run: sha256sum --strict -c SHA256SUMS
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.x
-          check-latest: true
+          # Exact version (the one the v1.16.0 run resolved): no lookup of the latest release on nodejs.org.
+          node-version: 24.22.3
           package-manager-cache: false
       # Only the lockfile of the npm CLI is taken from the verified commit (no other file, no credentials).
       # It goes to its own folder: a checkout into the workspace root would delete the downloaded release/ folder.
@@ -565,8 +603,8 @@ jobs:
     steps:
       # Egress is blocked. The list comes from the outbound calls that the harden-runner log of the v1.16.0
       # run printed for this job: checkout, the tag check and the release upload.
-      # *.blob.core.windows.net is where the artifact service keeps the files that upload-artifact and
-      # download-artifact move (the run used productionresultssa1; GitHub picks the account per run).
+      # productionresultssa0..19 are the artifact service accounts that upload-artifact and download-artifact
+      # use (the run used productionresultssa1; GitHub picks the account per run).
       # A new destination fails the run on purpose: add it here after reviewing it.
       - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
@@ -577,7 +615,26 @@ jobs:
             github.com:443
             api.github.com:443
             *.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
+            productionresultssa0.blob.core.windows.net:443
+            productionresultssa1.blob.core.windows.net:443
+            productionresultssa2.blob.core.windows.net:443
+            productionresultssa3.blob.core.windows.net:443
+            productionresultssa4.blob.core.windows.net:443
+            productionresultssa5.blob.core.windows.net:443
+            productionresultssa6.blob.core.windows.net:443
+            productionresultssa7.blob.core.windows.net:443
+            productionresultssa8.blob.core.windows.net:443
+            productionresultssa9.blob.core.windows.net:443
+            productionresultssa10.blob.core.windows.net:443
+            productionresultssa11.blob.core.windows.net:443
+            productionresultssa12.blob.core.windows.net:443
+            productionresultssa13.blob.core.windows.net:443
+            productionresultssa14.blob.core.windows.net:443
+            productionresultssa15.blob.core.windows.net:443
+            productionresultssa16.blob.core.windows.net:443
+            productionresultssa17.blob.core.windows.net:443
+            productionresultssa18.blob.core.windows.net:443
+            productionresultssa19.blob.core.windows.net:443
             uploads.github.com:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -619,6 +676,7 @@ jobs:
       - name: Create the release (draft for final versions)
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_TELEMETRY: "false"
           TAG: ${{ needs.verify.outputs.tag }}
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
