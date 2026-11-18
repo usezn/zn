@@ -171,8 +171,8 @@ const OUTPUT_CHECK_TOOLS = new Set(['webfetch', 'mcp', 'mcpresource', 'bash', 'p
 // latency budget (bench/hook_latency_baseline.json).
 const OUTPUT_CHECK_CAP = 48 * 1024;
 const OUTPUT_CHECK_TAIL = 16 * 1024;
-// Only agents whose hook can pass a note with an unchanged output get the check.
-const OUTPUT_CHECK_AGENTS = new Set(['claude-code']);
+// Only agents whose post-tool hook can pass a note while the output stays unchanged get the check: Claude Code (additionalContext next to the output) and ZCode (additionalContext, documented as appended for the model; it cannot replace the output). Codex PostToolUse has no such field: its only answer replaces the result.
+const OUTPUT_CHECK_AGENTS = new Set(['claude-code', 'zcode']);
 const { mayMatchRules } = require('./output_prefilter');
 
 /*

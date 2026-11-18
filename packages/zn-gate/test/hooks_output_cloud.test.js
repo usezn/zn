@@ -498,13 +498,37 @@ test('the environment cannot switch the cloud path off or on: only the config fi
   assert.equal(seen.length, 1);
 });
 
-test('agents other than Claude Code send nothing (their hooks cannot pass a note with an unchanged output)', async (t) => {
+test('Codex sends nothing (its hook cannot pass a note with an unchanged output)', async (t) => {
   const seen = stub(t, block);
   const { dir, home } = await setup(t);
   const raw = { hook_event_name: 'PostToolUse', session_id: 's', cwd: dir, tool_name: 'Bash', tool_input: { command: 'cat page.html' }, tool_response: { stdout: CLEAN.repeat(5), stderr: '' }, tool_use_id: 't1' };
   const res = await run(raw, home, codex);
   assert.ok(!/zn cloud check/.test(JSON.stringify(res.output || {})));
   assert.equal(seen.length, 0);
+});
+
+test('ZCode gets the note: additionalContext only, the output is not replaced', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t);
+  const zcode = require('../lib/agents/zcode');
+  const raw = { hook_event_name: 'PostToolUse', session_id: 's', cwd: dir, tool_name: 'Bash', tool_input: { command: 'cat page.html' }, tool_response: { stdout: CLEAN.repeat(5), stderr: '' }, tool_use_id: 't1' };
+  const res = await run(raw, home, zcode);
+  assert.equal(seen.length, 1);
+  assert.equal(res.decision.decision, 'allow');
+  assert.equal(res.decision.updatedOutput, undefined);
+  assert.equal(res.output.hookSpecificOutput.hookEventName, 'PostToolUse');
+  assert.match(res.output.hookSpecificOutput.additionalContext, /zn cloud check flagged this tool output/);
+  assert.deepEqual(Object.keys(res.output.hookSpecificOutput).sort(), ['additionalContext', 'hookEventName']);
+});
+
+test('ZCode: with the cloud opt-in off nothing is sent and no note is added', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t, {}, undefined, true, false);
+  const zcode = require('../lib/agents/zcode');
+  const raw = { hook_event_name: 'PostToolUse', session_id: 's', cwd: dir, tool_name: 'Bash', tool_input: { command: 'cat page.html' }, tool_response: { stdout: CLEAN.repeat(5), stderr: '' }, tool_use_id: 't1' };
+  const res = await run(raw, home, zcode);
+  assert.equal(seen.length, 0);
+  assert.ok(!/zn cloud check/.test(JSON.stringify(res.output || {})));
 });
 
 // Values placed across the points where the sample is cut: the first 12 KiB, and the start of the last bytes kept.

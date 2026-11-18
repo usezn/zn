@@ -250,8 +250,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   outputs are also sent to zn's API, when the local check did not flag them: a sample of at most 16 KiB,
   counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and card numbers) are replaced. The cloud
   can only add the same note (also when its verdict is neither allow nor block); a failed call changes nothing. Remove the setting, or set it to
-  `false`, to turn this path off. Only the Claude Code hook does this today:
-  the other agents get no note for tool output (the same limit as the local check above), so they send nothing.
+  `false`, to turn this path off. Only two agents get this note, so only they send anything: Claude Code and the ZCode desktop app, whose post-tool hooks can add a note for the model while the output stays as it is (ZCode's documentation says the note is appended and cannot replace the output). The same two agents get the local check above. The others get no note for tool output, so they send nothing: Codex CLI's post-tool hook has no field that adds a note without replacing the result, and Antigravity's can only return an empty answer. For Cursor, OpenCode, Gemini CLI and GitHub Copilot, zn does not use a note-only answer after a tool, so the note is not available there either.
 - **Codex CLI**:
   - `ask` is not supported, so a call zn would ask about (personal data in an
     MCP call, a write to an instruction file, a search over a folder with a

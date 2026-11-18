@@ -1,0 +1,2 @@
+### Changed
+- The opt-in cloud check of tool output now also covers the ZCode desktop app, whose hook can add a note after a tool ran without changing the output. It stays off unless you turn it on, and the local check of tool output now runs for ZCode too. Codex CLI, Cursor, OpenCode, Gemini CLI, Antigravity and GitHub Copilot still get no note for tool output, because their hooks cannot carry one without replacing the result; the docs now say so.
