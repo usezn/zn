@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # version and date strings are evidence labels; a failing probe only blanks the label
 # Runs the end-to-end scenario on every agent CLI found and writes the
 # redacted evidence to bench/e2e/<agent>/:
 #   summary.txt        each tool call and the result the model got (fake values replaced by names)

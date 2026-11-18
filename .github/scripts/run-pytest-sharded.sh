@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # tail failure only blanks a log line in the summary echo
 # Runs the Python package tests as three pytest processes at the same time: each of the two long
 # linear-time and oversize-input test files in its own process, every other test in the third. These two
 # files take about two thirds of the time of a sequential run, and the runner has idle cores.

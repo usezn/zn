@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # command -v/cat feed the prompt or config; a missing file fails the agent run that follows
 # End-to-end run of Claude Code with the zn hooks against the scripted
 # provider. Nothing leaves the machine: the provider is mock_llm.js on
 # 127.0.0.1 and every value is fake.

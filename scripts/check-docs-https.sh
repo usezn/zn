@@ -57,6 +57,7 @@ scan_page() {
   ' "$1"
 }
 
+page_list="$(list_pages)" || exit 1
 pages=0
 skipped=0
 status=0
@@ -67,7 +68,7 @@ while IFS= read -r page; do
   esac
   pages=$((pages + 1))
   scan_page "$page" || status=1
-done < <(list_pages)
+done <<< "$page_list"
 
 if [ "$status" != 0 ]; then
   echo "" >&2

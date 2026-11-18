@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # row() builds test fixtures inline; its output is compared by the assertion itself
 # Tests .github/scripts/cache-deleted-branches.sh with made-up cache lists.
 # Run from anywhere inside the repository: bash .github/scripts/test-cache-deleted-branches.sh
 set -euo pipefail

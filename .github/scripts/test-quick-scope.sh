@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # grep -c inside $(...) is compared with an expected count; failure fails the comparison
 # Tests .github/scripts/quick-scope.sh: for each changed path, which checks of the "Quick checks" workflow run.
 # Usage: bash .github/scripts/test-quick-scope.sh   (from the repository root; uses a temporary git repository)
 set -euo pipefail

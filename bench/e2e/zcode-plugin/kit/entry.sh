@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2312 # tee process substitution only mirrors the log; date/uname are labels
 # Official ZCode Desktop 3.16.3 .deb on Debian 12, e2e of zn-gate adapter (fictitious values only)
 set -uo pipefail
 : "${ZN_OUT:?}"

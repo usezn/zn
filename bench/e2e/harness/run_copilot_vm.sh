@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # tee process substitution only mirrors the log; the PASS/FAIL echo is a label
 # Entry of the znops job: GitHub Copilot CLI end-to-end on an ephemeral Ubuntu VM.
 # Staged inputs (cwd): src.tgz (the repo working tree), versions.env.
 set -uo pipefail

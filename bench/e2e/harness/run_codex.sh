@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # cat feeds the prompt; a missing file fails the agent run that follows
 # End-to-end run of the Codex CLI with the zn hooks against the scripted
 # provider (OpenAI Responses API on 127.0.0.1). Every value is fake.
 #

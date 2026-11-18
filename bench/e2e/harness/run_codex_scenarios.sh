@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # version and date strings are evidence labels; a failing probe only blanks the label
 # Hook scenarios for the Codex CLI against the scripted provider on 127.0.0.1
 # (no account, no key; every value is fake). One case per scenario:
 #

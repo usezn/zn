@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2310,SC2312 # have() and attempt() are predicates meant for if conditions: every failure is reported through pass/fail/cannot, not through set -e; ls -A only tests emptiness of the --keep dir
 # Verifies a PUBLISHED zn-gate release: checksums, GitHub artifact attestations,
 # the Sigstore signature of SHA256SUMS, npm provenance and PyPI attestations.
 # Every step is described in docs/verify-release.md; this script only runs the

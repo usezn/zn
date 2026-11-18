@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # cat feeds the prompt; a missing file fails the agent run that follows
 # End-to-end run of OpenCode with the zn plugin against the scripted
 # provider (OpenAI Chat Completions on 127.0.0.1). Every value is fake.
 #

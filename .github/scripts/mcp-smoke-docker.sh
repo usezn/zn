@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # id -u/-g cannot fail on a normal host; a failure would only change the --user value
 # Installs the built zn-gate tarball in a clean node:22-slim container and runs the MCP smoke test there.
 # The server step runs with no network at all, which also proves ZN_LOCAL_ONLY=true needs none.
 # Usage: .github/scripts/mcp-smoke-docker.sh path/to/zn-gate-X.Y.Z.tgz

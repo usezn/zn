@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2312 # scope scripts run inside $(...) are compared against expected output, so a failure fails the comparison; grep exit 1 (no mentions) is valid
 # Tests .github/scripts/ci-scope.sh and rust-scope.sh against throwaway git repositories.
 # Run from anywhere inside the repository: bash .github/scripts/test-ci-scope.sh
 set -euo pipefail

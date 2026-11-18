@@ -421,7 +421,7 @@ jobs:
         run: |
           set -euo pipefail
           shellcheck --version
-          git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck --color=always
+          git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck --color=always --enable=check-set-e-suppressed,check-extra-masked-returns
 
       # Pre-commit hooks (system Python, before setup-python below)
       - name: Pre-commit hooks - install pre-commit and PyYAML
