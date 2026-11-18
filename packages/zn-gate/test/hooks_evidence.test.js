@@ -126,3 +126,26 @@ test('a busy write lock keeps the deny', async () => {
   const res = await runner.handle(cc(), pre(home, 'cat ~/.aws/credentials'), { home });
   assert.equal(res.decision.decision, 'deny');
 });
+
+test('a busy write lock leaves the ledger and the lock alone, and the next block chains onto the log', async () => {
+  const home = tmp();
+  fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
+  const file = path.join(home, '.zn', 'evidence.jsonl');
+  const lock = file + '.lock';
+  const held = JSON.stringify({ pid: process.pid, token: 'x', t: Date.now() });
+  fs.writeFileSync(lock, held);
+  // First block while someone else holds the lock: still denied, nothing written, the lock is not touched.
+  const busy = await runner.handle(cc(), pre(home, 'cat ~/.aws/credentials'), { home });
+  assert.equal(busy.decision.decision, 'deny');
+  assert.equal(fs.existsSync(file), false, 'nothing is written without the lock');
+  assert.equal(fs.readFileSync(lock, 'utf8'), held, 'a lock held by someone else is left alone');
+  // The holder lets go: the next two blocks are recorded and chain, so the log is valid and has no gap or fork.
+  fs.rmSync(lock);
+  await runner.handle(cc(), pre(home, 'cat ~/.ssh/id_rsa'), { home });
+  await runner.handle(cc(), pre(home, 'cat ~/.aws/credentials'), { home });
+  const { records } = ledger(home);
+  assert.equal(records.length, 2);
+  assert.equal(records[1].prev_hash, records[0].record_hash);
+  assert.equal(verifyEvidenceLedger(file).valid, true);
+  assert.equal(fs.existsSync(lock), false, 'the lock is released after each write');
+});
