@@ -73,7 +73,7 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 | `ZN_CLOUD=1` | Off: nothing leaves your machine | Turns the optional cloud check on. |
 | `ZN_LOCAL_ONLY=true` or `--local-only` | Not stated | Never uses the cloud, even when `ZN_CLOUD=1` is set. |
 | `ZN_STAGE` or `--stage <v30\|prod>` | `v30` | Cloud stage. |
-| `ZN_API_URL` or `--url <url>` | Not stated | Uses another cloud address. |
+| `ZN_API_URL` or `--url <url>` | Not stated | Uses another route on `https://api.usezn.com`. Any other host, or `http://`, is refused and the local rules are used. A gateway on this machine (`localhost`, `127.0.0.1`, `::1`) works only with `ZN_API_ALLOW_LOCALHOST=1`, for development. |
 | `--long-input <windows\|off>` | `windows` (overlapping windows, up to 20) | How long texts are sent to the cloud check; `off` sends only the first 512 tokens. |
 | `ZN_STATS=off` | Not stated | Turns off the local counts shown by `stats` and `report`. |
 | `ZN_VERBOSE=1` or `--verbose` | Not stated | Prints debug messages to the error output. |
@@ -87,7 +87,7 @@ The table below gives the full description of each setting.
 | `ZN_CLOUD=1` | Turns the optional cloud check on. Without it (or `zn-gate connect`) nothing leaves your machine. |
 | `ZN_LOCAL_ONLY=true` or `--local-only` | Never use the cloud, even when `ZN_CLOUD=1` is set. |
 | `ZN_STAGE` or `--stage <v30\|prod>` | Cloud stage. Default `v30`. |
-| `ZN_API_URL` or `--url <url>` | Use another cloud address. |
+| `ZN_API_URL` or `--url <url>` | Use another route on `https://api.usezn.com`. Other hosts and `http://` are refused; a gateway on this machine needs `ZN_API_ALLOW_LOCALHOST=1`. |
 | `--long-input <windows\|off>` | How long texts are sent to the cloud check: in overlapping windows (default, up to 20), or only the first 512 tokens. Any other value exits `2`. |
 | `ZN_TEAM_JOIN_TOKEN` | The join token for `team join` when you give none as an argument and no `-`. Keeps the token out of your shell history. An argument wins over it. |
 | `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
@@ -107,7 +107,8 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
 | `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
 | `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
-| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
+| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another route on `https://api.usezn.com`. Any other host, or `http://`, is refused before the key is sent, and the local rules are used. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
+| `ZN_API_ALLOW_LOCALHOST` | Off | `1` lets `ZN_API_URL` or `--url` name a gateway on this machine (`localhost`, `127.0.0.1`, `::1`, over http or https), for development. | Both |
 | `ZN_STAGE` | The production API | Which cloud API route the check is sent to: `prod`, or unset for the default route. Any other value also uses the default route. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values under `--stage`. | Both |
 | `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check. `windows` sends overlapping windows of the text; `off` sends only the start. The values `none`, `truncate`, `0`, `false` and `no` also count as `off`. Any other value counts as `windows`. | Both |
 | `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |

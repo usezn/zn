@@ -16,6 +16,7 @@ import http.client
 import os
 import socket
 import threading
+import urllib.parse
 import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional, cast
@@ -91,15 +92,55 @@ class _BoundedHTTPSHandler(urllib.request.HTTPSHandler):
         return self.do_open(_BoundedHTTPSConnection, req, context=getattr(self, "_context", None))
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib would send the Authorization header (the API key) on to the new address.
+    The 3xx answer becomes an HTTPError, a failed cloud call."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
+
+
 _OPENER: Optional[urllib.request.OpenerDirector] = None
 
 
 def _open(req: Any, timeout: Optional[float] = None) -> Any:
-    """urlopen with the proxy settings of the environment and a name lookup that ends within `timeout`."""
+    """urlopen with the proxy settings of the environment, a name lookup that ends within `timeout`, and no redirects."""
     global _OPENER
     if _OPENER is None:
-        _OPENER = urllib.request.build_opener(_BoundedHTTPSHandler)
+        _OPENER = urllib.request.build_opener(_BoundedHTTPSHandler, _NoRedirectHandler)
     return _OPENER.open(req, timeout=timeout)
+
+
+# Where the API key may go: only https://api.usezn.com. A gateway on this machine (localhost, 127.0.0.1 or ::1, over
+# http or https) is accepted only with ZN_API_ALLOW_LOCALHOST=1, for development. Any other host, and http:// anywhere
+# else, is refused before the request is built: a project can set ZN_API_URL in an agent's environment, and the key and
+# the text must not go where it points. Same rule as the Node.js client.
+OFFICIAL_API_HOST = "api.usezn.com"
+_LOOPBACK_API_HOSTS = frozenset(("localhost", "127.0.0.1", "::1"))
+
+
+class EndpointRefusedError(ValueError):
+    """The API URL is not one the key may be sent to."""
+
+
+def endpoint_refusal(endpoint_url: Any) -> Optional[str]:
+    """Why the key must not be sent to this URL, or None when it may."""
+    try:
+        u = urllib.parse.urlsplit(str(endpoint_url))
+        host = (u.hostname or "").lower()
+        port = u.port
+    except ValueError:
+        return "the API URL is not a valid URL"
+    if u.username is not None or u.password is not None:
+        return "the API URL must not carry a user name or password"
+    scheme = u.scheme.lower()
+    if scheme == "https" and host == OFFICIAL_API_HOST and port in (None, 443):
+        return None
+    if host in _LOOPBACK_API_HOSTS and scheme in ("http", "https"):
+        if os.environ.get("ZN_API_ALLOW_LOCALHOST") == "1":
+            return None
+        return "a gateway on this machine (%s) is used only with ZN_API_ALLOW_LOCALHOST=1, for development" % (u.netloc,)
+    return "the API key is only sent to https://%s, not to %s://%s" % (OFFICIAL_API_HOST, scheme, u.netloc)
 
 
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
@@ -170,6 +211,9 @@ def analyze_cloud(
 ) -> Dict[str, Any]:
     """Sends a payload to the zn cloud gate (stdlib urllib). Secrets are always redacted first."""
     endpoint = endpoint_url or DEFAULT_ENDPOINT
+    refused = endpoint_refusal(endpoint)
+    if refused:
+        raise EndpointRefusedError(refused)
     redacted, _ = redact_secrets(input_text)
     body: Dict[str, Any] = {"input": redacted}
     if long_input == "windows":
@@ -190,6 +234,9 @@ def analyze_cloud(
 
 def cloud_error_hint(exc: BaseException) -> str:
     """One plain sentence on what a failed cloud call means and what to do."""
+    if isinstance(exc, EndpointRefusedError):
+        return ("The API URL is not allowed: the key is only sent to https://api.usezn.com "
+                "(ZN_API_ALLOW_LOCALHOST=1 allows a gateway on this machine).")
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code in (401, 403):
             return "The cloud service did not accept the API key: check ZN_API_KEY."
@@ -281,7 +328,7 @@ def analyze(
         if isinstance(exc, urllib.error.HTTPError):
             # An HTTP error carries the open response: close it now instead of leaving the socket to the GC.
             exc.close()
-        if is_verbose():
+        if is_verbose() or isinstance(exc, EndpointRefusedError):
             import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). {cloud_error_hint(exc)} "
                              "The local rules were used instead, so the text was checked on this machine only.\n")

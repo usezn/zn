@@ -1,4 +1,7 @@
 'use strict';
+
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
 // A cloud answer whose decided_by starts with "ml-error" was decided by the rules alone (the model was down). It keeps
 // the cloud verdict, and is marked degraded so the caller can tell it apart. A local HTTP server stands in for the gate.
 

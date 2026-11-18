@@ -59,6 +59,12 @@ def _chain_texts(exc):
     return texts
 
 
+@pytest.fixture(autouse=True)
+def _local_gateway_allowed(monkeypatch):
+    """The fake gateway listens on this machine: allowed only with this development switch."""
+    monkeypatch.setenv("ZN_API_ALLOW_LOCALHOST", "1")
+
+
 SCENARIOS = [
     pytest.param(200, ALLOW, False, 0.0, 4.0, False, id="200-allow"),
     pytest.param(200, BLOCK, False, 0.0, 4.0, False, id="200-block"),

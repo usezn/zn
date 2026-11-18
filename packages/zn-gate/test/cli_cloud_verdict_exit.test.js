@@ -1,4 +1,7 @@
 'use strict';
+
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
 // The command line exit code follows the cloud verdict contract: a reply whose verdict is not "allow" or "block"
 // (another word, another type) blocks the text and exits 2, never 0. A local HTTP server stands in for the gate.
 

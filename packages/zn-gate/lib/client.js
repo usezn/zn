@@ -52,6 +52,36 @@ function resolveEndpoint(options = {}, { stored = false } = {}) {
   return 'https://api.usezn.com/v30/analyze';
 }
 
+/*
+ * Where the API key may go. Only https://api.usezn.com. A gateway on this machine (localhost, 127.0.0.1 or ::1, over
+ * http or https) is accepted only with ZN_API_ALLOW_LOCALHOST=1, for development. Any other host, and http:// anywhere
+ * else, is refused before the request is built: a project can set ZN_API_URL in an agent's environment, and the key
+ * and the text must not go where it points.
+ */
+const OFFICIAL_API_HOST = 'api.usezn.com';
+const LOOPBACK_API_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Why the key must not be sent to this URL, or null when it may. */
+function endpointRefusal(endpointUrl, env = process.env) {
+  let u;
+  try { u = new URL(String(endpointUrl)); } catch (_) { return 'the API URL is not a valid URL'; }
+  if (u.username || u.password) return 'the API URL must not carry a user name or password';
+  const host = u.hostname.toLowerCase();
+  if (u.protocol === 'https:' && host === OFFICIAL_API_HOST && u.port === '') return null;
+  if (LOOPBACK_API_HOSTS.has(host) && (u.protocol === 'http:' || u.protocol === 'https:')) {
+    if (env.ZN_API_ALLOW_LOCALHOST === '1') return null;
+    return 'a gateway on this machine (' + u.host + ') is used only with ZN_API_ALLOW_LOCALHOST=1, for development';
+  }
+  return 'the API key is only sent to https://' + OFFICIAL_API_HOST + ', not to ' + u.protocol + '//' + u.host;
+}
+
+const notedRefusals = new Set();
+function noteRefusal(why) {
+  if (notedRefusals.has(why)) return;
+  notedRefusals.add(why);
+  try { process.stderr.write('[zn-gate] Cloud check not used: ' + why + ' (check ZN_API_URL or --url). The local rules were used instead.\n'); } catch (_) { /* no stderr */ }
+}
+
 const cloudKey = require('./cloud-key');
 const { isVerbose } = require('./verbose');
 const { usableApiKey } = cloudKey;
@@ -119,6 +149,7 @@ function cloudErrorHint(err) {
     return `The cloud service answered with an error (HTTP ${err.httpStatus}): try again later.`;
   }
   if (err && err.code === 'ETIMEDOUT') return 'The cloud service took too long to answer: check your network connection.';
+  if (err && err.code === 'ZN_API_URL_REFUSED') return 'The API URL is not allowed: the key is only sent to https://api.usezn.com (ZN_API_ALLOW_LOCALHOST=1 allows a gateway on this machine).';
   if (err && typeof err.code === 'string') return 'The cloud service could not be reached: check your network connection and ZN_API_URL.';
   return 'The cloud check failed.';
 }
@@ -147,6 +178,14 @@ function degradedFields(cloudRes) {
 
 function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) {
   return new Promise((resolve, reject) => {
+    // Checked again here, so no caller can send the key to a URL analyze() would refuse.
+    const refused = endpointRefusal(endpointUrl);
+    if (refused) {
+      const err = new Error(refused);
+      err.code = 'ZN_API_URL_REFUSED';
+      reject(err);
+      return;
+    }
     const url = new URL(endpointUrl);
     const postData = JSON.stringify({ input, ...extra });
     const isHttps = url.protocol === 'https:';
@@ -261,6 +300,11 @@ async function analyze(input, options = {}) {
   if (pinned && endpoint.indexOf(FIXED_API_ORIGIN + '/') !== 0) {
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: 'the saved key is only sent to ' + FIXED_API_ORIGIN };
   }
+  const refused = endpointRefusal(endpoint);
+  if (refused) {
+    noteRefusal(refused);
+    return { ...local, mode: 'oss-local', fallback: true, cloud_error: refused };
+  }
   const urlIgnored = storedKey && Boolean(options.apiUrl || process.env.ZN_API_URL);
   const windows = longInputMode(options) === 'windows' && sanitized.length > LONG_INPUT_MIN_CHARS;
   try {
@@ -272,7 +316,7 @@ async function analyze(input, options = {}) {
       secrets_redacted_before_upload: detections.length,
       ...degradedFields(cloudRes),
     };
-    if (urlIgnored) out.note = 'The saved key is only sent to api.usezn.com, so the custom URL was ignored. Use --key or ZN_API_KEY to send to another URL.';
+    if (urlIgnored) out.note = 'The saved key is only sent to api.usezn.com/v30 or /prod, so the custom URL was ignored. Use --key or ZN_API_KEY to choose another route on api.usezn.com.';
     if (cloudRes.long_input && cloudRes.long_input.capped) {
       out.warning = 'The text is longer than the cloud gate checks (' + cloudRes.long_input.windows + ' windows of 512 tokens): the end was not analyzed.';
     } else if (windows && cloudRes.long_input && cloudRes.long_input.mode === 'truncate') {
@@ -345,6 +389,7 @@ module.exports = {
   longInputMode,
   LONG_INPUT_MIN_CHARS,
   resolveEndpoint,
+  endpointRefusal,
   usesStoredKey,
   evaluate,
   checkCommand,

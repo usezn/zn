@@ -12,7 +12,7 @@ from unittest import mock
 from zn_gate import cli, client
 
 FAKE_KEY = "fake-key-for-tests"
-ENDPOINT = "https://example.com/v30/analyze"
+ENDPOINT = "https://api.usezn.com/v30/analyze"
 TEXT = "The quarterly report lists the shipping dates for each warehouse."
 REASON = "model unavailable, rules only"
 WARN = "the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model"

@@ -41,7 +41,7 @@ class TestCliCloudVerdictExit(unittest.TestCase):
         srv, url = _gate(reply)
         self.addCleanup(srv.server_close)
         self.addCleanup(srv.shutdown)
-        env = {"ZN_API_KEY": KEY, "ZN_CLOUD": "1", "ZN_API_URL": url}
+        env = {"ZN_API_KEY": KEY, "ZN_CLOUD": "1", "ZN_API_URL": url, "ZN_API_ALLOW_LOCALHOST": "1"}
         out = io.StringIO()
         with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", ["zn-gate", "analyze", TEXT]), \
                 contextlib.redirect_stdout(out):

@@ -1,4 +1,7 @@
 'use strict';
+
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
 // Long texts ask the cloud gate for overlapping windows ("long_input": "windows").
 // A local HTTP server stands in for the gate; nothing leaves the machine.
 

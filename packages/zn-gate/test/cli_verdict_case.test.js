@@ -1,4 +1,7 @@
 'use strict';
+
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
 // The CLI treats a verdict as a block whatever its case, like the MCP server does.
 // A local HTTP server stands in for the gate; nothing leaves the machine.
 

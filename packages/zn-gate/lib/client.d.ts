@@ -102,3 +102,5 @@ export function usesStoredKey(options?: AnalyzeOptions): boolean;
 /** The key when it has the expected shape, otherwise null. */
 export function usableApiKey(value: unknown): string | null;
 export function resolveEndpoint(options?: ResolveEndpointOptions, flags?: { stored?: boolean }): string;
+/** Why the API key must not be sent to this URL (only https://api.usezn.com; localhost with ZN_API_ALLOW_LOCALHOST=1), or null. */
+export function endpointRefusal(endpointUrl: string, env?: Record<string, string | undefined>): string | null;

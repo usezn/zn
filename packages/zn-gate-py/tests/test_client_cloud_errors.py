@@ -16,7 +16,7 @@ from unittest import mock
 from zn_gate import client
 
 FAKE_KEY = "fake-key-for-tests"
-ENDPOINT = "https://example.com/v30/analyze"
+ENDPOINT = "https://api.usezn.com/v30/analyze"
 ZN_VARS = ("ZN_API_KEY", "ZN_CLOUD", "ZN_LOCAL_ONLY", "ZN_API_URL", "ZN_STAGE", "ZN_LONG_INPUT", "ZN_VERBOSE", "DEBUG")
 
 

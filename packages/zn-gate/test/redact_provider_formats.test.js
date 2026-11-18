@@ -1,5 +1,8 @@
 'use strict';
 
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
+
 // Provider token formats are redacted by redactSecrets, sanitizeToolResult and
 // the evidence preview, the same as the scrubber and the Python package do.
 // Every token is random and built at run time from pieces; none is a real

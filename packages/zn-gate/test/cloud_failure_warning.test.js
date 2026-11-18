@@ -1,4 +1,7 @@
 'use strict';
+
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
 // A failed cloud call prints one warning in verbose mode. The wording matches the Python package.
 // A local HTTP server stands in for the gate; nothing leaves the machine.
 

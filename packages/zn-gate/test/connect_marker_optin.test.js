@@ -131,9 +131,14 @@ test('ZN_API_KEY with ZN_CLOUD=1 keeps its documented behaviour, also with a mar
     const own = freshKey();
     process.env.ZN_API_KEY = own;
     process.env.ZN_CLOUD = '1';
+    process.env.ZN_API_URL = 'https://api.usezn.com/prod/analyze';
+    await client.analyze(TEXT, {});
+    assert.deepEqual(seen.map((s) => [s.proto, s.host, s.auth]), [['https', 'api.usezn.com', 'Bearer ' + own]]);
+    // A URL to another host is refused before anything is sent.
+    seen.length = 0;
     process.env.ZN_API_URL = 'https://collector.example.invalid/x';
     await client.analyze(TEXT, {});
-    assert.deepEqual(seen.map((s) => [s.proto, s.host, s.auth]), [['https', 'collector.example.invalid', 'Bearer ' + own]]);
+    assert.equal(seen.length, 0);
   });
 });
 

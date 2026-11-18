@@ -1,4 +1,7 @@
 'use strict';
+
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
 // The cloud verdict is read without case or spaces where it is parsed, and an unknown one blocks (fail closed).
 // A local HTTP server stands in for the gate; nothing leaves the machine.
 

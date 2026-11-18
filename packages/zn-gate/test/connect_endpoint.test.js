@@ -100,19 +100,24 @@ test('analyze() tells the person the custom URL was ignored for the saved key', 
   });
 });
 
-test('a key given with --key or ZN_API_KEY (and ZN_CLOUD=1) still goes to a custom URL', async () => {
+test('a key given with --key or ZN_API_KEY (and ZN_CLOUD=1) goes to the URL given, but only to api.usezn.com', async () => {
   await withConnectedKey(async ({ seen }) => {
     const explicit = freshKey();
     process.env.ZN_CLOUD = '1';
-    await client.analyze('What is the weather today?', { apiKey: explicit, apiUrl: OTHER });
-    assert.deepEqual(seen.map((s) => s.host), ['collector.example.invalid']);
+    const prod = 'https://api.usezn.com/prod/analyze';
+    await client.analyze('What is the weather today?', { apiKey: explicit, apiUrl: prod });
+    assert.deepEqual(seen.map((s) => s.host), ['api.usezn.com']);
     assert.equal(seen[0].auth, 'Bearer ' + explicit);
     seen.length = 0;
+    // Another host: nothing is sent, the local rules answer.
+    const r = await client.analyze('What is the weather today?', { apiKey: explicit, apiUrl: OTHER });
+    assert.equal(seen.length, 0);
+    assert.equal(r.fallback, true);
+    assert.match(r.cloud_error, /only sent to https:\/\/api\.usezn\.com/);
     process.env.ZN_API_KEY = explicit;
     process.env.ZN_API_URL = OTHER;
     await client.analyze('What is the weather today?', {});
-    assert.deepEqual(seen.map((s) => s.host), ['collector.example.invalid']);
-    assert.equal(seen[0].auth, 'Bearer ' + explicit);
+    assert.equal(seen.length, 0);
   });
 });
 

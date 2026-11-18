@@ -36,7 +36,7 @@ The key is never written to a file in plain text, and zn's hooks refuse the dire
 
 This is a barrier, not a vault wall: a program running as you can still ask the keychain for the key, as it can for any keychain entry. That is why `connect` only accepts a key limited to analyzing text (a copy can do little with it), and why you can revoke it at <https://usezn.com/api-keys/>. A key you give in `ZN_API_KEY` or `--key` can be read from your environment, as before.
 
-A saved key is only ever sent to <https://api.usezn.com>. `--url` and `ZN_API_URL` are ignored for it; use `--key` or `ZN_API_KEY` to send to another URL.
+A saved key is only ever sent to <https://api.usezn.com>. `--url` and `ZN_API_URL` are ignored for it. A key given with `--key` or `ZN_API_KEY` follows `--url` or `ZN_API_URL`, but only to `https://api.usezn.com` (or, with `ZN_API_ALLOW_LOCALHOST=1`, to a gateway on this machine).
 
 ## See and change the state
 

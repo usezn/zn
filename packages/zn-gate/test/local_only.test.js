@@ -1,5 +1,8 @@
 'use strict';
 
+// The fake gateway in these tests listens on this machine: allowed only with this development switch.
+process.env.ZN_API_ALLOW_LOCALHOST = '1';
+
 /*
  * 1.4.1 data-flow guarantees:
  *  - tool results and tool-call arguments never leave the machine and always

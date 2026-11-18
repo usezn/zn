@@ -53,8 +53,8 @@ class _Case(unittest.TestCase):
 
 class TestEndpointPrecedence(_Case):
     def test_empty_option_falls_through_to_env(self):
-        os.environ["ZN_API_URL"] = "https://example.com/from-env"
-        self.assertEqual(client.resolve_endpoint({"api_url": ""}), "https://example.com/from-env")
+        os.environ["ZN_API_URL"] = "https://api.usezn.com/from-env"
+        self.assertEqual(client.resolve_endpoint({"api_url": ""}), "https://api.usezn.com/from-env")
 
     def test_empty_env_falls_through_to_stage(self):
         os.environ["ZN_API_URL"] = ""
@@ -62,8 +62,8 @@ class TestEndpointPrecedence(_Case):
         self.assertEqual(client.resolve_endpoint(), "https://api.usezn.com/prod/analyze")
 
     def test_url_beats_stage(self):
-        os.environ["ZN_API_URL"] = "https://example.com/from-env"
-        self.assertEqual(client.resolve_endpoint({"stage": "prod"}), "https://example.com/from-env")
+        os.environ["ZN_API_URL"] = "https://api.usezn.com/from-env"
+        self.assertEqual(client.resolve_endpoint({"stage": "prod"}), "https://api.usezn.com/from-env")
 
     def test_stage_option_beats_env_stage(self):
         os.environ["ZN_STAGE"] = "prod"
@@ -73,19 +73,19 @@ class TestEndpointPrecedence(_Case):
         self.assertEqual(client.resolve_endpoint({"stage": "staging"}), client.DEFAULT_ENDPOINT)
 
     def test_analyze_endpoint_argument_beats_everything(self):
-        os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1", ZN_API_URL="https://example.com/env/v30/analyze")
-        self.run_analyze(endpoint="https://example.com/arg/v30/analyze", api_url="https://example.com/kw/v30/analyze")
-        self.assertEqual(self.calls[0]["url"], "https://example.com/arg/v30/analyze")
+        os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1", ZN_API_URL="https://api.usezn.com/env/v30/analyze")
+        self.run_analyze(endpoint="https://api.usezn.com/arg/v30/analyze", api_url="https://api.usezn.com/kw/v30/analyze")
+        self.assertEqual(self.calls[0]["url"], "https://api.usezn.com/arg/v30/analyze")
 
     def test_analyze_api_url_keyword_beats_env(self):
-        os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1", ZN_API_URL="https://example.com/env/v30/analyze")
-        self.run_analyze(api_url="https://example.com/kw/v30/analyze")
-        self.assertEqual(self.calls[0]["url"], "https://example.com/kw/v30/analyze")
+        os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1", ZN_API_URL="https://api.usezn.com/env/v30/analyze")
+        self.run_analyze(api_url="https://api.usezn.com/kw/v30/analyze")
+        self.assertEqual(self.calls[0]["url"], "https://api.usezn.com/kw/v30/analyze")
 
     def test_analyze_uses_env_url_then_stage(self):
-        os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1", ZN_API_URL="https://example.com/env/v30/analyze")
+        os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1", ZN_API_URL="https://api.usezn.com/env/v30/analyze")
         res = self.run_analyze()
-        self.assertEqual(self.calls[0]["url"], "https://example.com/env/v30/analyze")
+        self.assertEqual(self.calls[0]["url"], "https://api.usezn.com/env/v30/analyze")
         self.assertEqual(res["engine"], "cloud-v30")
         del os.environ["ZN_API_URL"]
         res = self.run_analyze(stage="prod")
@@ -96,9 +96,9 @@ class TestEndpointPrecedence(_Case):
 class TestCloudSwitches(_Case):
     def test_api_key_argument_beats_env_key(self):
         os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1")
-        self.run_analyze(api_key=KEY_ARG, endpoint="https://example.com/v30/analyze")
+        self.run_analyze(api_key=KEY_ARG, endpoint="https://api.usezn.com/v30/analyze")
         self.assertEqual(self.calls[0]["auth"], "Bearer " + KEY_ARG)
-        self.run_analyze(endpoint="https://example.com/v30/analyze")
+        self.run_analyze(endpoint="https://api.usezn.com/v30/analyze")
         self.assertEqual(self.calls[1]["auth"], "Bearer " + KEY_ENV)
 
     def test_only_exact_one_opts_in(self):
@@ -119,14 +119,14 @@ class TestCloudSwitches(_Case):
 
     def test_local_only_argument_beats_opt_in(self):
         os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1")
-        res = self.run_analyze(local_only=True, endpoint="https://example.com/v30/analyze")
+        res = self.run_analyze(local_only=True, endpoint="https://api.usezn.com/v30/analyze")
         self.assertEqual(self.calls, [])
         self.assertEqual(res["mode"], "oss-local")
         self.assertEqual(res["verdict"], "allow")
 
     def test_local_only_env_beats_key_argument(self):
         os.environ.update(ZN_CLOUD="1", ZN_LOCAL_ONLY="true")
-        res = self.run_analyze(api_key=KEY_ARG, endpoint="https://example.com/v30/analyze")
+        res = self.run_analyze(api_key=KEY_ARG, endpoint="https://api.usezn.com/v30/analyze")
         self.assertEqual(self.calls, [])
         self.assertEqual(res["mode"], "oss-local")
 
@@ -142,7 +142,7 @@ class TestWindowThreshold(_Case):
         os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1")
 
     def _ask(self, text, **kw):
-        self.run_analyze(text, endpoint="https://example.com/v30/analyze", **kw)
+        self.run_analyze(text, endpoint="https://api.usezn.com/v30/analyze", **kw)
         return self.calls[-1]
 
     def test_boundary_is_strictly_greater_than_the_limit(self):
