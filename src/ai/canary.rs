@@ -332,4 +332,235 @@ mod tests {
         assert!(d.enforce_fpr_guard(&s, 50, 0.02));
         assert!(!d.has_canary(), "rollback must drop the canary");
     }
+
+    fn stub(name: &str) -> Arc<dyn ModelBackend> {
+        Arc::new(Stub { name: name.into() })
+    }
+
+    /// Canary: `fp` flagged-and-allowed, `tn` clean; control the same.
+    fn stats(c_fp: u64, c_tn: u64, k_fp: u64, k_tn: u64) -> CanaryStats {
+        let mut s = CanaryStats::default();
+        for _ in 0..c_fp {
+            s.note(true, true, true);
+        }
+        for _ in 0..c_tn {
+            s.note(true, false, true);
+        }
+        for _ in 0..k_fp {
+            s.note(false, true, true);
+        }
+        for _ in 0..k_tn {
+            s.note(false, false, true);
+        }
+        s
+    }
+
+    #[test]
+    fn rollback_at_exactly_min_samples_is_allowed_to_trip() {
+        // 10 canary samples with FPR 0.5 against a clean control.
+        let s = stats(5, 5, 0, 10);
+        assert_eq!(s.canary_total, 10);
+        assert!(s.should_rollback(10, 0.0), "exactly min_samples counts");
+        assert!(
+            !s.should_rollback(11, 0.0),
+            "one sample short must not trip"
+        );
+        assert!(s.should_rollback(9, 0.0));
+    }
+
+    #[test]
+    fn rollback_margin_equal_to_the_gap_does_not_trip() {
+        // canary FPR 0.5, control FPR 0.25: the gap is exactly 0.25
+        // (all values are exact binary fractions).
+        let s = stats(2, 2, 1, 3);
+        assert_eq!(s.canary_fpr(), 0.5);
+        assert_eq!(s.control_fpr(), 0.25);
+        assert!(!s.should_rollback(1, 0.25), "gap == margin is not above it");
+        assert!(s.should_rollback(1, 0.125), "margin below the gap trips");
+        assert!(!s.should_rollback(1, 0.5), "margin above the gap does not");
+    }
+
+    #[test]
+    fn rollback_with_zero_samples_never_trips() {
+        let s = CanaryStats::default();
+        assert_eq!(s.canary_fpr(), 0.0);
+        assert_eq!(s.control_fpr(), 0.0);
+        assert!(!s.should_rollback(0, 0.0));
+        assert!(!s.should_rollback(1, 0.0));
+        assert!(!s.should_rollback(u64::MAX, 0.0));
+    }
+
+    #[test]
+    fn rollback_when_every_canary_decision_is_a_false_positive() {
+        let s = stats(100, 0, 0, 100);
+        assert_eq!(s.canary_fpr(), 1.0);
+        assert_eq!(s.control_fpr(), 0.0);
+        assert!(s.should_rollback(50, 0.5));
+        // Margin of 1.0 can never be exceeded by an FPR that is at most 1.0.
+        assert!(!s.should_rollback(50, 1.0));
+    }
+
+    #[test]
+    fn rollback_never_trips_when_every_decision_is_allowed_and_clean() {
+        let s = stats(0, 500, 0, 500);
+        assert_eq!(s.canary_fpr(), 0.0);
+        assert!(!s.should_rollback(1, 0.0));
+    }
+
+    #[test]
+    fn rollback_ignores_blocked_decisions_in_the_fpr_but_not_in_the_sample_count() {
+        let mut s = CanaryStats::default();
+        // flagged and blocked: counted in the total, in neither FP nor TN
+        for _ in 0..10 {
+            s.note(true, true, false);
+        }
+        assert_eq!(s.canary_total, 10);
+        assert_eq!(s.canary_fp + s.canary_tn, 0);
+        assert_eq!(s.canary_fpr(), 0.0);
+        assert!(!s.should_rollback(10, 0.0));
+    }
+
+    #[test]
+    fn rollback_does_not_trip_when_control_is_worse_than_canary() {
+        let s = stats(0, 100, 30, 70);
+        assert!(s.control_fpr() > s.canary_fpr());
+        assert!(!s.should_rollback(50, 0.0));
+    }
+
+    #[test]
+    fn enforce_guard_uses_the_live_stats_and_drops_the_canary() {
+        let d = CanaryDeployer::new(stub("cur"));
+        d.set_canary(stub("can"), 100); // everyone is in the canary bucket
+        for i in 0..40 {
+            d.note(&format!("agent-{i}"), false, true);
+        }
+        for i in 0..10 {
+            d.note(&format!("agent-{i}"), true, true); // 10 FPs in 50 samples
+        }
+        assert_eq!(d.stats().canary_total, 50);
+        assert!(d.has_canary());
+        // One sample above the live total: the guard must hold.
+        assert!(!d.enforce_guard(51, 0.0));
+        assert!(d.has_canary());
+        // Exactly at the live total, margin above the FPR (0.2): holds.
+        assert!(!d.enforce_guard(50, 0.2));
+        assert!(d.has_canary());
+        // Exactly at the live total, margin below the FPR: rolls back.
+        assert!(d.enforce_guard(50, 0.1));
+        assert!(!d.has_canary());
+        assert_eq!(d.backend_for("agent-1").name(), "cur");
+        // Without a canary the same call still reports the stats rule, and
+        // rolling back again is harmless.
+        assert!(d.enforce_guard(50, 0.1));
+        assert!(!d.has_canary());
+    }
+
+    #[test]
+    fn enforce_guard_with_no_samples_does_nothing() {
+        let d = CanaryDeployer::new(stub("cur"));
+        d.set_canary(stub("can"), 10);
+        assert!(!d.enforce_guard(0, 0.0));
+        assert!(!d.enforce_guard(100, 0.0));
+        assert!(d.has_canary());
+    }
+
+    #[test]
+    fn enforce_fpr_guard_with_a_clean_canary_keeps_it() {
+        let d = CanaryDeployer::new(stub("cur"));
+        d.set_canary(stub("can"), 10);
+        let s = stats(0, 200, 5, 195);
+        assert!(!d.enforce_fpr_guard(&s, 50, 0.0));
+        assert!(d.has_canary());
+    }
+
+    #[test]
+    fn serving_fpr_follows_the_canary_while_one_is_active() {
+        let d = CanaryDeployer::new(stub("cur"));
+        // 100%: every note lands in the canary bucket.
+        d.set_canary(stub("can"), 100);
+        d.note("a", true, true);
+        d.note("b", false, true);
+        assert_eq!(d.serving_fpr(), 0.5);
+        d.rollback();
+        // No canary: notes land in control, and nothing was noted there yet.
+        assert_eq!(d.serving_fpr(), 0.0);
+        d.note("a", true, true);
+        assert_eq!(d.serving_fpr(), 1.0);
+    }
+
+    #[test]
+    fn set_canary_clamps_the_percentage() {
+        let d = CanaryDeployer::new(stub("cur"));
+        // 0 is clamped up to 1: still a canary, and at most ~1% of agents.
+        d.set_canary(stub("can"), 0);
+        assert!(d.has_canary());
+        let routed = (0..1000)
+            .filter(|i| d.is_canary_bucket(&format!("agent-{i}")))
+            .count();
+        assert!(routed < 50, "1% canary routed {routed} of 1000 agents");
+        // Above 100 is clamped down: everyone is served by the canary.
+        d.set_canary(stub("can"), 250);
+        assert!((0..1000).all(|i| d.is_canary_bucket(&format!("agent-{i}"))));
+    }
+
+    #[test]
+    fn promote_without_a_canary_returns_false_and_keeps_current() {
+        let d = CanaryDeployer::new(stub("cur"));
+        assert!(!d.promote(true));
+        assert_eq!(d.active().name(), "cur");
+    }
+
+    #[test]
+    fn bucket_is_stable_across_instances_and_calls() {
+        let ids: Vec<String> = (0..500).map(|i| format!("fake-agent-{i}")).collect();
+        let first: Vec<u8> = ids.iter().map(|a| CanaryDeployer::bucket(a)).collect();
+        for _ in 0..3 {
+            let again: Vec<u8> = ids.iter().map(|a| CanaryDeployer::bucket(a)).collect();
+            assert_eq!(first, again);
+        }
+        // Not tied to a deployer instance.
+        let d = CanaryDeployer::new(stub("cur"));
+        d.set_canary(stub("can"), 100);
+        assert!(ids.iter().all(|a| d.is_canary_bucket(a)));
+    }
+
+    #[test]
+    fn bucket_is_roughly_even_over_ten_thousand_agent_ids() {
+        const N: usize = 10_000;
+        let mut counts = [0usize; 100];
+        for i in 0..N {
+            let b = CanaryDeployer::bucket(&format!("tenant-{}:agent-{i}", i % 7)) as usize;
+            assert!(b < 100);
+            counts[b] += 1;
+        }
+        assert_eq!(counts.iter().sum::<usize>(), N);
+        // Expected 100 per bucket (sd 10): a wide band of +-60 keeps this stable.
+        for (b, c) in counts.iter().enumerate() {
+            assert!((40..=160).contains(c), "bucket {b} got {c} of {N}");
+        }
+        // Every bucket is used.
+        assert!(counts.iter().all(|&c| c > 0));
+        // The share below a threshold tracks the percentage (a 10% canary serves ~10%).
+        let below_10: usize = counts[..10].iter().sum();
+        assert!(
+            (700..=1300).contains(&below_10),
+            "10% canary served {below_10} of {N}"
+        );
+    }
+
+    #[test]
+    fn empty_and_unicode_agent_ids_have_a_valid_stable_bucket() {
+        let long = "a".repeat(10_000);
+        for id in [
+            "",
+            " ",
+            "agent-\u{00e9}",
+            "\u{4e2d}\u{6587}-agent",
+            long.as_str(),
+        ] {
+            let b = CanaryDeployer::bucket(id);
+            assert!(b < 100);
+            assert_eq!(b, CanaryDeployer::bucket(id));
+        }
+    }
 }
