@@ -4,8 +4,9 @@ name: Oldest Node.js install
 # The docs say Node.js 18 or later works for the hooks and the CLI, and that the Claude Code plugin needs 20.19 or
 # later. This workflow packs the zn-gate npm package, installs the tarball the way a user does (npm install, with
 # lifecycle scripts) on Node.js 18.0.0 (the floor of the engines field), the latest 18.x and 20.19.0, then runs
-# zn-gate --version and the built-in offline self-test. Pull requests that change none of the paths below do not run
-# it. Not a required check; the merge queue does not run it. A manual run runs it on any branch.
+# zn-gate --version, the built-in offline self-test and a vault smoke test (fake passphrase, fake secret, in a temp
+# home). Pull requests that change none of the paths below do not run it. Not a required check; the merge queue does
+# not run it. A manual run runs it on any branch.
 on:
   pull_request:
     branches: [ next, main, 'release/**' ]
@@ -51,9 +52,19 @@ jobs:
         working-directory: packages/zn-gate
         run: |
           set -euo pipefail
+          # npm pack bundles only the dependencies that are installed, and age-encryption (the vault's encryption
+          # library) is a bundled dependency: install them first, without running their scripts.
+          npm ci --ignore-scripts --no-audit --no-fund
           mkdir -p "$RUNNER_TEMP/tarball"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/tarball"
           ls -l "$RUNNER_TEMP/tarball"
+          # The tarball must carry the bundled library and the package's own entry points.
+          tar -tzf "$RUNNER_TEMP"/tarball/zn-gate-*.tgz > "$RUNNER_TEMP/tarball-files.txt"
+          for f in package/package.json package/bin/cli.js package/lib/vault/store.js \
+            package/node_modules/age-encryption/package.json package/node_modules/age-encryption/dist/index.js; do
+            grep -qxF "$f" "$RUNNER_TEMP/tarball-files.txt" || { echo "missing from the tarball: $f"; exit 1; }
+          done
+          echo "files in the tarball: $(wc -l < "$RUNNER_TEMP/tarball-files.txt")"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zn-gate-tarball
@@ -101,3 +112,19 @@ jobs:
           grep -Eq '^zn-gate [0-9]+\.[0-9]+\.[0-9]+' version.txt
           # Offline self-test of the rules engine: no network, no account, no files outside HOME.
           "$bin" test
+      - name: Vault smoke (fake passphrase, fake secret, temp home)
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/consumer"
+          export HOME="$work/home"
+          bin="$work/node_modules/.bin/zn-gate"
+          trap '"$bin" lock > /dev/null 2>&1 || true' EXIT
+          # Fake passphrase and fake value only. The vault is created in the temp home, never in the runner's.
+          printf '%s' 'fake-ci-passphrase-0123' | "$bin" unlock --passphrase-stdin --backend passphrase --ttl 10m
+          # secret set needs a terminal: script provides one, and the value comes from the piped input.
+          # The terminal echoes the typed value back: keep that echo out of the log.
+          printf 'FAKE_TEST_VALUE\n' | script -qfec "\"$bin\" secret set CI_FAKE_TOKEN --mode env" /dev/null > /dev/null
+          "$bin" secret list | tee secrets.txt
+          grep -q 'CI_FAKE_TOKEN' secrets.txt
+          "$bin" lock
+          trap - EXIT
