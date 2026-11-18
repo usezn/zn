@@ -170,8 +170,20 @@ function systemCmdExe() {
 
 // Double a run of backslashes that comes right before a double quote or the closing quote, so a program that
 // reads its command line with the MSVCRT rules (nearly all of them) does not take `\"` for an escaped quote.
+// One pass: a pattern for a run of backslashes before a quote was retried at every backslash of a long run.
 function cmdQuote(arg) {
-  return '"' + String(arg).replace(/(\\*)"/g, '$1$1""').replace(/(\\*)$/, '$1$1') + '"';
+  const s = String(arg);
+  const parts = ['"'];
+  let slashes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\') { slashes++; continue; }
+    if (c === '"') parts.push('\\'.repeat(slashes * 2), '""');
+    else parts.push('\\'.repeat(slashes), c);
+    slashes = 0;
+  }
+  parts.push('\\'.repeat(slashes * 2), '"');
+  return parts.join('');
 }
 
 /*

@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-18.1';
+const POLICY_RULES_VERSION = '2026-11-18.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1787,13 +1787,48 @@ function dequoteShell(text) {
   return out;
 }
 // `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
-const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
+// It is a start (an `xargs` word) followed, in the same part of the command (up to the next newline, ;, & or |), by a zn word;
+// the delimiter in front of the zn word may be that newline itself. One pattern for all of it costs time quadratic in the
+// command when `xargs` or `zn-gate@` repeats, so the starts and the delimiters are walked once and only the short tail is a pattern.
+const XARGS_WORD_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b/gi;
+const XARGS_PART_END_RE = /[\n;&|]/g;
+const XARGS_DELIM_RE = /[\s\/\\'"]/;
+const XARGS_ZN_AUDIT_RE = /(?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/iy;
+const XARGS_GATE_AT_RE = /zn-gate@/iy;
+const XARGS_PACKAGE_SPEC_RE = /[^\s"'`;&|]*/y;
+function xargsRunsZnAudit(t) {
+  let doneTo = -1; // end of the part whose starts were tried; a later start in the same part reaches a subset of it
+  let specEnd = -1; // end of a zn-gate@ package spec that failed: the same spec read from inside it fails the same way
+  XARGS_WORD_RE.lastIndex = 0;
+  for (let m = XARGS_WORD_RE.exec(t); m; m = XARGS_WORD_RE.exec(t)) {
+    const from = m.index + m[0].length;
+    if (from <= doneTo) continue;
+    XARGS_PART_END_RE.lastIndex = from;
+    const end = XARGS_PART_END_RE.exec(t);
+    doneTo = end ? end.index : t.length;
+    for (let d = from; d <= doneTo && d < t.length; d++) {
+      if (!XARGS_DELIM_RE.test(t[d])) continue;
+      const at = d + 1;
+      XARGS_GATE_AT_RE.lastIndex = at;
+      const spec = XARGS_GATE_AT_RE.test(t);
+      if (spec && at < specEnd) continue;
+      XARGS_ZN_AUDIT_RE.lastIndex = at;
+      if (XARGS_ZN_AUDIT_RE.test(t)) return true;
+      if (spec) {
+        XARGS_PACKAGE_SPEC_RE.lastIndex = at + 8;
+        XARGS_PACKAGE_SPEC_RE.test(t);
+        specEnd = XARGS_PACKAGE_SPEC_RE.lastIndex;
+      }
+    }
+  }
+  return false;
+}
 function adminCommand(cmd) {
   const text = String(cmd || '');
   for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
     const m = ZN_ADMIN_RE.exec(t);
     if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
-    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+    if (xargsRunsZnAudit(t)) return 'audit --approve';
   }
   return npmExecInit(text) ? 'init' : null;
 }
@@ -2980,8 +3015,14 @@ const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\
 // cmd /v:on (or /v), or setlocal enabledelayedexpansion.
 const DELAYED_EXPANSION_RE = /\/v(?::on)?(?=[\s"'\/]|$)|enabledelayedexpansion/i;
 const CMD_CONTEXT_RE = /(?:^|[;&|(\"'`])\s*(?:(?:sudo|env|call|start|exec|nohup|time|xargs|command|wine)\s+(?:-\S+\s+)*)*(?:\S*[\\/])?(?:cmd(?:\.exe)?|[^\s;&|()\"'`]*\.(?:bat|cmd))(?=\s|$|[\"'])/i;
+// CMD_CONTEXT_RE costs time quadratic in the text. It cannot match without "cmd" or ".bat" in the text, and past
+// CMD_CONTEXT_SCAN_MAX characters it is not run: the text is then read as cmd input, which only adds readings (more is refused).
+const CMD_CONTEXT_SCAN_MAX = 8192;
 function cmdContext(text) {
-  return process.platform === 'win32' || CMD_CONTEXT_RE.test(text);
+  if (process.platform === 'win32') return true;
+  if (!/cmd|\.bat/i.test(text)) return false;
+  if (text.length > CMD_CONTEXT_SCAN_MAX) return true;
+  return CMD_CONTEXT_RE.test(text);
 }
 function cmdCaretsApply(text) {
   return text.indexOf('^') >= 0 && cmdContext(text);
@@ -3259,9 +3300,23 @@ function wildSegmentMatches(seg, t) {
 // unquoted expansion can read `.env`. The glob engine is the one the words without expansions use (globRegExp); a mark is any text.
 // Like the literal reading, a piece needs two literal characters (a bracket expression counts as one), so `*` or `${X}*` alone is not refused.
 const WILD_GLOB_NAMES = ['.env', '.env.local', '.env.example', '.env.sample', '.env.template', ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => ['id_' + k, 'id_' + k + '_sk', 'id_' + k + '.pub'])];
+// Every [...] set becomes one x: piece.replace(/\[[^\]]*\]/g, 'x'), but a [ with no ] after it is found once, not once per [.
+function bracketSetsToX(s) {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const open = s.indexOf('[', i);
+    if (open < 0) break;
+    const close = s.indexOf(']', open + 1);
+    if (close < 0) break;
+    out += s.slice(i, open) + 'x';
+    i = close + 1;
+  }
+  return out + s.slice(i);
+}
 function wildPieceGlobMatches(piece) {
   if (!/[*?[]/.test(piece)) return false;
-  const lits = piece.replace(/\[[^\]]*\]/g, 'x').replace(/[*?]/g, '').length;
+  const lits = bracketSetsToX(piece).replace(/[*?]/g, '').length;
   if (lits < 2) return false;
   let re;
   try { re = globRegExp(piece.replace(/[]/g, '*')); } catch (e) { return true; }
@@ -3728,7 +3783,32 @@ function denialOf(c, text, opts) {
  */
 const EGRESS_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const EGRESS_URL_LIKE_RE = /^(?:localhost|\$|\[|[\w${}-]+(?:\.[\w${}-]+)+|[\w.${}-]+:\d+)(?:[:/?#]|$)/i;
-const EGRESS_URLS_IN_TEXT_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi;
+// The URLs in a text: a scheme (letters, digits, + . -, starting with a letter at a word boundary), ://, and a body up to a
+// space, a quote, ) } ] or >. The matches are the same as those of
+// /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi, but each :// is looked at once; that pattern retried every position of a long scheme-like run.
+const EGRESS_URL_BODY_RE = /[^\s'"`)}\]>]+/y;
+function egressUrlMatches(text) {
+  const found = [];
+  const alpha = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  const word = (c) => alpha(c) || (c >= 48 && c <= 57) || c === 95;
+  const scheme = (c) => alpha(c) || (c >= 48 && c <= 57) || c === 43 || c === 46 || c === 45;
+  let floor = 0; // a match starts at or after the end of the previous one
+  for (let k = text.indexOf('://'); k >= 0; k = text.indexOf('://', k + 1)) {
+    let run = k;
+    while (run > floor && scheme(text.charCodeAt(run - 1))) run--;
+    let start = -1;
+    for (let p = run; p < k; p++) {
+      if (alpha(text.charCodeAt(p)) && (p === 0 || !word(text.charCodeAt(p - 1)))) { start = p; break; }
+    }
+    if (start < 0) continue;
+    EGRESS_URL_BODY_RE.lastIndex = k + 3;
+    if (!EGRESS_URL_BODY_RE.test(text)) continue;
+    found.push({ index: start, text: text.slice(start, EGRESS_URL_BODY_RE.lastIndex) });
+    floor = EGRESS_URL_BODY_RE.lastIndex;
+    k = floor - 1; // the next search starts at the end of this match
+  }
+  return found;
+}
 const EGRESS_PROGRAMS = new Set(['curl', 'wget']);
 // Words that start a command without being one. The wrappers themselves are one list, GIT_WRAPPERS, that the
 // download-and-run rule (destructive.js) shares.
@@ -3888,7 +3968,7 @@ function egressPowerShell(text, powershell, found) {
     let rest = text.slice(m.index + m[0].length).replace(/`[ \t]*\r?\n/g, ' ');
     const cut = rest.search(/\r?\n|\s\|\s|&&/);
     if (cut >= 0) rest = rest.slice(0, cut);
-    found.push({ urls: rest.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'ps', text: rest }] });
+    found.push({ urls: egressUrlMatches(rest).map((u) => u.text), parts: [{ where: 'ps', text: rest }] });
   }
 }
 
@@ -3905,7 +3985,7 @@ function egressInterpreter(words, k, text, found) {
     if (h && !rest.some((r) => /\.(?:py|js|mjs|cjs|ts)$/i.test(r.text))) code = text.slice(h.index);
   }
   if (!code || !EGRESS_CODE_NET_RE.test(code)) return;
-  found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
+  found.push({ urls: egressUrlMatches(code).map((u) => u.text), parts: [{ where: 'code', text: code }] });
 }
 
 // One reading of the command text: the requests it makes go to `found`. `raw` is the command as written (for heredocs).
@@ -4139,8 +4219,8 @@ function egressLabel(part, start) {
   const before = text.slice(Math.max(0, start - 300), start);
   if (part.where === 'ps' || part.where === 'code') {
     // A detection inside a URL written in the text is named by its place in that URL.
-    for (const m of text.matchAll(EGRESS_URLS_IN_TEXT_RE)) {
-      if (start >= m.index && start < m.index + m[0].length) return egressLabel({ where: 'url', text: m[0] }, start - m.index);
+    for (const m of egressUrlMatches(text)) {
+      if (start >= m.index && start < m.index + m.text.length) return egressLabel({ where: 'url', text: m.text }, start - m.index);
     }
   }
   if (part.where === 'url') {
@@ -4195,4 +4275,8 @@ module.exports = {
   egressMcpCovers,
   egressDecodedCopies,
   egressLabel,
+  _xargsRunsZnAudit: xargsRunsZnAudit,
+  _egressUrlMatches: egressUrlMatches,
+  _bracketSetsToX: bracketSetsToX,
+  _cmdContext: cmdContext,
 };

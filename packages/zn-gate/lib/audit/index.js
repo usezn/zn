@@ -274,7 +274,7 @@ class FileCtx {
     }
     // The URL path, query, userinfo and fragment never reach a report (detail or evidence), except the download URL of ZNA002.
     const keepUrl = (extra && extra.keepUrl) || null;
-    const evidenceText = (extra && extra.evidence != null) ? redact(extra.evidence) : this.redactedLine(ln);
+    const evidenceText = (extra && extra.evidence != null) ? redact(String(extra.evidence).length > REDACT_SPAN ? redactSpan(extra.evidence) : extra.evidence) : this.redactedLine(ln);
     this.out.push({
       id,
       severity,

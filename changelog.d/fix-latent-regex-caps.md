@@ -1,0 +1,2 @@
+### Fixed
+- Several checks that read shell commands, URLs in text, wildcard words, Windows command lines and the text shown in `zn audit` findings no longer take time quadratic in the size of their input. A long, hostile command, file or argument could keep them busy for seconds; each now takes linear time (or is not run past a fixed size, where it is read as the stricter case), and the decisions for ordinary input are unchanged.
