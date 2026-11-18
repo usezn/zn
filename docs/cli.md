@@ -115,6 +115,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_BLOCK_TRUNCATED=1` | Off | Blocks output too large to scan in full, even when `ZN_ALLOW_TRUNCATED=1` is set. | Both |
 | `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
 | `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
+| `ZN_EVIDENCE_LOCK_WAIT_MS` | `2000` (`10000` on a network file system) | How long, in milliseconds (0 to 600000), a writer waits for the evidence log lock before it gives up on an event. The default is longer when `ZN_HOME` is on NFS or SMB/CIFS (Linux). An invalid value is ignored. | Both |
 | `ZN_BLOCK_DESTRUCTIVE=1` | Two rules on (`rm_root_home`, `disk_overwrite`) | `1` turns on all six destructive-command rules. | npm |
 | `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` in your operating-system account's home folder. A `config.json` in the folder `ZN_HOME` (or `HOME`) points to can only add protection: settings that turn a check off or turn on a network lookup are not read from there. | npm |
 | `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
@@ -661,6 +662,8 @@ zn-gate stats share on|off|status|show
 ```
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
+
+Events that could not be written to the evidence log (the lock stayed busy past the wait, or the log was not writable) are counted on this machine and `stats` shows how many in a line `N evidence log events could not be written`, and as `evidenceDropped` in `--json`. The line is left out when the count is zero. Set `ZN_EVIDENCE_LOCK_WAIT_MS` to wait longer. The npm and Python packages share the same count.
 
 `stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only detector ids, the generic label `Built-in detector` and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id. The npm package adds `zn why`, which explains your last block. The Python package points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/) instead, because `why` is only in the npm package. The block is left out when nothing matched in the window.
 

@@ -209,6 +209,19 @@ function recordEvent(name, opts = {}) {
   }
 }
 
+// Events that could not be written to the evidence log (a lock that stayed busy, a log that cannot be written).
+// One byte per lost event is appended to `<log>.dropped`, so the count survives restarts and two processes cannot
+// overwrite each other. The Python package writes and reads the same file. Never throws; not turned off by ZN_STATS.
+function droppedFile(ledgerFile) { return `${ledgerFile || path.join(znHome(), 'evidence.jsonl')}.dropped`; }
+
+function recordDropped(ledgerFile) {
+  try { fs.appendFileSync(droppedFile(ledgerFile), 'x', { mode: 0o600 }); } catch { /* best effort */ }
+}
+
+function droppedCount(ledgerFile) {
+  try { return fs.statSync(droppedFile(ledgerFile)).size; } catch { return 0; }
+}
+
 /** Totals over the last `days` days (today included): overall, per layer:agent and per detection type. */
 function summary({ days = 30, now = new Date(), file } = {}) {
   const data = load(file || statsFile());
@@ -226,7 +239,7 @@ function summary({ days = 30, now = new Date(), file } = {}) {
       for (const [t, n] of Object.entries(c.detections || {})) detections[t] = (detections[t] || 0) + n;
     }
   }
-  return { days, since: first, total, byKey, detections, events: { ...data.events } };
+  return { days, since: first, total, byKey, detections, events: { ...data.events }, evidenceDropped: droppedCount() };
 }
 
 // Decision time per tool call: the last LATENCY_KEEP durations (ms, one decimal) of the hook decisions on pre and
@@ -289,5 +302,5 @@ function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Da
     .map(([id, count]) => ({ id, name: TOP_RULE_NAME, count }));
 }
 
-module.exports = { topRules, TOP_RULES_DAYS, znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+module.exports = { recordDropped, droppedCount, topRules, TOP_RULES_DAYS, znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
   percentile, latencySummary, latencyReport, LATENCY_KEEP };

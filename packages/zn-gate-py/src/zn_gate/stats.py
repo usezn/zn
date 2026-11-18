@@ -31,6 +31,30 @@ def stats_file() -> str:
     return os.path.join(zn_home(), "stats.json")
 
 
+def dropped_file(ledger_file: Optional[str] = None) -> str:
+    return (ledger_file or os.path.join(zn_home(), "evidence.jsonl")) + ".dropped"
+
+
+def record_dropped(ledger_file: Optional[str] = None) -> None:
+    """Counts one event that could not be written to the evidence log: one byte is appended to
+    `<log>.dropped`, the same file the npm package writes. Never raises."""
+    try:
+        fd = os.open(dropped_file(ledger_file), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, b"x")
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def dropped_count(ledger_file: Optional[str] = None) -> int:
+    try:
+        return os.stat(dropped_file(ledger_file)).st_size
+    except OSError:
+        return 0
+
+
 def load(path: Optional[str] = None) -> Dict[str, Any]:
     try:
         with open(path or stats_file(), "r", encoding="utf-8") as f:
@@ -75,7 +99,7 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
             for t, n in (dets.items() if isinstance(dets, dict) else []):
                 detections[t] = detections.get(t, 0) + _num(n)
     return {"days": days, "since": first, "total": total, "byKey": by_key, "detections": detections,
-            "events": dict(data.get("events") or {})}
+            "events": dict(data.get("events") or {}), "evidenceDropped": dropped_count()}
 
 
 _CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
@@ -135,6 +159,10 @@ def render(s: Dict[str, Any], top: Optional[Dict[str, Any]] = None) -> str:
                 layer, _, agent = key.partition(":")
                 lines.append("    {} ({}): {:,} events, {:,} blocked, {:,} replaced".format(
                     _label(agent), _label(LAYER_NAMES.get(layer, layer)), c["checked"], c["blocked"], c["redacted"]))
+    if s.get("evidenceDropped"):
+        lines.append("")
+        lines.append("  {:,} evidence log events could not be written (the log lock stayed busy or the log was not writable). "
+                     "Set ZN_EVIDENCE_LOCK_WAIT_MS to wait longer.".format(s["evidenceDropped"]))
     lines.append("")
     lines.append("  These counts stay on this machine. Sharing pseudonymous daily counts is opt-in: `npx zn-gate stats share show`.")
     return "\n".join(lines) + "\n"

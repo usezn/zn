@@ -69,8 +69,41 @@ class EvidenceLedgerError extends Error {}
 // belongs to a process that died (or was suspended) and is broken. The lock holds its owner's
 // token: a writer only deletes the lock while it is still its own, and checks that again just
 // before it appends, so a writer that lost its lock to a takeover writes nothing.
+// The wait is 2 s on a local disk and 10 s when the folder is on a network file system (NFS, SMB/CIFS),
+// where a lock can stay busy longer. ZN_EVIDENCE_LOCK_WAIT_MS (milliseconds, 0 to 600000) sets it.
+// An event that still cannot be written is counted (see recordDropped).
 const LOCK_WAIT_MS = 2000;
+const LOCK_WAIT_NETWORK_MS = 10000;
+const LOCK_WAIT_MAX_MS = 600000;
 const LOCK_STALE_MS = 10000;
+const NETWORK_FS_TYPES = new Set(['nfs', 'nfs4', 'cifs', 'smb', 'smb2', 'smb3', 'smbfs']);
+
+/** True when `dir` is on an NFS or SMB/CIFS mount (Linux, read from /proc/mounts); false anywhere else or on error. */
+function onNetworkFs(dir, mountsFile = '/proc/mounts') {
+  try {
+    let real;
+    try { real = fs.realpathSync(dir); } catch { real = path.resolve(dir); }
+    let best = null;
+    for (const line of fs.readFileSync(mountsFile, 'utf8').split('\n')) {
+      const f = line.split(' ');
+      if (f.length < 3) continue;
+      const mount = f[1].replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)));
+      const within = mount === '/' || real === mount || real.startsWith(mount + '/');
+      if (within && (!best || mount.length >= best.mount.length)) best = { mount, type: f[2] };
+    }
+    return !!best && NETWORK_FS_TYPES.has(best.type);
+  } catch { return false; }
+}
+
+/** How long a writer waits for the ledger lock: ZN_EVIDENCE_LOCK_WAIT_MS, else 2 s (10 s on a network file system). */
+function lockWaitFor(filePath) {
+  const raw = process.env.ZN_EVIDENCE_LOCK_WAIT_MS;
+  if (raw !== undefined && /^\d+$/.test(raw.trim())) {
+    const n = Number(raw.trim());
+    if (n <= LOCK_WAIT_MAX_MS) return n;
+  }
+  return onNetworkFs(path.dirname(path.resolve(filePath))) ? LOCK_WAIT_NETWORK_MS : LOCK_WAIT_MS;
+}
 
 class EvidenceLockError extends Error {}
 
@@ -456,7 +489,7 @@ function getLastHash(filePath = EVIDENCE_FILE) {
  *   damaged: nothing is appended (the chain is never restarted), a warning is printed to
  *   stderr (first time, then at most every 5 minutes), and the caller carries on. It also
  *   returns null (with a warning) when the log cannot be written (permissions, disk) or the
- *   write lock stays busy for 2 seconds; it never throws for a log problem.
+ *   write lock stays busy past the wait (2 seconds, 10 on a network file system, or ZN_EVIDENCE_LOCK_WAIT_MS); it never throws for a log problem.
  */
 function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
   if (filePath === EVIDENCE_FILE && !opts.noStats) {
@@ -470,7 +503,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
   let token = null;
   try {
     ensureZnDir(filePath);
-    token = acquireLock(lockPath, opts.lockWaitMs);
+    token = acquireLock(lockPath, opts.lockWaitMs === undefined ? lockWaitFor(filePath) : opts.lockWaitMs);
     let prevHash;
     try {
       prevHash = getLastHash(filePath);
@@ -481,6 +514,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
         lastWarnAt = now;
         process.stderr.write(`zn-gate: the evidence log ${filePath} is damaged (${e.message}) Events are not being recorded. Run 'zn-gate evidence --verify' for details. ${recoveryHint(filePath)}\n`);
       }
+      require('./stats').recordDropped(filePath);
       return null;
     }
     const finalRecord = buildRecord(event, prevHash, opts._plainPreview === true);
@@ -493,6 +527,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
     return finalRecord;
   } catch (e) {
     // A log problem (no permission, a full disk, a busy lock) must never break the caller.
+    require('./stats').recordDropped(filePath);
     const now = Date.now();
     if (lastWriteWarnAt === null || now - lastWriteWarnAt >= WARN_INTERVAL_MS) {
       lastWriteWarnAt = now;
@@ -1076,6 +1111,8 @@ Press Ctrl+C to stop dashboard.
 
 module.exports = {
   logEvidence,
+  lockWaitFor,
+  onNetworkFs,
   EvidenceLedgerError,
   recoveryHint,
   getLastHash,

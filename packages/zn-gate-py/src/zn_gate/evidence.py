@@ -24,7 +24,7 @@ def _redact(text: str) -> str:
     from .rules import mask_token_runs, redact_secrets  # local import avoids import cycles
     return mask_token_runs(redact_secrets(text)[0])
 
-from .stats import zn_home  # noqa: E402  (one rule for the state folder: ~/.zn or ZN_HOME)
+from .stats import record_dropped, zn_home  # noqa: E402  (one rule for the state folder: ~/.zn or ZN_HOME)
 
 ZN_DIR = zn_home()
 EVIDENCE_FILE = os.path.join(ZN_DIR, "evidence.jsonl")
@@ -166,8 +166,45 @@ class EvidenceLockError(Exception):
 # a process that died (or was suspended) and is broken. The lock holds its owner's token: a writer
 # only deletes the lock while it is still its own, and checks that again just before it appends,
 # so a writer that lost its lock to a takeover writes nothing.
+# The wait is 2 s on a local disk and 10 s when the folder is on a network file system (NFS, SMB/CIFS),
+# where a lock can stay busy longer. ZN_EVIDENCE_LOCK_WAIT_MS (milliseconds, 0 to 600000) sets it, as in the
+# npm package. An event that still cannot be written is counted (see record_dropped in stats.py).
 LOCK_WAIT = 2.0
+LOCK_WAIT_NETWORK = 10.0
+LOCK_WAIT_MAX_MS = 600000
 LOCK_STALE = 10.0
+_NETWORK_FS_TYPES = frozenset({"nfs", "nfs4", "cifs", "smb", "smb2", "smb3", "smbfs"})
+
+
+def on_network_fs(directory: str, mounts_file: str = "/proc/mounts") -> bool:
+    """True when `directory` is on an NFS or SMB/CIFS mount (Linux, read from /proc/mounts); False
+    anywhere else or on error."""
+    try:
+        real = os.path.realpath(directory)
+        best: Optional[Tuple[str, str]] = None
+        with open(mounts_file, "r", encoding="utf-8", errors="replace") as f:
+            for line in f.read().split("\n"):
+                parts = line.split(" ")
+                if len(parts) < 3:
+                    continue
+                mount = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), parts[1])
+                within = mount == "/" or real == mount or real.startswith(mount + "/")
+                if within and (best is None or len(mount) >= len(best[0])):
+                    best = (mount, parts[2])
+        return best is not None and best[1] in _NETWORK_FS_TYPES
+    except (OSError, ValueError):
+        return False
+
+
+def lock_wait_for(file_path: str) -> float:
+    """How long a writer waits for the ledger lock, in seconds: ZN_EVIDENCE_LOCK_WAIT_MS, else 2 s
+    (10 s on a network file system)."""
+    raw = os.environ.get("ZN_EVIDENCE_LOCK_WAIT_MS")
+    if raw is not None and re.fullmatch(r"[0-9]+", raw.strip()):
+        n = int(raw.strip())
+        if n <= LOCK_WAIT_MAX_MS:
+            return n / 1000.0
+    return LOCK_WAIT_NETWORK if on_network_fs(os.path.dirname(os.path.abspath(file_path))) else LOCK_WAIT
 _WIN_BUSY = (errno.EACCES, errno.EPERM, errno.EBUSY)
 
 
@@ -480,7 +517,7 @@ _last_write_warn: Optional[float] = None
 
 
 def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
-                 lock_wait: float = LOCK_WAIT) -> Optional[Dict[str, Any]]:
+                 lock_wait: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """
     Appends a cryptographically hash-chained evidence record to the ledger.
     Formula: record_hash = sha256(prev_hash + ":" + json(base_record))
@@ -488,7 +525,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
     If the existing ledger is corrupt or unreadable, nothing is appended (the chain is never
     restarted), a warning is printed to stderr (first time, then at most every 5 minutes) and
     None is returned. It also returns None (with a warning) when the log cannot be written
-    (permissions, disk) or the write lock stays busy for 2 seconds. This never raises for a log
+    (permissions, disk) or the write lock stays busy past the wait (2 seconds, 10 on a network file system, or ZN_EVIDENCE_LOCK_WAIT_MS). This never raises for a log
     problem, so it does not block the user's command; run `zn-gate evidence --verify` for
     details. To recover from damage, move the damaged file aside (see recovery_hint): the next
     event starts a new chain.
@@ -498,7 +535,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
     token: Optional[str] = None
     try:
         _ensure_dir(file_path)
-        token = _acquire_lock(lock_path, lock_wait)
+        token = _acquire_lock(lock_path, lock_wait_for(file_path) if lock_wait is None else lock_wait)
         try:
             prev_hash = get_last_hash(file_path)
         except EvidenceLedgerError as e:
@@ -510,6 +547,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
                     "Events are not being recorded. Run 'zn-gate evidence --verify' for details. "
                     f"{recovery_hint(file_path)}\n"
                 )
+            record_dropped(file_path)
             return None
         final_record = _build_record(event, prev_hash)
         # Still our lock? If it was taken over (this process was stalled for over 10 s) the last
@@ -521,6 +559,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
         return final_record
     except (OSError, EvidenceLockError) as e:
         # A log problem (no permission, a full disk, a busy lock) must never break the caller.
+        record_dropped(file_path)
         now = time.monotonic()
         if _last_write_warn is None or now - _last_write_warn >= WARN_INTERVAL:
             _last_write_warn = now

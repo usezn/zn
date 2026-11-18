@@ -81,7 +81,7 @@ test('logEvidence skips the write for an unreadable log, warns and leaves it alo
   assert.ok(err.includes('EISDIR'), err);
   assert.ok(fs.statSync(file).isDirectory(), 'the log path is not replaced');
   assert.deepEqual(fs.readdirSync(file), []);
-  assert.deepEqual(fs.readdirSync(dir), ['evidence.jsonl'], 'no lock file is left behind');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['evidence.jsonl', 'evidence.jsonl.dropped'], 'no lock file is left behind; the lost event is counted');
 });
 
 // A second process that really holds the lock: it creates the lock file with its own token and

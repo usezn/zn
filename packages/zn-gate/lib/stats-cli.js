@@ -74,6 +74,7 @@ function printSummary(s, out, top) {
       }
     }
   }
+  if (s.evidenceDropped) out(`\n  ${fmt(s.evidenceDropped)} evidence log events could not be written (the log lock stayed busy or the log was not writable). Set ZN_EVIDENCE_LOCK_WAIT_MS to wait longer.\n`);
   const st = share.status();
   out('\n' + (st.share
     ? '  Sharing pseudonymous daily counts: on. Turn it off with `zn-gate stats share off`.\n'
