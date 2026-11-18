@@ -1,0 +1,143 @@
+# CrewAI and Promptfoo examples run for real, on the oldest and the newest release of each framework.
+name: Framework examples
+
+# The examples in examples/crewai-agent and examples/promptfoo import the real framework (CrewAI) or run it (Promptfoo).
+# The package smoke test (examples-smoke.yml) runs the CrewAI example without CrewAI installed, and it never runs the
+# Promptfoo example, so a broken provider id or a CrewAI API change could reach a release unseen. This workflow runs
+# both examples with the framework installed: CrewAI 1.0.0 and 1.15.28 (the version the example pins), Promptfoo
+# 0.90.0 and 0.125.1 (the latest release when this was written). Pull requests that change none of the paths below
+# do not run it. Not a required check; the merge queue does not run it. A manual run runs it on any branch.
+on:
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - 'examples/crewai-agent/**'
+      - 'examples/promptfoo/**'
+      - 'packages/zn-gate-py/**'
+      - '.github/workflows/framework-examples.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels the run still going for it.
+concurrency:
+  group: framework-examples-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
+jobs:
+  crewai:
+    name: CrewAI ${{ matrix.version }} (${{ matrix.crewai }})
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 1.0.0 is the oldest 1.x release; 1.15.28 is the version examples/crewai-agent/requirements.txt pins.
+          # CrewAI 1.x does not install on Python 3.14, so this job uses Python 3.12.
+          - version: oldest
+            crewai: "1.0.0"
+          - version: newest
+            crewai: "1.15.28"
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          # No pip cache: the framework pulls in many packages, and each cache key saves a new copy.
+      - name: Install zn-gate from this repository and CrewAI ${{ matrix.crewai }}
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir -e packages/zn-gate-py "crewai==${{ matrix.crewai }}" pytest
+          python -c "import importlib.metadata as m; v = m.version('crewai'); assert v == '${{ matrix.crewai }}', v; print('crewai', v)"
+      - name: Run the CrewAI example (no network, no API key)
+        working-directory: examples/crewai-agent
+        run: |
+          set -euo pipefail
+          python agent_guard.py > "$RUNNER_TEMP/crewai-example.txt"
+          cat "$RUNNER_TEMP/crewai-example.txt"
+          out="$RUNNER_TEMP/crewai-example.txt"
+          # The clean page passes unchanged, the injected page is withheld, the secret is hidden.
+          grep -q 'model reads: Paris today: 18 C' "$out"
+          grep -q "zn-gate blocked 'crewai:fetch_page:result'" "$out"
+          grep -q 'key=\[REDACTED_AWS_KEY\]' "$out"
+          grep -q 'CrewAI tool output for the blocked page' "$out"
+          # The CrewAI path ran (the example prints this line instead when CrewAI is missing), and the injected text
+          # and the secret never reach the output.
+          if grep -q 'CrewAI is not installed' "$out"; then echo "CrewAI was not imported"; exit 1; fi
+          if grep -q 'Ignore previous instructions' "$out"; then echo "injected text reached the output"; exit 1; fi
+          if grep -q 'AKIAIOSFODNN7EXAMPLE' "$out"; then echo "secret reached the output"; exit 1; fi
+      - name: Run the CrewAI tests of the package against the framework
+        working-directory: packages/zn-gate-py
+        env:
+          # Where CrewAI is installed above, its tests must run, not skip.
+          ZN_REQUIRE_FRAMEWORKS: "1"
+        run: python -m pytest tests/test_crewai_result_check.py tests/test_crewai_blocked_input.py tests/test_examples_agent_frameworks.py -q -k 'crewai or Crewai or example'
+
+  promptfoo:
+    name: Promptfoo ${{ matrix.version }} (${{ matrix.promptfoo }})
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 0.90.0 is the oldest release checked against this example. 0.100.0 does not start on a fresh install
+          # (its @adaline/google dependency fails to load), so it is not used.
+          - version: oldest
+            promptfoo: "0.90.0"
+          - version: newest
+            promptfoo: "0.125.1"
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: 22
+      - name: Install zn-gate from this repository (the Python provider imports it)
+        run: python -m pip install --disable-pip-version-check --no-cache-dir -e packages/zn-gate-py
+      - name: Run the Promptfoo example with promptfoo ${{ matrix.promptfoo }}
+        working-directory: examples/promptfoo
+        env:
+          # A clean home for Promptfoo, so nothing from the runner leaks in, and no telemetry or update check.
+          HOME: ${{ runner.temp }}/promptfoo-home
+          PROMPTFOO_DISABLE_TELEMETRY: "1"
+          PROMPTFOO_DISABLE_UPDATE: "1"
+          PROMPTFOO_CACHE_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME"
+          npx -y "promptfoo@${{ matrix.promptfoo }}" eval -c promptfooconfig.yaml --no-cache --no-progress-bar -o "$RUNNER_TEMP/promptfoo-results.json"
+      - name: Check that every case passed
+        run: |
+          set -euo pipefail
+          # The config has six cases: two benign, four attacks. Each must pass, with no failure and no error.
+          # Older releases leave out the errors count, so a missing count is zero.
+          python3 -c "import json, sys; s = json.load(open(sys.argv[1]))['results']['stats']; print(s); sys.exit(0 if s['successes'] == 6 and s['failures'] == 0 and s.get('errors', 0) == 0 else 1)" "$RUNNER_TEMP/promptfoo-results.json"
