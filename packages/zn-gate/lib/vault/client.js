@@ -162,10 +162,20 @@ function lockedError(detail, notRunning = false) {
   return err;
 }
 
-function readSessionKey(keyFile) {
+/* true when this home has any vault file: a vault that was created and is only locked. */
+function vaultExists(opts) {
+  const p = store.paths(opts);
+  return [p.metaFile, p.secretsFile, p.identityFile].some((f) => { try { fs.statSync(f); return true; } catch (e) { return false; } });
+}
+
+function readSessionKey(keyFile, opts) {
   let buf;
   try { buf = store.readPrivateFile(keyFile); } catch (err) { throw lockedError(err.code); }
-  if (buf === null) throw lockedError(null, true);
+  if (buf === null) {
+    const err = lockedError(null, true);
+    if (!vaultExists(opts)) err.noVault = true;
+    throw err;
+  }
   const hex = buf.toString('utf8').trim();
   if (!/^[0-9a-f]{64}$/.test(hex)) throw lockedError('bad session key');
   return Buffer.from(hex, 'hex');
@@ -182,7 +192,7 @@ class VaultClient {
     const ep = endpoint(this.opts);
     this.conn = new Promise((resolve, reject) => {
       let key;
-      try { key = readSessionKey(ep.keyFile); } catch (err) { reject(err); return; }
+      try { key = readSessionKey(ep.keyFile, this.opts); } catch (err) { reject(err); return; }
       const socket = net.createConnection(ep.address);
       socket.setEncoding('utf8');
       const state = { socket, pending: new Map(), nextId: 1, stage: 'hello', buf: '', clientNonce: crypto.randomBytes(16).toString('hex'), serverNonce: null };

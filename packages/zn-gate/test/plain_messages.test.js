@@ -114,6 +114,9 @@ test('humanError: other vault failures keep their own detail under a plain lead'
 
 test('client: a vault with no running daemon gives the plain unlock steps', async (t) => {
   const home = tempDir(t, 'zn-home-');
+  // A vault that exists (any vault file) and is only locked.
+  fs.mkdirSync(path.join(home, 'vault'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'vault', 'keychain.json'), '{}\n');
   const saved = process.env.ZN_HOME;
   process.env.ZN_HOME = home;
   const c = createClient({});

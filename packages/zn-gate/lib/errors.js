@@ -77,7 +77,11 @@ function humanError(err, env = process.env) {
   const code = err && typeof err.code === 'string' && err.code.startsWith('ZN_') ? err.code : '';
   const detail = String((err && err.message) || '');
   let text;
-  if (code === CODES.LOCKED && err.vaultNotRunning === true) {
+  if (code === CODES.LOCKED && err.vaultNotRunning === true && err.noVault === true) {
+    // A fresh home: there is nothing to unlock yet.
+    const { znCommand } = require('./zn-command');
+    text = 'No vault yet. Create one with ' + znCommand('secret set NAME') + ', or run ' + znCommand('unlock') + ' to start.';
+  } else if (code === CODES.LOCKED && err.vaultNotRunning === true) {
     // Only the plain "the vault is not unlocked" case gets the unlock steps;
     // integrity and keychain failures keep their own detail.
     const { znCommand } = require('./zn-command');

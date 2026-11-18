@@ -325,7 +325,8 @@ async function guide(opts = {}) {
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {
     w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app). Nothing was changed.\n');
-    w('Install one, then run `npx -y zn-gate init` again. Other editors: https://usezn.com/docs/install\n');
+    w('zn-gate protects the agents it can find on this machine, so there is nothing to set up until one is installed.\n');
+    w('Install one, then run `npx -y zn-gate init` again' + (interactive ? '' : ' in your own terminal (init needs an interactive terminal, not a script or a pipe)') + '. Other editors: https://usezn.com/docs/install\n');
     tail();
     return 1;
   }
@@ -340,6 +341,7 @@ async function guide(opts = {}) {
       : 'This is not an interactive terminal, so zn only prints the steps.') + ' Nothing was changed.\n');
     w('Run them in your own terminal:\n\n');
     for (const s of allSteps) w(`  ${s.manual}\n`);
+    w('\nThere is no non-interactive install: `zn hooks install` also needs an interactive terminal, so run these in a terminal window you type in.\n');
     w('\nThen check that it works: `npx -y zn-gate check`\n');
     tail();
     return 1;
