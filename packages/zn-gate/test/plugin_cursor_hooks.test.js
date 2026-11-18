@@ -1,10 +1,10 @@
 'use strict';
 
 // The Cursor hooks `zn hooks install cursor` writes (there is no Cursor plugin any more): a hook may only
-// fail closed when zn always writes an answer on that event. Cursor's documentation (cursor.com/docs/agent/hooks)
-// says failClosed blocks the action on "no output", and its permission hooks accept no neutral answer: "allow"
-// would skip Cursor's own approval, and an empty object is not a valid permission answer. So an event where zn
-// has no objection and stays silent must not be failClosed.
+// fail closed when zn always writes an answer on that event. Cursor's documentation (cursor.com/docs/agent/hooks,
+// re-read 2026-11-17) says failClosed blocks the action on "no output", and that a permission hook whose output is
+// invalid JSON or does not match its schema blocks even without failClosed. So every permission hook zn installs
+// prints an explicit {"permission":"allow"} when it has no objection.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -50,18 +50,12 @@ test('every failClosed event gets an explicit answer when zn has no objection', 
   }
 });
 
-test('an event where zn stays silent is not failClosed (it would block every ordinary call)', () => {
-  for (const event of ['beforeShellExecution', 'beforeMCPExecution', 'preToolUse', 'postToolUse']) {
-    assert.equal(answer(event), null, event);
-    for (const h of plugin()[event] || []) assert.notEqual(h.failClosed, true, event);
-  }
-});
-
-test('zn never answers "allow" on shell, MCP or tool-use events (that could skip Cursor\'s own approval)', () => {
+test('an event where zn has no objection answers with an explicit allow, never with empty output', () => {
   for (const event of ['beforeShellExecution', 'beforeMCPExecution', 'preToolUse']) {
-    const a = answer(event);
-    assert.ok(a === null || a.permission !== 'allow', event);
+    assert.deepEqual(answer(event), { permission: 'allow' }, event);
   }
+  // postToolUse is not a permission hook (no permission field): nothing to say is a valid answer there.
+  assert.equal(answer('postToolUse'), null);
 });
 
 test('a deny is still written on every event that can deny', () => {
@@ -83,14 +77,14 @@ function cursorBlocks(entry, event, res) {
   if (entry.failClosed === true && (res.status !== 0 || out === '')) return true;
   if (res.status !== 0 || out === '') return false; // fails open
   let a;
-  try { a = JSON.parse(out); } catch (_) { return ['beforeShellExecution', 'beforeMCPExecution', 'beforeReadFile', 'preToolUse'].includes(event); }
+  try { a = JSON.parse(out); } catch (_) { return ['beforeShellExecution', 'beforeMCPExecution', 'beforeReadFile', 'beforeTabFileRead', 'preToolUse'].includes(event); }
   if (a.permission === 'deny' || a.continue === false) return true;
   return false;
 }
 
-test('the simulation: a failClosed hook that writes nothing blocks, a silent hook without failClosed does not', () => {
+test('the simulation: a failClosed hook that writes nothing blocks, a silent non-permission hook does not', () => {
   assert.equal(cursorBlocks({ failClosed: true }, 'beforeShellExecution', { status: 0, stdout: '' }), true);
-  assert.equal(cursorBlocks({}, 'beforeShellExecution', { status: 0, stdout: '' }), false);
+  assert.equal(cursorBlocks({}, 'postToolUse', { status: 0, stdout: '' }), false);
   assert.equal(cursorBlocks({ failClosed: true }, 'beforeReadFile', { status: 0, stdout: '{"permission":"allow"}' }), false);
 });
 

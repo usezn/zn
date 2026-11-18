@@ -16,18 +16,16 @@
  *                                                 -> {permission: allow|deny, user_message, agent_message}
  *    postToolUse           tool_name, tool_input, tool_output (JSON string)
  *                                                 -> {updated_mcp_tool_output} (MCP tools only)
- *  No output (exit 0, empty stdout) counts as a hook failure that fails
- *  open: Cursor carries on with its own settings. That is how this adapter
- *  says "no opinion" for shell commands, so it never auto-approves.
+ *  Permission hooks (shell, MCP, file reads, preToolUse) must always print a valid answer:
+ *  "invalid JSON or a response that doesn't match the hook's schema blocks the action" (read 2026-11-17), so
+ *  when zn has no objection it prints {"permission":"allow"} (noObjection below), never nothing.
  *
  * A hook that cannot start (read 2026-10-20): "Other exit codes - Hook failed, action proceeds (fail-open by
  *  default)." `failClosed: true` blocks "the action when the hook fails (crash, timeout, non-zero exit, or no
  *  output)"; exit code 2 blocks. zn sets failClosed on beforeReadFile and beforeSubmitPrompt, and its launcher
  *  (lib/agents/launcher.js) also exits 2 on the other events that can deny when the Node.js is gone.
- *  Only an event where this adapter always answers may be failClosed: on shell, MCP and tool-use events it
- *  writes nothing when it has no objection, Cursor documents no neutral answer ("allow" could skip its own
- *  approval; an empty object is not documented as a valid permission answer), and failClosed would block every call
- *  (test/plugin_cursor_hooks.test.js). There is no Cursor plugin any more: its hooks started node by name.
+ *  Every permission hook of this adapter now always answers (an explicit allow when zn has no objection), so
+ *  an empty output no longer blocks an ordinary call. There is no Cursor plugin any more: its hooks started node by name.
  *
  * What Cursor allows, and so what zn does there (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied
@@ -117,6 +115,16 @@ function normalize(raw) {
   return { ...base, event: null };
 }
 
+/*
+ * The answer when zn has no objection to a call. Cursor's documentation (re-read 2026-11-17) says a permission hook
+ * (beforeShellExecution, beforeMCPExecution, beforeReadFile, beforeTabFileRead, preToolUse) that prints invalid JSON
+ * or an answer that does not match its schema blocks the call, even without failClosed, and it documents no neutral
+ * answer. Printing nothing is therefore not safe: the one valid way to let a call go on is an explicit allow.
+ * Cursor does not say whether its own approval still applies after an allow from a hook; it only says that a deny
+ * wins over an ask, and an ask over an allow, across hooks.
+ */
+const noObjection = () => ({ permission: 'allow' });
+
 function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return null;
@@ -130,8 +138,7 @@ function respond(d) {
     }
     // Cursor does not enforce "ask" from preToolUse: a question would be dropped, so it becomes a deny.
     if (isPlainAsk(d)) { const msg = askAsDeny('Cursor', d); return { permission: 'deny', user_message: msg, agent_message: msg }; }
-    // No opinion, not "allow": an allow could skip Cursor's own confirmations.
-    return null;
+    return noObjection();
   }
   if (h === 'beforeReadFile') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn' };
@@ -147,7 +154,7 @@ function respond(d) {
       return { permission: 'deny', user_message: msg, agent_message: msg };
     }
     if (d.decision === 'ask' && (d.confirm === true || !d.updatedInput)) return { permission: 'ask', user_message: d.message || 'zn asks for confirmation' };
-    return null; // no opinion: Cursor's own approval settings apply
+    return noObjection();
   }
   if (h === 'beforeSubmitPrompt') {
     if (d.decision === 'deny') return { continue: false, user_message: d.message || 'Blocked by zn' };
@@ -157,7 +164,7 @@ function respond(d) {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn', agent_message: d.message || 'Blocked by zn' };
     // Cursor does not enforce a hook's "ask" for MCP calls: a question becomes a deny.
     if (isPlainAsk(d)) { const msg = askAsDeny('Cursor', d); return { permission: 'deny', user_message: msg, agent_message: msg }; }
-    return null; // no opinion: Cursor's own MCP approval applies
+    return noObjection();
   }
   if (h === 'postToolUse') {
     if (ev.tool === 'mcp' && d.updatedOutput !== undefined) {

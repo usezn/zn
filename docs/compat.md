@@ -430,23 +430,23 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     server, identified by the exact command `zn hooks install` writes; a
     server reached by URL, or one that only has the name, is not zn's own.
     Arguments over 1 MB (counted in characters) are denied, because zn cannot
-    check them. Other calls get no answer, so Cursor's own MCP approval still
-    applies. This hook, like
-    `beforeShellExecution` and `preToolUse`, has no `failClosed`: zn gives no
-    answer when it has no objection, and Cursor treats an empty answer as a
-    block when `failClosed` is set, which would block every such call. The
-    trade-off: if this hook crashes or times out, the call runs unchecked. (If it cannot start
-    because its Node.js is gone, the launcher script described above blocks the call.)
-    Cursor documents no neutral answer for these hooks: an `allow` could skip
-    Cursor's own approval, and an empty object is not a documented permission
-    answer. `zn hooks install cursor` therefore sets `failClosed` on
-    `beforeReadFile` and `beforeSubmitPrompt` only.
+    check them. Other calls get an explicit `{"permission": "allow"}`: Cursor's
+    documentation says a permission hook (`beforeShellExecution`,
+    `beforeMCPExecution`, `beforeReadFile`, `beforeTabFileRead`, `subagentStart`,
+    `preToolUse`) whose output is invalid JSON or does not match its schema
+    blocks the action, and it documents no neutral answer, so zn never prints
+    nothing there. Cursor does not say whether its own approval still applies
+    after an `allow` from a hook; it says a deny beats an ask and an ask beats
+    an allow across hooks. `beforeShellExecution`, the MCP hook and `preToolUse`
+    have no `failClosed`: if one of them crashes or times out, the call runs
+    unchecked. (If it cannot start because its Node.js is gone, the launcher
+    script described above blocks the call.) `zn hooks install cursor` sets
+    `failClosed` on `beforeReadFile` and `beforeSubmitPrompt` only.
   - `preToolUse` (Write, Delete, Grep) checks the file a call names with the
     same rules as the other tools. Cursor does not document the input keys of
     these tools, so zn looks for the usual names (`file_path`, `path`,
     `target_file`). A write whose file cannot be read is refused.
-  - A call zn has no objection to gets no answer, not `allow`: an `allow` could
-    skip Cursor's own confirmations. A Grep without a `path` searches the whole
+  - A Grep without a `path` searches the whole
     workspace, so files that zn would shadow or refuse can be found that way;
     zn does not filter those results.
   - `postToolUse` can only replace the output of MCP tools. Checked again on

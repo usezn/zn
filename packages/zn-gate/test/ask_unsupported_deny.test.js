@@ -106,7 +106,8 @@ test('a soft question (a command already wrapped in zn run, whose approval the v
   const rewrite = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', message: 'zn: puts back a value' };
   for (const d of [soft, rewrite]) {
     assert.equal(getAdapter('codex').respond({ ...d, event: ev }), null);
-    assert.equal(getAdapter('cursor').respond({ ...d, event: ev }), null);
+    // preToolUse is a permission hook: an explicit allow, never empty output.
+    assert.deepEqual(getAdapter('cursor').respond({ ...d, event: ev }), { permission: 'allow' });
     assert.equal(getAdapter('gemini').respond({ ...d, event: ev }), null);
     assert.deepEqual(getAdapter('opencode').respond({ ...d, event: ev }), { action: 'none' });
   }
@@ -221,7 +222,7 @@ test('Cursor shell and ZCode Bash keep their native ask when a security question
 
 test('Cursor shell and ZCode Bash stay silent on a bare rewrite proposal', () => {
   const bare = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', message: 'zn: puts back a value' };
-  assert.equal(getAdapter('cursor').respond({ ...bare, event: { event: 'pre_tool', hookEvent: 'beforeShellExecution', tool: 'bash', input: { command: 'x' } } }), null);
+  assert.deepEqual(getAdapter('cursor').respond({ ...bare, event: { event: 'pre_tool', hookEvent: 'beforeShellExecution', tool: 'bash', input: { command: 'x' } } }), { permission: 'allow' });
   const zc = getAdapter('zcode').respond({ ...bare, event: { event: 'pre_tool', hookEvent: 'PreToolUse', tool: 'Bash', input: { command: 'x' } } });
   assert.doesNotMatch(JSON.stringify(zc) || '', /"ask"/);
 });

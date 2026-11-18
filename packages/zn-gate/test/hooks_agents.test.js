@@ -123,7 +123,7 @@ test('cursor: beforeReadFile denies plain .env and credential files, allows othe
   assert.deepEqual(r2.output, { permission: 'allow' });
 });
 
-test('cursor: shell commands: deny reads, environment-variable guidance for markers, ask once wrapped, silent otherwise', async (t) => {
+test('cursor: shell commands: deny reads, environment-variable guidance for markers, ask once wrapped, an explicit allow otherwise', async (t) => {
   const dir = tmpProject(t);
   const a = await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'grep KEY .env', sandbox: false }));
   assert.equal(a.output.permission, 'deny');
@@ -132,7 +132,7 @@ test('cursor: shell commands: deny reads, environment-variable guidance for mark
   assert.match(b.output.agent_message, /run --secrets NAME -- <command>/);
   const c = await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'zn run -- gh api -H "Authorization: token __ZN_GITHUB_TOKEN__" /user' }));
   assert.equal(c.output.permission, 'ask');
-  assert.equal((await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'ls' }))).output, null, 'no auto-approval');
+  assert.deepEqual((await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'ls' }))).output, { permission: 'allow' }, 'no objection is an explicit, valid allow (empty output would block)');
 });
 
 test('cursor: MCP output is tokenized, built-in output cannot be, prompts with secrets are blocked', async () => {
@@ -188,7 +188,7 @@ test('cursor: beforeMCPExecution is installed without failClosed', (t) => {
   cursor.uninstall({ home });
 });
 
-test('cursor: beforeMCPExecution normalizes; only a deny gets an answer', (t) => {
+test('cursor: beforeMCPExecution normalizes; a deny, or an explicit allow', (t) => {
   const dir = tmpProject(t);
   const ev = cursor.normalize(cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' }));
   assert.equal(ev.event, 'pre_tool');
@@ -196,7 +196,7 @@ test('cursor: beforeMCPExecution normalizes; only a deny gets an answer', (t) =>
   assert.deepEqual(ev.mcp, { server: 'db', tool: 'query' });
   assert.deepEqual(ev.input.args, { sql: 'select 1' }, 'a JSON string tool_input is parsed');
   assert.deepEqual(cursor.respond({ decision: 'deny', message: 'no', event: ev }), { permission: 'deny', user_message: 'no', agent_message: 'no' });
-  assert.equal(cursor.respond({ decision: 'allow', event: ev }), null);
+  assert.deepEqual(cursor.respond({ decision: 'allow', event: ev }), { permission: 'allow' });
 });
 
 test('cursor: MCP arguments with a secret value are denied by kind, the value is never printed', async (t) => {
@@ -229,7 +229,7 @@ test('cursor: a __ZN_ marker goes to no server but zn\'s own "secrets" server', 
   assert.equal(other.output.permission, 'deny');
   assert.match(other.output.user_message, /secrets_http_request/);
   const own = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { url: 'https://api.example.com', token: '__ZN_DB_PASSWORD__' } }));
-  assert.equal(own.output, null);
+  assert.deepEqual(own.output, { permission: 'allow' });
   // Our server still gets the credential check: markers are its job, raw values are not.
   const ownCred = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { key: FAKE_AWS_KEY } }));
   assert.equal(ownCred.output.permission, 'deny');
@@ -264,11 +264,11 @@ test('cursor: MCP calls from OpenCode are allowed without the engine or the vaul
   assert.equal(oc.decision.decision, 'allow');
 });
 
-test('cursor: benign MCP calls get no answer; large arguments are scanned in full, up to 1 MB', async (t) => {
+test('cursor: benign MCP calls get an explicit allow; large arguments are scanned in full, up to 1 MB', async (t) => {
   const dir = tmpProject(t);
-  assert.equal((await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'list', mcp_server_name: 'github', tool_input: { repo: 'usezn/zn' } }))).output, null);
+  assert.deepEqual((await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'list', mcp_server_name: 'github', tool_input: { repo: 'usezn/zn' } }))).output, { permission: 'allow' });
   const benign = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(500 * 1024) } }));
-  assert.equal(benign.output, null);
+  assert.deepEqual(benign.output, { permission: 'allow' });
   // A credential deep inside a large argument is still found (the scan is windowed).
   const deep = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(300 * 1024) + ' ' + FAKE_AWS_KEY + ' ' + 'b'.repeat(300 * 1024) } }));
   assert.equal(deep.output.permission, 'deny');
