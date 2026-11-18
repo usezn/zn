@@ -818,13 +818,57 @@ def _strip_invisible(text: str) -> str:
     return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
 
 
+def _wrap_break_spans(text: str) -> List[Tuple[int, int]]:
+    """The spans WRAP_BREAK_RE.finditer(text) finds, in the same order. The pattern can only start in the
+    whitespace (and one CR) that precedes a line feed, and only right after ten token characters, so it is tried
+    once per line feed instead of once per position of the text (the lookbehind makes that much slower)."""
+    out: List[Tuple[int, int]] = []
+    pos = 0
+    last_end = 0
+    find = text.find
+    match = WRAP_BREAK_RE.match
+    while True:
+        nl = find('\n', pos)
+        if nl < 0:
+            return out
+        start = nl
+        if start > 0 and text[start - 1] == '\r':
+            start -= 1
+        while start > 0 and text[start - 1] in ' \t':
+            start -= 1
+        if start < last_end:
+            start = last_end
+        m = match(text, start) if start >= 10 else None
+        if m is not None and m.end() > m.start():
+            out.append(m.span())
+            last_end = m.end()
+            pos = max(m.end(), nl + 1)
+        else:
+            pos = nl + 1
+
+
+# (text, its view) of the last text asked for, in ONE tuple replaced in one assignment (as _SPACED_MEMO): the
+# scanners ask for the view of the same text more than once.
+_VIEW_MEMO: Tuple[Optional[str], Optional[Tuple[str, 'array[int]']]] = (None, None)
+
+
 def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
     the text has no invisible character. See invisibleView in rules.js."""
+    global _VIEW_MEMO
+    memo = _VIEW_MEMO
+    if memo[0] is text:
+        return memo[1]
+    view = _invisible_view(text)
+    _VIEW_MEMO = (text, view)
+    return view
+
+
+def _invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     runs = [m.span() for m in ZERO_WIDTH_RE.finditer(text)] + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)]
     if len(text) <= MAX_WRAP_VIEW_CHARS and '\n' in text:
-        runs += [m.span() for m in WRAP_BREAK_RE.finditer(text)]
+        runs += _wrap_break_spans(text)
     if not runs:
         return None
     runs.sort(key=lambda r: (r[0], -r[1]))
@@ -1832,6 +1876,45 @@ def _kv_placeholder(value: str) -> bool:
     return m is not None and _kv_bare_placeholder(value[m.end():])
 
 
+# Every key _KV_OPEN_RE reads begins with one of these (ASCII, any case).
+_KV_OPEN_STARTS = ('pass', 'secret', 'token', 'api', 'access', 'private', 'client', 'auth')
+# A text of this many characters or more is searched only where such a word starts, not at every position (a text
+# without one is then rejected by a few substring searches); with more starts than _KV_MAX_STARTS the plain search runs.
+_KV_STARTS_MIN_CHARS = 512
+_KV_MAX_STARTS = 2000
+
+
+def _kv_open_candidates(text: str) -> Optional[List[int]]:
+    """Ascending positions where a key of _KV_OPEN_RE can start in `text`, or None when the plain search is used.
+    _KV_OPEN_RE cannot match at any other position, so searching from the next start gives the match the search
+    from the previous end gives. The fold keeps every position (one character for one character)."""
+    if len(text) < _KV_STARTS_MIN_CHARS:
+        return None
+    folded = str.translate(text, _NEEDLE_FOLD)
+    found: List[int] = []
+    for word in _KV_OPEN_STARTS:
+        i = folded.find(word)
+        while i >= 0:
+            found.append(i)
+            if len(found) > _KV_MAX_STARTS:
+                return None
+            i = folded.find(word, i + 1)
+    found.sort()
+    return found
+
+
+def _kv_open_search(text: str, pos: int, starts: Optional[List[int]]) -> Any:
+    """_KV_OPEN_RE.search(text, pos), trying only the positions in `starts` (when given)."""
+    if starts is None:
+        return _KV_OPEN_RE.search(text, pos)
+    match = _KV_OPEN_RE.match
+    for i in range(bisect.bisect_left(starts, pos), len(starts)):
+        m = match(text, starts[i])
+        if m is not None:
+            return m
+    return None
+
+
 def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
     """Spans (start, end, quote) of the values described above. quote is the
     quote that the replacement of a bare number is wrapped in (empty for a
@@ -1839,8 +1922,9 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
     found: List[Tuple[int, int, str]] = []
     n = len(text)
     pos = 0
+    starts = _kv_open_candidates(text)
     while True:
-        m = _KV_OPEN_RE.search(text, pos)
+        m = _kv_open_search(text, pos, starts)
         if m is None:
             break
         after = m.end()
@@ -2000,6 +2084,46 @@ def _starts_secret_at(text: str, start: int, limit: int,
     return any(p.match(text, pos) for _, p, _ in patterns)
 
 
+# A text of this many characters or more is checked against the literals a rule's pattern needs before the pattern is
+# scanned (the same check _LazyPattern.search makes on large texts): a substring search is much cheaper than a regex
+# pass, and a history line is a few KB. Shorter texts go straight to the regex.
+_RULE_GATE_MIN_CHARS = 512
+# hay id -> (hay, folded hay): the texts one rule loop asks about in turn (the text, its view, its spaced view).
+_FOLD_MEMO: Dict[int, Tuple[str, str]] = {}
+
+
+# Rules whose literals _needles_for cannot derive but that every match holds (lower case, as the folded text is).
+_RULE_NEEDLES: Dict[str, Tuple[str, ...]] = {
+    "secret:github_token": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+    "secret:aws_secret_key": ("aws_",),
+}
+
+
+def _lacks_needles(pattern: Any, hay: str, rule_id: str = '') -> bool:
+    """True when `hay` holds none of the literals every match of `pattern` must contain, so the pattern cannot match."""
+    if len(hay) < _RULE_GATE_MIN_CHARS or not isinstance(pattern, _LazyPattern):
+        return False
+    needles = pattern._needles
+    if needles is None:
+        needles = pattern._needles = _needles_for(pattern.pattern, pattern._flags)
+    if not needles:
+        needles = _RULE_NEEDLES.get(rule_id) or ()
+    if not needles:
+        return False
+    entry = _FOLD_MEMO.get(id(hay))
+    if entry is not None and entry[0] is hay:
+        folded = entry[1]
+    else:
+        folded = str.translate(hay, _NEEDLE_FOLD)
+        if len(_FOLD_MEMO) > 8:
+            _FOLD_MEMO.clear()
+        _FOLD_MEMO[id(hay)] = (hay, folded)
+    for needle in needles:
+        if needle in folded:
+            return False
+    return True
+
+
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
                      view: Optional[Tuple[str, 'array[int]']], budget: List[int],
                      value_filter: Optional[Callable[[str, str], bool]],
@@ -2027,10 +2151,16 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
         if required and required not in hay:
             continue
         hints = PROVIDER_HINTS.get(rule_id)
-        if hints and not any(h in hay for h in hints):
-            continue
+        if hints:
+            for h in hints:
+                if h in hay:
+                    break
+            else:
+                continue
         prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id) or SCAN_SECRET_PREFILTERS.get(rule_id)
         if prefilter is not None and not prefilter.search(hay):
+            continue
+        if _lacks_needles(pattern, hay, rule_id):
             continue
         for m in pattern.finditer(hay):
             if m.end() == m.start():

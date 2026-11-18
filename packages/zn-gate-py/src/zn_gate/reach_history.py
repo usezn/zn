@@ -374,7 +374,10 @@ def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], 
         # that same text: an invisible character inside a token cannot change its type.
         view = rules.invisible_view(piece)
         seen = view[0] if view is not None else piece
-        pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(seen))
+        # Only a text that holds "github_pat_" (in any case) can hold such a token; most lines do not.
+        pats = 0
+        if "github_pat_" in str.translate(seen, rules._NEEDLE_FOLD):
+            pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(seen))
         for d in detections:
             # An id the table does not know is still a secret: count it as the generic type, never drop it.
             t = types.get(d["rule"]) or "SECRET"
