@@ -129,4 +129,94 @@ mod tests {
         assert!(!safe_result.is_attack);
         assert!(safe_result.matched_pattern.is_none());
     }
+
+    // --- Windows spellings. File names only; nothing is read or run. ---
+    // The matcher is a case-insensitive substring search with no path normalisation, so a Windows
+    // spelling that keeps the pattern text intact is caught and one that changes it is not.
+    // A test named gap_* is a spelling Windows resolves to a protected target that is not caught yet;
+    // it is ignored until the matcher normalises paths. Run them with `cargo test -- --ignored`.
+
+    #[test]
+    fn windows_spellings_that_keep_the_pattern_are_caught() {
+        for s in [
+            "C:\\WINDOWS\\System32\\config",
+            "\\\\?\\C:\\Windows\\System32",
+            "\\\\.\\C:\\Windows\\System32",
+            "c:/windows/system32/drivers",
+            "type .env::$DATA",
+            "type .env.",
+            "type .ENV",
+            "type C:\\Users\\alice\\proj\\.env",
+            "..\\..\\x",
+        ] {
+            assert!(contains_lfi(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn device_names_and_plain_files_are_not_caught() {
+        for s in [
+            "type NUL",
+            "type CON",
+            "copy x COM1",
+            "type notes.txt",
+            "C:\\Users\\alice\\proj\\build",
+        ] {
+            assert!(!contains_lfi(s), "{s}");
+        }
+    }
+
+    #[test]
+    #[ignore = "GAP-WR1: backslash spelling of a forward-slash pattern"]
+    fn gap_wr1_backslash_separator_in_dot_folders() {
+        for s in [
+            "type C:\\Users\\alice\\.ssh\\id_rsa",
+            "type .ssh\\authorized_keys",
+            "type .ssh\\id_dsa",
+            "type C:\\Users\\alice\\proj\\.git\\config",
+        ] {
+            assert!(contains_lfi(s), "{s}");
+        }
+    }
+
+    #[test]
+    #[ignore = "GAP-WR2: doubled or mixed separators and a trailing dot or space in a folder name"]
+    fn gap_wr2_separator_and_trailing_dot_forms_of_the_windows_folder() {
+        for s in [
+            "dir C:\\\\Windows\\System32",
+            "dir C:/\\Windows/System32",
+            "dir C:\\Windows.\\System32",
+            "dir \"C:\\Windows \\System32\"",
+            "dir C:\\.\\Windows\\System32",
+            "dir C:\\Windows::$INDEX_ALLOCATION\\System32",
+        ] {
+            assert!(contains_lfi(s), "{s}");
+        }
+    }
+
+    #[test]
+    #[ignore = "GAP-WR3: 8.3 short names"]
+    fn gap_wr3_short_names() {
+        for s in [
+            "type C:\\Users\\alice\\proj\\ENV~1",
+            "dir C:\\WINDOW~1\\System32",
+            "type SSH~1\\id_rsa",
+        ] {
+            assert!(contains_lfi(s), "{s}");
+        }
+    }
+
+    #[test]
+    #[ignore = "GAP-WR4: drive-less, administrative-share and variable spellings of the Windows folder"]
+    fn gap_wr4_drive_less_share_and_variable_forms() {
+        for s in [
+            "dir \\Windows\\System32",
+            "dir \\\\localhost\\C$\\Windows\\System32",
+            "dir \\\\?\\UNC\\localhost\\C$\\Windows\\System32",
+            "dir %SystemRoot%\\System32",
+            "dir C:Windows\\System32",
+        ] {
+            assert!(contains_lfi(s), "{s}");
+        }
+    }
 }
