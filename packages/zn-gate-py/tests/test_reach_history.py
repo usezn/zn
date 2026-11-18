@@ -167,7 +167,8 @@ def test_a_line_over_the_cap_is_skipped_and_listed(machine, monkeypatch):
     assert next(f for f in r["findings"] if f["type"] == "AWS_KEY")["count"] == 1
 
 
-@pytest.mark.skipif(not hasattr(os, "symlink") or sys.platform == "win32", reason="symbolic links")
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="the test builds POSIX-style symbolic links; Windows is not covered here")
 def test_links_are_never_followed_out_of_home(machine, tmp_path):
     home, env = machine
     outside = tmp_path / "outside"
@@ -244,7 +245,7 @@ def test_agents_whose_history_is_not_read_are_listed_as_not_scanned_yet(machine)
         assert re.search(n + r" +not scanned yet", text)
 
 
-@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="needs node on PATH and packages/zn-gate/bin/cli.js (monorepo checkout; absent in an sdist)")
 def test_json_equals_the_npm_package_with_outside_config_and_deep_files(machine, tmp_path):
     home, env = machine
     outside = tmp_path / "outside"
@@ -307,7 +308,7 @@ def test_help_lists_reach_history(machine):
     assert p.returncode == 0 and "zn-gate reach --history" in p.stdout
 
 
-@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="needs node on PATH and packages/zn-gate/bin/cli.js (monorepo checkout; absent in an sdist)")
 def test_json_equals_the_npm_package(machine):
     home, env = machine
     claude_fixture(home)
@@ -512,7 +513,7 @@ def test_a_line_with_a_fine_grained_and_a_classic_token_counts_one_of_each():
         assert counts == {"GITHUB_PAT": 1, "GITHUB_TOKEN": 1}, counts
 
 
-@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="needs node on PATH and packages/zn-gate/bin/cli.js (monorepo checkout; absent in an sdist)")
 def test_invisible_characters_in_a_fine_grained_token_equal_the_npm_package(machine):
     home, env = machine
     lines = ["pat " + v + " ok" for v in _pat_variants()] + ["pat " + PAT + " and classic " + CLASSIC, "pat " + PAT_ZW + " and classic " + CLASSIC]
@@ -548,7 +549,7 @@ def test_every_scrub_rule_has_a_type():
             assert rule_id.partition("#")[0] in types
 
 
-@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="needs node on PATH and packages/zn-gate/bin/cli.js (monorepo checkout; absent in an sdist)")
 def test_types_and_counts_equal_the_npm_package_for_scrub_and_generic_forms(machine):
     home, env = machine
     lines = [TWILIO, ZN_KEY, PAT, GITHUB, AWS] + GENERIC_LINES

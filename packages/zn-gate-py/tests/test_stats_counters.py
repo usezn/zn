@@ -95,7 +95,7 @@ def test_verbose_reads_process_environment(monkeypatch):
 def test_layer_names_match_node_layers():
     node_file = NODE_LIB / "stats.js"
     if not node_file.exists():
-        pytest.skip("Node stats module not available")
+        pytest.skip("packages/zn-gate/lib/stats.js is not in this checkout (sdist)")
     source = node_file.read_text()
     line = source.split("LAYERS = new Set([", 1)[1].split("]", 1)[0]
     node_layers = {p.strip().strip("'") for p in line.split(",")}
@@ -105,11 +105,11 @@ def test_layer_names_match_node_layers():
 def test_keep_days_matches_node():
     node_file = NODE_LIB / "stats.js"
     if not node_file.exists():
-        pytest.skip("Node stats module not available")
+        pytest.skip("packages/zn-gate/lib/stats.js is not in this checkout (sdist)")
     assert "const KEEP_DAYS = %d;" % stats.KEEP_DAYS in node_file.read_text()
 
 
-@pytest.mark.skipif(shutil.which("node") is None or not (NODE_LIB / "stats.js").exists(), reason="node or Node package not available")
+@pytest.mark.skipif(shutil.which("node") is None or not (NODE_LIB / "stats.js").exists(), reason="needs node on PATH and packages/zn-gate/lib/stats.js (monorepo checkout; absent in an sdist)")
 def test_python_reads_counters_written_by_node(tmp_path):
     script = (
         "const s=require(%s);"

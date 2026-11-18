@@ -387,7 +387,7 @@ def test_concurrent_writers_keep_one_chain(tmp_path):
     assert not os.path.exists(p + ".lock")
 
 
-@pytest.mark.skipif(not (_NODE and _has_node_pkg), reason="needs node and the Node package in the repo")
+@pytest.mark.skipif(not (_NODE and _has_node_pkg), reason="needs node on PATH and packages/zn-gate/lib/evidence.js (monorepo checkout; absent in an sdist)")
 def test_python_and_node_writers_at_the_same_time_share_one_chain(tmp_path):
     p = str(tmp_path / "evidence.jsonl")
     per = 40
@@ -444,7 +444,7 @@ def _node_verify(p):
     return json.loads(r.stdout)
 
 
-@pytest.mark.skipif(not (_NODE and _has_node_pkg), reason="needs node and the Node package in the repo")
+@pytest.mark.skipif(not (_NODE and _has_node_pkg), reason="needs node on PATH and packages/zn-gate/lib/evidence.js (monorepo checkout; absent in an sdist)")
 def test_non_ascii_records_written_by_python_verify_in_node(tmp_path):
     p = str(tmp_path / "evidence.jsonl")
     for _ in range(3):
@@ -456,7 +456,7 @@ def test_non_ascii_records_written_by_python_verify_in_node(tmp_path):
     assert v["total"] == 3
 
 
-@pytest.mark.skipif(not (_NODE and _has_node_pkg), reason="needs node and the Node package in the repo")
+@pytest.mark.skipif(not (_NODE and _has_node_pkg), reason="needs node on PATH and packages/zn-gate/lib/evidence.js (monorepo checkout; absent in an sdist)")
 def test_non_ascii_records_written_by_node_verify_in_python(tmp_path):
     p = str(tmp_path / "evidence.jsonl")
     code = ("const { logEvidence } = require(process.argv[1]);"
@@ -548,7 +548,8 @@ def test_lock_dated_in_the_future_counts_as_stale(tmp_path):
     assert verify_evidence_ledger(p)["total"] == 2
 
 
-@pytest.mark.skipif(os.name != "posix", reason="needs symlinks")
+@pytest.mark.skipif(os.name != "posix",
+                    reason="POSIX only: the test makes the lock path a dangling symlink, which Windows does not model")
 def test_unreadable_lock_path_does_not_spin_the_cpu(tmp_path, capsys):
     p = _ledger(tmp_path, n=1)
     os.symlink(str(tmp_path / "missing-target"), p + ".lock")

@@ -100,7 +100,7 @@ def test_no_fail_exits_0_for_every_case(tmp_path):
 
 
 @pytest.mark.skipif(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-                    reason="folder permissions are not enforced here")
+                    reason="chmod 0 is not enforced on Windows, and root (uid 0) bypasses folder permissions")
 def test_unreadable_folder_exits_3_unless_allow_partial(tmp_path):
     (tmp_path / "ok.md").write_text("hello\n")
     locked = tmp_path / "locked"
@@ -137,13 +137,15 @@ def test_cli_accepts_allow_partial(tmp_path):
 # named pipe is listed as not a regular file.
 def _link_fixture(tmp_path, with_fifo):
     (tmp_path / "AGENTS.md").write_text(OK)
-    os.symlink("AGENTS.md", tmp_path / "CLAUDE.md")
-    os.symlink("missing-target.md", tmp_path / "broken.md")
+    try:
+        os.symlink("AGENTS.md", tmp_path / "CLAUDE.md")
+        os.symlink("missing-target.md", tmp_path / "broken.md")
+    except (OSError, NotImplementedError) as e:
+        pytest.skip("cannot create a symbolic link here (%s)" % e)
     if with_fifo:
         os.mkfifo(tmp_path / "p.md")
 
 
-@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symbolic links")
 def test_links_inside_the_folder_are_not_followed_and_not_listed(tmp_path):
     _link_fixture(tmp_path, False)
     code, out = _scan(tmp_path, "json")
@@ -152,7 +154,7 @@ def test_links_inside_the_folder_are_not_followed_and_not_listed(tmp_path):
     assert data["total_files"] == 1 and data["skipped"] == [] and data["incomplete"] is False
 
 
-@pytest.mark.skipif(not hasattr(os, "mkfifo") or not hasattr(os, "symlink"), reason="needs named pipes and links")
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo exists on POSIX only")
 def test_named_pipe_is_listed_as_not_a_regular_file(tmp_path):
     _link_fixture(tmp_path, True)
     code, out = _scan(tmp_path, "json")
