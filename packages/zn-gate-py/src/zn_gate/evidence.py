@@ -479,6 +479,18 @@ def _canonical_forms(record: Dict[str, Any]) -> List[str]:
 _last_write_warn: Optional[float] = None
 
 
+def _warn_write(file_path: str, why: str) -> None:
+    """Tells stderr that an event was not recorded: the first time, then at most every 5 minutes."""
+    global _last_write_warn
+    now = time.monotonic()
+    if _last_write_warn is None or now - _last_write_warn >= WARN_INTERVAL:
+        _last_write_warn = now
+        sys.stderr.write(
+            f"zn-gate: cannot write to the evidence log {file_path} ({why}). "
+            "Events are not being recorded; the log is left as it is.\n"
+        )
+
+
 def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
                  lock_wait: float = LOCK_WAIT) -> Optional[Dict[str, Any]]:
     """
@@ -494,6 +506,10 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
     event starts a new chain.
     """
     global _last_warn, _last_write_warn
+    if not isinstance(event, dict):
+        # Node's logEvidence returns null here too, with the same warning.
+        _warn_write(file_path, f"the event is {type(event).__name__}, not a mapping")
+        return None
     lock_path = file_path + ".lock"
     token: Optional[str] = None
     try:
@@ -511,7 +527,11 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
                     f"{recovery_hint(file_path)}\n"
                 )
             return None
-        final_record = _build_record(event, prev_hash)
+        try:
+            final_record = _build_record(event, prev_hash)
+        except (TypeError, ValueError, RecursionError) as e:
+            _warn_write(file_path, f"the event cannot be written as JSON: {e}")
+            return None
         # Still our lock? If it was taken over (this process was stalled for over 10 s) the last
         # hash read above may be out of date: write nothing rather than fork the chain.
         if not _owns_lock(lock_path, token):
@@ -521,18 +541,46 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
         return final_record
     except (OSError, EvidenceLockError) as e:
         # A log problem (no permission, a full disk, a busy lock) must never break the caller.
-        now = time.monotonic()
-        if _last_write_warn is None or now - _last_write_warn >= WARN_INTERVAL:
-            _last_write_warn = now
-            why = str(e) if isinstance(e, EvidenceLockError) else (e.strerror or e)
-            sys.stderr.write(
-                f"zn-gate: cannot write to the evidence log {file_path} ({why}). "
-                "Events are not being recorded; the log is left as it is.\n"
-            )
+        _warn_write(file_path, str(e) if isinstance(e, EvidenceLockError) else (e.strerror or e))
         return None
     finally:
         if token is not None:
             _release_lock(lock_path, token)
+
+
+def _plain(value: Any) -> Any:
+    """The JSON-ready form of a value json cannot write, as the Node package gets it from
+    JSON.stringify: bytes as a Buffer object, a set as an empty object, a non-finite number as
+    null, any other object as its text. Values json already writes keep their content."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (bytes, bytearray)):
+        return {"type": "Buffer", "data": list(value)}
+    if isinstance(value, (set, frozenset)):
+        return {}
+    if isinstance(value, dict):
+        return {(k if isinstance(k, str) else str(k)): _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return str(value)
+
+
+def _json_text(value: Any) -> str:
+    try:
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError, RecursionError):
+        return json.dumps(_plain(value), separators=(",", ":"), ensure_ascii=False)
+
+
+def _json_ready(record: Dict[str, Any]) -> Dict[str, Any]:
+    """The record itself when json writes it, otherwise its JSON-ready form (see _plain)."""
+    try:
+        json.dumps(record)
+    except (TypeError, ValueError, RecursionError):
+        return _plain(record)
+    return record
 
 
 def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
@@ -550,7 +598,7 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
     elif payload_raw is None:
         payload_str = ""
     else:
-        payload_str = json.dumps(payload_raw, separators=(",", ":"), ensure_ascii=False)
+        payload_str = _json_text(payload_raw)
     payload_sha256 = hashlib.sha256(payload_str.encode("utf-8", errors="replace")).hexdigest()
 
     # A confidence of 0 is kept as 0; only a missing or non-numeric one defaults to 1.
@@ -579,6 +627,7 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
         "prev_hash": prev_hash,
     }
 
+    base_record = _json_ready(base_record)
     hash_input = f"{prev_hash}:{_canonical(base_record)}".encode("utf-8")
     final_record = dict(base_record)
     final_record["record_hash"] = hashlib.sha256(hash_input).hexdigest()
