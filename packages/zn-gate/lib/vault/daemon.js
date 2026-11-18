@@ -346,6 +346,7 @@ function headKey(secrets) {
 
 /* Plain message for a log that could not be read (a permission problem, a failing disk). */
 function readErrorText(err) {
+  if (err && err.newerFormat) return err.message;
   const code = err && err.code ? String(err.code).replace(/[^A-Za-z0-9_]/g, '').slice(0, 40) : '';
   return 'the audit log cannot be read' + (code ? ' (' + code + ')' : '') + '; this is a read error, not a sign that it was changed. Next step: check the permissions and free space of ~/.zn/audit.jsonl, then try again.';
 }
@@ -1294,7 +1295,8 @@ async function serve(opts) {
         if (tail) state.secrets.auditHead = { seq: tail.seq, mac: tail.mac };
       }
     } catch (err) {
-      recordTamper(state, 'the audit log cannot be read', null);
+      if (err && err.newerFormat) unlockFailure = err;
+      else recordTamper(state, 'the audit log cannot be read', null);
     }
     try {
       // Make every adoption visible in the log: those records were written but never checkpointed.
@@ -1309,6 +1311,7 @@ async function serve(opts) {
   if (unlockFailure) {
     // The log cannot be continued (its last line is unreadable): do not leave a half-started daemon.
     await shutdown('error');
+    if (unlockFailure.newerFormat) throw unlockFailure;
     throw znError(CODES.LOCKED, 'the audit log cannot be read, so the vault stays locked. The vault keeps a warning about it. Next step: keep a copy of ~/.zn/audit.jsonl as evidence; to start a new log on purpose, see zn vault reset.');
   }
   // The idle clock starts only now that the daemon is ready to serve, not

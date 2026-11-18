@@ -56,6 +56,16 @@ function sanitize(event, knownValues) {
   return out;
 }
 
+/* A record written by a newer zn-gate: refuse, never call it tampering and never append after it. */
+function checkRecordFormat(rec) {
+  if (rec && typeof rec === 'object' && typeof rec.v === 'number' && rec.v > 1) {
+    const { CODES, znError } = require('../errors');
+    const err = znError(CODES.LOCKED, require('../messages').vaultNewerFormat('audit.jsonl', rec.v));
+    err.newerFormat = true;
+    throw err;
+  }
+}
+
 function macOf(key, record) {
   return crypto.createHmac('sha256', key).update(JSON.stringify(record)).digest('hex');
 }
@@ -153,6 +163,7 @@ function append(event, opts) {
   if (key.length < 32) throw new Error('audit key missing');
   const file = o.file;
   const last = lastRecord(file);
+  checkRecordFormat(last);
   const record = Object.assign(
     { v: 1, seq: last ? last.seq + 1 : 1, ts: new Date().toISOString() },
     sanitize(event, o.knownValues),
@@ -185,6 +196,7 @@ function checkHead(file, head) {
   try { last = lastRecord(file); } catch (err) {
     return { ok: false, found: null, reason: 'the last record of the log cannot be read' };
   }
+  checkRecordFormat(last);
   if (!last) return { ok: false, found: null, reason: 'the log is empty or missing, but the vault expects ' + head.seq + ' records' };
   if (last.seq === head.seq && typeof head.mac === 'string' && last.mac === head.mac) return { ok: true };
   const found = { seq: last.seq, mac: last.mac };
@@ -222,6 +234,7 @@ function verify(opts) {
     let rec;
     try { rec = JSON.parse(text); } catch (err) { rec = undefined; }
     if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return fail(line, 'unparseable record');
+    checkRecordFormat(rec);
     const mac = rec.mac;
     delete rec.mac;
     const expected = macOf(key, rec);

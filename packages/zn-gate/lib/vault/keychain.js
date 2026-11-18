@@ -268,6 +268,7 @@ function readMeta(opts) {
     throw znError(CODES.LOCKED, require('../messages').vaultDamaged('keychain.json',
       'is corrupted (it records the keychain backend and the public key)'));
   }
+  store.checkFormat(meta, 'keychain.json');
   return meta;
 }
 

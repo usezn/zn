@@ -257,6 +257,12 @@ function disconnectKeychainLeft(reason, dashboard, canRevoke) {
 
 const TROUBLESHOOTING_URL = 'https://usezn.com/docs/zn-gate/troubleshooting/';
 
+/* A vault file or audit record written by a newer zn-gate: nothing is wrong with it, this build is too old. */
+function vaultNewerFormat(file, version, env = process.env) {
+  return 'This vault was created by a newer zn-gate (format ' + String(version).replace(/[^0-9A-Za-z.]/g, '').slice(0, 12) + ', file ' + file + '). ' +
+    'Update zn-gate: `npm install -g zn-gate@latest`; your secrets are not lost. zn did not change anything.';
+}
+
 /* One sentence for a vault file that cannot be read: what is damaged, what zn did, the real next step.
  * `detail` (a library message) is shown only with ZN_VERBOSE=1 or DEBUG=zn. */
 function vaultDamaged(file, what, detail, env = process.env) {
@@ -370,3 +376,4 @@ module.exports = {
   TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };
+module.exports.vaultNewerFormat = vaultNewerFormat;

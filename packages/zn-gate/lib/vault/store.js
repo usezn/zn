@@ -194,6 +194,23 @@ function readPrivateFile(file) {
   return fs.readFileSync(file);
 }
 
+/* Format version of the vault files (secrets.age, project maps, keychain.json) and of the audit records. */
+const FORMAT_VERSION = 1;
+
+/** A missing `v` counts as 1 (files written before the field was checked). A newer one is refused, never rewritten. */
+function checkFormat(obj, file) {
+  const v = obj && typeof obj === 'object' ? obj.v : undefined;
+  if (v === undefined || v === null) return obj;
+  if (typeof v === 'number' && Number.isInteger(v) && v <= FORMAT_VERSION) return obj;
+  if (typeof v === 'number' && Number.isFinite(v) && v > FORMAT_VERSION) {
+    throw znError(CODES.LOCKED, require('../messages').vaultNewerFormat(file, v));
+  }
+  if (typeof v === 'string' && /^[0-9]+$/.test(v) && Number(v) > FORMAT_VERSION) {
+    throw znError(CODES.LOCKED, require('../messages').vaultNewerFormat(file, v));
+  }
+  return obj;
+}
+
 /** Read and decrypt a JSON age file; null when it does not exist. */
 async function readEncrypted(file, identity) {
   const buf = readPrivateFile(file);
@@ -205,13 +222,15 @@ async function readEncrypted(file, identity) {
     throw znError(CODES.LOCKED, require('../messages').vaultDamaged(path.basename(file),
       'is corrupted or was encrypted to another key', (err && err.message) || err));
   }
+  let parsed;
   try {
-    return JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch (err) {
     // The parser's message quotes the start of the decrypted text: never pass it on, not even with ZN_VERBOSE or DEBUG.
     throw znError(CODES.LOCKED, require('../messages').vaultDamaged(path.basename(file),
       'is corrupted or was encrypted to another key', 'not valid JSON'));
   }
+  return checkFormat(parsed, path.basename(file));
 }
 
 /** true when this ZN_HOME already has history: an audit log or project maps. */
@@ -304,6 +323,8 @@ function touch(file) {
 }
 
 module.exports = {
+  FORMAT_VERSION,
+  checkFormat,
   znHome,
   paths,
   projectKey,
