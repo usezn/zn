@@ -187,6 +187,7 @@ A search runs on the request path, so it is tried once and gives up after one se
 To avoid the download:
 
 - `ZN_FAST_BOOT=1` (any value): the gateway does not load the model and runs with a stub. The neural check is off, and the gateway says so when it starts. With `neural.active_blocking` on (and `guardrails.alert_only` off) the gateway does not start, because the check that should block would be missing. For tests only.
+- If the fusion neural check fails while it runs (an inference error) in `zn analyze` or the `analyze_prompt` tool: with `neural.active_blocking` on (and `guardrails.alert_only` off) the text is blocked with the rule `fusion_neural_error`; otherwise the rules decide alone and zn logs a warning.
 - `"neural": {"enabled": false}` in `zn.json`: the model is not loaded and the neural check is off.
 - `ZN_NEURAL_MODEL_PATH=/path/to/folder` (or `neural.model_path` in `zn.json`): the gateway loads the model from that folder. Nothing is downloaded if the three files there match their hashes, so a local copy must be byte-identical.
 - `HF_ENDPOINT=<your-mirror-url>`: the gateway downloads from that server instead of huggingface.co. The server must serve the same paths, `<endpoint>/sentence-transformers/all-MiniLM-L6-v2/resolve/<commit>/<file>`.

@@ -52,6 +52,9 @@ const MAX_AGENT_ID_CHARS: usize = 128;
 /// Policy match of a call denied because the neural check could not run while it blocks.
 const NEURAL_ERROR_MATCH: &str = "neural_engine_error";
 
+/// Rule of an `analyze` verdict denied because the fusion neural check failed while neural blocking is on.
+const FUSION_ERROR_RULE: &str = "fusion_neural_error";
+
 /// `ZN_FAST_BOOT` (tests and smoke runs) does not load the neural model. With neural blocking on that
 /// would silently turn a protection off, so zn refuses to start; otherwise it says so at start.
 fn apply_fast_boot(config: &mut ZnConfig) -> Result<String> {
@@ -828,16 +831,24 @@ impl AnalyzerPipeline {
         // 1.5 Fusion Gate: block iff rules hit OR head score >= tau.
         // Disabled config / missing model degrades to exactly (rules_hit,
         // None): byte-identical output, no "fusion" key.
-        let (fused_blocked, fusion_ev) = zn::engine::neural::evaluate(
+        let fusion = zn::engine::neural::evaluate(
             rules_hit,
             &format!("analyze: {analysis_input}"),
             &self.config.fusion,
+            self.config.is_neural_blocking(),
         );
-        if fused_blocked && !rules_hit {
-            // Neural camera alone blocks: the negation case that rules miss.
+        let fusion_ev = fusion.evidence;
+        if fusion.blocked && !rules_hit {
             verdict = "block";
-            matched_rule = Some("fusion_neural".to_string());
-            risk_score = fusion_ev.as_ref().map_or(1.0, |ev| ev.neural_score as f64);
+            if fusion.error.is_some() {
+                // The neural check could not run while neural blocking is on: deny.
+                matched_rule = Some(FUSION_ERROR_RULE.to_string());
+                risk_score = 1.0;
+            } else {
+                // Neural camera alone blocks: the negation case that rules miss.
+                matched_rule = Some("fusion_neural".to_string());
+                risk_score = fusion_ev.as_ref().map_or(1.0, |ev| ev.neural_score as f64);
+            }
         }
 
         // 2. Neural Analysis (System-2) - only if not already blocked

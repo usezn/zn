@@ -118,30 +118,73 @@ pub fn fused_block(rules_hit: bool, neural_score: Option<f32>, tau: f32) -> bool
     rules_hit || neural_score.is_some_and(|s| s >= tau)
 }
 
-/// One fused decision + its evidence. Evidence is `Some` only when the neural
-/// camera actually participated (score computed) AND the call was blocked.
-/// Returns `(blocked, evidence)`.
+/// Result of one fused decision.
+#[derive(Debug)]
+pub struct FusionDecision {
+    pub blocked: bool,
+    /// `Some` only when the neural camera participated (score computed) AND the call was blocked.
+    pub evidence: Option<super::super::audit::FusionEvidence>,
+    /// `Some` when the neural check could not run (inference error). With `fail_closed`
+    /// the decision is then a block.
+    pub error: Option<String>,
+}
+
+/// One fused decision + its evidence. `fail_closed` is the active-blocking mode
+/// (`ZnConfig::is_neural_blocking`): an inference error then denies the call instead of
+/// falling back to the rules decision. In monitor mode the error is logged as a warning
+/// and the rules decision stands.
 pub fn evaluate(
     rules_hit: bool,
     neural_input: &str,
     cfg: &FusionConfig,
-) -> (bool, Option<super::super::audit::FusionEvidence>) {
-    use super::super::audit::FusionEvidence;
+    fail_closed: bool,
+) -> FusionDecision {
     let Some(engine) = shared_engine(cfg) else {
-        return (rules_hit, None);
+        return FusionDecision {
+            blocked: rules_hit,
+            evidence: None,
+            error: None,
+        };
     };
-    let score = match engine.score(neural_input) {
+    decide(rules_hit, engine.score(neural_input), cfg, fail_closed)
+}
+
+/// The decision itself, with the score (or the inference error) passed in so tests can
+/// inject an error without a model.
+fn decide(
+    rules_hit: bool,
+    scored: Result<f32>,
+    cfg: &FusionConfig,
+    fail_closed: bool,
+) -> FusionDecision {
+    use super::super::audit::FusionEvidence;
+    let score = match scored {
         Ok(s) => s,
         Err(e) => {
-            // Inference hiccup: degrade this call to the rules gate, never
-            // fail open into a block.
-            warn!("FUSION: scoring failed, degrading to rules gate: {e}");
-            return (rules_hit, None);
+            let msg = e.to_string();
+            if fail_closed {
+                warn!("FUSION: scoring failed, denying (neural blocking is on): {msg}");
+                return FusionDecision {
+                    blocked: true,
+                    evidence: None,
+                    error: Some(msg),
+                };
+            }
+            warn!("FUSION: scoring failed, using the rules decision (monitor mode): {msg}");
+            return FusionDecision {
+                blocked: rules_hit,
+                evidence: None,
+                error: Some(msg),
+            };
         }
     };
     let blocked = fused_block(rules_hit, Some(score), cfg.tau);
     if !blocked {
-        return (false, None);
+        return FusionDecision {
+            blocked: false,
+            evidence: None,
+            error: None,
+        };
     }
     let mut cameras = Vec::with_capacity(2);
     if rules_hit {
@@ -150,15 +193,16 @@ pub fn evaluate(
     if score >= cfg.tau {
         cameras.push("neural".to_string());
     }
-    (
-        true,
-        Some(FusionEvidence {
+    FusionDecision {
+        blocked: true,
+        evidence: Some(FusionEvidence {
             cameras,
             neural_score: score,
             tau: cfg.tau,
             model_id: cfg.model_id.clone(),
         }),
-    )
+        error: None,
+    }
 }
 
 #[cfg(test)]
@@ -209,10 +253,10 @@ mod tests {
             ..FusionConfig::default()
         };
         assert!(shared_engine(&cfg).is_none(), "disabled => no engine");
-        let (blocked, ev) = evaluate(true, "anything", &cfg);
-        assert!(blocked && ev.is_none());
-        let (blocked, ev) = evaluate(false, "anything", &cfg);
-        assert!(!blocked && ev.is_none());
+        let d = evaluate(true, "anything", &cfg, true);
+        assert!(d.blocked && d.evidence.is_none() && d.error.is_none());
+        let d = evaluate(false, "anything", &cfg, true);
+        assert!(!d.blocked && d.evidence.is_none() && d.error.is_none());
     }
 
     #[test]
@@ -226,8 +270,41 @@ mod tests {
             shared_engine(&cfg).is_none(),
             "absent model files => engine None"
         );
-        let (blocked, ev) = evaluate(false, "rm -rf /", &cfg);
-        assert!(!blocked && ev.is_none());
+        let d = evaluate(false, "rm -rf /", &cfg, false);
+        assert!(!d.blocked && d.evidence.is_none());
+    }
+
+    // ── Inference error: fail closed when blocking, rules only in monitor mode ──
+
+    #[test]
+    fn neural_inference_error_denies_when_blocking_is_on() {
+        let cfg = FusionConfig::default();
+        let d = decide(false, Err(anyhow!("session run failed")), &cfg, true);
+        assert!(d.blocked, "an inference error must deny in blocking mode");
+        assert_eq!(d.error.as_deref(), Some("session run failed"));
+        assert!(d.evidence.is_none());
+    }
+
+    #[test]
+    fn neural_inference_error_keeps_rules_decision_in_monitor_mode() {
+        let cfg = FusionConfig::default();
+        let d = decide(false, Err(anyhow!("session run failed")), &cfg, false);
+        assert!(
+            !d.blocked && d.error.is_some(),
+            "rules allowed: stays allowed"
+        );
+        let d = decide(true, Err(anyhow!("session run failed")), &cfg, false);
+        assert!(d.blocked, "rules hit: stays blocked");
+    }
+
+    #[test]
+    fn neural_successful_score_is_unchanged_by_the_mode() {
+        let cfg = FusionConfig::default();
+        for fail_closed in [true, false] {
+            assert!(!decide(false, Ok(0.0), &cfg, fail_closed).blocked);
+            let d = decide(false, Ok(0.999), &cfg, fail_closed);
+            assert!(d.blocked && d.evidence.is_some() && d.error.is_none());
+        }
     }
 
     // ── Parity vs the exported py scores (skips without local model) ──
@@ -528,7 +605,11 @@ mod tests {
         let expected = 0.880_797_f32;
 
         // Neural block alone (rules allow): the negation case.
-        let (blocked, ev) = evaluate(false, "hello", &cfg(0.5));
+        let FusionDecision {
+            blocked,
+            evidence: ev,
+            ..
+        } = evaluate(false, "hello", &cfg(0.5), true);
         let ev = ev.expect("a neural block carries evidence");
         assert!(blocked);
         assert_eq!(ev.cameras, vec!["neural".to_string()]);
@@ -541,7 +622,11 @@ mod tests {
         assert!((ev.tau - 0.5).abs() < f32::EPSILON);
 
         // Both cameras agree.
-        let (blocked, ev) = evaluate(true, "hello", &cfg(0.5));
+        let FusionDecision {
+            blocked,
+            evidence: ev,
+            ..
+        } = evaluate(true, "hello", &cfg(0.5), true);
         assert!(blocked);
         assert_eq!(
             ev.expect("evidence").cameras,
@@ -549,18 +634,26 @@ mod tests {
         );
 
         // Score under tau: the neural camera allows.
-        let (blocked, ev) = evaluate(false, "hello", &cfg(0.95));
+        let FusionDecision {
+            blocked,
+            evidence: ev,
+            ..
+        } = evaluate(false, "hello", &cfg(0.95), true);
         assert!(!blocked && ev.is_none(), "allow carries no evidence");
 
         // Rules block stays a block and the evidence names only the rules camera.
-        let (blocked, ev) = evaluate(true, "hello", &cfg(0.95));
+        let FusionDecision {
+            blocked,
+            evidence: ev,
+            ..
+        } = evaluate(true, "hello", &cfg(0.95), true);
         let ev = ev.expect("evidence for a rules block");
         assert!(blocked);
         assert_eq!(ev.cameras, vec!["rules".to_string()]);
         assert!((ev.neural_score - expected).abs() < 1e-4);
 
         // Unknown words and an empty input still score without an error.
-        let (blocked, _) = evaluate(false, "", &cfg(0.5));
+        let FusionDecision { blocked, .. } = evaluate(false, "", &cfg(0.5), true);
         assert!(blocked, "the fake model scores everything the same");
 
         assert!(shared_engine(&cfg(0.5)).is_some());
