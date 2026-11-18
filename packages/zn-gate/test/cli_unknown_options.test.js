@@ -70,7 +70,7 @@ test('scan with an unknown option names it, lists its options and exits 2', () =
     const r = run(['scan', '--bogus'], { cwd: dir });
     assert.strictEqual(r.status, 2, r.stderr);
     assert.match(r.stderr, /unknown option "--bogus"/);
-    assert.match(r.stderr, /--format, --include, --exclude, --code, --all, --allow-partial, --include-home/);
+    assert.match(r.stderr, /--format, --include, --exclude, --code, --all, --allow-partial, --no-fail, --include-home/);
     assert.strictEqual(r.stdout, '');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -74,7 +74,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `scan` | `0`, `1`, `2`, `3` | `0` nothing found and everything that matched was read; `1` something was found or the path does not exist; `2` an unknown `--format`; `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. |
+| `scan` | `0`, `1`, `2`, `3` | `0` nothing found and everything that matched was read; `1` something was found or the path does not exist; `2` an unknown `--format`; `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. `--no-fail` always exits `0`. |
 | `audit` | `0`, `1`, `2` | `0` nothing at or above `--fail-on`; `1` findings at or above it; `2` wrong usage or a path that is not a folder. |
 | `reach` | `0`, `1`, `2` | `0` done; `1` findings meet `--fail-on`; `2` wrong usage or a failure. |
 | `analyze` | `0`, `1`, `2` | `0` the text is allowed; `1` no text given; `2` the text is blocked. |

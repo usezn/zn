@@ -300,6 +300,7 @@ OPTIONS:
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --allow-partial     scan: exit 0 even when some files or folders were not read
                       (they are still listed). Reading no file at all stays an error (exit 3)
+  --no-fail           scan: print the full report but always exit 0 (report-only mode for CI)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
   --include-home      Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex,
                       Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text
@@ -753,6 +754,8 @@ Files   : ${files.length} file(s) queued for audit\n
   const incomplete = files.skipped.length + unreadDirs > 0;
   const incompleteNote = `${files.skipped.length} file(s) and ${unreadDirs} folder(s) were not read`;
   const coverageExit = () => {
+    // --no-fail is report-only: the report is printed in full and the exit code is always 0.
+    if (options.noFail) return 0;
     if (totalFindings > 0) return 1;
     if (files.length - notRead === 0) return 3;
     if (incomplete && !options.allowPartial) return 3;
@@ -904,6 +907,7 @@ async function runScanPackage(args, options) {
     // A partly walked audit (time budget, entry cap, folder not opened, agent file not fully read) is not a clean one.
     const gaps = auditCoverageGaps(result);
     if (gaps.length) process.stdout.write('\nConfig audit incomplete: ' + gaps.join('; ') + '. Exit code 3\n');
+    if (options.noFail) return 0;
     if (summary.failed || scanCode === 1) return 1;
     return scanCode || (gaps.length ? 3 : 0);
   } finally {
@@ -1028,8 +1032,8 @@ const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
 const COMMAND_OPTIONS = {
   scan: {
     value: ['--format', '--include', '--exclude', '--package', ...CLOUD_VALUE_OPTIONS],
-    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
-    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--package'],
+    flag: ['--code', '--all', '--allow-partial', '--no-fail', '--include-home', ...CLOUD_FLAG_OPTIONS],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--no-fail', '--include-home', '--package'],
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,
@@ -1239,6 +1243,7 @@ async function main() {
     includeCode: args.includes('--code') || args.includes('--all'),
     includeHome: args.includes('--include-home'),
     allowPartial: args.includes('--allow-partial'),
+    noFail: args.includes('--no-fail'),
     include: null,
     exclude: null,
   };

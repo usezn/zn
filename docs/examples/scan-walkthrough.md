@@ -118,7 +118,7 @@ Status       : No files were read: this is not a clean result
 Two options change the exit code:
 
 - `--allow-partial` exits `0` even when some files or folders were not read; they are still listed in the report. It does not apply when no file was read at all. In the Node version, put the path before the options (`scan ./docs --allow-partial`); `scan --allow-partial ./docs` scans the current folder.
-- The Python package also has `--no-fail`, which always exits `0`.
+- `--no-fail` (npm and Python) prints the same report but always exits `0`.
 
 ## `--format github` for CI
 
