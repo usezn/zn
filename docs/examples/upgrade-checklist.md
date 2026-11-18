@@ -18,7 +18,7 @@ A one-screen version of [Upgrading zn-gate](../upgrading.md). Run every command 
   ```
 
   It is safe to repeat: it updates zn's own entries and leaves the rest of your settings alone. Add `--project` for a project install, then commit the changed file.
-- [ ] Claude Code plugin: update it with `/plugin` in Claude Code (or `claude plugin update zn-gate@usezn`) and start a new session.
+- [ ] Claude Code plugin: the plugin is pinned to a release tag, so `/plugin` and `claude plugin update` do not bring a newer release. Run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#vX.Y.Z` (the new release tag) and `claude plugin install zn-gate@usezn`, then start a new session.
 - [ ] Codex: open Codex and approve the changed hooks in `/hooks`.
 
 ## After

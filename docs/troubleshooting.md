@@ -800,7 +800,7 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 **Is it safe?** Yes, the action was blocked. But nothing is being checked until you repair it.
 
-**What to do:** run `npm install -g zn-gate`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. The [check page](check.md#the-hooks-are-set-up-but-cannot-run) explains each case, and [compat](compat.md#if-your-agent-blocks-every-prompt) covers an agent that blocks every prompt.
+**What to do:** run `npm install -g zn-gate`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, move its marketplace to the new release tag instead (`claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#vX.Y.Z`, `claude plugin install zn-gate@usezn`). The [check page](check.md#the-hooks-are-set-up-but-cannot-run) explains each case, and [compat](compat.md#if-your-agent-blocks-every-prompt) covers an agent that blocks every prompt.
 
 #### "zn: could not check this action against your secret vault, so it was blocked"
 
@@ -827,7 +827,7 @@ zn: <agent> sent an event zn does not know, so zn cannot check it and blocked it
 
 **Is it safe?** A blocked call was not run. An event that was let through with a note was not checked, so update zn-gate soon.
 
-**What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
+**What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, move its marketplace to the new release tag instead (`claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#vX.Y.Z`, `claude plugin install zn-gate@usezn`). If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
 #### "zn: this action names a file or text that is not valid Unicode text, so it was blocked"
 

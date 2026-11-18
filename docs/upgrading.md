@@ -46,7 +46,7 @@ that fixes it.
 | npm (global install) | `npm install -g zn-gate` | Run `zn-gate check`. |
 | pip (Python package) | `pip install -U zn-gate` | Run `zn-gate check`. |
 | npx | `npx -y zn-gate ...` | Nothing to update. |
-| Claude Code plugin | `/plugin` inside Claude Code, or `claude plugin update zn-gate@usezn` in your terminal | Start a new Claude Code session. |
+| Claude Code plugin | `claude plugin marketplace remove usezn`, then `claude plugin marketplace add usezn/zn#vX.Y.Z` (the tag of the release you want), then `claude plugin install zn-gate@usezn`, all in your terminal | Start a new Claude Code session. `/plugin` and `claude plugin update` keep the release the marketplace is pinned to, so they do not upgrade it. |
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
@@ -67,8 +67,8 @@ finds lack a hook that your zn-gate has.
 Other cases:
 
 - **The zn-gate plugin for Claude Code** is added from a marketplace pinned to a
-  release tag, so `/plugin` and `claude plugin update` do not bring a newer
-  release by themselves. To move to a new release, run this in your own
+  release tag, so `/plugin` and `claude plugin update` keep that release and do
+  not bring a newer one. To move to a new release, run this in your own
   terminal, with the tag of the release you want in place of `vX.Y.Z`:
 
   ```bash
@@ -293,6 +293,9 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 | Version | Date | What to do |
 |---|---|---|
+| 1.16.0 | 2026-11-16 | The hook launcher now checks every zn-gate file the hook loads, not only the runner. `npm update -g zn-gate` refreshes the launchers by itself; if you updated with pnpm, bun, `--ignore-scripts` or `sudo`, run `zn hooks install <agent>` again for each agent. Optional: run `zn hooks install claude-code` again to add the new `ConfigChange` and `InstructionsLoaded` hooks (the plugin does not have them). Claude Code plugin: move the marketplace to the new tag (see [Other cases](#run-zn-hooks-install-agent-again-when-a-release-changes-the-hook)). ZCode plugin: install it again in ZCode (Settings, Plugins). A script that gives `check`, `doctor`, `status`, `version`, `test`, `evidence`, `logs`, `export` or `team status` an option the command does not have now fails with exit code `2` instead of ignoring it, and `zn-gate evidence --export` with an unknown `--format` exits `2` too. |
+| 1.15.0 | 2026-11-06 | The hook launcher now runs zn-gate's hook runner only while it matches the copy recorded at install time, and no longer falls back to a `zn` on the PATH. `npm update -g zn-gate` refreshes the launchers by itself. If you updated with pnpm, bun or `--ignore-scripts`, run `zn hooks install <agent>` again for each agent: until then the hooks block tool calls and say so (with pnpm they keep running the previous version's runner, without a message). ZCode plugin: install it again in ZCode (Settings, Plugins), because the Windows hook of earlier plugin versions could not start there. Claude Code plugin: move the marketplace to the new tag. |
+| 1.14.1 | 2026-10-28 | No action. This is the first 1.14 release on npm (1.14.0 reached PyPI only), so if you update from an earlier version with npm, use the 1.14.0 rows below and [the 1.14 checklist](#what-changes-when-you-update-to-114) as well. |
 | 1.14.0 | 2026-10-27 | A CI job or pre-commit hook that runs `zn-gate scan` can now exit `3` when a file was skipped (for example a JSON or Markdown file of 2 MiB or more) or when no file was read. Pass `--allow-partial` to accept skipped files (an empty scan still exits `3`); in the GitHub Action set `allow-partial: true`, and in pre-commit add `args: [--allow-partial]` to the `zn-gate-scan` hook. |
 | 1.14.0 | 2026-10-27 | **A secret marker in a command's arguments is now refused**, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: run `zn secret allow NAME --mode proxy` if an API needs it. Approvals saved by earlier versions do not carry over: the first time a command uses a secret after you update, zn asks you to approve it again. A vault that is already unlocked while you update is restarted by `zn unlock`. |
 | 1.13.0 | 2026-10-19 | If you installed Claude Code hooks with `zn hooks install claude-code`, run it again to add the hook that checks what a typed skill or command expands into (`zn-gate check` tells you; the plugin has it already). On a Node.js older than 20.12, `zn-gate init` sets up hooks instead of the plugin; if you have the plugin there, `check` gives the way out. In a GitHub workflow that uses the Action without `version`, set `version` to choose what runs: the 1.12.0 Action defaulted to 1.10.0. |

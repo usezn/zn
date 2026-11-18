@@ -70,7 +70,7 @@ Replace `codex` with the agent you use; the install, verify and uninstall comman
 
 Two notes for the Claude Code plugin, both shown by the check itself:
 
-- When the zn-gate plugin is a different version from the zn-gate command, the check adds a note that says which one to update: the plugin (`claude plugin update zn-gate@usezn`) when it is older, or the command (`npm install -g zn-gate@latest`) when it is older. This alone does not make Claude Code NOT protected.
+- When the zn-gate plugin is a different version from the zn-gate command, the check adds a note that says which one to update: the plugin when it is older (add the marketplace again at the new release tag, as [Upgrading](../upgrading.md#run-zn-hooks-install-agent-again-when-a-release-changes-the-hook) shows), or the command (`npm install -g zn-gate@latest`) when it is older. This alone does not make Claude Code NOT protected.
 - If the hooks were installed by an older zn-gate and lack the check for typed skills and commands, the check suggests running `zn hooks install claude-code` again.
 
 For Codex CLI, `zn hooks install codex` writes zn's hooks into your user file `~/.codex/hooks.json`. Codex runs a new or changed user hook only after you approve it: open Codex, type `/hooks` and approve zn's hooks there. Codex asks you to review them again when a hook changes.
