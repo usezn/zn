@@ -43,11 +43,11 @@ const forms = {
     const cmd = launcher.projectShCommand('claude-code', 'PreToolUse');
     assert.ok(cmd.startsWith('sh -c '));
     const script = cmd.slice(6).replace(/^'|'$/g, '').replace(/'\''/g, "'");
-    return spawnSync(path.join(bin, 'sh'), [...shellArgs(whichSh()), '-c', script], { input, encoding: 'utf8', env: { PATH: bin }, cwd: '/' });
+    return spawnSync(path.join(bin, 'sh'), [...shellArgs(whichSh()), '-c', script], { input, encoding: 'utf8', env: { PATH: bin + ':/usr/bin:/bin' }, cwd: '/' });
   },
   'split-on-spaces form (Antigravity)': (bin, input) => {
     const parts = launcher.projectShCommand('antigravity').split(' ');
-    return spawnSync(path.join(bin, parts[0]), parts.slice(1), { input, encoding: 'utf8', env: { PATH: bin }, cwd: '/' });
+    return spawnSync(path.join(bin, parts[0]), parts.slice(1), { input, encoding: 'utf8', env: { PATH: bin + ':/usr/bin:/bin' }, cwd: '/' });
   },
 };
 
@@ -75,11 +75,12 @@ test('project guard, PowerShell form: PATH entries in node_modules are dropped b
 
 test('OpenCode project plugin: the PATH given to zn has no node_modules entry', () => {
   const src = opencode.pluginSource({ scope: 'project' });
-  assert.match(src, /!\/node_modules\/i\.test\(d\)/);
+  assert.match(src, /\/node_modules\/i\.test\(d\)/);
   const m = src.match(/function projectEnv\(\) \{[\s\S]*?\n\}\n/)[0];
-  const env = new Function('process', m + '; return projectEnv();')({
+  const env = new Function('process', 'realpathSync', 'existsSync', 'homedir', m + '; return projectEnv();')({
     platform: 'linux',
+    cwd: () => '/',
     env: { PATH: '/proj/node_modules/.bin:/usr/bin:/opt/Node_Modules/x/bin:/bin' },
-  });
+  }, (p) => p, () => false, () => '/nonexistent-home');
   assert.equal(env.PATH, '/usr/bin:/bin');
 });

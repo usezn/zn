@@ -190,7 +190,28 @@ function projectEnv() {
     if (k.toUpperCase() === "PATH") pathValue = String(v || "");
     else env[k] = v;
   }
-  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/")) && !/node_modules/i.test(d);
+  // A PATH entry, or the zn or node in it, can be a link into node_modules/.bin or into the project: the real paths count too.
+  // An entry whose real folder cannot be read, or that is in a node_modules folder or in the project, is dropped; so is an
+  // entry whose zn or node really is in a node_modules/.bin folder or in the project. The project is the folder OpenCode
+  // runs in, unless that is / or the home folder. (A global npm install links zn into <prefix>/node_modules/zn-gate: kept.)
+  const real = (p) => { try { return realpathSync(p).split("\\\\").join("/").toLowerCase(); } catch (_) { return null; } };
+  const here = real(process.cwd());
+  const home = real(homedir());
+  const inProject = (p) => !!here && here !== home && here.length > 3 && (p === here || p.startsWith(here + "/"));
+  const names = win ? ["zn.cmd", "zn.exe", "zn", "node.exe", "node.cmd"] : ["zn", "node"];
+  const sep = win ? ";" : ":";
+  const keep = (d) => {
+    if (!(win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/")) || /node_modules/i.test(d)) return false;
+    const rd = real(d);
+    if (!rd || rd.includes("/node_modules/") || rd.endsWith("/node_modules") || inProject(rd)) return false;
+    for (const n of names) {
+      const f = d + (win ? "/" : "/") + n;
+      if (!existsSync(f)) continue;
+      const rf = real(f);
+      if (!rf || rf.includes("/node_modules/.bin/") || inProject(rf)) return false;
+    }
+    return true;
+  };
   env.PATH = pathValue.split(win ? ";" : ":").filter(keep).join(win ? ";" : ":");
   if (win) env.NoDefaultCurrentDirectoryInExePath = "1";
   return env;
@@ -201,7 +222,7 @@ function projectEnv() {
 // which blocks reads of secret files, puts commands that use stored secrets
 // through \`zn run\`, and replaces secret values in tool output with __ZN_ tokens.
 import { spawn } from "node:child_process";
-
+${project ? 'import { existsSync, realpathSync } from "node:fs";\nimport { homedir } from "node:os";\n' : ''}
 ${launch}
 ${projectEnvSource}
 // Variables that make Node.js or the dynamic loader load code of the caller's choosing (NODE_OPTIONS=--require, LD_PRELOAD

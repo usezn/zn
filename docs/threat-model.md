@@ -545,6 +545,13 @@ Three features are off by default. Each one helps in a narrow case and has limit
 
 ## Design decisions and known limits
 
+- **Project hook guard and links.** The project hook guard runs the `zn` and `node` it finds on the PATH only when
+  neither is in a `node_modules` folder or, with links followed, in a `node_modules/.bin` folder or in the folder the
+  agent runs in. On Linux and macOS (and in the OpenCode project plugin) links are followed with `readlink -f` or
+  `realpath`, and a link that cannot be followed blocks the call. The Windows PowerShell guard checks only the PATH
+  text: Windows PowerShell 5.1 cannot read a link target without cmdlets, so a PATH folder that is a junction into
+  `node_modules\.bin` is not caught there. A user install (`zn hooks install <agent>` without `--project`) names its
+  Node.js and runner by full path and is not affected.
 - **`secrets_http_request` and secret modes:** only a secret in `proxy` mode is
   sent over HTTP, to a host in its `allowHosts` and in the places its settings
   allow. The vault checks the mode, the host and the placement again when it
