@@ -1,0 +1,2 @@
+### Fixed
+- The Node.js secret redaction now takes the same token shapes as the Python package and the scrubber: a GitHub token of 41 to 255 characters, a fine-grained GitHub token longer than 82 characters, a JWT with short parts, an AWS secret access key named in the words before it, and a private key whose END line was cut off. Both packages are now tested against one shared set of fake token shapes.

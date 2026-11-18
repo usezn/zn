@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-16.34
+ * RULES_VERSION: 2026-11-18.1
  */
 
-const RULES_VERSION = '2026-11-16.34';
+const RULES_VERSION = '2026-11-18.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1652,15 +1652,22 @@ const SCRUB_PROVIDER_RULES = new Map([
   'SQUARE_TOKEN', 'DISCORD_BOT_TOKEN',
   'ONEPASSWORD_SA_TOKEN', 'AGE_SECRET_KEY', 'ALIBABA_KEY_ID', 'ARTIFACTORY_KEY', 'CLOUDFLARE_ORIGIN_CA_KEY', 'DYNATRACE_TOKEN', 'EASYPOST_KEY', 'FLYIO_TOKEN', 'GRAFANA_TOKEN', 'TERRAFORM_CLOUD_TOKEN', 'HEROKU_KEY_V2', 'NOTION_TOKEN', 'PERPLEXITY_KEY', 'PLANETSCALE_TOKEN', 'POSTMAN_KEY', 'PREFECT_KEY', 'PULUMI_TOKEN', 'README_KEY', 'RUBYGEMS_KEY', 'BREVO_KEY', 'SENTRY_USER_TOKEN', 'SHIPPO_KEY', 'OPENSHIFT_TOKEN', 'TEAMS_WEBHOOK',
   'BEARER_TOKEN',
+  // Forms the shared rules above do not take: GitHub tokens of 41 to 255 characters and fine-grained tokens
+  // longer than 82, a JWT with short parts, an AWS secret access key named in the words before it, and a
+  // private key whose END line was cut off. The Python package has the same forms (the #scrub rules).
+  'GITHUB_TOKEN', 'GITHUB_PAT', 'JWT', 'AWS_SECRET', 'PRIVATE_KEY',
 ].map((t) => [t, 'secret:' + t.toLowerCase()]).concat([
   ['AWS_KEY', 'secret:aws_key_id'],
   ['URL_PASSWORD', 'secret:url_password'],
+  ['GITHUB_PAT', 'secret:github_token'],
+  ['JWT', 'secret:jwt_token'],
+  ['AWS_SECRET', 'secret:aws_secret_key'],
   ['DB_PASSWORD', 'secret:url_password'],
 ]));
 
 // The scrubber types a URL password as DB_PASSWORD or URL_PASSWORD by scheme;
 // the Python package has one rule and one label for every scheme.
-const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
+const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD'], ['GITHUB_PAT', 'GITHUB_TOKEN']]);
 
 // The provider token formats of the scrubber engine (GitLab, Slack, Stripe,
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
