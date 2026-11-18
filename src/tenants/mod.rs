@@ -103,7 +103,7 @@ pub fn generate_ws_token_file(db_path: impl AsRef<Path>, token: &str) -> Result<
 /// followed.
 pub fn write_seed_key_file(path: &Path, key: &str) -> Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)
+        crate::private_file::create_private_dir(dir)
             .map_err(|e| anyhow!("Failed to create directory {:?}: {}", dir, e))?;
     }
     match std::fs::remove_file(path) {

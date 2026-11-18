@@ -329,6 +329,71 @@ fn create_temp(dir: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
+/// Create the folder `path` (and any missing parents) for private material
+/// such as key files, and check it.
+///
+/// Unix: new folders are created with mode `0700`, whatever the umask. A folder
+/// that already exists is not changed: it must be owned by the current user and
+/// have no write access for group or others, otherwise this fails with
+/// [`io::ErrorKind::PermissionDenied`] (the same refuse-and-explain policy as
+/// [`open_private`] for a loose file; nothing is chmod-ed behind the user's back).
+/// Only the last folder is checked, not its parents.
+///
+/// Windows: the folder is created with the inherited protection of its parent
+/// and is only checked to be a folder (the owner-only protection of the files
+/// inside is what [`create_private_file`] sets).
+///
+/// A link at `path` is followed, and the folder it points to is the one checked.
+pub fn create_private_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+    }
+    #[cfg(not(unix))]
+    fs::create_dir_all(path)?;
+    verify_private_dir(path)
+}
+
+/// Check that `path` is a folder only its owner can change: owned by the
+/// effective user with no write access for group or others (Unix); only a
+/// folder check on Windows. See [`create_private_dir`].
+pub fn verify_private_dir(path: &Path) -> io::Result<()> {
+    let meta = fs::metadata(path)?;
+    if !meta.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("not a folder: {}", path.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        if meta.uid() != euid {
+            return Err(denied(format!(
+                "folder {} is owned by uid {}, not by the current user (uid {})",
+                path.display(),
+                meta.uid(),
+                euid
+            )));
+        }
+        let mode = meta.mode() & 0o7777;
+        if mode & 0o022 != 0 {
+            return Err(denied(format!(
+                "folder {} has mode {mode:04o}: group or others can write to it, so they could \
+                 replace the key files inside (run chmod 700 on it, or choose another folder)",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 mod sys {
     use super::{denied, link_refused, not_regular};
@@ -1467,5 +1532,90 @@ mod tests {
             verify_private(&path).unwrap();
             assert_eq!(icacls_entries(&path).len(), 1);
         }
+    }
+
+    #[cfg(unix)]
+    mod private_dir {
+        use super::*;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        fn mode(p: &Path) -> u32 {
+            fs::metadata(p).unwrap().mode() & 0o7777
+        }
+
+        #[test]
+        fn new_folder_and_new_parents_are_0700() {
+            let dir = tempfile::tempdir().unwrap();
+            let leaf = dir.path().join("a").join("b");
+            create_private_dir(&leaf).unwrap();
+            assert_eq!(mode(&leaf), 0o700);
+            assert_eq!(mode(&dir.path().join("a")), 0o700);
+        }
+
+        #[test]
+        fn existing_private_folder_is_accepted_again_and_unchanged() {
+            let dir = tempfile::tempdir().unwrap();
+            let leaf = dir.path().join("keys");
+            create_private_dir(&leaf).unwrap();
+            create_private_dir(&leaf).unwrap();
+            assert_eq!(mode(&leaf), 0o700);
+        }
+
+        #[test]
+        fn existing_0755_folder_is_accepted() {
+            let dir = tempfile::tempdir().unwrap();
+            let leaf = dir.path().join("keys");
+            fs::create_dir(&leaf).unwrap();
+            fs::set_permissions(&leaf, fs::Permissions::from_mode(0o755)).unwrap();
+            create_private_dir(&leaf).unwrap();
+            assert_eq!(mode(&leaf), 0o755, "an acceptable folder is not changed");
+        }
+
+        #[test]
+        fn existing_group_or_other_writable_folder_is_refused_and_not_changed() {
+            for bad in [0o777, 0o775, 0o757, 0o722] {
+                let dir = tempfile::tempdir().unwrap();
+                let leaf = dir.path().join("keys");
+                fs::create_dir(&leaf).unwrap();
+                fs::set_permissions(&leaf, fs::Permissions::from_mode(bad)).unwrap();
+                let err = create_private_dir(&leaf).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "mode {bad:o}");
+                assert!(err.to_string().contains("chmod 700"), "{err}");
+                assert_eq!(mode(&leaf), bad, "a refused folder is left as it was");
+            }
+        }
+
+        #[test]
+        fn a_file_at_the_path_is_refused() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("keys");
+            fs::write(&path, b"x").unwrap();
+            assert!(create_private_dir(&path).is_err());
+        }
+
+        #[test]
+        fn a_link_to_a_loose_folder_is_refused_and_to_a_private_one_accepted() {
+            let dir = tempfile::tempdir().unwrap();
+            let loose = dir.path().join("loose");
+            let tight = dir.path().join("tight");
+            fs::create_dir(&loose).unwrap();
+            fs::set_permissions(&loose, fs::Permissions::from_mode(0o777)).unwrap();
+            fs::create_dir(&tight).unwrap();
+            fs::set_permissions(&tight, fs::Permissions::from_mode(0o700)).unwrap();
+            std::os::unix::fs::symlink(&loose, dir.path().join("l1")).unwrap();
+            std::os::unix::fs::symlink(&tight, dir.path().join("l2")).unwrap();
+            assert!(create_private_dir(&dir.path().join("l1")).is_err());
+            create_private_dir(&dir.path().join("l2")).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_dir_creates_a_folder_and_accepts_it_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let leaf = dir.path().join("a").join("keys");
+        create_private_dir(&leaf).unwrap();
+        create_private_dir(&leaf).unwrap();
+        assert!(leaf.is_dir());
     }
 }

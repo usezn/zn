@@ -346,8 +346,11 @@ fn write_state(path: &Path, state: &DataKeyState, overwrite: bool) -> Result<()>
         .filter(|d| !d.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| anyhow!("Failed to create directory {:?}: {}", dir, e))?;
+    // A bare file name has the current folder as its directory: leave that one alone.
+    if path.parent().is_some_and(|d| !d.as_os_str().is_empty()) {
+        crate::private_file::create_private_dir(&dir)
+            .map_err(|e| anyhow!("Failed to create directory {:?}: {}", dir, e))?;
+    }
     let tmp = dir.join(format!(
         ".{}.{}.tmp",
         DATA_KEY_FILE_NAME,

@@ -525,7 +525,8 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initialize Neural Memory (SQLite)
     let vector_db_path = "data/vectors";
-    std::fs::create_dir_all(vector_db_path).ok();
+    zn::private_file::create_private_dir(std::path::Path::new(vector_db_path))
+        .map_err(|e| anyhow::anyhow!("Cannot use the folder {vector_db_path}: {e}"))?;
     let memory = Arc::new(
         zn::ai::VectorMemory::new(
             vector_db_path,
@@ -783,7 +784,8 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
 
     // Initialize vector memory
     let vector_db_path = "data/vectors";
-    std::fs::create_dir_all(vector_db_path).ok();
+    zn::private_file::create_private_dir(std::path::Path::new(vector_db_path))
+        .map_err(|e| anyhow::anyhow!("Cannot use the folder {vector_db_path}: {e}"))?;
     let memory = Arc::new(
         zn::ai::VectorMemory::new(
             vector_db_path,
