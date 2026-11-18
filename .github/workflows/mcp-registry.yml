@@ -42,13 +42,23 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
-      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
-      - name: Harden the runner (egress audit)
+      # Egress is blocked. The list comes from the outbound calls that the harden-runner log of the v1.16.0
+      # run printed for this job: the npm checks, the pinned tool downloads (gitsign, mcp-publisher) and the registry.
+      # A new destination fails the run on purpose: add it here after reviewing it.
+      - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            *.actions.githubusercontent.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            registry.modelcontextprotocol.io:443
       - name: Check the tag name
         env:
           TAG: ${{ inputs.tag }}
