@@ -14,6 +14,7 @@
  *    beforeSubmitPrompt    prompt                 -> {continue: bool, user_message}
  *    beforeMCPExecution    tool_name, tool_input, mcp_server_name, command|url
  *                                                 -> {permission: allow|deny, user_message, agent_message}
+ *    postToolUseFailure    tool_name, tool_input, error_message, failure_type, is_interrupt -> {additional_context}
  *    postToolUse           tool_name, tool_input, tool_output (JSON string)
  *                                                 -> {updated_mcp_tool_output} (MCP tools only)
  *  No output (exit 0, empty stdout) counts as a hook failure that fails
@@ -56,7 +57,7 @@ const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
 const HOOK_TIMEOUT_S = 30;
-const EVENTS = ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'postToolUse', 'preToolUse'];
+const EVENTS = ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'postToolUse', 'postToolUseFailure', 'preToolUse'];
 const BUILTIN = { Shell: 'bash', Read: 'read', Write: 'write', Edit: 'edit', Grep: 'grep', Glob: 'glob', WebFetch: 'webfetch' };
 // preToolUse covers the built-in tools that can name a file, so the same path checks apply.
 const PRE_TOOL_MATCHER = 'Grep|Write|Delete';
@@ -100,6 +101,22 @@ function normalize(raw) {
     }
     return { ...base, event: null };
   }
+  if (name === 'postToolUseFailure') {
+    // Fields (read 2026-11-17): tool_name, tool_input, error_message, failure_type, is_interrupt. The output can only add
+    // additional_context, for any tool, so the error text of built-in tools is checked here too.
+    const toolName = String(raw.tool_name || '');
+    const isMcp = /^MCP:/i.test(toolName) || !Object.prototype.hasOwnProperty.call(BUILTIN, toolName);
+    return {
+      ...base,
+      event: 'post_tool',
+      failed: true,
+      tool: isMcp ? 'mcp' : BUILTIN[toolName],
+      toolName,
+      mcp: isMcp ? { server: null, tool: toolName.replace(/^MCP:/i, '') } : null,
+      input: { texts: [] },
+      output: typeof raw.error_message === 'string' ? raw.error_message : undefined,
+    };
+  }
   if (name === 'postToolUse') {
     const toolName = String(raw.tool_name || '');
     const isMcp = /^MCP:/i.test(toolName) || !Object.prototype.hasOwnProperty.call(BUILTIN, toolName);
@@ -117,10 +134,30 @@ function normalize(raw) {
   return { ...base, event: null };
 }
 
+/*
+ * The text added next to the error of a failed tool. A failed tool's output cannot be rewritten (read 2026-11-17: the
+ * failure hook can only add context), so when it held a secret the value is already in the conversation: this tells the
+ * model not to repeat it and the user to rotate it. An instruction-like text flagged in the error is passed on as it is.
+ */
+function failureNotice(d, agent) {
+  const st = d.stats || {};
+  if (st.redacted > 0) {
+    return 'zn: the error of this failed tool contains ' + st.redacted + ' secret value(s). ' + agent + ' cannot rewrite the output of a failed tool, so the value is already in this conversation. ' +
+      'Do not repeat it or write it anywhere, and tell the user to rotate it if it is real.';
+  }
+  if (st.withheld) return 'zn: part of the error of this failed tool is too large for zn to check for secrets in time, and ' + agent + ' cannot withhold it. Do not repeat values from it.';
+  if (d.decision === 'deny' || d.updatedOutput !== undefined) return 'zn: zn could not fully check the error of this failed tool. Do not repeat values from it.';
+  return d.message || null;
+}
+
 function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return null;
   const h = ev.hookEvent;
+  if (h === 'postToolUseFailure') {
+    const text = failureNotice(d, 'Cursor');
+    return text ? { additional_context: text } : null;
+  }
   if (h === 'preToolUse') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn', agent_message: d.message || 'Blocked by zn' };
     if (ev.unreadable) return { permission: 'deny', user_message: ev.unreadable, agent_message: ev.unreadable };

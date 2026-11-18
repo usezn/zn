@@ -167,12 +167,14 @@ function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
   const event = name === 'PreToolUse' ? 'pre_tool'
-    : name === 'PostToolUse' ? 'post_tool'
+    : name === 'PostToolUse' || name === 'PostToolUseFailure' ? 'post_tool'
       : name === 'UserPromptSubmit' ? 'user_prompt'
         : name === 'UserPromptExpansion' ? 'prompt_expansion'
           : name === 'ConfigChange' ? 'config_change'
             : name === 'InstructionsLoaded' ? 'instructions_loaded' : null;
+  const failed = name === 'PostToolUseFailure';
   const base = { event, cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
+  if (failed) base.failed = true;
   // A configuration file changed during the session (source: user_settings, project_settings, local_settings, policy_settings,
   // skills), or an instruction file (CLAUDE.md, .claude/rules/*.md) was loaded into context. Neither carries a tool.
   if (event === 'config_change') return { ...base, tool: null, input: { texts: [] }, configSource: typeof raw.source === 'string' ? raw.source : '', filePath: typeof raw.file_path === 'string' ? raw.file_path : '' };
@@ -204,8 +206,25 @@ function normalize(raw) {
     toolName,
     mcp: mcp ? mcpInfo(mcp[1], mcp[2], event, base.cwd) : null,
     input,
-    output: event === 'post_tool' ? raw.tool_response : undefined,
+    // A failed tool has no tool_response: its error text is what the model sees (documented as a string).
+    output: event === 'post_tool' ? (failed ? (typeof raw.error === 'string' ? raw.error : undefined) : raw.tool_response) : undefined,
   };
+}
+
+/*
+ * The text added next to the error of a failed tool. A failed tool's output cannot be rewritten (read 2026-11-17: the
+ * failure hook can only add context), so when it held a secret the value is already in the conversation: this tells the
+ * model not to repeat it and the user to rotate it. An instruction-like text flagged in the error is passed on as it is.
+ */
+function failureNotice(d, agent) {
+  const st = d.stats || {};
+  if (st.redacted > 0) {
+    return 'zn: the error of this failed tool contains ' + st.redacted + ' secret value(s). ' + agent + ' cannot rewrite the output of a failed tool, so the value is already in this conversation. ' +
+      'Do not repeat it or write it anywhere, and tell the user to rotate it if it is real.';
+  }
+  if (st.withheld) return 'zn: part of the error of this failed tool is too large for zn to check for secrets in time, and ' + agent + ' cannot withhold it. Do not repeat values from it.';
+  if (d.decision === 'deny' || d.updatedOutput !== undefined) return 'zn: zn could not fully check the error of this failed tool. Do not repeat values from it.';
+  return d.message || null;
 }
 
 function setPath(obj, key, value) {
@@ -258,6 +277,11 @@ function respondInner(d, ev) {
       return out;
     }
     return null; // never emit a bare "allow": it would bypass the user's permission rules
+  }
+  if (ev.event === 'post_tool' && ev.failed) {
+    // PostToolUseFailure "can't rewrite a result": only additionalContext is accepted.
+    const text = failureNotice(d, 'Claude Code');
+    return text ? { hookSpecificOutput: { hookEventName: 'PostToolUseFailure', additionalContext: text } } : null;
   }
   if (ev.event === 'post_tool') {
     if (d.updatedOutput !== undefined) {
@@ -396,6 +420,8 @@ function ourHooks(command) {
     // versions ignore the field, and the launcher covers them).
     PreToolUse: { matcher: PRE_MATCHER, hooks: [{ ...h('PreToolUse'), onFailure: 'block' }] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h('PostToolUse')] },
+    // A tool that failed runs this instead of PostToolUse. It can only add context, so zn warns when the error held a secret.
+    PostToolUseFailure: { matcher: POST_MATCHER, hooks: [h('PostToolUseFailure')] },
     // A prompt hook that cannot start or times out blocks the prompt
     // (Claude Code 2.1.295 and later; earlier versions ignore the field).
     UserPromptSubmit: { hooks: [{ ...h('UserPromptSubmit'), onFailure: 'block' }] },

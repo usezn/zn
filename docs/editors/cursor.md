@@ -45,7 +45,7 @@ To undo it: `zn hooks uninstall cursor`.
 These limits are stated on this page and in [compat.md](../compat.md):
 
 - Cursor does not let hooks change shell output or file contents, so zn-gate cannot remove secrets from them. A secret printed by a shell command, or in a file the agent reads that is not blocked, reaches the model.
-- `postToolUse` replaces the output of MCP tools only.
+- `postToolUse` replaces the output of MCP tools only. A tool that fails runs `postToolUseFailure` instead, which can only add context: zn warns when the error holds a secret, but cannot hide it.
 - Support is best effort: Cursor does not document the input of every tool, so `preToolUse` checks writes and deletes as well as it can. A write whose file cannot be read is refused.
 - A Grep without a `path` searches the whole workspace, so files that zn would shadow or refuse can be found that way. zn does not filter those results.
 - A secret written inside inline code is checked only where zn can read the path as a word.

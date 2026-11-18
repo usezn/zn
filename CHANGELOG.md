@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Claude Code and Cursor: zn now also checks the error of a failed tool call. Until now a failed command or MCP call (non-zero exit, tool error) ran `PostToolUseFailure` / `postToolUseFailure`, which zn did not hook, so a secret in its error text was never looked at. Neither agent lets a hook rewrite a failed result, so zn adds a warning next to it when it finds a secret (the value is already in the conversation: do not repeat it, rotate it if it is real). It cannot hide the value. Run `zn hooks install claude-code` and `zn hooks install cursor` again after updating. Copilot CLI and ZCode also have a failure hook; zn does not install it there because their documentation does not define its output.
+
 ## [1.15.0] - 2026-11-06
 
 zn-gate 1.15.0 hardens how the hooks start and what the command check reads. On macOS and Linux, and for Claude Code on Windows, zn's hook launcher now runs zn-gate's hook runner only while that file matches the copy recorded at install time, and no longer falls back to a `zn` found on the PATH. An update with npm refreshes those launchers through a short install step (`postinstall`, declared in the package's `DISCLOSURE` file); if you update with pnpm, bun or `--ignore-scripts`, run `zn hooks install <agent>` again. The destructive-command check now reads one-liners given to `python -c`, `node -e`, `perl -e` and `ruby -e`, ANSI-C quoting (`$'...'`) and PowerShell 7 line continuation. Messages are clearer when a check runs out of time, when `zn-gate init` has no internet connection and when the OpenCode hook cannot start, and in ZCode a tool output zn could not check is no longer reported as withheld. The Python package now warns when `ZN_STRICT` or `ZN_BLOCK_TRUNCATED` is set to a value other than `1`, and when a LangChain or LlamaIndex guard with `on_block="ignore"` lets a blocked item through.

@@ -236,7 +236,13 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 ## Why the differences
 
 - **Claude Code**: `PostToolUse` can replace the output of any tool
-  (`updatedToolOutput`), and `PreToolUse` can rewrite the input and ask the user
+  (`updatedToolOutput`), but only when the tool succeeded. A tool that fails (a
+  command that exits non-zero, an MCP error) runs `PostToolUseFailure` instead,
+  which "can't rewrite a result": the error reaches the model unchanged. zn
+  installs that hook too and, when the error holds a secret, adds a warning next
+  to it (`additionalContext`) that says the value is already in the
+  conversation and should be rotated. It does not hide the value,
+  and it does not say it did, and `PreToolUse` can rewrite the input and ask the user
   (`ask` + `updatedInput`). zn never returns `allow`, so your own permission
   rules always apply.
   The output of web fetches, MCP tools and shell commands is also checked
@@ -449,6 +455,10 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     skip Cursor's own confirmations. A Grep without a `path` searches the whole
     workspace, so files that zn would shadow or refuse can be found that way;
     zn does not filter those results.
+  - A tool that fails runs `postToolUseFailure`, which only accepts
+    `additional_context`. zn installs it for every tool and, when the error text
+    holds a secret, adds a warning that the value is already in the conversation;
+    it cannot replace the error. A failed MCP call is not tokenized either.
   - `postToolUse` can only replace the output of MCP tools. Checked again on
     2026-10-17: no Cursor hook can change shell or file output before the model
     sees it. `afterShellExecution` receives the output but returns nothing,

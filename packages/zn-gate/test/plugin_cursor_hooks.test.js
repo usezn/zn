@@ -109,6 +109,7 @@ test('with the real hook on an ordinary call, no installed event is blocked', (t
     beforeMCPExecution: { tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' },
     preToolUse: { tool_name: 'Write', tool_input: { file_path: path.join(proj, 'src', 'a.js'), content: 'x' } },
     postToolUse: { tool_name: 'Shell', tool_input: { command: 'echo hello' }, tool_output: '{"exitCode":0,"stdout":"hello"}' },
+    postToolUseFailure: { tool_name: 'Shell', tool_input: { command: 'false' }, error_message: 'exit 1', failure_type: 'error' },
   };
   for (const [event, list] of Object.entries(plugin())) {
     assert.ok(raw[event], 'no sample call for ' + event + ': add one');
