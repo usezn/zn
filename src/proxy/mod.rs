@@ -264,22 +264,53 @@ impl McpConnection {
     }
 
     fn is_safe_env_var(name: &str) -> bool {
-        const BLOCKED_ENV_VARS: &[&str] = &[
-            "LD_PRELOAD",
-            "LD_LIBRARY_PATH",
-            "DYLD_INSERT_LIBRARIES",
-            "DYLD_LIBRARY_PATH",
-            "PATH",
-            "HOME",
-            "USERPROFILE",
-            "SHELL",
-            "COMSPEC",
-        ];
-        let name_upper = name.to_uppercase();
-        !BLOCKED_ENV_VARS
-            .iter()
-            .any(|&blocked| blocked == name_upper)
+        is_safe_env_name(name)
     }
+}
+
+/// Variables the config `env` map may not set on a spawned MCP server: the process basics plus the
+/// dynamic loader, glibc and interpreter start-up settings that make a program load code or files of
+/// the caller's choosing. The loader and interpreter part must stay equal to `LOADER_VAR` in
+/// `packages/zn-gate/lib/broker/run.js` (a test reads that file and compares).
+const BLOCKED_ENV_VARS: &[&str] = &["PATH", "HOME", "USERPROFILE", "SHELL", "COMSPEC"];
+
+/// Names blocked by prefix (`LD_*`, `DYLD_*`).
+const BLOCKED_ENV_PREFIXES: &[&str] = &["LD_", "DYLD_"];
+
+/// Loader and interpreter start-up names, mirroring the Node `zn run` list.
+const LOADER_ENV_VARS: &[&str] = &[
+    "GCONV_PATH",
+    "GLIBC_TUNABLES",
+    "LOCPATH",
+    "NLSPATH",
+    "HOSTALIASES",
+    "RES_OPTIONS",
+    "OPENSSL_CONF",
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "NODE_REPL_EXTERNAL_MODULE",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "PYTHONINSPECT",
+    "PERL5OPT",
+    "PERL5LIB",
+    "PERLLIB",
+    "RUBYOPT",
+    "RUBYLIB",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "BASH_ENV",
+    "ENV",
+];
+
+/// Case-insensitive on every platform, like the Node check.
+fn is_safe_env_name(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    !(BLOCKED_ENV_VARS.contains(&upper.as_str())
+        || LOADER_ENV_VARS.contains(&upper.as_str())
+        || BLOCKED_ENV_PREFIXES.iter().any(|p| upper.starts_with(p)))
 }
 
 /// Read one reply line from an upstream stdio server, holding at most `max` bytes of it.
@@ -657,6 +688,82 @@ impl McpPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_blocklist_skips_loader_and_interpreter_vars() {
+        for name in LOADER_ENV_VARS.iter().chain(BLOCKED_ENV_VARS) {
+            assert!(!is_safe_env_name(name), "{name} must be skipped");
+            assert!(
+                !is_safe_env_name(&name.to_lowercase()),
+                "{name} must be skipped in lower case"
+            );
+        }
+        for name in [
+            "LD_PRELOAD",
+            "LD_AUDIT",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "dyld_framework_path",
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "PYTHONPATH",
+            "PYTHONSTARTUP",
+            "PERL5OPT",
+            "BASH_ENV",
+            "OPENSSL_CONF",
+            "GCONV_PATH",
+        ] {
+            assert!(!is_safe_env_name(name), "{name} must be skipped");
+            assert!(
+                !McpConnection::is_safe_env_var(name),
+                "{name} must be skipped"
+            );
+        }
+    }
+
+    #[test]
+    fn env_blocklist_keeps_ordinary_vars() {
+        for name in [
+            "API_KEY",
+            "MCP_TOKEN",
+            "LANG",
+            "NODE_ENV",
+            "LDAP_URL",
+            "ENVIRONMENT",
+        ] {
+            assert!(is_safe_env_name(name), "{name} must pass");
+        }
+    }
+
+    /// The Node `zn run` list lives in `LOADER_VAR`; the two must not drift apart.
+    #[test]
+    fn env_blocklist_matches_node_loader_list() {
+        let js = include_str!("../../packages/zn-gate/lib/broker/run.js");
+        let from = js
+            .find("const LOADER_VAR = new RegExp(")
+            .expect("LOADER_VAR in run.js");
+        let to = from + js[from..].find(", 'i')").expect("end of LOADER_VAR");
+        let mut pattern = String::new();
+        for part in js[from..to].split('\'').skip(1).step_by(2) {
+            pattern.push_str(part);
+        }
+        let (prefixes, names) = pattern
+            .strip_prefix("^(")
+            .and_then(|r| r.split_once(")|^("))
+            .and_then(|(p, n)| n.strip_suffix(")$").map(|n| (p, n)))
+            .expect("LOADER_VAR shape");
+        let mut node_prefixes: Vec<&str> = prefixes.split('|').collect();
+        let mut node_names: Vec<&str> = names.split('|').collect();
+        let mut rust_prefixes: Vec<&str> = BLOCKED_ENV_PREFIXES.to_vec();
+        let mut rust_names: Vec<&str> = LOADER_ENV_VARS.to_vec();
+        node_prefixes.sort_unstable();
+        node_names.sort_unstable();
+        rust_prefixes.sort_unstable();
+        rust_names.sort_unstable();
+        assert_eq!(node_prefixes, rust_prefixes);
+        assert_eq!(node_names, rust_names);
+    }
 
     #[test]
     fn test_validate_command_allowed() {
