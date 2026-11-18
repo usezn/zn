@@ -14,7 +14,7 @@ npx -y zn-gate connect
 
 1. The command tells you what will change and asks you to confirm.
 2. It opens <https://usezn.com/connect/> in your browser. Create a free account (or log in) and create an analysis-only API key there.
-3. Back in the terminal, paste the key at the hidden prompt. Nothing you type is shown. A key looks like `zn_` followed by 48 characters, for example `zn_` followed by placeholder characters. Never type a real key into an example, a note or the command line.
+3. Back in the terminal, paste the key at the hidden prompt. Nothing you type is shown. A key looks like `zn_` followed by 48 lowercase hexadecimal characters (`0-9` and `a-f`), for example `zn_` followed by placeholder characters. Never type a real key into an example, a note or the command line.
 4. zn-gate checks the key once with <https://api.usezn.com>. It accepts only an analysis-only key. A full-access key, a key the server rejects and a key that could not be checked are all refused, and nothing is saved.
 5. The key is saved in your system keychain, or in the zn vault when there is no keychain (unlock it with `zn unlock`). It is never saved in a plain file. The command prints the last four characters so you can recognise the key.
 

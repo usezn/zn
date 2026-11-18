@@ -104,7 +104,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 ### `usableApiKey(value)`
 
-- Returns the trimmed key when `value` is a string of 16 to 256 letters, digits, `.`, `_` or `-`, otherwise `null`. It rejects empty values and placeholders that were never filled in, such as `${user_config.api_key}` or `%ZN_API_KEY%`.
+- Returns the trimmed key when `value` is a string of 16 to 256 letters, digits, `.`, `_` or `-`, otherwise `null`. It rejects empty values and placeholders that were never filled in, such as `${user_config.api_key}` or `%ZN_API_KEY%`. It only checks that a value is worth sending. A key issued by zn is `zn_` followed by 48 lowercase hexadecimal characters.
 
 ### `longInputMode(options)`
 

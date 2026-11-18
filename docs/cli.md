@@ -105,7 +105,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 |---|---|---|---|
 | `ZN_HOME` | `~/.zn` | Folder for zn's own files: stats, the evidence log, pins and hook launchers. | Both |
 | `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
-| `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
+| `ZN_API_KEY` | None | API key for the cloud check: `zn_` followed by 48 lowercase hexadecimal characters. Used only when the cloud check is on. | Both |
 | `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
 | `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
 | `ZN_STAGE` | The production API | Which cloud API route the check is sent to: `prod`, or unset for the default route. Any other value also uses the default route. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values under `--stage`. | Both |
@@ -122,7 +122,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
 | `ZN_SHIELD_LIMITS` | The built-in limits | A JSON object that lowers the shield's size and count limits, for tests and unusual setups. Values above a built-in limit are cut to it; values that are not positive whole numbers are ignored. | npm |
 | `ZN_HOOK_DIR` | `~/.zn/hooks` (`$ZN_HOME/hooks` when `ZN_HOME` is set) | Folder for the hook launchers. It must be private to your user. | npm |
-| `ZN_AGENT` | None | Agent name for `zn run` and the MCP server when `--agent` is not given. | npm |
+| `ZN_AGENT` | None | Agent name for `zn run`, the MCP server and the output filter that streams a command's output to Claude Code's Monitor tool, when `--agent` is not given (the filter uses `stream` when this is unset). The name is written to the [`vault log`](#vault-log) with each use of a secret. It is reported by the caller, so it is not proof of who runs the command. | npm |
 | `ZN_TEAM_JOIN_TOKEN` | None | Join token for `team join` when no token is given as an argument. An argument wins. | npm |
 | `ZN_KEYCHAIN_BACKEND` | Detected | Forces the system keychain backend. For tests and unusual setups. | npm |
 | `ZN_KEYCHAIN_SERVICE` | `zn-vault` | Service name used in the keychain. For tests and unusual setups. | npm |

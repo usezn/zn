@@ -28,7 +28,7 @@ Before you paste zn-gate output into an issue, a discussion or a chat, go throug
 4. **Never paste these files or values:**
    - the vault files in `~/.zn` (`vault/secrets.age`, `vault/identity.age`, `vault/keychain.json`), `run/session.key`, any `vault-backup-<date>` folder, and `config.json`;
    - your `.env` files, and credential files such as `~/.aws/credentials`, `~/.netrc` and `~/.kube/config`;
-   - your zn API key (`zn_` followed by 48 characters), the value of `ZN_API_KEY` or `--key`, and a team join token (`znj_...`).
+   - your zn API key (`zn_` followed by 48 lowercase hexadecimal characters, `0-9` and `a-f`), the value of `ZN_API_KEY` or `--key`, and a team join token (`znj_...`).
 
    The [list of files and folders](files-and-folders.md#who-creates-each-one-and-how-to-remove-it) says what each file in `~/.zn` is.
 5. **Look over verbose output.** `ZN_VERBOSE=1` and `DEBUG=zn` add technical details of errors. Read them like the rest, and leave out paths or names you would not share.

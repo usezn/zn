@@ -333,7 +333,7 @@ We only publish numbers we can reproduce, with the method next to them.
 ## Configuration
 
 - `ZN_CLOUD`: `1` lets `analyze()` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
-- `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
+- `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/): `zn_` followed by 48 lowercase hexadecimal characters. No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_BLOCK_TRUNCATED`: `1` keeps a tool result too large to scan in full blocked (rule `size:truncated`), even when `ZN_ALLOW_TRUNCATED=1` is set. Any other value leaves it off and logs a warning (logger `zn_gate`) naming the accepted values.
