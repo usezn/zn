@@ -37,7 +37,7 @@
  * grep_search {pattern, dir_path, include_pattern, no_ignore} (alias search_file_content), glob and list_directory
  * {dir_path}, web_fetch {prompt}.
  *
- * Not used: AfterTool (its decision can replace a tool result, but the shape of tool_response is not documented
+ * Not used: AfterTool (its decision can replace a tool result; real events are in test/fixtures/gemini: tool_response is {llmContent: string, returnDisplay: string}; the shape of other tools is not captured
  * well enough to rewrite it safely), SessionStart and the rest. zn registers BeforeTool only.
  */
 

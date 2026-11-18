@@ -1,0 +1,8 @@
+{
+  "gemini_cli_version": "0.68.0",
+  "captured": "2026-11-18, ephemeral VM, scripted Gemini API on 127.0.0.1, auth type gemini-api-key",
+  "allow_shell": { "output": "<untrusted_context>\nOutput: zn-test-marker\nProcess Group PGID: 1234\n</untrusted_context>" },
+  "allow_read_file": { "output": "fake file content: EXAMPLE_KEY=fake-value-0000\n" },
+  "afterTool_deny_json": { "hook_stdout": { "decision": "deny", "reason": "R" }, "function_response": { "error": "R" }, "cli_stderr": "Error executing tool <tool>: Tool result blocked: R" },
+  "afterTool_exit2": { "hook_stderr": "S", "function_response": { "error": "S" }, "cli_stderr": "Hook execution for AfterTool: 0 succeeded, 1 failed" }
+}

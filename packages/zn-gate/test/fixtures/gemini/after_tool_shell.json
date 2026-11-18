@@ -1,0 +1,15 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000000",
+  "transcript_path": "${HOME}/.gemini/tmp/proj/chats/session-2026-01-01T00-00-00000000.jsonl",
+  "cwd": "/work/proj",
+  "hook_event_name": "AfterTool",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "echo zn-test-marker"
+  },
+  "tool_response": {
+    "llmContent": "<untrusted_context>\nOutput: zn-test-marker\nProcess Group PGID: 1234\n</untrusted_context>",
+    "returnDisplay": "zn-test-marker"
+  }
+}
