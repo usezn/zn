@@ -256,35 +256,45 @@ If you use the Python package (`pip install -U zn-gate`):
   block a generator or other one-shot iterator (pass a list). Check that your
   tools still pass.
 
-## Going back to the previous version
+## Going back to an earlier version
 
-Run these in your own terminal, not through an AI agent. Going back does not
-touch your code or your vault.
+Going back does not change your code, your vault or your settings. Run these
+steps in your own terminal, not through an AI agent.
 
-If you keep the hooks and only change the program, run the hook install again
-right after the change. Until you run `zn hooks install <agent>` for each agent
-with the older version, that agent's hooks block its actions: zn fails closed on
-purpose, so nothing runs unchecked. Run step 4 below straight after the install
-of the older release.
+1. Install the version you want, pinned to its number, with the same tool you
+   used to install zn-gate. Replace `1.15.0` with the version you want:
 
-1. Remove the hooks of each agent you set up with `zn hooks install`:
-   `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
-   `opencode` or `antigravity` for the others, and add `--project` for a project
-   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#3-claude-code-plugin).
-2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
-   if you also installed the Python package
-   ([details](uninstall.md#5-the-program-itself-last)).
-3. Install the older release with your package manager, the same way you
-   installed zn-gate the first time. The commands on this page
-   (`npm install -g zn-gate`, `pip install -U zn-gate`) install the newest release.
-4. Run `zn hooks install <agent>` again for each agent, and trust the hooks in
-   `/hooks` if you use Codex.
-5. Run `zn-gate check`. Every agent that is set up should say **OK**.
+   ```bash
+   npm install -g zn-gate@1.15.0
+   pip install zn-gate==1.15.0    # only if you use the Python package
+   ```
 
-Before you go back, look up your versions in
-[the table below](#what-each-release-asks-you-to-do): one row says not to go back
-to 1.7.1 in a zn Team organization with Warn rules. For the full removal steps,
-see [Remove zn-gate](uninstall.md).
+   npm and pip do not warn you about an older version, and they do not refuse it.
+2. Run `zn hooks install <agent>` again for each agent you set up with
+   `zn hooks install`, for example `zn hooks install claude-code`.
+3. Run `zn-gate check`. Every agent that is set up should say **OK**.
+
+Step 2 is needed because the hooks check the zn-gate files they run against the
+copies recorded when you installed them, and block when they do not match. In
+our tests, going back to 1.15.0 or 1.16.0 kept the hooks working. Going back to
+1.14.1 blocked every tool call of each agent, with a message that says zn-gate
+changed and to run `zn hooks install <agent>` again, until that install ran.
+The block is on purpose: nothing runs unchecked. After the install there are no
+duplicate hooks.
+
+What happens to your data when you go back:
+
+- **Vault:** it stays readable. It unlocks with the same passphrase and your
+  secrets are still listed.
+- **Evidence log:** it stays valid. `zn-gate evidence --verify` passes for the
+  records written by either version.
+- **Config file** (`~/.zn/config.json`): it is not changed.
+
+Run `zn-gate check` after every change of version. It names each agent that is
+not protected and the command that fixes it.
+
+Going back to 1.7.1 in a zn Team organization with Warn rules is not safe: see
+the table below. For the full removal steps, see [Remove zn-gate](uninstall.md).
 
 ## What each release asks you to do
 
