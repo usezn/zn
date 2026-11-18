@@ -1077,10 +1077,14 @@ test('check: the hook of the running zn-gate gets no note', async (t) => {
 
 test('check: a Claude Code plugin of another version than zn-gate gets a note with the update command', async (t) => {
   const own = require('../package.json').version;
+  // A pre-release command (an rc being tried) only shows both versions: no update command either way.
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+  const both = (v) => new RegExp('^the zn-gate plugin is version ' + escapeRe(v) + ' and the zn-gate command is ' + escapeRe(own) + '$');
+  const pre = /-/.test(own);
   // [plugin.json body, expected note: null for none, else a regex the note must match]
   const cases = [
-    [{ version: '1.0.0' }, /claude plugin marketplace remove usezn/],
-    [{ version: '999.0.0' }, /npm install -g zn-gate@latest/],
+    [{ version: '1.0.0' }, pre ? both('1.0.0') : /claude plugin marketplace remove usezn/],
+    [{ version: '999.0.0' }, pre ? both('999.0.0') : /npm install -g zn-gate@latest/],
     [{ version: own }, null],
     [null, null],
     ['{ not json', null],
