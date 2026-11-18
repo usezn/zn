@@ -221,6 +221,31 @@ If you add or move a page, or link to a heading, check the links on your machine
 
 - The offline link check CI runs, with lychee, covers the READMEs and `plugins` too. The command is in item 3 of the Documentation checks above.
 
+## Run the other checks locally
+
+These checks do not block a merge. All commands start from the repository root. Run `git fetch origin next` first where a command names `origin/next`.
+
+| Check | Local command |
+| --- | --- |
+| Changelog | `node .github/scripts/changelog.mjs check --base origin/next` |
+| Changelog files | `node .github/scripts/check-changelog-fragment-names.mjs`, `node .github/scripts/check-changelog-versions.mjs CHANGELOG.md`, `node .github/scripts/check-changelog-dates.mjs CHANGELOG.md` |
+| Docs scripts (Quick checks) | `for s in anchors bash-quotes changelog-security-links cheatsheet-commands cli-headings code-trailing-space command-names examples-commands examples-index examples-index-targets examples-names fences last-reviewed no-simply-just tables titles todo wording; do node .github/scripts/check-docs-$s.mjs \|\| break; done`, then `node .github/scripts/check-docs-examples-sections.mjs --base origin/next`, `bash scripts/check-docs-https.sh`, `node .github/scripts/check-readme-entry-points.mjs`, `node .github/scripts/check-security-advisory-links.mjs SECURITY.md`, `node .github/scripts/check-action-inputs-documented.mjs action.yml docs/github-action.md` |
+| Workflow scripts (Quick checks) | `for s in timeouts workflow-header workflow-first-line workflow-format action-inputs heavy-jobs-gating; do node .github/scripts/check-$s.mjs \|\| break; done` |
+| Markdown lint | See [Documentation checks](#documentation-checks) |
+| Link check | See [Documentation checks](#documentation-checks) |
+| Typos | `typos --config .typos.toml docs README.md packages/zn-gate/README.md packages/zn-gate-py/README.md changelog.d`, with `typos` from the [crate-ci/typos releases](https://github.com/crate-ci/typos/releases) |
+| Shellcheck | `git ls-files -z '*.sh' \| xargs -0 shellcheck` |
+| Workflow lint | `actionlint`, with the binary from the [actionlint releases](https://github.com/rhysd/actionlint/releases); and `zizmor --config .github/zizmor.yml .github/workflows action.yml`, with zizmor installed in your virtual environment from `.github/workflow-lint/zizmor-requirements.txt` (`python3 -m pip install --require-hashes --no-deps -r .github/workflow-lint/zizmor-requirements.txt`) |
+| Package lint (npm) | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `mkdir -p <dir>`, `npm pack --ignore-scripts --pack-destination <dir>`, then `npx --yes publint@<version> --strict <dir>/zn-gate-*.tgz`, where `<version>` is `PUBLINT_VERSION` in `.github/workflows/quick-checks.yml` |
+| Package lint (Python) | `python3 -m pip install -r .github/release-requirements.txt -r .github/package-lint-requirements.txt`, `python3 -m build --no-isolation --wheel packages/zn-gate-py --outdir <dir>`, `check-wheel-contents <dir>/*.whl` |
+| Pre-commit hooks | `python3 -m pip install pre-commit PyYAML`, `bash .github/scripts/test-pre-commit-hooks.sh` |
+| Doc snippets | See [Doc snippets](#doc-snippets) |
+| cargo audit (Rust dependencies) | `cargo install --locked cargo-audit`, `cargo audit` |
+| Minimum Rust version | `rustup toolchain install 1.95`, `cargo +1.95 check --locked --all-targets`, `cargo +1.95 test --locked` |
+| Unused dependencies | `cd packages/zn-gate`, `npx --yes knip@6.42.0 --dependencies`; for Rust, `cargo install --locked --version 0.9.1 cargo-machete`, `cargo machete` |
+
+The scripts in `.github/scripts/` that end in `.test.mjs` are the tests of the check scripts; run one with `node --test .github/scripts/<name>.test.mjs`. CI also runs agent compatibility, hook latency, macOS and Windows Python jobs, CodeQL and the example smoke tests (see [Where to start](#where-to-start), task 3); for those, open the matching file under `.github/workflows/` and run its steps.
+
 ## Writing a CI check script
 
 The small checks of the [Quick checks workflow](.github/workflows/quick-checks.yml) are plain Node.js scripts in `.github/scripts/`, one `check-<name>.mjs` with a `check-<name>.test.mjs` next to it. Real ones to copy from: `check-timeouts.mjs` (every workflow job sets `timeout-minutes`), `check-workflow-header.mjs`, `check-docs-titles.mjs` and `check-docs-examples-commands.mjs`. Follow the same shape so that a failure reads the same everywhere.
