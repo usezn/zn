@@ -42,6 +42,8 @@ Manager, or Secret Service on Linux), or behind a passphrase when there is no
 keychain. The vault stays unlocked for 8 hours, or until 30 minutes without
 use, or until `zn lock`.
 
+Only the npm package writes and reads this vault (`~/.zn/vault`, age files). The Python package and the Rust gateway neither read nor write it.
+
 After you update zn-gate, a vault that is still running from the older
 version keeps secrets as markers in the agent hooks until it is restarted.
 `zn vault status` shows the version of the running vault and flags an

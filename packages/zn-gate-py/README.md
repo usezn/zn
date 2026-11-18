@@ -106,7 +106,7 @@ print(r.verdict)           # allow
 **Scrubber: secrets stay out of the model's context**
 
 - Today: `redact_secrets`, `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations redact AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords.
-- Roadmap: personal data (PII) detection; stable placeholders backed by a local encrypted vault.
+- Roadmap: personal data (PII) detection; stable placeholders backed by a local encrypted vault are in the npm package only (this package has no vault).
 
 **Galvanize: prompt-injection detection**
 
