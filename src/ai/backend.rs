@@ -249,6 +249,9 @@ impl FastBootBackend {
 
 impl super::ModelBackend for FastBootBackend {
     fn embed(&self, text: &str) -> Result<Embedding> {
+        if self.dim == 0 {
+            return Err(E::msg("fast-boot backend has dimension 0"));
+        }
         let mut v = vec![0.0; self.dim];
         let bytes = text.as_bytes();
         for (i, b) in bytes.iter().enumerate() {
@@ -508,6 +511,12 @@ mod tests {
         let n = ((b'a' as f32).powi(2) + (b'b' as f32).powi(2)).sqrt();
         assert!((v[0] - b'a' as f32 / n).abs() < 1e-6);
         assert!((v[1] - b'b' as f32 / n).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fast_boot_with_dim_zero_returns_an_error() {
+        assert!(FastBootBackend::new(0).embed("abc").is_err());
+        assert!(FastBootBackend::new(0).embed("").is_err());
     }
 
     #[test]

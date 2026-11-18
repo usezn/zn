@@ -46,6 +46,12 @@ impl EmbeddingCache {
         }
     }
 
+    /// A panic in another holder poisons the mutex; the cache only holds
+    /// recomputable embeddings, so it keeps serving instead of panicking.
+    fn lock(&self) -> std::sync::MutexGuard<'_, LruCache<String, CacheEntry>> {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn key(model_id: &str, text: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -57,7 +63,7 @@ impl EmbeddingCache {
     /// Get an embedding from cache, returns None if not found or expired
     pub fn get(&self, model_id: &str, text: &str) -> Option<Vec<f32>> {
         let key = Self::key(model_id, text);
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.lock();
 
         if let Some(entry) = cache.get(&key) {
             if entry.is_expired() {
@@ -74,13 +80,13 @@ impl EmbeddingCache {
     pub fn insert(&self, model_id: &str, text: &str, embedding: Vec<f32>) {
         let key = Self::key(model_id, text);
         let entry = CacheEntry::new(embedding, self.ttl);
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.lock();
         cache.put(key, entry);
     }
 
     /// Clear all expired entries
     pub fn cleanup_expired(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.lock();
         let expired: Vec<String> = cache
             .iter()
             .filter(|(_, entry)| entry.is_expired())
@@ -94,7 +100,7 @@ impl EmbeddingCache {
 
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.lock();
         CacheStats {
             size: cache.len(),
             max_size: self.max_size,
@@ -104,7 +110,7 @@ impl EmbeddingCache {
 
     /// Clear the entire cache
     pub fn clear(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.lock();
         cache.clear();
     }
 }
@@ -126,6 +132,25 @@ impl Default for EmbeddingCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poisoned_mutex_still_serves() {
+        let cache = Arc::new(EmbeddingCache::new(300, 4));
+        cache.insert("m", "a", vec![1.0]);
+        let c2 = Arc::clone(&cache);
+        let _ = std::thread::spawn(move || {
+            let _guard = c2.cache.lock().unwrap();
+            panic!("poison the cache lock");
+        })
+        .join();
+        assert!(cache.cache.is_poisoned());
+        assert_eq!(cache.get("m", "a"), Some(vec![1.0]));
+        cache.insert("m", "b", vec![2.0]);
+        cache.cleanup_expired();
+        assert_eq!(cache.stats().size, 2);
+        cache.clear();
+        assert_eq!(cache.stats().size, 0);
+    }
 
     #[test]
     fn huge_ttl_does_not_panic() {

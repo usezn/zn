@@ -570,7 +570,7 @@ impl McpPool {
         }
         let conn = guard
             .as_mut()
-            .expect("connection slot was filled just above");
+            .ok_or_else(|| anyhow!("MCP connection to '{}' is not available", name))?;
 
         let response = conn.send_request(request).await?;
         drop(guard);

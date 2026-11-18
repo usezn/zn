@@ -449,7 +449,9 @@ impl VectorMemory {
             }
             *guard = Some(Self::open(path, busy_timeout)?);
         }
-        let conn = guard.as_mut().expect("connection opened above");
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("memory connection is not open"))?;
         // Stores and searches share the connection with different timeouts.
         conn.busy_timeout(busy_timeout)?;
         f(conn).map(Some)
@@ -617,7 +619,7 @@ impl VectorMemory {
                     if !d.is_finite() {
                         continue;
                     }
-                    if best.len() < limit || d < best[best.len() - 1].1 {
+                    if best.len() < limit || best.last().is_some_and(|worst| d < worst.1) {
                         let text: String = row.get(0)?;
                         let pos = best.partition_point(|(_, bd)| *bd <= d);
                         best.insert(pos, (text, d));
