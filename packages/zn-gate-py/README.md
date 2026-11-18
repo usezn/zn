@@ -282,9 +282,17 @@ For LlamaIndex tools, wrap the function with `guarded_tool` before `FunctionTool
 
 ### Promptfoo
 
+Promptfoo loads a Python provider from a file, not from a module name. Next to your `promptfooconfig.yaml`, create `zn_provider.py` with one line:
+
+```python
+from zn_gate.integrations import call_api
+```
+
+then point the config at it. Run `promptfoo eval` with the Python that has `zn-gate` installed (set `PROMPTFOO_PYTHON` to it, or activate its virtual environment first):
+
 ```yaml
 providers:
-  - id: "python:zn_gate.integrations.promptfoo:call_api"
+  - id: "python:zn_provider.py:call_api"
     label: "zn-gate"
 ```
 

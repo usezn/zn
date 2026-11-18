@@ -2,9 +2,10 @@
 Promptfoo custom provider integration for zn-gate.
 Enables automated red-teaming and prompt-injection benchmarking via Promptfoo.
 
-Usage in promptfooconfig.yaml:
+Promptfoo loads a Python provider from a file. Put `from zn_gate.integrations import call_api` in a
+zn_provider.py next to promptfooconfig.yaml, then in promptfooconfig.yaml:
 providers:
-  - id: 'python:zn_gate.integrations.promptfoo:call_api'
+  - id: 'python:zn_provider.py:call_api'
     label: 'zn-gate deterministic guardrail'
 """
 from __future__ import annotations

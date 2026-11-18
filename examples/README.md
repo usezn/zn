@@ -48,7 +48,7 @@ Each of these guards the tools of an agent built with a framework. Most check th
 
 | Example | What it shows | Command |
 |---|---|---|
-| [promptfoo](promptfoo/) | A Promptfoo config (`promptfooconfig.yaml`) that runs zn-gate's deterministic guardrail checks against benign and attack prompts. | The example gives no command. Run it with Promptfoo from this folder. |
+| [promptfoo](promptfoo/) | A Promptfoo config (`promptfooconfig.yaml`) and a one-line provider file (`zn_provider.py`) that run zn-gate's deterministic guardrail checks against benign and attack prompts. | The example gives no command. Run it with Promptfoo from this folder. |
 | [github-action](github-action/) | Four workflow files for pull requests: an audit of agent configs, a scan of prompts and tools, and a hardened layout for running a coding agent in CI. | Copy the file you need into `.github/workflows/` of your repository. The example gives no command. |
 
 The files in `github-action/` are: [workflow.yml](github-action/workflow.yml) (scan prompts and tools), [audit-minimal.yml](github-action/audit-minimal.yml) and [audit-workflow.yml](github-action/audit-workflow.yml) (audit agent configs), and [agent-in-ci.yml](github-action/agent-in-ci.yml) (run an agent without exposing secrets to pull requests from forks). See also [the GitHub Action guide](../docs/github-action.md).

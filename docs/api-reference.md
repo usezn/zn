@@ -388,7 +388,7 @@ No framework is required to import them. Each one uses the same rules as `check_
 
 ### `call_api(prompt, options=None, context=None) -> dict`
 
-- Promptfoo provider entry point (`promptfoo_provider` is the same function). It runs `evaluate` on the prompt and returns `{ output, tokenUsage, cost, cached, metadata }`: `output` starts with `[BLOCKED]` or `[ALLOWED]`, and `metadata` has `verdict`, `rule`, `reason`, `confidence`, `latency_ms` and `allowed`. In `promptfooconfig.yaml`: `id: 'python:zn_gate.integrations.promptfoo:call_api'`.
+- Promptfoo provider entry point (`promptfoo_provider` is the same function). It runs `evaluate` on the prompt and returns `{ output, tokenUsage, cost, cached, metadata }`: `output` starts with `[BLOCKED]` or `[ALLOWED]`, and `metadata` has `verdict`, `rule`, `reason`, `confidence`, `latency_ms` and `allowed`. Promptfoo loads a Python provider from a file: put `from zn_gate.integrations import call_api` in a `zn_provider.py` next to `promptfooconfig.yaml` and use `id: 'python:zn_provider.py:call_api'` (see `examples/promptfoo`).
 
 ### Typing
 
