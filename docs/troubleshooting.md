@@ -55,6 +55,8 @@ Find the command you ran, then the symptom that matches.
 - `scan` and `audit`
   - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
   - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
+  - [Messages from `scan --package`, `scan` options and `zn audit`](#messages-from-scan---package-scan-options-and-zn-audit)
+  - ["The project rules in <file> are not valid, so zn-gate blocks until they are fixed"](#the-project-rules-in-file-are-not-valid-so-zn-gate-blocks-until-they-are-fixed)
 - `secret`, `unlock`, `lock` and `vault`
   - ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
   - [Your agent was blocked: ".env holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
@@ -300,6 +302,18 @@ LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)
 ```
 
 `zn-gate evidence --verify` prints this (the Python package prefixes it with `Integrity:`) when the log verified up to the last line, and the last line is cut off. It then says how many records verified. A crash or a full disk while a record was being written can cause this, and so can someone removing the end of the log. It does not say the earlier records were changed. Move the file aside as the message shows if you want to keep it, and the next event starts a new log.
+
+### The last line is not valid text, or the log cannot be read
+
+```text
+Invalid UTF-8 bytes in the last line: the log was corrupted or modified.
+The last record has no valid record_hash.
+Cannot read the evidence log: <reason>
+```
+
+**What it means:** the first two are damage in the last line of the log (bytes that are not text, or a record without its hash). The Python package adds the byte position to the first one. zn stops writing to a log in that state, as in the message at the top of this section. The third one, from the Python package, means the file could not be opened at all, for example because of a permission error or because the path is a folder.
+
+**What to do:** for the first two, follow the steps at the top of this section: run `zn-gate evidence --verify`, move the file aside with the command it prints, and the next event starts a new log. For the third one, give your account read access to the file, or check that `ZN_HOME` points at the folder you expect (see [Messages about files and folders](#messages-about-files-and-folders)).
 
 ## 11. The Claude Code plugin rejects every call, or its MCP servers show `Failed to connect`
 
@@ -651,6 +665,18 @@ the system PowerShell was not found
 **What it means:** on Windows, zn uses Windows PowerShell 5.1 to check and set who may read its hook folder. It looks for it only in the fixed place Windows keeps it, `System32\WindowsPowerShell\v1.0\powershell.exe` inside your Windows folder, and never in a folder found through your `PATH` or in PowerShell 7 (`pwsh`). If that file is missing, or the path to it goes through a link, zn stops instead of using a program it cannot trust. The same cause is behind `zn could not make <the vault> private to your Windows account (the system PowerShell was not found), so it will not keep the vault there`.
 
 **What to do:** in File Explorer, check that `powershell.exe` exists in the `System32\WindowsPowerShell\v1.0` folder of your Windows folder (usually `C:\Windows`). If it is missing, repair or restore Windows PowerShell, then run init again. For the vault case, the message itself says what to do: leave `ZN_HOME` unset to use the default location, or use a folder on a local NTFS drive where you can change permissions. A different message, ["zn could not find Windows PowerShell"](#zn-could-not-find-windows-powershell--zn-could-not-start-the-system-program-that-holds-its-key), is about the vault key in the Credential Manager.
+
+### "zn will not keep its hook launcher in `<folder>`" (Windows)
+
+**What happened:** on Windows, zn checks the folder that holds its hook launcher before it writes there. The launcher runs on every tool call, so anyone who could replace it could run commands as you. The folder was refused. The message ends with the reason: the folder is or sits inside a link or junction, it is in a synced folder such as OneDrive, a folder above it can be changed by other users, or zn could not read the folder's access list (`could not read the access list of the folder`, `could not make the folder private`). Nothing was installed in that folder.
+
+**What to do:** unset `ZN_HOOK_DIR` to use the `.zn\hooks` folder in your home folder, or point it at a folder you own whose path has no link, junction or synced folder, and where only you, SYSTEM, Administrators and TrustedInstaller can make changes. If the reason is the access list, check that Windows PowerShell exists (see ["the system PowerShell was not found"](#the-system-powershell-was-not-found-windows)), then run init again.
+
+### "`<file>` already exists; refusing to overwrite it" / "backup is a symlink or not a regular file" / "backup is not in the same directory as the config"
+
+**What happened:** when zn changes an agent's settings file, for example to wrap MCP servers, it first copies the file to a backup next to it. It never writes over an existing backup name, and `--revert` restores only a plain file that sits in the same folder as the settings. One of those checks failed, so nothing was changed.
+
+**What to do:** look at the backup file the message names. If it is a leftover you do not need, move it aside yourself and run the command again. If it is a link or lies in another folder, do not restore from it: restore your settings from your own copy, or run `zn hooks install <agent>` to write them again.
 
 ## 22. The vault log export or the vault tidy-up says "Not exported" or "clock looks wrong"
 
@@ -1188,6 +1214,14 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 To see where these rules apply, and what happens when the file is not valid, read [where custom rules apply](../packages/zn-gate/README.md#where-custom-rules-apply).
 
+#### "The project rules in `<file>` are not valid, so zn-gate blocks until they are fixed"
+
+**What happened:** the `.znrules` or `zn.config.json` at the root of your project has an error, so zn-gate cannot trust it and blocks until it is fixed. The message lists up to three problems, each with its place (`line <n>` or `bannedPatterns[<n>]`) and what is wrong. For example `the top level must be an object`, `bannedPatterns must be a list`, `forbiddenPaths must be a list of strings`, or a pattern that uses something custom patterns do not support: a look-ahead or look-behind, a back-reference, a named group, or a quantifier that can take exponential time, such as `(a+)+`. The rule name in the result is `custom:invalid_rules`.
+
+**Is it safe?** Yes. This is zn failing closed: it stops instead of running with half of your rules.
+
+**What to do:** open the file at the place the message names and fix or delete that line or entry. Custom patterns support literals, classes, groups, alternation and the quantifiers `?`, `*`, `+` and `{n,m}` only. `zn-gate check` lists every error of the file at once, so you can fix them in one pass. More in [where custom rules apply](../packages/zn-gate/README.md#where-custom-rules-apply).
+
 #### "Output too large to scan in full" / "Input too large to scan in full" / "nested too deeply to check"
 
 **What happened:** zn-gate scans text in windows up to a limit (4 MB for a tool result). Text past it, or nested too deeply to walk, is blocked, because the part that was not scanned could hold an attack.
@@ -1595,6 +1629,18 @@ This also appears for `ZN_BLOCK_TRUNCATED`.
 
 **What to do:** if you did not mean to let blocked items through, use `on_block="raise"`, the default. The handler then raises `GuardBlockError` instead. If you did mean it, each warning is the record of an item that passed.
 
+#### "guard_langchain_tool needs langchain-core" / "openai_agents_tool_guardrails needs the OpenAI Agents SDK" / "guard_pydantic_ai_toolset needs Pydantic AI"
+
+**What happened:** you called an integration helper whose framework is not installed in this Python environment. zn-gate does not install frameworks for you.
+
+**What to do:** install the one the message names (`pip install langchain-core`, `pip install openai-agents` or `pip install pydantic-ai`) in the same environment that runs your program, then run it again.
+
+#### "on_block="custom" needs a callback" / "evaluate() takes the text once" / "evaluate() missing the text to check"
+
+**What happened:** these are errors in how the code calls zn-gate, raised as `ValueError` or `TypeError` when the call is made, before anything is checked. With `on_block="custom"` zn-gate needs a function to call when it blocks. `evaluate()` takes the text once, as `text` or as `input_text`, not both, and not neither.
+
+**What to do:** pass `callback=...`, or use `on_block="raise"` (the default). For `evaluate()`, pass the text once. See the [api-reference](api-reference.md).
+
 #### "[zn-gate] Warning: Cloud gate error (...)"
 
 **What happened:** you turned on the cloud check (`ZN_CLOUD=1` with an API key), and the call to the cloud failed. The message is shown only when `ZN_VERBOSE=1` is set. The rest of the line says why:
@@ -1607,6 +1653,54 @@ This also appears for `ZN_BLOCK_TRUNCATED`.
 Then zn checked the text with the local rules only, on your machine, and the result has `"mode": "oss-local-fallback"`.
 
 **What to do:** for an invalid key, check `ZN_API_KEY`. For a timeout or a connection error, check your connection and `ZN_API_URL` if you set it. For any other error, try again later.
+
+### Messages from `scan --package`, `scan` options and `zn audit`
+
+These stop the command before or while it reads. Nothing is changed on your computer. `scan --package` and `zn audit` exit with code `2` for them.
+
+#### "zn-gate scan: --package needs an npm package name" / "--package scans the package from the registry: leave out the folder argument" / "--include-home cannot be used with --package" / "--package supports only --format text for now" / "--exclude cannot be used with --package" / "--allow-partial cannot be used with --package"
+
+**What happened:** `--package` takes a package name and nothing else from the list of folder options. A package is read in full, so a folder, `--include-home`, `--exclude` or `--allow-partial` make no sense with it, and its report is text only for now.
+
+**What to do:** run it with the name alone, as `zn-gate scan --package NAME` or `--package NAME@VERSION`. To scan a folder, run `zn-gate scan <folder>` without `--package`. See [scan](cli.md#scan).
+
+#### "zn-gate scan: not an npm package name" / "not a version or dist-tag"
+
+**What happened:** the text after `--package` is not a valid npm name (`NAME` or `@SCOPE/NAME`), or the part after the `@` is not a version or tag such as `1.2.3` or `latest`.
+
+**What to do:** check the spelling in the npm registry and run it again, with an optional `@VERSION`.
+
+#### "zn-gate scan: ZN_NPM_REGISTRY is not a URL" / "must be an https address"
+
+**What happened:** you set `ZN_NPM_REGISTRY` to a value zn cannot use. It must be an `https://` address. Plain `http://` is accepted only for your own computer (`localhost`, `127.0.0.1` or `[::1]`), for testing.
+
+**What to do:** set it to the `https://` address of your registry, or unset it to use `https://registry.npmjs.org`.
+
+#### "the registry redirected to an address that is not its own" / "the registry sent too many redirects" / "the registry gave no usable metadata" / "the registry gave no checksum" / "the registry gave a tarball address that is not https" / "the downloaded tarball does not match the checksum the registry gave"
+
+**What happened:** zn follows a redirect only inside the same address, and it checks the checksum that the registry gives for the package file. One of those checks failed or the registry answer was incomplete, so the package was refused. The message ends with "Nothing was scanned".
+
+**Is it safe?** Yes. zn refuses what it cannot check, so no unchecked file was read. If the checksum does not match, treat the package as untrusted until you know why.
+
+**What to do:** run the same command again in a minute. If you use a company registry or a mirror, check that it serves the original checksums and does not redirect to another host. If the message repeats on the public registry, do not add the package, and report it at [GitHub issues](https://github.com/usezn/zn/issues).
+
+#### "the tarball is not a valid gzip archive" / "the archive is damaged" / "the package is too large to scan unpacked" / "the package has too many files to scan" / "the package contains a link or a special file" / "the package has an unsafe file path" / "a file path that leaves its folder"
+
+**What happened:** zn unpacks the package into a private temporary folder before it reads it, and refuses a package that cannot be unpacked safely: a damaged archive, a package larger than the size limit, one with too many files, one that holds a link or a special file, or a file whose path would leave the folder. The message names the reason and says the package was "refused, not scanned" where it applies.
+
+**What to do:** treat a package that fails this way as not checked, not as clean. A damaged download is fixed by running the command again. For the other reasons, read the package source yourself or choose another package. To audit a folder you already have on your computer, run `zn-gate scan <folder>`.
+
+#### "Error: --long-input needs windows or off"
+
+**What happened:** `--long-input` takes one of two words. The command stopped with exit code `2` and sent nothing.
+
+**What to do:** use `--long-input windows` (long texts go to the cloud check in overlapping windows, the default) or `--long-input off` (only the first 512 tokens go). See [cli](cli.md).
+
+#### "zn audit: unknown option `<option>`" / "only one path can be audited at a time" / "--format must be one of text, json, sarif" / "--fail-on must be one of low, medium, high, critical, none" / "--agents needs at least one agent" / "unknown agent `<name>`" / "not a directory: `<path>`"
+
+**What happened:** `zn audit` did not understand the arguments. It prints the reason and the usage line, and exits with code `2`.
+
+**What to do:** check the spelling against `zn audit --help`. It takes at most one folder. `--agents` takes a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all`. The path must be a folder, not a file. If the path does not exist the message is `path not found`. More in [audit](audit.md).
 
 ### Where a message points you
 
