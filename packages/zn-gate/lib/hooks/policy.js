@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.29';
+const POLICY_RULES_VERSION = '2026-11-18.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3194,7 +3194,7 @@ function stripExpansions(text, useDefaults, mark = '', quotedMark = mark) {
 }
 // ${NAME}, ${NAME:-word}, ${NAME-word}, ${NAME:+word}, ${NAME+word}, ${NAME:off} and ${NAME:off:len} (offset and length without a sign: a
 // negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
-const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
+const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:(?:true|:)\s*)?\)|`\s*(?:(?:true|:)\s*)?`/g;
 // cmd.exe: %NAME:~off,len% and %NAME:old=new% (and the !NAME...! forms of delayed expansion) give a piece of the value or a replaced one.
 const CMD_SLICE_RE = /%([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?%|!([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?!/g;
 const CMD_REPLACE_RE = /%([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;

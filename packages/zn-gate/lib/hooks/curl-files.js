@@ -507,14 +507,38 @@ const CURL_CONFIG_NAMES = ['.curlrc', '_curlrc', 'curlrc'];
    pattern that may match it (stat*.cfg, static.{cfg,x}, x/*, ~/.c*). NAMED_THROUGH_EXPANSION when a write goes to a
    destination built from an expansion zn does not resolve and can put a configuration there (see
    unresolvedConfigDestinations), or a word that starts with such an expansion ends in a configuration's name. */
-function pathsNamedElsewhere(readings, paths, opts) {
+// Each distinct list of paths costs one scan of the command, so a command of many curls is scanned a bounded number
+// of times. Past MAX_PATH_CHECKS distinct lists the answer is "named" (fail closed).
+const MAX_PATH_CHECKS = 64;
+
+// memo.get(key), or make() stored under key.
+function memoOf(map, key, make) {
+  if (!map.has(key)) map.set(key, make());
+  return map.get(key);
+}
+
+// unresolvedConfigDestinations for one set of names, computed once per command.
+function receiversFor(readings, names, opts, memo) {
+  return memoOf(memo.receivers, [...names].sort().join('\0'), () => unresolvedConfigDestinations(readings, names, opts));
+}
+
+function pathsNamedElsewhere(readings, paths, opts, memo) {
   if (!paths.length) return false;
+  const key = paths.join('\0');
+  if (memo.named.has(key)) return memo.named.get(key);
+  if (memo.named.size >= MAX_PATH_CHECKS) return true;
+  const found = pathsNamedElsewhereScan(readings, paths, opts, memo);
+  memo.named.set(key, found);
+  return found;
+}
+
+function pathsNamedElsewhereScan(readings, paths, opts, memo) {
   const want = [...new Set(paths.map((q) => path.resolve(q)))];
   const wantSet = new Set(want);
   const home = opts.home || os.homedir();
   const dirs = curlBaseDirs(opts) || [path.resolve(opts.cwd || process.cwd())];
   const names = new Set([...CURL_CONFIG_NAMES, ...want.map((q) => path.basename(q))]);
-  const receivers = unresolvedConfigDestinations(readings, names, opts);
+  const receivers = receiversFor(readings, names, opts, memo);
   const holds = (abs) => {
     if (wantSet.has(abs)) return true;
     const pre = abs.endsWith(path.sep) ? abs : abs + path.sep;
@@ -603,8 +627,8 @@ function pathsNamedElsewhere(readings, paths, opts) {
   return false;
 }
 
-function curlConfigNamedElsewhere(readings, paths, opts) {
-  return pathsNamedElsewhere(readings, paths, opts);
+function curlConfigNamedElsewhere(readings, paths, opts, memo) {
+  return pathsNamedElsewhere(readings, paths, opts, memo);
 }
 
 /* The files curl looks for as its default configuration, in curl's own search order (whether they exist or not):
@@ -662,24 +686,34 @@ function curlVariableFile(f, opts) {
 }
 
 /* The configuration files curl reads by default (unless -q/--disable is its first argument), that exist now. */
-function curlDefaultConfigs(opts, curlProgram) {
-  return curlDefaultConfigPlaces(opts, curlProgram).filter((f) => { try { return fs.statSync(f).isFile(); } catch (_) { return false; } });
+function curlDefaultConfigs(places, memo) {
+  return places.filter((f) => {
+    if (!memo.files.has(f)) {
+      let isFile = false;
+      try { isFile = fs.statSync(f).isFile(); } catch (_) { isFile = false; }
+      memo.files.set(f, isFile);
+    }
+    return memo.files.get(f);
+  });
 }
 
 /* True when this command names a curlrc anywhere but as an argument curl reads: a redirect target, a word of
    another command (printf ... | tee ~/.curlrc, cp x ~/.curlrc) or the output of curl -o. */
-function curlrcWritten(readings, group) {
-  const seq = group[0] ? group[0].seq : null;
+function curlrcWrittenIn(readings) {
+  let redirect = false;
+  const seqs = new Set();
+  const outputSeqs = new Set();
   for (const r of readings) {
     for (let k = 0; k < r.length; k++) {
       const w = r[k];
       if (!/curlrc/i.test(String(w.text))) continue;
-      if (w.redirectTarget || w.seq !== seq) return true;
+      if (w.redirectTarget) { redirect = true; continue; }
+      seqs.add(w.seq);
       const prev = r[k - 1] ? String(r[k - 1].text) : '';
-      if (/^(?:-[A-Za-z0-9#:]*o|--output|--output-dir|--dump-header|-D|--trace|--trace-ascii|--stderr|-c|--cookie-jar)$/.test(prev) || /^--(?:output|output-dir|dump-header|trace|trace-ascii|stderr|cookie-jar)=/.test(String(w.text))) return true;
+      if (/^(?:-[A-Za-z0-9#:]*o|--output|--output-dir|--dump-header|-D|--trace|--trace-ascii|--stderr|-c|--cookie-jar)$/.test(prev) || /^--(?:output|output-dir|dump-header|trace|trace-ascii|stderr|cookie-jar)=/.test(String(w.text))) outputSeqs.add(w.seq);
     }
   }
-  return false;
+  return (seq) => redirect || seqs.size > 1 || (seqs.size === 1 && !seqs.has(seq)) || outputSeqs.has(seq);
 }
 
 /* True when a word of the command (as the shell reads it: quotes and backslashes removed) sets CURL_HOME,
@@ -730,6 +764,11 @@ const CURL_AT_FILE_OPTS_RE = /^(?:-[A-Za-z0-9#:]*[dFH]|--data|--data-binary|--da
 
 function markCurlWords(readings, opts = {}, cmdText = '') {
   markCurlConfigValues(readings);
+  // Facts about the whole command, computed once: every curl of a long command asks them.
+  const memo = { named: new Map(), receivers: new Map(), places: new Map(), files: new Map() };
+  const curlrcWrittenAt = curlrcWrittenIn(readings);
+  const homeChanged = curlHomeChanged(readings);
+  const cmdSetsHome = /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME|USERPROFILE|APPDATA|HOMEDRIVE|HOMEPATH)\+?=/i.test(cmdText);
   for (const r of readings) {
     let i = 0;
     while (i < r.length) {
@@ -790,21 +829,21 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
           else if (/^-[A-Za-z0-9#:]*?K(.+)$/.test(t)) cfg = /^-[A-Za-z0-9#:]*?K(.+)$/.exec(t)[1];
           if (cfg !== null) {
             const c = curlConfigFile(cfg, opts);
-            if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts))) configs.push(c);
+            if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts, memo))) configs.push(c);
           }
         }
         // curl reads ~/.curlrc (or $CURL_HOME/.curlrc, $XDG_CONFIG_HOME/curlrc) unless -q/--disable comes first.
         const first = group[prog.at + 1] ? String(group[prog.at + 1].text) : '';
         if (first !== '-q' && first !== '--disable') {
           // A curlrc written by this command, or the folders curl looks in changed by it, cannot be checked.
-          const placesNamed = pathsNamedElsewhere(readings, curlDefaultConfigPlaces(opts, curlWord.text), opts);
-          if (curlrcWritten(readings, group) || curlHomeChanged(readings) || (placesNamed && placesNamed !== NAMED_THROUGH_EXPANSION) ||
-            /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME|USERPROFILE|APPDATA|HOMEDRIVE|HOMEPATH)\+?=/i.test(cmdText)) {
+          const places = memoOf(memo.places, curlWord.text, () => curlDefaultConfigPlaces(opts, curlWord.text));
+          const placesNamed = pathsNamedElsewhere(readings, places, opts, memo);
+          if (curlrcWrittenAt(group[0].seq) || homeChanged || (placesNamed && placesNamed !== NAMED_THROUGH_EXPANSION) || cmdSetsHome) {
             curlWord.curlConfigUnreadable = true;
           } else markConfigNamed(curlWord, placesNamed);
-          for (const f of curlDefaultConfigs(opts, curlWord.text)) {
+          for (const f of curlDefaultConfigs(places, memo)) {
             const c = curlConfigFile(f, opts);
-            if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts))) configs.push(c);
+            if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts, memo))) configs.push(c);
           }
         }
         if (configs.length) curlWord.curlConfigContents = configs;
