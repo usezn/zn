@@ -109,6 +109,7 @@ More short walk-throughs in [examples/](examples/), all with fake values:
 | [API reference](api-reference.md) | Node.js and Python functions | Developers |
 | [API data handling](api-data-handling.md) | What the analysis API keeps, for how long, and how to delete it | Developers, security reviewers |
 | [Verify a release](verify-release.md) | Check signatures and build provenance of a download | Security-minded users |
+| [Withdraw a bad release](releasing-withdraw.md) | What to do when a published version is bad: fixed release or withdrawal, and the commands for each registry | Maintainers |
 | [Rust gateway (legacy)](rust-core.md) | The original gateway in `src/`, not released | Contributors |
 
 ## Security advisories

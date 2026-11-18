@@ -150,6 +150,8 @@ their advisory.
    squash, so the tagged commit stays in the history of `main`. Then `main` is
    merged back into `next`, also with a merge commit.
 
+If a published version turns out to be bad, follow [docs/releasing-withdraw.md](docs/releasing-withdraw.md): it says when a fast fixed release is better than a withdrawal, and how to withdraw the version from npm, PyPI, the GitHub Release, the MCP Registry, the plugin pin and the website. Check it again whenever this release process changes.
+
 How to verify a release: [docs/verify-release.md](docs/verify-release.md).
 
 ## Adding maintainers
