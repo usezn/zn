@@ -17,6 +17,17 @@ on:
     branches: [ main, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
+    # A pull request that changes only Markdown, documentation, changelog fragments or images has nothing for
+    # CodeQL to read: none of the four languages analyses those files, so the run could not find anything new.
+    # This is not a required check, so a skipped run blocks nothing. Pushes, the weekly run and the nightly run
+    # on next still analyse everything.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'changelog.d/**'
+      - '**/*.png'
+      - '**/*.gif'
+      - '**/*.svg'
   schedule:
     - cron: '37 4 * * 1'
   workflow_dispatch:
