@@ -26,3 +26,8 @@ A one-screen version of [Upgrading zn-gate](../upgrading.md). Run every command 
 - [ ] Run `zn-gate check`. Every agent that is set up should say **OK**. If one does not, the output prints the command that fixes it. [What the output means](../check.md).
 - [ ] Run `zn-gate version` to confirm the new version.
 - [ ] If you need your agent right away while something is broken, turn zn off for it with `zn hooks uninstall <agent>`, then turn it back on with `zn hooks install <agent>` and run `zn-gate check` again.
+
+## More
+
+- [Upgrading](../upgrading.md)
+- [Check that it works](../check.md)

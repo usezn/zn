@@ -1,3 +1,0 @@
-### Security
-- The hook now refuses to read a `.env` file with values when a PowerShell parameter carries the path after a colon, for example `Get-Content -Path:.env`, `gc -LiteralPath:.env`, `-Lit:.env` or `Select-String KEY -Path:.env`. Ordinary files and `.env.example` are still allowed.
-- The hook now refuses a `.env` path that starts with a variable zn cannot expand when the variable stands right before the file name, for example `type !D!.env` in cmd.exe with delayed expansion (`cmd /v:on`), `type %D%.env`, `cat $D.env` or `cat ${D}.env`. A name that only looks similar (`!D!notes.txt`, `!D!.env.example`) is still allowed.

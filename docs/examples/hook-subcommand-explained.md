@@ -35,7 +35,7 @@ A project holds a fake `.env` file, and the agent tries to read it. The agent wr
 The hook answers on standard output. This is the answer from a real run:
 
 ```json
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.15.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.16.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
 ```
 
 The deny travels in the JSON answer (`permissionDecision: deny`), and the reason after `zn:` is the message the agent shows you. [block-message-anatomy.md](block-message-anatomy.md) explains one such message part by part. An event that is allowed gets an empty answer. The exit codes of the command are in [the command list](../cli.md#hook).
@@ -49,3 +49,8 @@ The deny travels in the JSON answer (`permissionDecision: deny`), and the reason
   - `zn-gate why` explains one block from the local decision log in plain words (worked example: [zn-why-allow-command.md](zn-why-allow-command.md)), and `zn-gate evidence` shows the log.
   - `zn hooks install <agent>` again repairs the settings after an upgrade or when the Node.js the hook used is gone.
 - One table of common questions and the command that answers each is in [which-command-shows-what.md](which-command-shows-what.md).
+
+## More
+
+- [Check that it works](../check.md)
+- [Command reference](../cli.md)
