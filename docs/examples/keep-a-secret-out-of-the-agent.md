@@ -87,3 +87,8 @@ zn-gate secret log --since 1h
 zn-gate secret rm PGPASSWORD
 zn-gate lock
 ```
+
+## More
+
+- [Keep secrets out of your coding agent](../secrets.md)
+- [Command reference](../cli.md)

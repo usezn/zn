@@ -33,8 +33,10 @@
  *    bundled would be looked up in parent node_modules folders the plugin
  *    does not control. Code that reaches Node's module system another way
  *    cannot be checked and is refused: import() with a computed name,
- *    createRequire, import.meta.resolve, process.mainModule, and the
- *    "module" built-in.
+ *    createRequire, import.meta.resolve, process.mainModule, the "module"
+ *    built-in, and the loader reached without it (require.extensions, the
+ *    loader table, the Module class, internal bindings: LOADER_ACCESS). The
+ *    reviewed exceptions are pinned by hash, each to one place.
  * 4. The plugin files are copied unchanged: the shared ones from
  *    plugins/zn-gate, the README, SECURITY and PROVENANCE files of the plugin
  *    repository from plugins/claude-dir. scripts/zn-gate.lock.json lists the
@@ -279,6 +281,62 @@ function withoutLauncherVerifyScript(rel, text) {
   return text.replace(blocks[0], '');
 }
 
+// Node's module loader reached without naming the "module" built-in, refused everywhere like the built-in itself. The
+// patterns read the source text (comments and strings included), so a mention in a comment is refused too. Limits: they
+// match plain property and string forms; a name built at run time (require[['ext', 'ensions'].join('')], a module name
+// assembled from pieces, Reflect.get on a computed key) or a loader object passed in from elsewhere is not seen. That is
+// the same limit as the rest of this check: it stops code that loads modules from outside the plugin by mistake, not a
+// malicious release (see the comment at the top).
+const LOADER_ACCESS = [
+  ['require.extensions', /\brequire\s*(?:\.\s*extensions\b|\[\s*(['"`])extensions\1\s*\])/],
+  ['the loader table (_extensions)', /\b_extensions\b/],
+  ['the Module class (module.constructor)', /\b(?:module|main|parent)\s*(?:\.\s*(?:constructor|__proto__)\b|\[\s*(['"`])(?:constructor|__proto__)\1\s*\])/],
+  ['the Module class (getPrototypeOf(module))', /\bgetPrototypeOf\s*\(\s*(?:module|require\s*\.\s*main)\b/],
+  ['Module.prototype', /\bModule\s*\.\s*prototype\b/],
+  ['the internals of the Module class', /\b(?:_load|_cache|_pathCache|_resolveFilename|_findPath|_nodeModulePaths|_resolveLookupPaths|_initPaths|_preloadModules)\b/],
+  ['an internal binding', /\bprocess\s*(?:\.\s*(?:binding|_linkedBinding|dlopen)\b|\[\s*(['"`])(?:binding|_linkedBinding|dlopen)\1\s*\])|\binternalBinding\b/],
+  ['a module added to require.cache', /\brequire\s*\.\s*cache\s*\[[^\]\n]*\]\s*=(?!=)/],
+  // The "module" built-in through another name for require (const r = require; r('module')) or a template literal.
+  ['the "module" built-in by name', /\(\s*(['"`])(?:node:)?module\1\s*\)/],
+];
+
+/** The loader access LOADER_ACCESS finds in a text, as a short name, or null. */
+function loaderAccess(text) {
+  for (const [what, re] of LOADER_ACCESS) if (re.test(text)) return what;
+  return null;
+}
+
+// lib/hooks/runner.js checks, on each call, that the files of the vault client have not changed since install, even
+// when the client is not loaded on that call. It hands each file to the .js loader that the launcher installed (VERIFY_JS
+// above), with a module that compiles nothing: that loader hashes the file against the install manifest and ends the run
+// when it differs, is missing or lies outside the package (fail closed). Reaching that loader needs Node's loader table,
+// require('module')._extensions['.js']. This is the one reviewed use outside the launcher: it is allowed only when the
+// whole function, from its first line to the closing brace at the start of a line, is byte for byte the reviewed text
+// (its SHA-256 below), and the file defines it once. Any change to the function, or any other loader access in the
+// runner or in any other file, is still refused.
+const VAULT_CHECK_FILE = /^lib\/hooks\/runner\.js$/;
+const VAULT_CHECK_START = '\nfunction checkVaultClientFiles() {\n';
+const VAULT_CHECK_NAME = /\bfunction\s+checkVaultClientFiles\b/g;
+const VAULT_CHECK_SHA256 = '8b18076ad85e8af7d2b6862fe1c31e3d24ae4b81095f1f7f879c38007b296f87';
+
+/** The text of the checkVaultClientFiles function (first line to closing brace, with its newline), or null. */
+function vaultCheckFunction(text) {
+  const start = text.indexOf(VAULT_CHECK_START);
+  if (start < 0 || (text.match(VAULT_CHECK_NAME) || []).length !== 1) return null;
+  const end = text.indexOf('\n}\n', start + 1);
+  if (end < 0) return null;
+  return { start: start + 1, end: end + 3, body: text.slice(start + 1, end + 3) };
+}
+
+/** For lib/hooks/runner.js only: the text without the reviewed checkVaultClientFiles function (unchanged otherwise). */
+function withoutVaultClientCheck(rel, text) {
+  if (!VAULT_CHECK_FILE.test(rel)) return text;
+  const fn = vaultCheckFunction(text);
+  if (!fn) return text;
+  if (crypto.createHash('sha256').update(fn.body, 'utf8').digest('hex') !== VAULT_CHECK_SHA256) return text;
+  return text.slice(0, fn.start) + text.slice(fn.end);
+}
+
 /**
  * True for a method named import ("async import(key, format) { ... }"): it
  * follows "async", "{", "," or ";" (or starts a line), its parameters are
@@ -328,11 +386,14 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(withoutLauncherVerifyScript(rel, withoutVerifyJs(rel, withoutCompileCacheUse(rel, text))))) {
-    // A tarball packed from a CRLF checkout has CRLF line ends, so the reviewed statement never matches its hash.
-    const crlf = VERIFY_JS_FILE.test(rel) && text.includes('\r\n') ? ' (this file has CRLF line ends: pack the release from an LF checkout)' : '';
+  const checked = withoutVaultClientCheck(rel, withoutLauncherVerifyScript(rel, withoutVerifyJs(rel, withoutCompileCacheUse(rel, text))));
+  // A tarball packed from a CRLF checkout has CRLF line ends, so the reviewed text never matches its hash.
+  const crlf = (VERIFY_JS_FILE.test(rel) || VAULT_CHECK_FILE.test(rel)) && text.includes('\r\n') ? ' (this file has CRLF line ends: pack the release from an LF checkout)' : '';
+  if (UNCHECKABLE.test(checked)) {
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked' + crlf);
   }
+  const loader = loaderAccess(checked);
+  if (loader) problems.push(rel + ': reaches Node\'s module loader directly (' + loader + '), which cannot be checked' + crlf);
   return out;
 }
 
@@ -569,7 +630,7 @@ function parseArgs(argv) {
   return opts;
 }
 
-module.exports = { build, readSource, bundleFiles, checkImports, checkLimits, verifyJsSpliceOk, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
+module.exports = { build, readSource, bundleFiles, checkImports, checkLimits, verifyJsSpliceOk, vaultCheckFunction, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {
