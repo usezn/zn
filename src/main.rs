@@ -1030,11 +1030,14 @@ fn stream_entry(state: &AppState, entry: &AuditEntry) {
     let mut streamed = entry.clone();
     streamed.payload = None;
     streamed.agent_id = streamed.agent_id.as_deref().map(Scrubber::redact_for_log);
-    streamed.policy_match = streamed
-        .policy_match
-        .as_deref()
-        .map(Scrubber::redact_for_log);
+    streamed.policy_match = redacted_policy_match(entry);
     let _ = state.tx.send(streamed);
+}
+
+/// The policy or refusal text of an audit entry with secrets masked, as the database row and the event
+/// stream carry it. The text can hold the raw tool name or agent id, which come from the message.
+fn redacted_policy_match(entry: &AuditEntry) -> Option<String> {
+    entry.policy_match.as_deref().map(Scrubber::redact_for_log)
 }
 
 /// Queue the webhook alert of an audit entry (metadata only, see `alert_for`).
@@ -1055,7 +1058,7 @@ fn alert_for(entry: &AuditEntry) -> webhooks::AlertPayload {
         tool_name: entry.tool_name.clone(),
         status: entry.status.clone(),
         timestamp: entry.timestamp.clone(),
-        policy_match: entry.policy_match.clone(),
+        policy_match: redacted_policy_match(entry),
         details: None,
     }
 }
@@ -3043,6 +3046,23 @@ mod audit_metadata_tests {
         assert!(alert.details.is_none());
         assert!(!serde_json::to_string(&alert).unwrap().contains(MARKER));
         assert_eq!(alert.tool_name, "read_note");
+    }
+
+    #[test]
+    fn webhook_alerts_carry_the_redacted_policy_match() {
+        let secret = ["xo", "xb-123456789012-example0123456789"].concat();
+        let entry = AuditEntry::new("TOOL_CALL", "read_note", "DENIED")
+            .with_policy(format!("banned_agent: agent-{secret}"));
+        let alert = alert_for(&entry);
+        let sent = serde_json::to_string(&alert).unwrap();
+        assert!(!sent.contains(&secret), "token left in the alert: {sent}");
+        let policy = alert.policy_match.expect("the reason is still reported");
+        assert!(policy.starts_with("banned_agent: agent-"), "{policy}");
+        assert_eq!(
+            Some(policy),
+            redacted_policy_match(&entry),
+            "the alert and the event stream carry the same text"
+        );
     }
 
     #[tokio::test]
