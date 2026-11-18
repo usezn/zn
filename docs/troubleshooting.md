@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The nineteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The twenty messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -50,6 +50,7 @@ Find the command you ran, then the symptom that matches.
   - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
   - ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook)
   - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
+  - [A hook warns that it could not check something](#20-a-hook-warns-that-it-could-not-check-something)
 - `scan` and `audit`
   - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
   - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
@@ -95,6 +96,7 @@ Find the command you ran, then the symptom that matches.
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
 - [zn-gate cannot reach the cloud](#19-zn-gate-cannot-reach-the-cloud)
+- [A hook warns that it could not check something](#20-a-hook-warns-that-it-could-not-check-something)
 - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
 - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
@@ -531,9 +533,59 @@ zn-gate scan: the registry answered HTTP <code> for <name>@<version>. Nothing wa
 
 Local checks keep working in all these cases. For the other message you may see when init cannot reach npm, see [12](#12-init-cannot-install-zn-gate-no-internet-connection).
 
+## 20. A hook warns that it could not check something
+
+A hook is the small program your agent runs before and after each action so zn can look at it. Most hook messages say that zn blocked something (see [Block and warn reasons, by family](#block-and-warn-reasons-by-family)). The messages here are different: they are warnings that the hook could not do one of its jobs. They appear in your agent's window or in the terminal where a shielded server runs. Each is copied as zn-gate prints it; a part in angle brackets is a blank that zn fills in.
+
+### The block could not be written to the evidence log
+
+```text
+zn-gate: could not record the block in the evidence log (<code>).
+```
+
+**What it means:** a hook blocked an action, but it could not write the record of that block to your evidence log. `<code>` is the reason in short form, for example `EACCES` (no permission), `ENOSPC` (the disk is full) or `error`. The action was still blocked: only the record is missing.
+
+**What to do:** free some disk space or fix the permissions of the `~/.zn` folder, then run `zn-gate evidence --verify` to see that the log itself is fine. If it says the log is damaged, see [10](#10-the-evidence-log--is-damaged). If the message was about a log that cannot be written at all, see [Events are not being recorded](#events-are-not-being-recorded) in that section.
+
+### A Stop event could not be checked
+
+```text
+zn hook: could not check this Stop event, so the last answer was not checked
+zn hook: could not read this Stop event, so the last answer was not checked
+```
+
+**What it means:** the Stop event is what your agent sends when it has finished an answer. zn looks at that answer for secrets. Here the event was too large to check in time (the first line, Claude Code and Codex) or was not valid JSON (the second line), so this one answer was not checked. zn does not block a Stop event: blocking it would make the agent carry on with its answer, so it lets it pass with this warning. Nothing else is switched off.
+
+**What to do:** if the answer may hold a secret, look at it yourself and rotate the secret if one is there. It usually happens once: the next answer is checked again. If it repeats on every answer, run `zn-gate check --hooks`, then `zn hooks install <agent>`. See also ["zn: could not check the last answer for secrets"](#zn-could-not-check-the-last-answer-for-secrets).
+
+### The shield cannot use its tool pins
+
+```text
+[zn-shield] Could not read or write the MCP tool pins in <folder> (<reason>). Every tool of this list is treated as unapproved until the pins can be used again; approving will not help before that.
+```
+
+**What it means:** zn-shield keeps a fingerprint of each MCP server's tools (the pins) so it notices when they change. It could not read or write that folder, so it cannot tell which tools you approved. Until it can, it treats every tool of the list as unapproved. Depending on your pin mode (`warn` or `block`), they are then flagged or removed. The `<reason>` is the cause, such as a permission error or a full disk.
+
+**What to do:** fix the folder named in the message: your account must be able to read and write it, and the disk must have room. Then restart your agent (or the MCP server) so the tool list is checked again. `zn-gate pins` lists the pins once they work. Running `zn-gate pins approve` does not help before the folder works. More in [shield](shield.md#tool-pinning).
+
+### zn refused to write a hook script
+
+```text
+zn: bad runner digest
+zn: the project hook script holds a space
+zn: unexpected launcher script
+zn: unsafe text in the project hook
+```
+
+**What it means:** before zn writes the script that starts a hook, it checks the script. If a check fails, zn refuses to write a script it cannot vouch for. These are safeguards inside zn-gate: a normal installation does not print them. If you see one, treat it as a sign that something is wrong with the installation, and check that zn is protecting your agent.
+
+**What to do:** reinstall zn-gate (`npm install -g zn-gate`), then run `zn hooks install <agent>` again and `npx -y zn-gate check`. If the same message comes back, report it at [GitHub issues](https://github.com/usezn/zn/issues) with the message and your `zn-gate --version`, and leave out any secret.
+
+When none of these fits and a hook only says `zn: something went wrong inside the zn hook`, see ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook).
+
 ## Block and warn reasons, by family
 
-Past the nineteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the twenty messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
