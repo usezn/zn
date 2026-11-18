@@ -20,6 +20,8 @@
 
 ## Install
 
+**Processors and C libraries.** The npm and PyPI packages are plain JavaScript and plain Python, with no native binaries, so the same package is installed on every processor and every C library. Version 1.16.0 was tested installing and running on Linux with x86_64 processors and on Linux with arm64 processors (under emulation, not on arm64 hardware), with both the standard C library (glibc) and musl, the C library of Alpine Linux, using npm and pip. Windows on ARM, Apple silicon Macs and Intel Macs were not tested.
+
 Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error. On Debian and Ubuntu, `python3 -m venv` also needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash

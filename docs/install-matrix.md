@@ -1,6 +1,6 @@
 # Install matrix
 
-Last reviewed: 2026-11-11
+Last reviewed: 2026-11-18
 
 Install methods by operating system, with the command that verifies each one. Everything here is
 taken from [compat.md](compat.md) and [first-5-minutes.md](first-5-minutes.md); read those pages for the full
@@ -48,6 +48,10 @@ agent's hook to read it, and deletes the folder. If it says `NOT protected`, see
 | Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
 
 Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. The npm package declares Node.js 18 or later in the `engines` field of its package.json. Using only the Python package (`pip install zn-gate`, without the hooks) does not need Node.js. Without `npx`, install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
+
+## Processors and C libraries
+
+The npm and PyPI packages are plain JavaScript and plain Python, with no native binaries, so the same package is installed on every processor and every C library. Version 1.16.0 was tested installing and running on Linux with x86_64 processors and on Linux with arm64 processors (under emulation, not on arm64 hardware), with both the standard C library (glibc) and musl, the C library of Alpine Linux, using npm and pip. Windows on ARM, Apple silicon Macs and Intel Macs were not tested.
 
 ## Install on a machine without internet
 
