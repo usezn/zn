@@ -1,0 +1,2 @@
+### Security
+- The Rust gateway built from `src/` (not part of the npm, PyPI or plugin releases) now writes the generated SuperAdmin key file (`zn-superadmin-key.txt`) and the MCP WebSocket token file (`zn-mcp-ws-token.txt`) with an owner-only access list on Windows, as it already did with mode 0600 on Unix. Before, on Windows they inherited the permissions of the folder they landed in. The docs now say the files land in the folder you start the gateway in and must not be committed, and the repository `.gitignore` lists the token file too.

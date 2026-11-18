@@ -31,6 +31,7 @@ venv/
 *.db
 zn.json
 zn-superadmin-key.txt
+zn-mcp-ws-token.txt
 models/
 .zn/
 *.bak.*

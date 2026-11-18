@@ -12,7 +12,7 @@ The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It ne
 
 On first start, with an empty database, the gateway seeds a default organisation with a super-admin key. The key is `ZN_API_KEY` if it is set, otherwise a random key.
 
-A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default). The file is readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy the key somewhere safe, then delete the file.
+A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default). The file is readable only by your user: mode 0600 on Unix, and on Windows an access list with a single entry for your user that does not inherit from the folder (both are in place from the moment the file exists). The file lands in the folder you start the gateway in unless you set another database path, so do not commit it (the repository `.gitignore` lists it). Copy the key somewhere safe, then delete the file.
 
 The key is never printed, so it does not end up in terminal scrollback or container logs. Earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
 
@@ -146,7 +146,7 @@ sqlite3 zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id 
 
 ### MCP WebSocket token
 
-`ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. A generated token is saved in `zn-mcp-ws-token.txt`, in the same directory as `audit.db_path` (mode 0600; on Windows the file inherits the directory ACL). It changes on every start and is never printed, so read it from that file, or set `ZN_MCP_WS_TOKEN` to use a stable one. If the file cannot be written, the gateway refuses to start and asks you to set `ZN_MCP_WS_TOKEN`. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
+`ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. A generated token is saved in `zn-mcp-ws-token.txt`, in the same directory as `audit.db_path` (readable only by your user, like the key file above: mode 0600 on Unix, an owner-only access list on Windows). It changes on every start and is never printed, so read it from that file, or set `ZN_MCP_WS_TOKEN` to use a stable one. If the file cannot be written, the gateway refuses to start and asks you to set `ZN_MCP_WS_TOKEN`. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
 
 ## Policy endpoints
 

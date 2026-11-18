@@ -9,7 +9,6 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -98,9 +97,10 @@ pub fn generate_ws_token_file(db_path: impl AsRef<Path>, token: &str) -> Result<
 }
 
 /// Writes `key` to a new file at `path` that only the current user can read
-/// and write (mode 0600 on Unix; on Windows the file inherits the ACL of its
-/// directory). A file or symlink already at `path` is removed first, never
-/// followed.
+/// and write: mode 0600 on Unix, and on Windows an owner-only access list that
+/// does not inherit from the folder (both through `private_file`, from the
+/// first moment the file exists). A file or symlink already at `path` is
+/// removed first, never followed.
 pub fn write_seed_key_file(path: &Path, key: &str) -> Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)
@@ -111,19 +111,8 @@ pub fn write_seed_key_file(path: &Path, key: &str) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(anyhow!("Failed to replace {:?}: {}", path, e)),
     }
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts
-        .open(path)
+    crate::private_file::create_private_file(path, format!("{key}\n").as_bytes())
         .map_err(|e| anyhow!("Failed to create {:?}: {}", path, e))?;
-    writeln!(file, "{}", key)
-        .and_then(|_| file.sync_all())
-        .map_err(|e| anyhow!("Failed to write {:?}: {}", path, e))?;
     Ok(())
 }
 
@@ -661,6 +650,39 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&file).unwrap().permissions().mode();
             assert_eq!(mode & 0o077, 0, "key file must not be readable by others");
+        }
+        crate::private_file::verify_private(&file).expect("owner-only file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_key_file_is_owner_only_and_replaces_an_old_file_or_link() {
+        let dir = temp_dir("seed-private");
+        let file = dir.join("zn-superadmin-key.txt");
+        write_seed_key_file(&file, "first-key").unwrap();
+        crate::private_file::verify_private(&file).expect("owner-only file");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "first-key\n");
+        write_seed_key_file(&file, "second-key").unwrap();
+        crate::private_file::verify_private(&file).expect("still owner-only");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "second-key\n");
+        // No temporary file is left next to it.
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["zn-superadmin-key.txt".to_string()]);
+
+        #[cfg(unix)]
+        {
+            // A link at the path is replaced by a file, the destination is untouched.
+            let target = dir.join("elsewhere.txt");
+            std::fs::write(&target, "other").unwrap();
+            std::fs::remove_file(&file).unwrap();
+            std::os::unix::fs::symlink(&target, &file).unwrap();
+            write_seed_key_file(&file, "third-key").unwrap();
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "other");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "third-key\n");
+            crate::private_file::verify_private(&file).expect("owner-only file");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
