@@ -4,6 +4,6 @@
   package runs after an install) and a reinstall or rebuild record the files as they are now, so an agent that had
   edited a file of the package could run one of them and have its change trusted. Like `zn hooks install`, these are now
   refused to the agent with a message that asks you to run them in your own terminal: running the refresh or the
-  launcher writer with Node.js, Bun or Deno (also through `./` or `../` in the path or after a `cd` in the same command), and `npm`, `pnpm`, `yarn`, `bun` or `volta` commands that install, update,
+  launcher writer with Node.js, Bun or Deno (also through `./` or `../` in the path, after a `cd` in the same command, or from inline code that joins the path from string constants), and `npm`, `pnpm`, `yarn`, `bun` or `volta` commands that install, update,
   rebuild or link zn-gate (also `npm run postinstall` in an installed zn-gate folder). Removing zn-gate, reading its files
   and other package commands are not affected.

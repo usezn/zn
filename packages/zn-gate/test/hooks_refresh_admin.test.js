@@ -89,6 +89,47 @@ test('reading the files and other package commands stay allowed', () => {
   }
 });
 
+test('inline code may not build the refresh path from string constants', () => {
+  for (const c of [
+    // The exact command from the review.
+    'node -e "require(\'/opt/example-prefix/lib/agents/\' + \'refresh.js\').main()"',
+    'node -e \'require("/opt/example-prefix/lib/agents/" + "refresh.js").main()\'',
+    'node -e \'require(`/opt/example-prefix/lib/agents/` + `refresh.js`).main()\'',
+    'node -e "require(\'/opt/example-prefix/lib/agents/\'+\'refresh.js\').main()"',
+    'node -e "require(\'/opt/example-prefix/lib/agents/\'   +   \'refresh.js\').main()"',
+    'node -e "require(\'/opt/example-prefix/lib/\' + \'agents/\' + \'refresh.js\').main()"',
+    'node -e "require(\'/opt/example-prefix/lib/agents/ref\' + \'resh.js\').main()"',
+    'node -e "require(\'/opt/example-prefix/lib/agents/\' + \"launcher\" + `.js`)"',
+    'node -p "require(\'/opt/example-prefix/lib/agents/\' + \'refresh.js\')"',
+    'node --eval="require(\'/opt/example-prefix/lib/agents/\' + \'refresh.js\').main()"',
+    'node -e "require(\'/opt/example-prefix/lib/agents/\\x72efresh.js\').main()"',
+    'cd ' + PREFIX + '/lib && node -e "require(\'./agents/\' + \'refresh\').main()"',
+    'deno eval "import(\'/opt/example-prefix/lib/agents/\' + \'refresh.js\')"',
+    // A name built at run time cannot be read from the text: refused when the code names the refresh or launcher.
+    'node -e "const d = \'/opt/example-prefix/lib/agents/\'; require(d + \'refresh.js\').main()"',
+    'node -e \'const f = "refresh.js"; require(`/opt/example-prefix/lib/agents/${f}`).main()\'',
+    'node -e "require([\'/opt/example-prefix/lib/agents\', \'refresh.js\'].join(\'/\')).main()"',
+  ]) {
+    const d = policy.bashDenial(c) || '';
+    assert.match(d, /zn blocked this: the hook launcher refresh/, c);
+    assert.match(d, /their own terminal/, c);
+  }
+});
+
+test('ordinary inline code stays allowed', () => {
+  for (const c of [
+    'node -e "console.log(1 + 2)"',
+    'node -e "console.log(\'a\' + \'b\')"',
+    'node -p "require(\'./package.json\').version"',
+    'node -e "const p = require(\'path\'); console.log(p.join(\'a\', \'b\'))"',
+    'node -e "console.log(\'refresh done: \' + Date.now())"',
+    'node -e "require(\'./scripts/refresh-cache.js\')"',
+    'node -e "require(\'/opt/example-prefix/lib/\' + \'other.js\')"',
+  ]) {
+    assert.equal(policy.bashDenial(c), null, c);
+  }
+});
+
 test('the same commands are refused from PowerShell', () => {
   for (const c of ['npm install -g zn-gate', '& node "' + PREFIX + '/lib/agents/refresh.js"', 'Set-Location ' + WIN_PREFIX + '\\lib\\agents; node .\\refresh.js']) {
     assert.match(policy.bashDenial(c, { powershell: true }) || '', /zn blocked this/, c);
@@ -104,6 +145,8 @@ test('a long command is checked in linear time', () => {
   assert.equal(policy.adminCommand(('sudo npm x ' + 'b'.repeat(50) + ' ').repeat(1500) + ' zn-gate'), null);
   assert.equal(policy.adminCommand(('cd ' + '../'.repeat(50) + 'x; ').repeat(500) + 'node refresh.js'), null);
   assert.equal(policy.adminCommand('node ' + 'refresh/'.repeat(5000) + 'x.js'), null);
+  assert.equal(policy.adminCommand('node -e "x(' + "'a' + ".repeat(20000) + "'b')\""), null);
+  assert.equal(policy.adminCommand('node -e ' + "'a\\x41".repeat(20000)), null);
   assert.equal(policy.adminCommand('npm' + ' -a b'.repeat(15000) + ' install -g zn-gate'), 'zn-gate package', 'padding does not hide it');
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.ok(ms < 1000, 'took ' + ms + ' ms');
