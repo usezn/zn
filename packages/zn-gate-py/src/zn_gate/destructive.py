@@ -1441,6 +1441,83 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
     return a[j:] if j > 0 else a
 
 
+def _glob_matches(pat: str, name: str) -> bool:
+    """Does the glob `pat` (* ? [set]) match the whole of `name`? A table of the prefixes of the name (no regex, no
+    backtracking), so the time is linear in the pattern; the names are the short program names of this file."""
+    if len(pat) > 4096:
+        return True
+    n = len(name)
+    row = [True] + [False] * n
+    i = 0
+    # Once a [ finds no ] after it, no later [ will: the scan is not repeated for each (one pass over the pattern).
+    no_close = False
+    while i < len(pat):
+        c = pat[i]
+        nxt = [False] * (n + 1)
+        if c == "*":
+            i += 1
+            anyv = False
+            for k in range(n + 1):
+                anyv = anyv or row[k]
+                nxt[k] = anyv
+        elif c == "?":
+            i += 1
+            for k in range(1, n + 1):
+                nxt[k] = row[k - 1]
+        elif c == "[":
+            j = i + 1
+            neg = j < len(pat) and pat[j] in "!^"
+            if neg:
+                j += 1
+            set_start = j
+            if not no_close:
+                if j < len(pat) and pat[j] == "]":
+                    j += 1
+                while j < len(pat) and pat[j] != "]":
+                    j += 1
+                if j >= len(pat):
+                    no_close = True
+            if no_close:
+                i += 1  # no closing ]: the [ is an ordinary character
+                for k in range(1, n + 1):
+                    nxt[k] = row[k - 1] and name[k - 1] == "["
+            else:
+                body = pat[set_start:j]
+                i = j + 1
+                for k in range(1, n + 1):
+                    if not row[k - 1]:
+                        continue
+                    ch = name[k - 1]
+                    hit = False
+                    m = 0
+                    while m < len(body) and not hit:
+                        if m + 2 < len(body) and body[m + 1] == "-":
+                            hit = body[m] <= ch <= body[m + 2]
+                            m += 2
+                        else:
+                            hit = ch == body[m]
+                        m += 1
+                    nxt[k] = hit != neg
+        else:
+            i += 1
+            for k in range(1, n + 1):
+                nxt[k] = row[k - 1] and name[k - 1] == c
+        row = nxt
+    return row[n]
+
+
+def _dynamic_program(word: str, names: Any) -> bool:
+    """A program word the shell expands before it runs: a glob (/usr/bin/cu?l, /bin/s[h]). `names` is the set of programs the
+    caller looks for; the word counts when its glob matches one of them. The tokenizer drops the quotes, so a quoted glob
+    (which the shell keeps literal) is read as a glob too: a false alarm, never a miss."""
+    w = str(word)
+    base = re.split(r"[\\/]", re.sub(r"^\\+", "", w))[-1]
+    if not re.search(r"[*?\[]", base):
+        return False
+    low = base.lower()
+    return any(_glob_matches(low, n) for n in names)
+
+
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
@@ -1448,20 +1525,20 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
         a = _pipe_args(a, unsure)
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
-        heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
+        heads.append((a, names[0], names, alts is None, _segment_dir(known, d), bool(a) and _dynamic_program(a[0], _DOWNLOADERS), bool(a) and _dynamic_program(a[0], _SHELLS)))
     if any(h[4] is _CWD_OVERFLOW for h in heads):
         return _OVERFLOW
-    first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
+    first_dl = next((j for j, h in enumerate(heads) if h[3] or h[5] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
-            args, head, names, overflow, _dir = heads[j]
+            args, head, names, overflow, _dir, _dl_dyn, sh_dyn = heads[j]
             # an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
-            interp = "" if overflow or any(n in _SHELLS for n in names) else next((k for k in map(_interpreter_kind, names) if k), "")
+            interp = "" if overflow or sh_dyn or any(n in _SHELLS for n in names) else next((k for k in map(_interpreter_kind, names) if k), "")
             if interp:
                 if _reads_script_from_stdin(interp, args[1:]):
                     return "pipe_to_shell"
                 continue
-            if not overflow and not any(n in _SHELLS for n in names):
+            if not overflow and not sh_dyn and not any(n in _SHELLS for n in names):
                 continue
             rest = args[1:]
             if any(re.match(r"^-[A-Za-z]*[cn][A-Za-z]*\Z", w) for w in rest):

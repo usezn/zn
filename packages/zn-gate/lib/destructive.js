@@ -746,27 +746,95 @@ function pipeArgs(un) {
   return j > 0 ? a.slice(j) : a;
 }
 
+/* Does the glob `pat` (* ? [set]) match the whole of `name`? A table of the prefixes of the name, so the time is
+   linear in the pattern (the names are the short program names of this file). */
+function globMatches(pat, name) {
+  if (pat.length > 4096) return true;
+  let row = new Array(name.length + 1).fill(false);
+  row[0] = true;
+  // Once a [ finds no ] after it, no later [ will: the scan is not repeated for each (one pass over the pattern).
+  let noClose = false;
+  for (let i = 0; i < pat.length;) {
+    const c = pat[i];
+    const next = new Array(name.length + 1).fill(false);
+    if (c === '*') {
+      i++;
+      let any = false;
+      for (let k = 0; k <= name.length; k++) { any = any || row[k]; next[k] = any; }
+    } else if (c === '?') {
+      i++;
+      for (let k = 1; k <= name.length; k++) next[k] = row[k - 1];
+    } else if (c === '[') {
+      let j = i + 1;
+      const neg = pat[j] === '!' || pat[j] === '^';
+      if (neg) j++;
+      const setStart = j;
+      if (!noClose) {
+        if (pat[j] === ']') j++;
+        while (j < pat.length && pat[j] !== ']') j++;
+        if (j >= pat.length) noClose = true;
+      }
+      if (noClose) {
+        // no closing ]: the [ is an ordinary character
+        i++;
+        for (let k = 1; k <= name.length; k++) next[k] = row[k - 1] && name[k - 1] === '[';
+      } else {
+        const body = pat.slice(setStart, j);
+        i = j + 1;
+        for (let k = 1; k <= name.length; k++) {
+          if (!row[k - 1]) continue;
+          const ch = name[k - 1];
+          let hit = false;
+          for (let m = 0; m < body.length && !hit; m++) {
+            if (m + 2 < body.length && body[m + 1] === '-') { hit = ch >= body[m] && ch <= body[m + 2]; m += 2; } else hit = ch === body[m];
+          }
+          next[k] = hit !== neg;
+        }
+      }
+    } else {
+      i++;
+      for (let k = 1; k <= name.length; k++) next[k] = row[k - 1] && name[k - 1] === c;
+    }
+    row = next;
+  }
+  return row[name.length];
+}
+
+/* A program word the shell expands before it runs: a glob (/usr/bin/cu?l, /bin/s[h]). `names` is the set of programs the
+   caller looks for; the word counts when its glob matches one of them. The tokenizer drops the quotes, so a quoted glob
+   (which the shell keeps literal) is read as a glob too: a false alarm, never a miss. */
+function dynamicProgram(word, names) {
+  const w = String(word);
+  const base = w.replace(/^\\+/, '').split(/[\\/]/).pop();
+  if (!/[*?[]/.test(base)) return false;
+  const low = base.toLowerCase();
+  for (const n of names) if (globMatches(low, n)) return true;
+  return false;
+}
+
 function checkPipeline(pipe, known = null) {
   const heads = pipe.map((s) => {
     const un = unwrapDir(stripRedirects(s.words));
     const a = pipeArgs(un);
     const alts = a.length ? braceAlts(a[0]) : [''];
     const names = (alts || [String(a[0])]).map(programName);
-    return { args: a, head: names[0], names, overflow: alts === null, dir: segmentDir(known, un.dir) };
+    const dlDyn = a.length > 0 && dynamicProgram(a[0], DOWNLOADERS);
+    const shDyn = a.length > 0 && dynamicProgram(a[0], SHELLS);
+    return { args: a, head: names[0], names, overflow: alts === null, dlDyn, shDyn, dir: segmentDir(known, un.dir) };
   });
   if (heads.some((h) => h.dir === CWD_OVERFLOW)) return OVERFLOW;
-  const firstDl = heads.findIndex((h) => h.overflow || h.names.some((n) => DOWNLOADERS.has(n)));
+  const firstDl = heads.findIndex((h) => h.overflow || h.dlDyn || h.names.some((n) => DOWNLOADERS.has(n)));
   if (firstDl >= 0) {
     // a download whose output reaches a shell
     for (let j = firstDl + 1; j < pipe.length; j++) {
       const h = heads[j];
       // an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
-      const interp = h.overflow || h.names.some((n) => SHELLS.has(n)) ? '' : h.names.map(interpreterKind).find(Boolean);
+      const interp = h.overflow || h.shDyn || h.names.some((n) => SHELLS.has(n)) ? '' : h.names.map(interpreterKind).find(Boolean);
       if (interp) {
         if (readsScriptFromStdin(interp, h.args.slice(1)) && on('pipe_to_shell')) return 'pipe_to_shell';
         continue;
       }
-      if (!h.overflow && !h.names.some((n) => SHELLS.has(n))) continue;
+      if (!h.overflow && !h.shDyn && !h.names.some((n) => SHELLS.has(n))) continue;
       const rest = h.args.slice(1);
       // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
       if (rest.some((w) => /^-[A-Za-z]*[cn][A-Za-z]*$/.test(w))) continue;
