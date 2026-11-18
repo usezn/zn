@@ -1,0 +1,2 @@
+### Fixed
+- The Rust gateway's MCP server pool no longer waits forever on a server. A request now gives up after 60 seconds, a WebSocket connect attempt after 10 seconds, a reply must carry the id of the request, and a server process that exits now gives an error instead of an empty answer. After any of these errors the connection is dropped, so a late reply cannot be read as the answer to the next request. The pool is not used for forwarding yet, so this has no effect on a running gateway today.

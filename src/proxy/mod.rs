@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncBufRead, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -26,6 +26,21 @@ const WS_HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3)
 /// How long `health_check` waits for a server whose connection is held by an
 /// in-flight request before reporting it as down.
 const HEALTH_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long one request to an MCP server may take, from the write to the matching reply. A server
+/// that stays silent (or keeps sending frames that are not the reply) ends in an error instead of
+/// holding the connection, and every later caller of that server, forever.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long one WebSocket connect attempt (TCP, TLS and the upgrade) may take.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Frames that are not the reply (notifications and requests from the server) skipped while waiting
+/// for one reply.
+const MAX_SKIPPED_FRAMES: usize = 32;
+
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Configuration for an MCP server
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -103,8 +118,8 @@ impl McpConnection {
                 attempts += 1;
                 info!(mcp = %name, url = %url, attempt = attempts, "Connecting to MCP via WebSocket");
 
-                match connect_async(url).await {
-                    Ok((ws_stream, _)) => {
+                match connect_ws_once(url, CONNECT_TIMEOUT).await {
+                    Ok(ws_stream) => {
                         return Ok(Self::WebSocket {
                             name: name.to_string(),
                             url: url.clone(),
@@ -187,28 +202,25 @@ impl McpConnection {
         }
     }
 
-    /// Send a request to the MCP server and wait for response
+    /// Send a request to the MCP server and wait for its reply, for at most `REQUEST_TIMEOUT`.
+    ///
+    /// The reply must carry the id of the request. After any error the connection can still hold a
+    /// late or foreign reply, so the caller must drop it and connect again (`McpPool::send` does).
     pub async fn send_request(&mut self, request: &str) -> Result<String> {
+        self.send_request_within(request, REQUEST_TIMEOUT).await
+    }
+
+    async fn send_request_within(
+        &mut self,
+        request: &str,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
         match self {
             Self::Stdio { stdin, stdout, .. } => {
-                stdin.write_all(request.as_bytes()).await?;
-                stdin.write_all(b"\n").await?;
-                stdin.flush().await?;
-
-                read_upstream_line(stdout, MAX_STDIN_LINE_BYTES, request).await
+                bounded(timeout, stdio_exchange(stdin, stdout, request)).await
             }
             Self::WebSocket { ws_stream, .. } => {
-                ws_stream
-                    .send(Message::Text(request.to_string().into()))
-                    .await?;
-
-                while let Some(msg) = ws_stream.next().await {
-                    match msg? {
-                        Message::Text(text) => return Ok(text.to_string()),
-                        _ => continue,
-                    }
-                }
-                Err(anyhow!("WebSocket closed without response"))
+                bounded(timeout, ws_exchange(ws_stream, request)).await
             }
         }
     }
@@ -282,6 +294,128 @@ impl McpConnection {
     }
 }
 
+/// One WebSocket connect attempt that gives up after `timeout`.
+async fn connect_ws_once(url: &str, timeout: std::time::Duration) -> Result<WsStream, String> {
+    match tokio::time::timeout(timeout, connect_async(url)).await {
+        Ok(Ok((ws_stream, _))) => Ok(ws_stream),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!(
+            "no answer within {} seconds",
+            timeout.as_secs_f64()
+        )),
+    }
+}
+
+/// Run `fut`, failing with a plain message if it takes longer than `timeout`.
+async fn bounded<T>(
+    timeout: std::time::Duration,
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!(
+            "The MCP server did not answer within {} seconds, so the request was given up.",
+            timeout.as_secs_f64()
+        )),
+    }
+}
+
+/// The id of a JSON-RPC request, when it has one. A request without an id (a notification, or
+/// text that is not JSON) is not matched against the reply.
+fn request_id(request: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(request)
+        .ok()?
+        .get("id")
+        .filter(|id| !id.is_null())
+        .cloned()
+}
+
+/// What a frame from the server is, when waiting for the reply to a request with an id.
+enum Frame {
+    /// The reply to the request.
+    Reply,
+    /// A blank line, a notification or a request from the server: keep waiting.
+    Other,
+}
+
+fn classify_frame(expected: Option<&serde_json::Value>, frame: &str) -> Result<Frame> {
+    let Some(expected) = expected else {
+        return Ok(Frame::Reply);
+    };
+    if frame.trim().is_empty() {
+        return Ok(Frame::Other);
+    }
+    let value: serde_json::Value = serde_json::from_str(frame)
+        .map_err(|_| anyhow!("The MCP server sent a reply that is not JSON."))?;
+    if value.get("method").is_some() {
+        return Ok(Frame::Other);
+    }
+    match value.get("id") {
+        Some(id) if id == expected => Ok(Frame::Reply),
+        // A JSON-RPC error for a request it could not read has a null id.
+        Some(id) if id.is_null() && value.get("error").is_some() => Ok(Frame::Reply),
+        _ => Err(anyhow!(
+            "The MCP server's reply does not carry the id of the request ({expected}), so it was refused."
+        )),
+    }
+}
+
+/// Write one request and read its reply over a stdio pair. The reply must carry the request id;
+/// the end of the output (the process exited) is an error.
+async fn stdio_exchange<W, R>(stdin: &mut W, stdout: &mut R, request: &str) -> Result<String>
+where
+    W: AsyncWrite + Unpin,
+    R: AsyncBufRead + Unpin,
+{
+    let expected = request_id(request);
+    stdin.write_all(request.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await?;
+
+    let mut skipped = 0;
+    loop {
+        let line = read_upstream_line(stdout, MAX_STDIN_LINE_BYTES, request).await?;
+        match classify_frame(expected.as_ref(), &line)? {
+            Frame::Reply => return Ok(line),
+            Frame::Other => {
+                skipped += 1;
+                if skipped > MAX_SKIPPED_FRAMES {
+                    return Err(anyhow!(
+                        "The MCP server sent too many messages that are not the reply."
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// The same exchange over a WebSocket: text frames only, the reply must carry the request id.
+async fn ws_exchange(ws_stream: &mut WsStream, request: &str) -> Result<String> {
+    let expected = request_id(request);
+    ws_stream
+        .send(Message::Text(request.to_string().into()))
+        .await?;
+
+    let mut skipped = 0;
+    while let Some(msg) = ws_stream.next().await {
+        if let Message::Text(text) = msg? {
+            let text = text.to_string();
+            match classify_frame(expected.as_ref(), &text)? {
+                Frame::Reply => return Ok(text),
+                Frame::Other => {
+                    skipped += 1;
+                    if skipped > MAX_SKIPPED_FRAMES {
+                        return Err(anyhow!(
+                            "The MCP server sent too many messages that are not the reply."
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Err(anyhow!("WebSocket closed without response"))
+}
+
 /// Read one reply line from an upstream stdio server, holding at most `max` bytes of it.
 ///
 /// A longer line is dropped as it streams past, so a server that never sends a newline cannot make the
@@ -294,7 +428,9 @@ async fn read_upstream_line<R: AsyncBufRead + Unpin>(
 ) -> Result<String> {
     match read_line_bounded(reader, max).await? {
         BoundedLine::Line(line) => Ok(line.trim().to_string()),
-        BoundedLine::Eof => Ok(String::new()),
+        BoundedLine::Eof => Err(anyhow!(
+            "The MCP server closed its output before it answered (the process probably exited)."
+        )),
         BoundedLine::TooLong => {
             warn!(
                 limit_bytes = max,
@@ -572,7 +708,16 @@ impl McpPool {
             .as_mut()
             .expect("connection slot was filled just above");
 
-        let response = conn.send_request(request).await?;
+        let response = match conn.send_request(request).await {
+            Ok(response) => response,
+            Err(e) => {
+                // After a timeout, a wrong id or a broken pipe the connection can still hold a
+                // late reply that the next caller would read as its own: drop it (a stdio child
+                // is killed) so the next request connects again.
+                *guard = None;
+                return Err(e);
+            }
+        };
         drop(guard);
 
         // 2. Store in cache if successful and it looks like a tool call
@@ -1309,5 +1454,274 @@ mod retry_and_discovery_tests {
     fn auto_discover_fails_when_no_home_directory_is_known() {
         let _home = HomeGuard::set(None);
         assert!(McpPool::auto_discover().is_err());
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use tokio::io::{duplex, AsyncBufReadExt};
+
+    const REQ: &str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    const OK1: &str = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+    const OTHER: &str = r#"{"jsonrpc":"2.0","id":999,"result":{}}"#;
+
+    /// A fake child on in-memory pipes: reads the request line, then runs `act` with the pipe it
+    /// writes replies to. When `act` returns, both ends are dropped (the child "exits").
+    fn fake_child<F, Fut>(act: F) -> (tokio::io::DuplexStream, BufReader<tokio::io::DuplexStream>)
+    where
+        F: FnOnce(tokio::io::DuplexStream) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let (client_w, child_r) = duplex(8192);
+        let (child_w, client_r) = duplex(8192);
+        tokio::spawn(async move {
+            let mut input = BufReader::new(child_r);
+            let mut line = String::new();
+            let _ = input.read_line(&mut line).await;
+            act(child_w).await;
+        });
+        (client_w, BufReader::new(client_r))
+    }
+
+    #[tokio::test]
+    async fn a_matching_reply_passes() {
+        let (mut w, mut r) = fake_child(|mut out| async move {
+            out.write_all(format!("{OK1}\n").as_bytes()).await.unwrap();
+            out.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        let out = bounded(Duration::from_secs(5), stdio_exchange(&mut w, &mut r, REQ))
+            .await
+            .unwrap();
+        assert_eq!(out, OK1);
+    }
+
+    #[tokio::test]
+    async fn notifications_before_the_reply_are_skipped() {
+        let (mut w, mut r) = fake_child(|mut out| async move {
+            let note = r#"{"jsonrpc":"2.0","method":"notifications/message","params":{}}"#;
+            out.write_all(format!("{note}\n\n{OK1}\n").as_bytes())
+                .await
+                .unwrap();
+            out.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        let out = bounded(Duration::from_secs(5), stdio_exchange(&mut w, &mut r, REQ))
+            .await
+            .unwrap();
+        assert_eq!(out, OK1);
+    }
+
+    #[tokio::test]
+    async fn a_child_that_hangs_ends_in_a_timeout() {
+        let (mut w, mut r) = fake_child(|out| async move {
+            let _keep_open = out;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let start = Instant::now();
+        let err = bounded(
+            Duration::from_millis(300),
+            stdio_exchange(&mut w, &mut r, REQ),
+        )
+        .await
+        .expect_err("a silent server must time out");
+        assert!(err.to_string().contains("did not answer"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn a_reply_with_another_id_is_refused() {
+        let (mut w, mut r) = fake_child(|mut out| async move {
+            out.write_all(format!("{OTHER}\n").as_bytes())
+                .await
+                .unwrap();
+            out.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        let err = bounded(Duration::from_secs(5), stdio_exchange(&mut w, &mut r, REQ))
+            .await
+            .expect_err("a foreign reply must not be returned");
+        assert!(err.to_string().contains("id"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_child_that_exits_is_an_error_not_an_empty_reply() {
+        let (mut w, mut r) = fake_child(|_out| async move {});
+        let result = bounded(Duration::from_secs(5), stdio_exchange(&mut w, &mut r, REQ)).await;
+        let err = result.expect_err("an exited child must not give Ok");
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
+    async fn end_of_output_after_the_request_names_the_exit() {
+        let (mut w, mut r) = fake_child(|out| async move {
+            drop(out);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        let err = bounded(Duration::from_secs(5), stdio_exchange(&mut w, &mut r, REQ))
+            .await
+            .expect_err("end of output is an error");
+        assert!(err.to_string().contains("closed its output"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_request_without_an_id_keeps_the_old_pass_through() {
+        let note = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        let (mut w, mut r) = fake_child(|mut out| async move {
+            out.write_all(b"{\"anything\":true}\n").await.unwrap();
+            out.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        let out = bounded(Duration::from_secs(5), stdio_exchange(&mut w, &mut r, note))
+            .await
+            .unwrap();
+        assert_eq!(out, r#"{"anything":true}"#);
+    }
+
+    #[test]
+    fn an_error_reply_with_a_null_id_counts_as_the_reply() {
+        let expected = serde_json::json!(1);
+        let frame =
+            r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#;
+        assert!(matches!(
+            classify_frame(Some(&expected), frame),
+            Ok(Frame::Reply)
+        ));
+        assert!(classify_frame(Some(&expected), "not json").is_err());
+    }
+
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Reply,
+        WrongId,
+        Hang,
+        CloseAtOnce,
+    }
+
+    /// WebSocket test server: connection number n behaves as `modes[n]` (the last mode repeats).
+    async fn ws_server(modes: Vec<Mode>) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut n = 0;
+            while let Ok((tcp, _)) = listener.accept().await {
+                let mode = modes[n.min(modes.len() - 1)];
+                n += 1;
+                tokio::spawn(async move {
+                    let mut ws = match tokio_tungstenite::accept_async(tcp).await {
+                        Ok(ws) => ws,
+                        Err(_) => return,
+                    };
+                    if matches!(mode, Mode::CloseAtOnce) {
+                        return;
+                    }
+                    while let Some(Ok(msg)) = ws.next().await {
+                        if let Message::Text(text) = msg {
+                            match mode {
+                                Mode::Reply => {
+                                    let _ = ws.send(Message::Text(OK1.to_string().into())).await;
+                                }
+                                Mode::WrongId => {
+                                    let _ = ws.send(Message::Text(OTHER.to_string().into())).await;
+                                }
+                                Mode::Hang | Mode::CloseAtOnce => {}
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    async fn ws_conn(addr: std::net::SocketAddr) -> McpConnection {
+        let url = format!("ws://{}", addr);
+        let ws = connect_ws_once(&url, Duration::from_secs(5)).await.unwrap();
+        McpConnection::WebSocket {
+            name: "t".into(),
+            url,
+            ws_stream: Box::new(ws),
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_matching_reply_passes() {
+        let mut conn = ws_conn(ws_server(vec![Mode::Reply]).await).await;
+        let out = conn
+            .send_request_within(REQ, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(out, OK1);
+    }
+
+    #[tokio::test]
+    async fn websocket_reply_with_another_id_is_refused() {
+        let mut conn = ws_conn(ws_server(vec![Mode::WrongId]).await).await;
+        let err = conn
+            .send_request_within(REQ, Duration::from_secs(5))
+            .await
+            .expect_err("a foreign reply must not be returned");
+        assert!(err.to_string().contains("id"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn websocket_that_never_answers_times_out() {
+        let mut conn = ws_conn(ws_server(vec![Mode::Hang]).await).await;
+        let start = Instant::now();
+        let err = conn
+            .send_request_within(REQ, Duration::from_millis(300))
+            .await
+            .expect_err("a silent server must time out");
+        assert!(err.to_string().contains("did not answer"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn websocket_that_closes_is_an_error() {
+        let mut conn = ws_conn(ws_server(vec![Mode::CloseAtOnce]).await).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let result = conn.send_request_within(REQ, Duration::from_secs(5)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn websocket_connect_gives_up_when_the_upgrade_never_completes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            // Accept the TCP connection and say nothing.
+            let (_tcp, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let start = Instant::now();
+        let Err(err) = connect_ws_once(&format!("ws://{addr}"), Duration::from_millis(300)).await
+        else {
+            panic!("a handshake that never completes must time out");
+        };
+        assert!(err.contains("no answer within"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    /// After a refused reply the pool drops the connection and the next request connects again,
+    /// instead of reading a leftover reply as its own.
+    #[tokio::test]
+    async fn the_pool_connects_again_after_a_refused_reply() {
+        let addr = ws_server(vec![Mode::WrongId, Mode::Reply]).await;
+        let mut configs = HashMap::new();
+        configs.insert(
+            "s".to_string(),
+            McpServerConfig {
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
+                url: Some(format!("ws://{addr}")),
+            },
+        );
+        let pool = McpPool::new(configs);
+        assert!(pool.send("s", REQ, None).await.is_err());
+        let again = pool.send("s", REQ, None).await.unwrap();
+        assert_eq!(again, OK1);
     }
 }
