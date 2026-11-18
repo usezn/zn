@@ -3,6 +3,7 @@
 //! Sends real-time alerts to external services when security events occur.
 //! Supports Slack, Discord, and generic webhook endpoints.
 
+use crate::audit::exporter::endpoint_for_log;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -113,7 +114,13 @@ impl WebhookManager {
 
                 // Send webhook
                 if let Err(e) = self.send_webhook(config, &alert).await {
-                    error!("Failed to send webhook to {}: {}", config.url, e);
+                    // The URL of a webhook is a secret (Slack and Discord put the token in the path): log scheme, host
+                    // and port only, and the error without the URL it carries.
+                    error!(
+                        "Failed to send webhook to {}: {}",
+                        endpoint_for_log(&config.url),
+                        e
+                    );
                 }
             }
         }
@@ -131,16 +138,25 @@ impl WebhookManager {
             WebhookType::Generic => serde_json::to_value(alert)?,
         };
 
-        let response = self.client.post(&config.url).json(&body).send().await?;
+        let response = self
+            .client
+            .post(&config.url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::Error::new(e.without_url()))?;
 
         if response.status().is_success() {
-            info!("Webhook sent successfully to {}", config.url);
+            info!(
+                "Webhook sent successfully to {}",
+                endpoint_for_log(&config.url)
+            );
         } else {
+            // The response body is not logged: it may echo the request path.
             warn!(
-                "Webhook to {} returned status {}: {}",
-                config.url,
-                response.status(),
-                response.text().await.unwrap_or_default()
+                "Webhook to {} returned status {}",
+                endpoint_for_log(&config.url),
+                response.status()
             );
         }
 
@@ -388,6 +404,22 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&bodies.lock().unwrap()[0]).unwrap();
         assert_eq!(body["tool_name"], "fake_tool");
         assert_eq!(body["status"], "DENIED");
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_does_not_carry_the_secret_url() {
+        // Nothing listens on port 1: the request fails and the error must not repeat the URL.
+        let url = "http://127.0.0.1:1/services/T0FAKE/B0FAKE/FAKEWEBHOOKTOKEN?k=FAKEQUERYSECRET";
+        let config = cfg(url, WebhookType::Generic);
+        let (mgr, _rx) = WebhookManager::new(vec![config.clone()]);
+        let err = mgr
+            .send_webhook(&config, &alert("DENIED"))
+            .await
+            .unwrap_err();
+        let text = format!("{err:#} {err:?}");
+        assert!(!text.contains("FAKEWEBHOOKTOKEN"), "{text}");
+        assert!(!text.contains("FAKEQUERYSECRET"), "{text}");
+        assert_eq!(endpoint_for_log(url), "http://127.0.0.1:1");
     }
 
     #[tokio::test]

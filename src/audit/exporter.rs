@@ -40,7 +40,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 pub const BACKOFF_BASE: Duration = Duration::from_secs(2);
 /// The endpoint as it may appear in a log line: scheme, host and port only. A URL can carry a
 /// user name and password or a token in its path or query, which must not reach stderr.
-fn endpoint_for_log(endpoint: &str) -> String {
+pub fn endpoint_for_log(endpoint: &str) -> String {
     match reqwest::Url::parse(endpoint) {
         Ok(url) => match url.host_str() {
             Some(host) => match url.port() {
