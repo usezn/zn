@@ -14,6 +14,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | Look up a command, option or exit code | [Command line reference](cli.md) and [Exit codes](exit-codes.md) |
 | Review a repository's agent settings before I open it | [Audit](audit.md) |
 | Stop a coding agent in CI from exposing secrets | [Coding agents in CI](agents-in-ci.md) and the [GitHub Action](github-action.md) |
+| Use zn-gate in a dev container or a Codespace | [Dev containers and Codespaces](dev-containers.md) |
 | Set a shared policy for my team | [zn Team](team.md) and the [Team quick guide](team-quick-guide.md) |
 | Update or remove zn-gate | [Upgrading](upgrading.md) and [Remove zn-gate](uninstall.md) |
 | Call zn-gate from Node.js or Python | [API reference](api-reference.md) |
@@ -95,6 +96,7 @@ More short walk-throughs in [examples/](examples/), all with fake values:
 | [zn Team](team.md) | Organization policy, audit upload and OpenTelemetry export on a developer machine | Team admins, developers on a team |
 | [GitHub Action](github-action.md) | Audit agent configs and scan prompts on every pull request | Maintainers |
 | [Coding agents in CI](agents-in-ci.md) | Run an agent in a workflow without letting an issue or a pull request expose your secrets, with a hardened example | Maintainers |
+| [Dev containers and Codespaces](dev-containers.md) | Install zn-gate in a dev container, what works without a system keychain, the vault passphrase, approvals and rebuilds | Developers who work in containers |
 
 ## How it works
 
