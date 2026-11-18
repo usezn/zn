@@ -169,7 +169,7 @@ For a live check of the API and any published incident notes, see the [status pa
 
 A failed request returns a JSON body with two fields: `error`, a sentence you can show to a person, and `code`, a stable value you can match in your code.
 
-A path that does not exist returns `404` with `{"message": "Not Found"}` from the gateway. That answer has no `error` and no `code`, so check the URL first.
+A path that does not exist returns `404` with `{"message": "Not Found"}` from the gateway. That answer has no `error` and no `code`, so check the URL first. A request body over 10 MiB also gets a gateway answer, `413` with `{"message": ...}`.
 
 | Status | `code` | What it means | What to do |
 |---|---|---|---|
@@ -180,6 +180,7 @@ A path that does not exist returns `404` with `{"message": "Not Found"}` from th
 | 403 | none | This endpoint does not return 403. | If you get a 403, check that the URL matches the one in this guide. |
 | 429 | `MONTHLY_LIMIT_REACHED` or `INSUFFICIENT_QUOTA` | The monthly quota is used up. `INSUFFICIENT_QUOTA` means this input needs more calls than are left this month. | Retrying the same request will not help. The `Retry-After` header gives the seconds until the quota resets at the start of next month. Wait for the reset or check your plan. With `INSUFFICIENT_QUOTA`, a shorter input may still pass. |
 | 500 | `analysis_failed` | The service could not complete the analysis. A body that is not valid JSON also gets this response. | Send valid JSON. If the body is valid, try again later. |
+| 503 | `quota_unavailable` | The quota of your organization could not be read for a moment (a Team key). Nothing is billed. | Retry after the seconds in the `Retry-After` header (5). |
 
 The Python and Node.js examples above stop on 401, 402 and 429 with a message that says what to do. They do not retry: `Retry-After` on a 429 is the time until the monthly quota resets, so waiting for it and retrying once would not succeed.
 
