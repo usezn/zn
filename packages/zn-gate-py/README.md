@@ -23,9 +23,17 @@
 Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error. On Debian and Ubuntu, `python3 -m venv` also needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash
+# macOS and Linux
 python3 -m venv .venv
-.venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
-.venv/bin/zn-gate scan .           # Windows: .venv\Scripts\zn-gate scan .
+.venv/bin/pip install zn-gate
+.venv/bin/zn-gate scan .
+```
+
+```powershell
+# Windows (PowerShell)
+python -m venv .venv
+.venv\Scripts\pip install zn-gate
+.venv\Scripts\zn-gate scan .
 ```
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).

@@ -119,8 +119,15 @@ In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file 
 **Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one ("externally-managed-environment"):
 
 ```bash
+# macOS and Linux
 python3 -m venv .venv
-.venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
+.venv/bin/pip install zn-gate
+```
+
+```powershell
+# Windows (PowerShell)
+python -m venv .venv
+.venv\Scripts\pip install zn-gate
 ```
 
 **zn-gate as an MCP server only** (the agent calls it when it decides to; not automatic protection):
