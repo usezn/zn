@@ -201,7 +201,7 @@ Prints the same check as one JSON object, for scripts, CI and support requests. 
 zn-gate status
 ```
 
-Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. If any installed hook was written by an older zn-gate, it also prints one warning naming each agent and the command that refreshes it (`zn hooks install <agent>`, with `--project` for project hooks); it prints nothing about hooks when they are all current. It only reads files: nothing is run, changed or sent. Always exits `0`.
+Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. If any installed hook was written by an older zn-gate, it also prints one warning naming each agent and the command that refreshes it (`zn hooks install <agent>`, with `--project` for project hooks); it prints nothing about hooks when they are all current. It only reads files: nothing is run, changed or sent. Exit codes: `0` done, `2` an option it does not know, or `--key`, `--stage` or `--url` given as the last argument with no value.
 
 ### `test`
 
@@ -209,7 +209,7 @@ Shows the version, the rules version, whether the optional cloud check is on and
 zn-gate test
 ```
 
-Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed.
+Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed, `2` any option (it takes none).
 
 ### `version`
 
@@ -217,7 +217,7 @@ Runs the local self-test on built-in examples (attacks and ordinary developer te
 zn-gate version
 ```
 
-Prints the version and the versions of the rules. Exit code `0`. `-v`, `-V` and `--version` do the same.
+Prints the version and the versions of the rules. Exit code `0`; `2` for an option it does not know. `-v`, `-V` and `--version` do the same.
 
 ### `connect`
 
@@ -636,6 +636,7 @@ zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
+- Exit codes of the command: `0` done, `1` the chain was changed (`--verify`) or the file named by `--output` cannot be written, `2` an unknown option, a `--format` other than `jsonl` or `csv`, an option without its value, or a `--port` or `--tail` that is not a whole number.
 - `--ui`: open a local dashboard in your browser (default port 3100).
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 
@@ -795,15 +796,15 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 | Command | Options | What it does |
 |---|---|---|
-| `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
-| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--code`, `--all`, `--include-home` | Like `scan` in the npm package, with the same `--all` and `--code` options. One difference: without them the Python scan also reads `.py`, `.ts` and `.js` files, which the npm package reads only with `--code`. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
-| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
-| `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
-| `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
-| `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |
+| `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret, `2` for no text or an option it does not know. |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked or wrong usage (an unknown option, or an option without its value). Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
+| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--code`, `--all`, `--include-home` | Like `scan` in the npm package, with the same `--all` and `--code` options. One difference: without them the Python scan also reads `.py`, `.ts` and `.js` files, which the npm package reads only with `--code`. Exit `0` nothing found, `1` something was found or the path does not exist, `2` wrong usage (an unknown option, a `--format` that is not `text`, `json` or `github`, or an option without its value), `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
+| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. Exit `0` done, `1` `--verify` found a changed chain or the export was not saved, `2` wrong usage (an unknown option or `--format`, or an option without its value). |
+| `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`, or `2` for an option it does not know. |
+| `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range or an option is unknown. |
+| `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise, `2` for an option it does not know. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |
 
-The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. Python reports a wrong option with the `argparse` usage message and exits `2`, so `zn-gate --frob` (an unknown first option) exits `2` in Python; the npm package treats it as an unknown command and exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
 
 ## JSON output
 
