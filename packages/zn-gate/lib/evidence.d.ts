@@ -43,6 +43,10 @@ export interface EvidenceVerification {
   /** Index of the first broken record, or null. */
   broken_index: number | null;
   error: string | null;
+  /** true when only a leading byte order mark (an editor re-saved the log) keeps it from verifying. valid is false. */
+  reencoded?: boolean;
+  /** true when a verified log has Windows line endings (CRLF). */
+  crlf?: boolean;
 }
 
 export interface LogEvidenceOptions {

@@ -23,7 +23,7 @@ from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_reda
 from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
-from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence import verify_evidence_ledger, reencoded_hint, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -758,8 +758,15 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         res = verify_evidence_ledger()
         if res.get("valid"):
             print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
+            if res.get("crlf"):
+                print("Note: the log has Windows line endings (CRLF), which an editor adds when it saves a file. No record was changed.\n")
             return 0
         else:
+            if res.get("reencoded"):
+                print(f"\n{_lead(ALERT, sys.stderr)}Integrity: LOG WAS RE-SAVED BY AN EDITOR (RECORDS INTACT, FILE CHANGED)", file=sys.stderr)
+                print(f"Details: {res.get('error')}", file=sys.stderr)
+                print(f"{reencoded_hint()}\n", file=sys.stderr)
+                return 1
             if res.get("truncated_tail"):
                 print(f"\n{_lead(ALERT, sys.stderr)}Integrity: LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)", file=sys.stderr)
                 print(f"Details: {res.get('error')}", file=sys.stderr)

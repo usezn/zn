@@ -41,7 +41,7 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
-const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { verifyEvidenceLedger, reencodedHint, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -1393,6 +1393,8 @@ ${ruleLine(process.env, 60)}\n`);
       let integrity;
       if (verification.valid) {
         integrity = sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)');
+      } else if (verification.reencoded) {
+        integrity = sym(process.env, '✖', col.red) + col.red('LOG WAS RE-SAVED BY AN EDITOR (RECORDS INTACT, FILE CHANGED)');
       } else if (verification.truncated_tail) {
         integrity = sym(process.env, '✖', col.red) + col.red('LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)');
       } else {
@@ -1405,11 +1407,16 @@ ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
   Integrity     : ${integrity}
 \n`);
       if (!verification.valid) {
-        const next = verification.truncated_tail
+        const next = verification.reencoded
+          ? reencodedHint()
+          : verification.truncated_tail
           ? `The first ${verification.verified} records verified; the last line is incomplete (cut off by a crash, or removed by someone). ${recoveryHint()}`
           : recoveryHint();
         process.stdout.write(`  Details: ${verification.error}\n  ${next}\n\n`);
         process.exit(1);
+      }
+      if (verification.crlf) {
+        process.stdout.write('  Note: the log has Windows line endings (CRLF), which an editor adds when it saves a file. No record was changed.\n\n');
       }
       return;
     }

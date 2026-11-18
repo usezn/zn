@@ -635,7 +635,7 @@ zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] 
 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
-- `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
+- `--verify`: check the SHA-256 chain. Exit `0` if it holds, `1` if it does not. It never changes the log. A real edit is reported as "tamper detected". A log that an editor re-saved with a leading byte order mark (BOM), with no record changed, is reported as "log was re-saved by an editor" (also exit `1`), with a command that removes the mark; the result is the same when the file also has Windows line endings. A log that only has Windows line endings (CRLF) still verifies (exit `0`) and prints a note. The npm and Python packages say the same.
 - `--ui`: open a local dashboard in your browser (default port 3100).
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 

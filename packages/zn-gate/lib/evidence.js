@@ -350,13 +350,16 @@ const LENIENT = new TextDecoder('utf-8', { ignoreBOM: true });
  * lines (undecodable bytes replaced) and `bad`, a Map from a 0-based line index to the
  * reason that line is not valid UTF-8. Throws EvidenceLedgerError if the file cannot be read.
  */
-function readLedger(filePath) {
+function readLedger(filePath, stripBom = false) {
   let raw;
   try {
     raw = fs.readFileSync(filePath);
   } catch (e) {
     throw new EvidenceLedgerError(`Cannot read the evidence log: ${e.code || e.message}`);
   }
+  const bom = raw.length >= 3 && raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf;
+  const crlf = raw.includes(Buffer.from([0x0d, 0x0a]));
+  if (stripBom && bom) raw = raw.subarray(3);
   const lines = [];
   const bad = new Map();
   let start = 0;
@@ -373,7 +376,7 @@ function readLedger(filePath) {
       lines.push(LENIENT.decode(chunk));
     }
   }
-  return { lines, bad };
+  return { lines, bad, bom, crlf };
 }
 
 /**
@@ -608,37 +611,73 @@ function truncatedTailResult(total, index) {
  * @returns {object} { valid: boolean, total: number, verified: number, broken_index: number|null, error: string|null }
  */
 function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
+  const first = verifyLedgerBytes(filePath, false);
+  if (first.valid || !first.bom) return stripInternal(first);
+  // The file starts with a byte order mark (a Windows editor adds one when it saves a file).
+  // Check the chain without it, only in memory: the file is never changed. If the chain holds,
+  // report a re-saved log; if not, report what is really wrong (a real edit stays a tamper).
+  const second = verifyLedgerBytes(filePath, true);
+  if (second.valid) {
+    return {
+      valid: false,
+      total: second.total,
+      verified: 0,
+      broken_index: 0,
+      reencoded: true,
+      error: REENCODED_MESSAGE,
+    };
+  }
+  return stripInternal(second);
+}
+function stripInternal(r) {
+  const { bom, crlf, ...rest } = r;
+  if (rest.valid && crlf) rest.crlf = true;
+  return rest;
+}
+const REENCODED_MESSAGE = 'The log starts with a byte order mark (BOM) at line 1, which an editor adds when it saves a file. No record was changed: the chain verifies once the mark is removed.';
+function reencodedHint(filePath = EVIDENCE_FILE) {
+  const bak = `${filePath}.bak`;
+  const cmd = process.platform === 'win32'
+    ? `Copy-Item "${filePath}" "${bak}"; $b=[IO.File]::ReadAllBytes("${bak}"); [IO.File]::WriteAllBytes("${filePath}", $b[3..($b.Length-1)])`
+    : `cp "${filePath}" "${bak}" && tail -c +4 "${bak}" > "${filePath}"`;
+  return `To fix it, keep a copy and remove the mark (${cmd}), then run 'zn-gate evidence --verify' again. Do not save the log in an editor again. zn-gate never changes the log during --verify.`;
+}
+
+function verifyLedgerBytes(filePath, stripBom) {
   if (!fs.existsSync(filePath)) {
     return { valid: true, total: 0, verified: 0, broken_index: null, error: null };
   }
 
   let lines;
   let bad;
+  let bom = false;
+  let crlf = false;
   try {
-    ({ lines, bad } = readLedger(filePath));
+    ({ lines, bad, bom, crlf } = readLedger(filePath, stripBom));
   } catch (e) {
-    return { valid: false, total: 0, verified: 0, broken_index: 0, error: e.message };
+    return { valid: false, total: 0, verified: 0, broken_index: 0, error: e.message, bom };
   }
   let expectedPrevHash = GENESIS_HASH;
 
   for (let i = 0; i < lines.length; i++) {
     if (bad.has(i)) {
-      return { valid: false, total: lines.length, verified: i, broken_index: i, error: bad.get(i) };
+      return { valid: false, total: lines.length, verified: i, broken_index: i, error: bad.get(i), bom };
     }
     let rec;
     try {
       rec = JSON.parse(lines[i]);
     } catch (e) {
-      if (i === lines.length - 1 && isCutTail(filePath, lines[i])) return truncatedTailResult(lines.length, i);
-      return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed JSON at line ${i + 1}: ${e.message}` };
+      if (i === lines.length - 1 && isCutTail(filePath, lines[i])) return { ...truncatedTailResult(lines.length, i), bom };
+      return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed JSON at line ${i + 1}: ${e.message}`, bom };
     }
     if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
-      return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed record at line ${i + 1}: not a JSON object.` };
+      return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed record at line ${i + 1}: not a JSON object.`, bom };
     }
 
     if (rec.prev_hash !== expectedPrevHash) {
       return {
         valid: false,
+        bom,
         total: lines.length,
         verified: i,
         broken_index: i,
@@ -653,6 +692,7 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     if (!canonicalForms(baseRecord).some((text) => hashOf(text) === record_hash)) {
       return {
         valid: false,
+        bom,
         total: lines.length,
         verified: i,
         broken_index: i,
@@ -663,7 +703,7 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     expectedPrevHash = record_hash;
   }
 
-  return { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null };
+  return { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null, crlf };
 }
 
 /**
@@ -1080,6 +1120,7 @@ module.exports = {
   recoveryHint,
   getLastHash,
   verifyEvidenceLedger,
+  reencodedHint,
   getEvidenceStats,
   exportEvidenceLedger,
   startEvidenceUi,

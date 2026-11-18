@@ -81,7 +81,7 @@ def recovery_hint(file_path: str = EVIDENCE_FILE) -> str:
             "the next event starts a new chain.")
 
 
-def _read_ledger(file_path: str) -> Tuple[List[str], Dict[int, str]]:
+def _read_ledger(file_path: str, _flags: Optional[Dict[str, bool]] = None, strip_bom: bool = False) -> Tuple[List[str], Dict[int, str]]:
     """Reads the ledger as raw bytes and decodes it line by line.
     Returns (lines, bad) where lines are the non-empty lines (undecodable bytes replaced) and
     bad maps a 0-based line index to the reason that line is not valid UTF-8.
@@ -91,6 +91,11 @@ def _read_ledger(file_path: str) -> Tuple[List[str], Dict[int, str]]:
             raw = f.read()
     except OSError as e:
         raise EvidenceLedgerError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    if _flags is not None:
+        _flags["bom"] = raw.startswith(b"\xef\xbb\xbf")
+        _flags["crlf"] = b"\r\n" in raw
+    if strip_bom and raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
     lines: List[str] = []
     bad: Dict[int, str] = {}
     for chunk in raw.split(b"\n"):
@@ -624,16 +629,58 @@ def _truncated_tail_result(total: int, index: int) -> Dict[str, Any]:
     }
 
 
+REENCODED_MESSAGE = (
+    "The log starts with a byte order mark (BOM) at line 1, which an editor adds when it saves a file. "
+    "No record was changed: the chain verifies once the mark is removed."
+)
+
+
+def reencoded_hint(file_path: str = EVIDENCE_FILE) -> str:
+    bak = f"{file_path}.bak"
+    if os.name == "nt":
+        cmd = (f'Copy-Item "{file_path}" "{bak}"; $b=[IO.File]::ReadAllBytes("{bak}"); '
+               f'[IO.File]::WriteAllBytes("{file_path}", $b[3..($b.Length-1)])')
+    else:
+        cmd = f'cp "{file_path}" "{bak}" && tail -c +4 "{bak}" > "{file_path}"'
+    return (f"To fix it, keep a copy and remove the mark ({cmd}), then run 'zn-gate evidence --verify' again. "
+            "Do not save the log in an editor again. zn-gate never changes the log during --verify.")
+
+
 def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
     """
     Verifies the cryptographic integrity of the entire ledger chain from genesis.
     Returns { "valid": bool, "total": int, "verified": int, "broken_index": Optional[int], "error": Optional[str] }
+    A log that only starts with a byte order mark (an editor re-saved it) and whose chain holds
+    without it is reported as valid: False with "reencoded": True. A valid log with Windows line
+    endings carries "crlf": True. The file is never changed.
     """
+    flags: Dict[str, bool] = {}
+    first = _verify_ledger_bytes(file_path, False, flags)
+    if first.get("valid"):
+        if flags.get("crlf"):
+            first["crlf"] = True
+        return first
+    if not flags.get("bom"):
+        return first
+    second = _verify_ledger_bytes(file_path, True, {})
+    if second.get("valid"):
+        return {
+            "valid": False,
+            "total": second["total"],
+            "verified": 0,
+            "broken_index": 0,
+            "reencoded": True,
+            "error": REENCODED_MESSAGE,
+        }
+    return second
+
+
+def _verify_ledger_bytes(file_path: str, strip_bom: bool, flags: Dict[str, bool]) -> Dict[str, Any]:
     if not os.path.exists(file_path):
         return {"valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None}
 
     try:
-        lines, bad = _read_ledger(file_path)
+        lines, bad = _read_ledger(file_path, flags, strip_bom)
     except EvidenceLedgerError as e:
         return _corrupt_result(0, 0, str(e))
 

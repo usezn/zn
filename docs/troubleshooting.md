@@ -973,9 +973,17 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 **What to do:** run the command again, then `zn-gate status`. If it repeats, report it at [GitHub issues](https://github.com/usezn/zn/issues) with the message and your `zn-gate --version`, and leave out any secret.
 
+#### "Log was re-saved by an editor"
+
+**What happened:** `zn-gate evidence --verify` printed `LOG WAS RE-SAVED BY AN EDITOR (RECORDS INTACT, FILE CHANGED)`. The log starts with a byte order mark (BOM), three extra bytes that a Windows editor adds when it saves a file. zn-gate checked the chain without them and it holds: no record was changed.
+
+**Is it safe?** Yes. Your protection keeps working and the records are intact. `--verify` does not change the file.
+
+**What to do:** keep a copy and remove the mark with the command that `--verify` prints, then run `npx -y zn-gate evidence --verify` again. On macOS and Linux it is `cp "<path>" "<path>.bak" && tail -c +4 "<path>.bak" > "<path>"`; on Windows it is a PowerShell command that does the same. Do not open the log in an editor and save it. Windows line endings (CRLF) alone are not a problem: the log still verifies and `--verify` prints a note.
+
 #### "Tamper detected"
 
-**What happened:** `zn-gate evidence --verify` found that the decision log was changed or damaged, so its chain of records no longer matches. The message gives the place of the break and a command to move the file aside.
+**What happened:** `zn-gate evidence --verify` found that the decision log was changed or damaged, so its chain of records no longer matches. This is also what you see when a record was edited and the file was saved with a byte order mark or Windows line endings. The message gives the place of the break and a command to move the file aside.
 
 **Is it safe?** Your protection keeps working. Only the record is in doubt.
 
