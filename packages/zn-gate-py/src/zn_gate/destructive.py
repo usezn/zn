@@ -1541,6 +1541,29 @@ def _substitute_heads(text: str) -> str:
     return _SUBST_HEAD_RE.sub(rep, text)
 
 
+# The program of a substitution, written as a glob: $(/usr/bin/cu?l URL), <(cu*l URL).
+_SUBST_PROGRAM_GLOB_RE = re.compile(r"((?:\$\(|<\()[ \t]*(?:[\w.~-]*/)*)([\w.\-?*\[\]!^]+)")
+
+
+def _unhide_substituted_program(text: str) -> str:
+    """The text with what hides a downloader inside a substitution read away, for the patterns that look for one: quotes
+    (c"u"rl, 'curl', $'curl'), a backslash before a line break inside the name and a glob that matches a downloader
+    (cu?l -> curl). The patterns only ever see this text as an extra reading, so it can only add a block. One pass each."""
+    t = re.sub(r"\\\r?\n", "", text).replace("$'", "'")
+    t = t.replace("'", "").replace('"', "")
+
+    def rep(m: "re.Match[str]") -> str:
+        word = m.group(2)
+        if not re.search(r"[*?\[]", word):
+            return m.group(0)
+        low = word.lower()
+        if any(_glob_matches(low, n) for n in _DOWNLOADERS):
+            return m.group(1) + "curl"
+        return m.group(0)
+
+    return _SUBST_PROGRAM_GLOB_RE.sub(rep, t)
+
+
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
@@ -1707,6 +1730,15 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
         or _PS_CALL_RE.search(ps_bare)
     ):
         return "pipe_to_shell"
+    # A shell run on a substitution whose downloader is quoted, glob-written or split by a line continuation.
+    if "$(" in text or "<(" in text:
+        bare_subst = _unhide_substituted_program(text)
+        if (
+            _SHELL_RUNS_DOWNLOAD_RE.search(bare_subst)
+            or _SOURCE_DOWNLOAD_RE.search(bare_subst)
+            or _SHELL_STDIN_DOWNLOAD_RE.search(bare_subst)
+        ):
+            return "pipe_to_shell"
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
     segs, truncated = _segments_of(text)

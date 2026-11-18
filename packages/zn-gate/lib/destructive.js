@@ -830,6 +830,22 @@ function substituteHeads(text) {
   });
 }
 
+// The program of a substitution, written as a glob: $(/usr/bin/cu?l URL), <(cu*l URL).
+const SUBST_PROGRAM_GLOB_RE = /((?:\$\(|<\()[ \t]*(?:[\w.~-]*\/)*)([\w.\-?*[\]!^]+)/g;
+
+/* The text with what hides a downloader inside a substitution read away, for the patterns that look for one: quotes
+   (c"u"rl, 'curl', $'curl'), a backslash before a line break (cu\<nl>rl) and a glob that matches a downloader
+   (cu?l -> curl). The patterns only ever see this text as an extra reading, so it can only add a block. One pass each. */
+function unhideSubstitutedProgram(text) {
+  const t = text.replace(/\\\r?\n/g, '').replace(/\$'/g, "'").replace(/["']/g, '');
+  return t.replace(SUBST_PROGRAM_GLOB_RE, (m, lead, word) => {
+    if (!/[*?[]/.test(word)) return m;
+    const low = word.toLowerCase();
+    for (const n of DOWNLOADERS) if (globMatches(low, n)) return lead + 'curl';
+    return m;
+  });
+}
+
 function checkPipeline(pipe, known = null) {
   const heads = pipe.map((s) => {
     const un = unwrapDir(stripRedirects(s.words));
@@ -977,6 +993,11 @@ function analyze(cmd, depth = 0, known = null) {
     ? bare.replace(/`\r?\n/g, ' ').replace(PS_TICK_RE, '').replace(PS_NEXT_PIPE_RE, ' |')
     : bare;
   if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || SHELL_STDIN_DOWNLOAD_RE.test(text) || PS_PIPE_RE.test(psBare) || PS_CALL_RE.test(psBare)) && on('pipe_to_shell')) return 'pipe_to_shell';
+  // A shell run on a substitution whose downloader is quoted, glob-written or split by a line continuation.
+  if ((text.includes('$(') || text.includes('<(')) && on('pipe_to_shell')) {
+    const bareSubst = unhideSubstitutedProgram(text);
+    if (SHELL_RUNS_DOWNLOAD_RE.test(bareSubst) || SOURCE_DOWNLOAD_RE.test(bareSubst) || SHELL_STDIN_DOWNLOAD_RE.test(bareSubst)) return 'pipe_to_shell';
+  }
   if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
   const segs = segmentsOf(text);
   const hit = checkSegments(segs, depth, known);

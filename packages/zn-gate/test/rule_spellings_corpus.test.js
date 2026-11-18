@@ -31,8 +31,7 @@ const GHP = generateAll(8360, { perType: 1, piiPerType: 1 }).secrets.find((s) =>
 const KNOWN_GAPS = new Set([
   'egress-dotenv-001', 'egress-dotenv-002', 'egress-dotenv-003', 'egress-dotenv-004',
   'egress-file-009', 'egress-prog-030',
-  'pts-subst-013', 'pts-subst-014', 'pts-subst-015', 'pts-subst-020',
-  'pts-subst-021', 'pts-subst-022', 'pts-subst-023', 'pts-subst-024', 'pts-subst-025',
+  
   'rc-target-011', 'rc-target-012', 'rc-target-025',
 ]);
 
