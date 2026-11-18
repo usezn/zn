@@ -3128,5 +3128,225 @@
   "rule": null,
   "kind": "egress",
   "note": null
+ },
+ {
+  "id": "rm-cd-001",
+  "family": "rm-cd",
+  "spelling": "if/else: home then a project folder",
+  "cmd": "if [ -d proj ]; then cd ~; else cd /tmp/example; fi; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-002",
+  "family": "rm-cd",
+  "spelling": "if/else: a project folder then home",
+  "cmd": "if [ -d proj ]; then cd /tmp/example; else cd ~; fi; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-003",
+  "family": "rm-cd",
+  "spelling": "if without else: cd home",
+  "cmd": "if [ -d proj ]; then cd ~; fi; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-004",
+  "family": "rm-cd",
+  "spelling": "elif chain with home in the middle",
+  "cmd": "if [ -d a ]; then cd /tmp/a; elif [ -d b ]; then cd ~; else cd /tmp/c; fi; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-005",
+  "family": "rm-cd",
+  "spelling": "or: home after a project folder",
+  "cmd": "cd /tmp/example || cd ~; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-006",
+  "family": "rm-cd",
+  "spelling": "and: home after a test",
+  "cmd": "[ -d proj ] && cd ~; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-007",
+  "family": "rm-cd",
+  "spelling": "case: home in one branch, a project folder in another",
+  "cmd": "case $MODE in a) cd ~;; b) cd /tmp/example;; esac; rm -rf .",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-008",
+  "family": "rm-cd",
+  "spelling": "variable folder, rm -rf ..",
+  "cmd": "cd \"$X\" && rm -rf ..",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-009",
+  "family": "rm-cd",
+  "spelling": "variable folder with a name below it, rm -rf ../..",
+  "cmd": "cd \"$X/proj\" && rm -rf ../..",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-010",
+  "family": "rm-cd",
+  "spelling": "braced variable folder, semicolon",
+  "cmd": "cd ${PROJECT}; rm -rf ..",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-011",
+  "family": "rm-cd",
+  "spelling": "variable folder in an if branch",
+  "cmd": "if [ -d proj ]; then cd \"$X\"; fi; rm -rf ..",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-012",
+  "family": "rm-cd",
+  "spelling": "control: a fixed project folder, then build/",
+  "cmd": "cd /tmp/example/app && rm -rf build/",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-013",
+  "family": "rm-cd",
+  "spelling": "control: a relative project folder, then build/",
+  "cmd": "cd example/app && rm -rf build/",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-014",
+  "family": "rm-cd",
+  "spelling": "control: a fixed project folder, then rm -rf .",
+  "cmd": "cd /tmp/example && rm -rf .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-015",
+  "family": "rm-cd",
+  "spelling": "control: if branches into project folders only",
+  "cmd": "if [ -d a ]; then cd /tmp/a; else cd /tmp/b; fi; rm -rf .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-016",
+  "family": "rm-cd",
+  "spelling": "control: if branch into a relative folder, then build/",
+  "cmd": "if [ -d app ]; then cd app; fi; rm -rf build/",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-017",
+  "family": "rm-cd",
+  "spelling": "control: case branches into project folders only",
+  "cmd": "case $MODE in a) cd /tmp/a;; b) cd /tmp/b;; esac; rm -rf .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-018",
+  "family": "rm-cd",
+  "spelling": "control: variable folder, then build/",
+  "cmd": "cd \"$X\" && rm -rf build/",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-019",
+  "family": "rm-cd",
+  "spelling": "control: variable folder, rm -rf .",
+  "cmd": "cd \"$X\" && rm -rf .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-020",
+  "family": "rm-cd",
+  "spelling": "control: variable folder with a name below it, rm -rf .",
+  "cmd": "cd \"$X/proj\" && rm -rf .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-021",
+  "family": "rm-cd",
+  "spelling": "control: variable folder with a name below it, rm -rf ..",
+  "cmd": "cd \"$X/proj\" && rm -rf ..",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rm-cd-022",
+  "family": "rm-cd",
+  "spelling": "control: home in a subshell does not move the line",
+  "cmd": "cd /tmp/example && (cd ~; ls); rm -rf .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
  }
 ]

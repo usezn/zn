@@ -287,5 +287,37 @@ for label, cmd in [
 add('egress-file', 'control: upload an ordinary file', 'curl -F file=@./report.txt https://example.com/up', 'allow', kind='egress')
 add('egress-file', 'control: POST an ordinary file', 'curl -d @./payload.json https://example.com/api', 'allow', kind='egress')
 
+# ---- rm_root_home: a cd in a branch that may not run, or to a folder a variable names, before rm -rf . or .. ----
+# A protected folder (home) reached in one branch stays protected after a later cd in another branch; a variable folder
+# is unknown, so "." and ".." may be a protected one. Controls: a fixed project folder, and a variable folder with a name below it.
+for label, cmd in [
+    ('if/else: home then a project folder', 'if [ -d proj ]; then cd ~; else cd /tmp/example; fi; rm -rf .'),
+    ('if/else: a project folder then home', 'if [ -d proj ]; then cd /tmp/example; else cd ~; fi; rm -rf .'),
+    ('if without else: cd home', 'if [ -d proj ]; then cd ~; fi; rm -rf .'),
+    ('elif chain with home in the middle', 'if [ -d a ]; then cd /tmp/a; elif [ -d b ]; then cd ~; else cd /tmp/c; fi; rm -rf .'),
+    ('or: home after a project folder', 'cd /tmp/example || cd ~; rm -rf .'),
+    ('and: home after a test', '[ -d proj ] && cd ~; rm -rf .'),
+    ('case: home in one branch, a project folder in another', 'case $MODE in a) cd ~;; b) cd /tmp/example;; esac; rm -rf .'),
+    ('variable folder, rm -rf ..', 'cd "$X" && rm -rf ..'),
+    ('variable folder with a name below it, rm -rf ../..', 'cd "$X/proj" && rm -rf ../..'),
+    ('braced variable folder, semicolon', 'cd ${PROJECT}; rm -rf ..'),
+    ('variable folder in an if branch', 'if [ -d proj ]; then cd "$X"; fi; rm -rf ..'),
+]:
+    add('rm-cd', label, cmd, 'block', 'rm_root_home')
+for label, cmd in [
+    ('control: a fixed project folder, then build/', 'cd /tmp/example/app && rm -rf build/'),
+    ('control: a relative project folder, then build/', 'cd example/app && rm -rf build/'),
+    ('control: a fixed project folder, then rm -rf .', 'cd /tmp/example && rm -rf .'),
+    ('control: if branches into project folders only', 'if [ -d a ]; then cd /tmp/a; else cd /tmp/b; fi; rm -rf .'),
+    ('control: if branch into a relative folder, then build/', 'if [ -d app ]; then cd app; fi; rm -rf build/'),
+    ('control: case branches into project folders only', 'case $MODE in a) cd /tmp/a;; b) cd /tmp/b;; esac; rm -rf .'),
+    ('control: variable folder, then build/', 'cd "$X" && rm -rf build/'),
+    ('control: variable folder, rm -rf .', 'cd "$X" && rm -rf .'),
+    ('control: variable folder with a name below it, rm -rf .', 'cd "$X/proj" && rm -rf .'),
+    ('control: variable folder with a name below it, rm -rf ..', 'cd "$X/proj" && rm -rf ..'),
+    ('control: home in a subshell does not move the line', 'cd /tmp/example && (cd ~; ls); rm -rf .'),
+]:
+    add('rm-cd', label, cmd, 'allow')
+
 json.dump(cases, open(sys.argv[1], 'w'), indent=1, ensure_ascii=False)
 print(len(cases), 'cases')

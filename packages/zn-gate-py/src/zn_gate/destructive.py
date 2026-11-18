@@ -411,7 +411,8 @@ class _Vars:
     value, and every reading of a command that uses it is checked."""
 
     __slots__ = (
-        "vars", "assignments", "expanded", "overflow", "has_multi", "parens", "braces", "blocks", "after_and_or", "cases",
+        "vars", "assignments", "expanded", "overflow", "has_multi", "parens", "braces", "blocks", "after_and_or", "cases", "branch",
+        "after_or",
     )
 
     def __init__(self) -> None:
@@ -426,6 +427,9 @@ class _Vars:
         self.blocks = 0
         self.after_and_or = False
         self.cases = 0
+        # True while the command being read is in a branch that may not run (right after ||, or inside if, while, until, for or case).
+        self.branch = False
+        self.after_or = False
 
     def substitute(self, word: str, chosen: Optional[Dict[str, Optional[str]]] = None) -> str:
         if not self.vars or "$" not in word:
@@ -558,6 +562,7 @@ class _Vars:
         if sep == ")" and self.cases == 0:
             self.parens = max(0, self.parens - 1)
         self.after_and_or = sep in ("&&", "||")
+        self.after_or = sep == "||"
 
     def _read_and_record(self, words: List[str], sep: Optional[str], conditional: bool) -> List[List[str]]:
         outs = self._readings(words)
@@ -593,6 +598,9 @@ class _Vars:
         opens_here = any(w in ("{", "(") or w in _OPEN_BLOCK or w in _OPENER_WORDS or w.endswith("()") for w in words)
         conditional = (self.after_and_or or self.parens > 0 or self.braces > 0 or self.blocks > 0 or opens_here
                        or sep == "(" or opens > 0)
+        self.branch = self.after_or or self.blocks > 0 or any(
+            w in _OPEN_BLOCK or (w in _OPENER_WORDS and w != "function") for w in words
+        )
         try:
             return self._read_and_record(words, sep, conditional)
         finally:
@@ -1177,6 +1185,32 @@ def _folder_rel(cwd: Any, w: str) -> Any:
     return _folder_walk(cwd, w.rstrip().replace("\\", "/"))
 
 
+# The anchor of a folder named by a plain variable (or ~user): $X/, ${X}/, %X/ or ~user/.
+_VAR_FOLDER_RE = re.compile(r"^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|%[^%/]+%|~[^/]+|\$env:[A-Za-z_][A-Za-z0-9_]*)/\Z")
+
+
+def _sensitive_folder(f: Any) -> bool:
+    """Whether the folder f is, or may be, a protected one (home, the root, a system folder) or one a variable names."""
+    if f is _CWD_LOST:
+        return True
+    if not f:
+        return False
+    return (f.kind == "other" and bool(_VAR_FOLDER_RE.match(f.a))) or _dangerous_path(_from_cwd(f, ".")) != ""
+
+
+def _join_branch(prev: Any, t: Any) -> Any:
+    """The folder after a cd in a branch that may not run (if/else, case, after ||): it may be the folder prev before
+    the cd or the folder t the cd names, so a protected one of the two stays protected and a later cd to another folder
+    cannot hide it."""
+    if t is prev:
+        return t
+    if not _sensitive_folder(prev):
+        return t
+    if _sensitive_folder(t) and (t is _CWD_LOST or _from_cwd(t, ".") != _from_cwd(prev, ".")):
+        return _CWD_LOST
+    return prev
+
+
 def _from_cwd(cwd: Any, word: str) -> str:
     """A word read from the folder cwd: relative words are joined to it, anchored words are kept. Only as many trailing
     segments of the folder as the word's ".." can reach (plus four) are written out: a protected folder is at most three
@@ -1185,6 +1219,12 @@ def _from_cwd(cwd: Any, word: str) -> str:
         return word
     if cwd is _CWD_LOST:
         return "/"
+    # A folder named by a variable the line cannot see through: the ones above it may be a protected one (the folder itself is not
+    # followed, like cd "$BUILD_DIR" && rm -rf .).
+    if cwd.kind == "other" and _VAR_FOLDER_RE.match(cwd.a):
+        r = _folder_walk(cwd, word.replace("\\", "/"))
+        if r is None or r is _CWD_LOST or r is _CWD_OVERFLOW:
+            return "/"
     ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
     return _folder_text(cwd, ups + 4) + "/" + word
 
@@ -1669,7 +1709,7 @@ def _check_segments(
                 elif t is not _NOT_CD:
                     to = _CWD_LOST
             if to is not _NOT_CD:
-                known = to
+                known = _join_branch(known, to) if var_scope.branch else to
         pipe.append([(w1, sep) for w1 in readings])
         if not _is_pipe(sep):
             hit2 = _check_pipeline_readings(pipe, known)

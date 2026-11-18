@@ -26,6 +26,8 @@ function newScope() {
     // Where the line has got to: inside a ( ) group, a { } group or an if/while/for/case block, or right after && or ||.
     // An assignment there may not run, so it adds a possible value instead of replacing the old one.
     parens: 0, braces: 0, blocks: 0, afterAndOr: false, cases: 0,
+    // True while the command being read is in a branch that may not run (right after ||, or inside if, while, until, for or case).
+    branch: false, afterOr: false,
   };
 }
 
@@ -159,6 +161,7 @@ function track(scope, words, sep, opens) {
   // so the assignments after it stay conditional (fail-safe).
   if (sep === ')' && scope.cases === 0) scope.parens = Math.max(0, scope.parens - 1);
   scope.afterAndOr = sep === '&&' || sep === '||';
+  scope.afterOr = sep === '||';
 }
 
 function readAndRecord(scope, words, sep, conditional) {
@@ -191,6 +194,7 @@ function applyVariants(scope, words, sep, opens = 0) {
   // A group or block opened in this same segment (f() { D=x; }, { D=x; }, if ...; then D=x) makes it conditional too.
   const opensHere = words.some((w) => w === '{' || w === '(' || OPEN_BLOCK.has(w) || OPENER_WORDS.has(w) || /\(\)$/.test(w));
   const conditional = scope.afterAndOr || scope.parens > 0 || scope.braces > 0 || scope.blocks > 0 || opensHere || sep === '(' || opens > 0;
+  scope.branch = scope.afterOr || scope.blocks > 0 || words.some((w) => OPEN_BLOCK.has(w) || (OPENER_WORDS.has(w) && w !== 'function'));
   try {
     return readAndRecord(scope, words, sep, conditional);
   } finally {

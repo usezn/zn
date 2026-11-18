@@ -23,6 +23,8 @@
  *
  * A cd or pushd earlier in the same command line is followed: after `cd ~ && find . -delete` the "." is the home folder.
  * A cd made by an earlier tool call, or inside a subshell or a pipeline, is not seen.
+ * A cd in a branch that may not run (if/else, case, after ||) leaves the folder it may have been in before or the one it names:
+ * a protected one of the two stays protected. A cd to a folder named by a variable the line cannot see through makes the folders above it protected.
  *
  * The command is split with the hook policy's own tokenizer (scanFirstCommand),
  * so quotes and escapes read the same as in the rest of the policy.
@@ -179,6 +181,8 @@ const MAX_CWD_CHARS = 4096;
 const CWD_OVERFLOW = Symbol('cwd-overflow');
 // A folder that stepped above the home folder or a drive root is unknown, and treated as protected for the rest of the line.
 const CWD_LOST = Symbol('cwd-lost');
+// The anchor of a folder named by a plain variable (or ~user): $X/, ${X}/, %X/ or ~user/.
+const VAR_FOLDER_RE = /^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|%[^%\/]+%|~[^\/]+|\$env:[A-Za-z_][A-Za-z0-9_]*)\/$/;
 
 /* The folder a line has reached is kept as an immutable chain: an anchor (the root, a drive, a home word) and the
    segments below it, newest first. A cd adds or drops one segment, so the cost of a step does not depend on how long
@@ -248,6 +252,23 @@ function cdTarget(args, cwd) {
   return folderRel(cwd, t);
 }
 
+/* Whether the folder `f` is, or may be, a protected one (home, the root, a system folder) or one a variable names. */
+function sensitiveFolder(f) {
+  if (f === CWD_LOST) return true;
+  if (!f) return false;
+  return (f.kind === 'other' && VAR_FOLDER_RE.test(f.a)) || dangerousPath(fromCwd(f, '.')) !== '';
+}
+
+/* The folder after a cd in a branch that may not run (if/else, case, after ||): it may be the folder `prev` before the cd
+   or the folder `t` the cd names, so a protected one of the two stays protected and a later cd to another folder cannot hide it. */
+function joinBranch(prev, t) {
+  if (t === prev) return t;
+  const sp = sensitiveFolder(prev);
+  if (!sp) return t;
+  if (sensitiveFolder(t) && (t === CWD_LOST || fromCwd(t, '.') !== fromCwd(prev, '.'))) return CWD_LOST;
+  return prev;
+}
+
 /* A relative folder word followed from the folder `cwd` (null = unknown). */
 function folderRel(cwd, w) {
   if (cwd === null || cwd === undefined) return null;
@@ -261,6 +282,11 @@ function fromCwd(cwd, word) {
   const w = String(word);
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
   if (cwd === CWD_LOST) return '/';
+  // A folder named by a variable the line cannot see through: the ones above it may be a protected one (the folder itself is not followed, like cd "$BUILD_DIR" && rm -rf .).
+  if (cwd.kind === 'other' && VAR_FOLDER_RE.test(cwd.a)) {
+    const r = folderWalk(cwd, w.replace(/\\/g, '/'));
+    if (r === null || r === CWD_LOST || r === CWD_OVERFLOW) return '/';
+  }
   const ups = w.split(/[\\/]/).filter((s) => s === '..').length;
   return folderText(cwd, ups + 4) + '/' + w;
 }
@@ -948,7 +974,7 @@ function checkSegments(segs, depth, cwd0 = null) {
         if (segs1.length === 1) to = t;
         else if (t !== NOT_CD) to = CWD_LOST;
       }
-      if (to !== NOT_CD) known = to;
+      if (to !== NOT_CD) known = vars.branch ? joinBranch(known, to) : to;
     }
     pipe.push(segs1);
     if (!isPipe(seg.sep)) {
