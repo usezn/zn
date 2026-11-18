@@ -4,7 +4,15 @@
  * OpenCode adapter: a plugin that calls the zn hook runner.
  *
  * Plugin API (opencode.ai/docs/plugins and the OpenCode source at v1.18.25,
- * read 2026-10-11):
+ * read 2026-10-11; docs re-read 2026-11-18, latest opencode-ai on npm 1.19.6):
+ *  - This adapter writes a V1 plugin (a file that exports an async function returning
+ *    the hook object). OpenCode's V2 plugin API (Plugin.define from @opencode/plugin,
+ *    ctx.tool.hook execute.before/after, config key `plugins`, directory plugins) does
+ *    not run V1 code, but V1 object entrypoints are still supported from 1.18.29 and
+ *    this V1 plugin was checked on 1.19.6 (test/opencode_plugin_compat.test.js, run on
+ *    a throwaway VM). Port plan: opencode.ai/docs/build/plugins/migrate-v1 and
+ *    opencode.ai/docs/build/plugins/server. Re-check both pages and re-run the compat
+ *    test before changing the hook names below.
  *  - Plugins load from ~/.config/opencode/plugins/ (user) and
  *    <project>/.opencode/plugins/ (project); `plugin/` also works.
  *  - "tool.execute.before"(input {tool, sessionID, callID}, output {args}):
