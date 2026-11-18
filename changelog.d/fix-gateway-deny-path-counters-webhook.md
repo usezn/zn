@@ -1,0 +1,2 @@
+### Fixed
+- The gateway now counts, streams and reports every call that a managed rule or guard refuses, not only the ones that reached the policy engine. Restricted tools, injection and secret rules, banned agents, the loop breaker, pending consensus, vision and OCR checks and skipped servers now also step `zn_tool_calls_denied_total`, appear on the event stream (SSE and the SIEM exporter) and send the DENIED webhook alert, next to their audit row. One shared helper does all four, so a new guard cannot forget one.

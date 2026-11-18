@@ -1481,3 +1481,248 @@ async fn a_consensus_refusal_writes_a_denied_audit_row() {
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_block_row(&rows[0], "drop_table", "tenant-a", "consensus_required:");
 }
+
+// ---------------------------------------------------------------------------------------------
+// The whole trail of a refusal: one audit row, one stream event, one counter step, one webhook alert
+// ---------------------------------------------------------------------------------------------
+
+type Posts = Arc<std::sync::Mutex<Vec<String>>>;
+
+/// A local endpoint that records the body of every POST it gets and answers 200.
+async fn fake_webhook_endpoint() -> (String, Posts) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", listener.local_addr().unwrap());
+    let bodies: Posts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&bodies);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let seen = Arc::clone(&seen);
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(n) = sock.read(&mut chunk).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let len = head
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= len {
+                            seen.lock().unwrap().push(body.to_string());
+                            break;
+                        }
+                    }
+                }
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            });
+        }
+    });
+    (url, bodies)
+}
+
+/// Point the state's webhook queue at a running dispatcher that posts to the fake endpoint.
+async fn with_webhook_endpoint(state: &mut AppState) -> Posts {
+    let (url, bodies) = fake_webhook_endpoint().await;
+    let (manager, rx) = zn::webhooks::WebhookManager::new(vec![zn::webhooks::WebhookConfig {
+        url,
+        webhook_type: zn::webhooks::WebhookType::Generic,
+        event_filter: vec![],
+        status_filter: vec![],
+        enabled: true,
+    }]);
+    state.webhook_tx = manager.sender();
+    tokio::spawn(async move { manager.run(rx).await });
+    bodies
+}
+
+/// What `denials` refusals must have left besides the audit rows (the caller checks those): the stream
+/// events, the webhook posts and the counter. The counter is process-wide and other tests refuse calls at
+/// the same time, so it may have moved more than this test did, never less.
+async fn assert_denial_trail(
+    stream: &mut broadcast::Receiver<AuditEntry>,
+    bodies: &Posts,
+    denied_before: u64,
+    tool: &str,
+    reason_prefix: &str,
+    denials: usize,
+) {
+    let deadline = std::time::Instant::now() + WAIT;
+    while bodies.lock().unwrap().len() < denials && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // Room for a duplicate to arrive: there must be none.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let posts = bodies.lock().unwrap().clone();
+    assert_eq!(
+        posts.len(),
+        denials,
+        "one webhook alert per refusal: {posts:?}"
+    );
+    let last: Value = serde_json::from_str(posts.last().unwrap()).unwrap();
+    for post in &posts {
+        let alert: Value = serde_json::from_str(post).unwrap();
+        assert_eq!(alert["status"], "DENIED", "{post}");
+        assert_eq!(alert["tool_name"], tool, "{post}");
+        assert!(alert["details"].is_null(), "metadata only: {post}");
+    }
+    assert!(
+        last["policy_match"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with(reason_prefix),
+        "{last}"
+    );
+    let mut events = Vec::new();
+    while let Ok(e) = stream.try_recv() {
+        events.push(e);
+    }
+    let denied: Vec<_> = events.iter().filter(|e| e.status == "DENIED").collect();
+    assert_eq!(
+        denied.len(),
+        denials,
+        "one stream event per refusal: {events:?}"
+    );
+    assert!(
+        denied
+            .iter()
+            .all(|e| e.payload.is_none() && e.tool_name == tool),
+        "{denied:?}"
+    );
+    assert!(
+        zn::metrics::TOOL_CALLS_DENIED.get() >= denied_before + denials as u64,
+        "zn_tool_calls_denied_total must count every refusal"
+    );
+}
+
+#[tokio::test]
+async fn a_restricted_tool_refusal_leaves_the_whole_trail() {
+    let (mut state, _dir) = test_state(None);
+    let bodies = with_webhook_endpoint(&mut state).await;
+    let mut stream = state.tx.subscribe();
+    let before = zn::metrics::TOOL_CALLS_DENIED.get();
+    let line = call_frame(3, "arguments", "shutdown_host", "hello");
+    assert_error_only(&run(&state, Some("tenant-a"), &line).await, Some(-32001));
+    assert_eq!(audit_rows(&state).len(), 1);
+    assert_denial_trail(
+        &mut stream,
+        &bodies,
+        before,
+        "shutdown_host",
+        "managed_rule:",
+        1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_injection_refusal_leaves_the_whole_trail() {
+    let (mut state, _dir) = test_state(None);
+    let bodies = with_webhook_endpoint(&mut state).await;
+    let mut stream = state.tx.subscribe();
+    let before = zn::metrics::TOOL_CALLS_DENIED.get();
+    let line = call_frame(5, "arguments", "search_notes", BAD_INJECTION);
+    assert_error_only(&run(&state, Some("tenant-a"), &line).await, Some(-32001));
+    assert_eq!(audit_rows(&state).len(), 1);
+    assert_denial_trail(
+        &mut stream,
+        &bodies,
+        before,
+        "search_notes",
+        "managed_rule:",
+        1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_banned_agent_refusal_leaves_the_whole_trail() {
+    let (mut state, _dir) = test_state(None);
+    let bodies = with_webhook_endpoint(&mut state).await;
+    let mut stream = state.tx.subscribe();
+    let before = zn::metrics::TOOL_CALLS_DENIED.get();
+    let line = call_frame(1, "arguments", "search_notes", BAD_INJECTION);
+    let mut calls = 0;
+    for _ in 0..200 {
+        calls += 1;
+        if parse(&run(&state, Some("tenant-a"), &line).await)["error"]["code"] == -32003 {
+            break;
+        }
+    }
+    // The managed-rule refusals before the ban and the banned call itself: each is one refusal everywhere.
+    assert_eq!(audit_rows(&state).len(), calls);
+    assert_denial_trail(
+        &mut stream,
+        &bodies,
+        before,
+        "search_notes",
+        "banned_agent:",
+        calls,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_loop_breaker_refusal_leaves_the_whole_trail() {
+    let (mut state, _dir) = test_state(None);
+    let bodies = with_webhook_endpoint(&mut state).await;
+    let mut stream = state.tx.subscribe();
+    let before = zn::metrics::TOOL_CALLS_DENIED.get();
+    let line = call_frame(1, "arguments", "search_notes", "quarterly revenue");
+    for _ in 0..200 {
+        if parse(&run(&state, Some("tenant-a"), &line).await)["error"]["code"] == -32002 {
+            break;
+        }
+    }
+    // The calls before the breaker were allowed: exactly one refusal, one alert.
+    let denied_rows = audit_rows(&state)
+        .iter()
+        .filter(|r| r.status == "DENIED")
+        .count();
+    assert_eq!(denied_rows, 1);
+    assert_denial_trail(
+        &mut stream,
+        &bodies,
+        before,
+        "search_notes",
+        "loop_breaker:",
+        1,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_consensus_refusal_leaves_the_whole_trail() {
+    let (mut state, _dir) = test_state(None);
+    consensus_state(&mut state);
+    let bodies = with_webhook_endpoint(&mut state).await;
+    let mut stream = state.tx.subscribe();
+    let before = zn::metrics::TOOL_CALLS_DENIED.get();
+    let out = run(&state, Some("tenant-a"), &frame("drop_table")).await;
+    assert_error_only(&out, Some(-32004));
+    assert_eq!(audit_rows(&state).len(), 1);
+    assert_denial_trail(
+        &mut stream,
+        &bodies,
+        before,
+        "drop_table",
+        "consensus_required:",
+        1,
+    )
+    .await;
+}

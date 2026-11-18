@@ -1000,12 +1000,15 @@ fn audit_write(state: &AppState, event: &str, entry: AuditEntry) -> bool {
     }
 }
 
-/// Audit row for a call that a managed rule or guard refused before the policy engine saw it.
+/// Everything a refusal leaves behind, for a call that a managed rule or guard refused before the policy
+/// engine saw it: a DENIED audit row, the event stream (SSE and SIEM exporter, `/api/v1/logs` reads the row),
+/// the `DENIED` tool-call counters and the webhook alert.
 ///
-/// Every refusal in `process_mcp_message` goes through here, so no block leaves without a row. The row
-/// goes through `AuditVault::log`, which redacts the tool name, the agent id and the reason and applies
-/// the payload settings, exactly like the rows of policy decisions. It holds the reason (a short,
-/// bounded text), never the arguments. The call is refused anyway, so a failed write is only counted.
+/// Every refusal in `process_mcp_message` goes through here, so no block leaves without a trace and a new
+/// guard cannot forget one of the four. The row goes through `AuditVault::log`, which redacts the tool name,
+/// the agent id and the reason and applies the payload settings, exactly like the rows of policy decisions.
+/// It holds the reason (a short, bounded text), never the arguments. The call is refused anyway, so a failed
+/// write is only counted.
 fn audit_block(state: &AppState, tool_log: &str, namespace: &str, agent_id: &str, reason: &str) {
     const MAX_REASON: usize = 200;
     let reason: String = reason.chars().take(MAX_REASON).collect();
@@ -1013,7 +1016,34 @@ fn audit_block(state: &AppState, tool_log: &str, namespace: &str, agent_id: &str
         .with_policy(reason)
         .with_namespace(namespace)
         .with_agent_id(agent_id);
-    audit_write(state, "TOOL_CALL", entry);
+    audit_write(state, "TOOL_CALL", entry.clone());
+    stream_entry(state, &entry);
+    metrics::record_tool_call(tool_log, "DENIED");
+    send_webhook_alert(state, &entry);
+}
+
+/// Put an audit entry on the event stream: metadata only, never a payload (even when `audit.store_payloads`
+/// keeps one in the database), because the scrubber cannot know every secret field. It carries the same
+/// redacted text as the database row (`AuditVault::log`): the agent id and the policy name come from the
+/// message, so a token in them must not leave through the SSE stream or the SIEM exporter either.
+fn stream_entry(state: &AppState, entry: &AuditEntry) {
+    let mut streamed = entry.clone();
+    streamed.payload = None;
+    streamed.agent_id = streamed.agent_id.as_deref().map(Scrubber::redact_for_log);
+    streamed.policy_match = streamed
+        .policy_match
+        .as_deref()
+        .map(Scrubber::redact_for_log);
+    let _ = state.tx.send(streamed);
+}
+
+/// Queue the webhook alert of an audit entry (metadata only, see `alert_for`).
+fn send_webhook_alert(state: &AppState, entry: &AuditEntry) {
+    let alert_tx = state.webhook_tx.clone();
+    let alert_payload = alert_for(entry);
+    tokio::spawn(async move {
+        let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
+    });
 }
 
 /// The webhook alert for an audit entry: metadata only. The request payload
@@ -1544,20 +1574,7 @@ async fn process_mcp_message(
                 )));
             }
 
-            // The event stream carries metadata only, never a payload (even
-            // when `audit.store_payloads` keeps one in the database): the
-            // scrubber cannot know every secret field.
-            // It carries the same redacted text as the database row (`AuditVault::log`): the agent id
-            // and the policy name come from the message, so a token in them must not leave through the
-            // SSE stream or the SIEM exporter either.
-            let mut streamed = entry.clone();
-            streamed.payload = None;
-            streamed.agent_id = streamed.agent_id.as_deref().map(Scrubber::redact_for_log);
-            streamed.policy_match = streamed
-                .policy_match
-                .as_deref()
-                .map(Scrubber::redact_for_log);
-            let _ = state.tx.send(streamed);
+            stream_entry(state, &entry);
 
             if status == "ALLOWED" {
                 metrics::record_tool_call(&tool_name, "ALLOWED");
@@ -1583,11 +1600,7 @@ async fn process_mcp_message(
                 }
 
                 // Send webhook alert
-                let alert_tx = state.webhook_tx.clone();
-                let alert_payload = alert_for(&entry);
-                tokio::spawn(async move {
-                    let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
-                });
+                send_webhook_alert(state, &entry);
 
                 let message = if entry.policy_match.as_deref() == Some(NEURAL_ERROR_MATCH) {
                     format!(
