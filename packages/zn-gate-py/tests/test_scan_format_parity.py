@@ -47,6 +47,17 @@ def _make_fixture(folder):
     return folder
 
 
+def _env_with_npx(folder):
+    """Both CLIs print the npx form of the next step only when npx is on the PATH (Node always does, Python asks
+    the PATH). Put a stand-in npx first, so the text is the same on a host with node but no npm. Nothing runs it."""
+    shim = Path(folder).parent / (Path(folder).name + "-npx-shim")
+    shim.mkdir(exist_ok=True)
+    for name in ("npx", "npx.cmd"):
+        (shim / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (shim / name).chmod(0o755)
+    return dict(os.environ, PATH=str(shim) + os.pathsep + os.environ.get("PATH", ""))
+
+
 def _scan(folder, impl, fmt):
     if impl == "node":
         cmd = [NODE, str(NODE_CLI), "scan", ".", "--format", fmt]
@@ -54,7 +65,7 @@ def _scan(folder, impl, fmt):
     else:
         cmd = [sys.executable, "-m", "zn_gate.cli", "scan", ".", "--format", fmt]
         extra = {"PYTHONPATH": str(SRC)}
-    env = dict(os.environ, NO_COLOR="1", **extra)
+    env = dict(_env_with_npx(folder), NO_COLOR="1", **extra)
     return subprocess.run(cmd, cwd=folder, capture_output=True, text=True, env=env, timeout=120)
 
 

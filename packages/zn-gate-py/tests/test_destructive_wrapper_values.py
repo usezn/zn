@@ -58,8 +58,17 @@ def test_unsure_marking(cmd, name, expected):
 
 
 def test_many_later_words_stay_within_budget():
-    cmd = "nice --adj 5 echo " + "rm sh find dd " * 4000
-    t0 = time.process_time()
-    r = check_command(cmd)
-    assert time.process_time() - t0 < 3.0
-    assert r.verdict == "block"
+    def cpu(words):
+        best = None
+        for _ in range(3):
+            t0 = time.process_time()
+            r = check_command("nice --adj 5 echo " + "rm sh find dd " * words)
+            spent = time.process_time() - t0
+            best = spent if best is None else min(best, spent)
+        assert r.verdict == "block"
+        return best
+
+    # Four times the words must cost far less than the 16 times a quadratic reader would take. Both sizes are
+    # measured on the same host at the same moment, so a loaded runner does not change the ratio.
+    small, large = cpu(1000), cpu(4000)
+    assert large <= 8 * small + 0.3, (small, large)

