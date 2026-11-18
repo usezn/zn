@@ -1884,7 +1884,8 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
                     break
                 i = hit.start()
                 run_match = _KV_BACKSLASH_RUN_RE.match(text, i)
-                assert run_match is not None
+                if run_match is None:  # explicit, not an assert: python -O removes asserts
+                    raise RuntimeError("internal error: no backslash run where one was found")
                 run = run_match.end() - i
                 if run == level and text[i + run:i + run + 1] == quote:
                     end = i
@@ -1903,7 +1904,8 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
                 if p >= n or text[p] not in '"\'':
                     break
                 word = _KV_WORD_RUN_RE.match(text, p + 1)
-                assert word is not None
+                if word is None:  # explicit, not an assert: python -O removes asserts
+                    raise RuntimeError("internal error: no word run after a quote")
                 q = word.end()
                 if q == p + 1:
                     break
@@ -2049,7 +2051,8 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
             if value_filter is not None:
                 # The value (group 2) decides whether the match is redacted.
                 span = groups[2]
-                assert span is not None
+                if span is None:  # explicit, not an assert: python -O removes asserts
+                    raise RuntimeError("internal error: a value filter match without its value")
                 vs, ve = span
                 value = _clean_value(text[vs:ve])
                 prefix = ''

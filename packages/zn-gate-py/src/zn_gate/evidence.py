@@ -414,7 +414,8 @@ def _js_number(x: float) -> str:
     from decimal import Decimal
 
     sign, digit_tuple, exp = Decimal(repr(x)).as_tuple()
-    assert isinstance(exp, int)  # a finite float, so never 'n', 'N' or 'F'
+    if not isinstance(exp, int):  # 'n', 'N' or 'F': not a finite float. An explicit check, not an assert: python -O removes asserts
+        raise ValueError("not a finite number")
     all_digits = "".join(map(str, digit_tuple))
     digits = all_digits.rstrip("0") or "0"
     # Decimal point position: value = 0.<digits> * 10**n
