@@ -512,7 +512,7 @@ function createSecretsServer(opts = {}) {
     const rec = { ts: new Date().toISOString(), name, reason, agent };
     try {
       const dir = process.env.ZN_HOME ? require('../stats').znHome() : path.join(home, '.zn');
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      require('../state-dir').ensureStateDir(dir);
       fs.appendFileSync(path.join(dir, 'requests.jsonl'), JSON.stringify(rec) + '\n', { mode: 0o600 });
     } catch (_) { /* best effort */ }
     await audit({ secret: name, mode: null, tool: 'mcp:secrets_request', argv0: null, host: null, decision: 'ask', reason: reason.slice(0, 120) });

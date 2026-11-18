@@ -134,7 +134,7 @@ function readConfig() {
 
 function writeConfig(cfg) {
   const file = configFile();
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  require('./state-dir').ensureStateDir(path.dirname(file));
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
   fs.renameSync(tmp, file);

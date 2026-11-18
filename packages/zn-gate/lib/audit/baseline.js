@@ -273,7 +273,7 @@ function baselinePath(home, root) {
 
 function saveBaseline(home, root, surface, now = new Date()) {
   const file = baselinePath(home, root);
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  require('../state-dir').ensureStateDir(path.dirname(file));
   const tmp = file + '.' + process.pid + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify({ version: 1, approved_at: now.toISOString(), entries: surface }), { mode: 0o600 });
   fs.renameSync(tmp, file);

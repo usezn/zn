@@ -1458,6 +1458,8 @@ async function check(opts = {}) {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
+  // Read before the live check runs a hook, which tightens the folder.
+  const stateNote = require('./state-dir').describe(env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(home, '.zn'));
   if (opts.live === false) {
     const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
     const results = [];
@@ -1468,7 +1470,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true, warnings: nodeWarnings(opts, env) };
+    return { results, removed: true, warnings: [...stateNote, ...nodeWarnings(opts, env)] };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
@@ -1489,7 +1491,7 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
+  return { results, removed: !fs.existsSync(dir), warnings: [...stateNote, ...nodeWarnings(opts, env)] };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */

@@ -159,7 +159,7 @@ function append(event, opts) {
     { prev: last ? last.mac : GENESIS },
   );
   record.mac = macOf(key, record);
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  require('../state-dir').ensureStateDir(path.dirname(file));
   // Flushed to disk before the vault saves its checkpoint of this record: after a
   // power loss the checkpoint then never points past the end of the log.
   const fd = fs.openSync(file, 'a', 0o600);

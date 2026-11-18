@@ -320,7 +320,7 @@ function remember(root, counts, home, env) {
   let fd = null;
   let tmp = null;
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    require('../state-dir').ensureStateDir(path.dirname(file));
     tmp = file + '.' + crypto.randomBytes(8).toString('hex') + '.tmp';
     fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), 0o600);
     fs.writeSync(fd, JSON.stringify(data));

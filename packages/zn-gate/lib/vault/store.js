@@ -93,7 +93,7 @@ function ensurePrivateDir(dir) {
   if (typeof process.getuid === 'function' && st.uid !== process.getuid()) {
     throw znError(CODES.POLICY_DENIED, 'directory is owned by another user: ' + dir);
   }
-  if ((st.mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
+  require('../state-dir').ensureStateDir(dir);
 }
 
 function ensureLayout(opts) {

@@ -194,7 +194,7 @@ function loadServer(key) {
 
 function saveServer(key, s) {
   const dir = pinsDir();
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  require('./state-dir').ensureStateDir(dir);
   const file = fileOf(key);
   const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
   try {

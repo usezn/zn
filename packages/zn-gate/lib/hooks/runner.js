@@ -1462,7 +1462,7 @@ function readSeen(file) {
 function writeSeen(file, list) {
   if (!file) return;
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    require('../state-dir').ensureStateDir(path.dirname(file));
     fs.writeFileSync(file, JSON.stringify(list.slice(-500)), { mode: 0o600 });
   } catch (_) {
     /* no memory: the hook still answers */
@@ -1814,6 +1814,7 @@ function failDecision(ev, err, mode, agentId) {
   if (ev && ev.event === 'stop') {
     return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
   }
+  if (err.code === 'ZN_STATE_DIR') return failClosed(ev, err, 'zn: ' + err.message);
   if (err.code === 'ZN_MALFORMED_TEXT') {
     return failClosed(ev, err, 'zn: this action names a file or text that is not valid Unicode text, so it was blocked. ' +
       'Ask the user to check the file names in the request.');
@@ -1925,6 +1926,8 @@ async function handle(adapter, rawEvent, opts = {}) {
   let decision;
   const d = lazyDeps(opts);
   try {
+    // zn's own folder must be private to this account before anything is read from or written to it (fail closed).
+    require('../state-dir').ensureStateDir(opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome(), { create: false });
     ev = adapter.normalize(rawEvent);
     // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
     if (ev && typeof ev.unreadable === 'string') ev.unreadable += ' ' + formatChangeStep(adapter.id);

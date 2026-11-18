@@ -126,7 +126,7 @@ function keepDamagedCopy(file) {
 }
 
 function save(data, file = statsFile()) {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  require('./state-dir').ensureStateDir(path.dirname(file));
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });

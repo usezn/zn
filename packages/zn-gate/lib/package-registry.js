@@ -161,7 +161,7 @@ function writeCache(file, entries) {
   }
   const tmp = file + '.' + process.pid + '.tmp';
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    require('./state-dir').ensureStateDir(path.dirname(file));
     fs.writeFileSync(tmp, JSON.stringify({ v: 1, e: entries }), { mode: 0o600 });
     fs.renameSync(tmp, file);
   } catch (e) {

@@ -191,7 +191,7 @@ function readNotice(home) {
 
 function writeNotice(home, n) {
   try {
-    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    require('../state-dir').ensureStateDir(home);
     const file = noticePath(home);
     const tmp = file + '.' + process.pid + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(n) + '\n', { mode: 0o600 });

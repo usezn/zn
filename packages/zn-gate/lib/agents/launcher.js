@@ -396,7 +396,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const dir = path.dirname(file);
   // ZN_HOOK_DIR names any folder: the launcher in it runs on every tool call, so the folder must be ours and private.
   if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot, readWinAcls: opts.readWinAcls, setWinPrivate: opts.setWinPrivate });
-  else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  else require('../state-dir').ensureStateDir(dir);
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
   writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest, manifest: opts.manifest, platform }), 0o755);

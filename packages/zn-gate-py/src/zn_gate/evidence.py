@@ -34,8 +34,9 @@ GENESIS_HASH = "0" * 64
 def _ensure_dir(file_path: str) -> None:
     # The ledger directory is private to the user (POSIX; the mode is ignored on Windows).
     dirname = os.path.dirname(file_path)
-    if dirname and not os.path.exists(dirname):
-        os.makedirs(dirname, mode=0o700, exist_ok=True)
+    if dirname:
+        from .state_dir import ensure_state_dir
+        ensure_state_dir(dirname)
 
 
 def _open_for_append(file_path: str) -> TextIO:

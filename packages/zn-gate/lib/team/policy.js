@@ -236,7 +236,7 @@ function readJson(file) {
 
 /* Atomic write, private file. */
 function writeJson(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  require('../state-dir').ensureStateDir(path.dirname(file));
   const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
   fs.renameSync(tmp, file);

@@ -53,7 +53,7 @@ function readState(stateFile) {
 
 /* Written to a temp file and renamed, so a crash never leaves a half-written state file. */
 function writeState(stateFile, s) {
-  fs.mkdirSync(path.dirname(stateFile), { recursive: true, mode: 0o700 });
+  require('../state-dir').ensureStateDir(path.dirname(stateFile));
   const data = {
     head: s.head,
     last_upload: s.last_upload,
@@ -145,7 +145,7 @@ function toEvent(rec) {
 
 /* Returns an open file descriptor, or null when another upload holds a fresh lock. */
 function acquireLock(lockFile, nowMs) {
-  fs.mkdirSync(path.dirname(lockFile), { recursive: true, mode: 0o700 });
+  require('../state-dir').ensureStateDir(path.dirname(lockFile));
   for (let attempt = 0; attempt < 3; attempt++) {
     let fd;
     try {

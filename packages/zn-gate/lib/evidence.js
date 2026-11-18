@@ -17,9 +17,7 @@ const LEDGER_FILE_MODE = 0o600;
 
 function ensureZnDir(filePath = EVIDENCE_FILE) {
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true, mode: LEDGER_DIR_MODE });
-  }
+  require('./state-dir').ensureStateDir(dir);
 }
 
 /**
