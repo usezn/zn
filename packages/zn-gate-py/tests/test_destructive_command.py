@@ -35,6 +35,19 @@ class DestructiveCommandCorpus(unittest.TestCase):
         self.assertEqual([x["cmd"] for x in CORPUS["not_covered"] if not check_command(x["cmd"]).allowed], [])
 
 
+def _cpu_budget():
+    """CPU seconds a linear read of a long command may use on this machine: twenty times what a fixed 80 KB
+    command of 10,000 short commands costs here (best of three), never under one second. The reference is timed in
+    the same run, so a slow or busy runner raises the budget with it, while a read that grows faster than its
+    input costs far more than twenty times the reference."""
+    best = float("inf")
+    for _ in range(3):
+        start = time.process_time()
+        check_command("echo a; " * 10000)
+        best = min(best, time.process_time() - start)
+    return max(1.0, 20 * best)
+
+
 class DestructiveCommandShape(unittest.TestCase):
     def test_allow_and_block_answers(self):
         ok = check_command("npm test")
@@ -54,10 +67,11 @@ class DestructiveCommandShape(unittest.TestCase):
     def test_hostile_long_input_stays_fast(self):
         inputs = ["a" * 100000, "curl " * 20000, "iwr " * 20000, '"\\"' * 30000, '"a ' * 30000, "; " * 40000,
                   "$( " * 30000, ":(){ " * 15000, "sh -c " * 15000, "echo " + "a" * 150000 + " && rm -rf ~"]
+        budget = _cpu_budget()
         for text in inputs:
             t0 = time.process_time()
             check_command(text)
-            self.assertLess(time.process_time() - t0, 3, text[:12])
+            self.assertLess(time.process_time() - t0, budget, text[:12])
 
     def test_long_line_cannot_hide_a_command_after_the_segment_limit(self):
         for sep in (";", "\n"):
@@ -96,14 +110,15 @@ class DestructiveCommandShape(unittest.TestCase):
             ("sh " * 60000 + '-c "$(curl x)"', False),
         ]
         # The budget catches a read that grows faster than the input. The slowest case, 30,000 backtick commands,
-        # grows linearly and uses up to about 2 s of CPU time on a CI runner, so a 2 s budget failed it by chance.
-        # 4 s leaves room for a slow runner; a quadratic read of that case would need 16 times the time of its
-        # 7,500-command version, far past 4 s.
+        # grows linearly and used up to about 2 s of CPU time on a CI runner, so a fixed 2 s budget failed it by
+        # chance. The budget now follows the speed of the machine (see _cpu_budget); a quadratic read of that case
+        # would need 16 times the time of its 7,500-command version.
+        budget = _cpu_budget()
         for cmd, allowed in cases:
             self.assertLess(len(cmd), 200 * 1024)
             t0 = time.process_time()
             res = check_command(cmd)
-            self.assertLess(time.process_time() - t0, 4.0, cmd[:40])
+            self.assertLess(time.process_time() - t0, budget, cmd[:40])
             self.assertEqual(res.allowed, allowed, cmd[:40])
 
     def test_shell_fed_from_a_substitution_or_a_piped_group(self):
