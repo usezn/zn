@@ -1,0 +1,2 @@
+### Changed
+- `ZN_KMS_ALLOW_CONFIG_FALLBACK`, `ZN_NEURAL_ENABLED` and `ZN_NEAREST_NEIGHBOR_AUDIT` now read on/off values the same way as the other on/off settings: `1`, `0`, `true`, `false`, `yes`, `no`, `on` or `off`, in any capitalisation. A value that is none of these (a typo such as `flase`) now stops the start with an error naming the variable, instead of silently turning the setting on (or, for the KMS fallback, off). An empty value keeps the default.

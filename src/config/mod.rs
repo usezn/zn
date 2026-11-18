@@ -935,15 +935,6 @@ impl ZnConfig {
             self.kms.key_id = Some(key_id);
         }
 
-        if let Ok(allow) = std::env::var("ZN_KMS_ALLOW_CONFIG_FALLBACK") {
-            self.kms.allow_config_fallback =
-                matches!(allow.as_str(), "1" | "true" | "TRUE" | "True");
-        }
-
-        if let Ok(neural_enabled) = std::env::var("ZN_NEURAL_ENABLED") {
-            self.neural.enabled = neural_enabled.parse().unwrap_or(true);
-        }
-
         if let Ok(neural_threshold) = std::env::var("ZN_NEURAL_THRESHOLD") {
             if let Ok(t) = neural_threshold.parse() {
                 self.neural.threshold = t;
@@ -968,17 +959,14 @@ impl ZnConfig {
             }
         }
 
-        if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
-            self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
-        }
-
         self.apply_security_flags(&|var| {
             std::env::var_os(var).map(|v| v.to_string_lossy().into_owned())
         })?;
         Ok(())
     }
 
-    /// The on/off environment settings that guard security behaviour. An unset or
+    /// The on/off environment settings (the four that guard security behaviour, plus the
+    /// KMS fallback, the neural check and the nearest-neighbour audit). An unset or
     /// empty variable keeps the current value; anything that is not a clear on/off
     /// word is an error, so a typo can never leave a protection off.
     fn apply_security_flags(&mut self, get: &dyn Fn(&str) -> Option<String>) -> Result<()> {
@@ -993,6 +981,15 @@ impl ZnConfig {
         }
         if let Some(v) = bool_env("ZN_GUARDRAILS_ALERT_ONLY", get)? {
             self.guardrails.alert_only = v;
+        }
+        if let Some(v) = bool_env("ZN_KMS_ALLOW_CONFIG_FALLBACK", get)? {
+            self.kms.allow_config_fallback = v;
+        }
+        if let Some(v) = bool_env("ZN_NEURAL_ENABLED", get)? {
+            self.neural.enabled = v;
+        }
+        if let Some(v) = bool_env("ZN_NEAREST_NEIGHBOR_AUDIT", get)? {
+            self.guardrails.nearest_neighbor_audit = v;
         }
         Ok(())
     }
@@ -1827,11 +1824,14 @@ mod parse_message_tests {
 mod bool_flag_tests {
     use super::*;
 
-    const FLAGS: [&str; 4] = [
+    const FLAGS: [&str; 7] = [
         "ZN_AUDIT_STORE_PAYLOADS",
         "ZN_AUDIT_REQUIRE_WRITE",
         "ZN_NEURAL_BLOCKING",
         "ZN_GUARDRAILS_ALERT_ONLY",
+        "ZN_KMS_ALLOW_CONFIG_FALLBACK",
+        "ZN_NEURAL_ENABLED",
+        "ZN_NEAREST_NEIGHBOR_AUDIT",
     ];
 
     /// Applies the security flags with `var` set to `value` and every other one unset.
@@ -1848,6 +1848,9 @@ mod bool_flag_tests {
             "ZN_AUDIT_REQUIRE_WRITE" => config.audit.require_write,
             "ZN_NEURAL_BLOCKING" => config.neural.active_blocking,
             "ZN_GUARDRAILS_ALERT_ONLY" => config.guardrails.alert_only,
+            "ZN_KMS_ALLOW_CONFIG_FALLBACK" => config.kms.allow_config_fallback,
+            "ZN_NEURAL_ENABLED" => config.neural.enabled,
+            "ZN_NEAREST_NEIGHBOR_AUDIT" => config.guardrails.nearest_neighbor_audit,
             _ => unreachable!("{var}"),
         }
     }
@@ -1960,5 +1963,32 @@ mod bool_flag_tests {
             })
             .expect_err("must fail");
         assert!(err.to_string().contains("ZN_NEURAL_BLOCKING"), "{err}");
+    }
+
+    #[test]
+    fn the_three_formerly_lax_variables_no_longer_take_a_typo_for_a_default() {
+        // These used to read "off" as on (neural, audit) or as off (KMS fallback) without a word.
+        for (var, off_means_false) in [
+            ("ZN_NEURAL_ENABLED", true),
+            ("ZN_NEAREST_NEIGHBOR_AUDIT", true),
+            ("ZN_KMS_ALLOW_CONFIG_FALLBACK", true),
+        ] {
+            let config = apply(var, Some("off")).unwrap();
+            assert_eq!(read(&config, var), !off_means_false, "{var}=off");
+            let config = apply(var, Some("YES")).unwrap();
+            assert!(read(&config, var), "{var}=YES");
+            for bad in ["flase", "enable", "TRU", "10"] {
+                let err = apply(var, Some(bad)).expect_err(bad).to_string();
+                assert!(err.contains(var), "{err}");
+            }
+        }
+    }
+
+    #[test]
+    fn neural_enabled_and_audit_default_to_on_and_the_kms_fallback_to_off() {
+        let config = apply("ZN_NEURAL_ENABLED", None).unwrap();
+        assert!(config.neural.enabled);
+        assert!(config.guardrails.nearest_neighbor_audit);
+        assert!(!config.kms.allow_config_fallback);
     }
 }
