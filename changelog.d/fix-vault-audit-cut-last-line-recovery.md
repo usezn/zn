@@ -1,0 +1,3 @@
+### Fixed
+
+- A vault audit log whose last line was cut by a crash, a power loss or a full disk no longer leaves `zn vault reset` as the only way out. `zn unlock` says what happened and names `zn unlock --repair-cut-audit-tail`, which, when every record before that line verifies, moves the cut bytes unchanged to `audit.jsonl.cut-<time>`, adds a record with their hash and size, and unlocks with all secrets. While the vault is unlocked, a cut last line gives the same hint instead of "internal error". A change anywhere else in the log is still refused, and the message names a way out that keeps the secrets before `zn vault reset`.

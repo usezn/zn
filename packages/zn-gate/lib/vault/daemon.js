@@ -387,6 +387,51 @@ function chainStatus(state, opts) {
   return r;
 }
 
+/* A cut last line of the audit log (a write cut by a crash, a power loss or a
+ * full disk). The log cannot be continued after it. `zn unlock
+ * --repair-cut-audit-tail` moves that line aside, but only when every record
+ * before it verifies; anything else stays a tamper finding. */
+const REPAIR_TAIL_FLAG = '--repair-cut-audit-tail';
+const KEEP_LOG_STEP = 'keep the log as evidence and start a new one: run zn lock, move ~/.zn/audit.jsonl to a safe place, then run zn unlock. ' +
+  'Your secrets stay; the vault keeps a warning until you accept it with zn vault verify --acknowledge. zn vault reset deletes your secrets: use it only as a last resort.';
+
+function cutTailLockedError(c) {
+  const err = znError(CODES.LOCKED, 'the last line of the audit log (record ' + c.line + ', ' + c.bytes + ' bytes) is cut or is not a record, and every record before it verifies: ' +
+    'a crash, a power loss or a full disk while writing leaves this. The vault stays locked and the log was not changed; your secrets are safe. ' +
+    'Next step: zn unlock ' + REPAIR_TAIL_FLAG + ' moves that line to a file next to the log (audit.jsonl.cut-<time>), records the repair in the log and unlocks.');
+  err.cutTail = true;
+  return err;
+}
+
+function cutTailWriteError() {
+  const err = znError(CODES.POLICY_DENIED, 'the last line of the audit log is cut or is not a record (a crash, a power loss or a full disk while writing), so the vault cannot add to the log and refused this request. ' +
+    'Nothing was changed. Next step: free some disk space, run zn lock, then zn unlock ' + REPAIR_TAIL_FLAG + '.');
+  err.cutTail = true;
+  return err;
+}
+
+/* A tamper mark that was stored for the cut line itself (by an earlier unlock, verify or write). */
+function isCutTailMark(t, cut, head) {
+  if (!t || !cut || !cut.ok) return false;
+  const same = (a, b) => (a === null && b === null) || (Boolean(a) && Boolean(b) && a.seq === b.seq && a.mac === b.mac);
+  if (!same(t.expected || null, head || null)) return false;
+  if (t.reason === 'the last record of the log cannot be read' || t.reason === 'the audit log cannot be read') return true;
+  const m = /^unparseable record \(record (\d+)\)$/.exec(String(t.reason));
+  return Boolean(m) && Number(m[1]) === cut.line;
+}
+
+/* What `zn unlock --repair-cut-audit-tail` did, for the person who asked (no values, no key). */
+function repairSummary(r) {
+  if (!r || !r.repaired) return { repaired: false };
+  return { repaired: true, path: r.cutFile, bytes: r.bytes, sha256: r.sha256, line: r.line, records: r.records, clearedWarning: r.clearedWarning === true };
+}
+
+function cutTailOf(state) {
+  try {
+    return audit.checkCutTail({ file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex'), checkpoint: state.secrets.auditHead });
+  } catch (err) { return { cut: false }; }
+}
+
 /* Every audit write goes through here: the in-memory head must be the last
  * record in the file before the daemon appends, and the whole chain must
  * verify (a change in the middle of the log is not seen by the head alone);
@@ -395,6 +440,10 @@ function appendChecked(state, event, extra) {
   const secrets = state.secrets;
   if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
   const file = state.paths.auditFile;
+  let tail = null;
+  try { tail = audit.tailLine(file); } catch (err) { tail = null; }
+  // Appending after a cut line would bury it inside the chain: refuse, in words, and name the repair.
+  if (tail && !tail.parsed) throw cutTailWriteError();
   if (!secrets.auditTamper) {
     const h = audit.checkHead(file, secrets.auditHead);
     if (!h.ok) recordTamper(state, h.reason, h.found);
@@ -1008,10 +1057,14 @@ function makeOps(state, ctl) {
       if (!r.ok && !secrets.auditTamper) recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
       const t = secrets.auditTamper;
       if (!t) return r;
+      // Only the last line is cut and the rest verifies: name the repair, not --acknowledge (which needs a whole chain).
+      const cut = cutTailOf(state);
+      const repairHint = cut.cut && cut.ok ? 'Only the last line of the log is cut (a crash or a full disk while writing); every record before it verifies. Next step: zn lock, then zn unlock ' + REPAIR_TAIL_FLAG + '.' : undefined;
       return Object.assign({}, r, {
         ok: false,
         tampered: true,
         error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
+        repairHint,
       });
     },
 
@@ -1056,7 +1109,11 @@ function makeOps(state, ctl) {
         const key = Buffer.from(cur.auditKey, 'hex');
         const chain = audit.verify({ file: auditFile, key });
         if (!chain.ok) {
-          throw znError(CODES.POLICY_DENIED, 'the audit log does not verify on its own (' + chain.error + '), so it cannot be accepted. Next step: keep a copy of ~/.zn/audit.jsonl as evidence; to start a new log on purpose, see zn vault reset.');
+          const cut = cutTailOf(state);
+          if (cut.cut && cut.ok) {
+            throw znError(CODES.POLICY_DENIED, 'only the last line of the audit log is cut, so it cannot be accepted as it is. Next step: zn lock, then zn unlock ' + REPAIR_TAIL_FLAG + ' (it keeps that line in a file next to the log).');
+          }
+          throw znError(CODES.POLICY_DENIED, 'the audit log does not verify on its own (' + chain.error + '), so it cannot be accepted. Next step: ' + KEEP_LOG_STEP);
         }
         const last = audit.lastRecord(auditFile);
         cur.auditHead = last ? { seq: last.seq, mac: last.mac } : null;
@@ -1185,7 +1242,9 @@ async function serve(opts) {
     try { fs.unlinkSync(ep.keyFile); } catch (err) { /* ignore */ }
     await new Promise((resolve) => server.close(() => resolve()));
     if (ep.unix) { try { fs.unlinkSync(ep.address); } catch (err) { /* ignore */ } }
-    if (typeof o.onExit === 'function') o.onExit(reason);
+    // 'error': a refused start. serve() throws next, and its caller reports why (the detached daemon sends the
+    // message to `zn unlock` before it exits); exiting here would leave only "the vault stopped while starting".
+    if (typeof o.onExit === 'function' && reason !== 'error') o.onExit(reason);
   }
   ctl.shutdown = shutdown;
 
@@ -1241,7 +1300,7 @@ async function serve(opts) {
           } catch (err) {
             const code = err && typeof err.code === 'string' && err.code.startsWith('ZN_') ? err.code : 'ZN_ERROR';
             // Never echo arbitrary error text: it could carry a value.
-            const message = err && err.code && err.code.startsWith('ZN_') ? String(err.message).slice(0, 200) : (vaultFsMessage(err) || 'internal error');
+            const message = err && err.code && err.code.startsWith('ZN_') ? String(err.message).slice(0, 600) : (vaultFsMessage(err) || 'internal error');
             send({ id, ok: false, error: { code, message } });
           }
         });
@@ -1279,7 +1338,38 @@ async function serve(opts) {
   } catch (err) { await shutdown('lock'); throw err; }
   let unlockFailure = null;
   let adoptedRecords = 0;
+  let cutRefusal = null;
+  let tailRepair = null;
+  let repairError = null;
+  let cutSeen = null;
   await state.serial(async () => {
+    // A cut last line with every earlier record intact: refuse in words, or, when the
+    // person asked for it, move the line aside (kept, never deleted) and continue the chain.
+    const cut = cutTailOf(state);
+    cutSeen = cut;
+    // A cut line with a change before it: store the change itself as the warning, not the cut line.
+    if (cut.cut && !cut.ok) recordTamper(state, cut.error + (cut.line ? ' (record ' + cut.line + ')' : ''), null);
+    if (cut.cut && cut.ok && o.repairCutTail !== true) {
+      // The warning is stored (as for any change to the log): removing the line by hand does not clear it; the repair does.
+      cutRefusal = cut;
+      recordTamper(state, 'unparseable record (record ' + cut.line + ')', null);
+      await state.saveSecrets();
+      return;
+    }
+    if (cut.cut && cut.ok) {
+      const head = state.secrets.auditHead;
+      try {
+        tailRepair = audit.repairCutTail({ file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex'), checkpoint: head });
+      } catch (err) {
+        repairError = err;
+        return;
+      }
+      if (tailRepair.repaired && isCutTailMark(state.secrets.auditTamper, cut, head)) {
+        delete state.secrets.auditTamper;
+        tailRepair.clearedWarning = true;
+      }
+      state.chainCache = null;
+    }
     // Check the log against the vault's checkpoint BEFORE the unlock record is
     // written: that record would otherwise continue from whatever tail is there.
     try {
@@ -1299,6 +1389,8 @@ async function serve(opts) {
     try {
       // Make every adoption visible in the log: those records were written but never checkpointed.
       if (adoptedRecords > 0) appendChecked(state, { mode: 'unlock', decision: 'warn', reason: 'audit_tail_adopted_after_unclean_shutdown:' + adoptedRecords }, {});
+      // The repair is part of the chain: the hash and size of the bytes that were moved aside.
+      if (tailRepair && tailRepair.repaired) appendChecked(state, { mode: 'unlock', decision: 'warn', reason: 'audit_tail_cut:' + tailRepair.sha256.slice(0, 32) + ':' + tailRepair.bytes }, {});
       appendChecked(state, { mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' }, {});
     } catch (err) {
       unlockFailure = err;
@@ -1306,17 +1398,30 @@ async function serve(opts) {
       await state.saveSecrets();
     }
   });
+  if (cutRefusal) {
+    await shutdown('error');
+    throw cutTailLockedError(cutRefusal);
+  }
+  if (repairError) {
+    await shutdown('error');
+    const code = repairError.code ? ' (' + String(repairError.code).replace(/[^A-Za-z0-9_]/g, '').slice(0, 40) + ')' : '';
+    throw znError(CODES.LOCKED, 'the cut last line of the audit log could not be moved aside' + code + ', so the vault stays locked. The log keeps that line. Next step: check the free space and permissions of ~/.zn, then run zn unlock ' + REPAIR_TAIL_FLAG + ' again.');
+  }
   if (unlockFailure) {
     // The log cannot be continued (its last line is unreadable): do not leave a half-started daemon.
+    // With a cut last line, the finding that matters is what changed before it.
+    const before = cutSeen && cutSeen.cut && !cutSeen.ok ? cutSeen.error + (cutSeen.line ? ' (record ' + cutSeen.line + ')' : '') : null;
+    const why = before ? ' (' + before + ')' : (state.secrets && state.secrets.auditTamper ? ' (' + state.secrets.auditTamper.reason + ')' : '');
     await shutdown('error');
-    throw znError(CODES.LOCKED, 'the audit log cannot be read, so the vault stays locked. The vault keeps a warning about it. Next step: keep a copy of ~/.zn/audit.jsonl as evidence; to start a new log on purpose, see zn vault reset.');
+    throw znError(CODES.LOCKED, 'the audit log does not verify' + why + ' and cannot be continued, so the vault stays locked. The vault keeps a warning about it. Next step: ' + KEEP_LOG_STEP);
   }
   // The idle clock starts only now that the daemon is ready to serve, not
   // before the first (possibly slow) write above: otherwise a slow disk can
   // expire the session before the first client connects.
   if (!closed) bumpIdle();
 
-  return { address: ep.address, close: () => shutdown('lock'), expiresAt: ctl.expiresAt };
+  const repair = o.repairCutTail === true ? repairSummary(tailRepair) : undefined;
+  return { address: ep.address, close: () => shutdown('lock'), expiresAt: ctl.expiresAt, repair };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1354,6 +1459,7 @@ async function unlock(opts) {
   const args = [__filename, '--serve'];
   if (o.ttlMs) args.push('--ttl-ms', String(o.ttlMs));
   if (o.idleMs) args.push('--idle-ms', String(o.idleMs));
+  if (o.repairCutTail === true) args.push(REPAIR_TAIL_FLAG);
   const env = Object.assign({}, process.env);
   if (o.home) env.ZN_HOME = path.resolve(o.home);
   const child = spawn(process.execPath, args, {
@@ -1377,7 +1483,7 @@ async function unlock(opts) {
   child.removeAllListeners('exit');
   if (child.connected) child.disconnect();
   child.unref();
-  return { pid: child.pid, expiresAt: info.expiresAt, created, confirm: info.confirm || 'none' };
+  return { pid: child.pid, expiresAt: info.expiresAt, created, confirm: info.confirm || 'none', repair: info.repair };
 }
 
 /**
@@ -1401,9 +1507,9 @@ async function unlockForeground(opts) {
   const channel = confirmMod.ttyChannel({ input: o.input || process.stdin, output: o.output || process.stderr });
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
-  const srv = await serve({ identity, home: o.home, ttlMs: o.ttlMs, idleMs: o.idleMs, channel, onExit: (reason) => finish(reason) });
+  const srv = await serve({ identity, home: o.home, ttlMs: o.ttlMs, idleMs: o.idleMs, channel, repairCutTail: o.repairCutTail === true, onExit: (reason) => finish(reason) });
   identity = null;
-  return { expiresAt: new Date(srv.expiresAt).toISOString(), created, close: srv.close, done };
+  return { expiresAt: new Date(srv.expiresAt).toISOString(), created, close: srv.close, done, repair: srv.repair };
 }
 
 /** lock({home}) -> true if a daemon was running. */
@@ -1433,12 +1539,12 @@ async function daemonMain(argv) {
     // Detached: no terminal of its own, so confirmations use a native dialog
     // when the platform has one, otherwise they are refused.
     const channel = confirmMod.chooseChannel({ foreground: false });
-    const srv = await serve({ identity, ttlMs: opt('--ttl-ms'), idleMs: opt('--idle-ms'), channel, onExit: () => process.exit(0) });
+    const srv = await serve({ identity, ttlMs: opt('--ttl-ms'), idleMs: opt('--idle-ms'), channel, repairCutTail: argv.includes(REPAIR_TAIL_FLAG), onExit: () => process.exit(0) });
     identity = null;
-    if (process.send) process.send({ ready: true, expiresAt: new Date(srv.expiresAt).toISOString(), confirm: channel.kind });
+    if (process.send) process.send({ ready: true, expiresAt: new Date(srv.expiresAt).toISOString(), confirm: channel.kind, repair: srv.repair });
     if (process.connected) process.disconnect();
   } catch (err) {
-    if (process.send) process.send({ ready: false, code: err.code || 'ZN_ERROR', message: String(err.message || err).slice(0, 200) });
+    if (process.send) process.send({ ready: false, code: err.code || 'ZN_ERROR', message: String(err.message || err).slice(0, 600) });
     process.exit(1);
   }
 }

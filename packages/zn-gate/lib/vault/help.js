@@ -6,13 +6,15 @@
 
 const HELP = {
   unlock: [
-    'usage: zn unlock [--ttl 8h] [--idle 30m] [--backend NAME] [--passphrase-stdin] [--foreground]',
+    'usage: zn unlock [--ttl 8h] [--idle 30m] [--backend NAME] [--passphrase-stdin] [--foreground] [--repair-cut-audit-tail]',
     'Unlocks the local vault for this session. The first run creates it.',
     '  --ttl DURATION       lock after this long, whatever the use (default 8h; 1m to 24h)',
     '  --idle DURATION      lock after this long without use (default 30m)',
     '  --backend NAME       macos, windows, libsecret or passphrase (default: the one the vault uses)',
     '  --passphrase-stdin   read the passphrase from stdin instead of a hidden prompt',
     '  --foreground         keep the vault in this terminal and approve secret use here',
+    '  --repair-cut-audit-tail  when only the last line of the audit log is cut (a crash or a full disk),',
+    '                       move it to audit.jsonl.cut-<time>, record the repair in the log and unlock',
   ],
   lock: [
     'usage: zn lock',

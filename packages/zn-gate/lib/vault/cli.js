@@ -2,7 +2,7 @@
 /**
  * CLI for the vault session:
  *
- *   zn unlock [--ttl 8h] [--idle 30m] [--backend <name>] [--passphrase-stdin] [--foreground]
+ *   zn unlock [--ttl 8h] [--idle 30m] [--backend <name>] [--passphrase-stdin] [--foreground] [--repair-cut-audit-tail]
  *   zn lock
  *   zn vault status
  *   zn vault forget [<project dir>]     (vault must be locked)
@@ -75,7 +75,7 @@ function flag(args, name) {
 
 /* The options each command takes: true when the option needs a value after it. */
 const OPTIONS = {
-  unlock: { '--ttl': true, '--idle': true, '--backend': true, '--passphrase-stdin': false, '--foreground': false },
+  unlock: { '--ttl': true, '--idle': true, '--backend': true, '--passphrase-stdin': false, '--foreground': false, '--repair-cut-audit-tail': false },
   lock: {},
   status: {},
   verify: { '--acknowledge': false },
@@ -106,7 +106,7 @@ function argumentProblem(name, rest, maxWords) {
 }
 
 const USAGE = {
-  unlock: () => 'usage: ' + znCommand('unlock') + ' [--ttl 8h] [--idle 30m] [--backend NAME] [--passphrase-stdin] [--foreground]',
+  unlock: () => 'usage: ' + znCommand('unlock') + ' [--ttl 8h] [--idle 30m] [--backend NAME] [--passphrase-stdin] [--foreground] [--repair-cut-audit-tail]',
   lock: () => 'usage: ' + znCommand('lock'),
   status: () => 'usage: ' + znCommand('vault status'),
   verify: () => 'usage: ' + znCommand('vault verify') + ' [--acknowledge]',
@@ -266,6 +266,7 @@ async function unlockCmd(args, deps) {
     ttlMs: parseDuration(flag(args, '--ttl'), daemon.DEFAULT_TTL_MS),
     idleMs: parseDuration(flag(args, '--idle'), daemon.DEFAULT_IDLE_MS),
   };
+  if (args.includes('--repair-cut-audit-tail')) opts.repairCutTail = true;
   const asked = flag(args, '--backend');
   if (asked !== undefined && !keychain.BACKENDS.includes(asked)) throw usageError(messages.unknownBackend(asked, keychain.BACKENDS));
   const agent = d.agent !== undefined ? d.agent : agentDetected(process.env);
@@ -287,6 +288,7 @@ async function unlockCmd(args, deps) {
   const res = await daemon.unlock(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
   vaultReset.clearUnlockFailures({});
+  repairLines(res.repair).forEach((l) => out(l));
   out('Vault unlocked: ' + lockWhenText(opts.idleMs, res.expiresAt) + '. Run `' + znCommand('lock') + '` to lock now.');
   if (res.confirm === 'gui') out('Confirmations (first use of a secret by a command, policy changes) appear as a system dialog.');
   else {
@@ -296,10 +298,25 @@ async function unlockCmd(args, deps) {
   return 0;
 }
 
+/* What `zn unlock --repair-cut-audit-tail` did, line by line (nothing when the flag was not given). */
+function repairLines(r) {
+  if (!r) return [];
+  if (!r.repaired) return ['The audit log has no cut last line: nothing to repair.'];
+  const lines = [
+    'Repaired the audit log: its last line (record ' + r.line + ', ' + r.bytes + ' bytes) was cut or was not a record; the ' + r.records + ' records before it verify.',
+    '  Moved those bytes, unchanged, to ' + r.path + ' (zn never deletes that file).',
+    '  sha256 of the moved bytes: ' + r.sha256,
+    '  A record "audit_tail_cut" with that hash and size was added to the log, and the chain continues after it.',
+  ];
+  if (r.clearedWarning) lines.push('  The warning the vault kept about this cut line is replaced by that record.');
+  return lines;
+}
+
 async function unlockForegroundCmd(opts, backend) {
   if (!process.stdin.isTTY) throw new Error(messages.FOREGROUND_NEEDS_TERMINAL);
   const res = await daemon.unlockForeground(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
+  repairLines(res.repair).forEach((l) => out(l));
   out('Vault unlocked: ' + lockWhenText(opts.idleMs, res.expiresAt) + '.');
   out('Keep this terminal open: zn asks here before a secret is used by a command for the first time or a policy changes.');
   out('Press Ctrl+C or run `' + znCommand('lock') + '` to lock.');
@@ -358,7 +375,8 @@ async function auditVerifyCmd(args) {
     const r = await c.auditVerify();
     if (r.ok) { out('Audit log OK: ' + r.records + ' records, chain and MACs verified.'); return 0; }
     process.stderr.write(messages.auditFailed(r.line || r.records, r.error) + '\n');
-    if (r.tampered) {
+    if (r.repairHint) process.stderr.write(r.repairHint + '\n');
+    else if (r.tampered) {
       process.stderr.write('The vault keeps this warning until you look into it. Keep a copy of the audit log as evidence, then, in your own terminal, run `' + znCommand('vault verify --acknowledge') + '` to accept the log as it is now.\n');
     }
     return 1;

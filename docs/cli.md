@@ -473,10 +473,10 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 ### `unlock`
 
 ```bash
-zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
+zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground] [--repair-cut-audit-tail]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). The defaults are `--ttl 8h` and `--idle 30m`. `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). The defaults are `--ttl 8h` and `--idle 30m`. `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. `--repair-cut-audit-tail` is for an audit log whose last line was cut by a crash or a full disk: when every record before that line verifies, it moves the line to `audit.jsonl.cut-<time>`, records its hash in the log and unlocks (see [troubleshooting](troubleshooting.md#5-your-secret-vault-is-locked)). It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
 
 If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
 

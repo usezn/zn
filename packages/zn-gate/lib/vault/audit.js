@@ -69,11 +69,14 @@ function macOf(key, record) {
  * fn returns true to stop early. Read errors other than ENOENT are thrown.
  * opts.onChunk(buffer, length), when given, sees every raw chunk as it is read
  * (used to hash the exact bytes that were read).
+ * opts.bytes, when given, reads only the first that many bytes of the file.
  */
 function forEachLine(file, fn, opts) {
   const o = opts || {};
   const chunkSize = Number.isInteger(o.chunkSize) && o.chunkSize > 0 ? o.chunkSize : 1024 * 1024;
   const maxLine = Number.isInteger(o.maxLine) && o.maxLine > 0 ? o.maxLine : 4 * 1024 * 1024;
+  const limit = Number.isInteger(o.bytes) && o.bytes >= 0 ? o.bytes : Infinity;
+  let readSoFar = 0;
   let fd;
   try { fd = fs.openSync(file, 'r'); } catch (err) { if (err.code === 'ENOENT') return false; throw err; }
   try {
@@ -88,8 +91,10 @@ function forEachLine(file, fn, opts) {
       return fn(tooLong ? null : bytes.toString('utf8'), lineNo) === true;
     };
     for (;;) {
-      const n = fs.readSync(fd, buf, 0, chunkSize, null);
+      const want = Math.min(chunkSize, limit - readSoFar);
+      const n = want > 0 ? fs.readSync(fd, buf, 0, want, null) : 0;
       if (n === 0) break;
+      readSoFar += n;
       if (typeof o.onChunk === 'function') o.onChunk(buf, n);
       let start = 0;
       for (;;) {
@@ -206,6 +211,7 @@ function checkHead(file, head) {
  * reach that sequence number and the record there must carry that MAC, so a
  * tail lost after a crash (or swapped for another valid-looking one) is
  * reported. Records written after the checkpoint are fine.
+ * opts.bytes: check only the first that many bytes (the log without a cut last line).
  */
 function verify(opts) {
   const o = opts || {};
@@ -236,7 +242,7 @@ function verify(opts) {
       return fail(line, 'log differs from the vault checkpoint (record ' + seq + ' has a different MAC)');
     }
     return false;
-  }, { chunkSize: o.chunkSize, maxLine: o.maxLine, onChunk: (b, n) => { fileHash.update(b.subarray(0, n)); fileBytes += n; } });
+  }, { chunkSize: o.chunkSize, maxLine: o.maxLine, bytes: o.bytes, onChunk: (b, n) => { fileHash.update(b.subarray(0, n)); fileBytes += n; } });
   if (!exists) {
     if (cp) return { ok: false, records: 0, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
     // No log yet (a vault that has not written a record): with opts.hash the checked bytes are the empty input.
@@ -248,6 +254,111 @@ function verify(opts) {
   }
   // With opts.hash: also the sha256 and size of the exact bytes that were checked (a caller that reads the file later can tell whether it changed).
   return o.hash === true ? { ok: true, records: count, sha256: fileHash.digest('hex'), bytes: fileBytes } : { ok: true, records: count };
+}
+
+/*
+ * tailLine(file) -> null | {start, end, size, parsed}
+ * Where the last non-empty line of the log starts and ends (byte offsets), and
+ * whether it is a JSON object (parsed). Reads only the tail of the file.
+ * null: no file, or no line in it.
+ */
+function tailLine(file) {
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch (err) { if (err.code === 'ENOENT') return null; throw err; }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) { const e = new Error('the audit log is not a regular file'); e.code = 'EISDIR'; throw e; }
+    const size = st.size;
+    const buf = Buffer.alloc(4096);
+    let pos = size;
+    let end = -1;
+    let start = 0;
+    scan: while (pos > 0) {
+      const len = Math.min(buf.length, pos);
+      pos -= len;
+      fs.readSync(fd, buf, 0, len, pos);
+      for (let i = len - 1; i >= 0; i--) {
+        if (end < 0) { if (buf[i] !== 0x0a) end = pos + i + 1; continue; }
+        if (buf[i] === 0x0a) { start = pos + i + 1; break scan; }
+      }
+    }
+    if (end < 0) return null;
+    let parsed = false;
+    // A line longer than any record the daemon writes is not a record.
+    if (end - start <= 4 * 1024 * 1024) {
+      const line = Buffer.alloc(end - start);
+      fs.readSync(fd, line, 0, line.length, start);
+      try {
+        const rec = JSON.parse(line.toString('utf8'));
+        parsed = Boolean(rec) && typeof rec === 'object' && !Array.isArray(rec);
+      } catch (err) { parsed = false; }
+    }
+    return { start, end, size, parsed };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * checkCutTail({file, key, checkpoint}) -> {cut: false} | {cut: true, ok, offset, bytes, line, records?, error?}
+ * A cut last line: the last line of the log is not a record (a write cut by a
+ * crash, a power loss or a full disk, or bytes added by someone else).
+ * ok: true only when every record before that line verifies (MACs, chain,
+ * sequence numbers) and reaches the vault's checkpoint, so the only damage is
+ * that last line. ok: false means more of the log changed (error says what).
+ * offset: where the cut line starts; bytes: how many bytes from there to the end.
+ */
+function checkCutTail(opts) {
+  const o = opts || {};
+  const t = tailLine(o.file);
+  if (!t || t.parsed) return { cut: false };
+  const r = verify({ file: o.file, key: o.key, checkpoint: o.checkpoint, bytes: t.start });
+  const base = { cut: true, offset: t.start, bytes: t.size - t.start };
+  if (!r.ok) return Object.assign(base, { ok: false, error: r.error, line: r.line || null });
+  return Object.assign(base, { ok: true, records: r.records, line: r.records + 1 });
+}
+
+/**
+ * repairCutTail({file, key, checkpoint, now}) -> result of checkCutTail, plus
+ * {repaired: true, cutFile, sha256} when the cut line was moved aside.
+ * Only for a log where checkCutTail says ok: the bytes of the cut line (to the
+ * end of the file) are copied to <file>.cut-<time>, flushed, and only then
+ * removed from the log. They are never deleted. Single writer: the daemon,
+ * before it serves.
+ */
+function repairCutTail(opts) {
+  const o = opts || {};
+  const c = checkCutTail(o);
+  if (!c.cut || !c.ok) return c;
+  const stamp = (o.now instanceof Date ? o.now : new Date()).toISOString().replace(/[:.]/g, '-');
+  const cutFile = o.file + '.cut-' + stamp;
+  const hash = crypto.createHash('sha256');
+  const fd = fs.openSync(o.file, 'r+');
+  try {
+    if (fs.fstatSync(fd).size !== c.offset + c.bytes) throw new Error('the audit log changed while it was being repaired');
+    const out = fs.openSync(cutFile, 'wx', 0o600);
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      let pos = c.offset;
+      while (pos < c.offset + c.bytes) {
+        const n = fs.readSync(fd, buf, 0, Math.min(buf.length, c.offset + c.bytes - pos), pos);
+        if (n === 0) break;
+        hash.update(buf.subarray(0, n));
+        let w = 0;
+        while (w < n) w += fs.writeSync(out, buf, w, n - w);
+        pos += n;
+      }
+      try { fs.fsyncSync(out); } catch (err) { /* a file system without fsync: keep going */ }
+    } finally {
+      fs.closeSync(out);
+    }
+    fs.ftruncateSync(fd, c.offset);
+    try { fs.fsyncSync(fd); } catch (err) { /* a file system without fsync: keep going */ }
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (process.platform !== 'win32') { try { fs.chmodSync(cutFile, 0o600); } catch (err) { /* ignore */ } }
+  return Object.assign({}, c, { repaired: true, cutFile, sha256: hash.digest('hex') });
 }
 
 function parseSince(since) {
@@ -289,4 +400,4 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, checkHead, read, sanitize, lastRecord, forEachLine, FIELDS, GENESIS };
+module.exports = { append, verify, checkHead, read, sanitize, lastRecord, forEachLine, tailLine, checkCutTail, repairCutTail, FIELDS, GENESIS };

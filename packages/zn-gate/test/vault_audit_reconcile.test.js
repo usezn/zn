@@ -161,7 +161,7 @@ test('a log that cannot be read at its end is reported, not skipped', async (t) 
   for (let i = 0; i < 2; i++) await h.set(i);
   await h.lock();
   fs.appendFileSync(h.file(), '{"not json\n');
-  await assert.rejects(() => h.unlock(), /cannot be read/);
+  await assert.rejects(() => h.unlock(), /is cut or is not a record/);
   assert.strictEqual(h.srv, null);
   // The warning is stored: once the tail is readable again (here: the bad line removed), verify still reports it.
   fs.writeFileSync(h.file(), h.lines().slice(0, -1).join('\n') + '\n');
