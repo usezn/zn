@@ -13,7 +13,7 @@ zn-gate vault status
 There are three states. These outputs come from real runs in a throwaway home folder, which is shown as `~`. Messages print the command in the form that works on your machine (for example `npx -y zn-gate@<version> unlock`); here it is shortened to `zn-gate`.
 
 ```text
-Vault: not created yet (run `zn-gate unlock`).
+Vault: not created yet (run `zn unlock`).
 ```
 
 ```text
