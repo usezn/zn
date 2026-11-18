@@ -805,11 +805,29 @@ function globMatches(pat, name) {
    (which the shell keeps literal) is read as a glob too: a false alarm, never a miss. */
 function dynamicProgram(word, names) {
   const w = String(word);
+  if (w === SUBST_WORD) return true;
   const base = w.replace(/^\\+/, '').split(/[\\/]/).pop();
   if (!/[*?[]/.test(base)) return false;
   const low = base.toLowerCase();
   for (const n of names) if (globMatches(low, n)) return true;
   return false;
+}
+
+// A program word that stands for a command substitution, put in by substituteHeads below. It may print any program.
+const SUBST_WORD = '__zn_subst__';
+// A command substitution, $( ) or ` `, written where a command starts, with no substitution nested in it. The lead is one
+// separator character or a line break (not a run of white space), so the scan is linear.
+const SUBST_HEAD_RE = /(^|[;&|(]|\n)([ \t]*)(?:\$\(([^()\n]*)\)|`([^`\n]*)`)/g;
+
+/* The line with each command substitution that starts a command (and names a downloader or a shell in its text:
+   $(echo curl) URL | sh, curl URL | $(echo sh), `echo curl` URL >> ~/.bashrc) replaced by one program word. The tokenizer
+   does not read the substitution as a word, and the shell runs whatever it prints. Returns the text unchanged when none. */
+function substituteHeads(text) {
+  return text.replace(SUBST_HEAD_RE, (m, lead, sp, a, b) => {
+    const low = String(a === undefined ? b : a).toLowerCase();
+    for (const set of [DOWNLOADERS, SHELLS]) for (const n of set) if (low.includes(n)) return lead + sp + SUBST_WORD;
+    return m;
+  });
 }
 
 function checkPipeline(pipe, known = null) {
@@ -974,6 +992,15 @@ function analyze(cmd, depth = 0, known = null) {
   if (text.includes('\\')) {
     const posixHit = checkSegments(segmentsOf(text, true), depth, known);
     if (posixHit) return posixHit;
+  }
+  // A command substitution as the program of a download or as the shell it runs into ($(echo curl) URL | sh). Like the
+  // reading above, this one only adds a block, and only for the two download rules.
+  if (text.includes('$(') || text.includes('`')) {
+    const alt = substituteHeads(text);
+    if (alt !== text) {
+      const substHit = checkSegments(segmentsOf(alt), depth, known);
+      if (substHit === 'pipe_to_shell' || substHit === 'rc_download') return substHit;
+    }
   }
   // ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
   // this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',

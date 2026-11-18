@@ -1511,11 +1511,34 @@ def _dynamic_program(word: str, names: Any) -> bool:
     caller looks for; the word counts when its glob matches one of them. The tokenizer drops the quotes, so a quoted glob
     (which the shell keeps literal) is read as a glob too: a false alarm, never a miss."""
     w = str(word)
+    if w == _SUBST_WORD:
+        return True
     base = re.split(r"[\\/]", re.sub(r"^\\+", "", w))[-1]
     if not re.search(r"[*?\[]", base):
         return False
     low = base.lower()
     return any(_glob_matches(low, n) for n in names)
+
+
+# A program word that stands for a command substitution, put in by _substitute_heads below. It may print any program.
+_SUBST_WORD = "__zn_subst__"
+# A command substitution, $( ) or ` `, written where a command starts, with no substitution nested in it. The lead is one
+# separator character or a line break (not a run of white space), so the scan is linear.
+_SUBST_HEAD_RE = re.compile(r"(^|[;&|(]|\n)([ \t]*)(?:\$\(([^()\n]*)\)|`([^`\n]*)`)")
+
+
+def _substitute_heads(text: str) -> str:
+    """The line with each command substitution that starts a command (and names a downloader or a shell in its text:
+    $(echo curl) URL | sh, curl URL | $(echo sh), `echo curl` URL >> ~/.bashrc) replaced by one program word. The tokenizer
+    does not read the substitution as a word, and the shell runs whatever it prints. Returns the text unchanged when none."""
+
+    def rep(m: "re.Match[str]") -> str:
+        low = (m.group(3) if m.group(3) is not None else m.group(4)).lower()
+        if any(n in low for n in _DOWNLOADERS) or any(n in low for n in _SHELLS):
+            return m.group(1) + m.group(2) + _SUBST_WORD
+        return m.group(0)
+
+    return _SUBST_HEAD_RE.sub(rep, text)
 
 
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
@@ -1702,6 +1725,14 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
         posix_hit = _check_segments(_segments_of(text, True)[0], depth, known)
         if posix_hit:
             return posix_hit
+    # A command substitution as the program of a download or as the shell it runs into ($(echo curl) URL | sh). Like the
+    # reading above, this one only adds a block, and only for the two download rules.
+    if "$(" in text or "`" in text:
+        alt = _substitute_heads(text)
+        if alt != text:
+            subst_hit = _check_segments(_segments_of(alt)[0], depth, known)
+            if subst_hit in ("pipe_to_shell", "rc_download"):
+                return subst_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
     # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
