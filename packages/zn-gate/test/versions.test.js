@@ -93,3 +93,50 @@ test('zn-gate check prints the version line under each agent found,', POSIX, asy
   assert.match(out, /Codex CLI[^\n]*\n\s+version 0\.300\.0, newer than 0\.163\.0/);
   assert.doesNotMatch(out, /Cursor\s+not found on this machine\n\s+version/);
 });
+
+test('a missing agent program is named in the report, with the hook note only under an OK agent', (t) => {
+  const absent = { found: null, tested: null, relation: 'not-found', command: true, onPath: false };
+  assert.equal(V.versionLine(absent, 'Claude Code', true), 'Claude Code program not found on PATH (hooks are installed; they run when the agent runs)');
+  assert.equal(V.versionLine(absent, 'Claude Code'), 'Claude Code program not found on PATH');
+  assert.equal(V.versionLine(absent), 'version: not found');
+  assert.equal(V.versionLine({ found: null, tested: null, relation: 'not-found', command: true, onPath: true }, 'Claude Code'), 'Claude Code program on PATH printed no version');
+  assert.equal(V.versionLine({ found: null, tested: null, relation: 'not-found', command: false, onPath: false }, 'Cursor', true), 'no version read: Cursor has no command that prints its version');
+  const present = { found: '2.2.0', tested: null, relation: 'unknown' };
+  assert.equal(V.versionLine(present, 'Claude Code', true), 'version 2.2.0, no tested version recorded');
+});
+
+test('report: an OK agent with no program on PATH says so instead of a bare "version: not found"', (t) => {
+  const absent = { found: null, tested: null, relation: 'not-found', command: true, onPath: false };
+  const results = [
+    { id: 'claude-code', name: 'Claude Code', state: 'protected', message: 'zn: blocked', notes: [], version: absent },
+    { id: 'codex', name: 'Codex CLI', state: 'not-set-up', fix: 'run zn hooks install codex', found: true, version: { found: null, tested: '0.163.0', relation: 'not-found', command: true, onPath: false } },
+  ];
+  let out = '';
+  report({ results, removed: true, warnings: [] }, (s) => { out += s; });
+  assert.match(out, /OK Claude Code +blocked the \.env file[^\n]*\n[^\n]*\n {5}Claude Code program not found on PATH \(hooks are installed; they run when the agent runs\)\n/);
+  assert.doesNotMatch(out, /version: not found/);
+  assert.match(out, /Codex CLI program not found on PATH\n/);
+});
+
+test('report: a present agent keeps its version line, and --json has no version field to change', (t) => {
+  const results = [
+    { id: 'claude-code', name: 'Claude Code', state: 'protected', message: 'zn: blocked', notes: [], version: { found: '2.2.0', tested: null, relation: 'unknown' } },
+  ];
+  let out = '';
+  report({ results, removed: true, warnings: [] }, (s) => { out += s; });
+  assert.match(out, /\n {5}version 2\.2\.0, no tested version recorded\n/);
+  const { toJson } = require('../lib/check');
+  const json = toJson({ results, removed: true, warnings: [] }, { home: '/nonexistent-zn-home' });
+  assert.deepEqual(Object.keys(json.agents[0]).sort(), ['checked', 'fix', 'id', 'message', 'name', 'notes', 'protected', 'reason', 'state']);
+});
+
+test('versionInfo tells a missing program from one on PATH that printed nothing', POSIX, (t) => {
+  const m = machine(t, { codex: 'exit 3' });
+  const o = { env: m.env, cwd: m.cwd, timeoutMs: 300 };
+  const absent = V.versionInfo('claude-code', o);
+  assert.deepEqual([absent.relation, absent.command, absent.onPath], ['not-found', true, false]);
+  assert.equal(V.versionLine(absent, 'Claude Code', true), 'Claude Code program not found on PATH (hooks are installed; they run when the agent runs)');
+  const silent = V.versionInfo('codex', o);
+  assert.deepEqual([silent.relation, silent.onPath], ['not-found', true]);
+  assert.equal(V.versionInfo('cursor', o).command, false);
+});

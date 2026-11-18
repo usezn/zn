@@ -1504,7 +1504,7 @@ function report({ results, removed, warnings }, write) {
   let bad = 0;
   const missing = [];
   const { versionLine } = require('./agents/versions');
-  const ver = (r) => { if (r.version) w(`     ${versionLine(r.version)}\n`); };
+  const ver = (r, hooksInstalled = false) => { if (r.version) w(`     ${versionLine(r.version, r.name, hooksInstalled)}\n`); };
   for (const r of results) {
     if (r.state === 'not-set-up' && r.found === false) {
       w(`  -  ${r.name.padEnd(12)} not found on this machine\n`);
@@ -1532,7 +1532,7 @@ function report({ results, removed, warnings }, write) {
     w(`  OK ${r.name.padEnd(12)} blocked the .env file and allowed the ordinary file. Your agent would be told:\n`);
     w(`     "${r.message}"\n`);
     for (const n of r.notes) w(`     (${n})\n`);
-    ver(r);
+    ver(r, true);
   }
   w('\n');
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';

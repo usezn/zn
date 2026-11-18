@@ -128,12 +128,13 @@ Under each agent it finds, `zn-gate check` shows the version of that agent on yo
      "zn: ..."
      version 0.170.0, newer than 0.163.0, the last version zn was tested with. It may still work. If a hook does not run, report it at https://github.com/usezn/zn/issues
   -  Cursor       zn is not set up for this agent. To protect it, run `zn hooks install cursor` in your own terminal.
-     version: not found
+     no version read: Cursor has no command that prints its version
 ```
 
 - **Newer than tested**: the agent may still work. If a hook does not run, report it at the link in the line.
 - **Older than tested**: if a hook does not run, update the agent first, then report it.
-- **not found**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
+- **Program not found on PATH**: the agent's command is not installed or not on your PATH. The line names the program (for example `Claude Code program not found on PATH`). Under an agent that is OK, it adds that its hooks are installed and run when the agent runs.
+- **no version read**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
 - **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder (on Windows also SystemRoot, ComSpec, PATHEXT, APPDATA and LOCALAPPDATA, which programs there need to start), and with update checks turned off. It changes nothing, and zn sends nothing over the network.
 
 ## List every installed hook
