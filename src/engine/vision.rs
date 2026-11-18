@@ -45,6 +45,7 @@ pub enum VisionError {
     TooManyImages,
     UnsupportedFormat,
     ParseTimeout,
+    MalformedImage,
 }
 
 impl VisionError {
@@ -55,6 +56,7 @@ impl VisionError {
             VisionError::TooManyImages => "too many images in request",
             VisionError::UnsupportedFormat => "unsupported image format",
             VisionError::ParseTimeout => "image parse timeout",
+            VisionError::MalformedImage => "malformed image",
         }
     }
 }
@@ -110,7 +112,7 @@ impl VisionEngine {
                 info!("VISION GUARD: Intercepted {} image #{}.", img_type, count);
 
                 let stripped = match img_type {
-                    "JPEG" => strip_jpeg_metadata(&bytes),
+                    "JPEG" => strip_jpeg_metadata(&bytes)?,
                     "PNG" => strip_png_metadata(&bytes),
                     _ => return Err(VisionError::UnsupportedFormat),
                 };
@@ -205,17 +207,24 @@ fn classify_image(bytes: &[u8]) -> &'static str {
 }
 
 /// Remove EXIF (APP1) segments from a JPEG by walking the marker structure.
-fn strip_jpeg_metadata(data: &[u8]) -> Vec<u8> {
+///
+/// Fails closed: bytes that are not a marker where a marker must start (before the scan data
+/// begins) mean the file cannot be walked, so the image is refused instead of copied through.
+fn strip_jpeg_metadata(data: &[u8]) -> Result<Vec<u8>, VisionError> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
-        return data.to_vec();
+        return Ok(data.to_vec());
     }
     let mut out = vec![0xFF, 0xD8];
     let mut i = 2;
     let mut changed = false;
+    let mut in_scan = false;
     while i + 1 < data.len() {
         if data[i] != 0xFF {
-            out.extend_from_slice(&data[i..]);
-            break;
+            if in_scan {
+                out.extend_from_slice(&data[i..]);
+                break;
+            }
+            return Err(VisionError::MalformedImage);
         }
         let marker = data[i + 1];
         if matches!(marker, 0x01 | 0xD8 | 0xD9) {
@@ -239,13 +248,16 @@ fn strip_jpeg_metadata(data: &[u8]) -> Vec<u8> {
         } else {
             out.extend_from_slice(&data[i..i + total]);
         }
+        if marker == 0xDA {
+            in_scan = true;
+        }
         i += total;
     }
     if changed {
         info!("🔧 JPEG parser: APP1/EXIF segment(s) removed.");
-        out
+        Ok(out)
     } else {
-        data.to_vec()
+        Ok(data.to_vec())
     }
 }
 
@@ -527,10 +539,10 @@ mod tests {
         let jpeg: Vec<u8> = vec![
             0xFF, 0xD8, // SOI
             0xFF, 0xE1, 0x00, 0x08, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00, // APP1 EXIF
-            0xFF, 0xE0, 0x00, 0x04, 0x4A, 0x46, 0x49, 0x46, // APP0 JFIF
+            0xFF, 0xE0, 0x00, 0x06, 0x4A, 0x46, 0x49, 0x46, // APP0 JFIF
             0xFF, 0xDA, 0x00, 0x03, 0x01, 0x02, 0x03, // SOS
         ];
-        let out = strip_jpeg_metadata(&jpeg);
+        let out = strip_jpeg_metadata(&jpeg).expect("well-formed JPEG");
         assert!(out.len() < jpeg.len(), "EXIF bytes must be removed");
         assert!(!out.windows(2).any(|w| w == [0xFF, 0xE1]), "APP1 removed");
         assert!(out.windows(2).any(|w| w == [0xFF, 0xE0]), "APP0 kept");
@@ -538,11 +550,59 @@ mod tests {
     }
 
     #[test]
+    fn jpeg_with_junk_after_a_stripped_segment_is_refused() {
+        // The fuzz input "regression-junk-after-stripped-segment" (without its mode byte): a JPEG
+        // signature, an APP1 segment, then bytes that are not a marker.
+        let jpeg: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x10, 0x4A, 0x00, 0x10, 0x45, 0x78, 0x69, 0x66, 0x00,
+            0x00, 0x74, 0x66, 0x69, 0x63, 0x69, 0x6F, 0x6E, 0x61, 0x6C, 0x21, 0xFF, 0xDA, 0x00,
+            0x08, 0x01, 0x00, 0x00, 0x3F, 0x00, 0xAA, 0x74, 0x66, 0x69, 0x63, 0x69, 0x6F, 0x6E,
+            0x61, 0x6C, 0x21, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0xAA,
+            0xFF, 0xD9,
+        ];
+        assert_eq!(strip_jpeg_metadata(&jpeg), Err(VisionError::MalformedImage));
+    }
+
+    #[test]
+    fn jpeg_with_junk_between_headers_is_refused_even_without_app1() {
+        let jpeg: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x4A, 0x46, 0x41, 0x42, 0xFF, 0xD9,
+        ];
+        assert_eq!(strip_jpeg_metadata(&jpeg), Err(VisionError::MalformedImage));
+    }
+
+    #[test]
+    fn jpeg_scan_data_after_sos_is_still_kept() {
+        let jpeg: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x04, 0x45, 0x58, // APP1
+            0xFF, 0xDA, 0x00, 0x04, 0x01, 0x02, // SOS header
+            0x12, 0x34, 0x56, 0xFF, 0x00, 0x78, 0xFF, 0xD9, // entropy-coded data, EOI
+        ];
+        let out = strip_jpeg_metadata(&jpeg).expect("well-formed JPEG");
+        assert_eq!(out, [&jpeg[..2], &jpeg[8..]].concat());
+    }
+
+    #[test]
+    fn the_guard_refuses_a_malformed_jpeg_in_arguments() {
+        let jpeg: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x04, 0x45, 0x58, 0x99, 0x98, 0xFF, 0xD9,
+        ];
+        let args = format!(
+            "{{\"image\":\"data:image/jpeg;base64,{}\"}}",
+            general_purpose::STANDARD.encode(&jpeg)
+        );
+        assert_eq!(
+            VisionEngine::sanitize_multimodal(&args, &guard_on()),
+            Err(VisionError::MalformedImage)
+        );
+    }
+
+    #[test]
     fn jpeg_without_exif_is_unchanged() {
         let jpeg: Vec<u8> = vec![
-            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x4A, 0x46, 0x49, 0x46, 0xFF, 0xD9,
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x06, 0x4A, 0x46, 0x49, 0x46, 0xFF, 0xD9,
         ];
-        let out = strip_jpeg_metadata(&jpeg);
+        let out = strip_jpeg_metadata(&jpeg).expect("well-formed JPEG");
         assert_eq!(out, jpeg, "no APP1 means no change");
     }
 
@@ -794,6 +854,7 @@ mod tests {
 
         // The comment survives metadata stripping.
         assert!(strip_jpeg_metadata(&jpeg)
+            .expect("well-formed JPEG")
             .windows(payload.len())
             .any(|w| w == payload));
         assert_eq!(
@@ -850,6 +911,7 @@ mod tests {
             VisionError::TooManyImages,
             VisionError::UnsupportedFormat,
             VisionError::ParseTimeout,
+            VisionError::MalformedImage,
         ];
         let messages: std::collections::HashSet<&str> = all.iter().map(|e| e.as_str()).collect();
         assert_eq!(messages.len(), all.len());
