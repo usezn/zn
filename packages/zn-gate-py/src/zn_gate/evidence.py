@@ -145,7 +145,7 @@ def get_last_hash(file_path: str = EVIDENCE_FILE) -> str:
         last_rec = json.loads(last.decode("utf-8"))
     except UnicodeDecodeError as e:
         raise EvidenceLedgerError(f"Invalid UTF-8 bytes in the last line (byte {e.start}): the log was corrupted or modified.") from e
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
         raise EvidenceLedgerError(f"Malformed JSON in the last line: {e}") from e
     last_hash = last_rec.get("record_hash") if isinstance(last_rec, dict) else None
     if not isinstance(last_hash, str) or not _HASH_RE.fullmatch(last_hash):

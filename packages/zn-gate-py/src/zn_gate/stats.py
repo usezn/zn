@@ -37,7 +37,7 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
             data = json.load(f)
         if isinstance(data, dict) and isinstance(data.get("days"), dict):
             return data
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         pass
     return {"version": 1, "days": {}, "events": {}}
 
