@@ -23,6 +23,59 @@ pub trait ModelBackend: Send + Sync {
     fn dim(&self) -> usize;
 }
 
+/// Most bytes of a call the neural layer reads. The embedder tokenizes everything it is given, so
+/// its time and memory grow with the text; the rules engine still checks the whole call.
+pub const NEURAL_INPUT_MAX_BYTES: usize = 8 * 1024;
+
+/// The part of `text` the neural layer reads: all of it when it fits, otherwise its first and last
+/// halves of `NEURAL_INPUT_MAX_BYTES` joined by a marker (cut on character boundaries).
+pub fn neural_window(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.len() <= NEURAL_INPUT_MAX_BYTES {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let half = NEURAL_INPUT_MAX_BYTES / 2;
+    let mut head = half;
+    while !text.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = text.len() - half;
+    while !text.is_char_boundary(tail) {
+        tail += 1;
+    }
+    std::borrow::Cow::Owned(format!("{} ... {}", &text[..head], &text[tail..]))
+}
+
+/// How many embeddings may run on blocking threads at once.
+fn embed_slots() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
+    static SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let n = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2)
+            .clamp(1, 4);
+        std::sync::Arc::new(tokio::sync::Semaphore::new(n))
+    })
+}
+
+/// Embed `text` on a blocking thread, at most a few at a time, so a slow embedding never holds a
+/// runtime worker (the management API and every other request keep running).
+pub async fn embed_blocking(
+    model: std::sync::Arc<dyn ModelBackend>,
+    text: String,
+) -> anyhow::Result<Vec<f32>> {
+    let permit = std::sync::Arc::clone(embed_slots())
+        .acquire_owned()
+        .await
+        .map_err(|e| anyhow::anyhow!("embedding gate closed: {e}"))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        model.embed(&text)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("embedding task failed: {e}"))?
+}
+
 /// Fused System-2 decision: fire when the anomaly distance crosses
 /// `threshold` OR the classifier probability crosses `classifier_threshold`.
 /// `prob = None` is anomaly-only mode (no `head.json`), where the classifier
@@ -199,6 +252,60 @@ pub fn content_ref(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neural_window_keeps_short_text_and_bounds_long_text() {
+        assert_eq!(neural_window("short"), "short");
+        let exact = "a".repeat(NEURAL_INPUT_MAX_BYTES);
+        assert_eq!(neural_window(&exact), exact.as_str());
+
+        let long = format!("HEAD{}TAIL", "x".repeat(10 * 1024 * 1024));
+        let w = neural_window(&long);
+        assert!(w.len() <= NEURAL_INPUT_MAX_BYTES + 8);
+        assert!(w.starts_with("HEAD"), "the start is kept");
+        assert!(w.ends_with("TAIL"), "the end is kept");
+    }
+
+    #[test]
+    fn neural_window_cuts_on_character_boundaries() {
+        // 3-byte characters: every cut point is checked, a panic here would be a bad slice.
+        let long = "\u{20ac}".repeat(20_000);
+        let w = neural_window(&long);
+        assert!(w.len() <= NEURAL_INPUT_MAX_BYTES + 8);
+        assert!(w.chars().all(|c| c == '\u{20ac}' || c == ' ' || c == '.'));
+        for shift in 0..4 {
+            let text = format!("{}{}", "a".repeat(shift), "\u{1f600}".repeat(9_000));
+            let _ = neural_window(&text);
+        }
+    }
+
+    struct SlowBackend;
+    impl ModelBackend for SlowBackend {
+        fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            Ok(vec![text.len() as f32])
+        }
+        fn classify(&self, _: &[f32]) -> anyhow::Result<Option<f32>> {
+            Ok(None)
+        }
+        fn name(&self) -> &str {
+            "slow"
+        }
+        fn dim(&self) -> usize {
+            1
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_slow_embedding_does_not_hold_the_runtime() {
+        let model: std::sync::Arc<dyn ModelBackend> = std::sync::Arc::new(SlowBackend);
+        let slow = tokio::spawn(embed_blocking(model, "abc".to_string()));
+        // The only runtime thread is free while the embedding runs on a blocking thread.
+        let start = std::time::Instant::now();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(start.elapsed() < std::time::Duration::from_millis(200));
+        assert_eq!(slow.await.unwrap().unwrap(), vec![3.0]);
+    }
 
     #[test]
     fn fired_matches_legacy_anomaly_only_when_no_head() {

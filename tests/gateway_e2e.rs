@@ -604,3 +604,34 @@ fn logs_and_audit_rows_never_hold_secrets_and_stdout_has_no_logs() {
     );
     assert!(stray.is_empty(), "log text on stdout: {stray}");
 }
+
+fn small_frame_limit(config: &mut Value) {
+    config["server"]["max_stdin_frame_bytes"] = json!(2048);
+}
+
+#[test]
+fn a_frame_over_the_limit_is_refused_and_the_next_one_still_goes_through() {
+    let mut gw = Gateway::start_with("big-frame", small_frame_limit, &[]);
+
+    gw.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "notifications/message",
+        "params": {"text": "a".repeat(10_000)}
+    }));
+    let refusal = gw.next_client_error();
+    assert_eq!(refusal["error"]["code"], json!(-32600));
+    let message = refusal["error"]["message"].as_str().unwrap();
+    assert!(message.contains("too large"), "message: {message}");
+    assert!(message.contains("2048"), "the limit is named: {message}");
+
+    // Nothing of the big frame went upstream, and the gateway is still serving.
+    gw.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "notifications/message",
+        "params": {"text": "hello"}
+    }));
+    let frame = gw.next_upstream();
+    assert_eq!(frame["id"], json!(8));
+}

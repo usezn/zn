@@ -126,6 +126,11 @@ pub struct ServerConfig {
     #[serde(default = "default_ws_max_frame_bytes")]
     pub ws_max_frame_bytes: usize,
 
+    /// Largest JSON-RPC frame (one line) the stdio gateway accepts, in bytes (default 16 MiB; 0 means
+    /// the default). A larger frame is refused with a JSON-RPC error and never passed on.
+    #[serde(default = "default_max_stdin_frame_bytes")]
+    pub max_stdin_frame_bytes: usize,
+
     /// Seconds a management API connection may go without receiving a byte before it is closed
     /// (default 900, 15 minutes; 0 means the default). It ends an SSE stream or WebSocket session
     /// that nobody uses.
@@ -138,6 +143,16 @@ pub struct ServerConfig {
     pub write_timeout_secs: u64,
 }
 
+impl ServerConfig {
+    /// The largest stdio frame accepted, in bytes (0 in the file means the default).
+    pub fn stdin_frame_limit(&self) -> usize {
+        match self.max_stdin_frame_bytes {
+            0 => crate::bounded_line::MAX_STDIN_LINE_BYTES,
+            n => n,
+        }
+    }
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -146,6 +161,7 @@ impl Default for ServerConfig {
             channel_capacity: default_channel_capacity(),
             ws_max_message_bytes: default_ws_max_message_bytes(),
             ws_max_frame_bytes: default_ws_max_frame_bytes(),
+            max_stdin_frame_bytes: default_max_stdin_frame_bytes(),
             session_idle_timeout_secs: default_session_idle_timeout_secs(),
             write_timeout_secs: default_write_timeout_secs(),
         }
@@ -160,6 +176,9 @@ fn default_ws_max_message_bytes() -> usize {
 }
 fn default_ws_max_frame_bytes() -> usize {
     1024 * 1024
+}
+fn default_max_stdin_frame_bytes() -> usize {
+    crate::bounded_line::MAX_STDIN_LINE_BYTES
 }
 fn default_session_idle_timeout_secs() -> u64 {
     900

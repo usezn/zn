@@ -685,21 +685,22 @@ async fn start_proxy(args: Args) -> Result<()> {
     let mut reader = BufReader::new(stdin);
 
     // A line is read with a size limit: one without a newline cannot make the gateway buffer forever.
+    // A frame over the limit is refused with an error, never passed on unchecked.
+    let max_frame = state.config.server.stdin_frame_limit();
     loop {
-        let response = match zn::bounded_line::read_line_bounded(
-            &mut reader,
-            zn::bounded_line::MAX_STDIN_LINE_BYTES,
-        )
-        .await?
-        {
+        let response = match zn::bounded_line::read_line_bounded(&mut reader, max_frame).await? {
             zn::bounded_line::BoundedLine::Eof => break,
-            zn::bounded_line::BoundedLine::TooLong => Some(
-                r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Request too large"}}"#
-                    .to_string(),
-            ),
-            zn::bounded_line::BoundedLine::Line(line) => {
-                process_mcp_message(&line, &state, None).await.ok().flatten()
+            zn::bounded_line::BoundedLine::TooLong => {
+                log::warning(format!(
+                    "Request refused: a frame is larger than server.max_stdin_frame_bytes ({max_frame} bytes)"
+                ))
+                .ok();
+                Some(too_large_frame_response(max_frame))
             }
+            zn::bounded_line::BoundedLine::Line(line) => process_mcp_message(&line, &state, None)
+                .await
+                .ok()
+                .flatten(),
         };
         if let Some(response) = response {
             stdout.write_all(response.as_bytes()).await?;
@@ -709,6 +710,20 @@ async fn start_proxy(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The JSON-RPC error for a stdin frame over the size limit. The frame was skipped unread, so its
+/// id is not known.
+fn too_large_frame_response(max_frame: usize) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": null,
+        "error": {
+            "code": -32600,
+            "message": format!("Request too large: a frame may be at most {max_frame} bytes (server.max_stdin_frame_bytes)")
+        }
+    })
+    .to_string()
 }
 
 /// Analyze text for security risks using the full engine pipeline
@@ -1258,11 +1273,16 @@ async fn process_mcp_message(
                 let mut neural_error: Option<String> = None;
 
                 if state.config.neural.enabled {
-                    let neural_input = format!("{}: {}", tool_name, arguments);
+                    // The neural layer reads a bounded window of the call (its start and end); the
+                    // rules engine checks all of it. The embedding runs off the request path.
+                    let neural_input =
+                        zn::ai::neural_window(&format!("{}: {}", tool_name, arguments))
+                            .into_owned();
                     let start_neural = std::time::Instant::now();
                     let model = state.canary.backend_for(&agent_id_str);
 
-                    let embedded = model.embed(&neural_input);
+                    let embedded =
+                        zn::ai::embed_blocking(model.clone(), neural_input.clone()).await;
                     if let Err(e) = &embedded {
                         neural_error = Some(format!("embedding failed: {e}"));
                     }
