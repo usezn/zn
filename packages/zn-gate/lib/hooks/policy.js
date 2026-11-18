@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-16.29';
+const POLICY_RULES_VERSION = '2026-11-18.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1788,12 +1788,101 @@ function dequoteShell(text) {
 }
 // `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
 const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
+/*
+ * Commands that rewrite zn's hook launchers with the files of the installed zn-gate package. Each launcher runs the hook
+ * only while the package's files match the digest it recorded; rewriting it records whatever the package holds now, also
+ * files an agent changed. So, like `zn hooks install`, they are the user's to run:
+ *  - running the package's launcher refresh (lib/agents/refresh.js, the postinstall step) or its launcher writer
+ *    (lib/agents/launcher.js) with Node.js, Bun or Deno, or loading either from inline code;
+ *  - a package manager that installs, updates, rebuilds or links zn-gate (npm i -g zn-gate, npm rebuild -g zn-gate,
+ *    yarn global add zn-gate@1.0.0, npm i -g ./zn-gate-1.16.0.tgz, npm --prefix <...>/node_modules/zn-gate run postinstall,
+ *    npm explore -g zn-gate -- ...), also after a cd into an installed zn-gate folder. Removing it (npm uninstall -g
+ *    zn-gate) stays allowed: it runs no install script, and the launchers then block.
+ * Reading the files (cat, grep), other package commands (npm test, npm install lodash, npm ls zn-gate) and text that only
+ * names such a command (git commit -m "npm i -g zn-gate") stay allowed. A script file the agent wrote that loads
+ * refresh.js is not seen here. Each check is one pass over the words, so a long command costs linear time.
+ */
+const REFRESH_HINT_RE = /agents[\\/]+(?:refresh|launcher)/i;
+// The file as a word or the end of a word: .../lib/agents/refresh.js, require('../lib/agents/launcher').
+const REFRESH_WORD_RE = /lib[\\/]+agents[\\/]+(?:refresh|launcher)(?:\.c?js)?(?=$|["'\x60),;])/i;
+const REFRESH_LOAD_RE = /(?:\brequire|\bimport|\bfrom)\s*\(?\s*["'\x60][^"'\x60\n]{0,4096}?lib[\\/]+agents[\\/]+(?:refresh|launcher)(?:\.c?js)?["'\x60]/i;
+const JS_RUNNER_RE = /^(?:.*[\/\\])?(?:node|nodejs|bun|deno)(?:\.exe|\.cmd)?$/i;
+const PM_WORD_RE = /^(?:.*[\/\\])?(?:npm|pnpm|yarn|bun|cnpm|volta)(?:-cli\.js|\.cmd|\.ps1|\.exe)?$/i;
+const PM_VERBS = new Set(['install', 'i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'add', 'ci', 'clean-install',
+  'ic', 'install-clean', 'isntall-clean', 'install-ci-test', 'cit', 'install-test', 'it', 'rebuild', 'rb', 'update', 'up', 'upgrade', 'udpate',
+  'link', 'ln', 'explore']);
+const PM_LIFECYCLE = new Set(['install', 'preinstall', 'postinstall', 'prepare']);
+const PM_RUN_VERBS = new Set(['run', 'run-script', 'rum', 'urn']);
+// Words after which the next program name is a command too: wrappers that run the rest (sudo npm ..., npx npm ...,
+// xargs node ...) and the shell keywords that start a command (then npm ...).
+const CMD_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'timeout', 'xargs', 'npx', 'corepack',
+  'start-process', 'start', 'call', 'cmd', 'cmd.exe', '/c', 'then', 'do', 'else', '!', '{', 'stdbuf', 'ionice', 'setsid', 'script', 'watch']);
+// zn-gate as a package spec or path: zn-gate, zn-gate@1.16.0, x@npm:zn-gate, ./zn-gate-1.16.0.tgz, <prefix>/node_modules/zn-gate.
+const ZN_PKG_RE = /(?:^|[=:\/\\@])zn-gate(?:@[^\s\/\\]*|-\d[^\s\/\\]*\.tgz)?[\/\\]*$/i;
+// An installed zn-gate folder named anywhere in the command (a cd into it, --prefix, -C).
+const ZN_INSTALLED_DIR_RE = /node_modules[\/\\]+zn-gate(?=$|[\/\\\s"'\x60;&|)])/i;
+const bareWord = (w) => w.replace(/^(?:\$\(|[("'\x60])+|["'\x60)]+$/g, '');
+
+/* The words of each simple command of the (dequoted) text. */
+function simpleCommands(text) {
+  return text.split(/[\n;&|]+/).map((p) => p.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length);
+}
+/* The index of the first word that matches `re` where a command starts: the first word after variable assignments, or any
+   word after a wrapper (sudo, env, npx, xargs, then ...). -1 when there is none. */
+function refreshProgramAt(words, re) {
+  let wrapped = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = bareWord(words[i]);
+    if (re.test(w)) return i;
+    if (CMD_WRAPPERS.has(w.toLowerCase())) wrapped = true;
+    else if (!wrapped && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) return -1;
+  }
+  return -1;
+}
+/* True when the words after a package manager install, update, rebuild, link or explore a package, or run an install script. */
+function pmMutates(rest) {
+  let prev = '';
+  for (const word of rest) {
+    if (word.startsWith('-')) continue;
+    const w = bareWord(word).toLowerCase();
+    if (PM_VERBS.has(w) || (PM_RUN_VERBS.has(prev) && PM_LIFECYCLE.has(w))) return true;
+    prev = w;
+  }
+  return false;
+}
+function refreshCommand(text) {
+  const parts = simpleCommands(text);
+  if (REFRESH_HINT_RE.test(text)) {
+    let runner = false;
+    for (const words of parts) {
+      const at = refreshProgramAt(words, JS_RUNNER_RE);
+      if (at < 0) continue;
+      runner = true;
+      // node [options] <...>/lib/agents/refresh.js, node -r <...>/launcher.js -e 0, Start-Process node <...>/refresh.js
+      for (let j = at + 1; j < words.length; j++) if (REFRESH_WORD_RE.test(words[j])) return 'hooks refresh';
+    }
+    // node -e "...; require('<...>/lib/agents/refresh.js')": inline code that spans several simple commands.
+    if (runner && REFRESH_LOAD_RE.test(text)) return 'hooks refresh';
+  }
+  const installedDir = ZN_INSTALLED_DIR_RE.test(text);
+  for (const words of parts) {
+    const at = refreshProgramAt(words, PM_WORD_RE);
+    if (at < 0) continue;
+    const rest = words.slice(at + 1);
+    if (pmMutates(rest) && (installedDir || rest.some((w) => ZN_PKG_RE.test(bareWord(w))))) return 'zn-gate package';
+  }
+  return null;
+}
 function adminCommand(cmd) {
   const text = String(cmd || '');
   for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
     const m = ZN_ADMIN_RE.exec(t);
     if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
     if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const r = refreshCommand(t);
+    if (r) return r;
   }
   return npmExecInit(text) ? 'init' : null;
 }
@@ -3675,6 +3764,14 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (admin === 'hooks refresh') {
+    return 'zn blocked this: the hook launcher refresh of zn-gate records the files of the installed package as the ones your coding agents\' hooks trust, ' +
+      'so running it is the user\'s decision and an agent may not. Next step: ask the user to run it in their own terminal, or to run `' + znCommand('hooks install <agent>', opts) + '` if the hooks need repairing.';
+  }
+  if (admin === 'zn-gate package') {
+    return 'zn blocked this: installing, updating, rebuilding or removing the zn-gate package rewrites zn\'s hook launchers to trust the files it leaves, ' +
+      'so it is the user\'s decision and an agent may not run it. Next step: ask the user to run this command in their own terminal.';
+  }
   if (/^audit/i.test(admin)) {
     return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
       'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
