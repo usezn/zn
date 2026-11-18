@@ -61,7 +61,7 @@ function openBrowser(url) {
   if (!cmd) return false;
   try {
     const opts = { stdio: 'ignore', timeout: 15000, windowsHide: true };
-    if (process.platform === 'win32') opts.env = require('./exe').psEnv(cmd);
+    opts.env = process.platform === 'win32' ? require('./exe').psEnv(cmd) : require('./safe-env').safeEnv(process.env);
     const r = spawnSync(cmd, args, opts);
     return !r.error && r.status === 0;
   } catch (_) { return false; }

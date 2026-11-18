@@ -44,6 +44,7 @@ const audit = require('./audit');
 const confirmMod = require('./confirm');
 const { variants, buildMatcher, MIN_LENGTH: MIN_NEEDLE, validateSecretValue } = require('../scrub/exact');
 const exe = require('../exe');
+const { safeEnv } = require('../safe-env');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
@@ -1354,7 +1355,7 @@ async function unlock(opts) {
   const args = [__filename, '--serve'];
   if (o.ttlMs) args.push('--ttl-ms', String(o.ttlMs));
   if (o.idleMs) args.push('--idle-ms', String(o.idleMs));
-  const env = Object.assign({}, process.env);
+  const env = safeEnv(process.env);
   if (o.home) env.ZN_HOME = path.resolve(o.home);
   const child = spawn(process.execPath, args, {
     detached: true,

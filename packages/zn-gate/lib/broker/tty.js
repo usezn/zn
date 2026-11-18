@@ -123,7 +123,7 @@ function readClipboard(opts = {}) {
       : [['/usr/bin/wl-paste', ['--no-newline']], ['/usr/bin/xclip', ['-selection', 'clipboard', '-o']], ['/usr/bin/xsel', ['--clipboard', '--output']]];
   const timedOut = [];
   for (const [cmd, args] of candidates) {
-    const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, killSignal: 'SIGKILL', ...(cmd === ps ? { env: require('../exe').psEnv(ps) } : {}) });
+    const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, killSignal: 'SIGKILL', env: cmd === ps ? require('../exe').psEnv(ps) : require('../safe-env').safeEnv(process.env) });
     // A tool that does not answer is killed and the next one is tried; the error names the ones that hung.
     if (r.error && r.error.code === 'ETIMEDOUT') { timedOut.push(path.basename(cmd)); continue; }
     if (!r.error && r.status === 0) return String(r.stdout || '').replace(/\r?\n$/, '');

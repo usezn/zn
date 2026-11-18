@@ -116,7 +116,7 @@ function parseCim(text) {
 function psTable() {
   for (const ps of ['/bin/ps', '/usr/bin/ps']) {
     if (!fs.existsSync(ps)) continue;
-    const r = spawnSync(ps, ['-axo', 'pid=,ppid=,ucomm=,args='], { encoding: 'utf8', timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 });
+    const r = spawnSync(ps, ['-axo', 'pid=,ppid=,ucomm=,args='], { encoding: 'utf8', timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, env: require('../safe-env').safeEnv(process.env) });
     if (!r.error && r.status === 0) return parsePs(r.stdout);
   }
   return null;

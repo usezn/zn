@@ -31,6 +31,7 @@
 
 const fs = require('fs');
 const { ASTRAL_CLASS } = require('../invisible');
+const { safeEnv } = require('../safe-env');
 
 const DEFAULT_TIMEOUT_MS = 120000;
 const MAX_TEXT = 1500;
@@ -230,7 +231,7 @@ function guiChannel(opts = {}) {
       let child;
       try {
         child = spawnFn(cmd.file, cmd.args, {
-          env: cmd.env && cmd.env.PSModulePath ? require('../exe').psEnv(cmd.file, env, cmd.env) : Object.assign({}, env, cmd.env),
+          env: cmd.env && cmd.env.PSModulePath ? require('../exe').psEnv(cmd.file, env, cmd.env) : safeEnv(env, cmd.env),
           stdio: 'ignore',
           windowsHide: false,
         });

@@ -521,7 +521,8 @@ function systemPsModulePath(ps) {
  */
 function psEnv(ps, base, extra) {
   const env = {};
-  for (const k of Object.keys(base || process.env)) if (!/^psmodulepath$/i.test(k)) env[k] = (base || process.env)[k];
+  const { LOADER_VAR } = require('./safe-env');
+  for (const k of Object.keys(base || process.env)) if (!/^psmodulepath$/i.test(k) && !LOADER_VAR.test(k)) env[k] = (base || process.env)[k];
   for (const k of Object.keys(extra || {})) if (!/^psmodulepath$/i.test(k)) env[k] = extra[k];
   env.PSModulePath = systemPsModulePath(ps);
   return env;

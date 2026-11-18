@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const store = require('./store');
+const { safeEnv } = require('../safe-env');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
 
@@ -82,7 +83,7 @@ function run(cmd, args, input, extraEnv) {
     encoding: 'utf8',
     timeout: 60000,
     windowsHide: true,
-    env: extraEnv && extraEnv.PSModulePath ? require('../exe').psEnv(cmd, process.env, extraEnv) : Object.assign({}, process.env, extraEnv || {}),
+    env: extraEnv && extraEnv.PSModulePath ? require('../exe').psEnv(cmd, process.env, extraEnv) : safeEnv(process.env, extraEnv),
     maxBuffer: 1024 * 1024,
   });
   if (res.error) throw znError(CODES.LOCKED, messages.keychainHelperFailed(cmd + ' (' + res.error.code + ')'));

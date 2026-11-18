@@ -48,14 +48,8 @@ const { parseAllowList, startEgressProxy, egressEnv } = require('./egress');
 
 const USAGE = 'usage: zn run [--secrets NAME[,NAME...]] [--agent ID] [--egress-allow HOST[:PORT],...] -- <command> [args...]';
 
-// Settings that make the approved program, or the interpreter it starts (an
-// npm CLI is a shim that runs node), load code or files of the caller's
-// choosing: dynamic loader and glibc settings (LD_PRELOAD,
-// DYLD_INSERT_LIBRARIES, GCONV_PATH ...) and interpreter start-up options
-// (NODE_OPTIONS=--require, PYTHONPATH, PERL5OPT, JAVA_TOOL_OPTIONS, BASH_ENV ...).
-const LOADER_VAR = new RegExp('^(LD_|DYLD_)|^(GCONV_PATH|GLIBC_TUNABLES|LOCPATH|NLSPATH|HOSTALIASES|RES_OPTIONS|' +
-  'NODE_OPTIONS|NODE_PATH|NODE_REPL_EXTERNAL_MODULE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTHONINSPECT|PERL5OPT|PERL5LIB|PERLLIB|' +
-  'RUBYOPT|RUBYLIB|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|BASH_ENV|ENV)$', 'i');
+// Loader and interpreter start-up variables: the list is shared with the other programs zn starts (lib/safe-env.js).
+const { LOADER_VAR } = require('../safe-env');
 
 function splitList(v) {
   return String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
