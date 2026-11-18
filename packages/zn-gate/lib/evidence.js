@@ -347,38 +347,6 @@ function trimBytes(buf) {
 
 // ignoreBOM keeps a BOM in the text (so JSON.parse rejects it, as Python does) instead of dropping it.
 const STRICT = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-const LENIENT = new TextDecoder('utf-8', { ignoreBOM: true });
-
-/**
- * Reads the ledger as raw bytes and decodes it line by line. Returns the non-empty
- * lines (undecodable bytes replaced) and `bad`, a Map from a 0-based line index to the
- * reason that line is not valid UTF-8. Throws EvidenceLedgerError if the file cannot be read.
- */
-function readLedger(filePath) {
-  let raw;
-  try {
-    raw = fs.readFileSync(filePath);
-  } catch (e) {
-    throw new EvidenceLedgerError(`Cannot read the evidence log: ${e.code || e.message}`);
-  }
-  const lines = [];
-  const bad = new Map();
-  let start = 0;
-  while (start <= raw.length) {
-    let end = raw.indexOf(0x0a, start);
-    if (end === -1) end = raw.length;
-    const chunk = trimBytes(raw.subarray(start, end));
-    start = end + 1;
-    if (chunk.length === 0) continue;
-    try {
-      lines.push(STRICT.decode(chunk));
-    } catch {
-      bad.set(lines.length, `Invalid UTF-8 bytes at line ${lines.length + 1}: the log was corrupted or modified.`);
-      lines.push(LENIENT.decode(chunk));
-    }
-  }
-  return { lines, bad };
-}
 
 /**
  * Returns the last non-empty line as a Buffer (null for an empty or whitespace-only file),
@@ -606,6 +574,25 @@ function truncatedTailResult(total, index) {
 }
 
 /**
+ * Reads the log once, in chunks, and checks the hash chain as it goes. onRecord(rec, index) is
+ * called for every line that parses as JSON, so a caller can count while the chain is checked,
+ * without a second read. Returns the exporter's result; throws EvidenceLedgerError if the log
+ * cannot be read in full.
+ */
+function scanLedger(filePath, onRecord) {
+  const state = {};
+  for (const piece of exporter.exportChunks(filePath, 'none', state, { onRecord })) void piece;
+  return state.result;
+}
+
+// The fields verifyEvidenceLedger returns (the exporter's result also has the tip hash and byte count).
+function checkFields(r) {
+  const out = { valid: r.valid, total: r.total, verified: r.verified, broken_index: r.broken_index, error: r.error };
+  if (r.truncated_tail) out.truncated_tail = true;
+  return out;
+}
+
+/**
  * Verifies the cryptographic integrity of the entire evidence chain.
  *
  * @param {string} [filePath] - Optional ledger path
@@ -616,58 +603,14 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     return { valid: true, total: 0, verified: 0, broken_index: null, error: null };
   }
 
-  let lines;
-  let bad;
+  let result;
   try {
-    ({ lines, bad } = readLedger(filePath));
+    result = scanLedger(filePath);
   } catch (e) {
+    if (!(e instanceof EvidenceLedgerError)) throw e;
     return { valid: false, total: 0, verified: 0, broken_index: 0, error: e.message };
   }
-  let expectedPrevHash = GENESIS_HASH;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (bad.has(i)) {
-      return { valid: false, total: lines.length, verified: i, broken_index: i, error: bad.get(i) };
-    }
-    let rec;
-    try {
-      rec = JSON.parse(lines[i]);
-    } catch (e) {
-      if (i === lines.length - 1 && isCutTail(filePath, lines[i])) return truncatedTailResult(lines.length, i);
-      return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed JSON at line ${i + 1}: ${e.message}` };
-    }
-    if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
-      return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed record at line ${i + 1}: not a JSON object.` };
-    }
-
-    if (rec.prev_hash !== expectedPrevHash) {
-      return {
-        valid: false,
-        total: lines.length,
-        verified: i,
-        broken_index: i,
-        error: `Broken chain link at line ${i + 1} (record ${rec.id}): expected prev_hash ${expectedPrevHash.slice(0, 8)}... but found ${rec.prev_hash?.slice(0, 8)}...`
-      };
-    }
-
-    const { record_hash, ...baseRecord } = rec;
-    const hashOf = (text) => crypto.createHash('sha256').update(expectedPrevHash + ':' + text).digest('hex');
-    // Records written by Python (or older versions) may have non-ASCII escaped or a small
-    // confidence written the Python way: accept every form.
-    if (!canonicalForms(baseRecord).some((text) => hashOf(text) === record_hash)) {
-      return {
-        valid: false,
-        total: lines.length,
-        verified: i,
-        broken_index: i,
-        error: `Tamper detected at line ${i + 1} (record ${rec.id}): hash mismatch. The content of this log was altered!`
-      };
-    }
-
-    expectedPrevHash = record_hash;
-  }
-
-  return { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null };
+  return checkFields(result);
 }
 
 /**
@@ -688,42 +631,59 @@ function getEvidenceStats(filePathOrLimit = EVIDENCE_FILE, maybeLimit = 50) {
     return { total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: true, top_rules: {}, top_tools: {}, recent: [] };
   }
 
-  let lines;
-  try {
-    ({ lines } = readLedger(filePath));
-  } catch (e) {
-    return { total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: false, error: e.message, top_rules: {}, top_tools: {}, recent: [] };
-  }
+  // One streaming pass reads the log, checks the chain and counts. Earlier versions walked the lines
+  // from the newest, so the objects list names in the order of their last use and `recent` is newest
+  // first: both are rebuilt that way here, keeping only the newest `limit` records in memory.
   let blocked = 0;
   let allowed = 0;
   let shadows = 0;
-  const topRules = {};
-  const topTools = {};
-  const recent = [];
+  const ruleCount = new Map();
+  const ruleLast = new Map();
+  const toolCount = new Map();
+  const toolLast = new Map();
+  const keep = limit > 0 ? Math.ceil(limit) : 0;
+  const newest = [];
 
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const rec = JSON.parse(lines[i]);
-      if (rec === null || typeof rec !== 'object') continue;
-      if (rec.verdict === 'shadow') {
-        shadows++;
-      } else if (rec.verdict === 'block') {
-        blocked++;
-        if (rec.rule) topRules[rec.rule] = (topRules[rec.rule] || 0) + 1;
-      } else {
-        allowed++;
-      }
-      if (rec.tool_name) topTools[rec.tool_name] = (topTools[rec.tool_name] || 0) + 1;
-      if (recent.length < limit) {
-        recent.push(rec);
-      }
-    } catch {}
+  const bump = (counts, last, raw, i) => {
+    const key = String(raw);
+    counts.set(key, (counts.get(key) || 0) + 1);
+    last.set(key, i);
+  };
+  const ordered = (counts, last) => {
+    const obj = {};
+    for (const key of [...counts.keys()].sort((a, b) => last.get(b) - last.get(a))) obj[key] = counts.get(key);
+    return obj;
+  };
+  const onRecord = (rec, i) => {
+    if (rec === null || typeof rec !== 'object') return;
+    if (rec.verdict === 'shadow') {
+      shadows++;
+    } else if (rec.verdict === 'block') {
+      blocked++;
+      if (rec.rule) bump(ruleCount, ruleLast, rec.rule, i);
+    } else {
+      allowed++;
+    }
+    if (rec.tool_name) bump(toolCount, toolLast, rec.tool_name, i);
+    if (keep > 0) {
+      newest.push(rec);
+      if (newest.length > keep) newest.shift();
+    }
+  };
+
+  let check;
+  try {
+    check = scanLedger(filePath, onRecord);
+  } catch (e) {
+    if (!(e instanceof EvidenceLedgerError)) throw e;
+    return { total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: false, error: e.message, top_rules: {}, top_tools: {}, recent: [] };
   }
-
-  const check = verifyEvidenceLedger(filePath);
+  const topRules = ordered(ruleCount, ruleLast);
+  const topTools = ordered(toolCount, toolLast);
+  const recent = newest.reverse();
 
   return {
-    total: lines.length,
+    total: check.total,
     blocks: blocked,
     blocked,
     allows: allowed,

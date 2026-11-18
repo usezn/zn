@@ -10,9 +10,9 @@ import pytest
 
 from zn_gate import cli
 from zn_gate.evidence import (
-    export_evidence_ledger,
     log_evidence,
     verify_evidence_ledger,
+    write_evidence_export,
 )
 
 CSV_HEADER = (
@@ -35,8 +35,8 @@ def _ledger(tmp_path, kind):
 def run(monkeypatch, capsys):
     def _run(path, **kw):
         monkeypatch.setattr(cli, "verify_evidence_ledger", lambda: verify_evidence_ledger(path))
-        monkeypatch.setattr(cli, "export_evidence_ledger",
-                            lambda format="jsonl": export_evidence_ledger(path, format))
+        monkeypatch.setattr(cli, "write_evidence_export",
+                            lambda file_path, fmt, out: write_evidence_export(path, fmt, out))
         args = type("A", (), kw)()
         code = cli.cmd_evidence(args)
         return code, capsys.readouterr()

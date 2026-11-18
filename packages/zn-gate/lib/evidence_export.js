@@ -8,9 +8,10 @@
 
 const fs = require('fs');
 
-const DEFAULT_CHUNK = 256 * 1024;
+// Small reads keep the lines and rows being worked on from piling up between two garbage collections.
+const DEFAULT_CHUNK = 64 * 1024;
 // CSV rows are handed out in batches of about this many characters.
-const CSV_BATCH = 256 * 1024;
+const CSV_BATCH = 32 * 1024;
 
 const CSV_HEADERS = [
   'timestamp',
@@ -107,6 +108,8 @@ function createExporter(deps) {
    */
   function* exportChunks(filePath, format, state, opts = {}) {
     const chunkSize = Math.max(1, (testHooks && testHooks.exportChunkSize) || DEFAULT_CHUNK);
+    // opts.onRecord(rec, index) is called for every line that parses as JSON, in order, in the same pass.
+    const onRecord = typeof opts.onRecord === 'function' ? opts.onRecord : null;
     if (!fs.existsSync(filePath)) {
       if (format === 'csv') yield CSV_HEADER_LINE + '\n';
       state.result = { format, valid: true, total: 0, verified: 0, broken_index: null, error: null, tip_hash: genesisHash, bytes: 0 };
@@ -160,6 +163,7 @@ function createExporter(deps) {
       held = { text: lineText, rec, parseError, bad };
       total++;
       tipText = lineText;
+      if (onRecord && !parseError) onRecord(rec, total - 1);
       if (format === 'csv' && !parseError) {
         let row = null;
         try { row = csvRow(rec); } catch { /* not a record: no row, as before */ }

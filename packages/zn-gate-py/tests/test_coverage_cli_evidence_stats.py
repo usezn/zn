@@ -451,16 +451,22 @@ def test_cmd_evidence_verify(capsys):
 
 def test_cmd_evidence_export_to_stdout_and_file(tmp_path, capsys):
     res = {"content": "a,b\n", "total": 1, "valid": True}
-    with mock.patch.object(cli, "export_evidence_ledger", return_value=res) as m:
+    def fake_export(result):
+        def run(file_path, fmt, stream):
+            stream.write(result["content"])
+            return result
+        return run
+
+    with mock.patch.object(cli, "write_evidence_export", side_effect=fake_export(res)) as m:
         assert cli.cmd_evidence(argparse.Namespace(export=True, format="csv", output=None)) == 0
-        assert m.call_args.kwargs == {"format": "csv"}
+        assert m.call_args.args[1] == "csv"
         assert capsys.readouterr().out == "a,b\n"
         out = tmp_path / "out.csv"
         assert cli.cmd_evidence(argparse.Namespace(export=True, output=str(out))) == 0
     assert out.read_text(encoding="utf-8") == "a,b\n"
     shown = capsys.readouterr().out
     assert "Exported 1 records" in shown and "VALID" in shown
-    with mock.patch.object(cli, "export_evidence_ledger", return_value={**res, "valid": False}):
+    with mock.patch.object(cli, "write_evidence_export", side_effect=fake_export({**res, "valid": False})):
         cli.cmd_evidence(argparse.Namespace(export=True, output=str(out)))
     assert "TAMPERED" in capsys.readouterr().out
 

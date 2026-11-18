@@ -23,7 +23,7 @@ from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_reda
 from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
-from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence import verify_evidence_ledger, get_evidence_stats, write_evidence_export, EvidenceLedgerError, recovery_hint, EVIDENCE_FILE
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -771,23 +771,35 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 
     if getattr(args, "export", False):
         fmt = getattr(args, "format", "jsonl")
-        res = export_evidence_ledger(format=fmt)
-        out_content = res.get("content", "")
+        # The log is streamed to the output while its chain is checked, so a log of any size
+        # exports in bounded memory. The output file is opened first, so a path that cannot be
+        # written fails before anything is read.
+        out_path = getattr(args, "output", None)
+        out_file = None
+        if out_path:
+            try:
+                out_file = open(out_path, "w", encoding="utf-8")
+            except OSError as err:
+                print(f"Error: the export was not saved. {_fs_error_text(err, out_path)}", file=sys.stderr)
+                return 1
+        try:
+            res = write_evidence_export(None, fmt, out_file if out_file is not None else sys.stdout)
+            if out_file is not None:
+                out_file.close()
+        except (EvidenceLedgerError, OSError) as err:
+            if out_file is not None:
+                out_file.close()
+            incomplete = f" {out_path} is incomplete: do not use it." if out_path else ""
+            if isinstance(err, EvidenceLedgerError):
+                print(f"zn-gate: the export stopped. {err}.{incomplete}", file=sys.stderr)
+            else:
+                print(f"Error: the export was not saved. {_fs_error_text(err, out_path) if out_path else (err.strerror or err)}{incomplete}", file=sys.stderr)
+            return 1
         if not res.get("valid"):
             print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
             print(recovery_hint(), file=sys.stderr)
-        if getattr(args, "output", None):
-            try:
-                Path(args.output).write_text(out_content, encoding="utf-8")
-            except OSError as err:
-                print(f"Error: the export was not saved. {_fs_error_text(err, args.output)}", file=sys.stderr)
-                return 1
-            print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
-        else:
-            # The content already ends with a newline (or is empty when the
-            # ledger has no records); print() would add a blank line, which
-            # Node's process.stdout.write does not.
-            sys.stdout.write(out_content)
+        if out_path:
+            print(f"Exported {res.get('total')} records to {out_path} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)

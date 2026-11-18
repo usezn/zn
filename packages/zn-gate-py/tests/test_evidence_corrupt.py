@@ -172,7 +172,8 @@ def test_cli_verify_reports_tamper_and_exits_nonzero(tmp_path, monkeypatch, caps
 def test_cli_stats_and_export_print_message_without_traceback(tmp_path, monkeypatch, capsys):
     p, _ = _corrupt_end(tmp_path)
     monkeypatch.setattr(cli, "get_evidence_stats", lambda: get_evidence_stats(p))
-    monkeypatch.setattr(cli, "export_evidence_ledger", lambda format="jsonl": export_evidence_ledger(p, format))
+    monkeypatch.setattr(cli, "write_evidence_export",
+                        lambda file_path, fmt, out: evidence.write_evidence_export(p, fmt, out))
     cli.cmd_evidence(type("A", (), {})())
     out = capsys.readouterr().out
     assert "CORRUPTED" in out and "Invalid UTF-8" in out
