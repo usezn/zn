@@ -17,7 +17,8 @@ import secrets
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, TextIO, Tuple
+from collections import deque
+from typing import Any, Callable, Deque, Dict, Iterator, List, Optional, TextIO, Tuple
 
 
 def _redact(text: str) -> str:
@@ -624,44 +625,81 @@ def _truncated_tail_result(total: int, index: int) -> Dict[str, Any]:
     }
 
 
-def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
-    """
-    Verifies the cryptographic integrity of the entire ledger chain from genesis.
-    Returns { "valid": bool, "total": int, "verified": int, "broken_index": Optional[int], "error": Optional[str] }
-    """
-    if not os.path.exists(file_path):
-        return {"valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None}
+_CSV_HEADERS = [
+    "timestamp",
+    "verdict",
+    "phase",
+    "tool_name",
+    "agent_environment",
+    "rule",
+    "reason",
+    "payload_sha256",
+    "record_hash",
+    "prev_hash",
+    "latency_us",
+]
+_CSV_HEADER_LINE = ",".join(_CSV_HEADERS)
+# CSV rows are handed out in batches of about this many characters.
+_CSV_BATCH = 256 * 1024
 
+
+def _csv_row(obj: Dict[str, Any]) -> str:
+    row_vals = []
+    for h in _CSV_HEADERS:
+        val = str(obj.get(h, "")) if obj.get(h) is not None else ""
+        escaped = val.replace('"', '""')
+        row_vals.append(f'"{escaped}"')
+    return ",".join(row_vals)
+
+
+def _scan_ledger(file_path: str, fmt: str = "none", state: Optional[Dict[str, Any]] = None,
+                 on_record: Optional[Callable[[Any, int], None]] = None) -> Iterator[str]:
+    """Reads the ledger once, line by line, checking the hash chain as it goes, and yields the
+    export text in pieces: fmt is "jsonl", "csv" or "none" (check only, nothing is yielded).
+    When the generator finishes, state["result"] holds the same fields verify_evidence_ledger
+    returns, plus "tip_hash". on_record(rec, index) is called for every line that parses as JSON,
+    in order, so a caller can count in the same pass. Peak memory does not depend on the size of
+    the log. Raises EvidenceLedgerError if the file cannot be read in full."""
+    if state is None:
+        state = {}
     try:
-        lines, bad = _read_ledger(file_path)
-    except EvidenceLedgerError as e:
-        return _corrupt_result(0, 0, str(e))
+        f = open(file_path, "rb")
+    except OSError as e:
+        raise EvidenceLedgerError(f"Cannot read the evidence log: {e.strerror or e}") from e
 
     expected_prev = GENESIS_HASH
+    failure: Optional[Dict[str, Any]] = None
+    total = 0
+    last_rec: Any = None
+    last_ok = False
+    # The line before the current one, held back until we know whether it is the last: a
+    # malformed last line can be a write cut off by a crash.
+    held: Optional[Tuple[int, str, Any, Optional[Exception], Optional[str]]] = None
+    csv_parts: List[str] = []
+    csv_len = 0
+    if fmt == "csv":
+        csv_parts.append(_CSV_HEADER_LINE + "\n")
+        csv_len = len(_CSV_HEADER_LINE) + 1
+    wrote_any = False
+    last_piece_nl = True
 
-    for i, line in enumerate(lines):
-        if i in bad:
-            return _corrupt_result(len(lines), i, bad[i])
-        try:
-            rec = json.loads(line)
-        except Exception as e:
-            if i == len(lines) - 1 and _is_cut_tail(file_path, line):
-                return _truncated_tail_result(len(lines), i)
-            return {
-                "valid": False,
-                "total": len(lines),
-                "verified": i,
-                "broken_index": i,
-                "error": f"Malformed JSON at line {i+1}: {e}",
-            }
+    def check(entry: Tuple[int, str, Any, Optional[Exception], Optional[str]], is_last: bool) -> Optional[Dict[str, Any]]:
+        nonlocal expected_prev
+        i, line, rec, parse_error, bad_reason = entry
+        if bad_reason is not None:
+            return _corrupt_result(0, i, bad_reason)
+        if parse_error is not None:
+            if is_last and _is_cut_tail(file_path, line):
+                return {"truncated": i}
+            return {"valid": False, "verified": i, "broken_index": i,
+                    "error": f"Malformed JSON at line {i+1}: {parse_error}"}
         if not isinstance(rec, dict):
-            return _corrupt_result(len(lines), i, f"Malformed record at line {i+1}: not a JSON object.")
+            return _corrupt_result(0, i, f"Malformed record at line {i+1}: not a JSON object.")
 
         rec_prev = rec.get("prev_hash")
         if rec_prev != expected_prev:
             return {
                 "valid": False,
-                "total": len(lines),
                 "verified": i,
                 "broken_index": i,
                 "error": f"Broken chain link at line {i+1} (record {rec.get('id')}): expected {expected_prev[:8]}... found {str(rec_prev)[:8]}...",
@@ -672,29 +710,128 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         # Ensure confidence preserves whole number integer representation if whole
         if "confidence" in base_record and isinstance(base_record["confidence"], (int, float)) and float(base_record["confidence"]).is_integer():
             base_record["confidence"] = int(base_record["confidence"])
-            
+
         # Records written by the Node package or an older version may differ in how non-ASCII
         # text is written: accept both canonical forms.
-        # Called only within this iteration, before expected_prev is reassigned.
-        def _hash_of(text: str) -> str:
-            return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()  # noqa: B023
-
-        if recorded_hash not in {_hash_of(text) for text in _canonical_forms(base_record)}:
+        prev = expected_prev
+        hashes = {hashlib.sha256(f"{prev}:{text}".encode("utf-8", errors="replace")).hexdigest()
+                  for text in _canonical_forms(base_record)}
+        if recorded_hash not in hashes:
             return {
                 "valid": False,
-                "total": len(lines),
                 "verified": i,
                 "broken_index": i,
                 "error": f"Tamper detected at line {i+1} (record {rec.get('id')}): hash mismatch! Log contents were modified.",
             }
 
         expected_prev = recorded_hash
+        return None
 
-    return {"valid": True, "total": len(lines), "verified": len(lines), "broken_index": None, "error": None}
+    try:
+        with f:
+            for raw in f:
+                if fmt == "jsonl":
+                    # Same line endings as reading in text mode (Windows writes CRLF).
+                    piece = raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+                    wrote_any = True
+                    last_piece_nl = piece.endswith("\n")
+                    yield piece
+                chunk = raw.strip(_WS + b"\n")
+                if not chunk:
+                    continue
+                bad_reason: Optional[str] = None
+                try:
+                    line = chunk.decode("utf-8")
+                except UnicodeDecodeError as e:
+                    bad_reason = f"Invalid UTF-8 bytes at line {total + 1} (byte {e.start}): the log was corrupted or modified."
+                    line = chunk.decode("utf-8", errors="replace")
+                rec: Any = None
+                parse_error: Optional[Exception] = None
+                try:
+                    rec = json.loads(line)
+                except Exception as e:
+                    parse_error = e
+                if held is not None and failure is None:
+                    failure = check(held, False)
+                held = (total, line, rec, parse_error, bad_reason)
+                total += 1
+                last_rec, last_ok = rec, parse_error is None
+                if parse_error is None:
+                    if on_record is not None:
+                        on_record(rec, total - 1)
+                    if fmt == "csv" and isinstance(rec, dict):
+                        try:
+                            row = _csv_row(rec)
+                        except Exception:
+                            row = None
+                        if row is not None:
+                            csv_parts.append(row + "\n")
+                            csv_len += len(row) + 1
+                if csv_len >= _CSV_BATCH:
+                    yield "".join(csv_parts)
+                    csv_parts = []
+                    csv_len = 0
+    except OSError as e:
+        raise EvidenceLedgerError(f"Cannot read the evidence log: {e.strerror or e}") from e
+
+    if held is not None and failure is None:
+        failure = check(held, True)
+
+    if fmt == "jsonl":
+        # The export always ends with a newline (an empty log gives one newline).
+        if not wrote_any or not last_piece_nl:
+            yield "\n"
+    elif fmt == "csv" and csv_parts:
+        yield "".join(csv_parts)
+
+    tip_hash: Any = GENESIS_HASH
+    if last_ok and isinstance(last_rec, dict):
+        tip_hash = last_rec.get("record_hash", GENESIS_HASH)
+
+    if failure is None:
+        result: Dict[str, Any] = {"valid": True, "total": total, "verified": total, "broken_index": None, "error": None}
+    elif "truncated" in failure:
+        result = _truncated_tail_result(total, failure["truncated"])
+    else:
+        result = dict(failure)
+        result["total"] = total
+        result.setdefault("valid", False)
+    result["tip_hash"] = tip_hash
+    state["result"] = result
+
+
+def _run_scan(file_path: str, fmt: str = "none", on_record: Optional[Callable[[Any, int], None]] = None) -> Dict[str, Any]:
+    state: Dict[str, Any] = {}
+    for _piece in _scan_ledger(file_path, fmt, state, on_record):
+        pass
+    return state["result"]
+
+
+def _check_fields(result: Dict[str, Any]) -> Dict[str, Any]:
+    out = {k: result[k] for k in ("valid", "total", "verified", "broken_index", "error")}
+    if result.get("truncated_tail"):
+        out["truncated_tail"] = True
+    return out
+
+
+def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
+    """
+    Verifies the cryptographic integrity of the entire ledger chain from genesis.
+    The log is read once, line by line, so memory does not grow with its size.
+    Returns { "valid": bool, "total": int, "verified": int, "broken_index": Optional[int], "error": Optional[str] }
+    """
+    if not os.path.exists(file_path):
+        return {"valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None}
+
+    try:
+        result = _run_scan(file_path)
+    except EvidenceLedgerError as e:
+        return _corrupt_result(0, 0, str(e))
+    return _check_fields(result)
 
 
 def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[str, Any]:
-    """Generates aggregated stats from the evidence ledger."""
+    """Generates aggregated stats from the evidence ledger (one pass: the chain is checked while counting)."""
     if not os.path.exists(file_path):
         return {
             "total": 0,
@@ -707,73 +844,105 @@ def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[
             "recent": [],
         }
 
+    # Earlier versions walked the lines from the newest, so the dicts list names in the order of
+    # their last use and `recent` is newest first: both are rebuilt that way, keeping only the
+    # newest `limit` records in memory.
+    counts = {"blocks": 0, "allows": 0, "shadows": 0}
+    rule_count: Dict[Any, int] = {}
+    rule_last: Dict[Any, int] = {}
+    tool_count: Dict[Any, int] = {}
+    tool_last: Dict[Any, int] = {}
+    keep = limit > 0
+    newest: Deque[Dict[str, Any]] = deque(
+        maxlen=None if limit == float("inf") else (int(math.ceil(limit)) if keep else 1))
+
+    def on_record(rec: Any, i: int) -> None:
+        try:
+            if not isinstance(rec, dict):
+                return
+            v = rec.get("verdict")
+            if v == "block":
+                counts["blocks"] += 1
+                r = rec.get("rule")
+                if r:
+                    rule_count[r] = rule_count.get(r, 0) + 1
+                    rule_last[r] = i
+            elif v == "shadow":
+                counts["shadows"] += 1
+            else:
+                counts["allows"] += 1
+
+            t = rec.get("tool_name")
+            if t:
+                tool_count[t] = tool_count.get(t, 0) + 1
+                tool_last[t] = i
+
+            if keep:
+                newest.append(rec)
+        except Exception:
+            return
+
     try:
-        lines, bad = _read_ledger(file_path)
+        check = _run_scan(file_path, "none", on_record)
     except EvidenceLedgerError as e:
         return {"total": 0, "blocks": 0, "allows": 0, "shadows": 0, "valid": False, "error": str(e),
                 "top_rules": {}, "top_tools": {}, "recent": []}
 
-    blocks = 0
-    allows = 0
-    shadows = 0
-    top_rules: Dict[str, int] = {}
-    top_tools: Dict[str, int] = {}
-    recent: List[Dict[str, Any]] = []
-
-    for line in reversed(lines):
-        try:
-            rec = json.loads(line)
-            if not isinstance(rec, dict):
-                continue
-            v = rec.get("verdict")
-            if v == "block":
-                blocks += 1
-                r = rec.get("rule")
-                if r:
-                    top_rules[r] = top_rules.get(r, 0) + 1
-            elif v == "shadow":
-                shadows += 1
-            else:
-                allows += 1
-
-            t = rec.get("tool_name")
-            if t:
-                top_tools[t] = top_tools.get(t, 0) + 1
-
-            if len(recent) < limit:
-                recent.append(rec)
-        except Exception:
-            continue
-
-    check = verify_evidence_ledger(file_path)
+    top_rules = {k: rule_count[k] for k in sorted(rule_count, key=lambda k: -rule_last[k])}
+    top_tools = {k: tool_count[k] for k in sorted(tool_count, key=lambda k: -tool_last[k])}
 
     return {
-        "total": len(lines),
-        "blocks": blocks,
-        "allows": allows,
-        "shadows": shadows,
+        "total": check["total"],
+        "blocks": counts["blocks"],
+        "allows": counts["allows"],
+        "shadows": counts["shadows"],
         "valid": check["valid"],
         "error": check.get("error"),
         "top_rules": top_rules,
         "top_tools": top_tools,
-        "recent": recent,
+        "recent": list(reversed(newest)) if keep else [],
     }
+
+
+def write_evidence_export(file_path: Optional[str], format: str, out: TextIO) -> Dict[str, Any]:
+    """Streams the export of the ledger to a text stream in bounded memory, checking the hash chain
+    as it reads. Returns { "format", "valid", "error", "tip_hash", "total" }. Raises
+    EvidenceLedgerError if the log cannot be read in full."""
+    target_path = file_path if file_path else EVIDENCE_FILE
+    norm_format = "csv" if (format or "jsonl").lower() == "csv" else "jsonl"
+    if not os.path.exists(target_path):
+        if norm_format == "csv":
+            out.write(_CSV_HEADER_LINE + "\n")
+        return {"format": norm_format, "valid": True, "error": None, "tip_hash": GENESIS_HASH, "total": 0}
+    state: Dict[str, Any] = {}
+    written = False
+    try:
+        for piece in _scan_ledger(target_path, norm_format, state):
+            written = True
+            out.write(piece)
+    except EvidenceLedgerError as e:
+        if written:
+            raise
+        # A log that cannot be opened exports nothing and is not valid.
+        out.write(_CSV_HEADER_LINE + "\n" if norm_format == "csv" else "\n")
+        return {"format": norm_format, "valid": False, "error": str(e), "tip_hash": GENESIS_HASH, "total": 0}
+    res = state["result"]
+    return {"format": norm_format, "valid": res["valid"], "error": res.get("error"),
+            "tip_hash": res["tip_hash"], "total": res["total"]}
 
 
 def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl") -> Dict[str, Any]:
     """
     Exports the evidence ledger into JSONL or CSV with cryptographic verification.
     Suitable for enterprise compliance audits (SOC 2, ISO 27001, EU AI Act Art. 12).
+    This returns the whole export as one string, so it suits small logs; the command line
+    streams it (see write_evidence_export).
     """
     target_path = file_path if file_path else EVIDENCE_FILE
     norm_format = "csv" if (format or "jsonl").lower() == "csv" else "jsonl"
 
     if not os.path.exists(target_path):
-        empty_content = (
-            "timestamp,verdict,phase,tool_name,agent_environment,rule,reason,payload_sha256,record_hash,prev_hash,latency_us\n"
-            if norm_format == "csv"
-            else ""
-        )
+        empty_content = _CSV_HEADER_LINE + "\n" if norm_format == "csv" else ""
         return {
             "content": empty_content,
             "format": norm_format,
@@ -782,67 +951,27 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
             "total": 0,
         }
 
-    verify_result = verify_evidence_ledger(target_path)
+    state: Dict[str, Any] = {}
+    parts: List[str] = []
     try:
-        lines, _bad = _read_ledger(target_path)
-    except EvidenceLedgerError:
-        lines = []
-
-    tip_hash = GENESIS_HASH
-    if lines:
-        try:
-            tip_hash = json.loads(lines[-1]).get("record_hash", GENESIS_HASH)
-        except Exception:
-            pass
-
-    if norm_format == "csv":
-        headers = [
-            "timestamp",
-            "verdict",
-            "phase",
-            "tool_name",
-            "agent_environment",
-            "rule",
-            "reason",
-            "payload_sha256",
-            "record_hash",
-            "prev_hash",
-            "latency_us",
-        ]
-        rows = [",".join(headers)]
-        for line in lines:
-            try:
-                obj = json.loads(line)
-                row_vals = []
-                for h in headers:
-                    val = str(obj.get(h, "")) if obj.get(h) is not None else ""
-                    escaped = val.replace('"', '""')
-                    row_vals.append(f'"{escaped}"')
-                rows.append(",".join(row_vals))
-            except Exception:
-                pass
-
+        for piece in _scan_ledger(target_path, norm_format, state):
+            parts.append(piece)
+    except EvidenceLedgerError as e:
+        # A log that cannot be read exports nothing and is not valid.
         return {
-            "content": "\n".join(rows) + "\n",
-            "format": "csv",
-            "valid": verify_result["valid"],
-            "error": verify_result.get("error"),
-            "tip_hash": tip_hash,
-            "total": len(lines),
+            "content": _CSV_HEADER_LINE + "\n" if norm_format == "csv" else "\n",
+            "format": norm_format,
+            "valid": False,
+            "error": str(e),
+            "tip_hash": GENESIS_HASH,
+            "total": 0,
         }
-
-    try:
-        with open(target_path, "rb") as f:
-            # Same line endings as reading in text mode (Windows writes CRLF).
-            raw = f.read().decode("utf-8", errors="replace").replace("\r\n", "\n")
-    except OSError:
-        raw = ""
-
+    res = state["result"]
     return {
-        "content": raw if raw.endswith("\n") else raw + "\n",
-        "format": "jsonl",
-        "valid": verify_result["valid"],
-        "error": verify_result.get("error"),
-        "tip_hash": tip_hash,
-        "total": len(lines),
+        "content": "".join(parts),
+        "format": norm_format,
+        "valid": res["valid"],
+        "error": res.get("error"),
+        "tip_hash": res["tip_hash"],
+        "total": res["total"],
     }

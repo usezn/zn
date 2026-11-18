@@ -26,7 +26,11 @@ EMPTY = {"content": "", "format": "jsonl", "valid": True, "tip_hash": EMPTY_HASH
 def _export(output, res=GOOD):
     ns = argparse.Namespace(verify=False, export=True, format="jsonl", output=output)
     out, err = io.StringIO(), io.StringIO()
-    with mock.patch.object(cli, "export_evidence_ledger", return_value=res), \
+    def fake_export(file_path, fmt, stream):
+        stream.write(res["content"])
+        return res
+
+    with mock.patch.object(cli, "write_evidence_export", side_effect=fake_export), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = cli.cmd_evidence(ns)
     return code, out.getvalue(), err.getvalue()

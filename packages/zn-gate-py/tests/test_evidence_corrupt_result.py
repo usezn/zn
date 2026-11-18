@@ -45,10 +45,10 @@ def test_unreadable_ledger_reports_zero_total_and_index(tmp_path, monkeypatch):
     p = str(tmp_path / "evidence.jsonl")
     log_evidence({"payload": "example-0", "tool_name": "bash"}, file_path=p)
 
-    def boom(_path):
-        raise evidence.EvidenceLedgerError("Cannot read the evidence log: example")
+    def boom(*_a, **_k):
+        raise OSError(13, "example")
 
-    monkeypatch.setattr(evidence, "_read_ledger", boom)
+    monkeypatch.setattr("builtins.open", boom)
     r = verify_evidence_ledger(p)
     assert r == {
         "valid": False,
