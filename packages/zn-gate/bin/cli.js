@@ -217,7 +217,7 @@ USAGE:
 COMMANDS:
   init                Set up zn for the coding agents on this machine, one step at a time, then check it
   init --wrap-mcp     Find and wrap the MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
-  shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
+  shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python) (also: wrap)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
                       [--format text|json|github] (matched values are never printed)
   scan --package NAME[@VERSION]
@@ -228,7 +228,7 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-  evidence            Query the local hash-chained decision log and run the UI dashboard
+  evidence            Query the local hash-chained decision log and run the UI dashboard (also: export)
   logs                Tail or inspect security event logs
   why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
   mcp                 Run as standalone bidirectional MCP server for AI agents
@@ -238,12 +238,12 @@ COMMANDS:
   report              Weekly report of what zn-gate did on this machine (--since Nd, --json, --no-team-line; nothing is sent)
   pins                Tool pins of the MCP servers that shield wraps ("pins approve <server>|--all" accepts changes)
   status              Show engine configuration and gateway connectivity
-  version, -V         Show package version
+  version, -V         Show package version (also: -v, --version)
 
 SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret set NAME     Store a secret (hidden prompt or --clipboard; never as an argument)
                       [--mode proxy|env|file] [--host H] [--command C]
-  secret list         List stored secrets (names and policy, never values)
+  secret list         List stored secrets (names and policy, never values). "secrets" works for "secret"
   secret allow NAME   Add allowed hosts (--host) or commands (--command) to a secret
   secret approve NAME Approve the first use of a secret by an allowed command
   secret rm NAME      Remove a secret
@@ -1027,9 +1027,11 @@ const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
 const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
 const COMMAND_OPTIONS = {
   scan: {
-    value: ['--format', '--include', '--exclude', '--package', ...CLOUD_VALUE_OPTIONS],
-    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
-    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--package'],
+    // scan does not use the cloud: --key, --stage, --url, --local-only and --long-input are refused (exit 2), as in
+    // the Python package. --verbose (debug logging) is kept. If --no-fail is added to this list by another change, keep it.
+    value: ['--format', '--include', '--exclude', '--package'],
+    flag: ['--code', '--all', '--allow-partial', '--include-home', '--verbose'],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--package', '--verbose'],
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,

@@ -11,11 +11,12 @@ const { spawnSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const VALUE_OPTIONS = {
-  scan: ['--format', '--include', '--exclude', '--key', '--stage', '--url', '--long-input', '--package'],
+  // scan does not take the cloud options (they are refused with exit 2), so they are not listed for it.
+  scan: ['--format', '--include', '--exclude', '--package'],
   analyze: ['--key', '--stage', '--url', '--long-input'],
 };
 const FLAGS = {
-  scan: ['--code', '--all', '--allow-partial', '--include-home', '--local-only', '--verbose'],
+  scan: ['--code', '--all', '--allow-partial', '--include-home', '--verbose'],
   analyze: ['--local-only', '--verbose'],
 };
 
@@ -38,9 +39,10 @@ function run(args) {
 
 for (const command of Object.keys(VALUE_OPTIONS)) {
   for (const name of VALUE_OPTIONS[command]) {
+    const extra = command === 'analyze' ? ['--local-only'] : [];
     test(`${command} ${name}: the equals form behaves like the spaced form`, () => {
-      const spaced = run([command, name, 'value', '--local-only', '--', 'missing-target']);
-      const equals = run([command, `${name}=value`, '--local-only', '--', 'missing-target']);
+      const spaced = run([command, name, 'value', ...extra, '--', 'missing-target']);
+      const equals = run([command, `${name}=value`, ...extra, '--', 'missing-target']);
       assert.strictEqual(equals.status, spaced.status);
       assert.strictEqual(equals.stderr, spaced.stderr);
       assert.doesNotMatch(equals.stderr, /unknown option|give the value as the next argument/);

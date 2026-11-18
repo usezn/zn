@@ -1016,7 +1016,9 @@ def build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         description="zn deterministic guardrail engine for AI agents and LLM tool calling.",
         epilog="Also: reach --history  which secrets your coding agents kept in their session history "
-               "(types and counts, never values) [--json] [--max-seconds N]",
+               "(types and counts, never values) [--json] [--max-seconds N]. "
+               f"The other commands (init, hooks, secret, vault, shield, team, ...) are in the npm package: "
+               f"run {npx_name()} -y zn-gate --help",
     )
     # -v and -V print the version too, as in the npm package.
     parser.add_argument("-v", "-V", "--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")

@@ -41,7 +41,15 @@ def test_help_mentions_no_npm_only_command(texts):
             # the Python guard only and names the npm check for agent hooks.
             assert npx_name() + " -y zn-gate check" in " ".join(text.split()).replace("zn- gate", "zn-gate")  # argparse may wrap at the hyphen
             continue
-        assert "npx" not in text and "npm" not in text, name
+        if name == "(top level)":
+            # The root help points to the npm package once, in the epilog. Take that sentence out and check the rest.
+            flat = " ".join(text.split()).replace("zn- gate", "zn-gate")
+            pointer = "are in the npm package: run " + npx_name() + " -y zn-gate --help"
+            assert pointer in flat, flat
+            text = flat.replace(pointer, "").replace("The other commands (init, hooks, secret, vault, shield, team, ...)", "")
+            assert "npx" not in text and "npm" not in text, name
+        else:
+            assert "npx" not in text and "npm" not in text, name
         for cmd in sorted(NPM_ONLY_COMMANDS):
             pattern = r"(?<![\w-])zn-gate " + re.escape(cmd) + r"(?![\w-])"
             assert not re.search(pattern, text), (name, cmd)
