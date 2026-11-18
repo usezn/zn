@@ -1037,6 +1037,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--local-only", action="store_true", help="Force local deterministic rules only")
     analyze_parser.add_argument("--long-input", choices=["windows", "off"], help="Long texts sent to the cloud: overlapping 512-token windows (default) or the first 512 tokens only")
     analyze_parser.add_argument("--json", action="store_true", help="Output as JSON (the only output format; accepted so existing scripts keep working)")
+    analyze_parser.add_argument("--verbose", action="store_true", help="Print debug messages to the error output (same as ZN_VERBOSE=1)")
 
     # scan command
     scan_parser = subparsers.add_parser("scan", allow_abbrev=False, help="Scan directory or files for injection traps & secret leaks")
@@ -1048,6 +1049,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--allow-partial", action="store_true", help="Exit 0 even when some files or folders were not read (they are still listed). Reading no file at all stays an error (exit 3)")
     scan_parser.add_argument("--code", "--all", dest="code", action="store_true", help="Include source code files in the scan (.js, .ts, .py, .sh, .html, .go, .rs)")
     scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
+    scan_parser.add_argument("--verbose", action="store_true", help="Print debug messages to the error output (same as ZN_VERBOSE=1)")
 
     # evidence command
     ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
@@ -1057,7 +1059,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--output", help="Write export output to file")
 
     # status command
-    subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")
+    status_parser = subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")
+    status_parser.add_argument("--verbose", action="store_true", help="Print debug messages to the error output (same as ZN_VERBOSE=1)")
 
     # stats command
     st_parser = subparsers.add_parser("stats", allow_abbrev=False, help="What zn-gate did on this machine (local counts only)")
@@ -1109,6 +1112,9 @@ def main() -> int:
         sys.stderr.write(npm_only_message(sys.argv[1]))
         return 2
     args = parser.parse_args()
+    if getattr(args, "verbose", False):
+        # --verbose is the same switch as ZN_VERBOSE=1 (the npm package accepts both).
+        os.environ["ZN_VERBOSE"] = "1"
     if args.command == "test":
         return cmd_test(args)
     elif args.command == "analyze":
