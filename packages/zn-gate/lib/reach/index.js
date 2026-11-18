@@ -18,6 +18,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { byCode } = require('../code-order');
 
 const VERSION = 1;
 const SEVERITIES = ['high', 'medium', 'low', 'info'];
@@ -313,7 +314,7 @@ function remember(root, counts, home, env) {
   const previous = was ? { high: count(was.high), medium: count(was.medium), low: count(was.low), at: day } : null;
   data[key] = { high: counts.high, medium: counts.medium, low: counts.low, at: new Date().toISOString().slice(0, 10) };
   // Up to 200 folders: the oldest go first.
-  const keys = Object.keys(data).sort((a, b) => String(data[a].at).localeCompare(String(data[b].at)));
+  const keys = Object.keys(data).sort((a, b) => byCode(data[a].at, data[b].at));
   while (keys.length > 200) delete data[keys.shift()];
   // A new temporary file with a random name, created exclusively (never through a planted link), then renamed
   // over the old one. Two runs at the same time: the last one to finish wins; the file is never half written.

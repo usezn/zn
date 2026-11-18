@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { byCode } = require('../code-order');
 const store = require('./store');
 const keychain = require('./keychain');
 const daemon = require('./daemon');
@@ -271,7 +272,7 @@ function describe(t, opts) {
     lines.push(f.path + '  (' + f.kind + ')');
   }
   if (maps) lines.push(mapsDir + '  (' + maps + ' token map' + (maps === 1 ? '' : 's') + ' of projects)');
-  for (const [name, k] of [...backups].sort((a, b) => a[0].localeCompare(b[0]))) {
+  for (const [name, k] of [...backups].sort((a, b) => byCode(a[0], b[0]))) {
     lines.push(path.join(home, name) +'  (backup made by `zn vault reset`, ' + k.n + ' file' + (k.n === 1 ? '' : 's') + ')');
   }
   if (t.backend && t.backend !== 'passphrase') lines.push('the vault key in your ' + t.backend + ' keychain');

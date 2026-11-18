@@ -36,6 +36,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
+const { byCode } = require('../code-order');
 const { spawn } = require('child_process');
 const store = require('./store');
 const keychain = require('./keychain');
@@ -869,7 +870,7 @@ function makeOps(state, ctl) {
       const list = Object.entries(secrets.secrets).map(([name, s]) => ({
         name, type: s.type || 'SECRET', mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [],
         allowIn: s.allowIn || ['header'], injectAt: s.injectAt, source: s.source, lastUsed: s.lastUsed || null,
-      })).sort((a, b) => a.name.localeCompare(b.name));
+      })).sort((a, b) => byCode(a.name, b.name));
       const o = opts && typeof opts === 'object' ? opts : {};
       return o.effective ? team.effectiveList(list, typeof o.agent === 'string' ? o.agent : null, o.agentTrusted === true) : list;
     },
