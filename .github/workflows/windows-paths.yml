@@ -65,6 +65,10 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     timeout-minutes: 25
+    permissions:
+      # actions: read lets the skipped-tests step download the list of the last successful run.
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,6 +131,76 @@ jobs:
             echo "More tests are skipped on Windows than the baseline allows ($count > $base). Run them, or skip them with a reason and raise the baseline in .github/windows-skip-baseline.txt."
             exit 1
           fi
+      - name: List the skipped tests and compare with the last successful run
+        # Writes the names of the skipped tests to the job summary and the difference from the list of the last
+        # successful run (kept as the artifact windows-skipped-tests). It never fails the job: the step above decides that.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/unit.log"
+          dir="$RUNNER_TEMP/skipped"
+          mkdir -p "$dir/prev"
+          # One line per skipped test, as node --test prints it (TAP "ok N - name # SKIP reason" or the spec reporter).
+          grep -a -i -E '# skip' "$log" | grep -a -v -E '^(#|ℹ) skipped' | sed -E 's/^[[:space:]]+//; s/\r$//; s/^ok [0-9]+ - //; s/ \([0-9.]+ms\)//' | sort > "$dir/skipped-tests.txt" || true
+          now=$(wc -l < "$dir/skipped-tests.txt" | tr -d ' ')
+          {
+            echo "### Skipped tests on Windows ($now listed)"
+            echo
+            echo "The summary count above is the sum of the node --test summaries; this list is the lines marked as skipped in the output."
+            echo
+            echo '<details><summary>Skipped tests</summary>'
+            echo
+            echo '```'
+            cat "$dir/skipped-tests.txt"
+            echo '```'
+            echo
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          have=0
+          for id in $(gh run list --workflow windows-paths.yml --status success --limit 5 --json databaseId --jq '.[].databaseId'); do
+            if gh run download "$id" --name windows-skipped-tests --dir "$dir/prev" >/dev/null 2>&1 && [ -f "$dir/prev/skipped-tests.txt" ]; then
+              have=1
+              echo "Compared with run $id."
+              prev_id="$id"
+              break
+            fi
+          done
+          {
+            echo
+            echo "### Difference from the last successful run"
+            echo
+            if [ "$have" = 0 ]; then
+              echo "No list from a previous successful run is available (none yet, or its artifact expired)."
+            else
+              prev=$(wc -l < "$dir/prev/skipped-tests.txt" | tr -d ' ')
+              echo "Previous successful run: ${prev_id} ($prev listed, now $now)."
+              echo
+              added=$(comm -13 "$dir/prev/skipped-tests.txt" "$dir/skipped-tests.txt")
+              removed=$(comm -23 "$dir/prev/skipped-tests.txt" "$dir/skipped-tests.txt")
+              echo "Newly skipped:"
+              echo '```'
+              if [ -n "$added" ]; then printf '%s\n' "$added"; else echo "(none)"; fi
+              echo '```'
+              echo "No longer skipped:"
+              echo '```'
+              if [ -n "$removed" ]; then printf '%s\n' "$removed"; else echo "(none)"; fi
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the list of skipped tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-skipped-tests
+          path: ${{ runner.temp }}/skipped/skipped-tests.txt
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Vault tests (Windows Credential Manager)
         working-directory: packages/zn-gate
         env:
