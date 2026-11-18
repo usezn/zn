@@ -349,6 +349,12 @@ async function initIdentity(opts) {
   const o = opts || {};
   if (readMeta(o)) throw znError(CODES.POLICY_DENIED, 'vault already initialised. Next step: nothing to do; the vault already exists.');
   const backend = o.backend || detectBackend();
+  // Secrets must never land in a folder where chmod does nothing (FAT, exFAT, some network shares).
+  const stateFs = require('../state-fs');
+  const home = store.paths(o).home;
+  if (!stateFs.permissionsEnforced(home, o.stateFs)) {
+    throw znError(CODES.POLICY_DENIED, 'the vault will not be created: ' + stateFs.problemText({ folder: home, permissions_enforced: false }));
+  }
   store.ensureLayout(o);
   const { identity, recipient } = await store.generateIdentity();
   await storeIdentity(identity, Object.assign({}, o, { backend }));

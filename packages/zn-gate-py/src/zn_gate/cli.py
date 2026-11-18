@@ -872,6 +872,15 @@ def _check_rule_ids(text: str) -> str:
         return "unknown"
 
 
+def _state_folder_warning() -> str:
+    """The warning for a state folder (~/.zn or ZN_HOME) that ignores Unix permissions or holds no Unix socket, or ''."""
+    try:
+        from . import state_fs
+        return state_fs.problem_text(state_fs.support())
+    except Exception:
+        return ""
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Run the Python guard on a fake secret and on a benign text, in a temp folder."""
     import tempfile
@@ -920,6 +929,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     except Exception as exc:
         ok = False
         print(f"{_lead(ALERT)}FAIL  the check could not run: {type(exc).__name__}")
+    warning = _state_folder_warning()
+    if warning:
+        print(f"Warning: {warning}")
     if ok:
         print("OK: the Python guard works. Nothing was sent and nothing was written outside a temporary folder.")
         print(f"This covers the Python guard only. For agent hooks (Claude Code, Codex, Cursor...) run: {npx_name()} -y zn-gate check")

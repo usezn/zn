@@ -1449,6 +1449,20 @@ function nodeWarnings(opts, env) {
   return out;
 }
 
+/* The warning about a state folder (~/.zn, or ZN_HOME) that ignores Unix permissions or holds no Unix socket: the
+   evidence log and the vault files would stay readable by other users, and the vault cannot run there. opts.stateFolder
+   is the answer of lib/state-fs.js, given by tests; otherwise the folder is probed. Never throws. */
+async function stateFolderWarnings(opts) {
+  try {
+    const stateFs = require('./state-fs');
+    const info = opts.stateFolder || await stateFs.support({});
+    const text = stateFs.problemText(info);
+    return text ? [text] : [];
+  } catch (err) {
+    return [];
+  }
+}
+
 /**
  * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
@@ -1468,7 +1482,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true, warnings: nodeWarnings(opts, env) };
+    return { results, removed: true, warnings: nodeWarnings(opts, env).concat(await stateFolderWarnings(opts)) };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
@@ -1489,7 +1503,7 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
+  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env).concat(await stateFolderWarnings(opts)) };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */

@@ -1306,6 +1306,11 @@ async function main() {
     process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate init - Zero-Touch MCP Auto-Discovery & Shielding
 ${ruleLine(process.env, 60)}\n`);
+    try {
+      const stateFs = require('../lib/state-fs');
+      const text = stateFs.problemText(await stateFs.support({}));
+      if (text) process.stdout.write('Warning: ' + text + '\n\n');
+    } catch (_) { /* a warning never stops init */ }
     const { scanned, actions } = configureEnvironments({
       dryRun: options.dryRun,
       shadow: options.shadow,

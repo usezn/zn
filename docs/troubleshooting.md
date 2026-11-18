@@ -1166,6 +1166,12 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What to do:** run `zn team status` to see what, if anything, is waiting. If something should be waiting, ask your administrator.
 
+#### "The folder where zn keeps its private state (`<path>`) ignores Unix file permissions" / "... cannot hold Unix sockets"
+
+**What happened:** zn keeps its evidence log, stats, baselines and the vault in `~/.zn` (or the folder `ZN_HOME` names). On some disks, such as FAT and exFAT drives, USB sticks and some network shares (SMB), `chmod` is accepted and does nothing, so those files stay readable by other users on the computer, and the disk cannot hold a Unix socket, which the vault needs. `zn-gate check` (npm and Python) and `zn-gate init` show this as a warning. `zn unlock` and the first vault setup refuse to go on, instead of storing your vault identity where anyone could read it or failing later. Hooks, scans and evidence still work.
+
+**What to do:** set `ZN_HOME` to a folder on a disk with Unix permissions, such as your home disk (for example `export ZN_HOME="$HOME/.zn"` in your shell profile), then run the command again. To move what zn already stored, copy the old folder there while no zn command is running.
+
 ### Messages from the vault commands (`zn unlock`, `zn lock`, `zn vault forget`)
 
 The vault being locked, damaged or refusing a keychain are in [section 5](#5-your-secret-vault-is-locked). These are the other messages of the vault commands.

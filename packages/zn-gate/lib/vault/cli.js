@@ -270,6 +270,11 @@ async function unlockCmd(args, deps) {
   if (asked !== undefined && !keychain.BACKENDS.includes(asked)) throw usageError(messages.unknownBackend(asked, keychain.BACKENDS));
   const agent = d.agent !== undefined ? d.agent : agentDetected(process.env);
   if (agent) throw new Error(messages.agentRefusal(znCommand('unlock'), agent));
+  // A folder that ignores Unix permissions would leave the identity and the vault files readable by other users, and one
+  // without Unix sockets cannot run the vault: say so now, not after the vault is created or the daemon fails.
+  const stateFs = require('../state-fs');
+  const stateProblem = stateFs.problemText(await (d.stateSupport || stateFs.support)({ folder: store.paths().home }));
+  if (stateProblem) throw new Error('zn unlock will not start: ' + stateProblem);
   // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
   const running = await runningStatus(d.clientFactory);
   if (running && !isOutdatedVault(running)) throw new Error(messages.vaultAlreadyUnlocked());

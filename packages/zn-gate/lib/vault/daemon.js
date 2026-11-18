@@ -1089,6 +1089,14 @@ function assertPrivateEndpoint(ep, strict) {
       if (err.code === 'ENOENT' && file !== dir && !strict) continue;
       throw znError(CODES.POLICY_DENIED, 'the vault will not start: cannot check ' + path.basename(file) + ' (' + (err.code || 'error') + '). Next step: check the permissions of ' + dir + ' (it must be yours, mode 0700).');
     }
+    if (!st.isSymbolicLink() && st.uid === me && (st.mode & 0o077) !== 0) {
+      // Not a permission slip: this folder ignores chmod (FAT, exFAT, some network shares). Say so, and where to go.
+      const stateFs = require('../state-fs');
+      const folder = path.basename(dir) === 'run' ? path.dirname(dir) : dir;
+      if (!stateFs.permissionsEnforced(dir)) {
+        throw znError(CODES.POLICY_DENIED, 'the vault will not start: ' + stateFs.problemText({ folder, permissions_enforced: false }));
+      }
+    }
     if (st.isSymbolicLink() || st.uid !== me || (st.mode & 0o077) !== 0) {
       throw znError(CODES.POLICY_DENIED, 'the vault will not start: ' + path.basename(file) + ' is not private to your user. Next step: check the permissions of ' + dir + ' (it must be yours, mode 0700).');
     }
@@ -1260,6 +1268,10 @@ async function serve(opts) {
     });
   }).catch((err) => {
     if (err && err.code === 'EADDRINUSE') throw znError(CODES.POLICY_DENIED, messages.vaultAlreadyUnlocked());
+    if (ep.unix && err && require('../state-fs').NO_SOCKET_CODES.has(err.code)) {
+      const folder = path.basename(path.dirname(ep.address)) === 'run' ? path.dirname(path.dirname(ep.address)) : path.dirname(ep.address);
+      throw znError(CODES.POLICY_DENIED, 'the vault will not start: ' + require('../state-fs').problemText({ folder, unix_sockets: false }));
+    }
     throw err;
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);

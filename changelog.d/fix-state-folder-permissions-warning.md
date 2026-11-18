@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate check` (npm and Python) and `zn-gate init` now warn when the folder zn keeps its private state in (`~/.zn` or `ZN_HOME`) ignores Unix permissions or cannot hold Unix sockets, as on FAT, exFAT and some SMB shares, where the evidence log and vault files would stay readable by other users. `zn unlock` and the first vault setup refuse on such a folder and name the `ZN_HOME` fix, and the vault no longer reports the problem as a wrong `chmod`.
