@@ -87,7 +87,7 @@ zn evidence
 ```
 
 ```text
-[+]  zn Evidence Ledger Stats (<home>/.zn/evidence.jsonl)
+[+]  zn Evidence Log Stats (<home>/.zn/evidence.jsonl)
 ---------------------------------------------------
   Total Events  : 4
   Blocked Drops : 4
@@ -143,8 +143,8 @@ zn evidence --verify
 `report` covers the last 7 days by default. `evidence --verify` checks the chain of hashes of the log, so you know that nobody changed a line:
 
 ```text
-[ok] Cryptographic Evidence Ledger Verification:
-  Ledger Path   : <home>/.zn/evidence.jsonl
+[ok] Cryptographic Evidence Log Verification:
+  Log Path      : <home>/.zn/evidence.jsonl
   Total Records : 4
   Integrity     : [ok] ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```

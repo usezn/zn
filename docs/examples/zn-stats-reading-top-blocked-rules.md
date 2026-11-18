@@ -55,7 +55,7 @@ A rule is noisy when it tops the list again and again and you did not expect it.
    ```
 
    ```text
-   [+]  zn Evidence Ledger Stats (~/.zn/evidence.jsonl)
+   [+]  zn Evidence Log Stats (~/.zn/evidence.jsonl)
    ---------------------------------------------------
      Total Events  : 9
      Blocked Drops : 5

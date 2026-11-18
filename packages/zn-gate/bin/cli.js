@@ -365,7 +365,7 @@ EXAMPLES:
   # Wrap an individual MCP server on the fly
   npx -y zn-gate shield -- uvx mcp-server-fetch
 
-  # Launch audit dashboard and verify ledger integrity
+  # Open the evidence log dashboard and verify the evidence log
   npx -y zn-gate evidence --verify
   npx -y zn-gate evidence --ui
 
@@ -1399,8 +1399,8 @@ ${ruleLine(process.env, 60)}\n`);
         integrity = sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index);
       }
       process.stdout.write(`
-${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
-  Ledger Path   : ${EVIDENCE_FILE}
+${sym(process.env, '🔒')}Cryptographic Evidence Log Verification:
+  Log Path      : ${EVIDENCE_FILE}
   Total Records : ${verification.total}
   Integrity     : ${integrity}
 \n`);
@@ -1416,7 +1416,7 @@ ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
 
     const stats = getEvidenceStats();
     process.stdout.write(`
-${sym(process.env, '🛡️', undefined, '  ')}zn Evidence Ledger Stats (${EVIDENCE_FILE})
+${sym(process.env, '🛡️', undefined, '  ')}zn Evidence Log Stats (${EVIDENCE_FILE})
 ${ruleLine(process.env, 51)}
   Total Events  : ${stats.total}
   Blocked Drops : ${stats.blocks}

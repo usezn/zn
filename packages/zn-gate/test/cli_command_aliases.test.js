@@ -43,7 +43,7 @@ test('doctor gives the same exit code and first line as check', () => {
 
 test('logs gives the same exit code and first line as evidence', () => {
   const { alias } = sameBehaviour(['logs'], ['evidence']);
-  assert.match(firstLine(alias.stdout), /Evidence Ledger Stats/);
+  assert.match(firstLine(alias.stdout), /Evidence Log Stats/);
   assert.strictEqual(alias.status, 0);
 });
 

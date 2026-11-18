@@ -103,8 +103,8 @@ ZN_HOME=./zn-evidence zn evidence --verify
 ```
 
 ```text
-[ok] Cryptographic Evidence Ledger Verification:
-  Ledger Path   : <path>/zn-evidence/evidence.jsonl
+[ok] Cryptographic Evidence Log Verification:
+  Log Path      : <path>/zn-evidence/evidence.jsonl
   Total Records : 1
   Integrity     : [ok] ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```

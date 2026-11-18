@@ -15,7 +15,7 @@ zn-gate evidence
 ```
 
 ```text
-🛡️  zn Evidence Ledger Stats (/tmp/tmp.zLpJGchVnH/.zn/evidence.jsonl)
+🛡️  zn Evidence Log Stats (/tmp/tmp.zLpJGchVnH/.zn/evidence.jsonl)
 ───────────────────────────────────────────────────
   Total Events  : 8
   Blocked Drops : 8
@@ -59,8 +59,8 @@ zn-gate evidence --verify
 ```
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : /tmp/tmp.zLpJGchVnH/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : /tmp/tmp.zLpJGchVnH/.zn/evidence.jsonl
   Total Records : 8
   Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```

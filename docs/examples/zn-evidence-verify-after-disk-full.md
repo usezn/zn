@@ -15,8 +15,8 @@ zn-gate evidence --verify
 On a whole log it prints:
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : ~/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : ~/.zn/evidence.jsonl
   Total Records : 8
   Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```
@@ -24,8 +24,8 @@ On a whole log it prints:
 After the cut, the same command ends with exit code `1`:
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : ~/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : ~/.zn/evidence.jsonl
   Total Records : 8
   Integrity     : ✖ TAMPER DETECTED AT RECORD 7
 
@@ -68,8 +68,8 @@ zn-gate evidence --verify
 ```
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : ~/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : ~/.zn/evidence.jsonl
   Total Records : 0
   Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```
@@ -81,8 +81,8 @@ There is no log yet, so there are 0 records. The next decision starts a new chai
 If the whole last line is missing (and not a part of it), the log still verifies. This is the same log with its eighth line removed:
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : ~/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : ~/.zn/evidence.jsonl
   Total Records : 7
   Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```

@@ -13,15 +13,15 @@ The output below was printed on a test computer with a temporary home folder, so
 ## When the copy is fine
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : /tmp/demo-home/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : /tmp/demo-home/.zn/evidence.jsonl
   Total Records : 8
   Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
 ```
 
 How to read it:
 
-- `Ledger Path` is the file that was checked.
+- `Log Path` is the file that was checked.
 - `Total Records` is how many decisions the copied log holds.
 - `ALL SHA-256 HASHES VERIFIED` means every record's fingerprint matched the one before it, so the copy is complete and nothing in it was changed. The command ends with exit code `0`.
 
@@ -30,8 +30,8 @@ How to read it:
 If a line was cut off during the copy, or a record was edited, the fingerprints no longer match. The command ends with exit code `1` and names the first place that does not fit:
 
 ```text
-🔒 Cryptographic Evidence Ledger Verification:
-  Ledger Path   : /tmp/demo-home/.zn/evidence.jsonl
+🔒 Cryptographic Evidence Log Verification:
+  Log Path      : /tmp/demo-home/.zn/evidence.jsonl
   Total Records : 8
   Integrity     : ✖ TAMPER DETECTED AT RECORD 5
 

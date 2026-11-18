@@ -757,7 +757,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
         if res.get("valid"):
-            print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
+            print(f"\n{_lead(LOCK)}Cryptographic Evidence Log: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
             return 0
         else:
             if res.get("truncated_tail"):
@@ -794,7 +794,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         return 0
 
     stats = get_evidence_stats()
-    print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
+    print(f"\n{_lead(SHIELD)}zn Evidence Log Stats ({EVIDENCE_FILE})")
     print(f"  Total Events   : {stats.get('total', 0)}")
     print(f"  Blocked Drops  : {stats.get('blocks', 0)}")
     print(f"  Allowed Passes : {stats.get('allows', 0)}")
@@ -1050,7 +1050,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command
-    ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
+    ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Verify and read the local evidence log")
     ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
     ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")

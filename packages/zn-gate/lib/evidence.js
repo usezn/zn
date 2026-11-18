@@ -906,7 +906,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>zn Evidence Engine - Cryptographic AI Audit Ledger</title>
+  <title>zn Evidence Log - Cryptographic Audit Trail</title>
   <style>
     :root {
       --bg: #0b0f19;
@@ -973,7 +973,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
       <div class="header-actions">
         <a href="/api/export?format=jsonl" download class="btn-export">⬇ Export JSONL</a>
         <a href="/api/export?format=csv" download class="btn-export">⬇ Export CSV</a>
-        <div id="integrity-badge" class="status-badge badge-valid">● SHA-256 Ledger Verified</div>
+        <div id="integrity-badge" class="status-badge badge-valid">● SHA-256 Evidence Log Verified</div>
       </div>
     </header>
 
@@ -1013,7 +1013,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
         </tr>
       </thead>
       <tbody id="audit-table">
-        <tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 2rem;">Loading evidence ledger...</td></tr>
+        <tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 2rem;">Loading evidence log...</td></tr>
       </tbody>
     </table>
   </div>
@@ -1067,7 +1067,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(`
 ${banner}zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}
-Ledger location: ${filePath}
+Evidence log location: ${filePath}
 Press Ctrl+C to stop dashboard.
 \n`);
   });
