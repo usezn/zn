@@ -1020,6 +1020,66 @@
       "kind": "base",
       "path": "~/.ssh/id_rsa.pub)",
       "expect": "allow"
+    },
+    {
+      "kind": "block",
+      "path": ".env.production",
+      "expect": "block"
+    },
+    {
+      "kind": "block",
+      "path": "config/.env.staging",
+      "expect": "block"
+    },
+    {
+      "kind": "block",
+      "path": "x .env",
+      "expect": "block"
+    },
+    {
+      "kind": "block",
+      "path": "\"./.env\"",
+      "expect": "block"
+    },
+    {
+      "kind": "block",
+      "path": "app/.env\n",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "app.build()\n  .env(\"KEY\", \"value\")",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": ".env()",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "os\n  .env(",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": ".env/",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": ".env/bin/activate",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "./.env/lib/python3/site-packages",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "/home/example/project/.env/bin/python",
+      "expect": "allow"
     }
   ]
 }

@@ -352,10 +352,12 @@ function matchesRule(rule, text) {
 //   - ~user becomes ~; ./, repeated separators and dir/.. are collapsed;
 //   - trailing dots and spaces of every segment are dropped (Windows).
 // Every step is linear in the length of the text.
-const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
+const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_(\/])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 const PATH_HOME_VAR_RE = /\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%/g;
 const PATH_CWD_VAR_RE = /\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%/g;
 const PATH_WORD_SPLIT_RE = /[ \t\r\n\f\v|&;<>()\[\]{}`,]+/;
+// The same split, keeping each run of separators so the view can tell a directory ("/") or a call ("(") from a file.
+const PATH_WORD_DELIM_RE = /([ \t\r\n\f\v|&;<>()\[\]{}`,]+)/;
 const PATH_QUOTE_RE = /["']/g;
 const PATH_TILDE_USER_RE = /^~[^/]*/;
 const PATH_DRIVE_RE = /^[a-z]:$/;
@@ -397,10 +399,15 @@ function normalizePathWord(word) {
 function sensitivePathView(text) {
   const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
   const words = [];
-  for (const raw of lowered.split(PATH_WORD_SPLIT_RE)) {
+  const parts = lowered.split(PATH_WORD_DELIM_RE);
+  for (let i = 0; i < parts.length; i += 2) {
+    const raw = parts[i];
     if (!raw) continue;
     const word = raw.replace(PATH_QUOTE_RE, '');
-    words.push(normalizePathWord(word.replace(/\\/g, '/')));
+    // A word that ends in "/" is a folder and one followed by "(" is a call: keep that mark, so the rule does not read them as a file.
+    const tail = word.endsWith('/') ? '/' : (i + 1 < parts.length && parts[i + 1][0] === '(' ? '(' : '');
+    const norm = normalizePathWord(word.replace(/\\/g, '/'));
+    words.push(norm && tail && !norm.endsWith('/') ? norm + tail : norm);
     if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
   }
   return words.join('\n');
@@ -408,7 +415,7 @@ function sensitivePathView(text) {
 
 // The text as written: next to the path view, this keeps the home, drive and
 // variable prefixes the view does not need.
-const SENSITIVE_PATH_TEXT_RE = /(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
+const SENSITIVE_PATH_TEXT_RE = /(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_(\/])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_(\/])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 
 // cmd.exe reads a command in steps: %VAR% is expanded first, then a ^ outside double quotes escapes the next character, so
 // `type .e^nv`, `type ^.env` and `type %CD%\.e^nv` all open .env. These readings apply only where a cmd reader or cmd itself

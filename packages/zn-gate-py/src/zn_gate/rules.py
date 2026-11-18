@@ -569,10 +569,12 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 # Protected files and the path view: same rules and steps as rules.js
 # (testSensitivePath). The view is lexical only: it never touches the file
 # system, so symbolic links and Windows short (8.3) names are not resolved.
-SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_(\/])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 PATH_HOME_VAR_RE = _rc(r'\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%')
 PATH_CWD_VAR_RE = _rc(r'\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%')
 PATH_WORD_SPLIT_RE = _rc(r"""[ \t\r\n\f\v|&;<>()\[\]{}`,]+""")
+# The same split, keeping each run of separators so the view can tell a directory ("/") or a call ("(") from a file.
+PATH_WORD_DELIM_RE = _rc(r"""([ \t\r\n\f\v|&;<>()\[\]{}`,]+)""")
 PATH_QUOTE_RE = _rc(r"""["']""")
 PATH_TILDE_USER_RE = _rc(r'^~[^/]*')
 PATH_DRIVE_RE = _rc(r'^[a-z]:$')
@@ -606,11 +608,16 @@ def sensitive_path_view(text: str) -> str:
     """The path view of a text: its normalized words, one per line."""
     lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
     words: List[str] = []
-    for raw in PATH_WORD_SPLIT_RE.split(lowered):
+    parts = PATH_WORD_DELIM_RE.split(lowered)
+    for i in range(0, len(parts), 2):
+        raw = parts[i]
         if not raw:
             continue
         word = PATH_QUOTE_RE.sub('', raw)
-        words.append(_normalize_path_word(word.replace('\\', '/')))
+        # A word that ends in "/" is a folder and one followed by "(" is a call: keep that mark, so the rule does not read them as a file.
+        tail = '/' if word.endswith('/') else ('(' if i + 1 < len(parts) and parts[i + 1][0] == '(' else '')
+        norm = _normalize_path_word(word.replace('\\', '/'))
+        words.append(norm + tail if norm and tail and not norm.endswith('/') else norm)
         if '\\' in word:
             words.append(_normalize_path_word(word.replace('\\', '')))
     return '\n'.join(words)
@@ -618,7 +625,7 @@ def sensitive_path_view(text: str) -> str:
 
 # The text as written: next to the path view, this keeps the home, drive and
 # variable prefixes the view does not need.
-SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_(\/])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_(\/])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 
 # cmd.exe reads a command in steps: %VAR% is expanded first, then a ^ outside double quotes escapes the next character, so
