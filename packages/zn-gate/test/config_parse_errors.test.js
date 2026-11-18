@@ -166,3 +166,32 @@ test('commands that rewrite the config file read a byte order mark and UTF-16 an
   const after = JSON.parse(fs.readFileSync(path.join(home, '.zn', 'config.json'), 'utf8'));
   assert.equal(after.hooks.strict, true);
 });
+
+test('UTF-16 with a half character at the end is invalid, not a crash, in every reader', async (t) => {
+  const be = utf16be(TIGHT);
+  const cases = [
+    Buffer.concat([be, Buffer.from([0x00])]), // big endian with a mark, odd length
+    Buffer.concat([Buffer.from([0x00, 0x7B, 0x00, 0x7D]), Buffer.from([0x00])]), // big endian without a mark, odd length
+    Buffer.from([0xFE, 0xFF, 0x00]),
+    Buffer.concat([utf16le(TIGHT), Buffer.from([0x7B])]), // little endian with a mark, odd length
+    Buffer.concat([utf16le(TIGHT, false), Buffer.from([0x7B])]), // little endian without a mark, odd length
+  ];
+  for (const bytes of cases) {
+    const home = write(t, bytes);
+    const file = path.join(home, '.zn', 'config.json');
+    const r = znConfig.readJsonFile(file);
+    assert.equal(r.status, 'invalid');
+    assert.equal(r.reason, 'it is not valid JSON (incomplete UTF-16 bytes)');
+    assert.equal(r.intent, null);
+    assert.equal(znConfig.load(path.join(home, '.zn')).status, 'invalid');
+    assert.deepEqual(znConfig.readObject(file), {});
+    assert.doesNotThrow(() => runner.readConfig(home));
+    const problems = runner.configProblems({ home });
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /incomplete UTF-16 bytes/);
+    const ev = { session_id: 'sess-cfg-odd', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'Bash',
+      tool_input: { command: 'echo hello' }, tool_use_id: 'toolu_01' };
+    const res = await runner.handle(adapter, ev, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home });
+    assert.ok(res);
+  }
+});

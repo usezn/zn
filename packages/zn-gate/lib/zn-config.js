@@ -21,18 +21,25 @@ function isObj(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** The text of a config file's bytes, and how it was encoded. */
+function incomplete(encoding) {
+  return { text: '', encoding, incomplete: true };
+}
+
+/** The text of a config file's bytes, and how it was encoded. `incomplete`: UTF-16 with a half character at the end. */
 function decode(buf) {
+  const odd = (n) => n % 2 !== 0;
   if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) return { text: buf.slice(3).toString('utf8'), encoding: 'utf-8-bom' };
-  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return { text: buf.slice(2).toString('utf16le'), encoding: 'utf-16le' };
+  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return odd(buf.length - 2) ? incomplete('utf-16le') : { text: buf.slice(2).toString('utf16le'), encoding: 'utf-16le' };
   if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
+    if (odd(buf.length - 2)) return incomplete('utf-16be');
     const swapped = Buffer.from(buf.slice(2));
     swapped.swap16();
     return { text: swapped.toString('utf16le'), encoding: 'utf-16be' };
   }
   // No byte order mark, but the first character is ASCII (a "{") followed by a zero byte: UTF-16 without a mark.
-  if (buf.length >= 4 && buf[0] !== 0 && buf[1] === 0 && buf[2] !== 0 && buf[3] === 0) return { text: buf.toString('utf16le'), encoding: 'utf-16le' };
+  if (buf.length >= 4 && buf[0] !== 0 && buf[1] === 0 && buf[2] !== 0 && buf[3] === 0) return odd(buf.length) ? incomplete('utf-16le') : { text: buf.toString('utf16le'), encoding: 'utf-16le' };
   if (buf.length >= 4 && buf[0] === 0 && buf[1] !== 0 && buf[2] === 0 && buf[3] !== 0) {
+    if (odd(buf.length)) return incomplete('utf-16be');
     const swapped = Buffer.from(buf);
     swapped.swap16();
     return { text: swapped.toString('utf16le'), encoding: 'utf-16be' };
@@ -102,7 +109,8 @@ function readJsonFile(file) {
     if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { status: 'missing' };
     return { status: 'invalid', reason: 'the file could not be read (' + ((err && err.code) || 'error') + ')', intent: null };
   }
-  const { text, encoding } = decode(buf);
+  const { text, encoding, incomplete: cut } = decode(buf);
+  if (cut) return { status: 'invalid', reason: 'it is not valid JSON (incomplete UTF-16 bytes)', intent: null };
   if (!text.trim()) return { status: 'invalid', reason: 'the file is empty', intent: null };
   let data;
   try {
