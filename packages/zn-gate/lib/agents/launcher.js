@@ -40,7 +40,7 @@ const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath } = require('../shell-quote');
 const { winCommandText } = require('../zn-command');
-const { shScrubLines, psScrub } = require('../loader-env');
+const { shScrubLines, psScrub, LOADER_NAMES } = require('../loader-env');
 
 // Events where exit 2 with a reason on stderr is the documented block.
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
@@ -525,6 +525,7 @@ function projectAnswer(agentId, event, why, win) {
 
 // The project guard trusts the zn and node it found only when the folder of each one is an entry of the PATH as written:
 // P is ":$PATH:"; T is set when the folder of $Z (with or without a final slash) is in it, U the same for $N.
+const NM_ANY_CASE = 'node_modules'.replace(/[a-z]/g, (c) => '[' + c.toUpperCase() + c + ']');
 const PROJECT_TRUST = [
   'P=:$PATH:',
   'ZD=${P#*":${Z%/*}:"}', 'ZS=${P#*":${Z%/*}/:"}', 'ND=${P#*":${N%/*}:"}', 'NS=${P#*":${N%/*}/:"}',
@@ -532,8 +533,12 @@ const PROJECT_TRUST = [
   'U=', '[ "$ND" != "$P" ] && U=n', '[ "$NS" != "$P" ] && U=n',
   // A program inside a node_modules folder is the project's own (a package can plant a `zn` or `node` in node_modules/.bin, and
   // `npm run` or direnv put that folder on the PATH as an absolute entry): not trusted, so the guard blocks instead of running it.
-  '[ "${Z#*/node_modules/}" != "$Z" ] && T=', '[ "${N#*/node_modules/}" != "$N" ] && U=',
+  // The name is matched in any case: the file systems of macOS and Windows ignore case, so Node_Modules is the same folder.
+  '[ "${Z#*/' + NM_ANY_CASE + '/}" != "$Z" ] && T=', '[ "${N#*/' + NM_ANY_CASE + '/}" != "$N" ] && U=',
 ];
+
+// The sh scrub of loader-env.js without its comment lines (it spans lines: the loop reads `export -p` one line at a time).
+const PROJECT_SCRUB = shScrubLines().filter((l) => !l.startsWith('#')).join('\n');
 
 /**
  * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
@@ -553,7 +558,9 @@ function projectShCommand(agentId, event) {
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
-    const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
+    // The loader variables (NODE_OPTIONS=--require and the like, see loader-env.js) are removed before zn starts: a project can
+    // set the environment of the agent.
+    const script = PROJECT_SCRUB + '\nZ=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
       'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
@@ -571,6 +578,7 @@ function projectShCommand(agentId, event) {
     ':',
     'Z=$(' + sp('command', '-v', 'zn') + ')',
     'N=$(' + sp('command', '-v', 'node') + ')',
+    sp('unset', ...LOADER_NAMES),
     ...PROJECT_TRUST.map((x) => x.replace(/^\[ (.*) \] && /, (_, w) => test(...w.split(' ').map((o) => (o === '!=' ? o : o.replace(/^"/, '"x')))) + '&&')),
     'R=missing',
     [test('"x$N"', '!=', 'x'), test('"x${Z#/}"', '!=', '"x$Z"'), test('"x${N#/}"', '!=', '"x$N"'), test('"x$T"', '!=', 'x'), test('"x$U"', '!=', 'x')].join('&&') +
@@ -599,7 +607,7 @@ function projectWindowsScript(agentId, event) {
   // Only 0 (done) and 2 (blocked) leave early; with an answer that exits 0 (a deny JSON, a warning) the refusal passes on as exit 0.
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
   // PATH entries inside a node_modules folder (the project's own .bin) are dropped before zn.cmd and node are looked for.
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + "$env:PATH = (($env:PATH -split ';') -notmatch 'node_modules') -join ';'; " +
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + ZF + "$env:PATH = (($env:PATH -split ';') -notmatch 'node_modules') -join ';'; " +
     "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
 }
@@ -610,7 +618,8 @@ function isProjectGuard(command, agentId) {
     if (typeof command !== 'string') return false;
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
-    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
+    if ((command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") || (command.startsWith("sh -c 'unset ") && command.includes("\nZ=$(command -v zn); N=$(command -v node); "))) &&
+      command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
