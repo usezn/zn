@@ -1543,11 +1543,8 @@ async fn process_mcp_message(
                 }
 
                 // Send webhook alert
-                let alert_tx = state.webhook_tx.clone();
-                let alert_payload = alert_for(&entry);
-                tokio::spawn(async move {
-                    let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
-                });
+                // Queued without waiting: a full queue drops the alert and counts it.
+                webhooks::send_alert(&state.webhook_tx, alert_for(&entry));
 
                 let message = if entry.policy_match.as_deref() == Some(NEURAL_ERROR_MATCH) {
                     format!(

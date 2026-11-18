@@ -38,6 +38,12 @@ lazy_static! {
         "Total number of SQL injection attempts blocked"
     ).expect("Failed to create sql_injection_blocked metric");
 
+    /// Webhook alerts dropped because a queue was full
+    pub static ref WEBHOOK_ALERTS_DROPPED: IntCounter = IntCounter::new(
+        "zn_webhook_alerts_dropped_total",
+        "Total number of webhook alerts dropped because a queue was full"
+    ).expect("Failed to create webhook_alerts_dropped metric");
+
     /// Prompt injection attempts blocked
     pub static ref PROMPT_INJECTION_BLOCKED: IntCounter = IntCounter::new(
         "zn_prompt_injection_blocked_total",
@@ -217,6 +223,7 @@ pub fn init() -> Result<(), prometheus::Error> {
     REGISTRY.register(Box::new(TOOL_CALLS_DENIED.clone()))?;
     REGISTRY.register(Box::new(SQL_INJECTION_BLOCKED.clone()))?;
     REGISTRY.register(Box::new(PROMPT_INJECTION_BLOCKED.clone()))?;
+    REGISTRY.register(Box::new(WEBHOOK_ALERTS_DROPPED.clone()))?;
     REGISTRY.register(Box::new(POLICY_EVAL_DURATION.clone()))?;
     REGISTRY.register(Box::new(JSONRPC_REQUESTS.clone()))?;
     REGISTRY.register(Box::new(SSE_CONNECTIONS.clone()))?;
@@ -319,6 +326,11 @@ pub fn record_tool_call(tool_name: &str, status: &str) {
 /// Record an SQL injection block
 pub fn record_sql_injection_blocked() {
     SQL_INJECTION_BLOCKED.inc();
+}
+
+/// Record a webhook alert dropped because a queue was full
+pub fn record_webhook_alert_dropped() {
+    WEBHOOK_ALERTS_DROPPED.inc();
 }
 
 /// Record a prompt injection block

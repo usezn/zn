@@ -4,8 +4,37 @@
 //! Supports Slack, Discord, and generic webhook endpoints.
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
+
+/// Alerts the gateway keeps waiting for the dispatcher. A full queue drops the new alert.
+pub const INCOMING_QUEUE_CAPACITY: usize = 1024;
+/// Alerts kept waiting for one endpoint. A slow endpoint fills only its own queue.
+pub const ENDPOINT_QUEUE_CAPACITY: usize = 256;
+/// Seconds one send may take when the endpoint sets no `timeout_secs`.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 3;
+/// Longest `timeout_secs` accepted; a larger value is lowered to it.
+pub const MAX_TIMEOUT_SECS: u64 = 60;
+
+/// Alerts dropped because a queue was full, since the process started.
+static DROPPED_ALERTS: AtomicU64 = AtomicU64::new(0);
+
+/// How many alerts were dropped so far because a queue was full.
+pub fn dropped_alerts() -> u64 {
+    DROPPED_ALERTS.load(Ordering::Relaxed)
+}
+
+/// Count one dropped alert and say so now and then (the first, then every 100th), so a stuck
+/// endpoint cannot flood the log either.
+fn note_dropped(what: &str) {
+    let total = DROPPED_ALERTS.fetch_add(1, Ordering::Relaxed) + 1;
+    crate::metrics::record_webhook_alert_dropped();
+    if total == 1 || total.is_multiple_of(100) {
+        warn!("Webhook alert dropped: {what} is full ({total} dropped so far)");
+    }
+}
 
 /// Webhook configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -24,6 +53,20 @@ pub struct WebhookConfig {
     /// Whether this webhook is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Seconds one send may take before it is given up (default 3, at most 60; 0 means the default)
+    #[serde(default)]
+    pub timeout_secs: u64,
+}
+
+impl WebhookConfig {
+    /// The time one send may take.
+    pub fn timeout(&self) -> std::time::Duration {
+        let secs = match self.timeout_secs {
+            0 => DEFAULT_TIMEOUT_SECS,
+            n => n.min(MAX_TIMEOUT_SECS),
+        };
+        std::time::Duration::from_secs(secs)
+    }
 }
 
 fn default_webhook_type() -> WebhookType {
@@ -64,9 +107,9 @@ pub struct WebhookManager {
 impl WebhookManager {
     /// Create a new webhook manager
     pub fn new(configs: Vec<WebhookConfig>) -> (Self, mpsc::Receiver<AlertPayload>) {
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(INCOMING_QUEUE_CAPACITY);
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(MAX_TIMEOUT_SECS))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -91,16 +134,32 @@ impl WebhookManager {
         self.tx.clone()
     }
 
-    /// Start the webhook dispatcher loop
+    /// Start the webhook dispatcher loop.
+    ///
+    /// Each enabled endpoint has its own bounded queue and its own sending task, so one slow
+    /// endpoint delays only its own alerts. An alert that finds its endpoint queue full is dropped
+    /// and counted; the dispatcher never waits for a send.
     pub async fn run(self, mut rx: mpsc::Receiver<AlertPayload>) {
         info!("Starting webhook dispatcher");
 
-        while let Some(alert) = rx.recv().await {
-            for config in &self.configs {
-                if !config.enabled {
-                    continue;
+        let manager = Arc::new(self);
+        let mut endpoints: Vec<(WebhookConfig, mpsc::Sender<AlertPayload>)> = Vec::new();
+        for config in manager.configs.iter().filter(|c| c.enabled) {
+            let (tx, mut endpoint_rx) = mpsc::channel::<AlertPayload>(ENDPOINT_QUEUE_CAPACITY);
+            let worker = Arc::clone(&manager);
+            let worker_config = config.clone();
+            tokio::spawn(async move {
+                while let Some(alert) = endpoint_rx.recv().await {
+                    if let Err(e) = worker.send_webhook(&worker_config, &alert).await {
+                        error!("Failed to send webhook to {}: {}", worker_config.url, e);
+                    }
                 }
+            });
+            endpoints.push((config.clone(), tx));
+        }
 
+        while let Some(alert) = rx.recv().await {
+            for (config, tx) in &endpoints {
                 // Check filters
                 if !config.event_filter.is_empty() && !config.event_filter.contains(&alert.event) {
                     continue;
@@ -111,9 +170,14 @@ impl WebhookManager {
                     continue;
                 }
 
-                // Send webhook
-                if let Err(e) = self.send_webhook(config, &alert).await {
-                    error!("Failed to send webhook to {}: {}", config.url, e);
+                match tx.try_send(alert.clone()) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        note_dropped("the queue of an endpoint");
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        warn!("Webhook worker for {} has stopped", config.url);
+                    }
                 }
             }
         }
@@ -131,7 +195,13 @@ impl WebhookManager {
             WebhookType::Generic => serde_json::to_value(alert)?,
         };
 
-        let response = self.client.post(&config.url).json(&body).send().await?;
+        let response = self
+            .client
+            .post(&config.url)
+            .timeout(config.timeout())
+            .json(&body)
+            .send()
+            .await?;
 
         if response.status().is_success() {
             info!("Webhook sent successfully to {}", config.url);
@@ -206,10 +276,15 @@ impl WebhookManager {
     }
 }
 
-/// Send an alert without blocking
-pub async fn send_alert(tx: &mpsc::Sender<AlertPayload>, alert: AlertPayload) {
-    if tx.send(alert).await.is_err() {
-        warn!("Failed to queue webhook alert - channel full or closed");
+/// Queue an alert without ever waiting: a full queue drops the new alert and counts it, so request
+/// handling is never held up by a slow or stuck endpoint.
+pub fn send_alert(tx: &mpsc::Sender<AlertPayload>, alert: AlertPayload) {
+    match tx.try_send(alert) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(_)) => note_dropped("the alert queue"),
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            warn!("Failed to queue webhook alert - dispatcher stopped");
+        }
     }
 }
 
@@ -265,6 +340,7 @@ mod tests {
             event_filter: vec![],
             status_filter: vec![],
             enabled: true,
+            timeout_secs: 0,
         }
     }
 
@@ -459,8 +535,8 @@ mod tests {
         let tx = mgr.sender();
         let handle = tokio::spawn(mgr.run(rx));
 
-        send_alert(&tx, alert("ALLOWED")).await;
-        send_alert(&tx, alert("DENIED")).await;
+        send_alert(&tx, alert("ALLOWED"));
+        send_alert(&tx, alert("DENIED"));
         wait_for(&all_bodies, 2).await;
         wait_for(&denied_bodies, 1).await;
 
@@ -477,7 +553,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_alert_queues_on_open_channel() {
         let (tx, mut rx) = mpsc::channel(1);
-        send_alert(&tx, alert("DENIED")).await;
+        send_alert(&tx, alert("DENIED"));
         assert_eq!(rx.recv().await.unwrap().status, "DENIED");
     }
 
@@ -485,19 +561,83 @@ mod tests {
     async fn test_send_alert_with_closed_channel_does_not_panic() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        send_alert(&tx, alert("DENIED")).await;
+        send_alert(&tx, alert("DENIED"));
     }
 
     #[tokio::test]
-    async fn test_send_alert_waits_when_channel_is_full() {
+    async fn test_send_alert_never_waits_and_drops_the_new_alert_when_full() {
+        let before = dropped_alerts();
         let (tx, mut rx) = mpsc::channel(1);
-        send_alert(&tx, alert("FIRST")).await;
-        let tx2 = tx.clone();
-        let pending = tokio::spawn(async move { send_alert(&tx2, alert("SECOND")).await });
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(!pending.is_finished(), "second send blocks while full");
+        send_alert(&tx, alert("FIRST"));
+        // Returns at once instead of waiting for room.
+        send_alert(&tx, alert("SECOND"));
+        assert!(dropped_alerts() > before, "the drop is counted");
         assert_eq!(rx.recv().await.unwrap().status, "FIRST");
-        pending.await.unwrap();
-        assert_eq!(rx.recv().await.unwrap().status, "SECOND");
+        assert!(rx.try_recv().is_err(), "the second alert was dropped");
+    }
+
+    #[test]
+    fn test_timeout_default_and_clamp() {
+        let mut c = cfg("http://127.0.0.1:1/x", WebhookType::Generic);
+        assert_eq!(c.timeout().as_secs(), DEFAULT_TIMEOUT_SECS);
+        c.timeout_secs = 7;
+        assert_eq!(c.timeout().as_secs(), 7);
+        c.timeout_secs = 100_000;
+        assert_eq!(c.timeout().as_secs(), MAX_TIMEOUT_SECS);
+    }
+
+    /// A server that accepts connections and never answers.
+    async fn spawn_stalled_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn test_slow_endpoint_times_out_quickly() {
+        let url = spawn_stalled_server().await;
+        let mut config = cfg(&url, WebhookType::Generic);
+        config.timeout_secs = 1;
+        let (mgr, _rx) = WebhookManager::new(vec![]);
+        let start = std::time::Instant::now();
+        assert!(mgr.send_webhook(&config, &alert("DENIED")).await.is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_slow_endpoint_is_bounded_and_does_not_hold_up_a_fast_one() {
+        let stalled = spawn_stalled_server().await;
+        let (fast_url, fast_bodies) = spawn_server("HTTP/1.1 200 OK").await;
+        let mut slow = cfg(&stalled, WebhookType::Generic);
+        slow.timeout_secs = 30;
+        let configs = vec![slow, cfg(&fast_url, WebhookType::Generic)];
+
+        let (mgr, rx) = WebhookManager::new(configs);
+        let tx = mgr.sender();
+        let handle = tokio::spawn(mgr.run(rx));
+
+        // More alerts than both queues hold, sent without a pause: the sender is never blocked.
+        let before = dropped_alerts();
+        let total = INCOMING_QUEUE_CAPACITY + ENDPOINT_QUEUE_CAPACITY + 500;
+        let start = std::time::Instant::now();
+        for _ in 0..total {
+            send_alert(&tx, alert("DENIED"));
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "queueing never waits for an endpoint"
+        );
+
+        // The fast endpoint still gets alerts while the other one is stuck.
+        wait_for(&fast_bodies, 1).await;
+        assert!(dropped_alerts() > before, "the overflow is counted");
+        handle.abort();
     }
 }
