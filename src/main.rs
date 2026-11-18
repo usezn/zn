@@ -2003,9 +2003,37 @@ impl Drop for TracingGuard {
 }
 
 /// Initialize OTLP Tracing and Registry
+/// Dependency targets held at `info` whatever `RUST_LOG` says. At `trace` the WebSocket stack logs every
+/// message and frame it reads or writes, payload included, and the HTTP stack logs connection internals:
+/// none of that goes through the redactor's patterns, so a request body would end up in the log.
+const CAPPED_TARGETS: &[&str] = &[
+    "tungstenite",
+    "tokio_tungstenite",
+    "hyper",
+    "hyper_util",
+    "h2",
+    "reqwest",
+    "tower_http",
+];
+
+/// The log filter for a `RUST_LOG` value (`info` when it is unset or invalid), with the dependency targets
+/// above capped at `info`. Our own code never logs message or frame payloads, only sizes, ids and verdicts.
+fn capped_env_filter(spec: Option<&str>) -> tracing_subscriber::EnvFilter {
+    let mut filter = match spec {
+        Some(spec) => tracing_subscriber::EnvFilter::try_new(spec)
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        None => tracing_subscriber::EnvFilter::new("info"),
+    };
+    for target in CAPPED_TARGETS {
+        if let Ok(directive) = format!("{target}=info").parse() {
+            filter = filter.add_directive(directive);
+        }
+    }
+    filter
+}
+
 fn init_tracing() -> Result<TracingGuard> {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let env_filter = capped_env_filter(std::env::var("RUST_LOG").ok().as_deref());
 
     // Logs go to stderr, through the redactor: stdout carries the JSON-RPC
     // replies of `zn start` and nothing else may be written there.
@@ -3210,5 +3238,33 @@ mod fail_closed_tests {
         assert!(a.get("error").is_some(), "{a}");
         let b = reply(&state, Some("tenant-b"), &frame("read_notes")).await;
         assert!(b.get("error").is_none(), "{b}");
+    }
+
+    #[test]
+    fn rust_log_trace_cannot_raise_dependency_targets_above_info() {
+        for spec in [
+            Some("trace"),
+            Some("debug"),
+            Some("tungstenite=trace,tokio_tungstenite=trace,hyper=trace"),
+            Some("not a valid filter ((("),
+            None,
+        ] {
+            let text = capped_env_filter(spec).to_string();
+            for target in CAPPED_TARGETS {
+                assert!(
+                    text.contains(&format!("{target}=info")),
+                    "{spec:?} -> {text}"
+                );
+                assert!(
+                    !text.contains(&format!("{target}=trace"))
+                        && !text.contains(&format!("{target}=debug")),
+                    "{spec:?} -> {text}"
+                );
+            }
+        }
+        // Our own targets still follow RUST_LOG.
+        assert!(capped_env_filter(Some("zn=trace"))
+            .to_string()
+            .contains("zn=trace"));
     }
 }
