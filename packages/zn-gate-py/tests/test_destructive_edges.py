@@ -139,7 +139,7 @@ ALLOWED = [
     "echo hi | sh",
     "bash -c 'echo hi'",
     "echo a && echo b | cat",
-    "sh -c 'sh -c \"sh -c \\\"sh -c rm\\\"\"'",
+    "sh -c 'sh -c \"sh -c rm\"'",
 ]
 
 
@@ -155,12 +155,15 @@ def test_branch_is_allowed(cmd):
     assert check_command(cmd).verdict == "allow", cmd
 
 
-def test_nesting_depth_is_limited():
-    cmd = "rm -rf /"
+def test_nesting_depth_is_not_a_way_around_the_check():
+    cmd = "dd if=/dev/zero of=/dev/sda"
     for _ in range(4):
         cmd = "sh -c " + "'" + cmd.replace("'", "'\\''") + "'"
-    assert check_command(cmd).verdict == "allow"
+    assert check_command(cmd).verdict == "block"
 
 
-def test_non_string_is_allowed():
+def test_none_is_empty_input_and_other_non_text_raises():
     assert check_command(None).verdict == "allow"  # type: ignore[arg-type]
+    for bad in (5, ["rm", "-rf", "/"], {"cmd": "ls"}):
+        with pytest.raises(TypeError):
+            check_command(bad)  # type: ignore[arg-type]

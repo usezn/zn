@@ -106,10 +106,12 @@ test('ten levels of nesting are checked and the eleventh is refused', () => {
   assert.equal(res.rule, 'size:nesting');
 });
 
-test('an error that is not about nesting is not reported as a nesting block', () => {
+test('a throwing getter is never run and is not reported as a nesting block', () => {
   const args = {};
   Object.defineProperty(args, 'a', { enumerable: true, get() { throw new RangeError('boom'); } });
-  assert.throws(() => checkToolCall('t', args), RangeError);
+  const res = checkToolCall('t', args);
+  assert.equal(res.allowed, false);
+  assert.equal(res.rule, 'type:unscannable');
 });
 
 test('blockMessage names the rule when the assessment has no reason or no assessment at all', () => {

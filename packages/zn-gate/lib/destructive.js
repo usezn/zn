@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-16.29';
+const COMMAND_RULES_VERSION = '2026-11-17.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -40,6 +40,10 @@ const REASONS = {
 };
 
 const MAX_DEPTH = 3;
+// Shell code inside shell code (sh -c, eval, backticks) is read this deep; deeper is refused, not skipped.
+// Each level is read twice (the Windows and the POSIX reading of its quotes), so the work doubles with every level.
+// Same value in the Python port, which always runs every rule (Node's denial() can enable a subset).
+const MAX_SHELL_DEPTH = 3;
 // Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
 const MAX_SEGMENTS = 50000;
 const OVERFLOW = 'too_many_commands';
@@ -267,6 +271,7 @@ function fromCwd(cwd, word) {
 
 /* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read
    as commands, or '' when there is none. An escaped backtick inside one is a nested substitution. One pass over the text. */
+// Always returns a string: '' when there is none, also for an unmatched backtick (its body runs to the end of the text).
 function backtickCode(text) {
   const bodies = [];
   let quote = '';
@@ -621,9 +626,12 @@ function checkHead(args, depth, known) {
   }
   // The code is a download in a substitution (X="$(curl URL)"; sh -c "$X"): the same as sh -c "$(curl URL)".
   if (code !== null && (SHELLS.has(head) || head === 'su' || head === 'eval') && /^\s*(?:\$\(|`)/.test(code) && SHELL_RUNS_DOWNLOAD_RE.test('sh -c "' + code + '"') && on('pipe_to_shell')) return 'pipe_to_shell';
-  if (code !== null && depth < MAX_DEPTH) {
+  if (code !== null && depth < MAX_SHELL_DEPTH) {
     const hit = analyze(code, depth + 1, known);
     if (hit) return hit;
+  } else if (code !== null && code.trim() && (ENABLED === null || ENABLED.size > 0)) {
+    // Shell code nested past the depth limit is refused, not skipped (as for env -S strings).
+    return OVERFLOW;
   }
 
   // Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
@@ -847,11 +855,13 @@ function checkSegments(segs, depth, cwd0 = null) {
     seg = segs1[0];
     // A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder is
     // still the one the line started in, the whole-line reading in analyze() has already covered it.
-    if (seg.raw && known !== cwd0 && depth < MAX_DEPTH) {
+    if (seg.raw && known !== cwd0 && depth < MAX_SHELL_DEPTH) {
       if (++ticks > MAX_TICK_READS) return OVERFLOW;
       const inner = backtickCode(seg.raw);
       const innerHit = inner ? analyze(inner, depth + 1, known) : null;
       if (innerHit) return innerHit;
+    } else if (seg.raw && known !== cwd0 && backtickCode(seg.raw).trim() && (ENABLED === null || ENABLED.size > 0)) {
+      return OVERFLOW;
     }
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
       // A cd whose target depends on which value a variable holds leaves the folder unknown (protected).
@@ -896,10 +906,12 @@ function analyze(cmd, depth = 0, known = null) {
   const hit = checkSegments(segs, depth, known);
   if (hit) return hit;
   // A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
-  if (depth < MAX_DEPTH && text.includes('`')) {
+  if (depth < MAX_SHELL_DEPTH && text.includes('`')) {
     const inner = backtickCode(text);
     const innerHit = inner ? analyze(inner, depth + 1, known) : null;
     if (innerHit) return innerHit;
+  } else if (text.includes('`') && backtickCode(text).trim() && (ENABLED === null || ENABLED.size > 0)) {
+    return OVERFLOW;
   }
   // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
   // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
@@ -950,4 +962,4 @@ function denial(command, rules) {
 /** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */
 const DEFAULT_RULES = ['rm_root_home', 'disk_overwrite'];
 
-module.exports = { checkCommand, denial, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };
+module.exports = { checkCommand, denial, backtickCode, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };

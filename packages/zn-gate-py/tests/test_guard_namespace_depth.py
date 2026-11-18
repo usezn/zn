@@ -8,9 +8,12 @@ Fictitious values only.
 
 import argparse
 import dataclasses
+import io
 import json
 import logging
 import logging.handlers
+import os
+import tempfile
 import types
 import unittest
 
@@ -205,7 +208,62 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
                 self.text = BAD
 
         self.assertFalse(check_tool_result(Captured()).allowed)
-        self.assertTrue(check_tool_result(logging.getLogger().handlers).allowed)
+        # Standard library handlers are read without a block, whatever the runner has installed.
+        with tempfile.TemporaryDirectory() as tmp:
+            file_handler = logging.FileHandler(os.path.join(tmp, "example.log"), delay=True)
+            try:
+                stdlib = [logging.StreamHandler(io.StringIO()), logging.NullHandler(), file_handler]
+                self.assertTrue(check_tool_result(stdlib).allowed)
+            finally:
+                file_handler.close()
+
+        # A handler class that shows a value through a property of its own is refused.
+        class WithProperty(logging.NullHandler):
+            @property
+            def label(self):
+                return "example"
+
+        res = check_tool_result([WithProperty()])
+        self.assertFalse(res.allowed)
+        self.assertEqual(res.rule, "type:unscannable")
+
+    def test_handlers_that_applications_commonly_hold_are_allowed(self):
+        """Handlers built from the standard-library classes an application usually has are allowed as a result.
+
+        The runner's own root handlers (logging.getLogger().handlers) are not used here: under pytest they include
+        its LogCaptureHandler and capture streams, third-party classes with properties, and a tool result holding
+        one of those is refused by design (rule type:unscannable), so the test would depend on the runner.
+        """
+        import queue
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rotating = logging.handlers.RotatingFileHandler(os.path.join(tmp, "app.log"), maxBytes=1024,
+                                                            backupCount=1, delay=True)
+            stream = logging.StreamHandler(sys.__stderr__)
+            queued = logging.handlers.QueueHandler(queue.Queue())
+            try:
+                handlers = [stream, rotating, queued]
+                for value in (handlers, {"handlers": handlers}, stream, rotating, queued):
+                    with self.subTest(value=type(value).__name__):
+                        res = check_tool_result(value)
+                        self.assertTrue(res.allowed, res.reason)
+            finally:
+                for handler in (stream, rotating, queued):
+                    handler.close()
+
+    def test_arguments_stay_lenient_and_results_block_unreadable_values(self):
+        class WithProperty:
+            @property
+            def label(self):
+                return "example"
+
+        value = WithProperty()
+        res = check_tool_result(value)
+        self.assertFalse(res.allowed)
+        self.assertEqual(res.rule, "type:unscannable")
+        # The same value in arguments is read as far as possible, not refused.
+        self.assertTrue(check_tool_call("example_tool", {"client": value}).allowed)
 
     def test_logger_handlers_filters_and_subclass_attributes_are_read(self):
         logger = logging.getLogger("zn.example.capture")

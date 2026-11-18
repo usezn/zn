@@ -40,7 +40,9 @@ class ZnLlamaGuard:
         self.fallback = fallback
 
     def check_query(self, query_str: str) -> str:
-        assessment = evaluate(query_str)
+        # A LlamaIndex QueryBundle carries the text as query_str; other types that are not text raise TypeError.
+        bundle_text = getattr(query_str, "query_str", None)
+        assessment = evaluate(bundle_text if isinstance(bundle_text, str) and not isinstance(query_str, str) else query_str)
         if not assessment.allowed:
             if self.on_block == "raise":
                 raise GuardBlockError(assessment, target="llamaindex:query", payload=query_str)
