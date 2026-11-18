@@ -32,7 +32,7 @@ const store = require('./store');
 const { createClient } = require('./client');
 const { agentDetected } = require('../broker/tty');
 const messages = require('../messages');
-const { CODES, messageWithUnlockHint } = require('../errors');
+const { CODES, messageWithUnlockHint, fsErrorText } = require('../errors');
 const vaultReset = require('./reset');
 const vaultPurge = require('./purge');
 const { znCommand } = require('../zn-command');
@@ -391,7 +391,7 @@ async function runVaultCommand(args) {
     process.stderr.write('usage: ' + z('unlock') + ' | ' + z('lock') + ' | ' + z('vault status') + ' | ' + z('vault verify') + ' | ' + z('vault log [--since 1h]') + ' | ' + z('vault forget [dir]') + ' | ' + z('vault reset') + ' | ' + z('vault purge') + '\n');
     return 2;
   } catch (err) {
-    process.stderr.write('[zn] ' + messageWithUnlockHint(err) + '\n');
+    process.stderr.write('[zn] ' + vaultErrorMessage(err) + '\n');
     if (err && err.usage) process.stderr.write(USAGE[err.usage]() + '\n');
     // A wrong passphrase, again and again: point to the way out.
     if (args[0] === 'unlock' && err && err.code === CODES.LOCKED) {
@@ -402,7 +402,12 @@ async function runVaultCommand(args) {
   }
 }
 
-module.exports = { runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, untilText, lockWhenText };
+/* The text for a failed vault command. A disk or permission failure names "the vault", never a temporary file. */
+function vaultErrorMessage(err) {
+  return fsErrorText(err, 'the vault') || messageWithUnlockHint(err);
+}
+
+module.exports = { vaultErrorMessage, runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, untilText, lockWhenText };
 // The sentences that name a command are built when read, so they show the form that works on this computer.
 Object.defineProperties(module.exports, {
   ALREADY_UNLOCKED: { enumerable: true, get: () => messages.vaultAlreadyUnlocked() },

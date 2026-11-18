@@ -14,6 +14,7 @@ const path = require('path');
 const { colorEnabled } = require('../term');
 const { audit, AGENTS } = require('./index');
 const report = require('./report');
+const { fsErrorText } = require('../errors');
 
 const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--approve]';
 const FORMATS = ['text', 'json', 'sarif'];
@@ -98,7 +99,15 @@ async function main(args, ioIn) {
         io.stderr.write('zn audit: ' + String((asked.error && asked.error.message) || 'not confirmed').slice(0, 400) + '\n');
         return 2;
       }
-      bl.saveBaseline(home, root, surface);
+      try {
+        bl.saveBaseline(home, root, surface);
+      } catch (err) {
+        // A read-only or full disk, or a missing folder, is said in the plain sentences of lib/errors.js.
+        const text = fsErrorText(err, bl.baselinePath(home, root));
+        if (!text) throw err;
+        io.stderr.write('zn audit: ' + text + '\n');
+        return 2;
+      }
       io.stdout.write('zn audit: recorded ' + Object.keys(surface).length + ' executable configuration entr' + (Object.keys(surface).length === 1 ? 'y' : 'ies') + ' as approved for this project.\n');
       return 0;
     }
@@ -120,7 +129,7 @@ async function main(args, ioIn) {
     }
     return report.summarize(result, opts.failOn).failed ? 1 : 0;
   } catch (err) {
-    io.stderr.write('zn audit: ' + err.message + '\n');
+    io.stderr.write('zn audit: ' + (fsErrorText(err) || err.message) + '\n');
     return 2;
   }
 }
