@@ -293,6 +293,18 @@ What happens to your data when you go back:
 Run `zn-gate check` after every change of version. It names each agent that is
 not protected and the command that fixes it.
 
+For a clean start, you can also remove zn-gate before you install the older
+version. This is optional; the steps above are enough:
+
+1. Remove the hooks of each agent you set up with `zn hooks install`:
+   `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
+   `opencode` or `antigravity` for the others, and add `--project` for a project
+   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#3-claude-code-plugin).
+2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
+   if you also installed the Python package
+   ([details](uninstall.md#5-the-program-itself-last)).
+3. Install the older version as in step 1 above, then run steps 2 and 3 again.
+
 Going back to 1.7.1 in a zn Team organization with Warn rules is not safe: see
 the table below. For the full removal steps, see [Remove zn-gate](uninstall.md).
 

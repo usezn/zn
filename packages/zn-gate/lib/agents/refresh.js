@@ -102,16 +102,48 @@ function ranWithSudo(opts) {
   return uid === 0 && typeof env.SUDO_USER === 'string' && env.SUDO_USER !== '' && env.SUDO_USER !== 'root';
 }
 
+// Agent ids whose launcher records a runner digest other than the runner installed now: their hooks block tool calls.
+function staleLaunchers(opts = {}) {
+  const env = opts.env || process.env;
+  const launcher = require('./launcher');
+  const runner = opts.runnerPath || path.resolve(__dirname, '..', 'hooks', 'runner.js');
+  if (!fs.existsSync(runner)) return [];
+  const sha = launcher.runnerSha(runner);
+  const win = (opts.platform || process.platform) === 'win32';
+  const dir = launcher.launcherDir({ env, home: opts.home });
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const stale = [];
+  for (const name of names.sort()) {
+    try {
+      const m = /^zn-hook-([a-z-]+)\.sh$/.exec(name);
+      const file = path.join(dir, name);
+      if (!m || !fs.lstatSync(file).isFile() || fs.lstatSync(file).size > MAX_BYTES) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      const s = /^ZN_SHA='([0-9a-f]+)'$/m.exec(text);
+      const r = /^ZN_RUNNER='([^'\n]+)'$/m.exec(text);
+      // Only a launcher that points at this runner: a project-local install's launcher keeps the global copy, and is not stale.
+      if (s && r && samePath(r[1], runner, win) && s[1] !== sha) stale.push(m[1]);
+    } catch (_) { /* one bad file never stops the others */ }
+  }
+  return stale;
+}
+
 /** The postinstall entry: quiet (one line on stderr after a sudo install, shown only with `--foreground-scripts`), and never throws. */
 function main(opts = {}) {
   try {
     const done = refreshLaunchers(opts);
-    if (done.length) (opts.out || ((s) => process.stdout.write(s)))('zn-gate: refreshed hook launchers for ' + done.join(', ') + '\n');
+    const out = opts.out || ((s) => process.stdout.write(s));
+    if (done.length) out('zn-gate: refreshed hook launchers for ' + done.join(', ') + '\n');
     else if (ranWithSudo(opts)) (opts.err || ((s) => process.stderr.write(s)))(SUDO_NOTICE);
+    else {
+      const stale = staleLaunchers(opts);
+      if (stale.length) out('zn-gate: the hooks of ' + stale.join(', ') + ' were written for another zn-gate version and will block tool calls: run `zn hooks install <agent>` again for each agent.\n');
+    }
   } catch (_) { /* never fail the install */ }
 }
 
-module.exports = { refreshLaunchers, main, _launcherOptions: launcherOptions };
+module.exports = { refreshLaunchers, staleLaunchers, main, _launcherOptions: launcherOptions };
 
 if (require.main === module) {
   try { main(); } catch (_) { /* never fail the install */ }
