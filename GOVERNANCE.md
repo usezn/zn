@@ -78,23 +78,21 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
 
 ### Release schedule
 
-zn-gate ships once a week, with a release candidate first:
+zn-gate ships once a week, on Thursday, and the whole release happens that same day:
 
-- **Thursday: freeze and release candidate.** The `release/X.Y.0` branch is made
-  from `next`, and `vX.Y.0-rc.1` is published: on npm under the `next` dist-tag
-  (`npm install -g zn-gate@next`) and on PyPI as a pre-release (`X.Y.0rc1`,
-  installed only with `pip install --pre zn-gate`). A normal install does not
-  get it. The agent plugin pin and the MCP Registry entry are not updated for
-  a release candidate. Pull requests merged into `next` after the freeze go
-  into the following week's release.
-- **Friday to Monday: testing.** The release candidate is installed in clean
-  environments (Linux and Windows) and used for real work, the changes since the
-  last release get a security review, and the website pages for the version are
-  prepared. A fix found during testing is merged into `next` and also applied
-  to the release branch; if it changes the packages, a new `-rc.N` is published.
-- **Tuesday: release.** `vX.Y.0` is tagged on the commit that passed the
-  testing, and published with its release notes, any security advisories of the
-  week, the plugin pin, the MCP Registry entry and the website.
+- The `release/X.Y.0` branch is made from `next`. Pull requests merged into
+  `next` after that point go into the following week's release.
+- The release goes through its checks on the exact commit: all CI checks pass,
+  a clean install is tested on a fresh machine, the changes since the last
+  release get a security review, and the website pages for the version are
+  built in every supported language.
+- If every check passes, `vX.Y.0` is tagged and published the same day: npm,
+  PyPI, the release notes, any security advisories of the week, the agent
+  plugin pin, the MCP Registry entry and the website.
+- If a check fails, that week's release does not ship; the fix goes into
+  `next` and ships the following Thursday.
+
+There is no release candidate and no multi-day freeze.
 
 Patch releases outside this schedule are made only for a high or critical
 vulnerability (CVSS 7.0 or higher) in a published version, or when installing or
