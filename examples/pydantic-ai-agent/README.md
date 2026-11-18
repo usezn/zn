@@ -14,7 +14,7 @@ Written against `pydantic-ai-slim` 2.57.0 (the core package, without the model p
 
 ## Install
 
-Use Python 3.11 to 3.13 in a virtual environment, then:
+Use Python 3.11 to 3.14 in a virtual environment, then:
 
 ```bash
 pip install -r requirements.txt

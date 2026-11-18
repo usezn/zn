@@ -12,7 +12,7 @@ Everything runs on your machine. The pages in the example are made up, so there 
 
 ## Install
 
-Use Python 3.10 to 3.13 in a virtual environment, then:
+Use Python 3.10 to 3.13 in a virtual environment (the pinned CrewAI release does not support Python 3.14), then:
 
 ```bash
 pip install -r requirements.txt
