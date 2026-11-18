@@ -39,29 +39,91 @@ function show(value, max) {
   return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
-/** Reads the log for display. Returns null when there is no file, else { records, damaged }. */
-function readRecords(file) {
-  let raw;
+// The log is read from its end in blocks, so a large log is never loaded whole (a Node string
+// tops out near 512 MB). A record is a line of about 120 characters of preview plus a short
+// reason, so a line longer than MAX_LINE_BYTES is counted as damaged without being kept.
+const BLOCK_BYTES = 64 * 1024;
+const MAX_LINE_BYTES = 4 * 1024 * 1024;
+const NEWLINE = 0x0a;
+
+function readAt(fd, buf, start) {
+  let off = 0;
+  while (off < buf.length) {
+    const n = fs.readSync(fd, buf, off, buf.length - off, start + off);
+    if (n === 0) break;
+    off += n;
+  }
+  return buf.subarray(0, off);
+}
+
+/**
+ * Visits the records of the log from its last line back to its first, reading the file backwards
+ * in blocks, and stops as soon as visit(record) returns true. Lines are split on the byte 0x0A,
+ * which never occurs inside a UTF-8 sequence, so a character cut by a block edge is decoded whole.
+ * Returns null when there is no file, else { count, damaged, stopped }: count is the number of
+ * JSON objects visited and damaged the lines that could not be read. Both are exact only when the
+ * whole log was read (stopped is false).
+ */
+function scanTail(file, visit, opts = {}) {
+  const blockBytes = opts.blockBytes || BLOCK_BYTES;
+  const maxLine = opts.maxLineBytes || MAX_LINE_BYTES;
+  let fd;
   try {
-    raw = fs.readFileSync(file);
+    fd = fs.openSync(file, 'r');
   } catch (e) {
     if (e.code === 'ENOENT') return null;
     const err = new Error(e.code || e.message);
     err.unreadable = true;
     throw err;
   }
-  const text = raw.toString('utf8');
-  const records = [];
-  let damaged = 0;
-  for (const line of text.split('\n')) {
-    const t = line.trim();
-    if (t === '') continue;
+  const stats = { count: 0, damaged: 0, stopped: false };
+  // Returns true when the visitor wants no more records.
+  const handle = (line) => {
+    if (line.length > maxLine) { stats.damaged++; return false; }
+    const t = line.toString('utf8').trim();
+    if (t === '') return false;
     let rec;
-    try { rec = JSON.parse(t); } catch { damaged++; continue; }
-    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) { damaged++; continue; }
-    records.push(rec);
+    try { rec = JSON.parse(t); } catch { stats.damaged++; return false; }
+    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) { stats.damaged++; return false; }
+    stats.count++;
+    if (visit(rec)) { stats.stopped = true; return true; }
+    return false;
+  };
+  try {
+    let pos = fs.fstatSync(fd).size;
+    let carry = Buffer.alloc(0); // the start of the line still open, read so far (no newline in it)
+    let openTooLong = false; // the open line is over maxLine, so its bytes were dropped
+    while (pos > 0) {
+      const start = Math.max(0, pos - blockBytes);
+      const block = readAt(fd, Buffer.alloc(pos - start), start);
+      pos = start;
+      const buf = carry.length > 0 ? Buffer.concat([block, carry]) : block;
+      let end = buf.length;
+      let newline;
+      while (end > 0 && (newline = buf.lastIndexOf(NEWLINE, end - 1)) !== -1) {
+        if (openTooLong) {
+          stats.damaged++;
+          openTooLong = false;
+        } else if (handle(buf.subarray(newline + 1, end))) {
+          return stats;
+        }
+        end = newline;
+      }
+      const left = buf.subarray(0, end);
+      if (openTooLong || left.length > maxLine) {
+        openTooLong = true;
+        carry = Buffer.alloc(0);
+      } else {
+        carry = left;
+      }
+    }
+    // The start of the file: what is left is the first line.
+    if (openTooLong) stats.damaged++;
+    else if (carry.length > 0) handle(carry);
+    return stats;
+  } finally {
+    fs.closeSync(fd);
   }
-  return { records, damaged };
 }
 
 const isBlock = (rec) => typeof rec.verdict === 'string' && rec.verdict.toLowerCase() === 'block';
@@ -154,36 +216,35 @@ function runWhy(argv, io = {}) {
   if (positional.length === 1) id = positional[0];
 
   const file = io.file || require('./evidence').EVIDENCE_FILE;
-  let data;
+  // The log is read from its end and the scan stops at the first match, which is the last one.
+  let rec = null;
+  const visit = id !== null
+    ? (r) => { if (r.id === id) { rec = r; return true; } return false; }
+    : (r) => { if (isBlock(r)) { rec = r; return true; } return false; };
+  let scan;
   try {
-    data = readRecords(file);
+    scan = scanTail(file, visit, io);
   } catch (e) {
     err('the evidence log cannot be read (' + show(e.message, 40) + '). Nothing was changed.');
     return 1;
   }
-  if (data === null) {
+  if (scan === null) {
     err('there is no evidence log yet, so no block has been recorded on this computer.');
     return 1;
   }
-  const { records, damaged } = data;
+  const { count, damaged } = scan;
   const damageNote = damaged > 0 ? ' ' + damaged + ' line(s) of the log could not be read, and it may be among them (`' + znCommand('evidence --verify') + '` tells you more).' : '';
 
-  let rec = null;
-  if (id !== null) {
-    for (let i = records.length - 1; i >= 0; i--) if (records[i].id === id) { rec = records[i]; break; }
-    if (!rec) {
+  if (!rec) {
+    if (id !== null) {
       err('no record with the id "' + show(id, 40) + '" in the evidence log.' + damageNote);
       return 1;
     }
-  } else {
-    for (let i = records.length - 1; i >= 0; i--) if (isBlock(records[i])) { rec = records[i]; break; }
-    if (!rec) {
-      err((records.length === 0 && damaged === 0 ? 'the evidence log is empty' : 'no block is recorded in the evidence log') + ', so there is nothing to explain.' + damageNote);
-      return 1;
-    }
+    err((count === 0 && damaged === 0 ? 'the evidence log is empty' : 'no block is recorded in the evidence log') + ', so there is nothing to explain.' + damageNote);
+    return 1;
   }
   stdout(render(rec, znCommand, damaged));
   return 0;
 }
 
-module.exports = { runWhy, readRecords, USAGE };
+module.exports = { runWhy, scanTail, USAGE };
