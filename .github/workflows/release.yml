@@ -337,7 +337,9 @@ jobs:
         with:
           ref: ${{ needs.verify.outputs.sha }}
           path: plan
-          sparse-checkout: .github/scripts/npm-dist-tag-plan.mjs
+          sparse-checkout: |
+            .github/scripts/npm-dist-tag-plan.mjs
+            .github/scripts/npm-stage-idempotent.sh
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Download the signed release files
@@ -443,7 +445,11 @@ jobs:
           retention-days: 30
       # Stages the tarball; it is not public until a maintainer approves it with 2FA. The dist-tag chosen
       # above is stored with the stage and applied when it is approved.
+      # npm-stage-idempotent.sh: when the version is already public with this tarball's integrity, or a 409
+      # (an equivalent transparency log entry from an earlier attempt) is followed by that, nothing is staged;
+      # a public version with another integrity, or any other failure, fails the job.
       - name: Stage the tarball with npm trusted publishing
+        id: stage
         if: steps.live.outputs.live != 'true'
         working-directory: release
         env:
@@ -463,9 +469,11 @@ jobs:
           if [ "$actual" != "$expected" ]; then
             echo "::error::$tarball sha256 is $actual, SHA256SUMS lists $expected"; exit 1
           fi
-          npm stage publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts 2>&1 | tee "$RUNNER_TEMP/stage-output.txt"
+          : > "$RUNNER_TEMP/stage-output.txt"
+          NPM_VERSION="$NPM_VERSION" DIST_TAG="$DIST_TAG" TARBALL="$tarball" STAGE_OUTPUT="$RUNNER_TEMP/stage-output.txt" \
+            bash "$GITHUB_WORKSPACE/plan/.github/scripts/npm-stage-idempotent.sh"
       - name: Show how to approve the staged package
-        if: steps.live.outputs.live != 'true'
+        if: steps.live.outputs.live != 'true' && steps.stage.outputs.result == 'staged'
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           DIST_TAG: ${{ steps.disttag.outputs.tag }}
