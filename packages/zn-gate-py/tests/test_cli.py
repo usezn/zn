@@ -190,12 +190,24 @@ class TestCliScanCommand(unittest.TestCase):
 
     def test_many_key_blocks_scan_in_linear_time(self):
         block = self.BEGIN + "\n" + self.BODY + "\n" + self.END + "\n"
-        # CPU time of this process (the scan runs in it), not wall time: a busy shared runner can pause the test
-        # in the middle of a correct run, while a scan that went back over earlier blocks would still burn the CPU.
-        start = time.process_time()
-        code, out = self._scan_text(block * 15000)  # under the 2 MiB file limit
-        self.assertEqual(code, 1)
-        self.assertLess(time.process_time() - start, 8.0)
+
+        # Linear means three times the blocks cost about three times the CPU; a scan that went back over earlier
+        # blocks costs nine times. Both sizes are timed in the same run, so the speed of the machine cancels out,
+        # and CPU time of this process (the scan runs in it) is used because a busy shared runner can pause the
+        # test in the middle of a correct run. The small size takes the best of three, the large one the best of two.
+        def cpu(blocks, tries):
+            best = float("inf")
+            for _ in range(tries):
+                start = time.process_time()
+                code, out = self._scan_text(block * blocks)
+                best = min(best, time.process_time() - start)
+                self.assertEqual(code, 1)
+            return best, out
+
+        small, _ = cpu(5000, 3)
+        large, out = cpu(15000, 2)  # under the 2 MiB file limit
+        self.assertLess(large, 6 * max(small, 0.2),
+                        "three times the blocks took %.1f times the CPU time (%.2f s, then %.2f s)" % (large / max(small, 0.01), small, large))
         self.assertEqual(len(json.loads(out)["threats"]), 15000)
 
 
