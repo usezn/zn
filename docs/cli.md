@@ -258,6 +258,7 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 
 - `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; in the npm package, `zn-gate audit --format sarif` covers agent configs and `zn-gate reach --sarif` covers what an agent can reach. Any other value exits `2`.
 - `--all` (or `--code`): include source code files.
+- A scan reports every match, including the rules that only warn when an agent runs them. A source comment such as "bypass the cache" can therefore appear in the results with the rule `pi:bypass`, although the same text in a tool call is allowed with a note. If a rule keeps flagging comments you know are fine, leave that folder out with `--exclude`.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
