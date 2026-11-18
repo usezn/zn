@@ -540,6 +540,37 @@ const PROJECT_TRUST = [
 // The sh scrub of loader-env.js without its comment lines (it spans lines: the loop reads `export -p` one line at a time).
 const PROJECT_SCRUB = shScrubLines().filter((l) => !l.startsWith('#')).join('\n');
 
+// Where $Z and $N really are, links resolved (ZP, NP): with readlink -f or realpath, or, for a file that is not a link,
+// its folder read with cd -P (which resolves a linked folder). A PATH entry outside node_modules can be a link into
+// node_modules/.bin or into the project, so the path text alone is not enough. When neither can be read (a link and no
+// readlink -f or realpath), the program is not trusted. The real file may not be in a node_modules/.bin folder, nor in the
+// folder the hook runs in (the project; PR), unless that folder is / or the home folder (where every program would be).
+// A global npm install links zn into <prefix>/lib/node_modules/zn-gate, which is allowed: only .bin folders and the project
+// count. On Windows the PowerShell guard checks only the path text (see the threat model).
+const NM_BIN_ANY_CASE = NM_ANY_CASE + '/.[Bb][Ii][Nn]';
+const realLines = (v, p, q, flag) => [
+  // The system's readlink or realpath by full path, never one found on the PATH (the project can put its own there).
+  p + '=$(/usr/bin/readlink -f -- "$' + v + '" 2>/dev/null || /bin/readlink -f -- "$' + v + '" 2>/dev/null || /usr/bin/realpath -- "$' + v + '" 2>/dev/null || /bin/realpath -- "$' + v + '" 2>/dev/null)',
+  q + '=$(cd -P -- "${' + v + '%/*}/." 2>/dev/null && pwd -P)',
+  '[ -L "$' + v + '" ] && ' + q + '=',
+  '[ -z "$' + p + '" ] && ' + p + '=${' + q + ':+$' + q + '/${' + v + '##*/}}',
+  '[ -z "$' + p + '" ] && ' + flag + '=',
+  '[ "${' + p + '#*/' + NM_BIN_ANY_CASE + '/}" != "$' + p + '" ] && ' + flag + '=',
+  '[ "${' + p + '#"$PR"/}" != "$' + p + '" ] && ' + flag + '=',
+];
+const PROJECT_REAL = [
+  'PR=$(pwd -P)',
+  'H=$(cd -P -- "$HOME/." 2>/dev/null && pwd -P)',
+  '[ "$PR" = / ] && PR=/zn-none',
+  '[ "$PR" = "$H" ] && PR=/zn-none',
+  ...realLines('Z', 'ZP', 'ZQ', 'T'),
+  ...realLines('N', 'NP', 'NQ', 'U'),
+];
+// The same line for the Antigravity form, which may hold no space: each space becomes ${IFS} and the 2>/dev/null
+// redirections go (a redirection cannot be written there without a space; cd and realpath only print on stderr).
+// The && and || keep no space around them, so an assignment after them still starts its word.
+const splitFormLine = (line) => line.replace(/ 2>\/dev\/null/g, '').replace(/ (&&|\|\|) /g, '$1').split(' ').join(IFS);
+
 /**
  * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
@@ -560,7 +591,7 @@ function projectShCommand(agentId, event) {
     ].join('; ');
     // The loader variables (NODE_OPTIONS=--require and the like, see loader-env.js) are removed before zn starts: a project can
     // set the environment of the agent.
-    const script = PROJECT_SCRUB + '\nZ=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
+    const script = PROJECT_SCRUB + '\nZ=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; ' + PROJECT_REAL.join('; ') + '; R=missing; ' +
       'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
@@ -580,6 +611,7 @@ function projectShCommand(agentId, event) {
     'N=$(' + sp('command', '-v', 'node') + ')',
     sp('unset', ...LOADER_NAMES),
     ...PROJECT_TRUST.map((x) => x.replace(/^\[ (.*) \] && /, (_, w) => test(...w.split(' ').map((o) => (o === '!=' ? o : o.replace(/^"/, '"x')))) + '&&')),
+    ...PROJECT_REAL.map(splitFormLine),
     'R=missing',
     [test('"x$N"', '!=', 'x'), test('"x${Z#/}"', '!=', '"x$Z"'), test('"x${N#/}"', '!=', '"x$N"'), test('"x$T"', '!=', 'x'), test('"x$U"', '!=', 'x')].join('&&') +
       '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,

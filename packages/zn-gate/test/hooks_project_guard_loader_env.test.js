@@ -41,7 +41,8 @@ function mkbin(t, sub = 'bin') {
   fs.writeFileSync(path.join(bin, 'zn'), '#!' + whichSh() + '\nexec ' + JSON.stringify(path.join(bin, 'node')) + ' -e ' + JSON.stringify(code) + '\n');
   fs.chmodSync(path.join(bin, 'zn'), 0o755);
   const env = {
-    PATH: bin,
+    // The system folders come after the test folder: the guard reads real paths with readlink -f or realpath.
+    PATH: bin + ':/usr/bin:/bin',
     NODE_OPTIONS: '--require ' + pre,
     Node_Options: '--require ' + pre,
     NODE_PATH: root,
@@ -85,7 +86,7 @@ for (const [name, run] of Object.entries(forms)) {
   });
   test('project guard, ' + name + ': a zn in a Node_Modules folder (any case) is not run', skip, (t) => {
     const b = mkbin(t, path.join('Node_Modules', '.bin'));
-    run(b.bin, { PATH: b.bin });
+    run(b.bin, { PATH: b.bin + ':/usr/bin:/bin' });
     assert.equal(fs.existsSync(b.seen), false, 'the zn in Node_Modules ran');
   });
 }
