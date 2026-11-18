@@ -88,6 +88,12 @@ function jsonFileRows(spec, ctx, file, scope, text) {
     }
     rows.push(row);
   }
+  // Events the current zn-gate installs and this file lacks (an install from an older release): one STALE row each, one reason.
+  const { missingHookEvents, missingEventsReason } = require('./check')._internal;
+  const lacking = missingHookEvents(ours.map((o) => o.e.event), spec.id);
+  for (const event of lacking) {
+    rows.push({ event, matcher: undefined, command: '', status: 'STALE', reason: missingEventsReason(lacking), scope });
+  }
   return rows;
 }
 

@@ -172,7 +172,7 @@ How to read it:
 - A healthy hook has the same layout with `OK` at the start and no reason lines.
 
 - **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
-- **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date.
+- **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date. A Claude Code event that this zn-gate installs and your settings lack also counts as stale, one per missing event: after an update from 1.14.1 or 1.15.0 (4 events), ConfigChange and InstructionsLoaded show as `STALE`, the summary line says `4 OK, 2 stale`, and the fix is `zn hooks install claude-code`. The plain `zn-gate check` output for Claude Code also names the missing events in a note.
 - **BROKEN**: the hook cannot run, is turned off, is written twice for the same event, points at a file or Node.js that is gone, or is in a settings file zn cannot read (for example, one that is not valid JSON). Run the fix; if the settings file is not valid JSON, repair it first. If you no longer want zn for that agent, run `zn hooks uninstall <agent>` instead.
 
 Plain `zn-gate check` (without `--hooks`) ends with one line about the same hooks, and prints it only when at least one hook is installed. It does not change the exit code of `check`.

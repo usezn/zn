@@ -822,6 +822,20 @@ function znOnPath(env) {
   return found ? path.resolve(found) : null;
 }
 
+/* The hook events the current zn-gate installs for an agent that the given installed events lack. Only Claude Code is
+   compared: its set grew between releases (the other agents write the same events they always did). [] when nothing is
+   installed at all (not set up is a different state) or the agent is not compared. */
+function missingHookEvents(installedEvents, agentId) {
+  if (agentId !== 'claude-code' || !installedEvents.length) return [];
+  let wanted;
+  try { wanted = Object.keys(require('./agents').getAdapter('claude-code').ourHooks('zn')); } catch (_) { return []; }
+  return wanted.filter((e) => !installedEvents.includes(e));
+}
+
+function missingEventsReason(events) {
+  return 'its hooks lack ' + events.join(' and ') + ', which this zn-gate installs (' + events.length + (events.length === 1 ? ' protection is' : ' protections are') + ' missing); run `zn hooks install claude-code` again to add ' + (events.length === 1 ? 'it' : 'them');
+}
+
 /*
  * zn's own hooks in the user's hooks file (`zn hooks install <agent>`), not run yet:
  * {installed, problem, fix, live, notes}. `live` is {file, args, env} when the read hook can be run as the agent runs it.
@@ -1213,6 +1227,9 @@ async function checkAgent(spec, ctx) {
     // known here, so the note is harmless on a version without that event.
     const hasExpansion = hookEntries(readJson(userFile), spec.id).some((e) => e.event === 'UserPromptExpansion' && parseCommand(e.command, spec.id));
     if (!hasExpansion) res.notes.push('its hooks lack the newer prompt-expansion check (for typed skills and commands); run `zn hooks install claude-code` again to add it');
+    // Any other event this zn-gate installs and the file lacks (ConfigChange, InstructionsLoaded after 1.14.1 or 1.15.0).
+    const lacking = missingHookEvents(hookEntries(readJson(userFile), spec.id).filter((e) => parseCommand(e.command, spec.id)).map((e) => e.event), spec.id).filter((e) => e !== 'UserPromptExpansion');
+    if (lacking.length) res.notes.push(missingEventsReason(lacking));
   }
   if (spec.id === 'claude-code' && installed && (!res.problem || res.pluginFault)) {
     const p = claudePolicy(ctx.home, ctx.env, ctx.claudePolicy);
@@ -1613,4 +1630,4 @@ function toJson({ results, removed, warnings }, opts = {}) {
   };
 }
 
-module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { missingHookEvents, missingEventsReason, cliHooks, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };

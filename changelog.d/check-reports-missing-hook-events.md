@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate check` no longer says the Claude Code hooks are fine when a release installs hook events that yours lack. After an update from 1.14.1 or 1.15.0, whose hooks cover 4 events, the two newer events (ConfigChange and InstructionsLoaded) now show as stale in the hook summary line (for example `Hooks: 4 OK, 2 stale, 0 broken`) and in `zn-gate check --hooks`, and the check names the missing events and the fix, `zn hooks install claude-code`.

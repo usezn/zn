@@ -1158,3 +1158,22 @@ test('check: the plugin version is the one the launcher runs (scripts/zn-gate.lo
   assert.equal(pluginVersionNote(root, '1.14.1'), '');
   assert.match(pluginVersionNote(root, '1.15.0'), /plugin is version 1\.14\.1 /);
 });
+
+test('check: hooks written by 1.14.1 or 1.15.0 (no ConfigChange, no InstructionsLoaded) get a note naming both and the fix', async (t) => {
+  const ctx = homeWithHooks(t, ['claude-code']);
+  const file = getAdapter('claude-code').settingsFile(ctx);
+  const fresh = byId(await check(ctx), 'claude-code');
+  assert.ok(!fresh.notes.some((n) => /ConfigChange/.test(n)));
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete settings.hooks.ConfigChange;
+  delete settings.hooks.InstructionsLoaded;
+  fs.writeFileSync(file, JSON.stringify(settings));
+  const r = byId(await check(ctx), 'claude-code');
+  assert.equal(r.state, 'protected');
+  assert.ok(r.notes.some((n) => /lack ConfigChange and InstructionsLoaded.*2 protections are missing.*`zn hooks install claude-code` again to add them/.test(n)));
+  delete settings.hooks.UserPromptExpansion;
+  fs.writeFileSync(file, JSON.stringify(settings));
+  const r2 = byId(await check(ctx), 'claude-code');
+  assert.ok(r2.notes.some((n) => /newer prompt-expansion check/.test(n)));
+  assert.ok(r2.notes.some((n) => /lack ConfigChange and InstructionsLoaded/.test(n)));
+});

@@ -63,3 +63,46 @@ test('one stale hook: the line says 1 stale, both for check and doctor, and uses
   }
 });
 
+
+// A settings file written by 1.14.1 or 1.15.0 has 4 Claude Code events; the current zn-gate installs 6.
+function downgradeToFourEvents(s) {
+  const cfg = path.join(s.home, '.claude', 'settings.json');
+  const data = JSON.parse(fs.readFileSync(cfg, 'utf8'));
+  delete data.hooks.ConfigChange;
+  delete data.hooks.InstructionsLoaded;
+  fs.writeFileSync(cfg, JSON.stringify(data));
+  return Object.keys(data.hooks);
+}
+
+test('hooks from 1.14.1 or 1.15.0 (4 events) count the 2 missing events as stale and name the fix', SKIP, (t) => {
+  const s = setup(t, ['claude-code']);
+  const fresh = listHooks({ home: s.home, env: s.env, cwd: s.cwd });
+  assert.equal(fresh.counts.stale, 0);
+  assert.equal(fresh.counts.ok, 6);
+  assert.equal(downgradeToFourEvents(s).length, 4);
+  const res = listHooks({ home: s.home, env: s.env, cwd: s.cwd });
+  assert.equal(res.counts.ok, 4);
+  assert.equal(res.counts.stale, 2);
+  assert.equal(res.counts.broken, 0);
+  assert.match(summaryLine(res), /^Hooks: 4 OK, 2 stale, 0 broken\. /);
+  for (const cmd of ['check', 'doctor']) {
+    const out = runCheck(s, cmd);
+    assert.deepEqual(lines(out.stdout).length, 1);
+    assert.match(lines(out.stdout)[0], /^Hooks: 4 OK, 2 stale, 0 broken\. /);
+    assert.match(out.stdout, /lack ConfigChange and InstructionsLoaded.*`zn hooks install claude-code`/);
+  }
+  const rep = spawnSync(process.execPath, [CLI, 'check', '--hooks'], { cwd: s.cwd, env: s.env, encoding: 'utf8' });
+  assert.equal(rep.status, 1, 'stale hooks exit 1 in check --hooks, so do missing events');
+  assert.match(rep.stdout, /STALE +ConfigChange/);
+  assert.match(rep.stdout, /STALE +InstructionsLoaded/);
+  assert.match(rep.stdout, /Fix: run `zn hooks install claude-code`/);
+  assert.match(rep.stdout, /4 OK, 2 stale, 0 broken/);
+});
+
+test('hooks with all 6 events, and an install with nothing from zn, report no missing events', SKIP, (t) => {
+  const s = setup(t, ['claude-code']);
+  assert.ok(!lines(runCheck(s, 'check').stdout).some((l) => /stale/.test(l) && !/0 stale/.test(l)));
+  assert.doesNotMatch(runCheck(s, 'check').stdout, /lack ConfigChange/);
+  const empty = setup(t, []);
+  assert.equal(summaryLine(listHooks({ home: empty.home, env: empty.env, cwd: empty.cwd })), '');
+});
