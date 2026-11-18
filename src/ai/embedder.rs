@@ -1,3 +1,4 @@
+use crate::audit::exporter::endpoint_for_log;
 use crate::cache::{CacheStats, EmbeddingCache};
 use anyhow::{Error as E, Result};
 use candle_core::{Device, Tensor};
@@ -253,22 +254,27 @@ async fn download_file(
     name: &str,
     expected_sha256: &str,
 ) -> Result<()> {
+    // The endpoint may be a mirror with a token in its path: errors name its scheme, host and port only, and
+    // the request errors are stripped of the URL they carry.
+    let host = endpoint_for_log(url);
+    let failed = |e: reqwest::Error| {
+        E::msg(format!(
+            "downloading {name} from {host} failed: {}",
+            e.without_url()
+        ))
+    };
     let mut resp = client
         .get(url)
         .send()
         .await
-        .map_err(|e| E::msg(format!("downloading {name} failed: {e}")))?
+        .map_err(failed)?
         .error_for_status()
-        .map_err(|e| E::msg(format!("downloading {name} failed: {e}")))?;
+        .map_err(failed)?;
     let mut tmp = tempfile::Builder::new()
         .prefix(".zn-model-download-")
         .tempfile_in(dir)?;
     let mut hasher = Sha256::new();
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|e| E::msg(format!("downloading {name} failed: {e}")))?
-    {
+    while let Some(chunk) = resp.chunk().await.map_err(failed)? {
         hasher.update(&chunk);
         tmp.write_all(&chunk)?;
     }
@@ -484,6 +490,20 @@ mod tests {
             "{:?}",
             leftovers(dir.path())
         );
+    }
+
+    #[test]
+    fn download_errors_name_the_host_but_not_the_mirror_path() {
+        // Nothing listens on port 1; the mirror path stands for a token.
+        let base = "http://127.0.0.1:1/FAKEMIRRORTOKEN";
+        let sha = sha_hex(b"x");
+        let files = [("a.json", sha.as_str())];
+        let dir = tempfile::tempdir().unwrap();
+        let err = ensure_model_from(base, "owner/model", REV, &files, dir.path()).unwrap_err();
+        let text = format!("{err:#} {err:?}");
+        assert!(!text.contains("FAKEMIRRORTOKEN"), "{text}");
+        assert!(text.contains("http://127.0.0.1:1"), "{text}");
+        assert!(text.contains("a.json"), "{text}");
     }
 
     #[test]

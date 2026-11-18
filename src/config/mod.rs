@@ -1122,26 +1122,30 @@ fn plain_expected(want: &str) -> String {
     }
 }
 
-/// Plain wording for the value that was found ("the text \"eighty\"").
+/// Plain wording for the KIND of value that was found ("text", "a number"). The value itself is never
+/// printed: the setting may be a key or a token, and the error goes to a terminal or a log.
 fn plain_found(got: &str) -> String {
     let got = got.trim();
-    if let Some(rest) = got.strip_prefix("string ") {
-        return format!("the text {rest}");
+    if got.starts_with("string ") {
+        return "text".to_string();
     }
-    if let Some(rest) = got
-        .strip_prefix("integer ")
-        .or_else(|| got.strip_prefix("floating point "))
-    {
-        return format!("the number {}", rest.trim_matches('`'));
+    if got.starts_with("integer ") || got.starts_with("floating point ") {
+        return "a number".to_string();
     }
-    if let Some(rest) = got.strip_prefix("boolean ") {
-        return format!("the value {}", rest.trim_matches('`'));
+    if got.starts_with("boolean ") {
+        return "true or false".to_string();
     }
     match got {
         "null" | "unit value" => "an empty value (null)".to_string(),
         "sequence" => "a list".to_string(),
         "map" => "a group of settings".to_string(),
-        other => other.to_string(),
+        // Anything else may quote the value: say only what kind of thing it was.
+        other => other
+            .split([' ', '`', '"'])
+            .next()
+            .filter(|w| !w.is_empty())
+            .unwrap_or("a value")
+            .to_string(),
     }
 }
 
@@ -1162,6 +1166,13 @@ fn plain_data_problem(msg: &str) -> String {
                 );
             }
         }
+    }
+    if msg.starts_with("unknown variant `") {
+        let allowed = msg
+            .split_once(", expected ")
+            .map(|(_, want)| format!(" (allowed: {want})"))
+            .unwrap_or_default();
+        return format!("its value is not one of the allowed ones{allowed}");
     }
     if let Some(rest) = msg.strip_prefix("missing field `") {
         return format!(
@@ -1588,12 +1599,40 @@ mod parse_message_tests {
     }
 
     #[test]
+    fn type_errors_never_print_a_secret_value() {
+        for (file, value) in [
+            (
+                r#"{"security": {"api_key": 1234567890123456}}"#,
+                "1234567890123456",
+            ),
+            (r#"{"security": {"jwt_secret": true}}"#, "true\""),
+            (
+                r#"{"server": {"port": "FAKESECRETVALUE0001"}}"#,
+                "FAKESECRETVALUE0001",
+            ),
+            (r#"{"server": {"port": 99999}}"#, "99999"),
+            (r#"{"server": {"port": 1.5e3}}"#, "1500"),
+        ] {
+            let msg = problem(file);
+            assert!(!msg.contains(value), "{value} printed: {msg}");
+            assert!(msg.contains("wrong value"), "{msg}");
+        }
+        let msg = problem(r#"{"security": {"api_key": 1234567890123456}}"#);
+        assert!(msg.contains("\"security.api_key\""), "{msg}");
+        assert!(msg.contains("text in quotes, but it is a number"), "{msg}");
+    }
+
+    #[test]
     fn wrong_type_names_the_setting_in_plain_words() {
         let msg = problem(r#"{"server": {"port": "eighty"}}"#);
         assert!(msg.contains("/work/zn.json"), "{msg}");
         assert!(msg.contains("\"server.port\""), "{msg}");
         assert!(msg.contains("whole number from 0 to 65535"), "{msg}");
-        assert!(msg.contains("the text \"eighty\""), "{msg}");
+        assert!(msg.contains("but it is text"), "{msg}");
+        assert!(
+            !msg.contains("eighty"),
+            "the value must not be printed: {msg}"
+        );
         assert!(!msg.contains("u16"), "{msg}");
         assert!(msg.contains("zn init"), "{msg}");
     }
