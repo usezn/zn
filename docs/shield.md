@@ -1,13 +1,13 @@
 # Protect MCP servers: shield, shadow mode and tool pins
 
-`zn-gate shield` is a local proxy that sits between your agent and an MCP server. You wrap a server once, and every message between the agent and that server passes through zn-gate on your machine. Nothing is sent anywhere: the checks on tool lists, tool-call arguments and tool output run locally in every configuration.
+`zn-gate shield` is a local proxy that sits between your agent and an MCP server. (An MCP server is a tool your agent can call; a proxy is a layer in the middle that checks what passes through. See the [glossary](glossary.md).) You need Node.js installed, because the commands below start with `npx`; get it from [nodejs.org](https://nodejs.org/) (steps in [First 5 minutes](first-5-minutes.md#before-you-start)). Run them in your own terminal. You wrap a server once, and every message between the agent and that server passes through zn-gate on your machine. Nothing is sent anywhere: the checks on tool lists, tool-call arguments and tool output run locally in every configuration.
 
 For each wrapped server the shield:
 
 1. **Checks the tool list.** Tool and parameter descriptions that carry hidden instructions are neutralized before the agent reads them.
 2. **Checks tool-call arguments.** A call whose arguments carry an injection is refused and never reaches the server.
 3. **Checks tool output.** Secrets are redacted, and output that carries an injection is replaced by a short notice.
-   The same check covers the other text the server sends to the agent: notifications, requests such as sampling, resource and prompt contents (text blobs too), the descriptions in resource and prompt lists, the initialize instructions, completion values, error messages, and the structured content, embedded resources and resource links of tool results. A line from the server that is not valid JSON is dropped (shadow mode passes it on and reports it). A line from the agent that is not valid JSON (for example one with `NaN`) is not sent to the server either, because it cannot be checked; the agent gets a parse error when the line has a readable request id, and shadow mode passes it on and reports it. JSON-RPC batches are checked message by message in both directions.
+   The same check covers the other text the server sends to the agent. That is: notifications, requests such as sampling, resource and prompt contents (text blobs too), the descriptions in resource and prompt lists, the initialize instructions, completion values, error messages, and the structured content, embedded resources and resource links of tool results. A line from the server that is not valid JSON is dropped (shadow mode passes it on and reports it). A line from the agent that is not valid JSON (for example one with `NaN`) is not sent to the server either, because it cannot be checked. The agent gets a parse error when the line has a readable request id. Shadow mode passes it on and reports it. JSON-RPC batches are checked message by message in both directions.
 4. **Pins the tools.** It remembers what each tool looked like the first time and flags any tool that changes later (see [Tool pinning](#tool-pinning)).
 5. **Records each decision** in the local decision log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
 
@@ -39,7 +39,7 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 
 ## Wrap all your servers at once: `init --wrap-mcp`
 
-`init --wrap-mcp` finds the MCP servers in the configuration files of the agents on your machine (Claude Desktop, Claude Code, Cursor, Codex CLI, OpenCode, Antigravity and Hermes), writes a backup of each file it changes, and rewrites each local (stdio) server as a `shield` command.
+`init --wrap-mcp` finds the MCP servers in the configuration files of the agents on your machine (Claude Desktop, Claude Code, Cursor, Codex CLI, OpenCode, Antigravity and Hermes). It writes a backup of each file it changes. It then rewrites each local (stdio) server as a `shield` command.
 
 ```bash
 # Preview what would change, and change nothing

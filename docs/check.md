@@ -8,6 +8,8 @@ npx -y zn-gate check
 
 (or `zn-gate check` if you installed it with `npm i -g zn-gate`).
 
+You need Node.js installed first, because `npx` comes with it. If `node --version` prints nothing, get it from [nodejs.org](https://nodejs.org/); the steps are in [First 5 minutes](first-5-minutes.md#before-you-start). Run the command in your own terminal, not through your agent. A word you do not know, such as hook or vault? See the [glossary](glossary.md).
+
 On this page:
 
 - [What it does](#what-it-does)
@@ -20,15 +22,15 @@ On this page:
 
 ## What it does
 
-zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
+zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook (the small check your agent runs before it reads a file) to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
 
-- **Claude Code**: zn-gate checks the zn-gate plugin, or the hooks of `zn hooks install claude-code`. It also notices when the plugin is turned off and when a Claude Code setting turns hooks off. If your hooks were installed by an older zn-gate and lack the check for typed skills and commands, it suggests running `zn hooks install claude-code` again. When the plugin is a different version from the zn-gate command, it adds a note that says which one to update: the plugin (`claude plugin update zn-gate@usezn`) when it is older, or the command (`npm install -g zn-gate@latest`) when it is older. This alone does not make Claude Code NOT protected.
+- **Claude Code**: zn-gate checks the zn-gate plugin, or the hooks of `zn hooks install claude-code`. It also notices when the plugin is turned off and when a Claude Code setting turns hooks off. If your hooks were installed by an older zn-gate and lack the check for typed skills and commands, it suggests running `zn hooks install claude-code` again. When the plugin is a different version from the zn-gate command, it adds a note. The note says which one to update: the plugin (`claude plugin update zn-gate@usezn`) when it is older, or the command (`npm install -g zn-gate@latest`) when it is older. This alone does not make Claude Code NOT protected.
 - **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`. A zn-gate plugin for Cursor is reported as **NOT protected** and is never run (see [Cursor plugin](#cursor-plugin)).
 - **What it runs**: for Claude Code, Codex CLI and Cursor it runs the hook that is installed, exactly as your agent would. For the Claude Code plugin, that is the PreToolUse command of the plugin's `hooks/hooks.json`, run the way Claude Code runs it (see [Claude Code plugin](#claude-code-plugin)). On Windows, a hook installed as `zn hook <agent>` is not started; zn-gate checks zn's rules for it instead and says so in the output. A hook that cannot start, or that blocks every file because part of zn is missing, is reported as **NOT protected**.
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
 - **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
-- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds, to read the version (see [Agent versions](#agent-versions)), with no tokens, with updates and update notices turned off, and stopped after 2 seconds; no agent session is started. The folder is deleted at the end. The one thing that stays is described in [What check writes to the decision log](#what-check-writes-to-the-decision-log).
+- **Nothing changes**: zn-gate sends nothing over the network and no setting changes. Besides the installed zn hooks it tests (above), the only agent program it starts is `<agent> --version` for each agent it finds. This reads the version (see [Agent versions](#agent-versions)). It uses no tokens, has updates and update notices turned off, and is stopped after 2 seconds. No agent session is started. The folder is deleted at the end. The one thing that stays is described in [What check writes to the decision log](#what-check-writes-to-the-decision-log).
 
 ## What check writes to the decision log
 
@@ -57,7 +59,7 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
-- **X ... NOT protected**: zn is set up but would not protect the agent. The line says why and what to run to fix it. Every reason is explained in [What each NOT protected line means](#what-each-not-protected-line-means). When a hook cannot start because the Node.js it was installed with is gone (for example after `nvm uninstall`), the fix is a fresh `npm install -g zn-gate` and then `zn hooks install <agent>`, since the old Node.js took its `zn` with it.
+- **X ... NOT protected**: zn is set up but would not protect the agent. The line says why and what to run to fix it. Every reason is explained in [What each NOT protected line means](#what-each-not-protected-line-means). A hook can fail to start because the Node.js it was installed with is gone (for example after `nvm uninstall`). The fix is a fresh `npm install -g zn-gate` and then `zn hooks install <agent>`, since the old Node.js took its `zn` with it.
 
 ### Reading the symbols
 

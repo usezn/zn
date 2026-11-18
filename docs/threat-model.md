@@ -4,6 +4,8 @@
 command you allowed still holds the value: scope it, and turn on your agent's
 sandbox.**
 
+Words you do not know, such as vault, marker, hook or daemon, are in the [glossary](glossary.md). In short: the vault is the encrypted store where zn-gate keeps the real values of your secrets, a marker is the stand-in your agent sees instead, and a daemon is a program that keeps running in the background (here, the one that guards the vault). "Fails closed" means that when zn cannot tell whether something is safe, it blocks it.
+
 ## On this page
 
 - [What zn protects against](#what-zn-protects-against)

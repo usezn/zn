@@ -20,6 +20,16 @@ Short meanings of words used in the zn-gate docs.
 
 **Shadow** (`env shadow`): move the secret values of a `.env` file into the vault and leave markers in their place.
 
+**Fail closed**: when zn cannot tell whether something is safe, for example because a check crashed or timed out, it blocks the action instead of letting it through.
+
+**Daemon**: a program that keeps running in the background. The vault daemon is the one that guards the vault while it is unlocked.
+
+**Decision log** (also called evidence): the local file where zn-gate records each block or allow, such as `evidence.jsonl` in the `.zn` folder. It stays on your machine. `evidence --verify` checks the log.
+
+**Tamper**: change something that should not be changed, such as a hook file or the decision log.
+
+**CI** (continuous integration): a service, such as GitHub Actions, that runs checks or tests automatically each time code is pushed.
+
 **Hook**: a small check that your agent runs before or after it reads a file, runs a command or gets your prompt. zn-gate uses hooks to block or redact.
 
 **Plugin**: the zn-gate add-on for Claude Code. It sets up zn-gate's hooks in one step; since version 1.14.0 it adds no MCP server.
