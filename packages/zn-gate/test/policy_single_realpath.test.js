@@ -35,7 +35,7 @@ function tree(t) {
   return dir;
 }
 
-test('off win32 one candidate costs one realpath walk, not two', { skip: process.platform === 'win32' }, (t) => {
+test('off win32 one candidate costs one realpath walk, not two', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tree(t);
   const target = path.join(dir, 'link', 'new.txt');
   let targets;
@@ -56,7 +56,7 @@ test('on win32 targetsOf keeps both targets and the native walk', (t) => {
   assert.strictEqual(counts.native, 1);
 });
 
-test('off win32 a bash denial check never runs the native realpath', { skip: process.platform === 'win32' }, (t) => {
+test('off win32 a bash denial check never runs the native realpath', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tree(t);
   const counts = countRealpaths(() => {
     policy.bashDenial('cat ' + path.join(dir, 'link', 'missing', 'file.txt'), { cwd: dir, home: os.homedir(), env: {} });

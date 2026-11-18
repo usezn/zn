@@ -151,7 +151,7 @@ test('audit: a failing scanner never stops redaction of what the other redactors
   assert.ok(!out.includes('zn-test-fake-value-0001-not-real'), out);
 });
 
-test('audit: an unreadable config file is reported as skipped, not as an error', { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0) }, (t) => {
+test('audit: an unreadable config file is reported as skipped, not as an error', { skip: (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) && 'POSIX only, and not as root' }, (t) => {
   const dir = build(t, { 'f.json': '{}' });
   fs.chmodSync(path.join(dir, 'f.json'), 0o000);
   t.after(() => { try { fs.chmodSync(path.join(dir, 'f.json'), 0o600); } catch (_) { /* gone */ } });

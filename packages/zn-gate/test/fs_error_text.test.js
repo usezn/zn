@@ -42,7 +42,7 @@ test('ZN_VERBOSE shows the code; humanError and the unlock hint use the plain te
   assert.match(messageWithUnlockHint(sys('ENOTDIR', '/x/.zn/run')), /is a file where a folder should be/);
 });
 
-test('a settings file that cannot be read is not called a parse error', { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0) }, (t) => {
+test('a settings file that cannot be read is not called a parse error', { skip: (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) && 'POSIX only, and not as root' }, (t) => {
   const home = tempDir(t, 'zn-fserr-');
   const dir = path.join(home, '.claude');
   fs.mkdirSync(dir);

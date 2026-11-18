@@ -199,7 +199,7 @@ test('install (project): named hook with a nested PreToolUse group; idempotent; 
 });
 
 // The Unix launcher is not used where the home path has backslashes: Windows has its own test below.
-test('install (user) backs up, keeps foreign hooks and uninstall removes only zn', { skip: process.platform === 'win32' }, (t) => {
+test('install (user) backs up, keeps foreign hooks and uninstall removes only zn', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const home = tempDir(t, 'zn-agy-home-');
   const file = path.join(home, '.gemini', 'config', 'hooks.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });

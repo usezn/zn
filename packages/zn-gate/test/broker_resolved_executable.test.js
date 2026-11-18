@@ -38,7 +38,7 @@ test('a program outside the project is accepted', () => {
   });
 });
 
-test('a link inside the project that points outside it is still refused by its name', { skip: process.platform === 'win32' }, () => {
+test('a link inside the project that points outside it is still refused by its name', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   withProject(({ project, outside }) => {
     const target = path.join(outside, 'tool');
     const alias = path.join(project, 'bin', 'alias');
@@ -50,7 +50,7 @@ test('a link inside the project that points outside it is still refused by its n
   });
 });
 
-test('a link outside the project that points into it is refused by its real file', { skip: process.platform === 'win32' }, () => {
+test('a link outside the project that points into it is refused by its real file', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   withProject(({ project, outside }) => {
     const target = path.join(project, 'bin', 'tool');
     const alias = path.join(outside, 'alias');

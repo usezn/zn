@@ -40,7 +40,7 @@ test('off win32 nativeTargetOf is the same as realTargetOf and does not use the 
   assert.strictEqual(called, false);
 });
 
-test('on a real Windows host nativeTargetOf of the temp folder is an existing long path', { skip: process.platform !== 'win32' }, () => {
+test('on a real Windows host nativeTargetOf of the temp folder is an existing long path', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-short-'));
   try {
     const target = files.nativeTargetOf(dir);

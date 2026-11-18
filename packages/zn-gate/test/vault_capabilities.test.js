@@ -360,7 +360,7 @@ test('the vault reports the capabilities feature, and an older vault is called o
   assert.strictEqual(isOutdatedVault({ unlocked: true }), true);
 });
 
-test('POSIX: the daemon refuses to serve from files that are not private to its user', { skip: !POSIX }, () => {
+test('POSIX: the daemon refuses to serve from files that are not private to its user', { skip: !POSIX && 'POSIX only (not run on Windows)' }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ep-'));
   try {
     const ep = { unix: true, address: path.join(dir, 'vault.sock'), keyFile: path.join(dir, 'session.key') };

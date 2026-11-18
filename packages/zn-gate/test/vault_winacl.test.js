@@ -189,7 +189,7 @@ test('ensurePrivate accepts the SDDL of the built-in Administrator and checks sc
   assert.match(winacl.scriptEntriesRisk([{ path: 'C:\s\a.cmd', dir: false, sddl: 'O:LAD:P(A;;FA;;;LA)' }], ME).deny, /owned by LA/);
 });
 
-test('real Windows: a folder and a file open to the Users group are made owner-only and read back as private', { skip: process.platform !== 'win32' }, (t) => {
+test('real Windows: a folder and a file open to the Users group are made owner-only and read back as private', { skip: process.platform !== 'win32' && 'Windows only' }, (t) => {
   const fs = require('fs');
   const path = require('path');
   const { spawnSync } = require('child_process');
@@ -217,7 +217,7 @@ test('real Windows: a folder and a file open to the Users group are made owner-o
   assert.ok(acl.aces[0].sid === me || acl.aces[0].sid === 'LA', acl.aces[0].sid);
 });
 
-test('on other systems the real entry points do nothing', { skip: process.platform === 'win32' }, () => {
+test('on other systems the real entry points do nothing', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   winacl.ensurePrivate('/nonexistent/x', { dir: true });
   winacl.ensurePipe('/nonexistent/x.sock');
 });

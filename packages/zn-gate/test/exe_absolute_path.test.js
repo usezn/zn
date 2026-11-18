@@ -11,7 +11,7 @@ const path = require('path');
 const { absolutePath } = require('../lib/exe');
 const { tempDir } = require('./helpers/tmp');
 
-const notWindows = { skip: process.platform === 'win32' };
+const notWindows = { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' };
 // A POSIX platform that is not the one running the tests, so only the textual rule applies.
 const OTHER_POSIX = process.platform === 'freebsd' ? 'openbsd' : 'freebsd';
 

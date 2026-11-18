@@ -24,7 +24,7 @@ test('package.json has the three program names and each one points to the same e
   assert.ok(fs.readFileSync(file, 'utf8').startsWith('#!/usr/bin/env node'));
 });
 
-test('version prints the same text through each program name', { skip: process.platform === 'win32' }, (t) => {
+test('version prints the same text through each program name', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tempDir(t, 'zn-names-');
   const outputs = NAMES.map((name) => {
     const link = path.join(dir, name);

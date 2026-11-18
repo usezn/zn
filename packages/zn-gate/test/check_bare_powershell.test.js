@@ -31,7 +31,7 @@ test('check reads the powershell command of Copilot CLI on Windows, bash elsewhe
   assert.deepEqual(got, [process.platform === 'win32' ? tree.hooks.preToolUse[0].powershell : 'zn hook copilot']);
 });
 
-test('check finds Git Bash the way Claude Code is set up on Windows: the setting, then bin/bash next to git on the PATH', { skip: process.platform === 'win32' }, (t) => {
+test('check finds Git Bash the way Claude Code is set up on Windows: the setting, then bin/bash next to git on the PATH', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const { gitBash } = require('../lib/check')._internal;
   const fs = require('fs');
   const path = require('path');

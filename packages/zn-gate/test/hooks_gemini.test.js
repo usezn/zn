@@ -198,7 +198,7 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
 });
 
-test('install (user) backs up, keeps every other setting and hook, and uninstall removes only zn', { skip: process.platform === 'win32' }, (t) => {
+test('install (user) backs up, keeps every other setting and hook, and uninstall removes only zn', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const home = tempDir(t, 'zn-gem-home-');
   const file = settingsOf(home);
   fs.mkdirSync(path.dirname(file), { recursive: true });

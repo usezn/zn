@@ -45,7 +45,7 @@ function documentedSubcommands() {
   return found;
 }
 
-test('every zn-gate subcommand named in docs/*.md exists in the CLI help', { skip: !present }, () => {
+test('every zn-gate subcommand named in docs/*.md exists in the CLI help', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0);
   const listed = new Set();

@@ -9,7 +9,7 @@ const { getAdapter } = require('../lib/agents');
 const { tempDir } = require('./helpers/tmp');
 
 const agy = getAdapter('antigravity');
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' };
 
 // Writes a fake hook script into a temporary folder and returns the command that runs it.
 function fake(t, body) {

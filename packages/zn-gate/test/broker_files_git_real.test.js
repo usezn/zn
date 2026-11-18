@@ -30,7 +30,7 @@ function initRepo() {
   return repo;
 }
 
-test('gitStatusOf: an existing file in a folder outside any repository is outside', { skip: !haveGit }, () => {
+test('gitStatusOf: an existing file in a folder outside any repository is outside', { skip: !haveGit && 'git is not installed' }, () => {
   const plain = tmp();
   try {
     if (git(plain, 'rev-parse', '--show-toplevel').status === 0) return; // the temp folder sits inside a repository
@@ -40,14 +40,14 @@ test('gitStatusOf: an existing file in a folder outside any repository is outsid
   } finally { rm(plain); }
 });
 
-test('gitStatusOf: a tracked file is tracked', { skip: !haveGit }, () => {
+test('gitStatusOf: a tracked file is tracked', { skip: !haveGit && 'git is not installed' }, () => {
   const repo = initRepo();
   try {
     assert.equal(gitStatusOf(path.join(repo, 'tracked.txt')), 'tracked');
   } finally { rm(repo); }
 });
 
-test('gitStatusOf: an existing ignored file is ignored', { skip: !haveGit }, () => {
+test('gitStatusOf: an existing ignored file is ignored', { skip: !haveGit && 'git is not installed' }, () => {
   const repo = initRepo();
   try {
     fs.writeFileSync(path.join(repo, 'token.secret'), 'x');
@@ -55,7 +55,7 @@ test('gitStatusOf: an existing ignored file is ignored', { skip: !haveGit }, () 
   } finally { rm(repo); }
 });
 
-test('gitStatusOf: names that do not exist yet follow the ignore rules', { skip: !haveGit }, () => {
+test('gitStatusOf: names that do not exist yet follow the ignore rules', { skip: !haveGit && 'git is not installed' }, () => {
   const repo = initRepo();
   try {
     assert.equal(gitStatusOf(path.join(repo, 'new', 'deep', 'token.secret')), 'ignored');
@@ -64,7 +64,7 @@ test('gitStatusOf: names that do not exist yet follow the ignore rules', { skip:
   } finally { rm(repo); }
 });
 
-test('gitStatusOf: a relative path is resolved before it is checked', { skip: !haveGit }, () => {
+test('gitStatusOf: a relative path is resolved before it is checked', { skip: !haveGit && 'git is not installed' }, () => {
   const repo = initRepo();
   const cwd = process.cwd();
   try {

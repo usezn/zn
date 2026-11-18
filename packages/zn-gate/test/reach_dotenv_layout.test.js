@@ -37,7 +37,7 @@ test('dotenvFiles ignores .env files in a nested folder and in node_modules', (t
   assert.deepEqual(files[0].secrets, ['APP_API_KEY']);
 });
 
-test('dotenvFiles does not follow a link that points outside the project', { skip: process.platform === 'win32' }, (t) => {
+test('dotenvFiles does not follow a link that points outside the project', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const root = tempDir(t, 'zn-dotenv-layout-');
   const outside = tempDir(t, 'zn-dotenv-outside-');
   const target = path.join(outside, 'real.env');

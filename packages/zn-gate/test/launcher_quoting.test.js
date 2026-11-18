@@ -59,7 +59,7 @@ test('plainPathOk accepts simple paths and refuses spaces and quotes', () => {
   assert.equal(launcher.plainPathOk(''), false);
 });
 
-test('a quoted launcher command is read back by sh as the exact path and the event', { skip: !posix }, () => {
+test('a quoted launcher command is read back by sh as the exact path and the event', { skip: !posix && 'POSIX only (not run on Windows)' }, () => {
   for (const name of NAMES) {
     const file = path.posix.join('/tmp/zn-example', name);
     const cmd = launcher.launcherCommand(file, 'PreToolUse', 'linux');
@@ -69,7 +69,7 @@ test('a quoted launcher command is read back by sh as the exact path and the eve
   }
 });
 
-test('unixScript quotes node and runner paths with spaces and quotes as single words', { skip: !posix }, () => {
+test('unixScript quotes node and runner paths with spaces and quotes as single words', { skip: !posix && 'POSIX only (not run on Windows)' }, () => {
   const script = launcher.unixScript('codex', "/opt/my node/it's/node", '/opt/my "dir"/runner.js');
   assert.ok(script.includes("ZN_NODE='/opt/my node/it'\"'\"'s/node'"), script);
   assert.ok(script.includes("ZN_RUNNER='/opt/my \"dir\"/runner.js'"), script);

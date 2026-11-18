@@ -85,7 +85,7 @@ test('the subcommands printed by `vault --help` and `team --help` have a section
 });
 
 for (const command of documentedCommands()) {
-  test(`zn-gate ${command} --help exits 0 and prints a usage line`, { skip: KNOWN_GAPS.has(command) }, () => {
+  test(`zn-gate ${command} --help exits 0 and prints a usage line`, { skip: KNOWN_GAPS.has(command) && 'known gap: this command prints its usage on stderr and exits 2' }, () => {
     const r = spawnSync(process.execPath, [CLI, ...command.split(' '), '--help'], {
       encoding: 'utf8',
       input: '',

@@ -29,7 +29,7 @@ function orphan(t, agent) {
 }
 
 for (const agent of AGENTS) {
-  test('orphan hook (' + agent + '): a blocking event is blocked with the reason and both fixes', { skip: !posix }, (t) => {
+  test('orphan hook (' + agent + '): a blocking event is blocked with the reason and both fixes', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
     const run = orphan(t, agent);
     const event = [...launcher.blockExit(agent)][0];
     const r = run(event);
@@ -44,7 +44,7 @@ for (const agent of AGENTS) {
     assert.match(r.stderr, /once Node\.js is installed, remove the hooks/);
   });
 
-  test('orphan hook (' + agent + '): an event that cannot block only warns, with the same fixes', { skip: !posix }, (t) => {
+  test('orphan hook (' + agent + '): an event that cannot block only warns, with the same fixes', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
     const run = orphan(t, agent);
     const r = run('PostToolUse');
     assert.equal(r.status, 0, r.stdout + r.stderr);

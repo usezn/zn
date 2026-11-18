@@ -15,7 +15,7 @@ const EDQUOT = os.constants.errno.EDQUOT;
 const quota = (p) => Object.assign(new Error("UNKNOWN: unknown error, write '" + p + "'"), { code: 'UNKNOWN', errno: -EDQUOT, path: p });
 const RAW = /\b(?:UNKNOWN|EACCES|EPERM|ENOENT|ENOSPC|EDQUOT|EROFS)\b|errno|unknown error/;
 
-test('on Linux, an UNKNOWN error with errno -122 is a full quota, in the plain sentence', { skip: typeof EDQUOT !== 'number' }, () => {
+test('on Linux, an UNKNOWN error with errno -122 is a full quota, in the plain sentence', { skip: typeof EDQUOT !== 'number' && 'this system has no EDQUOT error code' }, () => {
   const text = fsErrorText(quota('/home/example-user/.claude/settings.json'), null, {}, 'linux');
   assert.equal(text, 'Your disk quota is used up, so /home/example-user/.claude/settings.json cannot be written. Free some space, then try again.');
   assert.doesNotMatch(text, RAW);
@@ -26,13 +26,13 @@ test('on Linux, an UNKNOWN error with errno -122 is a full quota, in the plain s
   assert.match(fsErrorText(quota('/x/y'), null, { ZN_VERBOSE: '1' }, 'linux'), /^\[EDQUOT\] Your disk quota is used up, so \/x\/y/);
 });
 
-test('humanError on Linux uses the quota sentence instead of the raw Node message', { skip: typeof EDQUOT !== 'number' || process.platform !== 'linux' }, () => {
+test('humanError on Linux uses the quota sentence instead of the raw Node message', { skip: (typeof EDQUOT !== 'number' || process.platform !== 'linux') && 'Linux only, and needs the EDQUOT error code' }, () => {
   const text = humanError(quota('/x/.zn/config.json'), {});
   assert.match(text, /^Your disk quota is used up, so \/x\/\.zn\/config\.json cannot be written/);
   assert.doesNotMatch(text, RAW);
 });
 
-test('the quota mapping is for Linux only; other platforms and other UNKNOWN errnos are left alone', { skip: typeof EDQUOT !== 'number' }, () => {
+test('the quota mapping is for Linux only; other platforms and other UNKNOWN errnos are left alone', { skip: typeof EDQUOT !== 'number' && 'this system has no EDQUOT error code' }, () => {
   for (const platform of ['darwin', 'win32']) {
     assert.equal(fsErrorText(quota('/x/y'), null, {}, platform), null, platform);
   }
@@ -47,7 +47,7 @@ test('a full disk (ENOSPC) keeps its sentence on every platform', () => {
   assert.equal(fsErrorText(e, 'the vault', {}, 'win32'), 'The disk that holds the vault is full. Free some space, then try again.');
 });
 
-test('vault: a full disk or a full quota is said in plain words, naming only "the vault"', { skip: typeof EDQUOT !== 'number' || process.platform !== 'linux' }, () => {
+test('vault: a full disk or a full quota is said in plain words, naming only "the vault"', { skip: (typeof EDQUOT !== 'number' || process.platform !== 'linux') && 'Linux only, and needs the EDQUOT error code' }, () => {
   const full = Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', path: '/home/example-user/.zn/vault/.secrets.age.123.abc.zn-tmp' });
   assert.equal(vaultFsMessage(full), 'The disk that holds the vault is full. Free some space, then try again.');
   assert.equal(vaultFsMessage(quota('/home/example-user/.zn/vault/secrets.age')), 'Your disk quota is used up, so the vault cannot be written. Free some space, then try again.');

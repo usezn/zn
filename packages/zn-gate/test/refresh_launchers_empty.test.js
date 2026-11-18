@@ -39,7 +39,7 @@ test('refreshLaunchers: a launcher folder that cannot be read gives an empty lis
   assert.deepEqual(refresh.refreshLaunchers({ env: c.env, runnerPath: c.runner }), []);
 });
 
-test('refreshLaunchers: a launcher folder without read permission gives an empty list', { skip: !posix || (process.getuid && process.getuid() === 0) }, (t) => {
+test('refreshLaunchers: a launcher folder without read permission gives an empty list', { skip: (!posix || (process.getuid && process.getuid() === 0)) && 'POSIX only, and not as root' }, (t) => {
   const c = setup(t);
   fs.mkdirSync(c.hookDir, { recursive: true });
   fs.chmodSync(c.hookDir, 0o000);

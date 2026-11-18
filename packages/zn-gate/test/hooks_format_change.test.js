@@ -150,7 +150,7 @@ test('the launcher script names the hook it serves for the runner', () => {
   assert.ok(win.includes("$env:ZN_HOOK_EVENT = 'PreToolUse'; "), 'the Windows script sets the event');
 });
 
-test('a real launcher blocks an unknown event on its PreToolUse hook', { skip: process.platform === 'win32' }, () => {
+test('a real launcher blocks an unknown event on its PreToolUse hook', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   const launcher = require('../lib/agents/launcher');
   const file = launcher.writeLauncher('claude-code', process.execPath, RUNNER, { home });
   const go = (event) => spawnSync('/bin/sh', [file, event], {

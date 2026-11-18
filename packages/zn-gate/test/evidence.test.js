@@ -198,7 +198,7 @@ test('evidence dashboard - listens on loopback only and serves the escaping rend
   }
 });
 
-test('evidence ledger - directory is 0700 and file is 0600 on POSIX', { skip: process.platform === 'win32' }, () => {
+test('evidence ledger - directory is 0700 and file is 0600 on POSIX', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-mode-'));
   const ledgerDir = path.join(tmpDir, 'zn');
   const ledger = path.join(ledgerDir, 'evidence.jsonl');

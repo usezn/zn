@@ -199,7 +199,7 @@ function plantUtilityModule(t) {
   return marker;
 }
 
-test('real Windows: a module planted in the user Documents folder does not change the ACL checks, the hook script, the ZCode launcher or the vault ACL read', { skip: !realOn }, (t) => {
+test('real Windows: a module planted in the user Documents folder does not change the ACL checks, the hook script, the ZCode launcher or the vault ACL read', { skip: !realOn && 'needs Windows and ZN_WIN_REAL_CHAIN set' }, (t) => {
   const marker = plantUtilityModule(t);
   const ps = exe.systemPowerShell();
   const root = path.win32.dirname(path.win32.dirname(path.win32.dirname(path.win32.dirname(ps))));

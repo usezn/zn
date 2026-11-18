@@ -274,7 +274,7 @@ test('windows: cursor and gemini also print their deny JSON, call zn.cmd and lea
   }
 });
 
-test('windows (real PowerShell): a launcher whose Node.js is gone answers Cursor and Gemini with deny JSON and exit 0', { skip: process.platform !== 'win32' }, (t) => {
+test('windows (real PowerShell): a launcher whose Node.js is gone answers Cursor and Gemini with deny JSON and exit 0', { skip: process.platform !== 'win32' && 'Windows only' }, (t) => {
   const { windowsCommandScript } = require('../lib/shell-quote');
   for (const [id, ev, field] of [['cursor', 'beforeShellExecution', 'permission'], ['gemini', 'BeforeTool', 'decision']]) {
     const home = tempDir(t, 'zn-more-launchers-winps-');

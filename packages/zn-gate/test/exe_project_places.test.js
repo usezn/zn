@@ -12,7 +12,7 @@ const path = require('path');
 const exe = require('../lib/exe');
 const { tempDir } = require('./helpers/tmp');
 
-const posix = { skip: process.platform === 'win32' };
+const posix = { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' };
 
 // A temporary git repository (an empty .git folder is enough) with a src/ folder, and a separate home folder.
 function repo(t) {

@@ -36,7 +36,7 @@ function hookCommand(env, home) {
   return data.hooks.PreToolUse[0].hooks[0].command;
 }
 
-test('claude-code: uninstalling one profile keeps the launcher the other profile uses', { skip: !posix }, (t) => {
+test('claude-code: uninstalling one profile keeps the launcher the other profile uses', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const { home, a, b, file } = profiles(t);
   assert.ok(fs.existsSync(file));
   assert.equal(claude.uninstall({ env: a, home, mcp: false }).removed, 1);
@@ -46,14 +46,14 @@ test('claude-code: uninstalling one profile keeps the launcher the other profile
   assert.notEqual(r.status, 127, r.stderr);
 });
 
-test('claude-code: after one profile is uninstalled, check still says the other is protected', { skip: !posix }, async (t) => {
+test('claude-code: after one profile is uninstalled, check still says the other is protected', { skip: !posix && 'POSIX only (not run on Windows)' }, async (t) => {
   const { home, a, b } = profiles(t);
   claude.uninstall({ env: a, home, mcp: false });
   const r = (await check({ home, env: b, cwd: tempDir(t, 'zn-shared-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'protected', r.problem);
 });
 
-test('claude-code: a hook that points at a missing launcher is reported as not protected, with the fix', { skip: !posix }, async (t) => {
+test('claude-code: a hook that points at a missing launcher is reported as not protected, with the fix', { skip: !posix && 'POSIX only (not run on Windows)' }, async (t) => {
   const { home, b, file } = profiles(t);
   fs.unlinkSync(file);
   const r = (await check({ home, env: b, cwd: tempDir(t, 'zn-shared-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
@@ -62,7 +62,7 @@ test('claude-code: a hook that points at a missing launcher is reported as not p
   assert.match(r.fix, /zn hooks install claude-code/);
 });
 
-test('the machine-wide uninstall (removeLauncher) still removes the launcher', { skip: !posix }, (t) => {
+test('the machine-wide uninstall (removeLauncher) still removes the launcher', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const { home, a, file } = profiles(t);
   claude.uninstall({ env: a, home, mcp: false, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);

@@ -91,7 +91,7 @@ test('check --json: valid JSON and exit 1 when an agent config is malformed', (t
 
 // Skipped on Windows: the nested path reuses an absolute path (a drive letter cannot sit inside a path component)
 // and symlinkSync needs extra privileges there. The replacement logic is the same on every platform.
-test('toJson hides a home whose real path contains it (longest form replaced first)', { skip: process.platform === 'win32' }, () => {
+test('toJson hides a home whose real path contains it (longest form replaced first)', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   const fsm = require('node:fs');
   const osm = require('node:os');
   const pathm = require('node:path');

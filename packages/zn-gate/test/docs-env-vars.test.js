@@ -40,11 +40,11 @@ function sourceText() {
   return out;
 }
 
-test('docs name at least one ZN_ variable', { skip: !present }, () => {
+test('docs name at least one ZN_ variable', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   assert.ok(docNames().length > 0);
 });
 
-test('every ZN_ variable in the docs is read in lib/ or bin/', { skip: !present }, () => {
+test('every ZN_ variable in the docs is read in lib/ or bin/', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   const src = sourceText();
   const missing = docNames().filter(
     (n) => !DOCS_ONLY.has(n) && !new RegExp('\\b' + n + '\\b').test(src)
@@ -52,7 +52,7 @@ test('every ZN_ variable in the docs is read in lib/ or bin/', { skip: !present 
   assert.deepStrictEqual(missing, [], 'documented but never read: ' + missing.join(', '));
 });
 
-test('the docs-only list holds no stale names', { skip: !present }, () => {
+test('the docs-only list holds no stale names', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   const src = sourceText();
   const names = new Set(docNames());
   for (const n of DOCS_ONLY) {

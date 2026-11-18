@@ -60,7 +60,7 @@ test('powershellExe names the default install folder for a command written for W
   assert.equal(sq.powershellExe('linux'), 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe');
 });
 
-test('powershellExe("win32") without a system PowerShell fails with the documented text', { skip: process.platform === 'win32' }, () => {
+test('powershellExe("win32") without a system PowerShell fails with the documented text', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   assert.throws(() => sq.powershellExe('win32'), (e) =>
     e instanceof Error &&
     e.message.startsWith('zn: the Windows PowerShell (System32\\WindowsPowerShell\\v1.0\\powershell.exe) was not found under the Windows folder, so no hook was written.') &&

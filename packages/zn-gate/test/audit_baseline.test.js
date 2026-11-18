@@ -321,7 +321,7 @@ test('past the per-folder cap no file is dropped: the rest counts as one entry, 
   assert.ok(d.changed.length + d.added.length + d.removed.length > 0);
 });
 
-test('a plugin or rules folder that exists but cannot be listed is an entry of its own, not an empty folder', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) }, (t) => {
+test('a plugin or rules folder that exists but cannot be listed is an entry of its own, not an empty folder', { skip: (process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0)) && 'POSIX only, and not as root' }, (t) => {
   const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
   const before = extractSurface(dir);
   assert.ok(before['.amazonq/rules/team/style.md#file']);
@@ -343,7 +343,7 @@ test('rule files deep in .amazonq/rules are recorded; a folder below the search 
   assert.ok(Object.keys(s).some((k) => k.startsWith('.amazonq/rules/a/b/c/d/e/f/g/h') && k.endsWith('#unreadable')), 'past the depth is recorded');
 });
 
-test('a symlinked rules subfolder is followed inside the project and recorded when it leaves it', { skip: process.platform === 'win32' }, (t) => {
+test('a symlinked rules subfolder is followed inside the project and recorded when it leaves it', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = project(t, { 'docs/rules/team.md': '# Team\n', '.amazonq/rules/own.md': '# Own\n' });
   fs.symlinkSync(path.join(dir, 'docs/rules'), path.join(dir, '.amazonq/rules/linked'));
   const outside = tempDir(t, 'zn-baseline-out-');
@@ -367,7 +367,7 @@ test('past the cap a content change is found even with the same size and the old
   assert.notEqual(extractSurface(dir)['.opencode/plugin#over-cap'], before);
 });
 
-test('links back to a folder already walked are recorded once and not walked again', { skip: process.platform === 'win32' }, (t) => {
+test('links back to a folder already walked are recorded once and not walked again', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
   const rules = path.join(dir, '.amazonq/rules');
   for (let i = 0; i < 10; i++) fs.symlinkSync(rules, path.join(rules, 'loop' + i));

@@ -12,7 +12,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { tempDir } = require('./helpers/tmp');
 
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' };
 
 test('the project plugin never starts a zn or node from a relative or empty PATH entry', skip, async (t) => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });

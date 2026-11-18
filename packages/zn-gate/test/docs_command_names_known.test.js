@@ -80,7 +80,7 @@ test('the parsers read help entries and bash blocks only', () => {
   }
 });
 
-test('docs command lines use commands listed in the help output', { skip: !fs.existsSync(docsDir) }, () => {
+test('docs command lines use commands listed in the help output', { skip: !fs.existsSync(docsDir) && 'the docs and files it reads are not in this checkout' }, () => {
   const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0);
   const known = helpCommands(r.stdout);

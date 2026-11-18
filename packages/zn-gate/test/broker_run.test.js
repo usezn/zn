@@ -44,7 +44,7 @@ test('marker names: valid, reserved and invalid', () => {
   assert.equal(markers.substitute('x __ZN_A__ __ZN_B__', new Map([['A', '1']])), 'x 1 __ZN_B__');
 });
 
-test('a program inside the project is refused, also when the project is reached through a symlink', { skip: process.platform === 'win32' }, () => {
+test('a program inside the project is refused, also when the project is reached through a symlink', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   // Under the package, not the temp dir: programs in the temp dir are refused anyway.
   const base = fs.mkdtempSync(path.join(__dirname, 'zn-exe-'));
   try {
@@ -256,7 +256,7 @@ test('zn run refuses proxy-mode secrets, unknown secrets and agent-planted binar
 
 // A Windows folder has a long and, often, a short 8.3 name: a binary planted in the temp folder is refused whichever
 // of the two names the PATH entry uses.
-test('zn run refuses a binary planted in the temp folder through its long and its short Windows name', { skip: process.platform !== 'win32' }, async (t) => {
+test('zn run refuses a binary planted in the temp folder through its long and its short Windows name', { skip: process.platform !== 'win32' && 'Windows only' }, async (t) => {
   const { execFileSync } = require('node:child_process');
   const dir = tempDir(t, 'zn-plant-name-');
   fs.writeFileSync(path.join(dir, 'psql.cmd'), '@echo %*\r\n');
@@ -300,7 +300,7 @@ test('zn run refuses a binary planted in the temp folder when TMPDIR, TEMP and T
   }
 });
 
-test('on Windows the system temp folder and the profile temp folder are always among the temp folders', { skip: process.platform !== 'win32' }, () => {
+test('on Windows the system temp folder and the profile temp folder are always among the temp folders', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
   const roots = markers.tempRoots().map((r) => r.toLowerCase());
   const systemTemp = fs.realpathSync.native('\\\\?\\GLOBALROOT\\SystemRoot\\Temp').toLowerCase();
   assert.ok(roots.includes(systemTemp), systemTemp + ' not in ' + roots.join(', '));
@@ -308,7 +308,7 @@ test('on Windows the system temp folder and the profile temp folder are always a
   assert.ok(roots.includes(profileTemp), profileTemp + ' not in ' + roots.join(', '));
 });
 
-test('on POSIX the fixed system temp folders are always among the temp folders', { skip: process.platform === 'win32' }, () => {
+test('on POSIX the fixed system temp folders are always among the temp folders', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   const roots = markers.tempRoots();
   for (const d of ['/tmp', '/var/tmp', '/dev/shm']) {
     if (fs.existsSync(d)) assert.ok(roots.includes(fs.realpathSync.native(d)), d + ' not in ' + roots.join(', '));

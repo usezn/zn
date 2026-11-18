@@ -28,7 +28,7 @@ test('tempRoots includes the real path of os.tmpdir()', () => {
   assert.ok(roots.map(norm).includes(norm(real)), real + ' not in ' + roots.join(', '));
 });
 
-test('on POSIX /tmp resolves to one of the temp folders', { skip: process.platform === 'win32' || !fs.existsSync('/tmp') }, () => {
+test('on POSIX /tmp resolves to one of the temp folders', { skip: (process.platform === 'win32' || !fs.existsSync('/tmp')) && 'POSIX only, and needs /tmp' }, () => {
   const roots = m.tempRoots();
   const real = fs.realpathSync.native('/tmp');
   assert.ok(roots.includes(real), real + ' not in ' + roots.join(', '));

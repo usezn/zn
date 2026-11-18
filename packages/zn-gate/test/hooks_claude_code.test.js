@@ -864,7 +864,7 @@ test('policy helpers', () => {
   assert.equal(scan.operator, '|');
 });
 
-test('install / uninstall write and remove only our hooks, with backups', { skip: process.platform === 'win32' }, (t) => {
+test('install / uninstall write and remove only our hooks, with backups', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const home = tempDir(t, 'zn-cc-');
   const file = path.join(home, '.claude', 'settings.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1307,7 +1307,7 @@ test('MCP PreToolUse: a clean call is allowed (no opinion), and PII checks can b
   assert.equal(noPii.output, null);
 });
 
-test('install writes the new PreToolUse matcher, replaces an old exact-list one, and uninstall removes it', { skip: process.platform === 'win32' }, (t) => {
+test('install writes the new PreToolUse matcher, replaces an old exact-list one, and uninstall removes it', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const home = tempDir(t, 'zn-cc-mcp-');
   const file = path.join(home, '.claude', 'settings.json');
   const env = {};
@@ -1416,7 +1416,7 @@ test('vault call: a project .mcp.json with the bare `zn secrets-mcp` is checked 
   }
 });
 
-test('vault call: a user-scope "secrets" server is zn\'s only with this Node.js and this CLI by absolute path', { skip: process.platform === 'win32' }, async (t) => {
+test('vault call: a user-scope "secrets" server is zn\'s only with this Node.js and this CLI by absolute path', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const dir = tmpProject(t);
   const bin = path.join(dir, 'bin');
   const marker = path.join(dir, 'zn-ran');
@@ -1451,7 +1451,7 @@ test('vault call: a user-scope "secrets" server is zn\'s only with this Node.js 
   assert.equal(fs.existsSync(marker), false, 'the project zn never ran');
 });
 
-test('vault call: the plugin\'s own zn-gate copy recognizes the server registered from npm; a project copy never counts', { skip: process.platform === 'win32' }, (t) => {
+test('vault call: the plugin\'s own zn-gate copy recognizes the server registered from npm; a project copy never counts', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   // The plugin repository loads zn-gate from vendor/zn-gate, while `zn hooks install claude-code` registered the
   // npm package's bin/cli.js: the vendored adapter must still see that server as zn's.
   const root = tempDir(t, 'zn-ccvendor-');
@@ -1505,7 +1505,7 @@ test('project install leaves an unreadable .mcp.json as it is and says so', (t) 
   }
 });
 
-test('install and uninstall start claude with only the PATH entries outside the project (a shebang never picks a project node)', { skip: process.platform === 'win32' }, (t) => {
+test('install and uninstall start claude with only the PATH entries outside the project (a shebang never picks a project node)', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const root = tempDir(t, 'zn-ccshebang-');
   const project = path.join(root, 'project');
   const projBin = path.join(project, 'bin');
@@ -1708,7 +1708,7 @@ test('mcp server kind: a server given with --mcp-config (file or JSON) revokes t
   assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', '{ not json']] }), null);
 });
 
-test('mcp server kind: the real process lookup finds --mcp-config of an ancestor (Linux)', { skip: process.platform !== 'linux' }, (t) => {
+test('mcp server kind: the real process lookup finds --mcp-config of an ancestor (Linux)', { skip: process.platform !== 'linux' && 'Linux only' }, (t) => {
   const dir = tmpProject(t);
   const cfg = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
   const file = path.join(dir, 'extra.json');

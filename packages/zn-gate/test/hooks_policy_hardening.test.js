@@ -196,7 +196,7 @@ test('secrets_render_file never writes agent settings, and asks before a credent
   assert.equal(fs.readFileSync(path.join(proj, '.aws', 'credentials'), 'utf8'), 'token=' + NPM + '\n');
 });
 
-test('an approved overwrite of a file with other hard links is refused, and the other name is untouched', { skip: process.platform === 'win32' }, async () => {
+test('an approved overwrite of a file with other hard links is refused, and the other name is untouched', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async () => {
   const { home, proj } = tmpHome();
   fs.writeFileSync(path.join(proj, '.gitignore'), '*.rc\n');
   fs.writeFileSync(path.join(proj, 'npmrc.tpl'), 'token=__ZN_NPM_TOKEN__\n');

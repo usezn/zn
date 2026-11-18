@@ -396,7 +396,7 @@ test('check: a setup for one project only is reported, not run, and not counted 
   assert.match(s, /set up only for one project/);
 });
 
-test('check: a project file that is a FIFO or a symlink is not read, and relative PATH entries are ignored', { skip: process.platform === 'win32' }, async (t) => {
+test('check: a project file that is a FIFO or a symlink is not read, and relative PATH entries are ignored', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const home = tempDir(t, 'zn-check-fifo-');
   const proj = tempDir(t, 'zn-check-fiforepo-');
   fs.mkdirSync(path.join(proj, '.codex'), { recursive: true });
@@ -767,7 +767,7 @@ test('check: on Windows a Claude Code plugin hook counts only when it runs with 
   assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
 });
 
-test('check: a plugin hook is NOT protected, and nothing it names runs, when its shell is not a system shell, it uses a pattern, or its script links out of the plugin', { skip: process.platform === 'win32' }, async (t) => {
+test('check: a plugin hook is NOT protected, and nothing it names runs, when its shell is not a system shell, it uses a pattern, or its script links out of the plugin', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const hooksJson = (cmd) => JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: cmd, onFailure: 'block' }] }] } });
   const S = '"${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code';
   const project = tempDir(t, 'zn-check-strict-proj-');
@@ -804,7 +804,7 @@ test('check: a plugin hook is NOT protected, and nothing it names runs, when its
 const REPO_PLUGIN = path.join(__dirname, '..', '..', '..', 'plugins', 'zn-gate');
 const { CLAUDE_PRE_COMMAND, claudePluginRun } = require('../lib/check')._internal;
 
-test('check: only the PreToolUse hook the plugin ships counts; a decoy script in the plugin is not run and is not protected', { skip: process.platform === 'win32' }, async (t) => {
+test('check: only the PreToolUse hook the plugin ships counts; a decoy script in the plugin is not run and is not protected', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const marker = path.join(tempDir(t, 'zn-check-decoy-mark-'), 'ran.txt');
   const noop = (root) => fs.writeFileSync(path.join(root, 'scripts', 'noop.sh'), '#!/bin/sh\necho noop >> ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
   const cmd = (c) => pluginHooks({ command: c });
@@ -834,7 +834,7 @@ test('check: only the PreToolUse hook the plugin ships counts; a decoy script in
   assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the decoy script or the launcher of a refused manifest');
 });
 
-test('check: the plugin\'s exact PreToolUse command is what runs; a zn-node.sh that answers nothing is not protected', { skip: process.platform === 'win32' }, async (t) => {
+test('check: the plugin\'s exact PreToolUse command is what runs; a zn-node.sh that answers nothing is not protected', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const home = tempDir(t, 'zn-check-inert-');
   const marker = path.join(tempDir(t, 'zn-check-inert-mark-'), 'ran.txt');
   const root = fakePlugin(home, launcher({ marker }));
@@ -853,7 +853,7 @@ test('check: the plugin\'s exact PreToolUse command is what runs; a zn-node.sh t
   assert.ok(fs.existsSync(marker), 'the manifest command did not start the plugin launcher');
 });
 
-test('check: the published plugin manifest with the real zn-node.sh is protected and verified', { skip: process.platform === 'win32' }, async (t) => {
+test('check: the published plugin manifest with the real zn-node.sh is protected and verified', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const home = tempDir(t, 'zn-check-published-');
   const published = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
   const root = fakePlugin(home, launcher(), null, { manifest: published });
@@ -866,7 +866,7 @@ test('check: the published plugin manifest with the real zn-node.sh is protected
   assert.equal(r.verified, true);
 });
 
-test('check: run from a subfolder of a project with its bin/ on the PATH, the plugin hook does not start the project node', { skip: process.platform === 'win32' }, async (t) => {
+test('check: run from a subfolder of a project with its bin/ on the PATH, the plugin hook does not start the project node', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const home = tempDir(t, 'zn-check-subdir-');
   const project = tempDir(t, 'zn-check-subdir-repo-');
   fs.mkdirSync(path.join(project, '.git'));
@@ -977,7 +977,7 @@ test('check: no Cursor plugin, or another plugin in Cursor\'s plugin folder, lea
   assert.equal(r.state, 'not-set-up');
 });
 
-test('check never starts a node from the project, node_modules or a link into them, also with no plugin (node version probe)', { skip: process.platform === 'win32' }, async (t) => {
+test('check never starts a node from the project, node_modules or a link into them, also with no plugin (node version probe)', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const { resolveHookNode } = require('../lib/check')._internal;
   const project = tempDir(t, 'zn-check-probe-proj-');
   fs.mkdirSync(path.join(project, '.git'));
@@ -1008,7 +1008,7 @@ test('check never starts a node from the project, node_modules or a link into th
   assert.equal(fs.existsSync(marker), false, 'zn-gate check started a node from the project, node_modules or a link into them');
 });
 
-test('check: from the home folder, or a dotfiles home with git, a Node.js only in nvm or volta counts', { skip: process.platform === 'win32' }, (t) => {
+test('check: from the home folder, or a dotfiles home with git, a Node.js only in nvm or volta counts', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const { resolveHookNode } = require('../lib/check')._internal;
   for (const [tool, dir] of [['nvm', path.join('.nvm', 'versions', 'node', 'v22.0.0', 'bin')], ['volta', path.join('.volta', 'bin')]]) {
     for (const dotfiles of [false, true]) {

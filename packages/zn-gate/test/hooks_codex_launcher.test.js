@@ -155,7 +155,7 @@ test('codex uninstall removes the launcher; a project install writes none', { sk
   assert.equal(fs.existsSync(file), false);
 });
 
-test('codex install on Windows: a user install writes no sh launcher, each event gets a PowerShell command, uninstall and a project install', { skip: posix }, (t) => {
+test('codex install on Windows: a user install writes no sh launcher, each event gets a PowerShell command, uninstall and a project install', { skip: posix && 'Windows only' }, (t) => {
   const { env, home, data, file } = setup(t, process.execPath, false);
   assert.equal(fs.existsSync(file), false, 'no sh launcher on Windows');
   for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'UserPromptSubmit', 'SessionStart', 'SubagentStart', 'Stop']) {

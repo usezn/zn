@@ -106,7 +106,7 @@ test('zn unlock with the system keychain refuses without an interactive terminal
   assert.notEqual(r.status, 0);
 });
 
-test('agentAncestor: a real process started through a program called claude is found; one called code is not', { skip: process.platform === 'win32' }, (t) => {
+test('agentAncestor: a real process started through a program called claude is found; one called code is not', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tempDir(t, 'zn-ancestry-');
   const probe = path.join(dir, 'probe.js');
   fs.writeFileSync(probe, "const { spawnSync } = require('child_process');\n" +

@@ -64,7 +64,7 @@ test('claude-code install: a user install writes the launcher and one command pe
   assert.match(text, /^ZN_RUNNER='.*runner\.js'$/m);
 });
 
-test('claude-code launcher: with the recorded Node.js it runs the real hook and denies .env', { skip: !posix }, (t) => {
+test('claude-code launcher: with the recorded Node.js it runs the real hook and denies .env', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const { file } = setup(t, process.execPath);
   const dir = tempDir(t, 'zn-claude-launcher-proj-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk-test-EXAMPLE0000000000000000\n');
@@ -74,7 +74,7 @@ test('claude-code launcher: with the recorded Node.js it runs the real hook and 
   assert.match(r.stdout, /"permissionDecision":\s*"deny"/);
 });
 
-test('claude-code launcher: Node.js gone and no zn on PATH: PreToolUse and the prompt events block with exit 2', { skip: !posix }, (t) => {
+test('claude-code launcher: Node.js gone and no zn on PATH: PreToolUse and the prompt events block with exit 2', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const { file } = setup(t, GONE);
   const bin = emptyBin(t);
   for (const ev of ['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) {
@@ -91,7 +91,7 @@ test('claude-code launcher: Node.js gone and no zn on PATH: PreToolUse and the p
   assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn(?:\.cmd)? hooks install claude-code/);
 });
 
-test('claude-code launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: !posix }, (t) => {
+test('claude-code launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const { file } = setup(t, GONE);
   const bin = tempDir(t, 'zn-claude-launcher-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -101,7 +101,7 @@ test('claude-code launcher: recorded Node.js gone but zn and node on an absolute
   assert.doesNotMatch(r.stdout, /VIA_ZN/, 'a zn found on the PATH is never run');
 });
 
-test('claude-code: reinstall replaces the launcher, uninstall removes it; a project install writes none', { skip: !posix }, (t) => {
+test('claude-code: reinstall replaces the launcher, uninstall removes it; a project install writes none', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const { env, home, file, data } = setup(t, process.execPath);
   assert.equal(data.hooks.PreToolUse.length, 1);
   claude.install({ env, home, nodePath: GONE, runnerPath: RUNNER, mcp: false });
@@ -126,7 +126,7 @@ test('claude-code windows: the launcher path is written with forward slashes for
   assert.ok(cfg.isOurs(cmd, 'claude-code'));
 });
 
-test('check: the Node.js recorded in the launcher is gone and nothing else can run the hook: not protected', { skip: !posix }, async (t) => {
+test('check: the Node.js recorded in the launcher is gone and nothing else can run the hook: not protected', { skip: !posix && 'POSIX only (not run on Windows)' }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
   const r = (await check({ home, env: { ...env, PATH: emptyBin(t) }, cwd: tempDir(t, 'zn-claude-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
@@ -135,7 +135,7 @@ test('check: the Node.js recorded in the launcher is gone and nothing else can r
   assert.equal(r.fix, REINSTALL);
 });
 
-test('check: the recorded Node.js is gone and only a zn on the PATH is left: not protected (the launcher does not run it)', { skip: !posix }, async (t) => {
+test('check: the recorded Node.js is gone and only a zn on the PATH is left: not protected (the launcher does not run it)', { skip: !posix && 'POSIX only (not run on Windows)' }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
   const bin = tempDir(t, 'zn-claude-launcher-bin-');
@@ -146,7 +146,7 @@ test('check: the recorded Node.js is gone and only a zn on the PATH is left: not
   assert.match(r.problem, /Node\.js .* is no longer there, so zn now blocks/);
 });
 
-test('check: a launcher script that was deleted is reported', { skip: !posix }, async (t) => {
+test('check: a launcher script that was deleted is reported', { skip: !posix && 'POSIX only (not run on Windows)' }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   fs.unlinkSync(file);
   const r = (await check({ home, env, cwd: tempDir(t, 'zn-claude-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');

@@ -88,7 +88,7 @@ test('permissionAdvice: the shell picks the profile file', () => {
   assert.ok(permissionAdvice({ env: { SHELL: '/bin/zsh' } }).includes('>> ~/.zshrc'));
 });
 
-const posixOnly = { skip: process.platform === 'win32' };
+const posixOnly = { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' };
 
 for (const code of ['EACCES', 'EPERM']) {
   test('permissionFailure: ' + code + ' in the output counts', posixOnly, () => {

@@ -111,7 +111,7 @@ test('openExecutable: a missing file throws a plain ENOENT error', (t) => {
   assert.throws(() => openExecutable(file), { code: 'ENOENT' });
 });
 
-test('openExecutable: a directory is refused', { skip: process.platform === 'win32' }, (t) => {
+test('openExecutable: a directory is refused', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   assert.throws(() => openExecutable(tempDir(t)), (err) => err instanceof Error);
 });
 
@@ -140,7 +140,7 @@ test('verifyOpen: a file rewritten after it was opened reports a change', (t) =>
   assert.equal(verifyOpen(opened, file, opened.fp), 'the program changed after it was checked');
 });
 
-test('verifyOpen: a path swapped for another file reports a different file', { skip: process.platform === 'win32' }, (t) => {
+test('verifyOpen: a path swapped for another file reports a different file', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tempDir(t);
   const file = path.join(dir, 'tool');
   const other = path.join(dir, 'other');
@@ -154,7 +154,7 @@ test('verifyOpen: a path swapped for another file reports a different file', { s
   assert.match(verifyOpen(opened, file, opened.fp), /^the (path now leads to a different file|program changed after it was checked)$/);
 });
 
-test('verifyOpen: a path that disappeared reports a different file', { skip: process.platform === 'win32' }, (t) => {
+test('verifyOpen: a path that disappeared reports a different file', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const file = path.join(tempDir(t), 'tool');
   fs.writeFileSync(file, 'content');
   const opened = openExecutable(file);

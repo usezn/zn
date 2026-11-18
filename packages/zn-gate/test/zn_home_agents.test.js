@@ -66,7 +66,7 @@ test('policy: a ZN_HOME that is the home folder does not protect the whole home 
   assert.equal(policy.writeDenial(path.join(home, 'notes.txt'), { home, cwd: proj, env: { ZN_HOME: home } }), null);
 });
 
-test('policy: a short ZN_HOME such as /zn is protected; only a file system root is not taken', { skip: process.platform === 'win32' }, (t) => {
+test('policy: a short ZN_HOME such as /zn is protected; only a file system root is not taken', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const { home, proj } = setup(t);
   const opts = { home, cwd: proj, env: { ZN_HOME: '/zn' } };
   assert.ok(policy.writeDenial('/zn/config.json', opts), 'write into a short ZN_HOME');
@@ -79,7 +79,7 @@ test('policy: a short ZN_HOME such as /zn is protected; only a file system root 
   }
 });
 
-test('policy: a short Windows ZN_HOME such as C:/zn is protected; a drive root is not taken', { skip: process.platform !== 'win32' }, (t) => {
+test('policy: a short Windows ZN_HOME such as C:/zn is protected; a drive root is not taken', { skip: process.platform !== 'win32' && 'Windows only' }, (t) => {
   const { home, proj } = setup(t);
   const drive = path.parse(proj).root;
   const zh = drive + 'zn';
@@ -134,7 +134,7 @@ test('znStateFile picks the first file in ~/.zn or ZN_HOME, and none otherwise',
   });
 });
 
-test('policy: the deny message names the folder zn really uses', { skip: process.platform === 'win32' }, (t) => {
+test('policy: the deny message names the folder zn really uses', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const { home, proj } = setup(t);
   const plain = policy.writeDenial(path.join(home, '.zn', 'config.json'), { home, cwd: proj, env: {} });
   assert.match(plain, /^zn blocked this: ~\/\.zn is where zn keeps your secrets/);

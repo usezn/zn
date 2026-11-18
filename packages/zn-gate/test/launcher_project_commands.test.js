@@ -59,7 +59,7 @@ test('projectShCommand rejects a bad agent id or event name', () => {
   assert.throws(() => launcher.projectShCommand('codex', 'Pre-Tool'), /bad event name/);
 });
 
-test('projectShCommand parses as shell script for every agent and event', { skip: !posix }, () => {
+test('projectShCommand parses as shell script for every agent and event', { skip: !posix && 'POSIX only (not run on Windows)' }, () => {
   for (const agent of AGENTS) {
     for (const event of [undefined, ...EVENTS]) {
       const cmd = launcher.projectShCommand(agent, event);

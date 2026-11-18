@@ -109,7 +109,7 @@ test('update: a blank file is replaced by the usual style', (t) => {
   assert.equal(read(file), '{\n  "a": 1\n}\n');
 });
 
-test('writeJson: an existing file keeps its permissions; a new file is not world-writable', { skip: process.platform === 'win32' }, (t) => {
+test('writeJson: an existing file keeps its permissions; a new file is not world-writable', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const h = tempDir(t, 'zn-cfgfile-');
   const file = path.join(h, 'private.json');
   put(file, '{}');

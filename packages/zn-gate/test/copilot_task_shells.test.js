@@ -84,7 +84,7 @@ test('an error while checking a task blocks it', () => {
   assert.equal(copilot.commandScan(input, 42).bad, true);
 });
 
-test('a task folder that does not exist yet stays inside a workspace reached through a link', { skip: process.platform === 'win32' }, (t) => {
+test('a task folder that does not exist yet stays inside a workspace reached through a link', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const real = tempDir(t, 'zn-task-real-');
   const linkParent = tempDir(t, 'zn-task-link-');
   const ws = require('path').join(linkParent, 'ws');

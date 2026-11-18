@@ -64,7 +64,7 @@ test('saveKey writes the marker under HOME/.zn/config.json without the key', asy
   });
 });
 
-test('config file is written with mode 0600 and the directory with 0700 on POSIX', { skip: !posix }, async () => {
+test('config file is written with mode 0600 and the directory with 0700 on POSIX', { skip: !posix && 'POSIX only (not run on Windows)' }, async () => {
   await withTempHome(async (home, file) => {
     cloudKey._use(fakeKeychain());
     await cloudKey.saveKey(FAKE_KEY);

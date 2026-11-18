@@ -113,7 +113,7 @@ test('record keeps a day exactly 90 days old and drops the day before it', () =>
   assert.ok(!days.includes(before));
 });
 
-test('record leaves no temporary files and gives the file mode 0600', { skip: process.platform === 'win32' }, () => {
+test('record leaves no temporary files and gives the file mode 0600', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   reset();
   stats.record({ checked: 1 }, { file });
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);

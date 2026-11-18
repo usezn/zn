@@ -44,7 +44,7 @@ test('findProgram: a folder name with spaces works', (t) => {
   assert.equal(_internal.findProgram('zn-fake-tool', { PATH: dir }), path.join(dir, progName('zn-fake-tool')));
 });
 
-test('spawnProgram: the child gets exactly the environment it is given, no extra keys', { skip: isWin }, (t) => {
+test('spawnProgram: the child gets exactly the environment it is given, no extra keys', { skip: isWin && 'POSIX only (not run on Windows)' }, (t) => {
   const env = { ZN_FAKE_ONE: 'one', ZN_FAKE_TWO: 'two' };
   const r = _internal.spawnProgram(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(process.env))'], env, { encoding: 'utf8' });
   assert.equal(r.status, 0);

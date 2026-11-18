@@ -292,7 +292,7 @@ test('writeFileAtomic: the temporary file has an unpredictable name and is opene
 });
 
 // ---- real ACLs (Windows only) -----------------------------------------------------------------------------------
-const real = { skip: process.platform !== 'win32' };
+const real = { skip: process.platform !== 'win32' && 'Windows only' };
 // By full path, so a whoami or icacls from Git for Windows earlier on the PATH is never the one that runs.
 const SYS32 = (name) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', name);
 const icacls = (...args) => {
@@ -338,7 +338,7 @@ test('real Windows: an ancestor that Users can delete from is refused', real, (t
 
 // The whole production chain (profile, Users, drive root) with the real ACLs, no trusted folder. Opt-in: it depends on the
 // machine's own folders (ZN_WIN_REAL_CHAIN=1 is set by the VM job that proves the rule).
-test('real Windows: the production rule accepts a new folder under the user profile', { skip: process.platform !== 'win32' || !process.env.ZN_WIN_REAL_CHAIN }, (t) => {
+test('real Windows: the production rule accepts a new folder under the user profile', { skip: (process.platform !== 'win32' || !process.env.ZN_WIN_REAL_CHAIN) && 'Windows only, and needs ZN_WIN_REAL_CHAIN set' }, (t) => {
   const dir = path.join(os.homedir(), '.zn-test-hooks-' + process.pid, 'hooks');
   t.after(() => fs.rmSync(path.dirname(dir), { recursive: true, force: true }));
   launcher.ensureSafeHookDir(dir, 'win32');

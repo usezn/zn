@@ -61,7 +61,7 @@ function run(t, late) {
   });
 }
 
-test('a timed-out vault request destroys its socket and the process exits by itself', { skip: process.platform === 'win32' }, (t) => {
+test('a timed-out vault request destroys its socket and the process exits by itself', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const r = run(t, false);
   assert.equal(r.error, undefined, 'the process kept running after the deadline: ' + (r.error && r.error.message));
   assert.equal(r.status, 0);
@@ -69,7 +69,7 @@ test('a timed-out vault request destroys its socket and the process exits by its
   assert.match(r.stdout, /EXITED/);
 });
 
-test('an answer that arrives after the deadline is ignored', { skip: process.platform === 'win32' }, (t) => {
+test('an answer that arrives after the deadline is ignored', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const r = run(t, true);
   assert.equal(r.error, undefined, 'the process kept running after the deadline');
   assert.match(r.stdout, /RESULT ZN_LOCKED/);

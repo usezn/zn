@@ -12,7 +12,7 @@ const { _internal } = require('../lib/check');
 
 const posix = process.platform !== 'win32';
 
-test('check: a shell-script hook that blocks and exits before reading a large event is read as a block, not as a hook that could not start', { skip: !posix }, (t) => {
+test('check: a shell-script hook that blocks and exits before reading a large event is read as a block, not as a hook that could not start', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tempDir(t, 'zn-check-epipe-');
   const hook = path.join(dir, 'hook.sh');
   const lines = ['#!/bin/sh', "printf '%s' '{\"permissionDecision\":\"deny\"}'", 'exit 2', ''];

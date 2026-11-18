@@ -42,7 +42,7 @@ function duplicateHeadings(md) {
   return dups;
 }
 
-test('every docs page has unique headings per level', { skip: !fs.existsSync(docsDir) }, () => {
+test('every docs page has unique headings per level', { skip: !fs.existsSync(docsDir) && 'the docs and files it reads are not in this checkout' }, () => {
   const problems = [];
   for (const file of markdownFiles(docsDir)) {
     for (const d of duplicateHeadings(fs.readFileSync(file, 'utf8'))) {

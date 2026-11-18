@@ -76,7 +76,7 @@ test('an empty page is rejected', (t) => {
   assert.deepEqual(check(t, '\n  \n'), ['page is empty']);
 });
 
-test('every page under docs/ has exactly one leading level-one heading', { skip: !fs.existsSync(docsDir) }, () => {
+test('every page under docs/ has exactly one leading level-one heading', { skip: !fs.existsSync(docsDir) && 'the docs and files it reads are not in this checkout' }, () => {
   const files = markdownFiles(docsDir);
   assert.ok(files.length > 0);
   for (const f of files) {

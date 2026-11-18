@@ -20,7 +20,7 @@ function script(p, marker) {
   return p;
 }
 
-test('findProgram: a link into the home folder node_modules is not found, also when zn runs in the home folder', { skip: !posix }, (t) => {
+test('findProgram: a link into the home folder node_modules is not found, also when zn runs in the home folder', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const home = fs.realpathSync(tempDir(t, 'zn-fpp-home-'));
   script(path.join(home, 'node_modules', 'evil', 'cli.js'));
   const bin = path.join(fs.realpathSync(tempDir(t, 'zn-fpp-bin-')), 'bin');
@@ -36,7 +36,7 @@ test('findProgram: a link into the home folder node_modules is not found, also w
   assert.equal(findProgram('npm', { PATH: path.join(prefix, 'bin'), HOME: home }, home), path.join(prefix, 'bin', 'npm'));
 });
 
-test('Claude Code install and uninstall do not run a claude that links into the project', { skip: !posix }, (t) => {
+test('Claude Code install and uninstall do not run a claude that links into the project', { skip: !posix && 'POSIX only (not run on Windows)' }, (t) => {
   const project = fs.realpathSync(tempDir(t, 'zn-fpp-proj-'));
   fs.mkdirSync(path.join(project, '.git'));
   const marker = path.join(fs.realpathSync(tempDir(t, 'zn-fpp-mark-')), 'ran');

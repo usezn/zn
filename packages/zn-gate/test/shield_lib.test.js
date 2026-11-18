@@ -417,7 +417,7 @@ test('a missing uvx points to the uv install page', async () => {
   assert.match(require('../lib/shield').startFailureMessage('foo', { code: 'EMFILE', message: 'boom' }), /Failed to start wrapped server 'foo': boom/);
 });
 
-test('SIGTERM to the shield stops the wrapped server too', { skip: process.platform === 'win32' }, async () => {
+test('SIGTERM to the shield stops the wrapped server too', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async () => {
   const s = startShield();
   s.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
   await s.reply(1);

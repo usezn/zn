@@ -15,7 +15,7 @@ function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cc-fail-'));
 }
 
-test('enable returns null when the parent folder is read-only', { skip: !posix || isRoot }, () => {
+test('enable returns null when the parent folder is read-only', { skip: (!posix || isRoot) && 'POSIX only, and not as root' }, () => {
   const base = tmp();
   try {
     const parent = path.join(base, 'ro');

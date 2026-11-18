@@ -109,7 +109,7 @@ function texts(pathValue) {
   return JSON.parse(r.stdout);
 }
 
-test('without zn on PATH (the npx case) every suggested command is the npx form', { skip: process.platform === 'win32' }, (t) => {
+test('without zn on PATH (the npx case) every suggested command is the npx form', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const empty = tempDir(t, 'zn-nopath-');
   const out = texts(empty);
   assert.equal(out.length, SENTENCES.length);
@@ -121,7 +121,7 @@ test('without zn on PATH (the npx case) every suggested command is the npx form'
   assert.match(out[SENTENCES.length - 1], NPX);
 });
 
-test('with zn on PATH the short form is used', { skip: process.platform === 'win32' }, (t) => {
+test('with zn on PATH the short form is used', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, (t) => {
   const dir = tempDir(t, 'zn-onpath-');
   const bin = path.join(dir, 'zn');
   fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n');

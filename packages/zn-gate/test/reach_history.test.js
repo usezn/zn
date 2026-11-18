@@ -254,7 +254,7 @@ test('usage errors', (t) => {
 });
 
 // A 300 MB history made at run time and never kept. Opt in with ZN_HISTORY_BIG=1: it takes a while.
-test('a 300 MB history is scanned in streaming mode', { skip: process.env.ZN_HISTORY_BIG !== '1' }, (t) => {
+test('a 300 MB history is scanned in streaming mode', { skip: process.env.ZN_HISTORY_BIG !== '1' && 'slow: set ZN_HISTORY_BIG=1 to run' }, (t) => {
   const { home, env } = machine(t);
   const file = path.join(home, '.claude/projects/big/huge.jsonl');
   fs.mkdirSync(path.dirname(file), { recursive: true });

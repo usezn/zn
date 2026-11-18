@@ -14,7 +14,7 @@ const { scanEnvironments } = require('../lib/init');
 const { dispatch } = require('../lib/broker/cli');
 const { tempDir } = require('./helpers/tmp');
 
-const posixOnly = { skip: process.platform === 'win32' };
+const posixOnly = { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' };
 
 test('a path of 260 characters or more on Windows is called too long, not "does not exist"', () => {
   const long = 'C:\\Users\\example-user\\' + 'a'.repeat(250) + '\\settings.json';

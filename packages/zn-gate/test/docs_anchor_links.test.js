@@ -160,7 +160,7 @@ test('a link to a renumbered heading is reported with the new anchor', () => {
   }
 });
 
-test('every anchor link in docs/ names an existing heading', { skip: !fs.existsSync(docsDir) }, () => {
+test('every anchor link in docs/ names an existing heading', { skip: !fs.existsSync(docsDir) && 'the docs and files it reads are not in this checkout' }, () => {
   const files = listMarkdown(docsDir);
   assert.ok(files.length > 0);
   assert.deepStrictEqual(problems(files), []);

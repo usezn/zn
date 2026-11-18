@@ -28,7 +28,7 @@ test('writeFileAtomic creates a file, replaces it and leaves no temp file', () =
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('writeFileAtomic uses mode 0600 by default', { skip: process.platform === 'win32' }, () => {
+test('writeFileAtomic uses mode 0600 by default', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   const dir = tmp();
   try {
     const f = path.join(dir, 'secret.txt');
@@ -60,7 +60,7 @@ test('realTargetOf keeps missing names as typed below an existing directory', ()
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('realTargetOf resolves a symlinked directory, also for a file not yet created', { skip: process.platform === 'win32' }, () => {
+test('realTargetOf resolves a symlinked directory, also for a file not yet created', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, () => {
   const dir = tmp();
   try {
     fs.mkdirSync(path.join(dir, 'real'));
@@ -69,7 +69,7 @@ test('realTargetOf resolves a symlinked directory, also for a file not yet creat
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('gitStatusOf: ignored, tracked and outside', { skip: !haveGit }, () => {
+test('gitStatusOf: ignored, tracked and outside', { skip: !haveGit && 'git is not installed' }, () => {
   const repo = tmp();
   const plain = tmp();
   try {

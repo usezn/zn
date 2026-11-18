@@ -183,7 +183,7 @@ test('the parser finds zn commands in shell blocks and skips output and placehol
   assert.deepEqual(problems({ args: ['run', '--', 'ls', '--whatever'] }, { ...known, phrases: new Set(['run']) }), []);
 });
 
-test('docs command lines use subcommands and options that the CLI has', { skip: !present }, () => {
+test('docs command lines use subcommands and options that the CLI has', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   const known = cliKnowledge();
   assert.ok(known.phrases.has('init') && known.long.has('--format'), 'CLI knowledge parsed');
   let checked = 0;
@@ -198,7 +198,7 @@ test('docs command lines use subcommands and options that the CLI has', { skip: 
   assert.deepEqual(bad, []);
 });
 
-test('every long option the CLI help prints is named in docs/cli.md', { skip: !present }, () => {
+test('every long option the CLI help prints is named in docs/cli.md', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
   assert.equal(r.status, 0);
   const { HELP } = require('../lib/vault/help');
@@ -208,14 +208,14 @@ test('every long option the CLI help prints is named in docs/cli.md', { skip: !p
   assert.deepEqual(missing, [], 'options printed by the help but not named in docs/cli.md');
 });
 
-test('the unlock defaults in docs/cli.md are the ones the vault uses', { skip: !present }, () => {
+test('the unlock defaults in docs/cli.md are the ones the vault uses', { skip: !present && 'the docs and files it reads are not in this checkout' }, () => {
   const { DEFAULT_TTL_MS, DEFAULT_IDLE_MS } = require('../lib/vault/daemon');
   const cliDoc = fs.readFileSync(path.join(repo, 'docs', 'cli.md'), 'utf8');
   const sentence = 'The defaults are `--ttl ' + DEFAULT_TTL_MS / 3600000 + 'h` and `--idle ' + DEFAULT_IDLE_MS / 60000 + 'm`.';
   assert.ok(cliDoc.includes(sentence), 'docs/cli.md should say: ' + sentence);
 });
 
-test('the env shadow --mode default in the help is the mode the command stores', { skip: !present }, async (t) => {
+test('the env shadow --mode default in the help is the mode the command stores', { skip: !present && 'the docs and files it reads are not in this checkout' }, async (t) => {
   process.env.ZN_STATS = 'off';
   const { HELP } = require('../lib/vault/help');
   const broker = require('../lib/broker/cli');

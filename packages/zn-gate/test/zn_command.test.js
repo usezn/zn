@@ -97,7 +97,7 @@ test('accepts the Path spelling of the variable', () => {
   }
 });
 
-test('a file that is not executable does not count on POSIX', { skip: isWin }, () => {
+test('a file that is not executable does not count on POSIX', { skip: isWin && 'POSIX only (not run on Windows)' }, () => {
   const dir = tempDir();
   try {
     fakeZn(dir, 0o644);
@@ -109,7 +109,7 @@ test('a file that is not executable does not count on POSIX', { skip: isWin }, (
   }
 });
 
-test('an extensionless zn is not a program on Windows', { skip: !isWin }, () => {
+test('an extensionless zn is not a program on Windows', { skip: !isWin && 'Windows only' }, () => {
   const dir = tempDir();
   try {
     fs.writeFileSync(path.join(dir, 'zn'), '#!/bin/sh\n');

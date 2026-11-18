@@ -165,7 +165,7 @@ test('enable is skipped when ~/.zn is open to other users', { skip: !posix && 'P
   }
 });
 
-test('a folder owned by another user is not private (needs root to set up)', { skip: !isRoot }, () => {
+test('a folder owned by another user is not private (needs root to set up)', { skip: !isRoot && 'needs root' }, () => {
   const base = tmp();
   try {
     const zn = path.join(base, '.zn');
@@ -178,7 +178,7 @@ test('a folder owned by another user is not private (needs root to set up)', { s
   }
 });
 
-test('enable is skipped when HOME cannot be written to', { skip: !posix || isRoot }, () => {
+test('enable is skipped when HOME cannot be written to', { skip: (!posix || isRoot) && 'POSIX only, and not as root' }, () => {
   const base = tmp();
   try {
     fs.chmodSync(base, 0o500);

@@ -136,7 +136,7 @@ test('the switch turns the check off', async (t) => {
   }
 });
 
-test('a protected path still wins over the question, and a link to an instruction file asks', { skip: process.platform === 'win32' }, async (t) => {
+test('a protected path still wins over the question, and a link to an instruction file asks', { skip: process.platform === 'win32' && 'POSIX only (not run on Windows)' }, async (t) => {
   const env = setup(t);
   const hooks = await decide(env, 'Write', { file_path: path.join(env.home, '.claude', 'settings.json'), content: '{}' });
   assert.equal(hooks.decision, 'deny');
