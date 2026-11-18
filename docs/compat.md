@@ -421,8 +421,10 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     `/hooks disable` turn the hook off; `zn-gate check` reports them.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
-  - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
-    and on `beforeSubmitPrompt`, so a hook that crashes or times out blocks the
+  - `beforeReadFile` can only allow or deny. `beforeTabFileRead` (the file reads
+    of Tab completion, not of the Agent) is the same hook with the same checks, so
+    `.env` and credential files do not reach the model through Tab either. zn sets
+    `failClosed: true` on both and on `beforeSubmitPrompt`, so a hook that crashes or times out blocks the
     read or the prompt.
   - `beforeMCPExecution` denies an MCP call whose arguments carry a
     `__ZN_<NAME>__` marker or a secret value, and names the kind of secret,
@@ -440,7 +442,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     Cursor documents no neutral answer for these hooks: an `allow` could skip
     Cursor's own approval, and an empty object is not a documented permission
     answer. `zn hooks install cursor` therefore sets `failClosed` on
-    `beforeReadFile` and `beforeSubmitPrompt` only.
+    `beforeReadFile`, `beforeTabFileRead` and `beforeSubmitPrompt` only.
   - `preToolUse` (Write, Delete, Grep) checks the file a call names with the
     same rules as the other tools. Cursor does not document the input keys of
     these tools, so zn looks for the usual names (`file_path`, `path`,

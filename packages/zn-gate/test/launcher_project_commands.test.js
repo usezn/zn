@@ -13,7 +13,7 @@ const launcher = require('../lib/agents/launcher');
 
 const AGENTS = ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity', 'copilot', 'gemini', 'zcode'];
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'PermissionRequest', 'BeforeTool',
-  'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
+  'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeTabFileRead', 'preToolUse', 'postToolUse'];
 
 const posix = process.platform !== 'win32';
 

@@ -10,6 +10,7 @@
  *  Every event's stdin has conversation_id, generation_id, hook_event_name
  *  and workspace_roots, plus:
  *    beforeReadFile        file_path, content     -> {permission: allow|deny, user_message}
+ *    beforeTabFileRead     file_path, content     -> {permission: allow|deny}  (only Tab, not Agent)
  *    beforeShellExecution  command, cwd           -> {permission: allow|deny|ask, user_message, agent_message}
  *    beforeSubmitPrompt    prompt                 -> {continue: bool, user_message}
  *    beforeMCPExecution    tool_name, tool_input, mcp_server_name, command|url
@@ -56,12 +57,12 @@ const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
 const HOOK_TIMEOUT_S = 30;
-const EVENTS = ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'postToolUse', 'preToolUse'];
+const EVENTS = ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeTabFileRead', 'postToolUse', 'preToolUse'];
 const BUILTIN = { Shell: 'bash', Read: 'read', Write: 'write', Edit: 'edit', Grep: 'grep', Glob: 'glob', WebFetch: 'webfetch' };
 // preToolUse covers the built-in tools that can name a file, so the same path checks apply.
 const PRE_TOOL_MATCHER = 'Grep|Write|Delete';
 // Events whose hook must block when it fails (crash, timeout, no output).
-const FAIL_CLOSED = new Set(['beforeReadFile', 'beforeSubmitPrompt']);
+const FAIL_CLOSED = new Set(['beforeReadFile', 'beforeSubmitPrompt', 'beforeTabFileRead']);
 
 function parseMaybeJson(s) {
   if (typeof s !== 'string') return s;
@@ -73,7 +74,8 @@ function normalize(raw) {
   const name = raw.hook_event_name;
   const cwd = raw.cwd || (Array.isArray(raw.workspace_roots) && raw.workspace_roots[0]) || process.cwd();
   const base = { cwd, sessionId: raw.conversation_id || null, raw, hookEvent: name };
-  if (name === 'beforeReadFile') return { ...base, event: 'pre_tool', tool: 'read', toolName: 'Read', input: { path: raw.file_path, texts: [] } };
+  // beforeTabFileRead (Tab completion reads a file, read 2026-11-17) gets the same input as beforeReadFile and, like it, can only allow or deny.
+  if (name === 'beforeReadFile' || name === 'beforeTabFileRead') return { ...base, event: 'pre_tool', tool: 'read', toolName: 'Read', input: { path: raw.file_path, texts: [] } };
   if (name === 'beforeShellExecution') return { ...base, event: 'pre_tool', tool: 'bash', toolName: 'Shell', input: { command: typeof raw.command === 'string' ? raw.command : undefined, texts: [] } };
   if (name === 'beforeSubmitPrompt') return { ...base, event: 'user_prompt', tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
   if (name === 'beforeMCPExecution') {
@@ -133,7 +135,7 @@ function respond(d) {
     // No opinion, not "allow": an allow could skip Cursor's own confirmations.
     return null;
   }
-  if (h === 'beforeReadFile') {
+  if (h === 'beforeReadFile' || h === 'beforeTabFileRead') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn' };
     if (!ev.input.path) return { permission: 'deny', user_message: 'zn: could not read the file this call reads, so zn cannot check it.' };
     if (isPlainAsk(d)) return { permission: 'deny', user_message: askAsDeny('Cursor', d) };

@@ -67,7 +67,7 @@ test('cursor: user install writes the launcher; the events that can deny block, 
   }
   assert.equal(data.hooks.beforeReadFile[0].failClosed, true, 'failClosed stays');
   const bin = tempDir(t, 'zn-more-launchers-bin-');
-  for (const ev of ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']) {
+  for (const ev of ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeTabFileRead', 'preToolUse']) {
     const r = run(file, ev, bin);
     assert.equal(r.status, 2, ev);
     assert.match(r.stderr, winCmdRe(/zn hooks install cursor/));

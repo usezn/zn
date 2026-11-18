@@ -113,7 +113,7 @@ const weird = fc.oneof(
 
 const NAMES = [
   'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'Stop', 'PermissionRequest',
-  'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeMCPExecution', 'preToolUse', 'postToolUse',
+  'beforeReadFile', 'beforeTabFileRead', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeMCPExecution', 'preToolUse', 'postToolUse',
   'tool.execute.before', 'tool.execute.after', 'chat.message',
 ];
 const TOOLS = [

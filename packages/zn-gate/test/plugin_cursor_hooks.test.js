@@ -19,6 +19,7 @@ const plugin = () => Object.fromEntries(Object.entries(cursor.hookEntries('zn ho
 // One ordinary, harmless call for each event, and the decision zn reaches for it: no objection.
 const RAW = {
   beforeReadFile: { file_path: '/work/src/index.js' },
+  beforeTabFileRead: { file_path: '/work/src/index.js' },
   beforeShellExecution: { command: 'echo hello', cwd: '/work' },
   beforeSubmitPrompt: { prompt: 'rename this function' },
   beforeMCPExecution: { tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' },
@@ -38,7 +39,7 @@ test('the install sets failClosed on file reads and prompts only', () => {
   const closed = Object.entries(plugin()).filter(([, list]) => list.some((h) => h.failClosed === true)).map(([e]) => e).sort();
   const installed = Object.entries(cursor.hookEntries('zn hook cursor')).filter(([, h]) => h.failClosed === true).map(([e]) => e).sort();
   assert.deepEqual(closed, installed);
-  assert.deepEqual(closed, ['beforeReadFile', 'beforeSubmitPrompt']);
+  assert.deepEqual(closed, ['beforeReadFile', 'beforeSubmitPrompt', 'beforeTabFileRead']);
 });
 
 test('every failClosed event gets an explicit answer when zn has no objection', () => {
@@ -104,6 +105,7 @@ test('with the real hook on an ordinary call, no installed event is blocked', (t
   const runner = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
   const raw = {
     beforeReadFile: { file_path: path.join(proj, 'src', 'index.js'), content: 'x' },
+    beforeTabFileRead: { file_path: path.join(proj, 'src', 'index.js'), content: 'x' },
     beforeShellExecution: { command: 'echo hello', cwd: proj },
     beforeSubmitPrompt: { prompt: 'rename this function' },
     beforeMCPExecution: { tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' },

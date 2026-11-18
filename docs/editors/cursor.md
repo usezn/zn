@@ -49,7 +49,7 @@ These limits are stated on this page and in [compat.md](../compat.md):
 - Support is best effort: Cursor does not document the input of every tool, so `preToolUse` checks writes and deletes as well as it can. A write whose file cannot be read is refused.
 - A Grep without a `path` searches the whole workspace, so files that zn would shadow or refuse can be found that way. zn does not filter those results.
 - A secret written inside inline code is checked only where zn can read the path as a word.
-- Only `beforeReadFile` and `beforeSubmitPrompt` fail closed. If the hook for an MCP call, a shell command or `preToolUse` crashes or times out, the call runs unchecked.
+- Only `beforeReadFile`, `beforeTabFileRead` and `beforeSubmitPrompt` fail closed. If the hook for an MCP call, a shell command or `preToolUse` crashes or times out, the call runs unchecked.
 - `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
 - MCP arguments over 1 MB are denied, because zn cannot check them.
 - The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.
@@ -87,7 +87,7 @@ Every result of a wrapped server is checked for prompt injection, and secrets zn
 `zn hooks install cursor` writes Cursor's `hooks.json` (zn-gate 1.5 and later, npm):
 
 - `beforeMCPExecution` denies an MCP call whose arguments carry a secret value or a `__ZN_` marker, unless it goes to zn's `secrets` server (from 1.7.0; run `zn hooks install cursor` again to add it).
-- `beforeReadFile` and `beforeSubmitPrompt` fail closed: if the hook crashes or times out, the read or the prompt is blocked. If the Node.js zn-gate was installed with is gone, a small launcher script (`~/.zn/hooks/zn-hook-cursor.sh`) blocks shell commands, MCP calls, file reads and prompts instead of letting them run; `zn-gate check` reports it, and `npm install -g zn-gate` then `zn hooks install cursor` fixes it.
+- `beforeReadFile`, `beforeTabFileRead` and `beforeSubmitPrompt` fail closed: if the hook crashes or times out, the read or the prompt is blocked. `beforeTabFileRead` covers the files Cursor's Tab completion reads, with the same checks as `beforeReadFile`: `.env` files, credential files and `~/.zn` are not sent to the model through Tab. If the Node.js zn-gate was installed with is gone, a small launcher script (`~/.zn/hooks/zn-hook-cursor.sh`) blocks shell commands, MCP calls, file reads and prompts instead of letting them run; `zn-gate check` reports it, and `npm install -g zn-gate` then `zn hooks install cursor` fixes it.
 - `beforeShellExecution` blocks commands that read secret files and refuses a `__ZN_` marker in a command's arguments and points the agent to `zn run --secrets` for commands that need a secret.
 - `postToolUse` removes secrets from MCP tool output (the only output Cursor lets a hook change).
 - `preToolUse` checks writes and deletes on a best-effort basis: Cursor does not document the input of every tool.

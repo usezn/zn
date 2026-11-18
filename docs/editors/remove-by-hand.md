@@ -18,7 +18,7 @@ For each supported editor, this page lists the files zn-gate writes and what to 
 
 | File | What zn-gate put there | How to remove it |
 | - | - | - |
-| `~/.cursor/hooks.json` (or `.cursor/hooks.json` in the project, with `--project`) | One hook entry of zn-gate in each of the events `beforeMCPExecution`, `beforeReadFile`, `beforeSubmitPrompt`, `beforeShellExecution`, `postToolUse` and `preToolUse`. The command of each entry runs `zn hook cursor`, or the launcher below. | `zn hooks uninstall cursor` (add `--project` for a project install). By hand: delete those entries and keep your own. |
+| `~/.cursor/hooks.json` (or `.cursor/hooks.json` in the project, with `--project`) | One hook entry of zn-gate in each of the events `beforeMCPExecution`, `beforeReadFile`, `beforeSubmitPrompt`, `beforeShellExecution`, `beforeTabFileRead`, `postToolUse` and `preToolUse`. The command of each entry runs `zn hook cursor`, or the launcher below. | `zn hooks uninstall cursor` (add `--project` for a project install). By hand: delete those entries and keep your own. |
 | `~/.cursor/hooks.json.bak-zn-<date>` | A copy of the file as it was before the change. | Delete it when you no longer need it. |
 | `~/.zn/hooks/zn-hook-cursor.sh` | A small launcher script (user install only; on Windows the steps are written inline in the hook commands instead). | Delete the file. `hooks uninstall` leaves it in place, because other Cursor settings on the machine may use it; `zn-gate uninstall` removes it. |
 

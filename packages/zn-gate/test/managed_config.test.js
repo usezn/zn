@@ -114,7 +114,7 @@ test('Cursor: version 1, failClosed on reads and prompts only, same entries as t
   const data = JSON.parse(f.content);
   assert.equal(data.version, 1);
   const closed = Object.entries(data.hooks).filter(([, list]) => list[0].failClosed === true).map(([e]) => e).sort();
-  assert.deepEqual(closed, ['beforeReadFile', 'beforeSubmitPrompt']);
+  assert.deepEqual(closed, ['beforeReadFile', 'beforeSubmitPrompt', 'beforeTabFileRead']);
   for (const [event, list] of Object.entries(data.hooks)) {
     assert.equal(list.length, 1);
     assert.equal(list[0].command, launcher.projectShCommand('cursor', event));

@@ -123,6 +123,21 @@ test('cursor: beforeReadFile denies plain .env and credential files, allows othe
   assert.deepEqual(r2.output, { permission: 'allow' });
 });
 
+test('cursor: beforeTabFileRead gets the same file checks as beforeReadFile, and only allows or denies', async (t) => {
+  const dir = tmpProject(t);
+  const r1 = await run(cursor, cu('beforeTabFileRead', { cwd: dir, file_path: path.join(dir, '.env'), content: 'API_KEY=x' }));
+  assert.equal(r1.output.permission, 'deny');
+  const r2 = await run(cursor, cu('beforeTabFileRead', { cwd: dir, file_path: path.join(dir, 'src.js'), content: '' }));
+  assert.deepEqual(r2.output, { permission: 'allow' });
+  const r3 = await run(cursor, cu('beforeTabFileRead', { cwd: dir, content: '' }));
+  assert.equal(r3.output.permission, 'deny', 'a read whose file cannot be read is refused');
+  const home = tmpProject(t);
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
+  const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
+  assert.equal(data.hooks.beforeTabFileRead[0].failClosed, true);
+  cursor.uninstall({ home });
+});
+
 test('cursor: shell commands: deny reads, environment-variable guidance for markers, ask once wrapped, silent otherwise', async (t) => {
   const dir = tmpProject(t);
   const a = await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'grep KEY .env', sandbox: false }));

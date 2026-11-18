@@ -146,7 +146,7 @@ function cursorFiles(os, opts) {
   const entries = cursor.hookEntries(os === 'windows' ? winGuard('cursor') : shGuard('cursor'));
   const notes = [
     'If this file already exists, merge the "hooks" entries into it.',
-    'failClosed is on for beforeReadFile and beforeSubmitPrompt: if the hook crashes, times out or prints nothing, Cursor blocks the read or the prompt.',
+    'failClosed is on for beforeReadFile, beforeTabFileRead and beforeSubmitPrompt: if the hook crashes, times out or prints nothing, Cursor blocks the read or the prompt.',
     'The enterprise file ranks above team, project and user hooks. Cursor documents no setting that stops a developer from adding hooks of their own, and none that deploys zn\'s MCP server.',
     INSTALL_NOTE,
   ];

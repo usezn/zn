@@ -51,7 +51,7 @@ const BLOCK_JSON = new Set(['PermissionRequest']);
 // Gemini CLI: exit 2 "aborts" the tool; zn registers BeforeTool only.
 const BLOCK_EXIT_BY_AGENT = {
   'claude-code': new Set(['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']),
-  cursor: new Set(['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']),
+  cursor: new Set(['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeTabFileRead', 'preToolUse']),
   gemini: new Set(['BeforeTool']),
   // Antigravity: the hook answers with {decision:'deny',reason} on stdout (exit 0); its docs do not say what a failed hook does.
   antigravity: new Set(['PreToolUse']),
@@ -620,7 +620,7 @@ function isProjectWindowsScript(script, agentId) {
 
 /** Every event name an installer writes the project guard for (any agent); the exact check tries each one. */
 const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'ConfigChange', 'InstructionsLoaded', 'PermissionRequest', 'BeforeTool',
-  'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
+  'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'beforeTabFileRead', 'preToolUse', 'postToolUse'];
 
 /** Whether a command is exactly a POSIX project guard that this version writes (any event of this agent). */
 function isProjectGuardExact(command, agentId) {
