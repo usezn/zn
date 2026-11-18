@@ -170,4 +170,161 @@ mod tests {
         assert_eq!(reg.entries(None).unwrap()[0].id, b.id);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    fn temp_db(tag: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("zn-reg-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("models.db").to_string_lossy().to_string();
+        (dir, db)
+    }
+
+    #[test]
+    fn get_unknown_or_non_numeric_id_is_none() {
+        let (dir, db) = temp_db("get-unknown");
+        let reg = ModelRegistry::new(&db).unwrap();
+        assert!(reg.get("999").unwrap().is_none());
+        assert!(reg.get("not-a-number").unwrap().is_none());
+        assert!(reg.get("").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn register_preserves_every_field_and_assigns_id() {
+        let (dir, db) = temp_db("fields");
+        let reg = ModelRegistry::new(&db).unwrap();
+        let src = entry("a");
+        let stored = reg.register(&src).unwrap();
+        assert!(!stored.id.is_empty());
+        let got = reg.get(&stored.id).unwrap().unwrap();
+        assert_eq!(got.id, stored.id);
+        assert_eq!(got.model_id, src.model_id);
+        assert_eq!(got.version, src.version);
+        assert_eq!(got.dim, 384);
+        assert_eq!(got.path, src.path);
+        assert_eq!(got.metrics, src.metrics);
+        assert_eq!(got.status, "staging");
+        assert_eq!(got.created_at, src.created_at);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicate_register_creates_two_distinct_rows() {
+        let (dir, db) = temp_db("dup");
+        let reg = ModelRegistry::new(&db).unwrap();
+        let e = entry("a");
+        let first = reg.register(&e).unwrap();
+        let second = reg.register(&e).unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(reg.entries(None).unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn entries_filter_by_status() {
+        let (dir, db) = temp_db("filter");
+        let reg = ModelRegistry::new(&db).unwrap();
+        let a = reg.register(&entry("a")).unwrap();
+        let b = reg.register(&entry("b")).unwrap();
+        let c = reg.register(&entry("c")).unwrap();
+        reg.set_status(&a.id, "active").unwrap();
+        reg.set_status(&b.id, "canary").unwrap();
+        let staging = reg.entries(Some("staging")).unwrap();
+        assert_eq!(staging.len(), 1);
+        assert_eq!(staging[0].id, c.id);
+        assert_eq!(reg.entries(Some("active")).unwrap()[0].id, a.id);
+        assert_eq!(reg.entries(Some("canary")).unwrap()[0].id, b.id);
+        assert!(reg.entries(Some("retired")).unwrap().is_empty());
+        assert!(reg.entries(Some("")).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn entries_are_sorted_newest_first() {
+        let (dir, db) = temp_db("order");
+        let reg = ModelRegistry::new(&db).unwrap();
+        let ids: Vec<String> = ["a", "c", "b"]
+            .iter()
+            .map(|s| reg.register(&entry(s)).unwrap().id)
+            .collect();
+        let got: Vec<String> = reg
+            .entries(None)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        // created_at grows with the first letter: c, b, a
+        assert_eq!(got, vec![ids[1].clone(), ids[2].clone(), ids[0].clone()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_status_on_unknown_id_is_a_silent_no_op() {
+        let (dir, db) = temp_db("unknown-status");
+        let reg = ModelRegistry::new(&db).unwrap();
+        let a = reg.register(&entry("a")).unwrap();
+        // Current behaviour: no error and nothing changes.
+        reg.set_status("424242", "active").unwrap();
+        reg.set_status("not-a-number", "active").unwrap();
+        assert_eq!(reg.get(&a.id).unwrap().unwrap().status, "staging");
+        assert_eq!(reg.entries(None).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_status_changes_only_the_target_row() {
+        let (dir, db) = temp_db("only-target");
+        let reg = ModelRegistry::new(&db).unwrap();
+        let a = reg.register(&entry("a")).unwrap();
+        let b = reg.register(&entry("b")).unwrap();
+        reg.set_status(&a.id, "retired").unwrap();
+        assert_eq!(reg.get(&a.id).unwrap().unwrap().status, "retired");
+        assert_eq!(reg.get(&b.id).unwrap().unwrap().status, "staging");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reopening_the_database_keeps_entries_and_status() {
+        let (dir, db) = temp_db("reopen");
+        let (a_id, b_id) = {
+            let reg = ModelRegistry::new(&db).unwrap();
+            let a = reg.register(&entry("a")).unwrap();
+            let b = reg.register(&entry("b")).unwrap();
+            reg.set_status(&a.id, "active").unwrap();
+            (a.id, b.id)
+        };
+        let reg = ModelRegistry::new(&db).unwrap();
+        assert_eq!(reg.entries(None).unwrap().len(), 2);
+        assert_eq!(reg.get(&a_id).unwrap().unwrap().status, "active");
+        assert_eq!(reg.get(&b_id).unwrap().unwrap().metrics, "{\"f1\":0.9}");
+        // ids keep growing after a reopen, they are not reused
+        let c = reg.register(&entry("c")).unwrap();
+        assert_ne!(c.id, a_id);
+        assert_ne!(c.id, b_id);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_creates_missing_parent_directories() {
+        let (dir, _) = temp_db("nested");
+        let db = dir.join("a").join("b").join("models.db");
+        let reg = ModelRegistry::new(&db.to_string_lossy()).unwrap();
+        reg.register(&entry("a")).unwrap();
+        assert!(db.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_fails_when_the_path_is_a_directory() {
+        let (dir, _) = temp_db("is-dir");
+        assert!(ModelRegistry::new(&dir.to_string_lossy()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_path_opens_a_private_temporary_database() {
+        let reg = ModelRegistry::new("").unwrap();
+        let a = reg.register(&entry("a")).unwrap();
+        assert_eq!(reg.get(&a.id).unwrap().unwrap().version, "v-a");
+    }
 }
