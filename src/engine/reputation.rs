@@ -70,9 +70,23 @@ impl Default for ReputationSystem {
 }
 
 impl ReputationSystem {
+    /// A panic in another thread must not make every later check panic: the map holds plain
+    /// counters, so the value behind a poisoned lock is still usable.
+    fn read_scores(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, ReputationScore>> {
+        self.scores
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write_scores(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, ReputationScore>> {
+        self.scores
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Get current status of an agent (Auth Check)
     pub fn check_agent_status(&self, agent_id: &str) -> Result<(), String> {
-        let scores = self.scores.read().unwrap();
+        let scores = self.read_scores();
         if let Some(entry) = scores.get(agent_id) {
             if entry.status == AgentStatus::Banned {
                 if let Some(ban_end) = entry.banned_until {
@@ -90,7 +104,7 @@ impl ReputationSystem {
 
     /// Record a clean, allowed call
     pub fn record_success(&self, agent_id: &str) {
-        let mut scores = self.scores.write().unwrap();
+        let mut scores = self.write_scores();
         let entry = scores
             .entry(agent_id.to_string())
             .or_insert(ReputationScore {
@@ -116,7 +130,7 @@ impl ReputationSystem {
 
     /// Record a security violation (Block)
     pub fn record_violation(&self, agent_id: &str, reason: &str, severity: i32) {
-        let mut scores = self.scores.write().unwrap();
+        let mut scores = self.write_scores();
         let entry = scores
             .entry(agent_id.to_string())
             .or_insert(ReputationScore {
@@ -140,7 +154,7 @@ impl ReputationSystem {
 
     /// Get all scores for dashboard
     pub fn all_scores(&self) -> HashMap<String, ReputationScore> {
-        self.scores.read().unwrap().clone()
+        self.read_scores().clone()
     }
 }
 
@@ -361,5 +375,26 @@ mod tests {
         snapshot.get_mut("agent-1").unwrap().score = 999;
         assert_eq!(score_of(&sys, "agent-1").score, 51);
         assert!(sys.all_scores().contains_key("agent-1"));
+    }
+}
+
+#[cfg(test)]
+mod untrusted_input_tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_score_map_keeps_serving() {
+        let sys = ReputationSystem::new();
+        let scores = sys.scores.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = scores.write().unwrap();
+            panic!("poison the lock");
+        })
+        .join();
+        assert!(sys.scores.is_poisoned());
+        assert!(sys.check_agent_status("agent-\u{20ac}").is_ok());
+        sys.record_violation("agent-\u{20ac}", "bad input", 5);
+        sys.record_success("agent-\u{20ac}");
+        assert_eq!(sys.all_scores().len(), 1);
     }
 }

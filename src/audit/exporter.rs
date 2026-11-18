@@ -71,6 +71,12 @@ fn approx_size(entry: &AuditEntry) -> usize {
         + entry.namespace.as_ref().map_or(0, String::len)
 }
 
+/// Lock the drop counter. A panic elsewhere must not turn every later event into a panic too:
+/// the counter holds plain numbers, so the value behind a poisoned lock is still usable.
+fn lock_drops(m: &Mutex<DropTracker>) -> std::sync::MutexGuard<'_, DropTracker> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Counts dropped events and rate-limits the warning about them.
 struct DropTracker {
     total: u64,
@@ -266,7 +272,7 @@ async fn pump(
                 // Always accept an event into an empty queue, even one above the byte cap.
                 let held = queued_bytes.load(Ordering::SeqCst);
                 if held > 0 && held + size > MAX_QUEUE_BYTES {
-                    drops.lock().unwrap().record_with(
+                    lock_drops(&drops).record_with(
                         1,
                         "SIEM export queue over its byte cap: dropped {} new events",
                     );
@@ -277,16 +283,14 @@ async fn pump(
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         queued_bytes.fetch_sub(size, Ordering::SeqCst);
-                        drops
-                            .lock()
-                            .unwrap()
+                        lock_drops(&drops)
                             .record_with(1, "SIEM export queue full: dropped {} new events");
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => break,
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                drops.lock().unwrap().record_with(
+                lock_drops(&drops).record_with(
                     n as usize,
                     "SIEM exporter lagged behind the audit channel: lost {} events",
                 );
@@ -357,7 +361,7 @@ impl SiemExporter {
                         Some(entry) => {
                             queued_bytes.fetch_sub(approx_size(&entry), Ordering::SeqCst);
                             let pushed = batch.push(entry);
-                            let mut drops = self.drops.lock().unwrap();
+                            let mut drops = lock_drops(&self.drops);
                             drops.record(pushed.dropped_oldest);
                             if pushed.rejected {
                                 drops.record_with(
@@ -408,10 +412,10 @@ impl SiemExporter {
     async fn send_batch(&self, endpoint: &str, batch: &mut Buffer) -> bool {
         while !batch.is_empty() {
             let n = batch.chunk_len(MAX_REQUEST_EVENTS, MAX_REQUEST_BYTES);
-            if !self
-                .send_chunk(endpoint, &batch.entries.make_contiguous()[..n])
-                .await
-            {
+            let Some(chunk) = batch.entries.make_contiguous().get(..n) else {
+                return false;
+            };
+            if !self.send_chunk(endpoint, chunk).await {
                 return false;
             }
             batch.drain_front(n);
@@ -1198,5 +1202,24 @@ mod tests {
         assert_eq!(exporter.backoff.failures, 0);
         assert!(exporter.backoff.ready(Instant::now()));
         assert!(batch.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod untrusted_input_tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_drop_counter_still_counts() {
+        let drops = Arc::new(Mutex::new(DropTracker::new()));
+        let d2 = drops.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = d2.lock().unwrap();
+            panic!("poison the lock");
+        })
+        .join();
+        assert!(drops.is_poisoned());
+        lock_drops(&drops).record(3);
+        assert_eq!(lock_drops(&drops).total, 3);
     }
 }

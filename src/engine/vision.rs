@@ -76,7 +76,9 @@ impl VisionEngine {
         let re = image_re();
         let mut count = 0;
         for cap in re.captures_iter(arguments) {
-            let b64_data = cap.get(1).unwrap();
+            let Some(b64_data) = cap.get(1) else {
+                continue;
+            };
             let b64 = b64_data.as_str();
             if b64.len() > MAX_B64_LEN {
                 return Err(VisionError::Base64TooLong);
@@ -95,7 +97,9 @@ impl VisionEngine {
             if started.elapsed().as_millis() > PARSE_TIMEOUT_MS {
                 return Err(VisionError::ParseTimeout);
             }
-            let b64_data = cap.get(1).unwrap();
+            let Some(b64_data) = cap.get(1) else {
+                continue;
+            };
             out.push_str(&arguments[last_end..b64_data.start()]);
             let b64 = b64_data.as_str();
 
@@ -228,9 +232,13 @@ fn strip_jpeg_metadata(data: &[u8]) -> Vec<u8> {
             out.extend_from_slice(&data[i..]);
             break;
         }
-        let seg_len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
-        let total = 2 + seg_len;
-        if i + total > data.len() {
+        let (Some(&hi), Some(&lo)) = (data.get(i + 2), data.get(i + 3)) else {
+            out.extend_from_slice(&data[i..]);
+            break;
+        };
+        let seg_len = u16::from_be_bytes([hi, lo]) as usize;
+        let total = seg_len.saturating_add(2);
+        if i.saturating_add(total) > data.len() {
             out.extend_from_slice(&data[i..]);
             break;
         }
@@ -260,8 +268,8 @@ fn strip_png_metadata(data: &[u8]) -> Vec<u8> {
     while i + 12 <= data.len() {
         let len = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
         let kind = &data[i + 4..i + 8];
-        let total = 12 + len;
-        if i + total > data.len() {
+        let total = len.saturating_add(12);
+        if i.saturating_add(total) > data.len() {
             out.extend_from_slice(&data[i..]);
             break;
         }
@@ -1005,5 +1013,76 @@ mod tests {
         }
         assert_eq!(find_malicious_pattern("a holiday photo of a beach"), None);
         assert_eq!(find_malicious_pattern(""), None);
+    }
+}
+
+#[cfg(test)]
+mod untrusted_input_tests {
+    use super::*;
+
+    fn sample_jpeg() -> Vec<u8> {
+        vec![
+            0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x06, b'E', b'x', b'i', b'f', 0xFF, 0xDB, 0x00, 0x04,
+            0x01, 0x02, 0xFF, 0xD9,
+        ]
+    }
+
+    fn sample_png() -> Vec<u8> {
+        let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
+        v.extend_from_slice(&[0, 0, 0, 4]);
+        v.extend_from_slice(b"tEXt");
+        v.extend_from_slice(b"abcd");
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        v.extend_from_slice(b"IEND");
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        v
+    }
+
+    #[test]
+    fn truncated_jpeg_never_panics() {
+        let full = sample_jpeg();
+        for n in 0..=full.len() {
+            let out = strip_jpeg_metadata(&full[..n]);
+            assert!(out.len() <= n);
+        }
+    }
+
+    #[test]
+    fn truncated_png_never_panics() {
+        let full = sample_png();
+        for n in 0..=full.len() {
+            let out = strip_png_metadata(&full[..n]);
+            assert!(out.len() <= n);
+        }
+    }
+
+    #[test]
+    fn huge_declared_lengths_do_not_overflow() {
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0xFF, 0xFF];
+        jpeg.extend_from_slice(&[0u8; 4]);
+        assert_eq!(strip_jpeg_metadata(&jpeg), jpeg);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        png.extend_from_slice(b"tEXt");
+        png.extend_from_slice(&[0u8; 8]);
+        assert_eq!(strip_png_metadata(&png), png);
+    }
+
+    #[test]
+    fn corrupted_images_are_refused_or_kept_without_panic() {
+        let config = ManagedRulesConfig {
+            visual_pii_redaction: true,
+            ..Default::default()
+        };
+        let full = sample_png();
+        for n in 0..=full.len() {
+            let b64 = general_purpose::STANDARD.encode(&full[..n]);
+            let args = format!(r#"{{"image": "data:image/png;base64,{b64}"}}"#);
+            // Ok or a VisionError, never a panic
+            let _ = VisionEngine::sanitize_multimodal(&args, &config);
+        }
+        let args = r#"{"image": "data:image/png;base64,iVBOR"}"#;
+        assert!(VisionEngine::sanitize_multimodal(args, &config).is_err());
     }
 }

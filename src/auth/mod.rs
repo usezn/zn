@@ -280,7 +280,9 @@ pub async fn api_key_auth(mut request: Request, next: Next) -> Result<Response, 
 fn strip_bearer(value: &str) -> &str {
     let value = value.trim();
     match value.get(..7) {
-        Some(prefix) if prefix.eq_ignore_ascii_case("bearer ") => value[7..].trim(),
+        Some(prefix) if prefix.eq_ignore_ascii_case("bearer ") => {
+            value.get(7..).unwrap_or_default().trim()
+        }
         _ => value,
     }
 }
@@ -915,5 +917,30 @@ mod unauthorized_body_tests {
         assert!(!text.contains("wrong-secret-value"));
         assert!(!text.contains("zn-superadmin-key"));
         assert!(!text.contains("ZN_API_KEY"));
+    }
+}
+
+#[cfg(test)]
+mod untrusted_header_tests {
+    use super::*;
+
+    #[test]
+    fn strip_bearer_handles_hostile_header_values() {
+        assert_eq!(strip_bearer(""), "");
+        assert_eq!(strip_bearer("Bearer "), "Bearer");
+        assert_eq!(strip_bearer("bEaReR    tok"), "tok");
+        // byte 7 falls inside a multi-byte character: no slice, value returned as is
+        let odd = "Bea\u{20ac}\u{20ac}x";
+        assert_eq!(strip_bearer(odd), odd);
+        assert_eq!(strip_bearer("\u{20ac}"), "\u{20ac}");
+    }
+
+    #[test]
+    fn percent_decode_rejects_truncated_and_multibyte_escapes() {
+        assert_eq!(percent_decode("%"), None);
+        assert_eq!(percent_decode("%4"), None);
+        assert_eq!(percent_decode("%\u{20ac}"), None);
+        assert_eq!(percent_decode("%zz"), None);
+        assert_eq!(percent_decode("a%41"), Some("aA".to_string()));
     }
 }

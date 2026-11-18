@@ -772,12 +772,12 @@ fn encrypt_payload(
 /// authenticated data. Returns `None` for anything malformed, including a
 /// nonce that is not 12 bytes long.
 fn decrypt_body(key_bytes: &[u8; 32], body: &str, aad: &[u8]) -> Option<String> {
-    let parts: Vec<&str> = body.split(':').collect();
-    if parts.len() != 2 {
+    let (nonce_b64, ciphertext_b64) = body.split_once(':')?;
+    if ciphertext_b64.contains(':') {
         return None;
     }
-    let nonce_bytes = general_purpose::STANDARD.decode(parts[0]).ok()?;
-    let ciphertext = general_purpose::STANDARD.decode(parts[1]).ok()?;
+    let nonce_bytes = general_purpose::STANDARD.decode(nonce_b64).ok()?;
+    let ciphertext = general_purpose::STANDARD.decode(ciphertext_b64).ok()?;
     let nonce = nonce_from_bytes(&nonce_bytes)?;
     let cipher = Aes256Gcm::new(key_bytes.into());
     let decrypted = cipher
@@ -1030,7 +1030,7 @@ fn is_neighbour_ref(value: &str) -> bool {
     if !crate::ai::is_content_ref(head) {
         return false;
     }
-    match value[18..].strip_prefix(':') {
+    match value.get(18..).and_then(|rest| rest.strip_prefix(':')) {
         None => value.len() == 18,
         Some(distance) => distance.parse::<f32>().is_ok_and(f32::is_finite),
     }
@@ -2555,5 +2555,42 @@ mod tests {
             .err()
             .expect("the folder does not exist");
         assert!(!err.to_string().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod untrusted_input_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_encrypted_bodies_decrypt_to_none() {
+        let key = [7u8; 32];
+        for body in [
+            "",
+            ":",
+            "::",
+            "a:b:c",
+            "nocolon",
+            "!!!:!!!",
+            "AAAA:",
+            ":AAAA",
+            "\u{20ac}\u{20ac}:\u{20ac}",
+            "AAAAAAAAAAAAAAAA:AAAA:AAAA",
+        ] {
+            assert_eq!(decrypt_body(&key, body, b"aad"), None, "body {body:?}");
+        }
+    }
+
+    #[test]
+    fn neighbour_ref_check_survives_multibyte_values() {
+        // byte 18 falls inside a multi-byte character
+        let split = format!("h:{}\u{e9}", "a".repeat(15));
+        assert!(!is_neighbour_ref(&split));
+        assert!(!is_neighbour_ref(""));
+        assert!(!is_neighbour_ref("h:"));
+        assert!(!is_neighbour_ref(&"\u{20ac}".repeat(9)));
+        assert!(is_neighbour_ref("h:0123456789abcdef"));
+        assert!(is_neighbour_ref("h:0123456789abcdef:0.5000"));
+        assert!(!is_neighbour_ref("h:0123456789abcdef:nan"));
     }
 }
