@@ -9,7 +9,7 @@ name: Nightly run of next
 # push to next that changes the Rust dependency files. A schedule runs on the
 # default branch (main), so the runs are started with --ref next and use the
 # workflow files of next. A second scheduled run, four hours later, looks at the runs started that night and opens
-# an issue (or comments on the open one) when one of them failed, did not finish or never started.
+# an issue (or comments on the open one) when one of them failed, did not finish or never started, and closes that issue when every run passed.
 # Pull requests into main and release branches, and pushes to them, still run the full matrix every time.
 on:
   schedule:
@@ -103,11 +103,17 @@ jobs:
               problems+="- $wf: $conclusion: $url"$'\n'
             fi
           done
+          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Nightly scheduled check failed") | .number' | head -n 1)"
           if [ -z "$problems" ]; then
             echo "every run on next passed"
+            # A green night closes the failure issue this workflow opened, so it does not wait for someone to close it.
+            if [ -n "$number" ]; then
+              gh issue comment "$number" --body "Resolved: every run on next passed in ${RUN_URL}. Closing this issue; a later problem opens a new one."
+              gh issue close "$number" --reason completed
+              echo "Closed issue #$number"
+            fi
             exit 0
           fi
-          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Nightly scheduled check failed") | .number' | head -n 1)"
           {
             echo "The nightly scheduled check found a problem (checked by ${RUN_URL}):"
             echo
@@ -116,7 +122,7 @@ jobs:
             echo "Open each run above to see the job that failed. \"no run was started\" means the start step of the nightly"
             echo "workflow failed for that workflow (see its run at 02:40 UTC)."
             echo
-            echo "This issue stays open until someone closes it. Each later night with a problem adds a comment."
+            echo "This issue closes itself on the first night when every run passes. Each later night with a problem adds a comment."
           } > "$RUNNER_TEMP/body.md"
           if [ -n "$number" ]; then
             gh issue comment "$number" --body-file "$RUNNER_TEMP/body.md"
