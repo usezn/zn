@@ -1113,6 +1113,8 @@ function expandEqualsOptions(command, args) {
 const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
 const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
 const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
+// Options whose value is a whole number, with the highest value they accept.
+const NUMBER_OPTIONS = { '--port': 65535, '--tail': 1000000 };
 const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
 
 function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
@@ -1123,6 +1125,12 @@ function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1)
       if (valueOptions.includes(tok)) {
         if (i + 1 >= args.length) return tok + ' needs a value, as ' + tok + ' VALUE.';
         i++;
+        if (NUMBER_OPTIONS[tok] !== undefined) {
+          const v = args[i];
+          if (!/^[0-9]{1,9}$/.test(v) || Number(v) < 1 || Number(v) > NUMBER_OPTIONS[tok]) {
+            return tok + ' needs a whole number from 1 to ' + NUMBER_OPTIONS[tok] + ', as ' + tok + ' ' + (tok === '--port' ? '3100' : '20') + '.';
+          }
+        }
       }
       continue;
     }

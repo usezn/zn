@@ -52,3 +52,16 @@ test('a value that is given still works, with a space or with =', (t) => {
     assert.notEqual(r.status, 2, args.join(' ') + ' -> ' + r.stderr);
   }
 });
+
+test('evidence --port and --tail need a whole number and exit 2 otherwise', (t) => {
+  const dir = tempDir(t, 'zn-missing-value-');
+  for (const [opt, bad] of [['--tail', 'abc'], ['--tail', '0'], ['--tail', '-5'], ['--tail', '2.5'], ['--port', 'abc'], ['--port', '0'], ['--port', '70000'], ['--port', '80x']]) {
+    const r = cli(['evidence', opt, bad], dir);
+    assert.equal(r.status, 2, opt + ' ' + bad + ' -> ' + r.stdout + r.stderr);
+    assert.match(r.stderr, new RegExp(opt + ' needs a whole number'), opt + ' ' + bad);
+  }
+  for (const args of [['evidence', '--tail', '5'], ['evidence', '--tail', '5', '--export']]) {
+    const r = cli(args, dir);
+    assert.notEqual(r.status, 2, args.join(' ') + ' -> ' + r.stderr);
+  }
+});
