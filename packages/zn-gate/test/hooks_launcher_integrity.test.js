@@ -19,7 +19,9 @@ const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
-const { hasPosixSh: posix } = require('./helpers/posix_sh');
+const { SH, fwd, pathList, shEnv } = require('./helpers/git_bash');
+// The launcher is a POSIX sh script: /bin/sh outside Windows, Git Bash (what Claude Code uses there) on Windows.
+const needSh = !SH && 'needs sh (Git Bash on Windows)';
 const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 const CHANGED = /zn-gate changed since the hooks were installed/;
 const AGAIN = /zn(?:\.cmd)? hooks install claude-code/;
@@ -35,23 +37,23 @@ function setup(t, nodePath = process.execPath) {
 }
 
 function run(file, event, pathValue = process.env.PATH, cwd) {
-  return spawnSync('/bin/sh', [file, event], { input: '{}', encoding: 'utf8', cwd, env: { PATH: pathValue, HOME: '/nonexistent' } });
+  return spawnSync(SH, [fwd(file), event], { input: '{}', encoding: 'utf8', cwd, env: shEnv({ PATH: pathValue, HOME: '/nonexistent' }) });
 }
 
-test('integrity: the intact runner runs normally', { skip: !posix }, (t) => {
+test('integrity: the intact runner runs normally', { skip: needSh }, (t) => {
   const { file } = setup(t);
   const r = run(file, 'PreToolUse');
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'REAL_RUNNER');
 });
 
-test('integrity: the launcher records the SHA-256 of the runner', { skip: !posix }, (t) => {
+test('integrity: the launcher records the SHA-256 of the runner', (t) => {
   const { file, runner } = setup(t);
   assert.match(fs.readFileSync(file, 'utf8'), new RegExp("^ZN_SHA='" + launcher.runnerSha(runner) + "'$", 'm'));
   assert.match(launcher.runnerSha(runner), /^[0-9a-f]{64}$/);
 });
 
-test('integrity: a launcher made with an empty digest (unreadable runner at install time) refuses to run the runner', { skip: !posix }, (t) => {
+test('integrity: a launcher made with an empty digest (unreadable runner at install time) refuses to run the runner', { skip: needSh }, (t) => {
   const { file, runner } = setup(t);
   fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, runner, { runnerDigest: '' }), { mode: 0o755 });
   assert.match(fs.readFileSync(file, 'utf8'), /^ZN_SHA=''$/m);
@@ -61,7 +63,7 @@ test('integrity: a launcher made with an empty digest (unreadable runner at inst
   assert.doesNotMatch(r.stdout, /REAL_RUNNER/);
 });
 
-test('integrity: a stub runner that exits 0 is blocked with the new reason, not passed through', { skip: !posix }, (t) => {
+test('integrity: a stub runner that exits 0 is blocked with the new reason, not passed through', { skip: needSh }, (t) => {
   const { file, runner } = setup(t);
   fs.writeFileSync(runner, 'process.exit(0);\n');
   const r = run(file, 'PreToolUse');
@@ -72,7 +74,7 @@ test('integrity: a stub runner that exits 0 is blocked with the new reason, not 
   for (const ev of ['UserPromptSubmit', 'UserPromptExpansion']) assert.equal(run(file, ev).status, 2, ev);
 });
 
-test('integrity: an edited runner is blocked', { skip: !posix }, (t) => {
+test('integrity: an edited runner is blocked', { skip: needSh }, (t) => {
   const { file, runner } = setup(t);
   fs.appendFileSync(runner, '// one more line\n');
   const r = run(file, 'PreToolUse');
@@ -80,7 +82,7 @@ test('integrity: an edited runner is blocked', { skip: !posix }, (t) => {
   assert.match(r.stderr, CHANGED);
 });
 
-test('integrity: after the tool ran (PostToolUse) a changed runner only warns, with the reinstall step', { skip: !posix }, (t) => {
+test('integrity: after the tool ran (PostToolUse) a changed runner only warns, with the reinstall step', { skip: needSh }, (t) => {
   const { file, runner } = setup(t);
   fs.writeFileSync(runner, 'process.exit(0);\n');
   const r = run(file, 'PostToolUse');
@@ -90,7 +92,7 @@ test('integrity: after the tool ran (PostToolUse) a changed runner only warns, w
   assert.match(msg, AGAIN);
 });
 
-test('integrity: an updated package (a new runner) is blocked with the reinstall message until the hooks are installed again', { skip: !posix }, (t) => {
+test('integrity: an updated package (a new runner) is blocked with the reinstall message until the hooks are installed again', { skip: needSh }, (t) => {
   const { file, runner, install } = setup(t);
   fs.writeFileSync(runner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
   const blocked = run(file, 'PreToolUse');
@@ -103,7 +105,7 @@ test('integrity: an updated package (a new runner) is blocked with the reinstall
   assert.equal(ok.stdout.trim(), 'NEW_VERSION');
 });
 
-test('integrity: no hash tool is needed: the recorded Node.js checks the runner, also with an empty PATH', { skip: !posix }, (t) => {
+test('integrity: no hash tool is needed: the recorded Node.js checks the runner, also with an empty PATH', { skip: needSh }, (t) => {
   const { file } = setup(t);
   const empty = tempDir(t, 'zn-launcher-integrity-empty-');
   const r = run(file, 'PreToolUse', empty);
@@ -111,7 +113,7 @@ test('integrity: no hash tool is needed: the recorded Node.js checks the runner,
   assert.equal(r.stdout.trim(), 'REAL_RUNNER');
 });
 
-test('integrity: a hash tool in the project that prints the recorded digest cannot make a changed runner run', { skip: !posix }, (t) => {
+test('integrity: a hash tool in the project that prints the recorded digest cannot make a changed runner run', { skip: needSh }, (t) => {
   const { home, file, runner } = setup(t);
   const sha = /^ZN_SHA='([0-9a-f]{64})'$/m.exec(fs.readFileSync(file, 'utf8'))[1];
   const mark = path.join(home, 'changed-runner-ran');
@@ -123,13 +125,13 @@ test('integrity: a hash tool in the project that prints the recorded digest cann
   fs.writeFileSync(path.join(bin, 'sha256sum'), '#!/bin/sh\necho "' + sha + '  -"\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'shasum'), '#!/bin/sh\necho "' + sha + '  -"\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'openssl'), '#!/bin/sh\necho "SHA2-256(stdin)= ' + sha + '"\n', { mode: 0o755 });
-  const r = run(file, 'PreToolUse', bin + ':/usr/bin:/bin', project);
+  const r = run(file, 'PreToolUse', pathList([bin, '/usr/bin', '/bin']), project);
   assert.equal(r.status, 2, r.stderr);
   assert.match(r.stderr, CHANGED);
   assert.equal(fs.existsSync(mark), false, 'the changed runner must not run');
 });
 
-test('integrity: the checked runner runs as the main module, with the agent id as its argument', { skip: !posix }, (t) => {
+test('integrity: the checked runner runs as the main module, with the agent id as its argument', { skip: needSh }, (t) => {
   const { file, runner, install } = setup(t);
   fs.writeFileSync(runner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write([require.main === module, process.argv[1] === __filename, process.argv[2]].join(' ') + '\\n');\n");
   install();
@@ -138,7 +140,7 @@ test('integrity: the checked runner runs as the main module, with the agent id a
   assert.equal(r.stdout.trim(), 'true true claude-code');
 });
 
-test('integrity: the deadline and other launcher options are kept with the digest', { skip: !posix }, (t) => {
+test('integrity: the deadline and other launcher options are kept with the digest', (t) => {
   const { runner } = setup(t);
   const text = launcher.unixScript('codex', process.execPath, runner, { deadlineS: 7, deadlineSoft: true, runnerDigest: 'ab'.repeat(32) });
   assert.match(text, /^ZN_SHA='(ab){32}'$/m);
@@ -146,18 +148,18 @@ test('integrity: the deadline and other launcher options are kept with the diges
   assert.throws(() => launcher.unixScript('codex', process.execPath, runner, { runnerDigest: 'not hex' }), /bad runner digest/);
 });
 
-test('integrity: a fake zn on an absolute PATH entry is not run when the recorded Node.js is gone', { skip: !posix }, (t) => {
+test('integrity: a fake zn on an absolute PATH entry is not run when the recorded Node.js is gone', { skip: needSh }, (t) => {
   const { home, file } = setup(t, '/nonexistent/node-gone/bin/node');
   const bin = tempDir(t, 'zn-launcher-integrity-bin-');
   const mark = path.join(home, 'fake-zn-ran');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\ntouch ' + mark + '\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\ntouch ' + fwd(mark) + '\nexit 0\n', { mode: 0o755 });
   const r = run(file, 'PreToolUse', bin);
   assert.equal(r.status, 2);
   assert.equal(fs.existsSync(mark), false, 'the fake zn must not run');
 });
 
-test('check: reports a launcher whose runner no longer matches the recorded SHA-256', { skip: !posix }, async (t) => {
+test('check: reports a launcher whose runner no longer matches the recorded SHA-256', { skip: needSh }, async (t) => {
   const { home, env, runner } = setup(t);
   // Give the check a runner that really answers, so that only the digest tells the difference.
   const real = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -175,14 +177,14 @@ test('check: reports a launcher whose runner no longer matches the recorded SHA-
   assert.match(r.fix, /zn(?:\.cmd)? hooks install claude-code/);
 });
 
-test('integrity: a NODE_OPTIONS that makes -e an ES module does not break the hook', { skip: !posix }, (t) => {
+test('integrity: a NODE_OPTIONS that makes -e an ES module does not break the hook', { skip: needSh }, (t) => {
   const { file, runner } = setup(t);
-  const env = { PATH: process.env.PATH, HOME: '/nonexistent', NODE_OPTIONS: '--input-type=module' };
-  const ok = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
+  const env = shEnv({ PATH: process.env.PATH, HOME: '/nonexistent', NODE_OPTIONS: '--input-type=module' });
+  const ok = spawnSync(SH, [fwd(file), 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
   assert.equal(ok.status, 0, ok.stderr);
   assert.equal(ok.stdout.trim(), 'REAL_RUNNER');
   fs.appendFileSync(runner, '// edited\n');
-  const blocked = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
+  const blocked = spawnSync(SH, [fwd(file), 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
   assert.equal(blocked.status, 2);
   assert.match(blocked.stderr, CHANGED);
 });

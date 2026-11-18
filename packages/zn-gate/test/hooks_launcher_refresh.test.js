@@ -18,7 +18,10 @@ const refresh = require('../lib/agents/refresh');
 const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
-const { hasPosixSh: posix } = require('./helpers/posix_sh');
+const { SH, fwd, shEnv, putNode } = require('./helpers/git_bash');
+const { skipUnless } = require('./helpers/links');
+// The launcher is a POSIX sh script: /bin/sh outside Windows, Git Bash (what Claude Code uses there) on Windows.
+const needSh = !SH && 'needs sh (Git Bash on Windows)';
 const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 
 function setup(t) {
@@ -31,10 +34,10 @@ function setup(t) {
 }
 
 function hook(file) {
-  return spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
+  return spawnSync(SH, [fwd(file), 'PreToolUse'], { input: '{}', encoding: 'utf8', env: shEnv({ PATH: process.env.PATH, HOME: '/nonexistent' }) });
 }
 
-test('refresh: the launcher keeps its deadline options, and Windows (Claude Code through Git Bash) is refreshed too', { skip: !posix }, (t) => {
+test('refresh: the launcher keeps its deadline options, and Windows (Claude Code through Git Bash) is refreshed too', (t) => {
   const ctx = setup(t);
   // A launcher written by an older package: same runner path, an old digest, a 9 s deadline.
   launcher.writeLauncher('claude-code', process.execPath, ctx.runner, { env: ctx.env, home: ctx.home, deadlineS: 9, deadlineSoft: true, runnerDigest: '00'.repeat(32) });
@@ -53,7 +56,7 @@ function post(ctx, extra = {}) {
   return out;
 }
 
-test('refresh: an updated runner is picked up and the hook runs again instead of blocking', { skip: !posix }, (t) => {
+test('refresh: an updated runner is picked up and the hook runs again instead of blocking', { skip: needSh }, (t) => {
   const ctx = setup(t);
   fs.writeFileSync(ctx.runner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
   assert.equal(hook(ctx.file).status, 2, 'blocked before the refresh');
@@ -64,7 +67,7 @@ test('refresh: an updated runner is picked up and the hook runs again instead of
   assert.equal(r.stdout.trim(), 'NEW_VERSION');
 });
 
-test('refresh: running it twice gives byte-identical files and no output the second time', { skip: !posix }, (t) => {
+test('refresh: running it twice gives byte-identical files and no output the second time', (t) => {
   const ctx = setup(t);
   fs.writeFileSync(ctx.runner, REAL + '// v2\n');
   assert.notEqual(post(ctx), '');
@@ -73,7 +76,7 @@ test('refresh: running it twice gives byte-identical files and no output the sec
   assert.deepEqual(fs.readFileSync(ctx.file), first);
 });
 
-test('refresh: no launcher directory means no output and no error', { skip: !posix }, (t) => {
+test('refresh: no launcher directory means no output and no error', (t) => {
   const home = tempDir(t, 'zn-refresh-none-');
   const env = { HOME: home, ZN_HOME: path.join(home, '.zn') };
   let out = '';
@@ -81,7 +84,7 @@ test('refresh: no launcher directory means no output and no error', { skip: !pos
   assert.equal(out, '');
 });
 
-test('refresh: a file that is not a zn launcher is left alone', { skip: !posix }, (t) => {
+test('refresh: a file that is not a zn launcher is left alone', (t) => {
   const ctx = setup(t);
   fs.writeFileSync(ctx.runner, REAL + '// v2\n');
   const dir = path.dirname(ctx.file);
@@ -98,7 +101,7 @@ test('refresh: a file that is not a zn launcher is left alone', { skip: !posix }
   assert.equal(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf8'), 'hello');
 });
 
-test('refresh: a corrupted, binary or unreadable launcher does not fail the install', { skip: !posix }, (t) => {
+test('refresh: a corrupted, binary or unreadable launcher does not fail the install', { skip: needSh || skipUnless('file') }, (t) => {
   const ctx = setup(t);
   fs.writeFileSync(ctx.runner, REAL + '// v2\n');
   const dir = path.dirname(ctx.file);
@@ -114,7 +117,7 @@ test('refresh: a corrupted, binary or unreadable launcher does not fail the inst
   assert.equal(hook(ctx.file).status, 0, 'the valid launcher was still refreshed');
 });
 
-test('refresh: the postinstall script exits 0 and prints nothing when there is nothing to do', { skip: !posix }, (t) => {
+test('refresh: the postinstall script exits 0 and prints nothing when there is nothing to do', (t) => {
   const home = tempDir(t, 'zn-refresh-cli-');
   const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'lib', 'agents', 'refresh.js')], {
     encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ZN_HOME: path.join(home, '.zn') },
@@ -125,7 +128,7 @@ test('refresh: the postinstall script exits 0 and prints nothing when there is n
   assert.equal(pkg.scripts.postinstall, 'node lib/agents/refresh.js');
 });
 
-test('refresh: a project-local install does not repoint launchers at another copy of zn-gate', { skip: !posix }, (t) => {
+test('refresh: a project-local install does not repoint launchers at another copy of zn-gate', { skip: needSh }, (t) => {
   const ctx = setup(t);
   // A second copy of the runner, as in ./node_modules/zn-gate of a project.
   const localRunner = path.join(tempDir(t, 'zn-refresh-local-'), 'runner.js');
@@ -156,7 +159,7 @@ function sudoRun(ctx, extra) {
   return { out, err };
 }
 
-test('refresh: as root through sudo with nothing refreshed, one line on stderr says to run the install as yourself', { skip: !posix }, (t) => {
+test('refresh: as root through sudo with nothing refreshed, one line on stderr says to run the install as yourself', (t) => {
   const ctx = setup(t);
   const empty = tempDir(t, 'zn-refresh-root-');
   const r = sudoRun({ ...ctx, home: empty, env: { HOME: empty, ZN_HOME: path.join(empty, '.zn'), PATH: process.env.PATH } }, { uid: 0, env: { SUDO_USER: 'someone' } });
@@ -166,7 +169,7 @@ test('refresh: as root through sudo with nothing refreshed, one line on stderr s
   assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
 });
 
-test('refresh: the sudo notice needs root and a SUDO_USER that is a non-empty string other than root (fake env objects)', { skip: !posix }, (t) => {
+test('refresh: the sudo notice needs root and a SUDO_USER that is a non-empty string other than root (fake env objects)', (t) => {
   const ctx = setup(t);
   const empty = tempDir(t, 'zn-refresh-fakeenv-');
   const bare = { ...ctx, home: empty, env: { HOME: empty, ZN_HOME: path.join(empty, '.zn'), PATH: process.env.PATH } };
@@ -190,7 +193,7 @@ test('refresh: the sudo notice needs root and a SUDO_USER that is a non-empty st
   assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
 });
 
-test('refresh: no sudo notice without root, without SUDO_USER, or when a launcher was refreshed', { skip: !posix }, (t) => {
+test('refresh: no sudo notice without root, without SUDO_USER, or when a launcher was refreshed', (t) => {
   const ctx = setup(t);
   assert.equal(sudoRun(ctx, { uid: 1000, env: { SUDO_USER: 'someone' } }).err, '');
   assert.equal(sudoRun(ctx, { uid: 0 }).err, '');
