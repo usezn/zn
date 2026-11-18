@@ -355,7 +355,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     exists, but GitHub says "Command and HTTP config-file `userPromptSubmitted`
     hooks have their output dropped" (VS Code: "command-hook output is ignored
     for `userPromptSubmitted`"). A secret pasted into the chat is not stopped,
-    and zn installs no prompt hook.
+    and zn installs no prompt hook. A newer `userPromptTransformed` event can
+    rewrite the text the model receives (the prompt shown in the timeline is
+    unaffected); zn does not use it.
   - **A hook that times out lets the call through, by Copilot's design.**
     GitHub: "Timeouts are fail-open for every event, including `preToolUse`".
     No setting in the hook format changes that. zn does not rely on it: it
@@ -392,7 +394,10 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   - Copilot's own session log (`events.jsonl`) keeps the original tool output
     on your machine.
   - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
-    turns the hooks off; `zn-gate check` reports it.
+    turns the hooks off; `zn-gate check` reports it, and also reports it in
+    your own `~/.copilot/settings.json` (GitHub does not say what it does
+    there, so it counts as off) and notes other inline `preToolUse` hooks in
+    that file, which run next to zn's.
 - **Gemini CLI** (experimental: `zn hooks install gemini [--project]`;
   `zn-gate check` lists it as "Gemini CLI (experimental)"). Google's blog post of 19 May 2026 says that on 18 June 2026 Gemini CLI stopped serving requests for Google AI Pro and Ultra accounts, and that Antigravity CLI keeps hooks ([source](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), checked 2026-11-06). The post does not call Gemini CLI deprecated, replaced or legacy, so this doc does not label it so. Whether it still serves other accounts is not verified here.
   Covered: `BeforeTool` blocks reads and writes of secret files by path, shell

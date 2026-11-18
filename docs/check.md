@@ -626,13 +626,22 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   `<file>` is `.github/copilot/settings.json` or `.github/copilot/settings.local.json` in the folder where you ran the check. Remove the setting, or ask whoever owns the repository.
 
-- **A note about your own Copilot settings.** It appears under an **OK** line, not as NOT protected:
+- **Your own Copilot settings switch the hooks off.**
 
   ```text
-  your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs
+  your Copilot user settings (<file>) have "disableAllHooks" turned on, which can switch off every hook of yours, zn included
+  remove "disableAllHooks" from that file, then run `zn-gate check` again
   ```
 
-  Your own Copilot settings file sets `disableAllHooks` to `true`. GitHub's documentation does not say whether that also skips hook files, so zn-gate cannot tell. If you did not set it on purpose, remove the line from that file, then run `zn-gate check` again.
+  `<file>` is `settings.json` in your Copilot folder (`~/.copilot`, or `$COPILOT_HOME` when you set it). GitHub documents `disableAllHooks` for a repository's settings, where it skips every hook except machine policy hooks, and does not say what it does in your own settings file, so zn-gate reports it as not protected to be safe. Remove the line, or set it to `false`, then run the check again.
+
+- **A note about other hooks in your Copilot settings.** It appears under an **OK** line:
+
+  ```text
+  your Copilot user settings (<file>) hold 1 other preToolUse hook that runs next to zn on every tool call; the docs do not say which answer wins, so zn cannot fully vouch for them
+  ```
+
+  Hooks written inline in the `hooks` field of that file run together with zn's hooks file; GitHub says all hook entries from all sources run, and does not document which answer wins. Review them and remove any you do not need.
 
 - **A warning when you install.** `zn hooks install copilot` prints this when zn's own hooks file had `disableAllHooks` turned on:
 

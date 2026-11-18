@@ -155,8 +155,10 @@ provider: 0 secret values sent.
   secret files by path, shell commands that handle secrets, and edits of
   Copilot's own hook and settings files. After a read-type or shell tool
   returns, zn replaces secret values in the result (successful results only).
-- **What it does not cover:** Copilot's `userPromptSubmitted` hook cannot block
-  or rewrite a typed prompt, so a pasted secret is not blocked. MCP tools that
+- **What it does not cover:** Copilot's `userPromptSubmitted` hook output is dropped for command
+  hooks, so a typed prompt is not blocked or rewritten there. The newer
+  `userPromptTransformed` event can rewrite what the model receives (not what
+  you see), but zn does not use it, so a pasted secret is not blocked. MCP tools that
   Copilot does not name as read or shell tools are not checked and their output
   is not scrubbed. The docs do not list the argument names of each tool, so zn
   refuses a known tool whose arguments it cannot read.

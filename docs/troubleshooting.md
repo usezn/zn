@@ -1013,12 +1013,12 @@ If `zn run` instead says your vault is locked, see [section 5](#5-your-secret-va
 
 ```text
 "disableAllHooks" was true in this file and was removed: it switched every hook of the file off.
-your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs
+your Copilot user settings (<file>) have "disableAllHooks" turned on, which can switch off every hook of yours, zn included
 ```
 
-**What happened:** the first line comes from `zn hooks install copilot`: zn's own Copilot hooks file had `"disableAllHooks": true`, which makes Copilot CLI skip every hook in the file, so the install removed it. The second line comes from `zn-gate check`, under an OK line: your own Copilot settings set it, and GitHub's documentation does not say whether that also skips hook files.
+**What happened:** the first line comes from `zn hooks install copilot`: zn's own Copilot hooks file had `"disableAllHooks": true`, which makes Copilot CLI skip every hook in the file, so the install removed it. The second line comes from `zn-gate check`, as NOT protected: your own Copilot settings set it, and GitHub's documentation does not say whether that also skips hook files, so zn-gate treats it as off.
 
-**Is it safe?** The first line means protection is back on. For the second, check that zn still runs.
+**Is it safe?** The first line means protection is back on. For the second, zn may be switched off until you remove the setting.
 
 **What to do:** for the first, nothing. For the second, remove the setting if you did not set it on purpose, then run `npx -y zn-gate check` again. The [check page](check.md#copilot-cli-settings-switch-the-hooks-off) explains the other Copilot lines.
 

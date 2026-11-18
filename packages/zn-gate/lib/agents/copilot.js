@@ -59,8 +59,12 @@
  * create with the arguments command, path, file_text; a deny is shown to the model as "Denied by preToolUse hook: <reason>";
  * postToolUse modifiedResult reaches the model; no secret value reached the provider. Copilot's own events.jsonl keeps the original output.
  *
+ * Sources (hooks-reference, read 2026-11-18): user inline hooks live in the top-level "hooks" of ~/.copilot/settings.json
+ * ($COPILOT_HOME/settings.json when set); ~/.copilot/config.json is no longer read for hooks; all sources run together, none
+ * overrides another. userPromptTransformed (output modifiedTransformedPrompt) rewrites only what the model receives, not
+ * what the user sees; zn does not use it (design note in the PR, not implemented).
  * Switching hooks off: "disableAllHooks": true at the top of a hooks file skips that file; in a repository's
- * .github/copilot/settings(.local).json it skips every hook except the policy ones. `zn-gate check` reports both.
+ * .github/copilot/settings(.local).json it skips every hook except the policy ones. `zn-gate check` reports both, and also "disableAllHooks" in the user settings (docs silent there: treated as off).
  */
 
 const fs = require('fs');

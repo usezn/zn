@@ -993,8 +993,19 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
       return out;
     }
   }
-  const user = readJson(path.join(adapter.copilotHome({ home: ctx.home, env: ctx.env }), 'settings.json'));
-  if (user && user.disableAllHooks === true) out.notes.push('your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs');
+  const userFileSettings = path.join(adapter.copilotHome({ home: ctx.home, env: ctx.env }), 'settings.json');
+  const user = readJson(userFileSettings);
+  if (user && user.disableAllHooks === true) {
+    // GitHub documents "disableAllHooks" for a repository's settings.json ("skips every hook from every source"); for the
+    // user settings file the docs are silent. A security tool fails closed: treat it as possibly switching zn off.
+    out.problem = 'your Copilot user settings (' + userFileSettings + ') have "disableAllHooks" turned on, which can switch off every hook of yours, zn included';
+    out.fix = 'remove "disableAllHooks" from that file, then run `zn-gate check` again';
+    return out;
+  }
+  // Inline hooks in the user settings run next to zn's file ("all hook entries from all sources are run", no override
+  // order documented), so a hook that answers before or after zn can change a call zn checked.
+  const inline = user && user.hooks && typeof user.hooks === 'object' ? hookEntries({ hooks: user.hooks }, 'copilot').filter((e) => /^pretooluse$/i.test(e.event) && !parseCommand(e.command, 'copilot')) : [];
+  if (inline.length) out.notes.push('your Copilot user settings (' + userFileSettings + ') hold ' + inline.length + ' other preToolUse hook' + (inline.length === 1 ? '' : 's') + ' that run' + (inline.length === 1 ? 's' : '') + ' next to zn on every tool call; the docs do not say which answer wins, so zn cannot fully vouch for them');
   out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout (zn answers by itself 4 seconds before that); zn cannot see the policy hooks from here');
   return out;
 }

@@ -302,6 +302,34 @@ test('zn-gate check reads the Copilot hook state (absent, set up, switched off b
   assert.match(off2.problem, /disableAllHooks/);
 });
 
+test('zn-gate check reads user-level Copilot settings (disableAllHooks is a problem, other inline hooks are a note)', async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-cop-user-');
+  const cwd = tempDir(t, 'zn-cop-user-cwd-');
+  const env = { PATH: process.env.PATH, HOME: home };
+  cop.install({ scope: 'user', home, env, nodePath: process.execPath });
+  const find = async () => (await check.check({ home, cwd, env, live: false })).results.find((r) => r.id === 'copilot');
+  const settings = path.join(home, '.copilot', 'settings.json');
+  fs.mkdirSync(path.dirname(settings), { recursive: true });
+  fs.writeFileSync(settings, JSON.stringify({ hooks: { preToolUse: [{ type: 'command', bash: 'echo other', timeoutSec: 5 }] } }));
+  const inline = await find();
+  assert.equal(inline.state, 'protected', JSON.stringify(inline));
+  assert.ok(inline.notes.some((n) => /other preToolUse hook/.test(n)), JSON.stringify(inline.notes));
+  fs.writeFileSync(settings, JSON.stringify({ disableAllHooks: true }));
+  const off = await find();
+  assert.equal(off.state, 'not-protected');
+  assert.match(off.problem, /user settings.*disableAllHooks/);
+  fs.writeFileSync(settings, JSON.stringify({ disableAllHooks: false }));
+  assert.equal((await find()).state, 'protected');
+  // COPILOT_HOME moves the settings file with the hooks folder
+  const alt = tempDir(t, 'zn-cop-alt-');
+  const env2 = { PATH: process.env.PATH, HOME: home, COPILOT_HOME: alt };
+  cop.install({ scope: 'user', home, env: env2, nodePath: process.execPath });
+  fs.writeFileSync(path.join(alt, 'settings.json'), JSON.stringify({ disableAllHooks: true }));
+  const r2 = (await check.check({ home, cwd, env: env2, live: false })).results.find((r) => r.id === 'copilot');
+  assert.equal(r2.state, 'not-protected');
+});
+
 test('zn-gate check runs the installed hook live against a fake secret', async (t) => {
   if (process.platform === 'win32') return;
   const check = require('../lib/check');
