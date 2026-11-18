@@ -476,7 +476,7 @@ jobs:
         run: >-
           python -m mypy --strict
           src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
-          src/zn_gate/client.py src/zn_gate/evidence.py
+          src/zn_gate/client.py src/zn_gate/evidence.py src/zn_gate/destructive.py
           typing_check/check_public_api.py
       - name: Test the PyPI license checker
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}

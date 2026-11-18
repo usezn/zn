@@ -14,6 +14,7 @@ from zn_gate import (
     GuardBlockError,
     SanitizedToolResult,
     analyze,
+    check_command,
     check_tool_call,
     check_tool_result,
     evaluate,
@@ -37,6 +38,11 @@ def check_assessments() -> None:
     assert_type(check_tool_call("search", {"q": "x"}), Assessment)
     assert_type(check_tool_result("output", block_truncated=True), Assessment)
     evaluate(1)  # type: ignore[arg-type]
+
+
+def check_command_signature() -> None:
+    assert_type(check_command("ls"), Assessment)
+    check_command(1)  # type: ignore[arg-type]
 
 
 def check_redaction() -> None:

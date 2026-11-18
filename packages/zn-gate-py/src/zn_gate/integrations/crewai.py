@@ -3,7 +3,7 @@ CrewAI tool protection for zn-gate.
 """
 from __future__ import annotations
 import functools
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ..guard import (GuardBlockError, _call_payload, _is_async_callable, _ResultPolicy, block_message,
                      check_tool_call, validate_on_block)
@@ -16,7 +16,7 @@ def guarded_tool(
     check_result: bool = True,
     block_truncated: bool = False,
     framework: Optional[str] = None,
-) -> Callable:
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Decorator for custom agent tools (CrewAI, Pydantic AI, Google ADK or plain
     Python functions; either class methods or tool functions).
@@ -56,14 +56,14 @@ def guarded_tool(
     validate_on_block(on_block, ("raise", "return"))
     prefix = framework if framework else "tool"
 
-    def _blocked_input(tool_name: str, assessment: Any, kwargs: dict) -> Any:
+    def _blocked_input(tool_name: str, assessment: Any, kwargs: Dict[str, Any]) -> Any:
         if on_block == "raise":
             raise GuardBlockError(assessment, target=f"{prefix}:{tool_name}", payload=kwargs)
         if fallback is not None:
             return fallback
         return block_message(assessment, f"{prefix}:{tool_name}")
 
-    def decorator(tool_func: Callable) -> Callable:
+    def decorator(tool_func: Callable[..., Any]) -> Callable[..., Any]:
         tool_name = getattr(tool_func, "__name__", "tool")
         policy = _ResultPolicy(tool_name, f"{prefix}:{tool_name}:result", check_result, mask_secrets,
                                block_truncated, on_block, fallback, None, default=block_message)

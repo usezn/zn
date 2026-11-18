@@ -23,7 +23,7 @@ import re
 import stat
 import sys
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 VERSION = 1
 DEFAULT_MAX_SECONDS = 120
@@ -272,7 +272,7 @@ def _strings(v: Any, out: List[str]) -> List[str]:
     return out
 
 
-def _cut_markers(text: str, known: set) -> str:
+def _cut_markers(text: str, known: Set[str]) -> str:
     """Cuts out the tokens zn itself writes (__ZN_<TYPE>_<n>__, __ZN_REDACTED_<TYPE>__): a value that is
     already replaced is not counted. Anything else with the same shape is scanned."""
     if "__ZN_" not in text:

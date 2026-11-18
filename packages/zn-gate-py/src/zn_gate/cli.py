@@ -831,7 +831,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 class _DaysGiven(argparse.Action):
     """Store --days and remember it was typed, so the Top rules block follows it (7 days otherwise)."""
 
-    def __call__(self, parser, namespace, values, option_string=None):
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, values: Any,
+                 option_string: Optional[str] = None) -> None:
         setattr(namespace, self.dest, values)
         namespace.days_given = True
 
@@ -928,7 +929,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_stats(args) -> int:
+def cmd_stats(args: argparse.Namespace) -> int:
     from . import stats as _stats
     given = bool(getattr(args, "days_given", False))
     if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):

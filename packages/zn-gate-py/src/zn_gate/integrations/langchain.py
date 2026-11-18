@@ -17,7 +17,7 @@ Two pieces, because a LangChain callback can stop a run but cannot change it:
 """
 from __future__ import annotations
 import contextvars
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 from uuid import UUID
 
 from ..guard import (GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block, warn_ignored,
@@ -254,11 +254,11 @@ if _HAVE_LANGCHAIN:
     # filled in by the application, but LangChain still accepts a value the model sends for it, so it stays checked.
     _OVERWRITTEN = frozenset({"InjectedToolCallId", "InjectedState", "InjectedStore"})
 
-    def _marks(meta: Any) -> frozenset:
+    def _marks(meta: Any) -> FrozenSet[str]:
         cls = meta if isinstance(meta, type) else type(meta)
         return frozenset(c.__name__ for c in getattr(cls, "__mro__", ()))
 
-    def _injected_keys(tool: Any) -> frozenset:
+    def _injected_keys(tool: Any) -> FrozenSet[str]:
         """Names of the injected arguments the model cannot set (see _OVERWRITTEN); they are not checked."""
         try:
             full = getattr(tool.get_input_schema(), "model_fields", None) or {}
