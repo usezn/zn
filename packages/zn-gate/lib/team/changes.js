@@ -18,6 +18,7 @@
  */
 
 const fs = require('fs');
+const { writeFileAtomic } = require('../broker/files');
 const path = require('path');
 const { secretMatches, hostCovered } = require('./effective');
 
@@ -193,9 +194,7 @@ function writeNotice(home, n) {
   try {
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     const file = noticePath(home);
-    const tmp = file + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(n) + '\n', { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    writeFileAtomic(file, JSON.stringify(n) + '\n', 0o600);
   } catch (err) { /* the notice is best effort */ }
 }
 

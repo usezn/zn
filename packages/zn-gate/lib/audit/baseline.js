@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { parseJsonc, parseToml } = require('./parse');
+const { writeFileAtomic } = require('../broker/files');
 
 const MAX_FILE = 1024 * 1024;
 const MAX_HASHED = 8 * 1024 * 1024;
@@ -274,9 +275,7 @@ function baselinePath(home, root) {
 function saveBaseline(home, root, surface, now = new Date()) {
   const file = baselinePath(home, root);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = file + '.' + process.pid + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, approved_at: now.toISOString(), entries: surface }), { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify({ version: 1, approved_at: now.toISOString(), entries: surface }), 0o600);
   return file;
 }
 

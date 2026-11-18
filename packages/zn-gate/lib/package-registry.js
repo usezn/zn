@@ -18,6 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeFileAtomic } = require('./broker/files');
 
 const HOSTS = new Set(['registry.npmjs.org', 'pypi.org']);
 const TIMEOUT_MS = 2000;
@@ -159,13 +160,11 @@ function writeCache(file, entries) {
   if (keys.length > MAX_CACHE_ENTRIES) {
     keys.sort((a, b) => entries[a].t - entries[b].t).slice(0, keys.length - MAX_CACHE_ENTRIES).forEach((k) => { delete entries[k]; });
   }
-  const tmp = file + '.' + process.pid + '.tmp';
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(tmp, JSON.stringify({ v: 1, e: entries }), { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    writeFileAtomic(file, JSON.stringify({ v: 1, e: entries }), 0o600);
   } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (e2) { /* nothing was written */ }
+    /* best effort: the cache is rebuilt on the next lookup; no temporary file is left behind */
   }
 }
 
