@@ -468,7 +468,7 @@ function readEnabledState(opts, file) {
 
 function writeEnabledState(opts, file, previous) {
   const f = enabledStateFile(opts);
-  fs.mkdirSync(path.dirname(f), { recursive: true });
+  require('../vault/store').ensurePrivateDir(path.dirname(f));
   writeFileAtomic(f, JSON.stringify({ file, previous }) + '\n', 0o600);
 }
 
