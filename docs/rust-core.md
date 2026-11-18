@@ -191,6 +191,35 @@ To avoid the download:
 - `ZN_NEURAL_MODEL_PATH=/path/to/folder` (or `neural.model_path` in `zn.json`): the gateway loads the model from that folder. Nothing is downloaded if the three files there match their hashes, so a local copy must be byte-identical.
 - `HF_ENDPOINT=<your-mirror-url>`: the gateway downloads from that server instead of huggingface.co. The server must serve the same paths, `<endpoint>/sentence-transformers/all-MiniLM-L6-v2/resolve/<commit>/<file>`.
 
+## Logs
+
+The gateway writes its log to standard error, not standard output: `zn start` uses standard output for its JSON-RPC replies. The default level is `info`. The gateway writes no log file; to keep the output, redirect standard error (for example `zn start 2> zn.log`).
+
+To change the level, set `RUST_LOG` before you start the gateway. It takes the standard `tracing` filter syntax:
+
+```bash
+RUST_LOG=debug zn start
+RUST_LOG=warn,zn=debug zn start
+```
+
+If `RUST_LOG` is not set, or its value cannot be parsed, the level is `info`. An invalid value does not stop the gateway.
+
+Every log line passes through a redactor before it is written. It masks:
+
+- private key blocks, AWS access key IDs and AWS secret access keys, and GitHub, GitLab, Google, Stripe, Slack, OpenAI and Anthropic keys;
+- Slack and Discord webhook URLs;
+- JSON Web Tokens and `Authorization` headers;
+- values of the names `api_key`, `secret_key`, `password`, `token`, `auth_token`, `access_token` and `bearer` when they are written as `name=value`, `name: value` or a JSON member (values of 8 characters or more); a URL query parameter with one of these names is masked too;
+- email addresses, card numbers, US Social Security numbers, phone numbers and IBANs.
+
+The redactor masks only these shapes. It does not mask file paths, including the path of your home directory, URLs whose secret is in the path or in a query parameter with another name (such as `key=`), or free text. A secret in a shape it does not know is written as it is.
+
+A few messages that the command-line interface prints directly to standard error do not go through this redactor. Those sites redact their own values, but a message from a new site is not redacted unless its code does so.
+
+At `debug` and `trace` level, the HTTP libraries the gateway uses (reqwest and hyper) also write their own log lines. The gateway does not control what they write. Their output can include endpoints, such as SIEM export and webhook URLs, and possibly request headers. The redactor passes these lines through, so only the shapes listed above are masked.
+
+Do not share a `debug` or `trace` log publicly, for example in an issue or a chat. Check any log before you share it, and remove URLs, headers and tokens that the redactor did not mask. Use `info` (the default) in normal operation.
+
 ## Build it yourself
 
 1. Install the prerequisites:
