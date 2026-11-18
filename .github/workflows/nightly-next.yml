@@ -83,9 +83,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The runs started at 02:40 UTC: manual runs on next created in the last five hours. The newest one of each
+          # The runs started at 02:40 UTC: manual runs on next created in the last 16 hours (GitHub can start a scheduled run
+          # many hours late, so a short window would miss runs that were started on time for the late check). The newest one of each
           # workflow counts, so a manual re-run that passed clears an earlier failure.
-          since="$(date -u -d '5 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          since="$(date -u -d '16 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
           problems=""
           for wf in ci.yml rust.yml scrubber.yml leak-bench.yml public-facts.yml quick-checks.yml codeql.yml windows-paths.yml node-macos.yml; do
             line="$(gh run list --workflow "$wf" --branch next --event workflow_dispatch --created ">=$since" --limit 1 \
@@ -98,7 +99,7 @@ jobs:
             read -r url status conclusion <<< "$line"
             echo "$wf: $status $conclusion $url"
             if [ "$status" != "completed" ]; then
-              problems+="- $wf: not finished after four hours ($status): $url"$'\n'
+              problems+="- $wf: not finished ($status): $url"$'\n'
             elif [ "$conclusion" != "success" ]; then
               problems+="- $wf: $conclusion: $url"$'\n'
             fi
