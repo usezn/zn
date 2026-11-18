@@ -16,9 +16,9 @@ Each question links to its answer further down this page.
 | Question | Short answer |
 |---|---|
 | [How do I update zn-gate?](#1-how-do-i-update-zn-gate) | Run `npm install -g zn-gate`, then `zn-gate check`. |
-| [Do I have to do anything besides updating the package?](#2-do-i-have-to-do-anything-besides-updating-the-package) | Usually no. Check the release table if you skipped versions. |
+| [Do I have to do anything besides updating the package?](#2-do-i-have-to-do-anything-besides-updating-the-package) | Usually no, unless you update with pnpm, bun or `--ignore-scripts`. Check the release table if you skipped versions. |
 | [When do I run `zn hooks install <agent>` again?](#3-when-do-i-run-zn-hooks-install-agent-again) | When a release adds or changes a hook. Running it again is safe. |
-| [How do I update the Claude Code plugin?](#4-how-do-i-update-the-claude-code-plugin) | Through `/plugin` in Claude Code, then start a new session. |
+| [How do I update the Claude Code plugin?](#4-how-do-i-update-the-claude-code-plugin) | Add the plugin again at the new release tag, then start a new session. |
 | [Codex asks me to trust the hooks again. Is that normal?](#5-codex-asks-me-to-trust-the-hooks-again-is-that-normal) | Yes. Approve the hooks in `/hooks` in Codex. |
 | [My agent stopped being protected after I changed my Node.js. What do I do?](#6-my-agent-stopped-being-protected-after-i-changed-my-nodejs-what-do-i-do) | Run `npx -y zn-gate check` and follow the fix it names. |
 | [How do I remove zn-gate completely?](#7-how-do-i-remove-zn-gate-completely) | Run `npx -y zn-gate uninstall`, then `npm uninstall -g zn-gate`. |
@@ -34,11 +34,13 @@ Each question links to its answer further down this page.
 Run `npm install -g zn-gate`, and `pip install -U zn-gate` if you use the Python
 package. Then run `zn-gate check`: every agent that is set up should say **OK**.
 If you only ever run `npx -y zn-gate ...`, there is nothing to update.
+If you update with pnpm, bun or `npm install --ignore-scripts`, also run
+`zn hooks install <agent>` again (see question 3).
 See [the short version](upgrading.md#the-short-version).
 
 ### 2. Do I have to do anything besides updating the package?
 
-Most releases need nothing more. Look up your old and new versions in
+Most releases need nothing more, as long as your update runs npm's install step (pnpm, bun and `--ignore-scripts` skip it: see question 3). Look up your old and new versions in
 [the table of releases](upgrading.md#what-each-release-asks-you-to-do). If you
 update from a version older than 1.8.0, go through the rows of every release in
 between.
@@ -46,16 +48,26 @@ between.
 ### 3. When do I run `zn hooks install <agent>` again?
 
 When a release adds or changes a hook. The release notes in the
-[changelog](../CHANGELOG.md) say so and name the agent. Running it again is safe:
+[changelog](../CHANGELOG.md) say so and name the agent. Also run it again after
+you update with pnpm, bun or `npm install --ignore-scripts`, and as yourself (not
+with `sudo`) if you updated with `sudo`: these updates do not refresh the hook
+launchers, so the hooks keep running an older version or block tool calls until you do.
+Running it again is safe:
 it updates zn's own entries and leaves the rest of your settings alone. See
 [Run `zn hooks install <agent>` again](upgrading.md#run-zn-hooks-install-agent-again-when-a-release-changes-the-hook).
 
 ### 4. How do I update the Claude Code plugin?
 
-Through Claude Code's plugin manager (`/plugin` inside Claude Code), then start a
-new Claude Code session. You do not run `zn hooks install` for the plugin. Do not
-keep both the plugin and the hooks of `zn hooks install claude-code`, because
-both would run; remove the hooks with `zn hooks uninstall claude-code`.
+The plugin comes from a marketplace pinned to a release tag, so `/plugin` and
+`claude plugin update` do not bring a newer release by themselves. In your own
+terminal, run `claude plugin marketplace remove usezn`, then
+`claude plugin marketplace add usezn/zn#vX.Y.Z` (the tag of the release you want),
+then `claude plugin install zn-gate@usezn`. Start a new Claude Code session
+afterwards. `zn-gate check` tells you when the plugin is older than your zn-gate.
+You do not run `zn hooks install` for the plugin. Do not keep both the plugin and
+the hooks of `zn hooks install claude-code`, because both would run; remove the
+hooks with `zn hooks uninstall claude-code`. See
+[the other cases](upgrading.md#run-zn-hooks-install-agent-again-when-a-release-changes-the-hook).
 
 ### 5. Codex asks me to trust the hooks again. Is that normal?
 
@@ -170,7 +182,7 @@ and the team commands that join or sync with a zn organization. On a computer
 without internet, leave the cloud check off: with it off, the hooks and
 `zn-gate analyze` send nothing to usezn.com. Two other opt-in features send data
 there: `zn-gate stats share on`, which sends daily counts (off by default), and
-`zn team join`, which uploads audit metadata. See
+`zn team join`, which joins a zn organization and then uploads the vault audit log to it. See
 [Install on a machine without internet](install-matrix.md#install-on-a-machine-without-internet)
 for the full list and the offline install steps.
 
