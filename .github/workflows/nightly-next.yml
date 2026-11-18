@@ -30,7 +30,7 @@ jobs:
     name: start the full runs on next
     if: github.repository == 'usezn/zn' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '40 2 * * *')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       # gh workflow run (the workflow dispatch API) needs actions: write. A workflow_dispatch event created with
       # the run's own token does start a run. No checkout and no secrets: gh reads the repository name from GH_REPO.
@@ -53,6 +53,8 @@ jobs:
           for wf in ci.yml rust.yml scrubber.yml leak-bench.yml public-facts.yml quick-checks.yml codeql.yml windows-paths.yml node-macos.yml; do
             if gh workflow run "$wf" --ref next; then
               echo "started $wf on next"
+              # Space out the workflows that have macOS legs (the hosted macOS pool is small).
+              case "$wf" in ci.yml|rust.yml|scrubber.yml|leak-bench.yml) sleep 120 ;; esac
             else
               echo "::error::could not start $wf on next"
               failed=1

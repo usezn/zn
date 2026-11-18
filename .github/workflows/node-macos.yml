@@ -49,7 +49,7 @@ on:
       - '.github/workflows/node-macos.yml'
   # Daily full run on the default branch.
   schedule:
-    - cron: '30 6 * * *'
+    - cron: '7 6 * * *'
   workflow_dispatch:
 
 permissions:

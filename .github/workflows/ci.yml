@@ -30,7 +30,7 @@ on:
     types: [ checks_requested ]
   # Daily full run on the default branch.
   schedule:
-    - cron: '30 6 * * *'
+    - cron: '22 6 * * *'
   workflow_dispatch:
 
 permissions:
