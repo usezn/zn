@@ -37,8 +37,9 @@
  * grep_search {pattern, dir_path, include_pattern, no_ignore} (alias search_file_content), glob and list_directory
  * {dir_path}, web_fetch {prompt}.
  *
- * Not used: AfterTool (its decision can replace a tool result, but the shape of tool_response is not documented
- * well enough to rewrite it safely), SessionStart and the rest. zn registers BeforeTool only.
+ * Not used: AfterTool. Documented (reference page, read 2026-11-18): a deny decision hides the real tool output and its
+ * reason replaces it, and tailToolCallRequest runs another tool whose result replaces it. But tool_response is
+ * listed as llmContent, returnDisplay and error without types or an example, so rewriting it is not done safely, SessionStart and the rest. zn registers BeforeTool only.
  */
 
 const fs = require('fs');

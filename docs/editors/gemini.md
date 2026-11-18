@@ -35,7 +35,7 @@ To undo it: `zn hooks uninstall gemini`.
 | Blocks reads and writes of secret files, by path | Yes, through the `BeforeTool` event |
 | Blocks shell commands that handle secrets | Yes |
 | Blocks edits of Gemini CLI's own hook or settings files | Yes |
-| Removes secrets from what a tool returns | **No.** zn-gate does not use `AfterTool`, so a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault |
+| Removes secrets from what a tool returns | **No.** Gemini CLI documents an `AfterTool` event that can replace a tool result, but zn-gate does not use it yet: the documented result format is not specific enough to rewrite safely. A value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault |
 | Blocks a secret pasted into the chat | No. A pasted secret in a typed prompt is not checked |
 | Asks you for confirmation | No. Gemini CLI hooks cannot ask: a call zn-gate would ask about is blocked, and the reason says what was held back and how to approve it (run it yourself outside the agent). A call zn-gate has no objection to gets no answer, so Gemini CLI's own approval applies |
 | When the hook crashes or times out | Gemini CLI would let the call run (only an explicit refusal blocks). zn-gate blocks instead: a hook that fails is answered with a block, zn-gate sets a 15-second timeout on its hook, and a check still running after 11 seconds is answered with a block |
@@ -46,7 +46,7 @@ To undo it: `zn hooks uninstall gemini`.
 
 ### The hooks
 
-`zn hooks install gemini` writes one hook entry into the Gemini CLI settings file: `~/.gemini/settings.json` for your user, or `.gemini/settings.json` in the project with `--project`. zn-gate registers the `BeforeTool` event only: it checks each tool call before it runs, and the hook entry has a 15-second timeout.
+`zn hooks install gemini` writes one hook entry into the Gemini CLI settings file: `~/.gemini/settings.json` for your user, or `.gemini/settings.json` in the project with `--project`. zn-gate registers the `BeforeTool` event only (not `AfterTool`, see above): it checks each tool call before it runs, and the hook entry has a 15-second timeout.
 
 A user install writes the hook command as a small launcher script, and a project install runs `zn` from your PATH inside a start guard: when the hook fails, including when the Node.js zn-gate was installed with is gone, the launcher or the guard answers with a block instead of letting the call run. After you upgrade zn-gate, run `zn hooks install gemini` again.
 

@@ -186,7 +186,7 @@ with Gemini CLI 0.64.0 against a scripted model provider.
 - **What it covers:** before a tool call runs, zn blocks reading or writing
   secret files by path, shell commands that handle secrets, and edits of
   Gemini CLI's own settings files.
-- **What it does not cover:** zn does not use `AfterTool`, so what a tool
+- **What it does not cover:** Gemini CLI documents an `AfterTool` event that can replace a tool result, but zn does not use it yet, so what a tool
   returns is not hidden: a value printed by a command or a file the agent may
   read reaches the model. Gemini CLI hooks cannot ask you for confirmation, so
   zn blocks what it would refuse, and what it would ask about, with the reason

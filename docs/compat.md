@@ -400,7 +400,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   zn adds its hook to `~/.gemini/settings.json` (or `.gemini/settings.json`
   with `--project`). Checked end to end with Gemini CLI 0.64.0 against a
   scripted model provider. Not covered, and limits:
-  - What a tool returns is not changed: zn does not use `AfterTool`, so a
+  - What a tool returns is not changed: Gemini CLI documents an `AfterTool` event that can replace a tool
+    result, but zn does not use it yet (the result format is not specific
+    enough), so a
     value printed by a command or a file the agent may read reaches the model.
     Keep secrets in the vault.
   - Gemini CLI hooks cannot ask you for confirmation, so a call zn would ask
