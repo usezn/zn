@@ -9,7 +9,7 @@ Files:
 - `CHECKLIST.md`: the steps for a human run, and which open point each step answers.
 - `hooks-example.json`: the hooks.json entries to copy.
 
-Requirements: Node.js 18 or newer, no npm packages.
+Requirements: Node.js 20.19 or newer, no npm packages.
 
 ## Install in Antigravity (on your own machine)
 

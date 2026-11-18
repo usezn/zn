@@ -43,7 +43,7 @@ const CLAUDE_PRE_COMMAND = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" P
 const CLAUDE_CHECK_COMMAND = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" SessionStart check claude-code';
 const ZCODE_PRE_WORDS = ['/bin/sh', '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', 'PreToolUse'];
 
-/* The zn-gate Claude Code plugin needs Node.js 20.19 or later; zn-gate itself runs on 18 and later.
+/* The zn-gate Claude Code plugin needs Node.js 20.19 or later; zn-gate itself runs on 20.19 and later.
    This is the one place that says which version; the messages below and in init are built from it. */
 const PLUGIN_NODE_MIN = '20.19';
 function pluginNodeOk(version) {

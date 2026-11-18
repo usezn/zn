@@ -30,7 +30,7 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 
 A short list of what a pull request needs. Each step points to the section below that explains it.
 
-1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
+1. Have Node.js 20.19 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
 2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
 3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
 4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
@@ -106,7 +106,7 @@ Windows notes: use PowerShell, and run each command on its own line (Windows Pow
 
 | Check | Commands | Linux and macOS | Windows (PowerShell) |
 | --- | --- | --- | --- |
-| Node.js 18, 22 and 24 tests and benchmarks | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/integration/test_agent_workflows.js`; then, from the root, `node bench/bench_node.js` | Same | Same. Only your installed Node.js version runs; CI runs 18, 22 and 24. |
+| Node.js 20.19, 22 and 24 tests and benchmarks | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/integration/test_agent_workflows.js`; then, from the root, `node bench/bench_node.js` | Same | Same. Only your installed Node.js version runs; CI runs 20.19, 22 and 24. |
 | Python 3.12 tests and benchmarks | `python -m pip install --require-hashes -r .github/ci-test-requirements.txt`, `python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py`, `cd packages/zn-gate-py`, `python -m pytest tests/ -v`; then, from the root, `python bench/bench_python.py` | Same | Same |
 | Lint (eslint, ruff, mypy) | See the Lint commands below | Same | Same, with `eslint.cmd` |
 | Public facts | `node .github/scripts/check-public-facts.mjs`, `cd packages/zn-gate`, `npm run check:rules`; for a pull request also `git fetch origin next` and `node .github/scripts/check-rule-versions.mjs origin/next` | Same | Same |

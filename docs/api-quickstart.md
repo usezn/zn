@@ -108,7 +108,7 @@ if __name__ == "__main__":
 
 ## 6. Node.js
 
-This script uses the built-in `fetch` function of Node.js 18 or later and needs no packages. Save it as `analyze.mjs`, set `ZN_API_KEY` and run `node analyze.mjs`.
+This script uses the built-in `fetch` function of Node.js 20.19 or later and needs no packages. Save it as `analyze.mjs`, set `ZN_API_KEY` and run `node analyze.mjs`.
 
 ```javascript
 const API_URL = 'https://api.usezn.com/v30/analyze';

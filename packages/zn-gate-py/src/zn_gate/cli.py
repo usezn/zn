@@ -961,7 +961,7 @@ def npm_only_message(command: str) -> str:
             "The Python package protects agents you build yourself (LangChain, CrewAI, "
             "LlamaIndex or plain tool calling).\n"
             "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, "
-            "install Node.js 18 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
+            "install Node.js 20.19 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
             "from https://nodejs.org, then follow the install steps at https://github.com/usezn/zn#install\n"
         )
     return (
@@ -969,7 +969,7 @@ def npm_only_message(command: str) -> str:
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
         "LlamaIndex or plain tool calling).\n"
         "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, run this in your own "
-        "terminal (it needs Node.js 18 or later):\n"
+        "terminal (it needs Node.js 20.19 or later):\n"
         f"  {npx_name()} -y zn-gate init\n"
     )
 
@@ -983,12 +983,12 @@ def npm_only_simple_message(command: str) -> str:
     if not node_available():
         return (
             f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
-            "It needs Node.js 18 or later: install it from https://nodejs.org, then follow the install steps at "
+            "It needs Node.js 20.19 or later: install it from https://nodejs.org, then follow the install steps at "
             "https://github.com/usezn/zn#install\n"
         )
     return (
         f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
-        "Run it with Node.js 18 or later:\n"
+        "Run it with Node.js 20.19 or later:\n"
         f"  {npx_name()} -y zn-gate {command}\n"
         f"or, after npm install -g zn-gate:\n"
         f"  {zn_gate_name()} {command}\n"
@@ -1003,7 +1003,7 @@ def npm_help_message() -> str:
         )
     return (
         "zn-gate help is not a command. The npm package shows its help with --help.\n"
-        "Run it with Node.js 18 or later:\n"
+        "Run it with Node.js 20.19 or later:\n"
         f"  {npx_name()} -y zn-gate --help\n"
     )
 

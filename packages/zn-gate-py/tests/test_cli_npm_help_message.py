@@ -9,8 +9,8 @@ def test_message_names_the_npm_help_command():
     assert npx_name() + " -y zn-gate --help" in cli.npm_help_message()
 
 
-def test_message_mentions_node_18():
-    assert "Node.js 18" in cli.npm_help_message()
+def test_message_mentions_node_floor():
+    assert "Node.js 20.19" in cli.npm_help_message()
 
 
 def test_message_ends_with_one_newline():

@@ -6,7 +6,7 @@ Support for Gemini CLI is experimental. It is listed apart from the seven suppor
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** In your own terminal, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/).
+1. **Check that Node.js is installed.** In your own terminal, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 20.19 or later works for the hooks and the CLI. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/).
 
 2. **Install zn-gate and turn on its protection for Gemini CLI.** Paste each line in the same terminal and press Enter after each one:
 
@@ -90,7 +90,7 @@ If you installed the hooks for one project only, add `--project` and run it from
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 20.19 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **`zn-gate check` says Gemini CLI is not protected:** a Gemini CLI setting switched the hook off (see [above](#when-a-gemini-cli-setting-switches-the-hook-off)), or the launcher cannot run: run `npm install -g zn-gate` and then `zn hooks install gemini` again.
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).

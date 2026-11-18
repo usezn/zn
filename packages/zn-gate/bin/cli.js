@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-// zn-gate needs Node.js 18 or later. This check is plain ES5 and runs before
+// zn-gate needs Node.js 20.19 or later. This check is plain ES5 and runs before
 // any require, so an older Node.js gets a clear message instead of a stack trace.
 // What an agent starts (hooks, MCP servers, the `zn run` commands the hooks write)
 // keeps running with a warning: stopping a hook here would let the agent's call
 // through unchecked in Claude Code and Codex.
 (function () {
-  var major = parseInt(String(process.versions && process.versions.node).split('.')[0], 10);
-  if (major >= 18) return;
-  var msg = 'zn-gate needs Node.js 18 or later, and this is Node.js ' + process.version + '.\n' +
+  var parts = String(process.versions && process.versions.node).split('.');
+  var major = parseInt(parts[0], 10);
+  var minor = parseInt(parts[1], 10) || 0;
+  if (major > 20 || (major === 20 && minor >= 19)) return;
+  var msg = 'zn-gate needs Node.js 20.19 or later, and this is Node.js ' + process.version + '.\n' +
     'Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), then run the command again.\n';
   var agentRun = { hook: 1, run: 1, mcp: 1, 'secrets-mcp': 1, 'mcp-shield': 1, shield: 1 };
   if (Object.prototype.hasOwnProperty.call(agentRun, process.argv[2])) {

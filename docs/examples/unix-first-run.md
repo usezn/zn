@@ -8,7 +8,7 @@ A short walk-through for macOS or Linux when Node.js came from a version manager
    node --version
    ```
 
-   Node.js 22 LTS is recommended. 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later.
+   Node.js 22 LTS is recommended. 20.19 or later is needed for the hooks, the CLI and the Claude Code plugin.
 
 2. If the version is too old, update it with your version manager, then open a new terminal and check again. With nvm:
 

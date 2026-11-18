@@ -42,7 +42,7 @@ that service.
 | `release/X.Y.Z` | A release being prepared: a version bump, release notes and, for a patch release, only the fixes it ships. |
 
 `main` and `next` are protected: changes go through pull requests, the required
-CI checks must pass (Node.js 18, 22 and 24 test suites, Python tests, the npm and
+CI checks must pass (Node.js 20.19, 22 and 24 test suites, Python tests, the npm and
 Python package checks, the secret-leak benchmark and the scrubber and vault
 tests), and force pushes and deletion are blocked. `release/*` branches and
 `v*` tags can only be created by repository administrators (today, the

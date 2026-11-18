@@ -1,6 +1,6 @@
 'use strict';
 
-// The Claude Code plugin needs Node.js 20.19 or later, zn-gate itself runs on 18 and later. With an older
+// The Claude Code plugin needs Node.js 20.19 or later, zn-gate itself runs on 20.19 and later. With an older
 // Node.js, init does not install the plugin and sets up zn's hooks instead, and check says so when the plugin
 // is installed. The Node.js version is injected (nodeVersion): the real runtime is never changed.
 

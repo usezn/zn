@@ -169,7 +169,7 @@ function createApi(options = {}) {
   const base = checkBase(rawBase);
   const allowHttp = base.startsWith('http://');
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw usageError('timeoutMs must be a positive integer');
-  if (typeof fetchImpl !== 'function') throw usageError('fetch is not available; zn-gate needs Node 18 or later');
+  if (typeof fetchImpl !== 'function') throw usageError('fetch is not available; zn-gate needs Node 20.19 or later');
   if (typeof userAgent !== 'string' || userAgent === '') throw usageError('userAgent must be a non-empty string');
 
   const scrub = (text) => (typeof token === 'string' && token !== '' ? text.split(token).join('[token]') : text);

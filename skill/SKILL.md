@@ -19,7 +19,7 @@ local MCP server over stdio with four tools.
 
 ## Setup
 
-You need Node.js 18 or later. Add zn-gate as an MCP server in your client:
+You need Node.js 20.19 or later. Add zn-gate as an MCP server in your client:
 
 ```bash
 claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code

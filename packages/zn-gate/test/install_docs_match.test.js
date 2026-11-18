@@ -41,8 +41,9 @@ test('both documents name the same patched Node.js releases as lib/node-support.
 
 test('both documents call the older lines end-of-life and recommend the line lib/node-support.js starts at', () => {
   const lines = [];
-  for (let m = 18; m < EOL_BELOW; m += 2) lines.push(m);
-  const phrase = 'Node.js ' + lines.join(' and ') + ' are end-of-life';
+  const floorMajor = Number(/^>=\s*(\d+)/.exec(require('../package.json').engines.node)[1]);
+  for (let m = floorMajor + (floorMajor % 2); m < EOL_BELOW; m += 2) lines.push(m);
+  const phrase = 'Node.js ' + lines.join(' and ') + (lines.length === 1 ? ' is' : ' are') + ' end-of-life';
   const recommended = 'Node.js ' + EOL_BELOW + ' LTS is recommended';
   for (const [name, text] of [['README', readme], ['guide', guide]]) {
     assert.ok(text.includes(phrase), name + ' lacks: ' + phrase);

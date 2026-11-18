@@ -4,7 +4,7 @@ Set up zn-gate in OpenCode in two minutes, then the technical details: the plugi
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** In your own terminal, paste `node --version` and press Enter. If you see a version number, go on: zn-gate needs Node.js 18 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/).
+1. **Check that Node.js is installed.** In your own terminal, paste `node --version` and press Enter. If you see a version number, go on: zn-gate needs Node.js 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/).
 
 2. **Install zn-gate and turn on its protection for OpenCode.** Run every command in your own terminal. Paste each line and press Enter after each one:
 
@@ -86,7 +86,7 @@ If you installed the plugin for one project only, add `--project` and run it fro
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 20.19 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **A blocked call says the hook could not be started:** run `zn-gate check` in a terminal, then `zn hooks install opencode`.
 - **A command is blocked with a note that it must be one program with plain arguments** (Windows PowerShell): the PowerShell wrapping covers only simple commands — no pipeline, variable or script block (see [Commands on Windows](#commands-on-windows) above).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).

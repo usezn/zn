@@ -4,7 +4,7 @@ Set up zn-gate in VS Code with GitHub Copilot agent mode in two minutes: hooks t
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 20.19 or later is needed for the hooks, the CLI and the Claude Code plugin. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code.
 2. In your own terminal, run:
 
    ```bash
@@ -122,7 +122,7 @@ Run `zn hooks uninstall copilot` (add `--project` if you installed it in a proje
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 20.19 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **`zn-gate check` shows a note about checking every call twice:** see "If zn-gate also protects Claude Code in the same project" above.
 - **The zn-gate tools do not appear in VS Code:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart VS Code.

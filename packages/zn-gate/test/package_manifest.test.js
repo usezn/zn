@@ -35,7 +35,7 @@ test('every bin target starts with a node shebang line', () => {
 });
 
 test('engines.node is a ">=MAJOR" floor that lib/node-support.js knows about', () => {
-  const m = /^>=\s*(\d+)(?:\.\d+\.\d+)?$/.exec(pkg.engines.node);
+  const m = /^>=\s*(\d+)(?:\.\d+){0,2}$/.exec(pkg.engines.node);
   assert.ok(m, 'unexpected engines.node: ' + pkg.engines.node);
   const floor = Number(m[1]);
   // The floor must not exclude any line that node-support.js still calls patched.
@@ -51,7 +51,7 @@ test('engines.node is a ">=MAJOR" floor that lib/node-support.js knows about', (
 });
 
 test('the version guard in bin/cli.js names the same floor as engines.node', () => {
-  const floor = /^>=\s*(\d+)/.exec(pkg.engines.node)[1];
+  const floor = /^>=\s*(\d+(?:\.\d+)?)/.exec(pkg.engines.node)[1];
   const head = fs.readFileSync(path.join(root, 'bin', 'cli.js'), 'utf8').split('\n').slice(0, 12).join('\n');
   assert.ok(head.includes('Node.js ' + floor + ' or later'), 'guard text does not mention Node.js ' + floor);
 });

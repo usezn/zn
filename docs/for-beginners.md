@@ -130,7 +130,7 @@ If you installed zn-gate with `pip` instead of `npx`, run `zn-gate scan .` in pl
 
 These are three messages a new user often meets first. Each one is explained in [Troubleshooting](troubleshooting.md).
 
-- **"zn-gate needs Node.js 18 or later, and this is Node.js v..."**: install the LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check `node --version`, then run your command again. ([Details](troubleshooting.md#1-nodejs-is-too-old))
+- **"zn-gate needs Node.js 20.19 or later, and this is Node.js v..."**: install the LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check `node --version`, then run your command again. ([Details](troubleshooting.md#1-nodejs-is-too-old))
 - **"... needs an interactive terminal. Open a terminal window yourself and run it there."**: open a terminal window yourself, not the agent's window, and run the same command there. Nothing was changed. ([Details](troubleshooting.md#4-it-needs-you-at-your-own-terminal))
 - **"Your secret vault is locked."**: run `zn unlock` in your own terminal, then run the command that failed again. ([Details](troubleshooting.md#5-your-secret-vault-is-locked))
 

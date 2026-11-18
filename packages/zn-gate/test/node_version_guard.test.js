@@ -22,12 +22,12 @@ function runAs(version, args, input) {
   }
 }
 
-for (const version of ['12.22.12', '16.20.2', '17.9.1']) {
+for (const version of ['12.22.12', '16.20.2', '18.20.8', '20.0.0', '20.18.3']) {
   test('Node.js ' + version + ' is refused with a clear message', () => {
     const r = runAs(version, ['--version']);
     assert.strictEqual(r.status, 1);
     assert.strictEqual(r.stdout, '');
-    assert.match(r.stderr, /^zn-gate needs Node\.js 18 or later, and this is Node\.js v/);
+    assert.match(r.stderr, /^zn-gate needs Node\.js 20\.19 or later, and this is Node\.js v/);
     assert.match(r.stderr, /https:\/\/nodejs\.org\//);
     assert.doesNotMatch(r.stderr, /\n\s+at /, 'no stack trace');
     assert.strictEqual(r.stderr.trim().split('\n').length, 2);
@@ -43,7 +43,7 @@ test('a hook started by an agent on Node.js 16 still runs and still blocks a .en
     const r = runAs('16.20.2', ['hook', 'claude-code'], event);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /"permissionDecision":\s*"deny"/);
-    assert.match(r.stderr, /^Warning: zn-gate needs Node\.js 18 or later/);
+    assert.match(r.stderr, /^Warning: zn-gate needs Node\.js 20\.19 or later/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -51,7 +51,7 @@ test('a hook started by an agent on Node.js 16 still runs and still blocks a .en
 
 test('a `zn run` command written by the hooks is not stopped by the guard on Node.js 16', () => {
   const r = runAs('16.20.2', ['run', '--', process.execPath, '-e', '']);
-  assert.match(r.stderr, /^Warning: zn-gate needs Node\.js 18 or later/);
+  assert.match(r.stderr, /^Warning: zn-gate needs Node\.js 20\.19 or later/);
   assert.doesNotMatch(r.stderr, /then run the command again\.\n[\s\S]*then run the command again/);
   assert.ok(!(r.status === 1 && r.stderr.trim().split('\n').length === 2), 'the guard stopped zn run');
 });
@@ -59,14 +59,16 @@ test('a `zn run` command written by the hooks is not stopped by the guard on Nod
 test('MCP servers on Node.js 16 keep stdout clean', () => {
   const r = runAs('16.20.2', ['mcp']);
   assert.strictEqual(r.stdout, '');
-  assert.match(r.stderr, /^Warning: zn-gate needs Node\.js 18 or later/);
+  assert.match(r.stderr, /^Warning: zn-gate needs Node\.js 20\.19 or later/);
 });
 
-test('Node.js 18 and later run normally', () => {
-  const r = runAs('18.0.0', ['--version']);
-  assert.strictEqual(r.status, 0, r.stderr);
-  assert.doesNotMatch(r.stderr, /needs Node\.js 18/);
-});
+for (const version of ['20.19.0', '20.19.6', '22.5.1']) {
+  test('Node.js ' + version + ' runs normally', () => {
+    const r = runAs(version, ['--version']);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /needs Node\.js/);
+  });
+}
 
 test('the guard is plain ES5 before the first require', () => {
   const src = fs.readFileSync(CLI, 'utf8');

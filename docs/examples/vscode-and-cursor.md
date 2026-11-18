@@ -4,7 +4,7 @@ Install, verify and uninstall zn-gate for both editors on one page. The commands
 
 The two editors are set up differently. In Cursor, zn-gate installs hooks. In VS Code, you add zn-gate as an MCP server by hand, and zn-gate does not install hooks for VS Code yet.
 
-Both need Node.js 18 or later: run `node --version` in a terminal to check.
+Both need Node.js 20.19 or later: run `node --version` in a terminal to check.
 
 ## At a glance
 

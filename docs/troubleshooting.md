@@ -100,7 +100,7 @@ Find the command you ran, then the symptom that matches.
 ## 1. Node.js is too old
 
 ```text
-zn-gate needs Node.js 18 or later, and this is Node.js v12.22.9.
+zn-gate needs Node.js 20.19 or later, and this is Node.js v12.22.9.
 Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), then run the command again.
 ```
 
@@ -286,7 +286,7 @@ X  Claude Code   NOT protected: the zn-gate plugin needs Node.js 20.19 or later 
 
 The version number in the second message is yours and will differ.
 
-**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.19 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make. Before version 1.14.0 the plugin also had MCP servers, which did not start either, so Claude Code listed them as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
+**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.19 or later. With an older Node.js (for example Node.js 18 or 20.0 to 20.18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make. Before version 1.14.0 the plugin also had MCP servers, which did not start either, so Claude Code listed them as failed to connect. zn-gate itself and zn's hooks still run on Node.js 20.19 and later. Nothing is wrong with your files.
 
 **How to check:**
 
@@ -298,7 +298,7 @@ The version number in the second message is yours and will differ.
 - **Update Node.js (recommended):** install the Node.js 22 LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check that `node --version` shows it, then start a new Claude Code session. On a computer with several Node.js installs, make sure the new one is the first on your `PATH`.
 - **Or use zn's hooks instead of the plugin:** run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal. Then run `npx -y zn-gate check` again.
 
-Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
+Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 20.19 or later is enough for the hooks, the CLI and the plugin. See the [README](../README.md#install).
 
 ## 12. Init cannot install zn-gate: no internet connection
 
@@ -1312,7 +1312,7 @@ The `zn-gate` command of the Python package protects agents you build yourself. 
 
 **What happened:** you ran a command that only the npm package has, such as `init`, `hooks`, `report`, `connect` or `disconnect`. Nothing was changed. The message prints the command that works.
 
-**What to do:** run it with Node.js 18 or later, for example `npx -y zn-gate init`. To see the help of the npm package, run `npx -y zn-gate --help`.
+**What to do:** run it with Node.js 20.19 or later, for example `npx -y zn-gate init`. To see the help of the npm package, run `npx -y zn-gate --help`.
 
 #### "Error: target path not found"
 

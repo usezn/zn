@@ -32,7 +32,7 @@
  * already be on this version. Every other release check, including the integrity, the attestation and the file digests of
  * the lock file as it is, stays strict. The strict form (no --pre-tag) runs on main once npm has the version: then the
  * lock file must equal it.
- * No dependencies; Node.js 18 or later.
+ * No dependencies; Node.js 20.19 or later.
  */
 
 const fs = require('fs');

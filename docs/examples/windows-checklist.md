@@ -6,7 +6,7 @@ A short list of steps, in order, for installing zn-gate on Windows and checking 
 
 ## Steps
 
-1. Check Node.js. Run `node --version`. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
+1. Check Node.js. Run `node --version`. Node.js 22 LTS is recommended; 20.19 or later is needed for the hooks, the CLI and the Claude Code plugin. If you see "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
 2. Check npx. Run `npx --version`. If PowerShell says "running scripts is disabled on this system", go to [the fix below](#if-you-see-running-scripts-is-disabled-on-this-system) and then come back to this step.
 3. Install. Run `npx -y zn-gate init`. It shows each step before it runs it and asks first, and you can say no.
 4. Check. Run `npx -y zn-gate check`. A line that starts with `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says what to run.

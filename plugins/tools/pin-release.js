@@ -24,7 +24,7 @@
  *
  * Run it after the release is published, review the diff of the lock files,
  * and commit them together with the version bump of the plugin manifests.
- * No dependencies; Node.js 18 or later.
+ * No dependencies; Node.js 20.19 or later.
  */
 
 const crypto = require('crypto');

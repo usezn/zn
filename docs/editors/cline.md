@@ -5,11 +5,11 @@ Set up zn-gate in Cline in two minutes: add it as an MCP server, and what zn-gat
 ## What you need
 
 - **Cline** in your editor, with its **MCP Servers** panel. This page does not name a minimum Cline or editor version.
-- **Node.js 18 or later**, which includes `npx` (step 1 below shows how to check).
+- **Node.js 20.19 or later**, which includes `npx` (step 1 below shows how to check).
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 20.19 or later is needed for the hooks, the CLI and the Claude Code plugin. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
 2. In the Cline panel, click the **MCP Servers** icon, open the **Configure** tab and click **Configure MCP Servers**. Cline opens its settings file.
 3. Paste this:
 
@@ -104,7 +104,7 @@ Open the settings file you edited in Install, delete the `zn-gate` entry (and an
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 20.19 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **The zn-gate tools do not appear in Cline:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Cline.
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
