@@ -74,10 +74,11 @@ jobs:
         os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.19.0", "20.x", "22.x", "24.x", "26.x"]' || '["22.x"]') }}
         # macOS is the scarcest runner: it runs Node.js 22.x only (also on a push to next), except on the Sunday schedule and on
-        # pull requests labelled full-ci, which test every version.
+        # pull requests labelled full-ci, which test every version. Pull requests without that label get no macOS leg here (node-macos.yml
+        # is the smoke leg).
         # 20.19.0 is the lowest Node.js the plugin supports (its locked dependencies need it), so the floor is tested exactly
         # in the weekly run.
-        exclude: ${{ fromJSON((github.event.schedule == '8 11 * * 0' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[]' || '[{"os":"macos-latest","node-version":"20.19.0"},{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"},{"os":"macos-latest","node-version":"26.x"}]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"macos-latest"}]' || (github.event.schedule == '8 11 * * 0' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[]' || '[{"os":"macos-latest","node-version":"20.19.0"},{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"},{"os":"macos-latest","node-version":"26.x"}]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'

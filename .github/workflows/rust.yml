@@ -112,13 +112,14 @@ jobs:
     # scope job always says yes there), in pull requests into main or a release branch and in pull requests with the full-ci label (always),
     # and in other pull requests only when they change Rust code or Cargo files, so a pull request into next that
     # changes none does not start a Windows or macOS runner. The merge queue runs only the required checks, so it
-    # skips this job. Draft pull requests skip it (through scope).
+    # skips this job. Draft pull requests skip it (through scope). The macOS entry does not run on a pull request without
+    # the full-ci label (the Node.js macOS smoke job is the one macOS leg of a pull request).
     needs: scope
     if: github.event_name != 'merge_group' && (needs.scope.outputs.rust == 'true' || (github.event_name == 'pull_request' && (github.base_ref != 'next' || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["windows-latest", "macos-latest"]' || '["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:

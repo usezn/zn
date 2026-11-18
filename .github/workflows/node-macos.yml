@@ -1,6 +1,7 @@
 # zn-gate Node.js 22 test suite on macOS, on pull requests and on pushes that touch the package code.
 name: zn-gate Node.js on macOS
 
+# This is the one macOS leg of a pull request (the other macOS legs run outside pull requests or with the full-ci label).
 # Runs the whole zn-gate Node.js test suite on macOS with Node.js 22, including the vault tests against
 # the native macOS Keychain. It runs on pull requests that touch the zn-gate library, CLI or tests (macOS runners
 # are the scarcest ones, so pull requests that change nothing there skip it), not in the merge queue (which runs

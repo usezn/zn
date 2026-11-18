@@ -250,13 +250,9 @@ jobs:
       matrix:
         # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check (plain pytest; the coverage
         # report is the python-coverage job): it is the job below, not an entry here.
-        include:
-          - {os: ubuntu-latest, python-version: "3.10"}
-          - {os: ubuntu-latest, python-version: "3.11"}
-          - {os: ubuntu-latest, python-version: "3.13"}
-          - {os: ubuntu-latest, python-version: "3.14"}
-          - {os: windows-latest, python-version: "3.12"}
-          - {os: macos-latest, python-version: "3.12"}
+        # The macOS entry runs outside pull requests (merge queue, push, schedule, manual runs) and on pull requests
+        # labelled full-ci; a pull request without the label gets the node-macos.yml smoke leg only.
+        include: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash

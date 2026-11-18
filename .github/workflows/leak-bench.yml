@@ -48,8 +48,8 @@ jobs:
         # "leak bench (node 22 / ubuntu-latest)" is a required check: it always runs.
         os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
-        # macOS is the scarcest runner: it runs Node.js 22 only, except on the Sunday schedule and on pull requests labelled full-ci.
-        exclude: ${{ fromJSON((github.event.schedule == '37 8 * * 0' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[]' || '[{"os":"macos-latest","node":20},{"os":"macos-latest","node":24}]') }}
+        # macOS is the scarcest runner: it runs Node.js 22 only, except on the Sunday schedule and on pull requests labelled full-ci. Pull requests without the label get no macOS leg here (node-macos.yml is the smoke leg).
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"macos-latest"}]' || (github.event.schedule == '37 8 * * 0' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[]' || '[{"os":"macos-latest","node":20},{"os":"macos-latest","node":24}]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
