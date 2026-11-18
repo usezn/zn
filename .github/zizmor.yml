@@ -12,3 +12,8 @@ rules:
       - rust.yml
       # actions/cache: the step is skipped on release pushes by its "if".
       - leak-bench.yml
+  # The Windows step of the protoc action appends a fixed directory under RUNNER_TEMP to GITHUB_PATH.
+  # No value from the event, an input or a download reaches it, and the path is built from a pinned version.
+  github-env:
+    ignore:
+      - action.yml:25

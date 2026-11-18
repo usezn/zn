@@ -558,4 +558,4 @@ jobs:
         env:
           # Read-only token: lets zizmor check pinned commits and action versions against GitHub.
           GH_TOKEN: ${{ github.token }}
-        run: zizmor --no-progress --config .github/zizmor.yml .github/workflows action.yml
+        run: zizmor --no-progress --config .github/zizmor.yml .github/workflows action.yml .github/actions .github/dependabot.yml
