@@ -1,2 +1,2 @@
 ### Fixed
-- State files the CLI writes (the audit baseline, the team notice and the package lookup cache) are now written in one step through the exclusive writer: the temporary file gets an unpredictable name, is created only if it does not exist, and is removed when the write fails.
+- Local state files the CLI writes (the audit baseline, the team notice, the package lookup cache, the usage statistics, the team policy and the upload state) are now written in one step through the exclusive writer: the temporary file gets an unpredictable name, is created only if absent, and is removed when a write fails.

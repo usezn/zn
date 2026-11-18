@@ -186,7 +186,7 @@ test('the state is saved by renaming a temp file in the same directory', async (
     assert.strictEqual(to, f.stateFile);
     assert.notStrictEqual(from, to);
     assert.strictEqual(path.dirname(from), path.dirname(to));
-    assert.match(path.basename(from), /\.tmp$/);
+    assert.match(path.basename(from), /\.(zn-)?tmp$/);
   }
 });
 

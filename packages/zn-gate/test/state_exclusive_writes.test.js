@@ -1,8 +1,8 @@
 'use strict';
 
-// The state files the CLI writes (the audit baseline, the team notice) go through the package's exclusive writer:
-// a file planted at the old, predictable temporary name is neither followed nor overwritten, and a failed write
-// leaves no temporary file behind. Values are fake.
+// The state files the CLI writes go through the package's exclusive writer: a file planted at the old, predictable
+// temporary name is neither followed nor overwritten, and a failed write leaves no temporary file behind.
+// Values are fake.
 
 process.env.ZN_STATS = 'off';
 const test = require('node:test');
@@ -11,6 +11,9 @@ const fs = require('fs');
 const path = require('path');
 const { saveBaseline, baselinePath } = require('../lib/audit/baseline');
 const { takeNotices } = require('../lib/team/changes');
+const { writeTeam } = require('../lib/team/policy');
+const { uploadPending } = require('../lib/team/upload');
+const stats = require('../lib/stats');
 const { tempDir } = require('./helpers/tmp');
 
 const PLANTED = 'planted by another process, must survive';
@@ -64,4 +67,66 @@ test('a failed notice write is swallowed and leaves no temporary file behind', (
 
   assert.doesNotThrow(() => takeNotices({ home, detectorsMissing: true, syncCommand: 'zn team sync', now: 1000 }));
   assert.deepEqual(leftovers(home), []);
+});
+
+test('a usage record is written to its file and leaves no temporary file behind', (t) => {
+  const dir = tempDir(t, 'zn-state-stats-');
+  const file = path.join(dir, 'stats.json');
+  process.env.ZN_STATS = 'on';
+  try {
+    stats.record({ agent: 'claude-code', layer: 'cli', checked: 1 }, { file, now: new Date('2026-11-18T12:00:00Z') });
+  } finally {
+    process.env.ZN_STATS = 'off';
+  }
+  assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).days);
+  assert.deepEqual(leftovers(dir), []);
+});
+
+test('a failed usage record is swallowed and leaves no temporary file behind', (t) => {
+  const dir = tempDir(t, 'zn-state-stats-');
+  const file = path.join(dir, 'stats.json');
+  fs.mkdirSync(file);
+  process.env.ZN_STATS = 'on';
+  try {
+    assert.doesNotThrow(() => stats.record({ agent: 'claude-code', layer: 'cli', checked: 1 }, { file, now: new Date('2026-11-18T12:00:00Z') }));
+  } finally {
+    process.env.ZN_STATS = 'off';
+  }
+  assert.deepEqual(leftovers(dir), []);
+});
+
+test('a team policy write lands in its file and leaves no temporary file behind', (t) => {
+  const home = tempDir(t, 'zn-state-team-');
+  writeTeam({ org: 'example-org' }, { home });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'team.json'), 'utf8')).org, 'example-org');
+  assert.deepEqual(leftovers(home), []);
+});
+
+test('a failed team policy write throws and leaves no temporary file behind', (t) => {
+  const home = tempDir(t, 'zn-state-team-');
+  fs.mkdirSync(path.join(home, 'team.json'));
+  assert.throws(() => writeTeam({ org: 'example-org' }, { home }));
+  assert.deepEqual(leftovers(home), []);
+});
+
+test('an upload state write lands in its file and leaves no temporary file behind', async (t) => {
+  const dir = tempDir(t, 'zn-state-upload-');
+  const audit = path.join(dir, 'audit.jsonl');
+  fs.writeFileSync(audit, '');
+  const stateFile = path.join(dir, 'state.json');
+  const r = await uploadPending({ auditFile: audit, stateFile, lockFile: path.join(dir, 'lock'), installId: 'fake-install', api: { ingest: async () => ({ ok: true }) }, now: () => 1000 });
+  assert.equal(r.status, 'nothing');
+  assert.ok(fs.existsSync(stateFile));
+  assert.deepEqual(leftovers(dir), []);
+});
+
+test('a failed upload state write is reported as an error and leaves no temporary file behind', async (t) => {
+  const dir = tempDir(t, 'zn-state-upload-');
+  const audit = path.join(dir, 'audit.jsonl');
+  fs.writeFileSync(audit, '');
+  const stateFile = path.join(dir, 'state.json');
+  fs.mkdirSync(stateFile);
+  const r = await uploadPending({ auditFile: audit, stateFile, lockFile: path.join(dir, 'lock'), installId: 'fake-install', api: { ingest: async () => ({ ok: true }) }, now: () => 1000 });
+  assert.equal(r.status, 'error');
+  assert.deepEqual(leftovers(dir), []);
 });

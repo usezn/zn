@@ -13,6 +13,7 @@
  */
 
 const fs = require('fs');
+const { writeFileAtomic } = require('./broker/files');
 const os = require('os');
 const path = require('path');
 
@@ -127,13 +128,7 @@ function keepDamagedCopy(file) {
 
 function save(data, file = statsFile()) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-  } finally {
-    try { fs.unlinkSync(tmp); } catch { /* renamed: nothing left */ }
-  }
+  writeFileAtomic(file, JSON.stringify(data), 0o600);
 }
 
 const DAY_MS = 86400000;

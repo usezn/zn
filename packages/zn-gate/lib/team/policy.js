@@ -23,6 +23,7 @@
  */
 
 const fs = require('fs');
+const { writeFileAtomic } = require('../broker/files');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('../vault/store');
@@ -237,9 +238,7 @@ function readJson(file) {
 /* Atomic write, private file. */
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o600);
   if (process.platform !== 'win32') { try { fs.chmodSync(file, 0o600); } catch (err) { /* ignore */ } }
 }
 

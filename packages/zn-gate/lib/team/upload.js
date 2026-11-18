@@ -14,8 +14,8 @@
  */
 
 const fs = require('fs');
+const { writeFileAtomic } = require('../broker/files');
 const path = require('path');
-const crypto = require('crypto');
 const { FIELDS, forEachLine } = require('../vault/audit');
 
 const LOCK_TTL_MS = 10 * 60 * 1000;
@@ -60,14 +60,7 @@ function writeState(stateFile, s) {
     last_status: s.last_status,
   };
   if (s.last_error) data.last_error = s.last_error;
-  const tmp = `${stateFile}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
-    fs.renameSync(tmp, stateFile);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch (e) { /* already gone */ }
-    throw err;
-  }
+  writeFileAtomic(stateFile, JSON.stringify(data, null, 2) + '\n', 0o600);
 }
 
 /* ------------------------------------------------------------------ */
