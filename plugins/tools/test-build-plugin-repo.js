@@ -634,6 +634,31 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       }
     });
 
+    await test('the real zn-gate package passes the module checks (the hook runner does not name the "module" built-in)', async () => {
+      const root = path.resolve(__dirname, '..', '..', 'packages', 'zn-gate');
+      const files = new Map();
+      const walk = (dir, rel) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const r = rel ? rel + '/' + e.name : e.name;
+          if (e.isDirectory()) {
+            if (e.name !== 'node_modules') walk(path.join(dir, e.name), r);
+          } else if (r.startsWith('lib/') || r.startsWith('bin/') || r === 'package.json') {
+            files.set(r, fs.readFileSync(path.join(dir, e.name)));
+          }
+        }
+      };
+      walk(root, '');
+      assert.ok(files.has('lib/hooks/runner.js') && files.has('lib/compile-cache.js'));
+      const problems = builder.checkImports(files).filter((p) => /cannot be checked|built-in/.test(p));
+      assert.deepStrictEqual(problems, []);
+      // The same check still refuses the old form of the line in the runner.
+      const runner = files.get('lib/hooks/runner.js').toString('utf8');
+      const old = runner.replace("require.extensions && require.extensions['.js']", "require('module')._extensions['.js']");
+      assert.notStrictEqual(old, runner);
+      const bad = builder.checkImports(new Map([...files, ['lib/hooks/runner.js', Buffer.from(old)]]));
+      assert.ok(bad.some((p) => p.startsWith('lib/hooks/runner.js') && /built-in/.test(p)));
+    });
+
     process.stdout.write('1..' + n + '\n');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

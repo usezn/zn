@@ -66,3 +66,34 @@ test('a call that redacts still loads the client, answers and ends by itself', (
   assert.equal(loaded, 'loaded');
   assert.ok(!r.stdout.includes(GHP), 'the fake token must not come back');
 });
+
+test('the hook runner does not name the module built-in: the vault file check reads require.extensions', () => {
+  const src = fs.readFileSync(RUNNER, 'utf8');
+  assert.ok(!/require\s*\(\s*['"](?:node:)?module['"]\s*\)/.test(src));
+  assert.ok(/require\.extensions\['\.js'\]/.test(src));
+});
+
+// The loader the check reads is the one a launcher replaces: a '.js' loader that refuses a vault file refuses it for the runner's check too.
+test('the vault file check hands every vault file to the installed .js loader and a refusal stops the call', (t) => {
+  const dir = tempDir(t, 'zn-vault-loader-');
+  const log = path.join(dir, 'log.json');
+  const preload = path.join(dir, 'hook.js');
+  fs.writeFileSync(preload, [
+    'const seen = [];',
+    "const store = require('path').join('vault', 'store.js');",
+    "const orig = require.extensions['.js'];",
+    "require.extensions['.js'] = function (m, f) { seen.push(f); if (f.endsWith(store) && process.env.ZN_TEST_REFUSE) process.exit(97); return orig(m, f); };",
+    "process.on('exit', () => require('fs').writeFileSync(process.env.ZN_TEST_LOG, JSON.stringify(seen)));",
+  ].join('\n'));
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home);
+  const base = { ...process.env, ZN_HOME: home, HOME: home, USERPROFILE: home, ZN_STATS: 'off', ZN_TEST_LOG: log };
+  const ev = JSON.stringify({ session_id: 's1', cwd: dir, tool_use_id: 't', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } });
+  const ok = spawnSync(process.execPath, ['-r', preload, RUNNER, 'claude-code'], { input: ev, env: base, cwd: dir, encoding: 'utf8', timeout: 20000 });
+  assert.notEqual(ok.status, 97);
+  const seen = JSON.parse(fs.readFileSync(log, 'utf8')).map((f) => f.split(path.sep).slice(-2).join('/'));
+  for (const f of ['vault/client.js', 'vault/store.js', 'vault/winacl.js']) assert.ok(seen.includes(f), f + ' was handed to the loader: ' + seen.join(','));
+  const refused = spawnSync(process.execPath, ['-r', preload, RUNNER, 'claude-code'], { input: ev, env: { ...base, ZN_TEST_REFUSE: '1' }, cwd: dir, encoding: 'utf8', timeout: 20000 });
+  assert.equal(refused.status, 97, 'a loader that refuses a vault file ends the run before the event is handled');
+  assert.equal(refused.stdout, '');
+});

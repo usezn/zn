@@ -2440,7 +2440,11 @@ const VAULT_CLIENT_FILES = ['vault/client.js', 'vault/store.js', 'vault/winacl.j
  * was loaded. Without the launcher's manifest (a direct run) the default loader only reads the file, and an error there is ignored.
  */
 function checkVaultClientFiles() {
-  const load = require('module')._extensions['.js'];
+  // require.extensions is the loader's own table (the object the launcher's program replaced the '.js' entry of), so this reads the
+  // same loader without naming the "module" built-in, which the plugin repository's build refuses outside lib/compile-cache.js.
+  // Nothing is replaced here. If the entry is not a function the loader is unknown, and a check that cannot run stops the call.
+  const load = require.extensions && require.extensions['.js'];
+  if (typeof load !== 'function') throw new Error('the module loader is not available');
   for (const rel of VAULT_CLIENT_FILES) {
     let file = path.join(__dirname, '..', rel);
     // Resolved as require would resolve it, so a link to a copy outside the package is refused too; a missing file stays as it is.
