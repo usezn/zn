@@ -1311,3 +1311,6 @@ mod retry_and_discovery_tests {
         assert!(McpPool::auto_discover().is_err());
     }
 }
+
+#[cfg(test)]
+mod robustness_tests;

@@ -1200,3 +1200,6 @@ mod tests {
         assert!(batch.is_empty());
     }
 }
+
+#[cfg(test)]
+mod robustness_tests;
