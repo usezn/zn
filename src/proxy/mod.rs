@@ -328,7 +328,9 @@ struct RawServersFile {
 struct ServerNames(Vec<String>);
 
 impl<'de> Deserialize<'de> for ServerNames {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
         struct NamesVisitor;
 
         impl<'de> serde::de::Visitor<'de> for NamesVisitor {
