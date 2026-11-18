@@ -530,6 +530,9 @@ const PROJECT_TRUST = [
   'ZD=${P#*":${Z%/*}:"}', 'ZS=${P#*":${Z%/*}/:"}', 'ND=${P#*":${N%/*}:"}', 'NS=${P#*":${N%/*}/:"}',
   'T=', '[ "$ZD" != "$P" ] && T=z', '[ "$ZS" != "$P" ] && T=z',
   'U=', '[ "$ND" != "$P" ] && U=n', '[ "$NS" != "$P" ] && U=n',
+  // A program inside a node_modules folder is the project's own (a package can plant a `zn` or `node` in node_modules/.bin, and
+  // `npm run` or direnv put that folder on the PATH as an absolute entry): not trusted, so the guard blocks instead of running it.
+  '[ "${Z#*/node_modules/}" != "$Z" ] && T=', '[ "${N#*/node_modules/}" != "$N" ] && U=',
 ];
 
 /**
@@ -595,7 +598,8 @@ function projectWindowsScript(agentId, event) {
   const missing = projectAnswer(agentId, event, 'missing', true);
   // Only 0 (done) and 2 (blocked) leave early; with an answer that exits 0 (a deny JSON, a warning) the refusal passes on as exit 0.
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
+  // PATH entries inside a node_modules folder (the project's own .bin) are dropped before zn.cmd and node are looked for.
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + "$env:PATH = (($env:PATH -split ';') -notmatch 'node_modules') -join ';'; " +
     "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
 }

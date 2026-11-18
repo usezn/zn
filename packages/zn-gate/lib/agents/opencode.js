@@ -190,7 +190,7 @@ function projectEnv() {
     if (k.toUpperCase() === "PATH") pathValue = String(v || "");
     else env[k] = v;
   }
-  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/"));
+  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/")) && !/node_modules/i.test(d);
   env.PATH = pathValue.split(win ? ";" : ":").filter(keep).join(win ? ";" : ":");
   if (win) env.NoDefaultCurrentDirectoryInExePath = "1";
   return env;
