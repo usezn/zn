@@ -9,7 +9,7 @@ The message below comes from the zn-gate hook. It was made with a file named `.e
 The hook sends this text to the agent in the reason field of its response. You usually see it in the agent window:
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.15.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.16.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
 ```
 
 ## The parts
@@ -18,7 +18,7 @@ zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.15.0 en
 |---|---|---|
 | Prefix | `zn:` | The message comes from the zn hook, not from the agent. Messages that start with `zn:` or `zn blocked this:` come from zn. |
 | Reason | `.env holds plain-text secrets` | What zn found. The file is a `.env` file and it holds values in plain text. zn stopped the read, so the values did not reach the agent. |
-| Next step | `Ask the user to run npx -y zn-gate@1.15.0 env shadow .env in their terminal` | The command to run yourself. The agent cannot run it for you. The version in it is the zn-gate version that wrote the message. |
+| Next step | `Ask the user to run npx -y zn-gate@1.16.0 env shadow .env in their terminal` | The command to run yourself. The agent cannot run it for you. The version in it is the zn-gate version that wrote the message. |
 | Effect of the step | `it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.` | What the command does. The file keeps placeholders, and the values go to the local vault. |
 
 The message does not show a rule id. The decision log names the group of checks that fired; see the next section.
@@ -79,5 +79,7 @@ Missing from the log: which check of the hook fired.
 1. If you expected the read, run the command from the message in your own terminal.
 2. If you did not expect it, ask your agent why it wanted the file. Do not look for a way around the block.
 3. To put the file back later, run the restore command that `env shadow` printed, for example `zn env unshadow .env --backup <name>`.
+
+## More
 
 For more, read [section 6 of the troubleshooting page](../troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets), [secrets](../secrets.md) and [the why command](../cli.md#why).

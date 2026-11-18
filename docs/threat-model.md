@@ -552,6 +552,14 @@ Three features are off by default. Each one helps in a narrow case and has limit
   text: Windows PowerShell 5.1 cannot read a link target without cmdlets, so a PATH folder that is a junction into
   `node_modules\.bin` is not caught there. A user install (`zn hooks install <agent>` without `--project`) names its
   Node.js and runner by full path and is not affected.
+- **Re-pinning the hook launchers is the user's.** A hook launcher runs the hook only while the installed zn-gate
+  files match the digest it recorded. The commands that record the files again are refused to an agent, like
+  `zn hooks install`: running the package's launcher refresh (`lib/agents/refresh.js`, its install step) with
+  Node.js, Bun or Deno (the path is read with `./` and `../` resolved and case ignored, and a `cd` earlier in the same
+  command counts), and installing, updating, rebuilding or linking zn-gate with npm, pnpm, yarn, bun or volta
+  (`npm update -g zn-gate` and the like). Run them in your own terminal. Not recognised: a script the agent writes and
+  then runs, a `cd` made in an earlier command, and a link or copy of the file under another name. This narrows the
+  path rather than closing it.
 - **`secrets_http_request` and secret modes:** only a secret in `proxy` mode is
   sent over HTTP, to a host in its `allowHosts` and in the places its settings
   allow. The vault checks the mode, the host and the placement again when it
