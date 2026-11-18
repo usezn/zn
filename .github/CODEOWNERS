@@ -1,0 +1,8 @@
+# Code owners for the files the required checks and the releases come from.
+# Review by a code owner only blocks a merge when the branch ruleset turns on "Require review from Code Owners".
+.github/                         @tljohnsilver
+scripts/verify-release.sh        @tljohnsilver
+/.github/CODEOWNERS              @tljohnsilver
+/MAINTAINERS.md                  @tljohnsilver
+/GOVERNANCE.md                   @tljohnsilver
+/SECURITY.md                     @tljohnsilver
