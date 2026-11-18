@@ -19,6 +19,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { budget, budgetWin } = require('./helpers/time_budget');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const FAKE = generateAll(7171, { perType: 1, piiPerType: 1 });
 const NPM = FAKE.secrets.find((s) => s.type === 'npm_access_token').value;
@@ -354,21 +355,6 @@ function fastestMs(fn, runs = 5) {
     const t0 = process.hrtime.bigint();
     result = fn();
     best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
-  }
-  return { ms: best, result };
-}
-
-// CPU time instead of wall-clock time, for a budget that a shared CI runner can break without any slower code: a stall
-// while another job holds the core is wall-clock time the check never used. A check that backtracks burns CPU, so the
-// budget still catches it. The CPU clock is coarse on Windows (about 16 ms), so the fastest of the runs is used.
-function fastestCpuMs(fn, runs = 5) {
-  let result = fn();
-  let best = Infinity;
-  for (let i = 0; i < runs; i++) {
-    const c0 = process.cpuUsage();
-    result = fn();
-    const c = process.cpuUsage(c0);
-    best = Math.min(best, (c.user + c.system) / 1000);
   }
   return { ms: best, result };
 }
@@ -749,7 +735,7 @@ test('a here-document that runs its body as code, or a read on the command line,
   assert.ok(policy.bashDenial('cat *', o), 'glob on the command line');
 });
 
-test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
+test('a 100 KB here-document read as data is checked in linear time', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-heredoc-big-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const o = { cwd: dir, home: dir, env: {} };
@@ -757,12 +743,16 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   let body = '';
   while (body.length + line.length < 100 * 1024 - 64) body += line;
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
-  const { ms, result: deny } = fastestCpuMs(() => policy.bashDenial(cmd, o));
+  const deny = policy.bashDenial(cmd, o);
   assert.equal(deny, null, 'the body is data, so the command is allowed');
-  // Windows runners measured 32 ms of CPU time for the same check (the CPU clock there ticks in about 16 ms steps, and
-  // the runner CPU is slower), so Windows gets a larger budget. A check that rescans the body, which is what this test
-  // guards against, takes seconds on 100 KB, so both budgets still catch it.
-  assert.ok(ms < budgetWin(25, 150), 'checked in ' + ms + ' ms');
+  // A check that rescans the body takes seconds on 100 KB; a correct one costs the same per byte at any size. The growth
+  // ratio of CPU time at a quarter of the size and at the full size does not depend on the speed of the runner.
+  const heredoc = (n) => {
+    let b = '';
+    while (b.length + line.length < n - 64) b += line;
+    return "cat > generated.js <<'EOF'\n" + b + 'EOF';
+  };
+  assertLinear((text) => policy.bashDenial(text, o), heredoc, 100 * 1024, 'a 100 KB here-document read as data');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {
