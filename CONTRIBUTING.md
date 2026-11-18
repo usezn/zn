@@ -79,6 +79,8 @@ The minimum Rust version is `rust-version` in `Cargo.toml` (1.95); CI tests 1.95
 
 ### Running Tests Locally
 
+Expect these run times on a 4-vCPU, 8 GB Linux machine: the full Node.js suite about 9 minutes and the full Python suite about 8 minutes, with no output for long stretches. The Rust gateway, from a cold start, takes about 7.5 minutes for build, clippy and tests together and fills about 10 GB under `target/`. While you work, run only the test file for the area you change (the commands under [Where to start](#where-to-start)), and run the full suites once before you push.
+
 #### Node.js (`packages/zn-gate`)
 ```bash
 cd packages/zn-gate
