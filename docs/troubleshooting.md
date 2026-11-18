@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The twenty messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The twenty-two messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -45,6 +45,7 @@ Find the command you ran, then the symptom that matches.
   - [It needs you at your own terminal](#4-it-needs-you-at-your-own-terminal)
   - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
   - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
+  - [`init` stops with an error about a file, a folder or PowerShell](#21-init-stops-with-an-error-about-a-file-a-folder-or-powershell)
 - `check`
   - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
   - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
@@ -61,6 +62,7 @@ Find the command you ran, then the symptom that matches.
   - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+  - [The vault log export or the vault tidy-up says "Not exported" or "clock looks wrong"](#22-the-vault-log-export-or-the-vault-tidy-up-says-not-exported-or-clock-looks-wrong)
 - `run`
   - ["zn run: Not found: secret `<NAME>` is not in the vault"](#zn-run-not-found-secret-name-is-not-in-the-vault)
 - `team`
@@ -73,6 +75,7 @@ Find the command you ran, then the symptom that matches.
   - ["Your organization is not active on zn right now"](#your-organization-is-not-active-on-zn-right-now)
 - `evidence`
   - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
+  - ["cannot write to the evidence log"](#events-are-not-being-recorded)
 - `connect`
   - [`zn-gate connect` does not accept your key](#7-zn-gate-connect-does-not-accept-your-key)
   - ["will not send the saved key" (TLS settings)](#8-will-not-send-the-saved-key-tls-settings)
@@ -97,6 +100,8 @@ Find the command you ran, then the symptom that matches.
 - [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
 - [zn-gate cannot reach the cloud](#19-zn-gate-cannot-reach-the-cloud)
 - [A hook warns that it could not check something](#20-a-hook-warns-that-it-could-not-check-something)
+- [`init` stops with an error about a file, a folder or PowerShell](#21-init-stops-with-an-error-about-a-file-a-folder-or-powershell)
+- [The vault log export or the vault tidy-up says "Not exported" or "clock looks wrong"](#22-the-vault-log-export-or-the-vault-tidy-up-says-not-exported-or-clock-looks-wrong)
 - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
 - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
@@ -275,6 +280,26 @@ zn-gate: the evidence log <path> is damaged (<reason>) Events are not being reco
 1. Run `npx -y zn-gate evidence --verify`. It says where the break is.
 2. Keep the old file if you need it for review. Move it aside with the command in the message. On Windows the message shows a `move` command instead of `mv`.
 3. The next event starts a new log. Run `npx -y zn-gate evidence --verify` again to see that it is fine.
+
+### Events are not being recorded
+
+A log that is not damaged can still be one that zn cannot write to. You may see this instead:
+
+```text
+zn-gate: cannot write to the evidence log <path> (<why>). Events are not being recorded; the log is left as it is.
+```
+
+**What it means:** zn tried to add a record and could not. `<why>` is the cause: a permission error, a full disk, or a busy lock (`another process is writing to the log` or `the write lock was taken over`). The npm package shows the error code, for example `EACCES` or `ENOSPC`; the Python package shows the system's own words, for example `Permission denied`. Your protection keeps working, but until the log can be written, blocks and checks are not recorded. zn prints this at most once every five minutes, so one line can stand for many missed records.
+
+**What to do:** free some disk space, or give your account write access to the folder that holds the log (`~/.zn`, or `ZN_HOME` if you set it), then run `npx -y zn-gate evidence --verify`. Records written before the problem are not lost. A busy lock clears by itself; if the message keeps coming back, check that no other program is holding the log open.
+
+### The last record is incomplete
+
+```text
+LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)
+```
+
+`zn-gate evidence --verify` prints this (the Python package prefixes it with `Integrity:`) when the log verified up to the last line, and the last line is cut off. It then says how many records verified. A crash or a full disk while a record was being written can cause this, and so can someone removing the end of the log. It does not say the earlier records were changed. Move the file aside as the message shows if you want to keep it, and the next event starts a new log.
 
 ## 11. The Claude Code plugin rejects every call, or its MCP servers show `Failed to connect`
 
@@ -583,9 +608,100 @@ zn: unsafe text in the project hook
 
 When none of these fits and a hook only says `zn: something went wrong inside the zn hook`, see ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook).
 
+## 21. `init` stops with an error about a file, a folder or PowerShell
+
+`zn-gate init` changes your agents' settings files. When it cannot do that safely, it stops and names what is wrong. The messages are copied as zn-gate prints them; a part in angle brackets is a blank that zn fills in. Run `init` in your own terminal.
+
+### "could not replace `<file>`: it is in use by another program"
+
+```text
+could not replace <file>: it is in use by another program; close it and run again
+```
+
+**What it means:** init writes the new settings to a temporary file and then moves it over your settings file. It tried five times, and the operating system said each time that another program holds the file (an editor, your agent itself, a backup or sync program, or an antivirus scan). This happens most on Windows. zn did not replace the file, so your settings are as they were.
+
+**What to do:** close the program that has the file open (often the agent whose settings it is, or an editor tab), wait a moment, and run `npx -y zn-gate init` again.
+
+### "`<folder>` is not a real folder (a link was put in its place)"
+
+```text
+<folder> is not a real folder (a link was put in its place); zn-gate will not write through it
+```
+
+**What it means:** init writes only to real folders. The folder named in the message, or one above it, is a link (a symbolic link or a Windows junction) that points somewhere else. zn refuses so that a link swapped in after its checks cannot send a write to another place. Nothing was written there.
+
+**What to do:** look at the folder named in the message. In macOS or Linux, `ls -ld <folder>` shows a `l` at the start and an arrow when it is a link; in Windows, `dir` shows `<SYMLINKD>` or `<JUNCTION>`. If you did not make the link, find out who did before you go on. If you made it on purpose (for example to keep your settings in a synced folder), put a real folder there, or wrap the servers by hand, then run init again.
+
+### "zn-gate init: unknown argument"
+
+```text
+zn-gate init: unknown argument "<argument>". Run `zn-gate init` with no arguments for the guided setup, or `zn-gate init --wrap-mcp` (with --dry-run, --shadow or --revert) to wrap MCP servers.
+```
+
+**What it means:** the guided `init` takes no arguments. zn-gate saw one it does not know: a typo, an option written in capital letters, or words your shell glued together (for example a line copied with a line break in it). Only `--wrap-mcp` (with `--dry-run`, `--shadow` or `--revert`) is accepted. The command exits with `2` and changes nothing.
+
+**What to do:** type the command again on one line: `npx -y zn-gate init` for the guided setup, or `npx -y zn-gate init --wrap-mcp --dry-run` to preview wrapping your MCP servers. The list of commands is in [cli](cli.md#init).
+
+### "the system PowerShell was not found" (Windows)
+
+```text
+the system PowerShell was not found
+```
+
+**What it means:** on Windows, zn uses Windows PowerShell 5.1 to check and set who may read its hook folder. It looks for it only in the fixed place Windows keeps it, `System32\WindowsPowerShell\v1.0\powershell.exe` inside your Windows folder, and never in a folder found through your `PATH` or in PowerShell 7 (`pwsh`). If that file is missing, or the path to it goes through a link, zn stops instead of using a program it cannot trust. The same cause is behind `zn could not make <the vault> private to your Windows account (the system PowerShell was not found), so it will not keep the vault there`.
+
+**What to do:** in File Explorer, check that `powershell.exe` exists in the `System32\WindowsPowerShell\v1.0` folder of your Windows folder (usually `C:\Windows`). If it is missing, repair or restore Windows PowerShell, then run init again. For the vault case, the message itself says what to do: leave `ZN_HOME` unset to use the default location, or use a folder on a local NTFS drive where you can change permissions. A different message, ["zn could not find Windows PowerShell"](#zn-could-not-find-windows-powershell--zn-could-not-start-the-system-program-that-holds-its-key), is about the vault key in the Credential Manager.
+
+## 22. The vault log export or the vault tidy-up says "Not exported" or "clock looks wrong"
+
+### "Not exported: ..." (`zn vault log export`)
+
+`zn vault log export --otlp` copies the vault's audit log (`~/.zn/audit.jsonl`, the record of what the vault did) to a file or to the screen. It checks first that the log was not changed. When it cannot be sure, it refuses and prints a line that starts with `[zn] Not exported:`. The command it suggests is written as `zn` here; on a computer without `zn` on the path it shows `npx -y zn-gate@<version>` instead, and on Windows `zn.cmd`.
+
+```text
+[zn] Not exported: the running vault is from an older version of zn-gate and cannot confirm which bytes it verified. Run `zn lock`, then `zn unlock`, and export again. Nothing from this run should be used.
+```
+
+**What it means:** the vault that is running was started by an older zn-gate than the one you ran the export with, so it cannot say exactly which bytes of the log it checked. zn will not trust the copy.
+
+**What to do:** run `zn lock`, then `zn unlock`, and run the export again. Do not use anything that this run wrote.
+
+```text
+[zn] Not exported: the audit log changed after the vault verified it (a new record may have been written), so this copy is not the verified log. Nothing from this run should be used; run the export again.
+```
+
+**What it means:** the vault checked the log, and then the file changed before the export read it. Most often the vault wrote a new record in between. The export aborts and leaves no partial file.
+
+**What to do:** run the same export again. Do not use anything from the failed run.
+```text
+[zn] Not exported: the vault is locked or unreachable, so the audit log chain cannot be verified. Unlock it (`zn unlock`) and export again, or add --unverified to export a copy that is NOT verified.
+```
+
+**What to do:** run `zn unlock`, then export again for a verified copy. `--unverified` makes a copy anyway and prints a warning on the error output; do not use it as proof that the log is intact.
+
+```text
+[zn] Not exported: <file> is a symbolic link. Choose a path that is a new file or a regular file.
+[zn] Not exported: <file> is not a regular file. Choose a path that is a new file or a regular file.
+```
+
+**What it means:** the `--out` path is a link or a folder (or a device). The export refuses to write to a link, because it could send the audit log wherever the link points. **What to do:** give `--out` the path of a new file or an ordinary file.
+
+A line that says the log "was changed behind the vault", followed by `Keep a copy of ~/.zn/audit.jsonl as evidence, look into the change, then run zn vault verify --acknowledge`, is a different case: see ["Tamper detected"](#tamper-detected). There is a walk-through in [Export the vault audit log](examples/vault-log-export.md).
+
+### "vault prune skipped, the system clock looks wrong"
+
+```text
+zn-gate: vault prune skipped, the system clock looks wrong
+zn-gate: vault prune skipped, the system clock looks wrong; it resumes after 7 days unless the clock is fixed
+```
+
+**What it means:** zn-gate tidies the vault by deleting the token map of a project (the list that connects the markers in your files to the names of your secrets) when you have not used the project for 30 days. A deleted map cannot be brought back, so before it deletes anything it checks the computer's clock. If the date looks wrong (in the future, or far from the last time it ran), it deletes nothing and prints one of these lines. Nothing is lost: the tidy-up is only postponed.
+
+**What to do:** check the date and time of your computer and turn on automatic time. The tidy-up runs again by itself once the clock is right. If you were just away for a long time and the clock is correct, do nothing: the second line says zn accepts the clock again after 7 days.
+
 ## Block and warn reasons, by family
 
-Past the twenty messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the twenty-two messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
