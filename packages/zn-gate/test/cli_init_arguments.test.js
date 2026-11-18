@@ -53,3 +53,36 @@ for (const flag of ['--dry-run', '--shadow', '--revert']) {
     assert.deepEqual(listAll(cwd), []);
   });
 }
+
+// The wrap forms refuse an unknown argument too: exit 2, the same message style, no file written.
+for (const form of [['--wrap-mcp'], ['--dry-run'], ['--shadow'], ['--revert'], ['--wrap-mcp', '--dry-run']]) {
+  for (const extra of [['--frob'], ['frob']]) {
+    test('init ' + form.join(' ') + ' ' + extra.join(' ') + ' exits 2 and changes nothing', (t) => {
+      const home = tempDir(t, 'zn-init-args-home-');
+      const cwd = tempDir(t, 'zn-init-args-cwd-');
+      const r = runInit(home, cwd, [...form, ...extra]);
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, new RegExp('^zn-gate init: unknown argument "' + extra[0] + '"\\.'));
+      assert.equal(r.stdout, '');
+      assert.deepEqual(listAll(home), []);
+      assert.deepEqual(listAll(cwd), []);
+    });
+  }
+}
+
+test('init --revert with the unknown argument first is refused too', (t) => {
+  const home = tempDir(t, 'zn-init-args-home-');
+  const cwd = tempDir(t, 'zn-init-args-cwd-');
+  const r = runInit(home, cwd, ['--frob', '--revert']);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /unknown argument "--frob"/);
+  assert.deepEqual(listAll(home), []);
+});
+
+test('init with all the wrap options together is still accepted', (t) => {
+  const home = tempDir(t, 'zn-init-args-home-');
+  const cwd = tempDir(t, 'zn-init-args-cwd-');
+  const r = runInit(home, cwd, ['--wrap-mcp', '--dry-run', '--shadow']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(listAll(home), []);
+});

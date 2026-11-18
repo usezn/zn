@@ -61,7 +61,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `init` | `0`, `1`, `2` | `0` done or already protected; `1` no supported agent found, or the steps were only printed, or (with `--wrap-mcp`) a config could not be changed, or (with `--revert`) a config could not be restored, for example because the disk is full; `2` an unknown argument. |
+| `init` | `0`, `1`, `2` | `0` done or already protected; `1` no supported agent found, or the steps were only printed, or (with `--wrap-mcp`) a config could not be changed, or (with `--revert`) a config could not be restored, for example because the disk is full; `2` an unknown argument (also with `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert`). |
 | `uninstall` | `0`, `1`, `64`, `77` | `0` removed or nothing to remove; `1` you answered no or a step failed; `64` an unknown option; `77` no interactive terminal or an agent ran it, so nothing changed. |
 | `check` (`doctor`) | `0`, `1` | `0` every agent that is set up is protected; `1` an agent is not protected, or none is set up. |
 | `status` | `0` | Always `0`. |

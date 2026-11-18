@@ -1303,6 +1303,16 @@ async function main() {
   }
 
   if (command === 'init') {
+    // The wrap forms take only --wrap-mcp, --dry-run, --shadow and --revert. Anything else is refused here, before
+    // any config is read or changed, with the same exit code and message style as the guided setup above.
+    const wrapArgs = ['--wrap-mcp', '--dry-run', '--shadow', '--revert'];
+    const unknownWrapArg = args.slice(1).find((a) => !wrapArgs.includes(a));
+    if (unknownWrapArg !== undefined) {
+      const shown = String(unknownWrapArg).replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
+      process.stderr.write('zn-gate init: unknown argument "' + shown + '". Run `zn-gate init --wrap-mcp` with any of --dry-run, --shadow or --revert, or `zn-gate init` with no arguments for the guided setup.\n');
+      process.exitCode = 2;
+      return;
+    }
     process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate init - Zero-Touch MCP Auto-Discovery & Shielding
 ${ruleLine(process.env, 60)}\n`);

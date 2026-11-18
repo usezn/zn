@@ -149,7 +149,7 @@ With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
-Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the guided steps were only printed (no terminal). `2` an argument it does not know. With `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert` the command exits `0` once it has finished: the line of each config says what was wrapped, skipped or failed.
+Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the guided steps were only printed (no terminal). `2` an argument it does not know, also with `--wrap-mcp`, `--dry-run`, `--shadow` or `--revert` (nothing is read or changed then). With those options the command exits `0` once it has finished: the line of each config says what was wrapped, skipped or failed.
 
 ### `uninstall`
 
