@@ -196,6 +196,22 @@ If you add or move a page, or link to a heading, check the links on your machine
 
 - The offline link check CI runs, with lychee, covers the READMEs and `plugins` too. The command is in item 3 of the Documentation checks above.
 
+### Run the other checks locally
+
+The nine checks that do not block a merge (Changelog, Markdown lint, Typos, Link check, Shellcheck, Workflow lint, Package lint, Pre-commit hooks and Doc snippets) can also be run on your machine. Markdown lint, the link check and Doc snippets are above. From the repository root:
+
+| Check | Command | What to install |
+| --- | --- | --- |
+| Changelog | `node .github/scripts/changelog.mjs check --base origin/next` (fetch `next` first) | Node.js |
+| Typos | `typos --config .typos.toml` | [typos](https://github.com/crate-ci/typos) |
+| Shellcheck | `git ls-files -z '*.sh' \| xargs -0 shellcheck` | [shellcheck](https://www.shellcheck.net/) |
+| Workflow lint | `actionlint`, then `zizmor --offline --config .github/zizmor.yml .github/workflows action.yml` | [actionlint](https://github.com/rhysd/actionlint) and zizmor (CI pins its version in `.github/workflow-lint/zizmor-requirements.txt`) |
+| Workflow files you edited | `node .github/scripts/check-workflow-header.mjs`, `check-workflow-first-line.mjs`, `check-timeouts.mjs`, `check-workflow-format.mjs` and `check-heavy-jobs-gating.mjs` (all in `.github/scripts`) | Node.js |
+| Package lint | In `packages/zn-gate`: `npm ci --ignore-scripts`, `npm pack --ignore-scripts --pack-destination <dir>`, then `npx publint --strict <dir>/zn-gate-*.tgz` | Node.js |
+| Pre-commit hooks | `bash .github/scripts/test-pre-commit-hooks.sh` | Python 3 and `pre-commit` |
+
+A few checks cannot be run on your machine, so a maintainer or CI runs them: CodeQL, dependency review, OpenSSF Scorecard, the macOS and Windows jobs on their own systems, the fuzz and hook latency runs, the agent compatibility runs against the real agents, and the release workflows. If one of them fails on your pull request, open the failed step on the Checks tab and describe what you see in a comment; a maintainer will take it from there.
+
 ## Writing a CI check script
 
 The small checks of the [Quick checks workflow](.github/workflows/quick-checks.yml) are plain Node.js scripts in `.github/scripts/`, one `check-<name>.mjs` with a `check-<name>.test.mjs` next to it. Real ones to copy from: `check-timeouts.mjs` (every workflow job sets `timeout-minutes`), `check-workflow-header.mjs`, `check-docs-titles.mjs` and `check-docs-examples-commands.mjs`. Follow the same shape so that a failure reads the same everywhere.
