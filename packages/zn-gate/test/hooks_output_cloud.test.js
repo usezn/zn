@@ -46,6 +46,8 @@ function stub(t, reply) {
       const body = JSON.parse(data);
       seen.push({ url: String(url), headers: opts.headers, body });
       const r = reply(body);
+      // { hang: true } is a call that never answers: only the hook deadline can end the wait.
+      if (r.hang) return;
       setImmediate(() => {
         if (r.error) { const e = new Error(r.error); if (r.code) e.code = r.code; req.emit('error', e); return; }
         const res = new EventEmitter();
@@ -505,6 +507,44 @@ test('agents other than Claude Code send nothing (their hooks cannot pass a note
   const res = await run(raw, home, codex);
   assert.ok(!/zn cloud check/.test(JSON.stringify(res.output || {})));
   assert.equal(seen.length, 0);
+});
+
+// The hook deadline is driven by a mocked clock (Date and setTimeout), so these tests never wait for real seconds.
+const HANG = () => ({ hang: true });
+const realElapsedMs = (start) => Number(process.hrtime.bigint() - start) / 1e6;
+
+test('cloud answer that hangs past the hook deadline: nothing is added and the output passes unchanged', async (t) => {
+  const seen = stub(t, HANG);
+  const { dir, home } = await setup(t);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-18T12:00:00Z') });
+  const start = process.hrtime.bigint();
+  const ev = webfetch(dir, CLEAN.repeat(5));
+  const pending = runner.handle(adapter, ev, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home, postDeadlineMs: 5000 });
+  // Wait (real time only for the event loop, not for the clock) until the cloud call is on its way.
+  for (let i = 0; i < 1000 && seen.length === 0; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(seen.length, 1, 'the cloud was asked');
+  t.mock.timers.tick(5000);
+  const res = await pending;
+  assert.equal(res.output, null);
+  assert.equal(res.decision.decision, 'allow');
+  assert.equal(res.decision.updatedOutput, undefined, 'output is not replaced');
+  assert.equal(res.decision.stats && res.decision.stats.instructions, undefined, 'no cloud flag is recorded');
+  assert.doesNotMatch(JSON.stringify(res.decision), /zn cloud check/);
+  assert.ok(realElapsedMs(start) < 2000, 'the test does not wait for real seconds');
+});
+
+test('little time left before the hook deadline (under 1.5 s): the cloud is not asked and the output passes unchanged', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-18T12:00:00Z') });
+  const start = process.hrtime.bigint();
+  const res = await runner.handle(adapter, webfetch(dir, CLEAN.repeat(5)), { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home, postDeadlineMs: 1400 });
+  assert.equal(seen.length, 0, 'the cloud was not asked');
+  assert.equal(res.output, null);
+  assert.equal(res.decision.decision, 'allow');
+  assert.equal(res.decision.updatedOutput, undefined, 'output is not replaced');
+  assert.doesNotMatch(JSON.stringify(res.decision), /zn cloud check/);
+  assert.ok(realElapsedMs(start) < 2000, 'the test does not wait for real seconds');
 });
 
 // Values placed across the points where the sample is cut: the first 12 KiB, and the start of the last bytes kept.
