@@ -22,7 +22,6 @@ with open(_PATH, encoding='utf-8') as fh:
 KNOWN_GAPS = {
     'pts-subst-013', 'pts-subst-014', 'pts-subst-015', 'pts-subst-020', 'pts-subst-021',
     'pts-subst-022', 'pts-subst-023', 'pts-subst-024', 'pts-subst-025',
-    'rc-target-011', 'rc-target-012', 'rc-target-025',
 }
 
 REPORT = {}

@@ -712,9 +712,34 @@ function braceAlts(w) {
   return policyModule().expandBraces(expandSequences(String(w)));
 }
 
+// File names of the shell startup files isRcPath knows, for a target written as a glob.
+const RC_FILE_NAMES = ['.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.profile', '.zshrc', '.zprofile', '.zshenv', '.zlogin',
+  '.kshrc', '.cshrc', '.tcshrc', 'config.fish', 'profile', 'bash.bashrc', 'zshrc', 'environment', 'profile.ps1', 'microsoft.powershell_profile.ps1'];
+// A substitution in a file name whose text names one of these may print a startup file name: it is read as a *.
+const RC_SUBST_HINTS = ['bash', 'zsh', 'ksh', 'csh', 'profile', 'login', 'fish', 'environment'];
+
+/* A target whose last part is a glob (~/.bas?rc, ~/.bashr[c]) or holds a substitution that names a startup file
+   (~/.$(echo bashrc)): true when it can be one of the startup files isRcPath knows. A glob in a folder name is not followed. */
+function globRcTarget(w) {
+  const t = String(w).replace(/\$\([^()\n]*\)|`[^`\n]*`/g, (m) => (RC_SUBST_HINTS.some((h) => m.toLowerCase().includes(h)) ? '*' : 'x'));
+  const cut = Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\'));
+  const dir = t.slice(0, cut + 1);
+  const last = t.slice(cut + 1).toLowerCase();
+  if (!/[*?[]/.test(last)) return false;
+  return RC_FILE_NAMES.some((n) => globMatches(last, n) && isRcPath(dir + n));
+}
+
+const RC_SUBST_RE = /\$\([^()\n]*\)|`[^`\n]*`/g;
+
+/* The line with each substitution whose text names a startup file (~/.$(echo bashrc)) replaced by a *: the tokenizer does not
+   read a substitution as part of a word, and the shell prints a name there. Used as an extra reading for rc_download only. */
+function globifyRcSubstitutions(text) {
+  return text.replace(RC_SUBST_RE, (m) => (RC_SUBST_HINTS.some((h) => m.toLowerCase().includes(h)) ? '*' : m));
+}
+
 function isRcTarget(w) {
   const alts = braceAlts(w);
-  return alts === null || alts.some(isRcPath);
+  return alts === null || alts.some(isRcPath) || alts.some(globRcTarget);
 }
 
 /* The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL). */
@@ -978,6 +1003,11 @@ function analyze(cmd, depth = 0, known = null) {
     : bare;
   if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || SHELL_STDIN_DOWNLOAD_RE.test(text) || PS_PIPE_RE.test(psBare) || PS_CALL_RE.test(psBare)) && on('pipe_to_shell')) return 'pipe_to_shell';
   if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
+  // A startup file whose name a substitution prints (>> ~/.$(echo bashrc)): the substitution is read as a glob.
+  if ((text.includes('$(') || text.includes('`')) && on('rc_download')) {
+    const alt = globifyRcSubstitutions(text);
+    if (alt !== text && checkSegments(segmentsOf(alt), depth, known) === 'rc_download') return 'rc_download';
+  }
   const segs = segmentsOf(text);
   const hit = checkSegments(segs, depth, known);
   if (hit) return hit;

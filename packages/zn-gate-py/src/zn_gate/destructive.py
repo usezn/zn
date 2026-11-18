@@ -1541,6 +1541,33 @@ def _substitute_heads(text: str) -> str:
     return _SUBST_HEAD_RE.sub(rep, text)
 
 
+# File names of the shell startup files _is_rc_path knows, for a target written as a glob.
+_RC_FILE_NAMES = (".bashrc", ".bash_profile", ".bash_login", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin",
+                  ".kshrc", ".cshrc", ".tcshrc", "config.fish", "profile", "bash.bashrc", "zshrc", "environment", "profile.ps1",
+                  "microsoft.powershell_profile.ps1")
+# A substitution in a file name whose text names one of these may print a startup file name: it is read as a *.
+_RC_SUBST_HINTS = ("bash", "zsh", "ksh", "csh", "profile", "login", "fish", "environment")
+_RC_SUBST_RE = re.compile(r"\$\([^()\n]*\)|`[^`\n]*`")
+
+
+def _globify_rc_substitutions(text: str) -> str:
+    """The line with each substitution whose text names a startup file (~/.$(echo bashrc)) replaced by a *: the tokenizer does
+    not read a substitution as part of a word, and the shell prints a name there. Used as an extra reading for rc_download only."""
+    return _RC_SUBST_RE.sub(lambda m: "*" if any(h in m.group(0).lower() for h in _RC_SUBST_HINTS) else m.group(0), text)
+
+
+def _glob_rc_target(w: str) -> bool:
+    """A target whose last part is a glob (~/.bas?rc, ~/.bashr[c]) or holds a substitution that names a startup file
+    (~/.$(echo bashrc)): true when it can be one of the startup files _is_rc_path knows. A glob in a folder name is not followed."""
+    t = _RC_SUBST_RE.sub(lambda m: "*" if any(h in m.group(0).lower() for h in _RC_SUBST_HINTS) else "x", str(w))
+    cut = max(t.rfind("/"), t.rfind("\\"))
+    d = t[: cut + 1]
+    last = t[cut + 1:].lower()
+    if not re.search(r"[*?\[]", last):
+        return False
+    return any(_glob_matches(last, n) and _is_rc_path(d + n) for n in _RC_FILE_NAMES)
+
+
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
@@ -1590,7 +1617,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                 if target is not None:
                     # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
                     alts = _brace_alts(_from_cwd(heads[j][4], target))
-                    if alts is None or any(_is_rc_path(t) for t in alts):
+                    if alts is None or any(_is_rc_path(t) or _glob_rc_target(t) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
@@ -1709,6 +1736,11 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
         return "pipe_to_shell"
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
+    # A startup file whose name a substitution prints (>> ~/.$(echo bashrc)): the substitution is read as a glob.
+    if "$(" in text or "`" in text:
+        alt = _globify_rc_substitutions(text)
+        if alt != text and _check_segments(_segments_of(alt)[0], depth, known) == "rc_download":
+            return "rc_download"
     segs, truncated = _segments_of(text)
     hit = _check_segments(segs, depth, known)
     if hit:
