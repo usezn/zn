@@ -182,7 +182,7 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
    .github/markdownlint/node_modules/.bin/markdownlint-cli2
    ```
 
-3. Link check with [lychee](https://github.com/lycheeverse/lychee) (the workflow pins `lychee-v0.24.2`; install it yourself). The offline run checks relative links and anchors, and fails when one is broken:
+3. Link check with [lychee](https://github.com/lycheeverse/lychee) (the workflow pins `lychee-v0.24.2`; on Linux, download `lychee-x86_64-unknown-linux-gnu.tar.gz` from its [release page](https://github.com/lycheeverse/lychee/releases/tag/lychee-v0.24.2) and unpack the `lychee` file, or run `cargo install --locked lychee --version 0.24.2` if you have Rust). The offline run checks relative links and anchors, and fails when one is broken:
 
    ```bash
    lychee --config .github/lychee.toml --offline --include-fragments --no-progress README.md docs "packages/*/README.md" plugins
