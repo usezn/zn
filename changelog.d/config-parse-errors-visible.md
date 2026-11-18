@@ -1,0 +1,3 @@
+### Fixed
+
+- `~/.zn/config.json` written with a UTF-8 byte order mark or as UTF-16 (what Windows PowerShell 5.1 writes for `>` and `Set-Content`) is read. A settings file that does not parse (a comment, a trailing comma) no longer reads as "no settings" without a word: the hook shows a message once per session, and `zn-gate status`, `zn-gate check` and `zn-gate stats` say so. A protection the file tried to enable stays on, and nothing that turns a check off is taken from it. A true/false setting written as the text `"true"` is read as true and reported; other wrong-typed values are ignored and reported.

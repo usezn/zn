@@ -68,7 +68,7 @@ function modeName(m) {
 
 function configMode(dir) {
   try {
-    return modeName(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).mcpPinning);
+    return modeName(require('./zn-config').readObject(path.join(dir, 'config.json')).mcpPinning);
   } catch (_) {
     return null;
   }

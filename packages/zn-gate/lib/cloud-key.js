@@ -125,7 +125,7 @@ function configFile() {
 }
 
 function readConfigAt(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch (_) { return {}; }
+  return require('./zn-config').readObject(file);
 }
 
 function readConfig() {

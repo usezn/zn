@@ -92,6 +92,7 @@ Find the command you ran, then the symptom that matches.
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
+- [zn-gate says your settings file cannot be read](#19-zn-gate-says-your-settings-file-cannot-be-read)
 - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
 - ["`zn unlock` fails on a computer with no keychain"](#zn-unlock-fails-on-a-computer-with-no-keychain)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
@@ -449,6 +450,24 @@ zn: its hook cannot start because zn-gate is not installed any more (the Node.js
 0. If Node.js itself is gone (`node --version` fails), install it again from [nodejs.org](https://nodejs.org) first. Both commands below need it.
 1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
 2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs Node.js but no installed zn-gate. See [Remove zn-gate](uninstall.md).
+
+## 19. zn-gate says your settings file cannot be read
+
+You may see this in your agent, in `zn-gate status`, in `zn-gate check` or at the end of `zn-gate stats`:
+
+```text
+zn: there is a problem with your settings file. ~/.zn/config.json cannot be read: it has comments, which JSON does not allow. zn did not apply it (only the settings in it that add protection were kept). Save it as plain JSON (UTF-8, no comments, no trailing commas).
+```
+
+**What it means:** `~/.zn/config.json` (on Windows, `.zn\config.json` in your user folder) exists but is not valid JSON, so zn cannot use it. zn then runs with its default settings, plus any setting in the file that turns a protection on (for example `strict`, `egressCheck` or `blockDestructiveCommands`). A setting that would turn a check off is not taken from a broken file. Your agent shows the message once per session.
+
+The common causes:
+
+- **Comments or a trailing comma.** JSON does not allow `//` or `/* */` comments, or a comma after the last item. Remove them.
+- **Quotes around a true/false value.** `"strict": "true"` is read as `true`, and the message says so; other wrong values, such as `"blockDestructiveCommands": "false"`, are ignored. Write `true` or `false` without quotes.
+- **A file written by Windows PowerShell.** zn reads a UTF-8 byte order mark and UTF-16 (what `>` and `Set-Content -Encoding Unicode` write in Windows PowerShell 5.1), so those are fine. To write the file as plain UTF-8 without a mark, use PowerShell 7 (`Set-Content -Encoding utf8NoBOM`), or an editor that saves as "UTF-8".
+
+**What to do:** fix the file in your editor, then run `zn-gate status` in your own terminal. The line "Settings file" is gone when the file is fine.
 
 ## Block and warn reasons, by family
 

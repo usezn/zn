@@ -137,6 +137,10 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
     out(JSON.stringify({ ...s, top_rules_days: top.days, top_rules: top.rules, sharing: share.status().share, sent_days: sentDays, send_failed: res.failed }, null, 2) + '\n');
   } else {
     printSummary(s, out, top);
+    try {
+      const cp = require('./hooks/runner').configProblems();
+      if (cp.length) out('  Settings file: ' + cp.join(' ') + '\n');
+    } catch (_) { /* stats never fail on this */ }
     for (const d of sentDays) out(`  Shared pseudonymous counts for ${d}.\n`);
     if (res.failed) out(`  ${res.failed} day(s) could not be shared; they will be tried next time.\n`);
   }

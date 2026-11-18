@@ -59,12 +59,37 @@ const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'ls
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
+/*
+ * The settings in dir/config.json (see lib/zn-config.js: a byte order mark and UTF-16 are read; a wrong-typed value is
+ * repaired toward the stricter reading or ignored). A file that cannot be parsed gives the defaults plus the protections
+ * a lenient reading found in it: what the person tried to enable stays on, nothing that relaxes a check is taken.
+ */
 function readConfigIn(dir) {
+  const r = require('../zn-config').load(dir);
+  if (r.status === 'invalid') return r.intent ? { hooks: tightenHooks({}, r.intent) } : {};
+  return r.data;
+}
+
+/* The problems with the person's own ~/.zn/config.json (the one the hooks trust), as sentences; [] when it is fine. */
+function configProblems(opts = {}) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) || {};
+    const dir = opts.home ? path.join(opts.home, '.zn') : require('../stats').userHome();
+    return dir ? require('../zn-config').load(dir).problems : [];
   } catch (_) {
-    return {};
+    return [];
   }
+}
+
+/* Shown once per session and per set of problems (pre-tool and prompt events): a settings file that does not parse. */
+function configNotice(ev, opts) {
+  const text = require('../zn-config').notice(configProblems(opts));
+  if (!text) return null;
+  const sf = seenFile(ev, 'config-problem', opts);
+  if (!sf) return text;
+  const key = require('crypto').createHash('sha256').update(text).digest('hex').slice(0, 16);
+  if (readSeen(sf).includes(key)) return null;
+  writeSeen(sf, [key]);
+  return text;
 }
 
 /*
@@ -197,7 +222,7 @@ function cloudOutputCheckOn(opts) {
   if (!userZn) return false;
   let hooks = {};
   try {
-    hooks = (JSON.parse(fs.readFileSync(path.join(userZn, 'config.json'), 'utf8')) || {}).hooks || {};
+    hooks = require('../zn-config').load(userZn).data.hooks || {};
   } catch (_) { /* no user config: off */ }
   return outputCheckOn(opts) && hooks.cloudCheckToolOutput === true;
 }
@@ -1952,6 +1977,11 @@ async function handle(adapter, rawEvent, opts = {}) {
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
+  // A settings file that does not parse: say so once per session, so a protection that is not applied is never silent.
+  if (decision && ev && (ev.event === 'pre_tool' || ev.event === 'user_prompt')) {
+    const note = configNotice(ev, opts);
+    if (note) decision.userMessage = decision.userMessage ? decision.userMessage + ' ' + note : note;
+  }
   // An event zn cannot read on a hook that can block is refused by the caller (exit code and answer of the agent).
   const output = decision.refuseText ? null : adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts, latencyMs);
@@ -2580,7 +2610,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
+module.exports = { readConfig, configProblems, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

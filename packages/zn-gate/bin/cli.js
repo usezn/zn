@@ -1611,6 +1611,11 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
       const w = require('../lib/hooks-list').staleWarning({});
       if (w) process.stdout.write(w);
     } catch (_) { /* status never fails on this check */ }
+    // A settings file that does not parse (a warning only: it never changes the exit status).
+    try {
+      const cp = require('../lib/hooks/runner').configProblems();
+      if (cp.length) process.stdout.write('  Settings file   : ' + cp.join(' ') + '\n\n');
+    } catch (_) { /* status never fails on this check */ }
     // An end-of-life or unpatched Node.js (a warning only: it never changes the exit status).
     try {
       const adv = require('../lib/node-support').nodeAdvice(process.versions.node);

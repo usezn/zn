@@ -31,7 +31,7 @@ function configFile() {
 }
 
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')) || {}; } catch { return {}; }
+  return require('./zn-config').readObject(configFile());
 }
 
 function writeConfig(cfg) {
