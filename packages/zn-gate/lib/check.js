@@ -234,8 +234,9 @@ function antigravityOtherHooks(files) {
   return out;
 }
 
-/* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
-function parseCommand(command, agentId) {
+/* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. `cwd` is the folder check runs in:
+   a Node.js or runner.js inside its project comes back with `inside` (the hook is BROKEN, see cliHooks). */
+function parseCommand(command, agentId, cwd = process.cwd()) {
   const { _internal: audit } = require('./audit');
   const launcher = require('./agents/launcher');
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
@@ -300,6 +301,12 @@ function parseCommand(command, agentId) {
       return { node: m[1], runner: m[2], missing: true };
     }
     if (!/^node(?:js)?(?:\.exe)?$/i.test(path.basename(node)) || !audit.znGateFile(runner, 'lib/hooks/runner.js')) return null;
+    // The outside-the-project rule audit applies to a hook it audits (audit's realOutside): code the repository can change
+    // is not what zn installs, so such a hook is reported instead of OK.
+    const ctx = { rec: { root: projectRootOf(cwd) }, cwd: path.resolve(cwd) };
+    const insideNode = !audit.realOutside(ctx, m[1]);
+    const insideRunner = !audit.realOutside(ctx, m[2]);
+    if (insideNode || insideRunner) return { node, runner, inside: { node: insideNode, runner: insideRunner } };
     return { node, runner };
   }
   return null;
@@ -846,7 +853,7 @@ function cliHooks(spec, ctx, userFile, given) {
     out.problem = 'zn\'s hooks are there, but not the one that checks reading files (' + spec.event + ')';
     return out;
   }
-  const cmd = parseCommand(read.command, spec.id);
+  const cmd = parseCommand(read.command, spec.id, ctx.cwd);
   // zn-gate 1.13 and earlier started powershell.exe by name: cmd.exe (Codex) and the process start of several agents look in
   // the current folder first, so a powershell.exe in the project could run instead. Only a reinstall writes the full path.
   if (/^powershell\.exe /i.test(String(read.command).trim())) {
@@ -911,6 +918,10 @@ function cliHooks(spec, ctx, userFile, given) {
   } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';
     // Usually a Node.js version removed with nvm (or similar), which takes its global zn-gate with it.
+    out.fix = REINSTALL(spec.id);
+  } else if (cmd.inside) {
+    const parts = [cmd.inside.node ? 'Node.js' : '', cmd.inside.runner ? 'zn-gate\'s runner.js' : ''].filter(Boolean);
+    out.problem = 'its hook runs ' + parts.join(' and ') + ' from inside this project, so files in the repository decide what the agent runs';
     out.fix = REINSTALL(spec.id);
   } else if (cmd.onPath) {
     const zn = znOnPath(ctx.env);

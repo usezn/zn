@@ -335,7 +335,7 @@ function realOutside(ctx, p) {
   try { real = fs.realpathSync(p); } catch (_) { return null; }
   if (insideDir(realRootOf(ctx), real)) return null;
   let cwd = null;
-  try { cwd = fs.realpathSync(process.cwd()); } catch (_) { cwd = null; }
+  try { cwd = fs.realpathSync(ctx.cwd || process.cwd()); } catch (_) { cwd = null; }
   if (cwd && insideDir(cwd, real)) return null;
   return real;
 }
@@ -2118,4 +2118,4 @@ function auditFileAt(opts) {
   return result;
 }
 
-module.exports = { audit, auditFileAt, classify, redact, AGENTS, AGENT_PLACES, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+module.exports = { audit, auditFileAt, classify, redact, AGENTS, AGENT_PLACES, _internal: { globMatcher, hookCommands, isOurHook, realOutside, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
