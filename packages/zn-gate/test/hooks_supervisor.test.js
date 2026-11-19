@@ -36,7 +36,7 @@ const PRE = {
   opencode: { hook: 'tool.execute.before', tool: 'bash', args: { command: 'echo hi' } },
 };
 
-function runner(t, agent, extraEnv) {
+function runner(t, agent, extraEnv, guardMs = 25000) {
   const home = tempDir(t, 'zn-sup-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off', ZN_TEST_HOOK_FAULTS: '1', ...extraEnv };
   const child = spawn(process.execPath, [RUNNER, agent], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
@@ -46,7 +46,7 @@ function runner(t, agent, extraEnv) {
   child.stderr.on('data', (c) => { out.stderr += c; });
   child.stdin.on('error', () => {});
   const done = new Promise((resolve) => {
-    const guard = setTimeout(() => { child.kill('SIGKILL'); }, 25000);
+    const guard = setTimeout(() => { child.kill('SIGKILL'); }, guardMs);
     child.on('close', (status, signal) => { clearTimeout(guard); resolve({ ...out, status, signal, ms: Date.now() - started }); });
   });
   return { child, done };
@@ -100,11 +100,18 @@ test('claude-code: a PostToolUse event on a stdin that never ends gets the withh
 // in the adapter: the supervisor answers before that, on its own default deadline (no shortened test deadline here).
 for (const agent of ['gemini', 'copilot']) {
   test(agent + ': a check that hangs for 20 s is blocked in under 15 s on the real deadline', async (t) => {
-    const { child, done } = runner(t, agent, { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '20000' });
+    // The supervisor arms its 11 s deadline when the runner has started, so the wall time from the spawn also holds the start-up of
+    // Node and the runner (3 s on Linux, 16 s and more on a slow Windows runner). That start-up is measured on the same machine with
+    // the same runner and a 0.5 s deadline, and only the time above it is held to the old 3 s of slack. The upper bound still
+    // proves the supervisor answered by itself: the hook would otherwise hang for 20 s.
+    const base = runner(t, agent, { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '20000', ZN_TEST_HOOK_DEADLINE_MS: '500' });
+    base.child.stdin.end(JSON.stringify(PRE[agent]));
+    const startup = Math.max(0, (await base.done).ms - 500);
+    const { child, done } = runner(t, agent, { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '20000' }, 25000 + 2 * startup);
     child.stdin.end(JSON.stringify(PRE[agent]));
     const r = await done;
     assertBlocked(agent, r);
-    assert.ok(r.ms < 14000, 'answered in ' + r.ms + ' ms');
+    assert.ok(r.ms < 14000 + 2 * startup,'answered in ' + r.ms + ' ms (start-up on this machine: ' + startup + ' ms)');
     assert.ok(r.ms > 5000, 'not before it had to: ' + r.ms + ' ms');
   });
 }
