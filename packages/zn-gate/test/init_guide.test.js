@@ -7,6 +7,7 @@
 process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const path = require('path');
 const { getAdapter } = require('../lib/agents');
@@ -59,8 +60,8 @@ test('plan: one route per agent found; agents not found get no steps', async (t)
   const m = machine(t, ['claude-code', 'codex']);
   const { items, setup } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const by = Object.fromEntries(items.map((i) => [i.id, i]));
-  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn#v' + VERSION, 'claude plugin install zn-gate@usezn']);
-  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn#v' + VERSION]);
+  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn']);
+  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn']);
   assert.equal(by['claude-code'].steps[0].run[0], path.resolve('/opt/bin/claude'));
   assert.deepEqual(by.codex.steps.map(line), ['zn hooks install codex']);
   // An install that stays runs its own CLI with node, by absolute path.
@@ -77,7 +78,7 @@ test('plan: without a claude command, Claude Code gets the two /plugin commands 
   const cc = items.find((i) => i.id === 'claude-code');
   assert.equal(cc.steps.length, 1);
   assert.equal(cc.steps[0].run, null);
-  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn#v' + VERSION + ' and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
+  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
 });
 
 test('plan: from a temporary copy, one global install comes before the hooks, by absolute path', async (t) => {
@@ -336,15 +337,18 @@ test('agent guard: a backslash before the option and npm exec options do not unl
   }
 });
 
-test('agent guard: the npm exec check stays fast', () => {
-  const t0 = process.hrtime.bigint();
+test('agent guard: the npm exec check stays linear', () => {
+  const admin = (text) => policy.adminCommand(text);
   assert.equal(policy.adminCommand('npm exec ' + 'a '.repeat(40000) + 'zn-gate init --dry-run'), 'init');
   assert.equal(policy.adminCommand(('npm x ' + 'b'.repeat(50) + ' ').repeat(1500)), null);
   assert.equal(policy.adminCommand(('npm exec ' + '-- '.repeat(20)).repeat(1500)), null);
   assert.equal(policy.adminCommand('npm' + ' -a b'.repeat(15000) + ' exec zn-gate init --dry-run'), 'init');
-  policy.adminCommand('npm' + ' -a b'.repeat(15000) + ' install');
   assert.equal(policy.adminCommand('npm exec ' + '--yes '.repeat(200) + 'zn-gate init --dry-run'), 'init', 'padding does not hide it');
-  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 500);
+  assertLinear(admin, (n) => 'npm exec ' + 'a '.repeat(n) + 'zn-gate init --dry-run', 40000, 'many words');
+  assertLinear(admin, (n) => ('npm x ' + 'b'.repeat(50) + ' ').repeat(n), 1500, 'many commands');
+  assertLinear(admin, (n) => ('npm exec ' + '-- '.repeat(20)).repeat(n), 1500, 'many separators');
+  assertLinear(admin, (n) => 'npm' + ' -a b'.repeat(n) + ' exec zn-gate init --dry-run', 15000, 'many options');
+  assertLinear(admin, (n) => 'npm' + ' -a b'.repeat(n) + ' install', 15000, 'many options, install');
 });
 
 test('agent guard: Unicode spaces, carriage returns and more npm exec forms do not unlock it (capitals: the CLI refuses them)', () => {

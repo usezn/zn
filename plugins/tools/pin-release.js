@@ -43,10 +43,13 @@ const NPM_NAME = 'zn-gate-plugin';
 // of this one package is the only install script a pin accepts, and only with that file in place.
 const OWN_SCRIPTS = { postinstall: 'node lib/agents/refresh.js' };
 const NPMRC = 'ignore-scripts=true\n';
+// The npm lifecycle scripts that run on install (they are what sets hasInstallScript). Other scripts, such as test or
+// check:rules, never run on install, so a release may add them without touching the pin rule.
+const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
 function ownScriptsOnly(meta) {
-  const scripts = Object.assign({}, (meta && meta.scripts) || {});
-  delete scripts.test;
-  return JSON.stringify(Object.keys(scripts).sort().map((k) => [k, scripts[k]])) === JSON.stringify(Object.entries(OWN_SCRIPTS));
+  const all = (meta && meta.scripts) || {};
+  const install = INSTALL_SCRIPTS.filter((k) => Object.prototype.hasOwnProperty.call(all, k)).sort().map((k) => [k, all[k]]);
+  return JSON.stringify(install) === JSON.stringify(Object.entries(OWN_SCRIPTS));
 }
 
 function get(url, redirects = 3) {
@@ -253,8 +256,6 @@ function versionedTexts(previous, version) {
     [new RegExp('\\*\\*' + esc + '\\*\\*', 'g'), '**' + version + '**'],
     [new RegExp('version ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'version ' + version],
     [new RegExp('usezn/zn@v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn@v' + version],
-    [new RegExp('usezn/zn#v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn#v' + version],
-    [new RegExp('--ref v' + esc + '(?![0-9]|\\.[0-9])', 'g'), '--ref v' + version],
     [new RegExp('`v' + esc + '`', 'g'), '`v' + version + '`'],
   ];
   const skills = path.join(root, 'zn-gate', 'skills');

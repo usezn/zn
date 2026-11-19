@@ -28,7 +28,7 @@ const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const CLAUDE = path.resolve('/opt/bin/claude');
 const line = (s) => s.manual;
 const VERSION = require('../package.json').version;
-const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn#v' + VERSION, 'claude plugin install zn-gate@usezn'];
+const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn'];
 
 function machine(t) {
   const home = tempDir(t, 'zn-initnode-home-');
@@ -338,7 +338,7 @@ test('check: a plugin older than this zn-gate says how to move it, a current one
   assert.ok(note, JSON.stringify(cc.notes));
   assert.match(note, /plugin is version 1\.9\.0/);
   assert.ok(note.includes('claude plugin marketplace remove usezn'));
-  assert.ok(note.includes('claude plugin marketplace add usezn/zn#v' + VERSION));
+  assert.ok(note.includes('claude plugin marketplace add usezn/zn'));
   assert.ok(note.includes('claude plugin install zn-gate@usezn'));
 
   const current = machine(t);
@@ -360,7 +360,7 @@ test('init: an installed plugin older than this zn-gate gets the steps to move i
   let out = '';
   await guide({ ...m, nodeVersion: '22.5.1', stdin: { isTTY: false }, write: (s) => { out += s; } });
   assert.match(out, /Claude Code: the zn-gate plugin is version 1\.9\.0 and this zn-gate is /);
-  assert.ok(out.includes('claude plugin marketplace add usezn/zn#v' + VERSION));
+  assert.ok(out.includes('claude plugin marketplace add usezn/zn'));
 });
 
 test('init: a plugin of the same version as this zn-gate adds no update line', async (t) => {

@@ -374,27 +374,6 @@ test('a short description is checked word for word on each surface', () => {
   assert.match(errors[0], /short description \(MCP Registry\) is Local layer\. Sends nothing/);
 });
 
-test('every marketplace add on a public surface names a release tag', () => {
-  const tagged = { ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#v2.0.0\n' + 'codex plugin marketplace add usezn/zn --ref v2.0.0\n' };
-  assert.deepEqual(run(tagged), []);
-  for (const [file, cmd] of [['README.md', 'claude plugin marketplace add usezn/zn'], ['packages/zn-gate/README.md', 'claude plugin marketplace add usezn/zn'], ['plugins/zn-gate/README.md', 'codex plugin marketplace add usezn/zn'], ['docs/a.md', '/plugin marketplace add usezn/zn and then']]) {
-    const errs = run({ ...GOOD, [file]: (GOOD[file] || '') + cmd + '\n' });
-    assert.equal(errs.length, 1, file);
-    assert.match(errs[0], /has no release tag/);
-  }
-  // The URL form must name a tag too, and another repository whose name starts with usezn/zn is not this one.
-  for (const cmd of ['claude plugin marketplace add https://github.com/usezn/zn', 'claude plugin marketplace add https://github.com/usezn/zn.git']) {
-    const errs = run({ ...GOOD, 'README.md': GOOD['README.md'] + cmd + '\n' });
-    assert.equal(errs.length, 1, cmd);
-    assert.match(errs[0], /has no release tag/);
-  }
-  assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn-algo\nclaude plugin marketplace add https://github.com/usezn/zn-algo.git\n' }), []);
-  // A tag of another version is caught by the pin check.
-  assert.match(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#v1.0.0\n' }).join('\n'), /pins usezn[/]zn#v1[.]0[.]0/);
-  // The changelog and code are not public install surfaces.
-  assert.deepEqual(run({ ...GOOD, 'CHANGELOG.md': 'claude plugin marketplace add usezn/zn\n' }), []);
-});
-
 const LIB = {
   'packages/zn-gate/lib/rules.js': "const RULES_VERSION = '2026-11-11.2';\n",
   'packages/zn-gate/lib/scrub/patterns.js': "const SCRUB_RULES_VERSION = '2026-11-11.1';\n",
@@ -472,4 +451,30 @@ test('a release tag where a version constant cannot be read is reported, not rep
   const errors = checkStatusSamples(['docs/a.md'], readFrom(doc), broken);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /^v1\.15\.0: .*AUDIT_RULES_VERSION not found/);
+});
+
+// examplesVersion may stay on the last published release while the next one is being cut.
+const withPublished = (version, examples, lastPublished) => {
+  const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples, lastPublished }, docsVersion: { value: '1.0.0' } };
+  const tree = {
+    'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
+    'pkg/server.json': JSON.stringify({ packages: [{ version }] }),
+    'py/pyproject.toml': `[project]\nversion = "${version}"\n`,
+    'README.md': 'Works with Claude Code, Cursor.\n',
+  };
+  const warnings = [];
+  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings });
+  return { errs, warnings };
+};
+
+test('final release: examples on the last published version pass while the next release is cut', () => {
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0'), { errs: [], warnings: [] });
+});
+
+test('final release: examples older than the last published version fail', () => {
+  for (const ex of ['1.15.0', '1.15.9', '1.16.0-rc.1']) {
+    const { errs } = withPublished('1.17.0', ex, '1.16.0');
+    assert.equal(errs.length, 1, ex);
+    assert.match(errs[0], /is on an older release line than version 1\.17\.0/, ex);
+  }
 });

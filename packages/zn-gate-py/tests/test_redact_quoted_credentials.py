@@ -4,13 +4,13 @@ the JSON, and the scan stays linear. Same behaviour as the Node.js scrubber
 (findQuotedKv in packages/zn-gate/lib/scrub/patterns.js). Fake values only."""
 
 import json
-import time
 import unittest
 from pathlib import Path
 
 from zn_gate import redact_secrets
 from zn_gate import rules as R
 from zn_gate.rules import redact_scan_secrets
+from ._timing import assert_linear
 
 TOKEN = "[REDACTED_SECRET]"
 FIXTURE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "scrub_quoted_kv_parity.json"
@@ -120,50 +120,43 @@ class QuotedCredentialTests(unittest.TestCase):
         self.assertEqual(redact(text), text)
 
 
-def _elapsed(fn, text: str) -> float:
-    t0 = time.perf_counter()
-    fn(text)
-    return time.perf_counter() - t0
-
-
 class QuotedCredentialLinearTimeTests(unittest.TestCase):
-    """The same adversarial inputs as the Node.js test, each under 3 seconds."""
+    """The same adversarial inputs as the Node.js test; 4x an input takes under 8x the CPU time."""
 
+    # (size, build): build(n) makes the input from n repeats; size is the repeat count of the input.
     INPUTS = [
-        'password="' * 50000,
-        "token='" * 70000,
-        '{"password":"' * 40000,
-        '"password":\\"' * 40000,
-        '"password":\\\\"' * 40000,
-        'password="' + '\\"' * 200000,
-        'password="' + "ab cd " * 100000,
-        'token=\\" ' + 'token=\\\\" ' * 60000,
-        "token:" + " " * 300000 + '"',
-        "token " * 100000,
-        '{"token":' + "1" * 300000 + "}",
+        (50000, lambda n: 'password="' * n),
+        (70000, lambda n: "token='" * n),
+        (40000, lambda n: '{"password":"' * n),
+        (40000, lambda n: '"password":\\"' * n),
+        (40000, lambda n: '"password":\\\\"' * n),
+        (200000, lambda n: 'password="' + '\\"' * n),
+        (100000, lambda n: 'password="' + "ab cd " * n),
+        (60000, lambda n: 'token=\\" ' + 'token=\\\\" ' * n),
+        (300000, lambda n: "token:" + " " * n + '"'),
+        (100000, lambda n: "token " * n),
+        (300000, lambda n: '{"token":' + "1" * n + "}"),
         # Not in the Node.js list: a long run of backslashes inside and after the value.
-        'password="' + "\\" * 300000,
-        'token=\\"' + "\\" * 300000 + '"',
-        "token='" + "\\" * 300000,
+        (300000, lambda n: 'password="' + "\\" * n),
+        (300000, lambda n: 'token=\\"' + "\\" * n + '"'),
+        (300000, lambda n: "token='" + "\\" * n),
     ]
 
     def test_the_finder_is_linear(self) -> None:
-        for text in self.INPUTS:
-            took = _elapsed(R._redact_quoted_credentials, text)
-            self.assertLess(took, 3.0, "took %.2f s on a %d-character input" % (took, len(text)))
+        for size, build in self.INPUTS:
+            assert_linear(R._redact_quoted_credentials, build, size, repr(build(8)))
 
     def test_redact_secrets_is_linear(self) -> None:
-        for text in self.INPUTS:
-            took = _elapsed(redact_secrets, text)
-            self.assertLess(took, 3.0, "took %.2f s on a %d-character input" % (took, len(text)))
+        for size, build in self.INPUTS:
+            assert_linear(redact_secrets, build, size, repr(build(8)))
 
     def test_many_values_after_an_invisible_character(self) -> None:
         # One invisible character makes a second pass, whose spans are compared with
         # those of the first: 1 MiB of redactable members and of numbers.
         for member in ('"api_key":"q7a1b2c3d4e5f6a7b8",', '"token":12345678901,'):
-            text = "\u200b" + member * (1024 * 1024 // len(member))
-            took = _elapsed(redact_secrets, text)
-            self.assertLess(took, 6.0, "took %.2f s on a %d-character input" % (took, len(text)))
+            size = 1024 * 1024
+            assert_linear(redact_secrets, lambda n, member=member: "\u200b" + member * (n // len(member)), size, member)
+            text = "\u200b" + member * (size // len(member))
             self.assertNotIn("q7a1b2c3", redact(text))
             self.assertNotIn("12345678901", redact(text))
 

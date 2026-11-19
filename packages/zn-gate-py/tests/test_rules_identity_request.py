@@ -8,11 +8,11 @@ ones; the test is skipped when they are not next to this package.
 
 import importlib
 import json
-import time
 import unittest
 from pathlib import Path
 
 from zn_gate import rules as R
+from ._timing import assert_linear
 
 CASES_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "identity_request_cases.json"
 FAMILY = ("pi:identity_request", "pi:identity_request_multi")
@@ -61,10 +61,8 @@ class TestIdentityRequest(unittest.TestCase):
         self.assertEqual((s.verdict, s.rule), ("block", "pi:identity_request"))
 
     def test_long_runs_of_words_are_not_slow(self):
-        start = time.time()
-        R.evaluate("send the users " * 4000)
-        R.evaluate("include " + "the user " * 5000 + "header")
-        self.assertLess(time.time() - start, 3)
+        assert_linear(R.evaluate, lambda n: "send the users " * n, 4000)
+        assert_linear(R.evaluate, lambda n: "include " + "the user " * n + "header", 5000)
 
 
 class TestIdentityRequestPrefilter(unittest.TestCase):

@@ -84,13 +84,6 @@ export function pinnedFiles(all, exclude) {
   return all.filter((f) => /\.(md|json)$/.test(f) && !exclude.some((p) => f === p || f.startsWith(p)));
 }
 
-/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name a release tag. */
-export function marketplaceFiles(all) {
-  return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
-}
-// The short form and the URL form (with or without .git); `usezn/zn-other` is another repository.
-const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(#v\S*|\s+--ref\s+v\S*)?/g;
-
 /**
  * All differences between the facts and the files, as readable lines (empty = consistent).
  * read(file) returns the text of a file of the repository, or throws when it does not exist.
@@ -181,8 +174,11 @@ export function check(facts, files, read, options = {}) {
     const minor = (v) => base(v).split('.').slice(0, 2).join('.') + '.0';
     const cmp = compareVersions(base(exampleVersion), base(version));
     const cmpMinor = cmp === null ? null : compareVersions(minor(exampleVersion), minor(version));
+    // lastPublished (optional) is the release on npm and PyPI now: examples may stay on it while the next release is cut.
+    const lastPublished = facts.examplesVersion.lastPublished;
+    const onLastPublished = Boolean(lastPublished) && !isPrerelease(exampleVersion) && compareVersions(base(exampleVersion), base(lastPublished)) === 0;
     if (cmp === null) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is not a version (X.Y.Z)`);
-    else if (cmpMinor < 0) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
+    else if (cmpMinor < 0 && !onLastPublished) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
     else if (cmp > 0 && !isPrerelease(exampleVersion)) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is ahead of version ${version}`);
     else if (cmp < 0 && cmpMinor === 0 && Array.isArray(options.warnings)) options.warnings.push(`examplesVersion ${exampleVersion} is behind the final release ${version}: pin the examples to ${version} once it is published on npm and PyPI`);
   }
@@ -197,18 +193,6 @@ export function check(facts, files, read, options = {}) {
         const line = s.slice(0, m.index).split('\n').length;
         errors.push(`${f}:${line}: pins ${m[0]}, public-facts.json${docsLabel} says ${docs}`);
       }
-    }
-  }
-
-  // Adding the plugin marketplace without a tag follows the default branch, so every command that adds it names a tag
-  // (the version of the tag itself is checked above, with the other pins).
-  for (const f of marketplaceFiles(files)) {
-    const s = text(f);
-    if (s === null) continue;
-    for (const m of s.matchAll(MARKETPLACE_ADD)) {
-      if (m[1]) continue;
-      const line = s.slice(0, m.index).split('\n').length;
-      errors.push(`${f}:${line}: "${m[0]}" has no release tag: use usezn/zn#v<version> (Claude Code) or usezn/zn --ref v<version> (Codex)`);
     }
   }
 
