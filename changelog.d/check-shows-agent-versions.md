@@ -1,2 +1,0 @@
-### Added
-- `zn-gate check` shows, under each agent it finds, the version of the agent on your machine next to the version zn-gate was last tested with, and says plainly when yours is newer or older. It only runs `<agent> --version` with a 2-second limit, and a version it cannot read is shown as "not found", not an error. The tested versions live in one file that a test keeps in sync with the compatibility page.
