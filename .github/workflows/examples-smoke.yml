@@ -30,6 +30,10 @@ on:
       - 'packages/zn-gate-py/**'
       - 'packages/zn-gate/**'
       - '!packages/**/*.md'
+      # Not shipped in the npm tarball (package.json files) and not read by this job.
+      - '!packages/zn-gate/test/**'
+      - '!packages/zn-gate/scripts/**'
+      - '!packages/zn-gate/knip.json'
       - '.github/scripts/examples-smoke*'
       - '.github/scripts/mcp-smoke*'
       - '.github/workflows/examples-smoke.yml'
