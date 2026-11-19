@@ -123,7 +123,8 @@ function makeApp(ledger, port = 4321) {
       destroyed: false,
       destroy(e) { this.destroyed = true; this.error = e; this.finish(); },
     };
-    // The stats and verify answers come after an asynchronous read: wait for res.done.
+    // Stats and verify are answered synchronously, so they are ready when the call returns.
+    // The export streams its body and is read through res.done.
     res.done = new Promise((resolve) => { res.finish = () => resolve(res); });
     handler({ url, headers }, res);
     return res;
