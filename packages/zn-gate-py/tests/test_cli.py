@@ -10,11 +10,12 @@ import io
 import json
 import os
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stdout
 
 from zn_gate.cli import cmd_scan, cmd_test
+
+from ._timing import assert_linear
 
 FAKE_AWS = "AKIA" + "ZNTESTFAKE" + "000000"
 
@@ -192,11 +193,14 @@ class TestCliScanCommand(unittest.TestCase):
         block = self.BEGIN + "\n" + self.BODY + "\n" + self.END + "\n"
         # CPU time of this process (the scan runs in it), not wall time: a busy shared runner can pause the test
         # in the middle of a correct run, while a scan that went back over earlier blocks would still burn the CPU.
-        start = time.process_time()
-        code, out = self._scan_text(block * 15000)  # under the 2 MiB file limit
-        self.assertEqual(code, 1)
-        self.assertLess(time.process_time() - start, 8.0)
-        self.assertEqual(len(json.loads(out)["threats"]), 15000)
+
+        def scan(text):
+            code, out = self._scan_text(text)
+            self.assertEqual(code, 1)
+            self.assertEqual(len(json.loads(out)["threats"]), text.count(self.BEGIN))
+
+        # 4x the blocks; the larger text stays under 2 MiB.
+        assert_linear(scan, lambda n: block * n, 15000, "15,000 key blocks")
 
 
 if __name__ == "__main__":

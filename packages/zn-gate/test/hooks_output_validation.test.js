@@ -107,7 +107,7 @@ test('hook: a refusal (exit 2) writes no confirmation and keeps its status', asy
 // Starts the launcher so that a TERM can be sent to it. Node cannot send TERM on Windows (child.kill is TerminateProcess, so the
 // launcher's trap never runs and the exit status is null). There the launcher runs under a small sh of Git Bash that sends the
 // TERM from inside, once the file `flag` exists, and ends with the launcher's own exit status.
-function startLauncherForTerm(t, file, event, { env, cwd }) {
+function spawnLauncherForTerm(t, file, event, { env, cwd }) {
   if (process.platform !== 'win32') {
     const child = spawn('/bin/sh', [file, event], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     return { child, term: () => child.kill('SIGTERM') };
@@ -116,6 +116,22 @@ function startLauncherForTerm(t, file, event, { env, cwd }) {
   const script = '/bin/sh "$1" "$2" <&0 & p=$!; while kill -0 $p 2>/dev/null && [ ! -e "$3" ]; do /bin/sleep 0.1; done; [ ! -e "$3" ] || kill -TERM $p; wait $p; exit $?';
   const child = spawn('/bin/sh', ['-c', script, 'sh', file.replace(/\\/g, '/'), event, flag], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   return { child, term: () => fs.writeFileSync(flag, '') };
+}
+
+// Same as spawnLauncherForTerm, plus a cleanup: if the test fails before term() runs (for example a readiness wait that times
+// out), the launcher child is still ended here, and the wait for its exit is bounded. On success the child has already exited,
+// so the cleanup does nothing.
+function startLauncherForTerm(t, file, event, { env, cwd }) {
+  const { child, term } = spawnLauncherForTerm(t, file, event, { env, cwd });
+  t.after(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    child.kill('SIGKILL');
+    let timer;
+    await Promise.race([exited, new Promise((resolve) => { timer = setTimeout(resolve, 2000); })]);
+    clearTimeout(timer);
+  });
+  return { child, term };
 }
 
 function writeScript(t, agent, runnerBody, opts = {}) {
@@ -465,11 +481,15 @@ for (const [mode, opts, edit] of MODES) {
 test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
-  const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
-  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp } });
+  // The TERM is sent once the hook is running: the launcher sets its TERM trap before it starts the hook, and a fixed wait
+  // sent the TERM too early on a slow runner (the launcher was then killed by it: 143 instead of the block, 2).
+  const ready = path.join(tempDir(t, 'zn-ov-planted-ready-'), 'ready');
+  const file = writeScript(t, 'claude-code', "require('fs').writeFileSync(process.env.ZN_TEST_READY, ''); process.stdin.resume(); setInterval(() => {}, 1000);\n", { deadlineS: 120 });
+  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp, ZN_TEST_READY: ready } });
   child.stdin.write('{');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  await new Promise((r) => setTimeout(r, 400));
+  for (let i = 0; i < 600 && !fs.existsSync(ready); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(fs.existsSync(ready), 'the hook started');
   term();
   assert.equal(await exited, 2);
   assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '');
