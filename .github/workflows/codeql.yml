@@ -10,6 +10,9 @@ name: CodeQL
 #     the merge. The analysis reads the code (build-mode none) and never builds or runs it, so the job's
 #     security-events: write token is not exposed to code from the pull request. A pull request from a fork gets a
 #     read-only token from GitHub and its upload fails; the maintainers' runs on next still cover that code.
+# A pull request analyses only the languages whose files it changes (the scope job decides; see
+# .github/scripts/codeql-scope.sh). Every other run analyses all four languages. A skipped language's job still
+# completes with success: only its steps are skipped, so no check is left pending.
 # Not a required check. Each run completes: a newer push does not cancel it. The default setup must be turned off in the repository settings (Code security) before this
 # workflow takes over; until then GitHub refuses advanced uploads for the same languages.
 on:
@@ -29,8 +32,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Lists the languages a pull request leaves untouched (empty on every other run). Its output only gates steps:
+  # when it is empty or the job fails, the analysis runs for all four languages.
+  scope:
+    name: CodeQL scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.scope.outputs.skip }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Choose the languages
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash .github/scripts/codeql-scope.sh
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: scope
+    # Runs even when the scope job fails, so a failed scope never skips the analysis (fail closed).
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -44,13 +72,16 @@ jobs:
         language: [ actions, javascript-typescript, python, rust ]
     steps:
       - name: Harden the runner (egress audit)
+        if: ${{ !contains(needs.scope.outputs.skip, matrix.language) }}
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !contains(needs.scope.outputs.skip, matrix.language) }}
         with:
           persist-credentials: false
       - name: Initialize CodeQL
+        if: ${{ !contains(needs.scope.outputs.skip, matrix.language) }}
         uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ matrix.language }}
@@ -59,6 +90,7 @@ jobs:
           # gate requires zero open CodeQL alerts. The category below matches the default setup's, so existing alerts
           # carry over instead of reopening.
       - name: Analyze
+        if: ${{ !contains(needs.scope.outputs.skip, matrix.language) }}
         uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: /language:${{ matrix.language }}
