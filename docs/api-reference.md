@@ -82,7 +82,7 @@ The package has an `exports` map, so only these paths can be imported (each also
 | `zn-gate/lib/guard` | The tool-call guard (`checkToolCall`, `guardTool`, `GuardBlockError`), also re-exported by `zn-gate/lib/client`. |
 | `zn-gate/package.json` | The package manifest. |
 
-Any other path, such as `zn-gate/lib/hooks/policy.js`, is internal and fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Those files can change in any release. Use the entry points above, or the `zn-gate` command line, instead.
+Any other file under `lib/` (for example the hooks code) is internal and fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Those files can change in any release. Use the entry points above, or the `zn-gate` command line, instead.
 
 ### `evaluate(text, options)`
 
