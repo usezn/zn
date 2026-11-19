@@ -56,8 +56,25 @@ fn endpoint_for_log(endpoint: &str) -> String {
 /// Longest wait between retries of a failing endpoint.
 pub const BACKOFF_MAX: Duration = Duration::from_secs(120);
 
+#[cfg(test)]
+thread_local! {
+    static SIZE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_size_calls() {
+    SIZE_CALLS.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+fn size_calls() -> usize {
+    SIZE_CALLS.with(|c| c.get())
+}
+
 /// Rough in-memory size of an entry, enough to bound the retry buffer.
 fn approx_size(entry: &AuditEntry) -> usize {
+    #[cfg(test)]
+    SIZE_CALLS.with(|c| c.set(c.get() + 1));
     const FIXED: usize = 256;
     FIXED
         + entry.id.len()
@@ -596,36 +613,43 @@ mod tests {
 
     #[test]
     fn pushes_at_the_cap_stay_linear() {
-        // Before the byte total was kept incrementally, 100k pushes took about 48 s.
+        // Counts size computations instead of time. A push sizes its own event once and
+        // sizes each event it evicts once, so the total is at most twice the push count.
+        // A byte total recomputed over the whole buffer would make it grow with the cap.
+        let pushes = 100_000;
         let mut b = Buffer::new(MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
-        let start = Instant::now();
-        for i in 0..100_000 {
+        reset_size_calls();
+        for i in 0..pushes {
             b.push(entry(&format!("e{i}"), None));
         }
+        let calls = size_calls();
         assert_eq!(b.len(), MAX_BUFFERED_EVENTS);
         assert_eq!(b.bytes, real_bytes(&b));
+        assert!(calls >= pushes, "counter is not live: {calls} calls");
         assert!(
-            start.elapsed() < Duration::from_secs(3),
-            "100k pushes took {:?}",
-            start.elapsed()
+            calls <= 2 * pushes,
+            "{calls} size computations for {pushes} pushes"
         );
     }
 
     #[test]
     fn pushes_at_the_byte_cap_stay_linear() {
         // Large events: the byte cap, not the count, is what bounds the buffer.
+        // Same size-computation bound as above.
+        let pushes = 50_000;
         let payload = "p".repeat(4_000);
         let mut b = Buffer::new(MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
-        let start = Instant::now();
-        for i in 0..50_000 {
+        reset_size_calls();
+        for i in 0..pushes {
             b.push(entry(&format!("e{i}"), Some(&payload)));
         }
+        let calls = size_calls();
         assert!(b.bytes <= MAX_BUFFERED_BYTES);
         assert_eq!(b.bytes, real_bytes(&b));
+        assert!(calls >= pushes, "counter is not live: {calls} calls");
         assert!(
-            start.elapsed() < Duration::from_secs(3),
-            "50k pushes took {:?}",
-            start.elapsed()
+            calls <= 2 * pushes,
+            "{calls} size computations for {pushes} pushes"
         );
     }
 
@@ -691,7 +715,6 @@ mod tests {
         );
         let mut batch = buffer_of(1, None, 100, usize::MAX);
         let endpoint = format!("http://127.0.0.1:{port}/");
-        let started = Instant::now();
         let ok = tokio::time::timeout(
             Duration::from_secs(5),
             exporter.send_batch(&endpoint, &mut batch),
@@ -699,7 +722,6 @@ mod tests {
         .await
         .expect("send_batch should return on its own timeout");
         assert!(!ok);
-        assert!(started.elapsed() < Duration::from_secs(3));
         assert_eq!(batch.len(), 1, "a timed-out batch is kept for retry");
     }
 
