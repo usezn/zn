@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-19.1';
+const SCRUB_RULES_VERSION = '2026-11-19.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -233,7 +233,7 @@ function phoneValid(raw) {
 function ipv4Public(raw) {
   const parts = raw.split('.').map(Number);
   if (parts.length !== 4 || parts.some((p) => !(p >= 0 && p <= 255))) return false;
-  const [a, b, c] = parts;
+  const [a, b, c, d] = parts;
   if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
   if (a === 169 && b === 254) return false;
   if (a === 172 && b >= 16 && b <= 31) return false;
@@ -241,8 +241,10 @@ function ipv4Public(raw) {
   if (a === 100 && b >= 64 && b <= 127) return false;
   // Only the reserved /24 blocks, not the whole /16 around them: 192.0.0.0/24 (IETF protocol
   // assignments), 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24 (documentation), 198.18.0.0/15
-  // (benchmarking). Other addresses in 192.0.x.x, 198.51.x.x and 203.0.x.x are public.
-  if (a === 192 && b === 0 && (c === 0 || c === 2)) return false;
+  // (benchmarking). Other addresses in 192.0.x.x, 198.51.x.x and 203.0.x.x are public, and so are
+  // 192.0.0.9 and 192.0.0.10 (PCP and TURN anycast), which the IANA registry lists as globally reachable.
+  if (a === 192 && b === 0 && c === 0 && d !== 9 && d !== 10) return false;
+  if (a === 192 && b === 0 && c === 2) return false;
   if (a === 198 && (b === 18 || b === 19)) return false;
   if (a === 198 && b === 51 && c === 100) return false;
   if (a === 203 && b === 0 && c === 113) return false;

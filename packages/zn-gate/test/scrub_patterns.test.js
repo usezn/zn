@@ -596,7 +596,15 @@ test('ipv4Public: only the reserved /24 blocks are non-public, not the /16 aroun
   for (const ip of ['192.0.0.8', '192.0.2.10', '198.51.100.7', '203.0.113.9', '198.18.0.1', '198.19.255.1']) {
     assert.strictEqual(P.ipv4Public(ip), false, ip);
   }
-  for (const ip of ['192.0.1.1', '192.0.3.1', '198.51.99.1', '198.51.101.1', '203.0.112.1', '203.0.114.1']) {
+  for (const ip of ['192.0.1.1', '192.0.3.1', '198.51.99.1', '198.51.101.1', '203.0.112.1', '203.0.114.1', '192.0.0.9', '192.0.0.10']) {
     assert.strictEqual(P.ipv4Public(ip), true, ip);
   }
+});
+
+test('public IPv4 masking: 192.0.0.9 and 192.0.0.10 are masked, 192.0.0.8 is not', () => {
+  const opts = { pii: { ipv4: true } };
+  for (const ip of ['192.0.0.9', '192.0.0.10']) {
+    assert.ok(P.findPii('peer ' + ip + ' answered', opts).some((x) => x.type === 'IPV4'), ip);
+  }
+  assert.ok(!P.findPii('peer 192.0.0.8 answered', opts).some((x) => x.type === 'IPV4'), '192.0.0.8');
 });
