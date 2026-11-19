@@ -1,0 +1,335 @@
+package zn
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// DefaultBaseURL is the production API host.
+const DefaultBaseURL = "https://api.usezn.com"
+
+const (
+	defaultTimeout      = 12 * time.Second
+	defaultMaxRetries   = 2
+	defaultMaxRetryWait = 30 * time.Second
+	defaultBackoffBase  = 500 * time.Millisecond
+	maxBackoff          = 8 * time.Second
+	maxResponseBytes    = 1 << 20
+	userAgent           = "zn-go"
+)
+
+// Client calls the zn Cloud API. It is safe for concurrent use.
+type Client struct {
+	apiKey       string
+	baseURL      string
+	httpClient   *http.Client
+	timeout      time.Duration
+	maxRetries   int
+	maxRetryWait time.Duration
+	backoffBase  time.Duration
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithBaseURL sets the API host, for example for a test server. The
+// default is DefaultBaseURL.
+func WithBaseURL(u string) Option {
+	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
+}
+
+// WithHTTPClient sets the HTTP client, for example to add a proxy or a
+// tracing transport. The default is a new http.Client.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			c.httpClient = h
+		}
+	}
+}
+
+// WithTimeout sets the time limit of each attempt (not of all attempts
+// together; use the context deadline for that). The default is 12 seconds.
+// Long inputs are scored in windows and can take 7 to 8 seconds, so keep it
+// at 10 seconds or more.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.timeout = d
+		}
+	}
+}
+
+// WithMaxRetries sets how many times a request is repeated after a 429,
+// a 5xx answer or a network error. The default is 2; 0 turns retries off.
+// zn does not deduplicate requests: every retry counts against your plan.
+func WithMaxRetries(n int) Option {
+	return func(c *Client) {
+		if n < 0 {
+			n = 0
+		}
+		c.maxRetries = n
+	}
+}
+
+// WithMaxRetryWait sets the longest Retry-After the client waits for. If
+// the API asks for more, the error is returned at once. The default is 30
+// seconds. This keeps a 429 that carries the time until the monthly quota
+// resets from blocking a request for days.
+func WithMaxRetryWait(d time.Duration) Option {
+	return func(c *Client) {
+		if d >= 0 {
+			c.maxRetryWait = d
+		}
+	}
+}
+
+// NewClient returns a client for the given API key. Read the key from your
+// environment or secret store; the client never logs it.
+func NewClient(apiKey string, opts ...Option) *Client {
+	c := &Client{
+		apiKey:       apiKey,
+		baseURL:      DefaultBaseURL,
+		httpClient:   &http.Client{},
+		timeout:      defaultTimeout,
+		maxRetries:   defaultMaxRetries,
+		maxRetryWait: defaultMaxRetryWait,
+		backoffBase:  defaultBackoffBase,
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+type analyzeRequest struct {
+	Input     string `json:"input"`
+	Model     string `json:"model,omitempty"`
+	LongInput string `json:"long_input,omitempty"`
+}
+
+// AnalyzeOption changes one Analyze call.
+type AnalyzeOption func(*analyzeRequest)
+
+// Model chooses the Galvanize model for this call, for example
+// "galvanize-3.1" or "galvanize-3". Leave it out to use the model of your
+// plan. A model your plan does not include is answered with a 403.
+func Model(name string) AnalyzeOption {
+	return func(r *analyzeRequest) { r.Model = name }
+}
+
+// LongInputWindows asks for an input of 2,000 characters or fewer to be
+// scored in windows too. Inputs of more than 2,000 characters are always
+// scored in windows.
+func LongInputWindows() AnalyzeOption {
+	return func(r *analyzeRequest) { r.LongInput = "windows" }
+}
+
+// Analyze checks input and returns the verdict.
+//
+// An input of more than MaxInputUnits UTF-16 code units is refused before
+// anything is sent (the error wraps ErrInputTooLong). API errors are
+// returned as *APIError.
+func (c *Client) Analyze(ctx context.Context, input string, opts ...AnalyzeOption) (*Result, error) {
+	if c.apiKey == "" {
+		return nil, ErrNoAPIKey
+	}
+	if input == "" {
+		return nil, ErrEmptyInput
+	}
+	if n := UTF16Len(input); n > MaxInputUnits {
+		return nil, fmt.Errorf("%w: %d UTF-16 code units, the limit is %d", ErrInputTooLong, n, MaxInputUnits)
+	}
+	req := analyzeRequest{Input: input}
+	for _, o := range opts {
+		o(&req)
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("zn: encode request: %w", err)
+	}
+
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		res, retryAfter, err := c.do(ctx, body)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if attempt >= c.maxRetries || !c.retryable(err) {
+			return nil, lastErr
+		}
+		wait := c.backoff(attempt)
+		if retryAfter >= 0 {
+			if retryAfter > c.maxRetryWait {
+				return nil, lastErr
+			}
+			wait = retryAfter
+		}
+		if err := sleep(ctx, wait); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// do sends one attempt. retryAfter is -1 when the answer has no usable
+// Retry-After header.
+func (c *Client) do(ctx context.Context, body []byte) (*Result, time.Duration, error) {
+	actx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(actx, http.MethodPost, c.baseURL+"/analyze", bytes.NewReader(body))
+	if err != nil {
+		return nil, -1, fmt.Errorf("zn: build request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		// The error text of net/http includes the URL, never the key.
+		return nil, -1, &networkError{err: err}
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return nil, -1, &networkError{err: err}
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		var res Result
+		if err := json.Unmarshal(data, &res); err != nil {
+			return nil, -1, fmt.Errorf("zn: decode response: %w", err)
+		}
+		return &res, -1, nil
+	}
+
+	ae := parseAPIError(resp.StatusCode, data)
+	retryAfter := time.Duration(-1)
+	if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+		ae.RetryAfter = d
+		retryAfter = d
+	}
+	return nil, retryAfter, ae
+}
+
+// networkError marks a failure to reach the API or to read its answer.
+type networkError struct{ err error }
+
+func (e *networkError) Error() string { return "zn: request failed: " + e.err.Error() }
+func (e *networkError) Unwrap() error { return e.err }
+
+func (c *Client) retryable(err error) bool {
+	var ne *networkError
+	if errors.As(err, &ne) {
+		return true
+	}
+	ae, ok := asAPIError(err)
+	if !ok {
+		return false
+	}
+	switch {
+	case ae.Status == http.StatusTooManyRequests:
+		// A quota answer does not clear in seconds: do not spend a retry.
+		return !IsQuotaExceeded(err)
+	case ae.Status >= 500:
+		return true
+	}
+	return false
+}
+
+// backoff is exponential with full jitter: a random wait up to
+// base * 2^attempt, at most maxBackoff.
+func (c *Client) backoff(attempt int) time.Duration {
+	if c.backoffBase <= 0 {
+		return 0
+	}
+	top := c.backoffBase << uint(attempt)
+	if top > maxBackoff || top <= 0 {
+		top = maxBackoff
+	}
+	return time.Duration(rand.Int63n(int64(top) + 1))
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func parseRetryAfter(v string) (time.Duration, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.ParseFloat(v, 64); err == nil {
+		if secs < 0 {
+			return 0, false
+		}
+		return time.Duration(secs * float64(time.Second)), true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+func parseAPIError(status int, data []byte) *APIError {
+	ae := &APIError{Status: status}
+	var b struct {
+		Error         string   `json:"error"`
+		Message       string   `json:"message"`
+		Code          string   `json:"code"`
+		Required      int      `json:"required"`
+		Remaining     int      `json:"remaining"`
+		AllowedModels []string `json:"allowed_models"`
+	}
+	if json.Unmarshal(data, &b) == nil {
+		ae.Message = b.Error
+		if ae.Message == "" {
+			ae.Message = b.Message
+		}
+		// For a key scope error, "error" is the fixed value key_scope and
+		// "message" holds the text.
+		if b.Error == "key_scope" && b.Message != "" {
+			ae.Code = "key_scope"
+			ae.Message = b.Message
+		}
+		if ae.Code == "" {
+			ae.Code = b.Code
+		}
+		ae.Required = b.Required
+		ae.Remaining = b.Remaining
+		ae.AllowedModels = b.AllowedModels
+	}
+	if ae.Message == "" {
+		ae.Message = http.StatusText(status)
+	}
+	return ae
+}
