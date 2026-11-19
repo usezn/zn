@@ -1,0 +1,2 @@
+### Security
+- Reading `.git/config` (in any folder, also with Windows backslashes) and the macOS keychain files in `~/Library/Keychains` (such as `login.keychain-db`) is now refused, with the agent's file tools and with commands such as `cat`. A repository config can hold credentials in a remote URL (`https://user:token@host/...`). `git` commands that use the file without naming it, such as `git remote -v`, `git config --get remote.origin.url` and `git fetch`, are not affected, and neither are `~/.gitconfig` or the other files under `.git`.

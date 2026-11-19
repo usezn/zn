@@ -114,7 +114,7 @@ From now on, every file read, command output and pasted prompt goes through the
 scrubber before it reaches the model. Known values, more than 60 secret formats
 (cloud keys, tokens, private keys, connection strings) and checksummed PII are
 replaced with tokens. Reads of `.env` files with real values, credential files
-(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.gnupg`, `~/.npmrc`…) and zn's own `~/.zn` are
+(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.gnupg`, `~/.npmrc`, `.git/config`, the macOS keychains in `~/Library/Keychains`…) and zn's own `~/.zn` are
 blocked. For GnuPG, the files in `~/.gnupg` (`%APPDATA%\gnupg` on Windows) and the folder itself are
 blocked: a command that names the folder, such as `tar`, `cp -r`, `grep -r` or `ls`, is refused,
 while `gpg`, `gpg2`, `gpgconf`, `gpgsm` and `gpgv` can still name their own keyring folder when every option

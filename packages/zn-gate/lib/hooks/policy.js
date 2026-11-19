@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-18.2';
+const POLICY_RULES_VERSION = '2026-11-19.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -92,6 +92,10 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
   [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
   [/(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/.+$/i, 'GnuPG keyring'],
+  // The repository config can hold credentials in a remote URL (https://user:token@host/...). git itself reads it all the
+  // time, but a git command never names the file: only a tool read or a command word such as cat .git/config does.
+  [/(^|\/)\.git\/config$/, 'git repository config, which can hold credentials in remote URLs'],
+  [/(^|\/)Library\/Keychains\/[^/]+\.keychain(?:-db)?$/i, 'macOS keychain'],
 ];
 // The GnuPG home folder itself: archiving, copying or searching it as a whole reads every key in it. Only the gpg
 // programs, which use their own home folder, may name it.
