@@ -243,8 +243,9 @@ function withPlatform(value, fn) {
 test('on win32 the commands typed in a terminal are the .cmd forms and the server command stays zn', () => {
   const msg = withPlatform('win32', () => mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY'));
   assert.match(msg, /run npx\.cmd -y zn-gate secret set BRAVE_API_KEY /);
-  assert.match(msg, /run zn\.cmd secret allow BRAVE_API_KEY --command <the server's command> so zn run may use it/);
-  assert.match(msg, /start the server through zn run: set the server's command to zn and put run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
+  assert.match(msg, /run zn\.cmd secret allow BRAVE_API_KEY --command <the server's command>, which lets the server receive the value through zn\./);
+  assert.match(msg, /in this file, set the server's command to zn \(written zn, not zn\.cmd: this file is read by the agent, not typed in a terminal\) and put run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
+  assert.doesNotMatch(msg, /so zn run may use it/);
   assert.doesNotMatch(msg, /run npx -y|run zn secret|npx\.cmd -y zn-gate run|command to npx/);
   assert.equal(msg, mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', { platform: 'win32' }));
 });
@@ -264,8 +265,8 @@ test('on other systems the vault next step names the plain forms', () => {
   for (const platform of ['linux', 'darwin']) {
     const msg = withPlatform(platform, () => mcp.mcpNextStep('argument', 'api-key'));
     assert.match(msg, /run npx -y zn-gate secret set MCP_API_KEY /);
-    assert.match(msg, /run zn secret allow MCP_API_KEY --command <the server's command> so zn run may use it/);
-    assert.match(msg, /set the server's command to zn and put run, --secrets, MCP_API_KEY, --/);
+    assert.match(msg, /run zn secret allow MCP_API_KEY --command <the server's command>, which lets the server receive the value through zn\./);
+    assert.match(msg, /in this file, set the server's command to zn and put run, --secrets, MCP_API_KEY, --/);
     assert.doesNotMatch(msg, /\.cmd/);
   }
 });

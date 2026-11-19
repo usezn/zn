@@ -114,8 +114,18 @@ From now on, every file read, command output and pasted prompt goes through the
 scrubber before it reaches the model. Known values, more than 60 secret formats
 (cloud keys, tokens, private keys, connection strings) and checksummed PII are
 replaced with tokens. Reads of `.env` files with real values, credential files
-(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
-blocked.
+(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.gnupg`, `~/.npmrc`…) and zn's own `~/.zn` are
+blocked. For GnuPG, the files in `~/.gnupg` (`%APPDATA%\gnupg` on Windows) and the folder itself are
+blocked: a command that names the folder, such as `tar`, `cp -r`, `grep -r` or `ls`, is refused,
+while `gpg`, `gpg2`, `gpgconf`, `gpgsm` and `gpgv` can still name their own keyring folder when every option
+of the call is a read-only one written in full (such as `--homedir`, `--list-keys`, `--list-secret-keys`,
+`--fingerprint`, `--with-colons`, `--verify`, `--list-dirs`, or `--armor --export` of a public key). Any other option, including the ones that
+start a helper program (`--agent-program`, `--dirmngr-program`, `--photo-viewer`) and abbreviations, makes
+the call refused. `gpg-agent` and `gpg-connect-agent` can start another program, so naming the folder
+through them is refused. Exporting a secret key is refused with any keyring:
+`gpg --export-secret-keys` and `--export-secret-subkeys` (also abbreviated), the
+`--export-secret-key-*` options of `gpgsm` and the agent's `EXPORT_KEY`. `gpg-connect-agent` is refused when zn cannot see the commands it would read: the command line has a pipe, an input redirection (`<`, `<<`, `<<<`) or a `$` or backtick expansion; one of its options starts with `--r` or is a short option group containing `r` (`--run FILE`, `-r FILE`, `-rFILE`); or it uses a control command other than `/bye` and `/echo` (such as `/run FILE`). `gpg --export`, which
+exports a public key, is not affected.
 
 Template files named `.env.example`, `.env.sample` or `.env.template` (also with a
 middle part, such as `.env.local.example`) can be read, because they are meant to

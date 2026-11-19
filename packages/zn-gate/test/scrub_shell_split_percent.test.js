@@ -92,6 +92,19 @@ test('work is linear and no decode count leaves the rest of a text encoded', () 
   assert.ok(cpuMsSince(t0) < 60000, 'scan took ' + cpuMsSince(t0) + ' ms of CPU');
 });
 
+test('many quote pairs and percent escapes with no newline take time in proportion to the size', () => {
+  const build = (k) => "a''".repeat(2 * k) + '%41'.repeat(k);
+  assertLinear((text) => scan(text, CTX), build, 100000, 'quote pairs then percent escapes');
+});
+
+test('a split secret after many changed spots is found whether or not the text has newlines', () => {
+  const noise = "a''b ".repeat(600);
+  const one = noise + AWS.slice(0, 4) + "''" + AWS.slice(4);
+  assert.equal(redacted(one), noise + '#');
+  const lines = (noise + '\n').repeat(3) + 'x=' + AWS.slice(0, 4) + '%' + '49' + AWS.slice(5) + '\n' + (noise + '\n').repeat(2);
+  assert.equal(redacted(lines), (noise + '\n').repeat(3) + 'x=#\n' + (noise + '\n').repeat(2));
+});
+
 test('a split secret far from the start and between long clean runs is redacted', () => {
   const clean = 'plain code line without secrets\n'.repeat(400);
   const text = clean + 'echo AKIA""IOSFODNN7EXAMPLE\n' + clean + 'x=%41KIAIOSFODNN7EXAMPLE\n' + clean;

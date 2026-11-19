@@ -32,6 +32,9 @@ process.stdout.on('error', (err) => {
   throw err;
 });
 
+// Node 18 prints an ExperimentalWarning for the X25519 algorithm that the vault uses. Drop only that one.
+require('../lib/warnings').installX25519WarningFilter();
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -1030,8 +1033,8 @@ const COMMAND_OPTIONS = {
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,
-    flag: CLOUD_FLAG_OPTIONS,
-    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS),
+    flag: [...CLOUD_FLAG_OPTIONS, '--json'],
+    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS, ['--json']),
   },
 };
 
@@ -1067,6 +1070,41 @@ function scanTargetOf(args) {
   }
   return '.';
 }
+
+// The arguments of scan or analyze with every --name=value of a value option split into --name and value.
+// A value after a bare "--" is positional text and is left alone, and so is the value that follows --name
+// in the spaced form, whatever it looks like. An empty value (--format=) becomes --format "" , which is
+// what --format "" has always meant.
+function expandEqualsOptions(command, args) {
+  const spec = COMMAND_OPTIONS[command];
+  if (!spec) return args.slice();
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '--') {
+      out.push(...args.slice(i));
+      break;
+    }
+    if (!tok.startsWith('--')) {
+      out.push(tok);
+      continue;
+    }
+    const eq = tok.indexOf('=');
+    const name = eq === -1 ? tok : tok.slice(0, eq);
+    if (!spec.value.includes(name)) {
+      out.push(tok);
+      continue;
+    }
+    if (eq !== -1) {
+      out.push(name, tok.slice(eq + 1));
+      continue;
+    }
+    out.push(tok);
+    if (i + 1 < args.length) out.push(args[++i]);
+  }
+  return out;
+}
+
 
 // Commands that take no options or a fixed set. An option they do not know is refused with exit 2: it is named and
 // the options the command takes are listed. -h, --help, -V and --version are handled by the general code, so they pass.
@@ -1114,7 +1152,9 @@ function fixedOptionsProblem(args) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  // scan and analyze accept --opt=value: it is split into --opt value before the parser reads the arguments.
+  const args = (rawArgs[0] === 'scan' || rawArgs[0] === 'analyze') ? expandEqualsOptions(rawArgs[0], rawArgs) : rawArgs;
   const fixedProblem = fixedOptionsProblem(args);
   if (fixedProblem) {
     process.stderr.write('zn-gate: ' + fixedProblem + '\n');
@@ -1297,6 +1337,13 @@ ${ruleLine(process.env, 60)}\n`);
     }
 
     const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
+    const totalFailed = actions.filter(a => a.failed).length;
+    if (totalFailed) {
+      // Exit 1: at least one config could not be changed (see the line above it for the path and the next step).
+      process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified, ${totalFailed} could not be changed).\n\n`);
+      process.exitCode = 1;
+      return;
+    }
     process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n\n`);
     return;
   }
@@ -1343,14 +1390,25 @@ ${ruleLine(process.env, 60)}\n`);
 
     if (options.verify) {
       const verification = verifyEvidenceLedger();
+      let integrity;
+      if (verification.valid) {
+        integrity = sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)');
+      } else if (verification.truncated_tail) {
+        integrity = sym(process.env, '✖', col.red) + col.red('LAST RECORD INCOMPLETE: CUT OFF OR REMOVED (NOT VERIFIED)');
+      } else {
+        integrity = sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index);
+      }
       process.stdout.write(`
 ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
   Ledger Path   : ${EVIDENCE_FILE}
   Total Records : ${verification.total}
-  Integrity     : ${verification.valid ? sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)') : sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index)}
+  Integrity     : ${integrity}
 \n`);
       if (!verification.valid) {
-        process.stdout.write(`  Details: ${verification.error}\n  ${recoveryHint()}\n\n`);
+        const next = verification.truncated_tail
+          ? `The first ${verification.verified} records verified; the last line is incomplete (cut off by a crash, or removed by someone). ${recoveryHint()}`
+          : recoveryHint();
+        process.stdout.write(`  Details: ${verification.error}\n  ${next}\n\n`);
         process.exit(1);
       }
       return;
@@ -1476,7 +1534,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const textArgs = dashAt !== -1 ? args.slice(dashAt + 1) : args.filter((a, idx) => {
       if (idx === 0) return false;
       if (a.startsWith('--')) return false;
-      if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose') return false;
+      if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose' && args[idx - 1] !== '--json') return false;
       return true;
     });
 

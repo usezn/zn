@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 export const PIN_PATTERNS = [
   /zn-gate@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /usezn\/zn@v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
+  /usezn\/zn#v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /--ref v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /\/(?:blob|tree)\/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)(?=[/"'\s)#]|$)/g,
   // The version in prose: "installs zn-gate 1.6.0", "zn-gate **1.6.0**", "exactly version 1.6.0", "the `v1.6.0` tag".
@@ -78,6 +79,7 @@ export function getPath(obj, path) {
 }
 
 /** Files whose pinned references are checked: tracked Markdown and JSON, minus the excluded prefixes. */
+
 export function pinnedFiles(all, exclude) {
   return all.filter((f) => /\.(md|json)$/.test(f) && !exclude.some((p) => f === p || f.startsWith(p)));
 }
@@ -172,8 +174,11 @@ export function check(facts, files, read, options = {}) {
     const minor = (v) => base(v).split('.').slice(0, 2).join('.') + '.0';
     const cmp = compareVersions(base(exampleVersion), base(version));
     const cmpMinor = cmp === null ? null : compareVersions(minor(exampleVersion), minor(version));
+    // lastPublished (optional) is the release on npm and PyPI now: examples may stay on it while the next release is cut.
+    const lastPublished = facts.examplesVersion.lastPublished;
+    const onLastPublished = Boolean(lastPublished) && !isPrerelease(exampleVersion) && compareVersions(base(exampleVersion), base(lastPublished)) === 0;
     if (cmp === null) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is not a version (X.Y.Z)`);
-    else if (cmpMinor < 0) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
+    else if (cmpMinor < 0 && !onLastPublished) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
     else if (cmp > 0 && !isPrerelease(exampleVersion)) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is ahead of version ${version}`);
     else if (cmp < 0 && cmpMinor === 0 && Array.isArray(options.warnings)) options.warnings.push(`examplesVersion ${exampleVersion} is behind the final release ${version}: pin the examples to ${version} once it is published on npm and PyPI`);
   }

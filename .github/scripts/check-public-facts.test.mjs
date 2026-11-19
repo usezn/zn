@@ -452,3 +452,29 @@ test('a release tag where a version constant cannot be read is reported, not rep
   assert.equal(errors.length, 1);
   assert.match(errors[0], /^v1\.15\.0: .*AUDIT_RULES_VERSION not found/);
 });
+
+// examplesVersion may stay on the last published release while the next one is being cut.
+const withPublished = (version, examples, lastPublished) => {
+  const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples, lastPublished }, docsVersion: { value: '1.0.0' } };
+  const tree = {
+    'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
+    'pkg/server.json': JSON.stringify({ packages: [{ version }] }),
+    'py/pyproject.toml': `[project]\nversion = "${version}"\n`,
+    'README.md': 'Works with Claude Code, Cursor.\n',
+  };
+  const warnings = [];
+  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings });
+  return { errs, warnings };
+};
+
+test('final release: examples on the last published version pass while the next release is cut', () => {
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0'), { errs: [], warnings: [] });
+});
+
+test('final release: examples older than the last published version fail', () => {
+  for (const ex of ['1.15.0', '1.15.9', '1.16.0-rc.1']) {
+    const { errs } = withPublished('1.17.0', ex, '1.16.0');
+    assert.equal(errs.length, 1, ex);
+    assert.match(errs[0], /is on an older release line than version 1\.17\.0/, ex);
+  }
+});

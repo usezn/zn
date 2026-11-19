@@ -2,7 +2,7 @@
 
 This page proves what [`zn-gate uninstall`](../uninstall.md) removes and what it leaves, without touching your real home folder. You point `HOME` at an empty temporary folder, set zn-gate up for one agent, write down every file, remove it, and compare the two lists. Your real settings, vault and projects are never involved. All values are made up, and your temporary folder name will differ.
 
-The output below comes from a real run on Linux with zn-gate 1.16.0 and Codex CLI as the agent. Your home folder in the temporary session is shown as `~`. Run the commands yourself, in your own terminal: `init` and `uninstall` ask you questions and refuse to run when an AI agent or a script runs them. The commands are in the [command reference](../cli.md); the page about [files zn-gate writes](../files-and-folders.md) explains each folder.
+The output below comes from a real run on Linux with zn-gate 1.17.0 and Codex CLI as the agent. Your home folder in the temporary session is shown as `~`. Run the commands yourself, in your own terminal: `init` and `uninstall` ask you questions and refuse to run when an AI agent or a script runs them. The commands are in the [command reference](../cli.md); the page about [files zn-gate writes](../files-and-folders.md) explains each folder.
 
 Use this on a computer where you are happy to install and remove zn-gate for a test. Everything else is in the temporary folder.
 
@@ -54,7 +54,7 @@ Answer `y` to the two questions: install zn-gate for your user, then install the
 ```text
   >  Codex CLI    not set up yet
 
-install zn-gate 1.16.0 for your user: run `npm install -g zn-gate@1.16.0`? [y/N] y
+install zn-gate 1.17.0 for your user: run `npm install -g zn-gate@1.17.0`? [y/N] y
 Codex CLI:
   install zn's hooks for Codex CLI: run `zn hooks install codex`? [y/N] y
 Installed zn hooks for codex in ~/.codex/hooks.json

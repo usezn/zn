@@ -291,15 +291,15 @@ test('block pinning refuses a tool that was never listed, and allows it after th
   }
 });
 
-test('a non-JSON line from the client is forwarded; one from the server is dropped and reported', async () => {
+test('a non-JSON line from the client is refused and never reaches the server; one from the server is dropped and reported', async () => {
   const s = startShield();
   try {
     s.send('hello not json');
-    const echo = await until(s, (m) => m.method === 'notifications/echo');
-    assert.strictEqual(echo.params.line, 'hello not json');
+    await waitStderr(s, /from the client that is not valid JSON was not sent/);
     s.send(call(7, 'noise'));
     const r = await s.reply(7);
     assert.strictEqual(resultText(r), 'after noise');
+    assert.ok(!s.lines.some((l) => l.includes('notifications/echo')), 'the server never saw the client line, so it echoed nothing');
     assert.ok(!s.lines.includes('this is not json'));
     await waitStderr(s, /not valid JSON was dropped/);
   } finally {
@@ -847,5 +847,16 @@ test('a client batch with a bare value answers each request in it and the bare v
     assert.ok(!s.lines.some((l) => l.includes('Hello from the fake server.')), 'nothing reached the server');
   } finally {
     await s.stop();
+  }
+});
+
+test('the deferred-string separator (newline, ESC, newline) survives input normalization', () => {
+  // A lone ESC is not an ANSI sequence and is not an invisible character, so normalization keeps it, and the
+  // newline rejoin never glues the strings on each side of it into one word.
+  const { normalizeInput } = require('../lib/rules');
+  for (const [a, b] of [['sys', 'tem'], ['ign', 'ore previous instructions'], ['[', 'x'], [']', 'x']]) {
+    const { stripped, normalized } = normalizeInput(a + '\n\u001b\n' + b);
+    assert.ok(stripped.includes('\n\u001b\n'), JSON.stringify(stripped));
+    assert.ok(!normalized.includes(a + b), JSON.stringify(normalized));
   }
 });

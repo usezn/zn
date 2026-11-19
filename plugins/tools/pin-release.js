@@ -220,7 +220,7 @@ const VERSIONED_JSON = [
 // Only docs that name the version the plugin installs: a sentence about an older
 // release written as "zn-gate X" in one of these files would be moved too.
 const VERSIONED_DOCS = ['README.md', 'zn-gate/README.md', 'zn-gate/plugin.json',
-  'zn-gate/.claude-plugin/plugin.json', 'zcode/README.md', 'zcode/.zcode-plugin/plugin.json'];
+  'zn-gate/.claude-plugin/plugin.json', 'zcode/README.md', 'zcode/.zcode-plugin/plugin.json', 'claude-dir/README.md'];
 
 function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -256,7 +256,6 @@ function versionedTexts(previous, version) {
     [new RegExp('\\*\\*' + esc + '\\*\\*', 'g'), '**' + version + '**'],
     [new RegExp('version ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'version ' + version],
     [new RegExp('usezn/zn@v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn@v' + version],
-    [new RegExp('--ref v' + esc + '(?![0-9]|\\.[0-9])', 'g'), '--ref v' + version],
     [new RegExp('`v' + esc + '`', 'g'), '`v' + version + '`'],
   ];
   const skills = path.join(root, 'zn-gate', 'skills');

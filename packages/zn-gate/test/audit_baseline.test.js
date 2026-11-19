@@ -234,3 +234,148 @@ test('loader and shell-prefix environment overrides are covered', (t) => {
     assert.deepEqual(d.added, ['.claude/settings.json#env:' + name]);
   }
 });
+
+// --- plugin code of OpenCode and the agent and rule files of Amazon Q ---
+
+const PLUGIN_FILES = {
+  '.opencode/plugin/a.js': 'module.exports = () => ({});',
+  '.opencode/plugins/b.js': 'module.exports = () => ({ hook: 1 });',
+  '.opencode/plugins/notes.txt': 'not code',
+  '.amazonq/cli-agents/dev.json': { name: 'dev', hooks: { agentSpawn: [{ command: 'node a.js' }] } },
+  '.amazonq/agents/ops.json': { name: 'ops' },
+  '.amazonq/rules/style.md': 'Use tabs.',
+  '.amazonq/rules/team/extra.md': 'Be brief.',
+  '.amazonq/mcp.json': MCP,
+};
+
+test('plugin code and Amazon Q agent and rule files are in the surface, one hash of the content each, in a fixed order', (t) => {
+  const dir = project(t, PLUGIN_FILES);
+  const s = extractSurface(dir);
+  assert.deepEqual(Object.keys(s).filter((k) => k.endsWith('#file')), ['.opencode/plugin/a.js#file', '.opencode/plugins/b.js#file', '.amazonq/cli-agents/dev.json#file',
+    '.amazonq/agents/ops.json#file', '.amazonq/rules/style.md#file', '.amazonq/rules/team/extra.md#file']);
+  assert.equal(Object.keys(s).filter((k) => k.endsWith('#file')).length, 6);
+  assert.equal(s['.opencode/plugin/a.js#file'], require('crypto').createHash('sha256').update('module.exports = () => ({});').digest('hex'));
+  assert.ok(!('.opencode/plugins/notes.txt#file' in s), 'only .js files of the plugin folders');
+  assert.deepEqual(Object.keys(extractSurface(dir)), Object.keys(s), 'deterministic order');
+});
+
+test('a change in one of those files is reported by name; a file added or removed is too', (t) => {
+  const d = changedBy(t, PLUGIN_FILES, (dir) => write(dir, '.opencode/plugin/a.js', 'module.exports = () => ({ evil: 1 });'));
+  assert.deepEqual(d, { added: [], changed: ['.opencode/plugin/a.js#file'], removed: [] });
+  const e = changedBy(t, PLUGIN_FILES, (dir) => { write(dir, '.amazonq/rules/new.md', 'x'); fs.rmSync(path.join(dir, '.amazonq/agents/ops.json')); });
+  assert.deepEqual(e, { added: ['.amazonq/rules/new.md#file'], changed: [], removed: ['.amazonq/agents/ops.json#file'] });
+});
+
+test('.amazonq/mcp.json keeps its handling: servers by name, not a whole-file entry', (t) => {
+  const s = extractSurface(project(t, { '.amazonq/mcp.json': MCP }));
+  assert.deepEqual(Object.keys(s).sort(), ['.amazonq/mcp.json#mcp:docs', '.amazonq/mcp.json#mcp:tools']);
+});
+
+test('a plugin file that is a link: followed inside the project, not followed outside it', (t) => {
+  if (process.platform === 'win32') return t.skip('links need privileges on Windows');
+  const dir = project(t, { 'shared/p.js': 'one();' });
+  fs.mkdirSync(path.join(dir, '.opencode/plugin'), { recursive: true });
+  fs.symlinkSync('../../shared/p.js', path.join(dir, '.opencode/plugin/p.js'));
+  const base = extractSurface(dir);
+  assert.deepEqual(Object.keys(base), ['.opencode/plugin/p.js#file']);
+  write(dir, 'shared/p.js', 'two();');
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.opencode/plugin/p.js#file']);
+  const outside = project(t, { 'x.js': 'outside();' });
+  fs.rmSync(path.join(dir, '.opencode/plugin/p.js'));
+  fs.symlinkSync(path.join(outside, 'x.js'), path.join(dir, '.opencode/plugin/p.js'));
+  const out = extractSurface(dir);
+  assert.deepEqual(Object.keys(out), ['.opencode/plugin/p.js#unreadable']);
+  assert.ok(!JSON.stringify(out).includes(outside), 'the path of the target is not kept');
+  // a whole plugin folder that leaves the project is not listed
+  fs.rmSync(path.join(dir, '.opencode/plugin'), { recursive: true });
+  fs.symlinkSync(outside, path.join(dir, '.opencode/plugin'));
+  assert.deepEqual(Object.keys(extractSurface(dir)), ['.opencode/plugin#unreadable']);
+});
+
+test('a plugin or rule file over the size cap is not hashed as a whole file: it is an entry of its own, and a file that is not a file too', (t) => {
+  const dir = project(t, { '.opencode/plugins/big.js': 'x'.repeat(1024 * 1024 + 1), '.amazonq/rules/ok.md': 'fine' });
+  fs.mkdirSync(path.join(dir, '.amazonq/agents'), { recursive: true });
+  if (process.platform !== 'win32') fs.symlinkSync('../rules', path.join(dir, '.amazonq/agents/dir.json'));
+  const s = extractSurface(dir);
+  const want = ['.amazonq/rules/ok.md#file', '.opencode/plugins/big.js#unreadable'];
+  if (process.platform !== 'win32') want.unshift('.amazonq/agents/dir.json#unreadable');
+  assert.deepEqual(Object.keys(s).sort(), want);
+  const before = s['.opencode/plugins/big.js#unreadable'];
+  write(dir, '.opencode/plugins/big.js', 'y'.repeat(1024 * 1024 + 1));
+  assert.notEqual(extractSurface(dir)['.opencode/plugins/big.js#unreadable'], before);
+});
+
+test('past the per-folder cap no file is dropped: the rest counts as one entry, and other folders are not affected', (t) => {
+  const files = { '.amazonq/agents/review.json': { name: 'review' } };
+  for (let i = 0; i < 501; i++) files['.opencode/plugin/p' + String(i).padStart(3, '0') + '.js'] = 'export default {}\n';
+  const dir = project(t, files);
+  const s = extractSurface(dir);
+  assert.ok(s['.opencode/plugin#over-cap'], 'the files past the cap are recorded');
+  assert.ok(s['.amazonq/agents/review.json#file'], 'another folder is still recorded');
+  assert.equal(Object.keys(s).filter((k) => k.startsWith('.opencode/plugin/')).length, 500);
+  // The last file sorts past the cap: changing it still changes the surface.
+  fs.writeFileSync(path.join(dir, '.opencode/plugin/p500.js'), 'export default { run() { return 1; } }\n');
+  const after = extractSurface(dir);
+  assert.notEqual(after['.opencode/plugin#over-cap'], s['.opencode/plugin#over-cap']);
+  const d = diffSurface(s, after);
+  assert.ok(d.changed.length + d.added.length + d.removed.length > 0);
+});
+
+test('a plugin or rules folder that exists but cannot be listed is an entry of its own, not an empty folder', { skip: (process.platform === 'win32' && 'POSIX folder modes (a folder cannot be made unreadable with chmod on Windows)') || (typeof process.getuid === 'function' && process.getuid() === 0 && 'needs a non-root POSIX user (root lists any folder)') }, (t) => {
+  const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
+  const before = extractSurface(dir);
+  assert.ok(before['.amazonq/rules/team/style.md#file']);
+  const rules = path.join(dir, '.amazonq/rules');
+  fs.chmodSync(rules, 0o000);
+  let s;
+  try { s = extractSurface(dir); } finally { fs.chmodSync(rules, 0o755); }
+  assert.ok(s['.amazonq/rules#unreadable'], 'the unreadable folder is recorded');
+  const d = diffSurface(before, s);
+  assert.ok(d.changed.length + d.added.length + d.removed.length > 0, 'and counts as a change');
+});
+
+test('rule files deep in .amazonq/rules are recorded; a folder below the search depth is an entry of its own', (t) => {
+  const deep5 = '.amazonq/rules/a/b/c/d/e/deep.md';
+  const deep10 = '.amazonq/rules/a/b/c/d/e/f/g/h/i/j/hidden.md';
+  const dir = project(t, { [deep5]: '# Deep\n', [deep10]: '# Hidden\n' });
+  const s = extractSurface(dir);
+  assert.ok(s[deep5 + '#file'], 'five levels down is recorded');
+  assert.ok(Object.keys(s).some((k) => k.startsWith('.amazonq/rules/a/b/c/d/e/f/g/h') && k.endsWith('#unreadable')), 'past the depth is recorded');
+});
+
+test('a symlinked rules subfolder is followed inside the project and recorded when it leaves it', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, (t) => {
+  const dir = project(t, { 'docs/rules/team.md': '# Team\n', '.amazonq/rules/own.md': '# Own\n' });
+  fs.symlinkSync(path.join(dir, 'docs/rules'), path.join(dir, '.amazonq/rules/linked'));
+  const outside = tempDir(t, 'zn-baseline-out-');
+  fs.writeFileSync(path.join(outside, 'x.md'), '# X\n');
+  fs.symlinkSync(outside, path.join(dir, '.amazonq/rules/away'));
+  const s = extractSurface(dir);
+  assert.ok(s['.amazonq/rules/linked/team.md#file'], 'a link inside the project is followed');
+  assert.ok(s['.amazonq/rules/away#unreadable'], 'a link leaving the project is recorded');
+  assert.ok(!Object.keys(s).some((k) => k.includes('x.md')), 'the outside folder is not listed');
+});
+
+test('past the cap a content change is found even with the same size and the old time', (t) => {
+  const files = {};
+  for (let i = 0; i < 501; i++) files['.opencode/plugin/p' + String(i).padStart(3, '0') + '.js'] = 'export const a = 1;\n';
+  const dir = project(t, files);
+  const last = path.join(dir, '.opencode/plugin/p500.js');
+  const st = fs.statSync(last);
+  const before = extractSurface(dir)['.opencode/plugin#over-cap'];
+  fs.writeFileSync(last, 'export const b = 2;\n'); // same length
+  fs.utimesSync(last, st.atime, st.mtime);
+  assert.notEqual(extractSurface(dir)['.opencode/plugin#over-cap'], before);
+});
+
+test('links back to a folder already walked are recorded once and not walked again', { skip: process.platform === 'win32' && 'symbolic links need privileges on Windows' }, (t) => {
+  const dir = project(t, { '.amazonq/rules/team/style.md': '# Style\n' });
+  const rules = path.join(dir, '.amazonq/rules');
+  for (let i = 0; i < 10; i++) fs.symlinkSync(rules, path.join(rules, 'loop' + i));
+  fs.symlinkSync(path.join(dir, '.amazonq'), path.join(rules, 'team', 'up'));
+  const started = Date.now();
+  const s = extractSurface(dir);
+  assert.ok(Date.now() - started < 5000, 'the walk stays fast');
+  assert.ok(s['.amazonq/rules/team/style.md#file']);
+  for (let i = 0; i < 10; i++) assert.ok(s['.amazonq/rules/loop' + i + '#unreadable'], 'loop' + i + ' is recorded');
+  assert.ok(Object.keys(s).length < 40, 'each folder is read once: ' + Object.keys(s).length + ' entries');
+});

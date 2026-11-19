@@ -87,7 +87,7 @@ test('no terminal, missing claude command: the plugin commands are typed in Clau
   const m = machine(t, 'claude-code');
   const { text, ran } = await run(m, { claude: null });
   assert.equal(ran, 0);
-  assert.match(text, /in Claude Code, type \/plugin marketplace add usezn\/zn and then \/plugin install zn-gate@usezn/);
+  assert.match(text, new RegExp('in Claude Code, type /plugin marketplace add usezn/zn and then /plugin install zn-gate@usezn'));
   assert.doesNotMatch(text, /claude plugin (?:marketplace add|install)/);
 });
 
@@ -95,7 +95,7 @@ test('no terminal, claude command found: the two claude plugin commands are prin
   const m = machine(t, 'claude-code');
   const { text, ran } = await run(m, { claude: path.resolve('/opt/bin/claude') });
   assert.equal(ran, 0);
-  assert.match(text, /^ {2}claude plugin marketplace add usezn\/zn$/m);
+  assert.match(text, new RegExp('^ {2}claude plugin marketplace add usezn/zn$', 'm'));
   assert.match(text, /^ {2}claude plugin install zn-gate@usezn$/m);
   assert.doesNotMatch(text, /in Claude Code, type/);
 });

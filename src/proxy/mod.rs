@@ -413,7 +413,12 @@ impl McpPool {
             if path_obj.exists() {
                 info!("Found MCP config at: {}", path);
                 match Self::from_config_file(path) {
-                    Ok(pool) => return Ok(pool),
+                    Ok(mut pool) => {
+                        // A broken config at an earlier location is still reported.
+                        notices.append(&mut pool.notices);
+                        pool.notices = notices;
+                        return Ok(pool);
+                    }
                     Err(e) => {
                         warn!("Failed to load MCP config from {}: {}", path, e);
                         notices.push(e.to_string());
@@ -1031,5 +1036,278 @@ Content-Length: 0
             msg.contains("mcp_servers.json") && msg.contains("ends too early"),
             "{msg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod retry_and_discovery_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
+    use std::time::{Duration, Instant};
+    use tokio::net::TcpListener;
+
+    /// `auto_discover` reads HOME, which is process-wide: these tests take turns.
+    static HOME_LOCK: StdMutex<()> = StdMutex::new(());
+
+    struct HomeGuard {
+        home: Option<std::ffi::OsString>,
+        profile: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl HomeGuard {
+        fn set(home: Option<&Path>) -> Self {
+            let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let guard = HomeGuard {
+                home: std::env::var_os("HOME"),
+                profile: std::env::var_os("USERPROFILE"),
+                _lock: lock,
+            };
+            std::env::remove_var("USERPROFILE");
+            match home {
+                Some(p) => std::env::set_var("HOME", p),
+                None => std::env::remove_var("HOME"),
+            }
+            guard
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.profile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+    }
+
+    fn url_config(url: String) -> McpServerConfig {
+        McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: Some(url),
+        }
+    }
+
+    /// A local server that closes every TCP connection before the WebSocket
+    /// handshake, so each attempt fails. Returns the address and the arrival times.
+    async fn refusing_server() -> (std::net::SocketAddr, Arc<StdMutex<Vec<Instant>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let arrivals = Arc::new(StdMutex::new(Vec::new()));
+        let seen = arrivals.clone();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                seen.lock().unwrap().push(Instant::now());
+                drop(tcp);
+            }
+        });
+        (addr, arrivals)
+    }
+
+    #[tokio::test]
+    async fn websocket_connect_backs_off_by_doubling_and_stops_after_five_attempts() {
+        let (addr, arrivals) = refusing_server().await;
+        let config = url_config(format!("ws://{addr}"));
+        let start = Instant::now();
+        let err = McpConnection::connect("flaky", &config)
+            .await
+            .err()
+            .expect("every attempt fails");
+        let total = start.elapsed();
+
+        let times = arrivals.lock().unwrap().clone();
+        assert_eq!(times.len(), 5, "five attempts, then it gives up");
+        // Waits between attempts: 0.5 s, 1 s, 2 s, 4 s (each at least that long).
+        let floors = [500u64, 1000, 2000, 4000];
+        for (i, floor) in floors.iter().enumerate() {
+            let gap = times[i + 1].duration_since(times[i]);
+            assert!(
+                gap >= Duration::from_millis(floor - 50),
+                "gap {i} was {gap:?}, expected at least {floor} ms"
+            );
+        }
+        let g: Vec<Duration> = times.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            g[3] > g[0],
+            "the wait grows from the first retry to the last"
+        );
+        // No sleep after the final failure: the four waits add up to 7.5 s, and one more (8 s) would pass 15 s.
+        assert!(total < Duration::from_secs(12), "took {total:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("flaky"), "{msg}");
+        assert!(msg.contains('5'), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn websocket_connect_recovers_when_the_server_comes_up_during_the_retries() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = accepted.clone();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+                if n < 3 {
+                    drop(tcp);
+                } else {
+                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    while ws.next().await.is_some() {}
+                    break;
+                }
+            }
+        });
+        let config = url_config(format!("ws://{addr}"));
+        let start = Instant::now();
+        let mut conn = McpConnection::connect("late", &config)
+            .await
+            .expect("the third attempt succeeds");
+        // Two failed attempts wait 0.5 s and 1 s before the third.
+        assert!(start.elapsed() >= Duration::from_millis(1400));
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            3,
+            "no attempt after success"
+        );
+        assert!(matches!(conn, McpConnection::WebSocket { .. }));
+        assert!(conn.is_alive_within(Duration::from_secs(2)).await);
+    }
+
+    #[tokio::test]
+    async fn connect_with_neither_command_nor_url_names_the_server() {
+        let config = McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: None,
+        };
+        let err = McpConnection::connect("empty-one", &config)
+            .await
+            .err()
+            .expect("must fail");
+        assert!(err.to_string().contains("empty-one"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn connect_refuses_a_command_that_is_not_allowed() {
+        let config = McpServerConfig {
+            command: Some("bash".to_string()),
+            args: vec!["-c".to_string(), "true".to_string()],
+            env: HashMap::new(),
+            url: None,
+        };
+        let err = McpConnection::connect("shelly", &config)
+            .await
+            .err()
+            .expect("must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("shelly") && msg.contains("bash"), "{msg}");
+    }
+
+    fn write_servers(home: &Path, rel: &str, body: &str) {
+        let file = home.join(rel);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+
+    #[test]
+    fn auto_discover_without_any_config_returns_an_empty_pool() {
+        let dir = tempfile::tempdir().unwrap();
+        let _home = HomeGuard::set(Some(dir.path()));
+        let pool = McpPool::auto_discover().expect("an empty pool, not an error");
+        assert!(pool.list_mcps().is_empty());
+        assert!(pool.notices().is_empty());
+    }
+
+    #[test]
+    fn auto_discover_loads_the_first_config_it_finds() {
+        let dir = tempfile::tempdir().unwrap();
+        write_servers(
+            dir.path(),
+            ".claude/mcp_servers.json",
+            r#"{"mcpServers": {"first": {"command": "npx"}}}"#,
+        );
+        write_servers(
+            dir.path(),
+            ".config/claude/mcp_servers.json",
+            r#"{"mcpServers": {"second": {"command": "npx"}}}"#,
+        );
+        let _home = HomeGuard::set(Some(dir.path()));
+        let pool = McpPool::auto_discover().unwrap();
+        assert_eq!(pool.list_mcps(), vec!["first".to_string()]);
+    }
+
+    #[test]
+    fn auto_discover_uses_the_second_location_when_the_first_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        write_servers(
+            dir.path(),
+            ".config/claude/mcp_servers.json",
+            r#"{"mcpServers": {"second": {"command": "npx"}}}"#,
+        );
+        let _home = HomeGuard::set(Some(dir.path()));
+        let pool = McpPool::auto_discover().unwrap();
+        assert_eq!(pool.list_mcps(), vec!["second".to_string()]);
+    }
+
+    #[test]
+    fn auto_discover_with_only_a_broken_config_reports_it_and_stays_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        write_servers(dir.path(), ".claude/mcp_servers.json", "{");
+        let _home = HomeGuard::set(Some(dir.path()));
+        let pool = McpPool::auto_discover().expect("a broken file is a notice, not an error");
+        assert!(pool.list_mcps().is_empty());
+        assert_eq!(pool.notices().len(), 1);
+        assert!(pool.notices()[0].contains("mcp_servers.json"));
+    }
+
+    #[test]
+    fn auto_discover_falls_through_a_broken_config_to_the_next_one() {
+        let dir = tempfile::tempdir().unwrap();
+        write_servers(dir.path(), ".claude/mcp_servers.json", "{");
+        write_servers(
+            dir.path(),
+            ".config/claude/mcp_servers.json",
+            r#"{"mcpServers": {"second": {"command": "npx"}}}"#,
+        );
+        let _home = HomeGuard::set(Some(dir.path()));
+        let pool = McpPool::auto_discover().unwrap();
+        assert_eq!(pool.list_mcps(), vec!["second".to_string()]);
+        assert_eq!(
+            pool.notices().len(),
+            1,
+            "the broken first file is still reported"
+        );
+    }
+
+    #[test]
+    fn auto_discover_keeps_the_notice_of_a_broken_first_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_servers(dir.path(), ".claude/mcp_servers.json", "{");
+        write_servers(
+            dir.path(),
+            ".config/claude/mcp_servers.json",
+            r#"{"mcpServers": {"second": {"command": "npx"}}}"#,
+        );
+        let _home = HomeGuard::set(Some(dir.path()));
+        let pool = McpPool::auto_discover().unwrap();
+        assert!(
+            pool.notices()
+                .iter()
+                .any(|n| n.contains("mcp_servers.json")),
+            "the user is never told the first file was ignored"
+        );
+    }
+
+    #[test]
+    fn auto_discover_fails_when_no_home_directory_is_known() {
+        let _home = HomeGuard::set(None);
+        assert!(McpPool::auto_discover().is_err());
     }
 }

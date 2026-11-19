@@ -634,6 +634,91 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       }
     });
 
+    // The real package: lib/ and bin/ of packages/zn-gate, as the tarball has them (LF line ends).
+    const realPackage = () => {
+      const root = path.resolve(__dirname, '..', '..', 'packages', 'zn-gate');
+      const files = new Map();
+      const walk = (dir, rel) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const r = rel ? rel + '/' + e.name : e.name;
+          if (e.isDirectory()) {
+            if (e.name !== 'node_modules') walk(path.join(dir, e.name), r);
+          } else if (r.startsWith('lib/') || r.startsWith('bin/') || r === 'package.json') {
+            const body = fs.readFileSync(path.join(dir, e.name));
+            files.set(r, /\.[mc]?js$/.test(r) ? Buffer.from(body.toString('utf8').replace(/\r\n/g, '\n')) : body);
+          }
+        }
+      };
+      walk(root, '');
+      return files;
+    };
+    const RUNNER = 'lib/hooks/runner.js';
+    const loaderProblems = (files) => builder.checkImports(files).filter((p) => /cannot be checked|built-in/.test(p));
+
+    await test('the real zn-gate package passes the module and loader checks', async () => {
+      const files = realPackage();
+      assert.ok(files.has(RUNNER) && files.has('lib/compile-cache.js') && files.has('lib/agents/launcher.js'));
+      assert.deepStrictEqual(loaderProblems(files), []);
+      const fn = builder.vaultCheckFunction(files.get(RUNNER).toString('utf8'));
+      assert.ok(fn && fn.body.startsWith('function checkVaultClientFiles() {\n') && fn.body.endsWith('\n}\n'), 'checkVaultClientFiles was not found');
+      assert.ok(fn.body.includes("require('module')._extensions['.js']"), 'the runner still reads the loader through the module built-in');
+    });
+
+    await test('loader access is refused everywhere but the reviewed checkVaultClientFiles of the hook runner', async () => {
+      const files = realPackage();
+      const runner = files.get(RUNNER).toString('utf8');
+      const fn = builder.vaultCheckFunction(runner).body;
+      const refused = (rel, text, re) => {
+        const p = loaderProblems(new Map([...files, [rel, Buffer.from(text)]]));
+        assert.ok(p.some((x) => x.startsWith(rel + ':') && re.test(x)), rel + ' with ' + JSON.stringify(text.slice(-120)) + ' was accepted: ' + JSON.stringify(p));
+      };
+      // the exception passes, in a file that has nothing else
+      assert.deepStrictEqual(loaderProblems(new Map([...files, [RUNNER, Buffer.from("'use strict';\n" + fn + 'module.exports = {};\n')]])), []);
+      // the function changed by one byte, renamed, in another file, twice, or with CRLF line ends: refused
+      refused(RUNNER, runner.replace(fn, fn.replace('paths: []', 'paths: [ ]')), /built-in|loader/);
+      refused(RUNNER, runner.replace(fn, fn.replace("['.js']", "['.json']")), /built-in|loader/);
+      refused(RUNNER, runner.replace(fn, fn.replace('function checkVaultClientFiles()', 'function checkVaultClientFiles2()')), /built-in|loader/);
+      refused('lib/extra.js', "'use strict';\n" + fn, /built-in|loader/);
+      refused(RUNNER, runner + fn, /built-in|loader/);
+      refused(RUNNER, runner.replace(/\n/g, '\r\n'), /CRLF line ends/);
+      // another use in the runner next to the reviewed function: refused
+      refused(RUNNER, runner + "const ext = require.extensions['.js'];\n", /require\.extensions/);
+      refused(RUNNER, runner + "require('module');\n", /built-in/);
+      // every form elsewhere
+      const elsewhere = [
+        ["require.extensions['.js'] = () => {};\n", /require\.extensions/],
+        ["const e = require . extensions;\n", /require\.extensions/],
+        ["const e = require['extensions'];\n", /require\.extensions/],
+        ["require('module')._extensions['.js'];\n", /built-in/],
+        ["const M = require(\"node:module\");\n", /built-in/],
+        ['const M = require(`module`);\n', /built-in|loader/],
+        ["const r = require;\nr('module');\n", /"module" built-in by name/],
+        ["const r = require;\nr('node:module');\n", /"module" built-in by name/],
+        ["module.constructor._extensions['.js'];\n", /loader/],
+        ['const M = module.constructor;\n', /Module class/],
+        ["const M = module['constructor'];\n", /Module class/],
+        ['const M = require.main.constructor;\n', /Module class/],
+        ['const M = Object.getPrototypeOf(module).constructor;\n', /Module class/],
+        ['Module.prototype.require = function () {};\n', /Module\.prototype/],
+        ["M._load('left-pad');\n", /internals/],
+        ["M._resolveFilename('x');\n", /internals/],
+        ['M._cache[f] = m;\n', /internals/],
+        ["process.binding('fs');\n", /internal binding/],
+        ["process['binding']('fs');\n", /internal binding/],
+        ["process._linkedBinding('x');\n", /internal binding/],
+        ["process.dlopen(m, 'x.node');\n", /internal binding/],
+        ["require.cache[f] = { exports: {} };\n", /require\.cache/],
+      ];
+      for (const [code, re] of elsewhere) refused('lib/extra.js', "'use strict';\n" + code, re);
+      // ES modules: static and dynamic import of the built-in
+      refused('lib/extra.js', "import('node:module');\n", /built-in/);
+      await rejects(esm("import { createRequire } from 'node:module';\n"), /"module" built-in/);
+      // ordinary code that only looks alike is accepted
+      for (const code of ['const cached = require.cache[f];\n', "if (pkg.type === 'module') x();\n", 'class X { _compile() {} }\n', 'fn.constructor.name;\n']) {
+        assert.deepStrictEqual(loaderProblems(new Map([...files, ['lib/extra.js', Buffer.from(code)]])), [], code);
+      }
+    });
+
     process.stdout.write('1..' + n + '\n');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

@@ -44,8 +44,7 @@ possible:
   integrity), with matching SHA-256 digests and nothing else, then runs
   zn-gate from the checked bytes in memory. Any mismatch or error fails closed.
 - **No self-update.** The plugin never updates itself or zn-gate. Install new
-  releases on purpose; marketplaces are added at a release tag, and
-  auto-update for third-party marketplaces is off by default in Claude Code.
+  releases on purpose; auto-update for third-party marketplaces is off by default in Claude Code.
 - **Least privilege.** The hooks and the MCP servers run zn-gate locally with
   your user's rights and send nothing over the network except the HTTP
   requests you allow per secret.
@@ -70,19 +69,22 @@ plugin; for the other agents, first install zn-gate as shown above. Then:
 ### Claude Code
 
 ```bash
-claude plugin marketplace add usezn/zn@v1.16.0
+claude plugin marketplace add usezn/zn
 claude plugin install zn-gate@usezn
 ```
 
-Leave auto-update off for this marketplace (the default), and upgrade on
-purpose with `claude plugin update zn-gate@usezn`, which also installs the
-newly pinned zn-gate. If you installed hooks before with
+Leave auto-update off for this marketplace (the default). The plugin pins one
+zn-gate release: to upgrade, run
+`claude plugin marketplace remove usezn`, then
+`claude plugin marketplace add usezn/zn` again and
+`claude plugin install zn-gate@usezn`, which also installs the newly pinned
+zn-gate. If you installed hooks before with
 `zn hooks install claude-code`, remove them: `zn hooks uninstall claude-code`.
 
 ### Codex
 
 ```bash
-codex plugin marketplace add usezn/zn --ref v1.16.0
+codex plugin marketplace add usezn/zn
 ```
 
 Install `zn-gate` from the `usezn` marketplace with `/plugins`. That adds the

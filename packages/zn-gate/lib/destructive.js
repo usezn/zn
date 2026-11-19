@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-13.3';
+const COMMAND_RULES_VERSION = '2026-11-16.29';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -136,6 +136,15 @@ function segmentsOf(cmd, posix = false) {
     const scan = scanFirstCommand(rest, posix);
     let sep = scan.operator;
     let adv = scan.end + 1;
+    // An unquoted word that starts with # opens a comment: it and the rest of the line are not part of the command.
+    const cAt = scan.words.findIndex((w) => rest[w.start] === '#');
+    if (cAt >= 0) {
+      const nlAt = rest.indexOf('\n', scan.words[cAt].start);
+      scan.words.length = cAt;
+      scan.end = nlAt < 0 ? rest.length : nlAt;
+      sep = nlAt < 0 ? null : '\n';
+      adv = scan.end + 1;
+    }
     if (sep === '|' || sep === '&') {
       const next = rest[scan.end + 1];
       if (next === sep) { sep += sep; adv++; } else if (sep === '|' && next === '&') { sep = '|&'; adv++; }
@@ -333,6 +342,9 @@ function unwrapDir(args) {
   let i = 0;
   const dirs = [];
   const splits = [];
+  // Where the words after the last -S value start: the string is read in place of the option, so what follows it
+  // (options env had taken, such as the -rf of env -S "-S rm" -rf DIR) belongs to the command the string names.
+  let splitEnd = -1;
   let overflow = false;
   // Set when the chain may not end on the program (see policy.skipWrapper): the caller also reads the later words.
   const chain = { unsure: false };
@@ -373,7 +385,9 @@ function unwrapDir(args) {
       while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) {
         const f = args[i++];
         if (!f.startsWith('-')) continue;
+        const before = splits.length;
         i = envOption(f, args, i, dirs, splits);
+        if (splits.length > before) splitEnd = i;
       }
       continue;
     }
@@ -385,7 +399,7 @@ function unwrapDir(args) {
     }
     break;
   }
-  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow, unsure: chain.unsure, all: first >= 0 ? args.slice(first) : args };
+  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, splitTail: splitEnd >= 0 ? args.slice(splitEnd) : [], overflow, unsure: chain.unsure, all: first >= 0 ? args.slice(first) : args };
 }
 
 /* The words of a command after wrappers and shell keywords. */
@@ -550,8 +564,11 @@ function checkSimple(words, depth, known) {
   }
   // env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by the
   // words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
-  if (un.splits.length && depth < MAX_DEPTH) {
-    const tail = args.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
+  // Strings inside strings (env -S "env -S 'rm -rf /home/alice'", env -S "-S rm -rf /home/alice") are read again the same
+  // way, up to MAX_DEPTH levels; a deeper one is refused, not skipped.
+  if (un.splits.length && depth >= MAX_DEPTH) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  if (un.splits.length) {
+    const tail = un.splitTail.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
     // The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
     const text = un.splits.map((x) => x.replace(/\\_/g, ' ').replace(/\\[tnvfr]/g, ' ')).join(' ');
     const hit = analyze('env ' + text + ' ' + tail, depth + 1, known);
@@ -618,13 +635,26 @@ function checkHead(args, depth, known) {
   }
   if (head === 'find') {
     const paths = [];
-    for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+    // GNU find takes -P, -L, -H, -O<level> and -D <options> before the starting paths; they do not end the list of paths.
+    let first = 0;
+    while (first < rest.length) {
+      if (/^-(?:[PLH]|O\d*)$/.test(rest[first])) first += 1;
+      else if (rest[first] === '-D') first += 2;
+      else break;
+    }
+    for (const w of rest.slice(first)) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
     // After a cd to a protected folder, a find with no path starts at ".".
     if (known && !paths.length) paths.push('.');
-    const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
+    // -execdir, -ok and -okdir run the program like -exec does (in the folder of each file, or after a prompt).
+    const del = rest.includes('-delete') || rest.some((w, i) => /^-(?:exec|execdir|ok|okdir)$/.test(w) && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
+    // From the filesystem root even a filtered delete is refused: a test does not make that safe.
     const filtered = rest.some((w) => FIND_TESTS.test(w));
-    if ((del && !filtered && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    const fromRoot = paths.some((w) => dangerousPath(fromCwd(known, w)) === 'root');
+    if ((del && (!filtered || fromRoot) && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    // -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
+    // over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
+    if ((del && rest.includes('-files0-from')) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
@@ -776,22 +806,45 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 // Most backtick substitutions read from a changed folder in one command line; past it the line is refused.
 const MAX_TICK_READS = 200;
 
+// Most combinations of readings checked for one pipeline; past it the line is refused.
+const MAX_PIPE_READINGS = 64;
+
+/* A pipeline whose commands each have several readings is checked once for every combination. */
+function checkPipelineReadings(pipe, known) {
+  let total = 1;
+  for (const r of pipe) {
+    total *= r.length;
+    if (total > MAX_PIPE_READINGS) return OVERFLOW;
+  }
+  const idx = pipe.map(() => 0);
+  for (let n = 0; n < total; n++) {
+    const hit = checkPipeline(pipe.map((r, i) => r[idx[i]]), known);
+    if (hit) return hit;
+    for (let i = idx.length - 1; i >= 0; i--) { if (++idx[i] < pipe[i].length) break; idx[i] = 0; }
+  }
+  return null;
+}
+
 /* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count. */
 function checkSegments(segs, depth, cwd0 = null) {
-  let pipe = [];
+  let pipe = []; // the commands of the current pipeline: for each, its readings (one per value its variables may hold)
   let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
   // A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
   const groups = [];
   let ticks = 0;
   const vars = shellVars.newScope();
   for (let seg of segs) {
-    // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
-    const words = shellVars.applyWords(vars, seg.words, seg.sep);
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh). A variable an assignment may not
+    // have changed (after &&, in an if, ...) holds each of its values, and every reading is checked.
+    const readings = shellVars.applyVariants(vars, seg.words, seg.sep, seg.opens || 0);
     if (vars.overflow) return OVERFLOW;
     if (seg.sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
-    if (words !== seg.words) seg = { ...seg, words };
-    const hit = checkSimple(seg.words, depth, known);
-    if (hit) return hit;
+    const segs1 = readings.map((words) => (words === seg.words ? seg : { ...seg, words }));
+    for (const s1 of segs1) {
+      const hit = checkSimple(s1.words, depth, known);
+      if (hit) return hit;
+    }
+    seg = segs1[0];
     // A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder is
     // still the one the line started in, the whole-line reading in analyze() has already covered it.
     if (seg.raw && known !== cwd0 && depth < MAX_DEPTH) {
@@ -801,13 +854,19 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (innerHit) return innerHit;
     }
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
-      const to = cdTarget(unwrap(seg.words), known);
-      if (to === CWD_OVERFLOW) return OVERFLOW;
+      // A cd whose target depends on which value a variable holds leaves the folder unknown (protected).
+      let to = NOT_CD;
+      for (const s1 of segs1) {
+        const t = cdTarget(unwrap(s1.words), known);
+        if (t === CWD_OVERFLOW) return OVERFLOW;
+        if (segs1.length === 1) to = t;
+        else if (t !== NOT_CD) to = CWD_LOST;
+      }
       if (to !== NOT_CD) known = to;
     }
-    pipe.push(seg);
+    pipe.push(segs1);
     if (!isPipe(seg.sep)) {
-      const hit2 = checkPipeline(pipe, known);
+      const hit2 = checkPipelineReadings(pipe, known);
       if (hit2) return hit2;
       pipe = [];
     }
@@ -815,7 +874,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     for (let i = 0; i < (seg.opens || 0) && groups.length < MAX_SEGMENTS; i++) groups.push(known);
     if (seg.sep === ')' && groups.length) known = groups.pop();
   }
-  return pipe.length ? checkPipeline(pipe, known) : null;
+  return pipe.length ? checkPipelineReadings(pipe, known) : null;
 }
 
 function analyze(cmd, depth = 0, known = null) {

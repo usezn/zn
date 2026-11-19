@@ -37,9 +37,7 @@ use zn::engine::reputation::ReputationSystem;
 use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
 use zn::engine::{ZnEngine, ZnEngineConfig};
-#[cfg(test)]
-use zn::jsonrpc::ArgSource;
-use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, JsonRpcValidation};
+use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, ArgSource, JsonRpcValidation};
 use zn::metrics;
 use zn::proxy::McpPool;
 use zn::scrubber::Scrubber;
@@ -50,6 +48,21 @@ use zn::webhooks::{self, WebhookManager};
 
 /// Longest agent id kept from a message; longer ids are cut (the id is a label, not an identity).
 const MAX_AGENT_ID_CHARS: usize = 128;
+
+/// Policy match of a call denied because the neural check could not run while it blocks.
+const NEURAL_ERROR_MATCH: &str = "neural_engine_error";
+
+/// `ZN_FAST_BOOT` (tests and smoke runs) does not load the neural model. With neural blocking on that
+/// would silently turn a protection off, so zn refuses to start; otherwise it says so at start.
+fn apply_fast_boot(config: &mut ZnConfig) -> Result<String> {
+    if config.neural.enabled && config.is_neural_blocking() {
+        return Err(anyhow!(
+            "ZN_FAST_BOOT is set, which does not load the neural model, but neural.active_blocking is on, so zn did not start. Unset ZN_FAST_BOOT, or set neural.active_blocking to false."
+        ));
+    }
+    config.neural.enabled = false;
+    Ok("ZN_FAST_BOOT is set: the neural model is not loaded and the neural check is off. Use it only for tests.".to_string())
+}
 
 fn bounded_agent_id(agent_id: Option<&str>) -> String {
     match agent_id {
@@ -70,6 +83,25 @@ fn reputation_key(namespace: &str, agent_id: &str) -> String {
 }
 
 /// Build a JSON-RPC 2.0 error response
+/// The frame to send on when the image guard changed the arguments of an allowed tool call: the call rebuilt with the
+/// checked arguments, or, when it cannot be rebuilt (for example a call that carried several argument keys), a JSON-RPC
+/// error. The original arguments are never forwarded.
+fn forward_changed_arguments(
+    scrubbed_line: &str,
+    arguments: &str,
+    source: ArgSource,
+    id: Option<serde_json::Value>,
+) -> String {
+    match with_arguments(scrubbed_line, arguments, source) {
+        Some(frame) => frame,
+        None => jsonrpc_error_response(
+            id,
+            -32001,
+            "zn could not rebuild the sanitized tool call, so it was not forwarded",
+        ),
+    }
+}
+
 fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &str) -> String {
     serde_json::json!({
         "jsonrpc": "2.0",
@@ -280,7 +312,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     // Fast boot (tests/smoke): skip neural scoring and model loading entirely.
     // Note: model_path is still used by registry/canary bookkeeping.
     if std::env::var("ZN_FAST_BOOT").is_ok() {
-        zn_config.neural.enabled = false;
+        log::warning(apply_fast_boot(&mut zn_config)?)?;
     }
 
     // Validate configuration
@@ -1171,10 +1203,9 @@ async fn process_mcp_message(
             }
 
             // 3. RECURSIVE LOOP BREAKER
-            if let Err(msg) =
-                state
-                    .loop_breaker
-                    .check_and_record(&agent_id_str, &tool_name, &arguments)
+            if let Err(msg) = state
+                .loop_breaker
+                .check_and_record(&rep_key, &tool_name, &arguments)
             {
                 log::warning(format!(
                     "🚫 LOOP BREAKER: {}",
@@ -1188,15 +1219,18 @@ async fn process_mcp_message(
             }
 
             // 4. M-of-N CONSENSUS AUTHORIZATION
-            if !state
-                .consensus
-                .check_approval(&agent_id_str, &tool_name, &arguments)
-            {
-                if let Some(action_id) =
-                    state
-                        .consensus
-                        .propose_action(&agent_id_str, &tool_name, &arguments)
-                {
+            if !state.consensus.check_approval(
+                &memory_namespace,
+                &agent_id_str,
+                &tool_name,
+                &arguments,
+            ) {
+                if let Some(action_id) = state.consensus.propose_action(
+                    &memory_namespace,
+                    &agent_id_str,
+                    &tool_name,
+                    &arguments,
+                ) {
                     log::warning(format!(
                         "⏳ CONSENSUS REQUIRED: {} (ID: {})",
                         tool_log, action_id
@@ -1220,13 +1254,19 @@ async fn process_mcp_message(
             let (status, policy_match) = {
                 // 🧠 NEURAL ANALYSIS (Bicameral Architecture)
                 let mut neural_veto = false;
+                // Why the neural check could not run (embedding, classifier or memory search).
+                let mut neural_error: Option<String> = None;
 
                 if state.config.neural.enabled {
                     let neural_input = format!("{}: {}", tool_name, arguments);
                     let start_neural = std::time::Instant::now();
                     let model = state.canary.backend_for(&agent_id_str);
 
-                    if let Ok(vec) = model.embed(&neural_input) {
+                    let embedded = model.embed(&neural_input);
+                    if let Err(e) = &embedded {
+                        neural_error = Some(format!("embedding failed: {e}"));
+                    }
+                    if let Ok(vec) = embedded {
                         let duration = start_neural.elapsed();
                         metrics::record_neural_embed(duration.as_secs_f64());
 
@@ -1234,18 +1274,27 @@ async fn process_mcp_message(
                         // signal — it fires even when the anomaly is quiet or
                         // the agent memory is empty. `None` in anomaly-only
                         // mode (no head.json).
-                        let prob = model.classify(&vec).ok().flatten();
+                        let prob = match model.classify(&vec) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                neural_error = Some(format!("classifier failed: {e}"));
+                                None
+                            }
+                        };
 
                         // Search nearest synchronously for the decision logic
-                        if let Ok(results) = state
+                        match state
                             .memory
                             .search(&memory_namespace, &agent_id_str, &vec, 1)
                             .await
                         {
-                            if let Some((t, d)) = results.first() {
-                                nearest = Some((t.clone(), *d));
-                                anomaly_score = Some(*d);
+                            Ok(results) => {
+                                if let Some((t, d)) = results.first() {
+                                    nearest = Some((t.clone(), *d));
+                                    anomaly_score = Some(*d);
+                                }
                             }
+                            Err(e) => neural_error = Some(format!("memory search failed: {e}")),
                         }
 
                         let distance = anomaly_score.unwrap_or(0.0);
@@ -1306,10 +1355,33 @@ async fn process_mcp_message(
                     }
                 }
 
+                // A neural check that could not run denies the call when neural blocking is on: allowing it
+                // would turn the protection off whenever the model fails. In shadow mode it is only logged.
+                let mut neural_failed = false;
+                if let Some(err) = neural_error {
+                    if state.config.is_neural_blocking() {
+                        neural_failed = true;
+                        log::warning(format!(
+                            "🛑 NEURAL CHECK FAILED: {} - denying (neural.active_blocking is on)",
+                            Scrubber::redact_for_log(&err)
+                        ))
+                        .ok();
+                    } else {
+                        log::warning(format!(
+                            "⚠️ NEURAL CHECK FAILED: {} (Shadow Mode)",
+                            Scrubber::redact_for_log(&err)
+                        ))
+                        .ok();
+                    }
+                }
+
                 // ⚖️ BICAMERAL DECISION ENGINE
                 // If Neural vetoed, it's a hard DENIED.
                 // Otherwise, we fallback to the deterministic WASM/Static Engine.
-                if neural_veto {
+                if neural_failed {
+                    metrics::record_neural_block();
+                    ("DENIED".to_string(), Some(NEURAL_ERROR_MATCH.to_string()))
+                } else if neural_veto {
                     state
                         .reputation
                         .record_violation(&rep_key, "Neural Anomaly Detection", 10);
@@ -1454,14 +1526,12 @@ async fn process_mcp_message(
                 }
                 // The vision guard changed the arguments: forward what it checked and what the audit vault
                 // stored, never the original images. A frame that cannot be rebuilt is refused.
-                match with_arguments(&scrubbed_line, &arguments, source) {
-                    Some(frame) => Ok(Some(frame)),
-                    None => Ok(Some(jsonrpc_error_response(
-                        id,
-                        -32001,
-                        "zn could not rebuild the sanitized tool call, so it was not forwarded",
-                    ))),
-                }
+                Ok(Some(forward_changed_arguments(
+                    &scrubbed_line,
+                    &arguments,
+                    source,
+                    id,
+                )))
             } else {
                 metrics::record_tool_call(&tool_name, "DENIED");
                 if status == "DENIED" {
@@ -1479,10 +1549,18 @@ async fn process_mcp_message(
                     let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
                 });
 
+                let message = if entry.policy_match.as_deref() == Some(NEURAL_ERROR_MATCH) {
+                    format!(
+                        "Tool call '{}' denied: the neural check could not run and neural.active_blocking is on",
+                        tool_name
+                    )
+                } else {
+                    format!("Tool call '{}' denied by security policy", tool_name)
+                };
                 Ok(Some(jsonrpc_error_response(
                     id,
                     jsonrpc_error::POLICY_DENIED,
-                    &format!("Tool call '{}' denied by security policy", tool_name),
+                    &message,
                 )))
             }
         }
@@ -2285,7 +2363,10 @@ mod kms_key_tests {
 
 #[cfg(test)]
 mod gateway_hardening_tests {
-    use super::{bounded_agent_id, reputation_key, with_arguments, ArgSource, MAX_AGENT_ID_CHARS};
+    use super::{
+        bounded_agent_id, forward_changed_arguments, reputation_key, with_arguments, ArgSource,
+        MAX_AGENT_ID_CHARS,
+    };
 
     fn parsed(s: Option<String>) -> serde_json::Value {
         serde_json::from_str(&s.expect("rebuilt frame")).expect("valid JSON")
@@ -2307,6 +2388,41 @@ mod gateway_hardening_tests {
         let key = reputation_key("a", &bounded_agent_id(Some("b\u{1f}c")));
         assert_eq!(key.matches('\u{1f}').count(), 1);
         assert_eq!(bounded_agent_id(Some("x\ny")), "x?y");
+    }
+
+    #[test]
+    fn changed_arguments_of_a_call_with_several_keys_are_refused_not_forwarded() {
+        let frame = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"t","arguments":{"img":"RAW"},"input":{"note":"AKIAIOSFODNN7EXAMPLE"}}}"#;
+        let out = forward_changed_arguments(
+            frame,
+            r#"{"img":"CLEAN"}"#,
+            ArgSource::Multiple,
+            Some(serde_json::json!(9)),
+        );
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["id"], 9);
+        assert_eq!(v["error"]["code"], -32001);
+        assert!(
+            v.get("params").is_none(),
+            "the call itself is not forwarded: {out}"
+        );
+        assert!(
+            !out.contains("RAW") && !out.contains("AKIAIOSFODNN7EXAMPLE"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn changed_arguments_of_a_call_with_one_key_are_forwarded_rebuilt() {
+        let frame = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t","arguments":{"img":"RAW"}}}"#;
+        let out = forward_changed_arguments(
+            frame,
+            r#"{"img":"CLEAN"}"#,
+            ArgSource::Key("arguments"),
+            Some(serde_json::json!(3)),
+        );
+        assert!(out.contains("CLEAN") && !out.contains("RAW"), "{out}");
+        assert!(!out.contains("\"error\""), "{out}");
     }
 
     #[test]
@@ -2357,7 +2473,7 @@ mod audit_isolation_tests {
         sse::{self, SseState},
     };
 
-    fn test_state(configured_namespace: Option<&str>) -> (AppState, tempfile::TempDir) {
+    pub(super) fn test_state(configured_namespace: Option<&str>) -> (AppState, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
         let mut config = zn::config::ZnConfig::default();
         config.neural.enabled = false;
@@ -2408,7 +2524,7 @@ mod audit_isolation_tests {
         (state, dir)
     }
 
-    fn frame(tool: &str) -> String {
+    pub(super) fn frame(tool: &str) -> String {
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -2945,5 +3061,154 @@ mod cli_form_tests {
     #[test]
     fn a_port_out_of_range_is_still_refused() {
         assert!(Args::try_parse_from(["zn", "start", "--port", "99999"]).is_err());
+    }
+}
+
+/// Paths that used to fail open: a neural check that cannot run while neural blocking is on, fast boot
+/// with neural blocking, and approvals or loop counts shared between namespaces.
+#[cfg(test)]
+mod fail_closed_tests {
+    use super::audit_isolation_tests::{frame, test_state};
+    use super::*;
+
+    /// A model whose embedding (or, when the embedding works, the classifier) always fails.
+    struct BrokenModel {
+        embed_fails: bool,
+    }
+
+    impl zn::ai::ModelBackend for BrokenModel {
+        fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+            if self.embed_fails {
+                Err(anyhow!("model unavailable"))
+            } else {
+                Ok(vec![0.1; 8])
+            }
+        }
+        fn classify(&self, _vec: &[f32]) -> anyhow::Result<Option<f32>> {
+            Err(anyhow!("classifier unavailable"))
+        }
+        fn name(&self) -> &str {
+            "broken"
+        }
+        fn dim(&self) -> usize {
+            8
+        }
+    }
+
+    fn neural_state(active_blocking: bool, embed_fails: bool) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state(None);
+        let mut config = (*state.config).clone();
+        config.neural.enabled = true;
+        config.neural.active_blocking = active_blocking;
+        config.guardrails.alert_only = false;
+        state.config = Arc::new(config);
+        state.canary = Arc::new(zn::ai::CanaryDeployer::new(Arc::new(BrokenModel {
+            embed_fails,
+        })));
+        (state, dir)
+    }
+
+    async fn reply(state: &AppState, namespace: Option<&str>, line: &str) -> serde_json::Value {
+        let out = process_mcp_message(line, state, namespace.map(str::to_string))
+            .await
+            .unwrap()
+            .unwrap();
+        serde_json::from_str(&out).unwrap()
+    }
+
+    fn error_message(v: &serde_json::Value) -> String {
+        v["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_failing_embedding_denies_the_call_when_neural_blocking_is_on() {
+        let (state, _dir) = neural_state(true, true);
+        let v = reply(&state, None, &frame("read_notes")).await;
+        assert!(
+            error_message(&v).contains("neural check could not run"),
+            "{v}"
+        );
+        let rows = state.vault.get_recent(10).unwrap();
+        assert_eq!(rows[0].status, "DENIED");
+        assert_eq!(rows[0].policy_match.as_deref(), Some(NEURAL_ERROR_MATCH));
+    }
+
+    #[tokio::test]
+    async fn a_failing_classifier_denies_the_call_when_neural_blocking_is_on() {
+        let (state, _dir) = neural_state(true, false);
+        let v = reply(&state, None, &frame("read_notes")).await;
+        assert!(
+            error_message(&v).contains("neural check could not run"),
+            "{v}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_neural_check_does_not_block_in_shadow_mode() {
+        let (state, _dir) = neural_state(false, true);
+        let v = reply(&state, None, &frame("read_notes")).await;
+        assert!(v.get("error").is_none(), "{v}");
+    }
+
+    #[test]
+    fn fast_boot_refuses_neural_blocking_and_says_the_model_is_off() {
+        let mut config = ZnConfig::default();
+        config.neural.enabled = true;
+        config.neural.active_blocking = true;
+        config.guardrails.alert_only = false;
+        let err =
+            apply_fast_boot(&mut config).expect_err("fast boot must not start with blocking on");
+        assert!(err.to_string().contains("neural.active_blocking"), "{err}");
+        config.neural.active_blocking = false;
+        let note = apply_fast_boot(&mut config).expect("shadow mode starts");
+        assert!(note.contains("neural check is off"), "{note}");
+        assert!(!config.neural.enabled);
+    }
+
+    #[tokio::test]
+    async fn an_approval_is_used_only_from_the_namespace_that_asked_for_it() {
+        let (mut state, _dir) = test_state(None);
+        let mut config = (*state.config).clone();
+        config.consensus.enabled = true;
+        config.consensus.critical_tools = vec!["drop_table".to_string()];
+        config.consensus.required_signatures = 1;
+        state.consensus = Arc::new(zn::engine::consensus::ConsensusManager::new(
+            config.consensus.clone(),
+        ));
+        state.config = Arc::new(config);
+
+        let first = reply(&state, Some("tenant-a"), &frame("drop_table")).await;
+        assert_eq!(first["error"]["code"], -32004, "{first}");
+        let pending = state.consensus.list_pending();
+        assert_eq!(pending.len(), 1);
+        state
+            .consensus
+            .sign_action(
+                &pending[0].id,
+                zn::engine::consensus::WitnessType::HumanAdmin("admin".into()),
+            )
+            .unwrap();
+
+        // Same agent id, tool and arguments from another namespace: the approval is not theirs.
+        let other = reply(&state, Some("tenant-b"), &frame("drop_table")).await;
+        assert_eq!(other["error"]["code"], -32004, "{other}");
+        // The namespace that asked for it can use it.
+        let own = reply(&state, Some("tenant-a"), &frame("drop_table")).await;
+        assert!(own.get("error").is_none(), "{own}");
+    }
+
+    #[tokio::test]
+    async fn one_namespace_cannot_trip_the_loop_breaker_of_another() {
+        let (state, _dir) = test_state(None);
+        for _ in 0..5 {
+            reply(&state, Some("tenant-a"), &frame("read_notes")).await;
+        }
+        let a = reply(&state, Some("tenant-a"), &frame("read_notes")).await;
+        assert!(a.get("error").is_some(), "{a}");
+        let b = reply(&state, Some("tenant-b"), &frame("read_notes")).await;
+        assert!(b.get("error").is_none(), "{b}");
     }
 }

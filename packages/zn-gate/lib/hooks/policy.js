@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-13.3';
+const POLICY_RULES_VERSION = '2026-11-18.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -38,6 +38,8 @@ const POLICY_RULES_VERSION = '2026-11-13.3';
 // are classified like their literal paths.
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
+// The Windows roaming application data folder, where GnuPG keeps its home folder.
+const APPDATA_VAR_RE = /^(?:\$\{?APPDATA\}?|\$env:APPDATA|%APPDATA%)(?=$|[\\/])/i;
 
 // A directory-stack entry other than the top (~1, ~+2, ~-1): zn does not know where it points.
 const DIR_STACK_RE = /(?:^|[\s=@<:,{])~[+-]?[1-9]\d*(?=$|[\\/\s,}])/;
@@ -58,6 +60,7 @@ function expandHome(p, home) {
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
+  if (APPDATA_VAR_RE.test(p)) return path.join(home, 'AppData', 'Roaming', p.replace(APPDATA_VAR_RE, '').replace(/^[\\/]+/, ''));
   return p;
 }
 
@@ -88,7 +91,69 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/, 'Google Cloud credentials'],
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
   [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
+  [/(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/.+$/i, 'GnuPG keyring'],
 ];
+// The GnuPG home folder itself: archiving, copying or searching it as a whole reads every key in it. Only the gpg
+// programs, which use their own home folder, may name it.
+const GNUPG_DIR_RE = /(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/?$/i;
+const GNUPG_DIR_REASON = 'GnuPG keyring folder';
+const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connect-agent', 'gpgsm', 'gpgv']);
+// The gpg programs that may name their own home folder, and only with read-only options spelled out in full (a
+// closed list: GnuPG has many options that start a helper program, such as --agent-program, --dirmngr-program or
+// --photo-viewer, and accepts abbreviations, so any option not on the list withdraws the exemption). gpg-agent and
+// gpg-connect-agent can start another program (--daemon PROGRAM, --exec) and get no exemption at all.
+const GPG_FOLDER_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpgsm', 'gpgv']);
+const GPG_READONLY_OPTIONS = new Set(['--homedir', '--list-keys', '-k', '--list-public-keys', '--list-secret-keys', '-K',
+  '--list-sigs', '--check-sigs', '--fingerprint', '--with-colons', '--with-fingerprint', '--with-subkey-fingerprint',
+  '--keyid-format', '--batch', '--no-tty', '--quiet', '-q', '--verbose', '-v', '--list-dirs', '--list-components',
+  '--list-options', '--verify', '--version', '--armor', '-a', '--export', '--export-ssh-key']);
+function gpgReadOnlyCall(listed, w) {
+  for (const x of listed) {
+    if (x.head !== w.head || x.seq !== w.seq) continue;
+    const t = String(x.text);
+    if (!t.startsWith('-')) continue;
+    if (!GPG_READONLY_OPTIONS.has(t.split('=')[0])) return false;
+  }
+  return true;
+}
+// Exporting a secret key prints or writes the private key, whatever folder gpg uses: --export-secret-keys,
+// --export-secret-subkeys and gpgsm's --export-secret-key-p12/-p8/-raw, also abbreviated (gpg takes any unique
+// prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
+const GPG_SECRET_EXPORT_RE = /^--export-se/i;
+const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
+// gpg-connect-agent also reads its commands from stdin, from a file (--run FILE, -r FILE, or its own /run FILE
+// control command), and a shell can build them from a variable or a command substitution. zn cannot see such
+// commands, so an EXPORT_KEY there could not be refused. Fail closed, with closed lists:
+// - a command line that runs gpg-connect-agent and has a pipe, an input redirection, or a $ or backtick expansion;
+// - an option of gpg-connect-agent that starts with --r (GnuPG accepts prefixes of long options) or a short option
+//   group that contains r (-r FILE, -rFILE, -vr);
+// - a control command other than /bye and /echo (/run, /definqfile and the others read or send files).
+const GPG_AGENT_WORD_RE = /(?:^|[^\w.-])gpg-connect-agent(?:\.exe)?(?![\w.-])/i;
+const GPG_AGENT_HIDDEN_INPUT_RE = /[|<`$]/;
+const GPG_AGENT_RUN_OPTION_RE = /^(?:--r|-[A-Za-z]*r)/;
+const GPG_AGENT_SAFE_CONTROL = new Set(['/bye', '/echo']);
+const GPG_AGENT_HIDDEN_INPUT_MESSAGE = 'zn: gpg-connect-agent is allowed only with its commands written out as arguments: this command line could feed it commands zn cannot check (from stdin, a file, a variable or a command substitution) for a secret key export (EXPORT_KEY). Give the commands as arguments, or ask the user to run it.';
+function gpgSecretExportDenial(words, text) {
+  // The program is found on the words as the shell reads them (quotes and escapes removed: gpg-connect-"agent"),
+  // and in the raw text as well.
+  const runsAgent = words.some((w) => programName(w.head || '') === 'gpg-connect-agent') ||
+    (typeof text === 'string' && GPG_AGENT_WORD_RE.test(text));
+  if (runsAgent && typeof text === 'string' && GPG_AGENT_HIDDEN_INPUT_RE.test(text)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+  for (const w of words) {
+    const prog = programName(w.head || '');
+    if (!GPG_PROGRAMS.has(prog)) continue;
+    if (prog === 'gpg-connect-agent') {
+      const t = String(w.text).trim();
+      if (programName(t) === 'gpg-connect-agent') continue; // the program word itself, with or without a path
+      if (GPG_AGENT_RUN_OPTION_RE.test(t)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+      const first = t.split(/\s+/)[0].toLowerCase();
+      if (first.startsWith('/') && !GPG_AGENT_SAFE_CONTROL.has(first)) return GPG_AGENT_HIDDEN_INPUT_MESSAGE;
+    }
+    if (GPG_SECRET_EXPORT_RE.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+    if (prog === 'gpg-connect-agent' && /(^|[^A-Za-z_])export_key([^A-Za-z_]|$)/i.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+  }
+  return null;
+}
 
 // Credential-file variables. A path given through one of them, or equal to
 // its value, is a credential path. Directory variables cover everything below.
@@ -420,6 +485,7 @@ function classifyResolved(abs, ctx) {
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
   for (const [re, reason] of CREDENTIAL_RES) if (ci(re).test(s)) return { kind: 'credential', reason };
+  if (ci(GNUPG_DIR_RE).test(s)) return { kind: 'credential', reason: GNUPG_DIR_REASON };
   if (s === h + '/.npmrc' || s === h + '/.pypirc') return { kind: 'credential', reason: 'package registry token' };
   // With "\" a separator too, so a Windows spelling names the same file on every platform.
   const base = path.basename(s);
@@ -1046,6 +1112,13 @@ const INSTRUCTION_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'rsync', 'ln'
 const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'copy', 'move', 'copy-item', 'move-item', 'ren', 'rename-item']);
 const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
 const INSTRUCTION_CHECKS_MAX = 64;
+// A command that names more files than are checked (or runs the check out of budget) cannot be shown to leave the
+// instruction files alone, so it gets the same decision as a write to one: ask, and a deny in strict mode.
+const TOO_MANY_TARGETS_NOTICE = {
+  file: 'too many files',
+  ask: 'zn: this command names too many files to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...). Approve only if you asked for this change.',
+  deny: 'zn: this command names too many files to check whether it writes to a file your agent reads as standing instructions in later sessions (AGENTS.md, CLAUDE.md...), and zn is set to block that. Ask the user to split the command or run it themselves.',
+};
 
 // Words that run the next command: the command word is the first one after them (and their options).
 // Each maps to the options that take a value.
@@ -1197,7 +1270,7 @@ function instructionWriteInWords(readings, opts) {
       for (const text of candidates) {
         if (!text || seen.has(text)) continue;
         seen.add(text);
-        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
+        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return TOO_MANY_TARGETS_NOTICE;
         const n = instructionWriteNotice(text, opts);
         if (n) return n;
       }
@@ -1715,12 +1788,143 @@ function dequoteShell(text) {
 }
 // `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
 const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
+/*
+ * Commands that rewrite zn's hook launchers with the files of the installed zn-gate package. Each launcher runs the hook
+ * only while the package's files match the digest it recorded; rewriting it records whatever the package holds now, also
+ * files an agent changed. So, like `zn hooks install`, they are the user's to run:
+ *  - running the package's launcher refresh (lib/agents/refresh.js, the postinstall step) or its launcher writer
+ *    (lib/agents/launcher.js) with Node.js, Bun or Deno, or loading either from inline code (node -e). The path is read
+ *    the way the file system would: ./ and ../ segments are resolved, case is ignored, and a cd, pushd or Set-Location
+ *    earlier in the same command counts (cd <prefix>/lib/agents && node refresh.js);
+ *  - a package manager that installs, updates, rebuilds or links zn-gate (npm i -g zn-gate, npm rebuild -g zn-gate,
+ *    yarn global add zn-gate@1.0.0, npm i -g ./zn-gate-1.16.0.tgz, npm --prefix <...>/node_modules/zn-gate run postinstall,
+ *    npm explore -g zn-gate -- ...), also after a cd into an installed zn-gate folder. Removing it (npm uninstall -g
+ *    zn-gate) stays allowed: it runs no install script, and the launchers then block.
+ * Reading the files (cat, grep), other package commands (npm test, npm install lodash, npm ls zn-gate) and text that only
+ * names such a command (git commit -m "npm i -g zn-gate") stay allowed. Not seen here: a script file the agent wrote, a
+ * cd made in an earlier tool call, and a link or copy of the file under another name (see the threat model). Each check is
+ * one pass over the words, so a long command costs linear time.
+ */
+const REFRESH_HINT_RE = /refresh|launcher/i;
+// The file, after normalizePathText: <anything>/lib/agents/refresh.js (or launcher, with .js, .cjs or no extension).
+const REFRESH_FILE_RE = /(?:^|\/)lib\/agents\/(?:refresh|launcher)(?:\.c?js)?$/;
+const JS_RUNNER_RE = /^(?:.*[\/\\])?(?:node|nodejs|bun|deno)(?:\.exe|\.cmd)?$/i;
+const JS_EVAL_RE = /^(?:-e|-p|-pe|--eval|--print)(?:=|$)/;
+const CD_WORD_RE = /^(?:cd|pushd|chdir|set-location|sl|push-location)$/i;
+const PM_WORD_RE = /^(?:.*[\/\\])?(?:npm|pnpm|yarn|bun|cnpm|volta)(?:-cli\.js|\.cmd|\.ps1|\.exe)?$/i;
+const PM_VERBS = new Set(['install', 'i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'add', 'ci', 'clean-install',
+  'ic', 'install-clean', 'isntall-clean', 'install-ci-test', 'cit', 'install-test', 'it', 'rebuild', 'rb', 'update', 'up', 'upgrade', 'udpate',
+  'link', 'ln', 'explore']);
+const PM_LIFECYCLE = new Set(['install', 'preinstall', 'postinstall', 'prepare']);
+const PM_RUN_VERBS = new Set(['run', 'run-script', 'rum', 'urn']);
+// Words after which the next program name is a command too: wrappers that run the rest (sudo npm ..., npx npm ...,
+// xargs node ...) and the shell keywords that start a command (then npm ...).
+const CMD_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'timeout', 'xargs', 'npx', 'corepack',
+  'start-process', 'start', 'call', 'cmd', 'cmd.exe', '/c', 'then', 'do', 'else', '!', '{', 'stdbuf', 'ionice', 'setsid', 'script', 'watch']);
+// zn-gate as a package spec or path: zn-gate, zn-gate@1.16.0, x@npm:zn-gate, ./zn-gate-1.16.0.tgz, <prefix>/node_modules/zn-gate.
+const ZN_PKG_RE = /(?:^|[=:\/\\@])zn-gate(?:@[^\s\/\\]*|-\d[^\s\/\\]*\.tgz)?[\/\\]*$/i;
+// An installed zn-gate folder named anywhere in the command (a cd into it, --prefix, -C).
+const ZN_INSTALLED_DIR_RE = /node_modules[\/\\]+zn-gate(?=$|[\/\\\s"'\x60;&|)])/i;
+const bareWord = (w) => w.replace(/^(?:\$\(|[("'\x60])+|["'\x60)]+$/g, '');
+
+/* The words of each simple command of the (dequoted) text. */
+function simpleCommands(text) {
+  return text.split(/[\n;&|]+/).map((p) => p.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length);
+}
+/* The index of the first word that matches `re` where a command starts: the first word after variable assignments, or any
+   word after a wrapper (sudo, env, npx, xargs, then ...). -1 when there is none. */
+function refreshProgramAt(words, re) {
+  let wrapped = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = bareWord(words[i]);
+    if (re.test(w)) return i;
+    if (CMD_WRAPPERS.has(w.toLowerCase())) wrapped = true;
+    else if (!wrapped && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) return -1;
+  }
+  return -1;
+}
+/* A path as the file system reads it, in lower case with / separators: \ becomes /, repeated slashes and ./ segments go,
+   and each ../ removes the segment before it. A relative path is read from `base` (a folder from an earlier cd) when known. */
+function normalizePathText(p, base) {
+  let s = String(p).replace(/\\/g, '/');
+  if (base && !/^(?:\/|[A-Za-z]:\/|~)/.test(s)) s = base + '/' + s;
+  const out = [];
+  for (const seg of s.split('/')) {
+    if (seg === '') { if (!out.length) out.push(''); continue; }
+    if (seg === '.') continue;
+    if (seg === '..') {
+      const top = out[out.length - 1];
+      if (out.length && top !== '..' && !(out.length === 1 && (top === '' || /^[A-Za-z]:$/.test(top)))) out.pop();
+      else if (!out.length || top === '..') out.push('..');
+      continue;
+    }
+    out.push(seg);
+  }
+  return out.join('/').toLowerCase();
+}
+/* The pieces of a word that can be a path: split at quotes, parentheses, commas, semicolons and = (--require=<path>). */
+const pathPieces = (w) => w.split(/["'\x60(),;=]+/).filter(Boolean);
+const isRefreshFile = (piece, base) => REFRESH_HINT_RE.test(piece) && REFRESH_FILE_RE.test(normalizePathText(piece, base));
+/* True when the words after a package manager install, update, rebuild, link or explore a package, or run an install script. */
+function pmMutates(rest) {
+  let prev = '';
+  for (const word of rest) {
+    if (word.startsWith('-')) continue;
+    const w = bareWord(word).toLowerCase();
+    if (PM_VERBS.has(w) || (PM_RUN_VERBS.has(prev) && PM_LIFECYCLE.has(w))) return true;
+    prev = w;
+  }
+  return false;
+}
+function refreshCommand(text) {
+  const parts = simpleCommands(text);
+  if (REFRESH_HINT_RE.test(text)) {
+    let cwd = null; // the folder of the last cd, pushd or Set-Location in this command; null: the agent's own folder
+    let inline = false; // a node -e earlier in the command: its code can span several simple commands
+    for (const words of parts) {
+      const at = refreshProgramAt(words, JS_RUNNER_RE);
+      if (at >= 0) {
+        // node [options] <...>/lib/agents/refresh.js, node -r <...>/launcher.js -e 0, node -e "require('./refresh')" after a cd
+        for (let j = at + 1; j < words.length; j++) {
+          if (JS_EVAL_RE.test(words[j])) inline = true;
+          for (const piece of pathPieces(words[j])) if (isRefreshFile(piece, cwd)) return 'hooks refresh';
+        }
+      } else if (inline) {
+        // The rest of inline code after a ; inside it: a require/import of the file.
+        for (let j = 0; j < words.length; j++) {
+          if (!/\b(?:require|import|from)\b/.test(words[j]) && !(j > 0 && /\b(?:require|import|from)\b/.test(words[j - 1]))) continue;
+          for (const piece of pathPieces(words[j])) if (isRefreshFile(piece, cwd)) return 'hooks refresh';
+        }
+      }
+      const c = refreshProgramAt(words, CD_WORD_RE);
+      if (c >= 0) {
+        const args = words.slice(c + 1).map(bareWord).filter((w) => w && !w.startsWith('-') && w.toLowerCase() !== '/d');
+        const target = args[args.length - 1];
+        cwd = !target || target === '-' ? null : normalizePathText(target, cwd);
+        // A folder name longer than any real path is not followed (it keeps each step of a long chain of cd's short).
+        if (cwd && cwd.length > 4096) cwd = null;
+      }
+    }
+  }
+  const installedDir = ZN_INSTALLED_DIR_RE.test(text);
+  for (const words of parts) {
+    const at = refreshProgramAt(words, PM_WORD_RE);
+    if (at < 0) continue;
+    const rest = words.slice(at + 1);
+    if (pmMutates(rest) && (installedDir || rest.some((w) => ZN_PKG_RE.test(bareWord(w))))) return 'zn-gate package';
+  }
+  return null;
+}
 function adminCommand(cmd) {
   const text = String(cmd || '');
   for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
     const m = ZN_ADMIN_RE.exec(t);
     if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
     if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const r = refreshCommand(t);
+    if (r) return r;
   }
   return npmExecInit(text) ? 'init' : null;
 }
@@ -2603,6 +2807,10 @@ function bashDenialOf(cmd, opts = {}) {
     const findDeny = findDeleteDenial(readings[0], opts);
     if (findDeny) return findDeny;
   }
+  {
+    const gpgDeny = gpgSecretExportDenial(words, text);
+    if (gpgDeny) return gpgDeny;
+  }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
@@ -2739,6 +2947,8 @@ function bashDenialOf(cmd, opts = {}) {
       continue; // reading the settings is allowed
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
+    // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
+    if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) && gpgReadOnlyCall(listed, w)) continue;
     let deny;
     if (denied.has(text)) deny = denied.get(text);
     else { deny = denialOf(c, text, opts); denied.set(text, deny); }
@@ -3596,6 +3806,14 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (admin === 'hooks refresh') {
+    return 'zn blocked this: the hook launcher refresh of zn-gate records the files of the installed package as the ones your coding agents\' hooks trust, ' +
+      'so running it is the user\'s decision and an agent may not. Next step: ask the user to run it in their own terminal, or to run `' + znCommand('hooks install <agent>', opts) + '` if the hooks need repairing.';
+  }
+  if (admin === 'zn-gate package') {
+    return 'zn blocked this: installing, updating, rebuilding or linking the zn-gate package rewrites zn\'s hook launchers to trust the files it installs, ' +
+      'so it is the user\'s decision and an agent may not run it. Next step: ask the user to run this command in their own terminal.';
+  }
   if (/^audit/i.test(admin)) {
     return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
       'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
@@ -3839,47 +4057,56 @@ function egressCollectText(raw, text, opts, depth, found) {
     const scan = scanFirstCommand(rest, false);
     let op = scan.operator;
     if ((op === '&' || op === '|') && rest[scan.end + 1] === op) op += op;
-    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...).
-    let words = scan.words;
-    const filled = shellVars.applyWords(vars, words.map((w) => w.text), op);
-    if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
-    let k = -1;
-    let prog = '';
-    const chain = {};
-    let i = 0;
-    let chainAt = -1;
-    while (i < words.length) {
-      const t = words[i].text;
-      let name = programName(t);
-      // {curl,-H,x,URL} is the words curl -H x URL.
-      if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
-        const alts = expandBraces(t);
-        if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
-          words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
-          name = programName(alts[0]);
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...). A variable an assignment may not have
+    // changed (after &&, in an if, ...) holds each of its values: every reading is looked at.
+    const readings = shellVars.applyVariants(vars, scan.words.map((w) => w.text), op, 0);
+    // Past the variable limits (too many possible values or combinations) the readings are incomplete: refuse rather
+    // than check only some of them (the same marker as a command too nested to check).
+    if (vars.overflow) {
+      found.push({ urls: [], parts: [{ where: 'code', text: 'a command whose variables have too many possible values for zn to check' }] });
+      return;
+    }
+    for (const filled of readings) {
+      let words = scan.words;
+      if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
+      let k = -1;
+      let prog = '';
+      const chain = {};
+      let i = 0;
+      let chainAt = -1;
+      while (i < words.length) {
+        const t = words[i].text;
+        let name = programName(t);
+        // {curl,-H,x,URL} is the words curl -H x URL.
+        if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
+          const alts = expandBraces(t);
+          if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
+            words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
+            name = programName(alts[0]);
+          }
+        }
+        prog = egressProgramOf(name);
+        if (prog) { k = i; break; }
+        if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
+        if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { if (chainAt < 0) chainAt = i; i = skipWrapper(words, i, name, chain); continue; }
+        break;
+      }
+      // The wrappers did not end on a plausible program (an option zn does not know may have taken the next word): the
+      // first later word that is a network program counts, so the request is not hidden behind the option.
+      // The words an option may have taken are read too (from the first wrapper on), so a wrong skip cannot hide the request.
+      if (k < 0 && chain.unsure) {
+        for (let j = Math.max(chainAt, 0); j < words.length; j++) {
+          prog = egressProgramOf(programName(words[j].text));
+          if (prog) { k = j; break; }
         }
       }
-      prog = egressProgramOf(name);
-      if (prog) { k = i; break; }
-      if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
-      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { if (chainAt < 0) chainAt = i; i = skipWrapper(words, i, name, chain); continue; }
-      break;
-    }
-    // The wrappers did not end on a plausible program (an option zn does not know may have taken the next word): the
-    // first later word that is a network program counts, so the request is not hidden behind the option.
-    // The words an option may have taken are read too (from the first wrapper on), so a wrong skip cannot hide the request.
-    if (k < 0 && chain.unsure) {
-      for (let j = Math.max(chainAt, 0); j < words.length; j++) {
-        prog = egressProgramOf(programName(words[j].text));
-        if (prog) { k = j; break; }
-      }
-    }
-    if (k >= 0) {
-      if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
-      // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
-      else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
-        const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
-        if (r.parts.length) found.push(r);
+      if (k >= 0) {
+        if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
+        // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
+        else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
+          const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+          if (r.parts.length) found.push(r);
+        }
       }
     }
     rest = rest.slice(scan.end + 1);

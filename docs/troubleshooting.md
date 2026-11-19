@@ -1078,9 +1078,9 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What to do:** check the path, or create a settings file with `zn init`, then start zn again.
 
-#### "`<file>`: unknown setting `<name>` was ignored" / "`<file>`: unknown setting `<name>`. Settings in the security and audit sections are not ignored"
+#### "`<file>`: unknown setting `<name>` was ignored" / "`<file>`: unknown setting `<name>`. Settings in the sections that turn protections on are not ignored"
 
-**What happened:** the settings file has a setting zn does not know, usually a typo. In most sections zn ignores it and carries on. In the `security` and `audit` sections zn stops instead, because a typo there would silently weaken a protection.
+**What happened:** the settings file has a setting zn does not know, usually a typo. In the sections that turn protections on (`security`, `audit`, `engine`, `kms`, `neural`, `fusion`, `managed_rules`, `loop_breaker`, `consensus` and `guardrails`), and for a misspelt name of one of those sections, zn stops, because a typo there would silently weaken a protection. In the other sections zn ignores the setting and carries on.
 
 **What to do:** if the message says "did you mean", use that name. Otherwise compare with the file that `zn init` writes, fix the name, and start zn again.
 
@@ -1231,7 +1231,7 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 - **A keychain was asked for that is not there.** You ran `zn unlock --backend libsecret`, or `ZN_KEYCHAIN_BACKEND` is set, but the `secret-tool` program is missing. A real run on a computer without it:
 
   ```text
-  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.16.0 unlock --backend passphrase`.
+  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.17.0 unlock --backend passphrase`.
   ```
 
   A second line then says that the passphrase is not the problem and points back to this page.
@@ -1246,7 +1246,7 @@ Nothing was changed.
    New vault passphrase (min 12 chars):
    Repeat passphrase:
    Created a new vault (passphrase) in ~/.zn/vault
-   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.16.0 lock` to lock now.
+   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.17.0 lock` to lock now.
    ```
 
    Later runs ask once, for `Vault passphrase:`. A wrong passphrase says `wrong passphrase, or vault file identity.age is corrupted`; see [section 5](#5-your-secret-vault-is-locked) if you forgot it.

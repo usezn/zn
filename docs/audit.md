@@ -47,7 +47,7 @@ there is no directory named `log`) and `zn audit --since DATE` exit with code
 | `--output` | standard output | Write the report to a file |
 | `--fail-on` | `high` | Exit with 1 if any finding has this severity or a higher one; `none` never fails |
 | `--agents` | `all` | Only check the files these agents read: `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini` or `all`. Findings that concern every agent (`AGENTS.md`, planted executables, CI workflows) are always shown |
-| `--approve` | off | Record the project's executable configuration as approved, then exit: MCP servers (`.mcp.json`, `.cursor`, `.vscode`, `.gemini`, `.amazonq`, `opencode.json`, `.codex/config.toml`), hooks with their matchers, permissions (allow, deny, ask, default mode), `disableAllHooks`, helper commands, endpoint, proxy and loader environment overrides, install scripts, dev container commands and folder-open tasks. A file that is a link is followed when it stays inside the project; a file that cannot be read counts as a change. It runs only at a terminal and not when an agent started it, zn blocks it as an agent writes it, and when the vault is unlocked the approval is also confirmed on the vault's own channel (its terminal or an OS dialog). With no vault running the terminal check is the only one: a process an agent started inside a pseudo-terminal can pass it. Only entry names and hashes are stored, in `~/.zn/baselines`, never a value. Later audits report an entry that changed, was added or was removed since (ZNA023) |
+| `--approve` | off | Record the project's executable configuration as approved, then exit: MCP servers (`.mcp.json`, `.cursor`, `.vscode`, `.gemini`, `.amazonq`, `opencode.json`, `.codex/config.toml`), hooks with their matchers, permissions (allow, deny, ask, default mode), `disableAllHooks`, helper commands, endpoint, proxy and loader environment overrides, install scripts, dev container commands, folder-open tasks, the code of OpenCode plugins (`.opencode/plugin/*.js`, `.opencode/plugins/*.js`) and the Amazon Q agent and rule files (`.amazonq/cli-agents/*.json`, `.amazonq/agents/*.json`, `.amazonq/rules/**/*.md`, `.amazonq/default.mcp.json`), each of those files by the hash of its content. A file that is a link is followed when it stays inside the project; a file or a folder that cannot be read counts as a change. Rule files are searched 8 folder levels deep (a deeper folder is one entry), a linked subfolder inside the project is followed, and past 500 files in one of those folders (for the rules, the whole .amazonq/rules tree counts together) the rest is hashed by content together, up to 5,000 more (past that, only the fact that it is over the limit is recorded). It runs only at a terminal and not when an agent started it, zn blocks it as an agent writes it, and when the vault is unlocked the approval is also confirmed on the vault's own channel (its terminal or an OS dialog). With no vault running the terminal check is the only one: a process an agent started inside a pseudo-terminal can pass it. Only entry names and hashes are stored, in `~/.zn/baselines`, never a value. Later audits report an entry that changed, was added or was removed since (ZNA023) |
 | `--include-home` | off | Also check your own user-level configs (`~/.claude/settings.json`, `~/.codex/config.toml`, ...) |
 
 Exit codes: `0` no finding at or above `--fail-on`, `1` at least one, `2`
@@ -158,7 +158,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 ### Text
 
 ```text
-zn audit  ./some-repo  (zn-gate 1.16.0)
+zn audit  ./some-repo  (zn-gate 1.17.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -180,7 +180,7 @@ file names) are printed as `\x1b`, never sent to the terminal.
 {
   "version": 1,
   "tool": "zn-gate",
-  "toolVersion": "1.16.0",
+  "toolVersion": "1.17.0",
   "root": "/home/me/some-repo",
   "findings": [
     {
@@ -297,7 +297,7 @@ findings) so alerts survive line moves and stay unique. Findings from
 flag off in CI.
 
 ```yaml
-- run: npx -y zn-gate@1.16.0 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.17.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif
@@ -329,7 +329,7 @@ This walks through the text report from [Output](#text), line by line. The value
 version) are made up; the words are the ones `zn audit` prints.
 
 ```text
-zn audit  ./some-repo  (zn-gate 1.16.0)
+zn audit  ./some-repo  (zn-gate 1.17.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
