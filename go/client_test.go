@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -286,6 +287,7 @@ func TestRetryOnNetworkError(t *testing.T) {
 func TestContextCancelDuringRequest(t *testing.T) {
 	release := make(chan struct{})
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -323,7 +325,12 @@ func TestPerAttemptTimeout(t *testing.T) {
 	var calls int32
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&calls, 1) == 1 {
-			<-r.Context().Done()
+			// The server only notices a closed connection after the body is read.
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
 			return
 		}
 		writeJSON(w, 200, allowBody)
