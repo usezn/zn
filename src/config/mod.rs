@@ -842,21 +842,28 @@ impl ZnConfig {
         Ok((config, notices))
     }
 
+    /// Apply a raw `ZN_PORT` value. A value that is not a port is reported as
+    /// a notice and the configured port is kept.
+    fn apply_port_override(&mut self, raw: Option<String>, notices: &mut Vec<String>) {
+        let Some(port) = raw else {
+            return;
+        };
+        match port.trim().parse() {
+            Ok(p) => self.server.port = p,
+            Err(_) => notices.push(crate::user_errors::invalid_port_env(
+                &port,
+                self.server.port,
+            )),
+        }
+    }
+
     /// Apply environment variable overrides
     fn apply_env_overrides(&mut self, notices: &mut Vec<String>) -> Result<()> {
         if let Ok(env) = std::env::var("ZN_ENV") {
             self.environment = env;
         }
 
-        if let Ok(port) = std::env::var("ZN_PORT") {
-            match port.trim().parse() {
-                Ok(p) => self.server.port = p,
-                Err(_) => notices.push(crate::user_errors::invalid_port_env(
-                    &port,
-                    self.server.port,
-                )),
-            }
-        }
+        self.apply_port_override(std::env::var("ZN_PORT").ok(), notices);
 
         // A blank key (for example `ZN_API_KEY=` from an unset compose
         // variable) counts as not set: it must never match an empty token.
@@ -1810,10 +1817,7 @@ mod parse_message_tests {
         let mut config = ZnConfig::default();
         config.server.port = 9090;
         let mut notices = Vec::new();
-        std::env::set_var("ZN_PORT", "abc");
-        let applied = config.apply_env_overrides(&mut notices);
-        std::env::remove_var("ZN_PORT");
-        applied.expect("a bad port is only a notice");
+        config.apply_port_override(Some("abc".to_string()), &mut notices);
         assert_eq!(config.server.port, 9090);
         assert_eq!(notices.len(), 1);
         assert!(
