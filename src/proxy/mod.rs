@@ -868,69 +868,131 @@ Content-Length: 0
         Arc::new(McpPool::new(configs))
     }
 
+    const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Test server: reports the first request it reads through `seen`, then
+    /// holds the echo until `release` becomes true.
+    async fn gated_echo_server(
+        seen: tokio::sync::oneshot::Sender<()>,
+        mut release: tokio::sync::watch::Receiver<bool>,
+    ) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let mut seen = Some(seen);
+            while let Some(Ok(msg)) = ws.next().await {
+                if let Message::Text(text) = msg {
+                    if let Some(seen) = seen.take() {
+                        let _ = seen.send(());
+                    }
+                    let _ = release.wait_for(|open| *open).await;
+                    if ws.send(Message::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        addr
+    }
+
+    /// Test server: reports each ping it reads through `pinged`, then holds the
+    /// pong until `release` becomes true.
+    async fn ping_gated_server(
+        pinged: tokio::sync::mpsc::UnboundedSender<()>,
+        mut release: tokio::sync::watch::Receiver<bool>,
+    ) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while let Some(Ok(msg)) = ws.next().await {
+                match msg {
+                    Message::Text(text) => {
+                        if ws.send(Message::Text(text)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Ping(_) => {
+                        let _ = pinged.send(());
+                        let _ = release.wait_for(|open| *open).await;
+                    }
+                    _ => {}
+                }
+            }
+        });
+        addr
+    }
+
     #[tokio::test]
     async fn slow_server_does_not_block_other_servers() {
-        let slow = slow_echo_server(
-            std::time::Duration::from_millis(1500),
-            std::time::Duration::ZERO,
-        )
-        .await;
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::watch::channel(false);
+        let slow = gated_echo_server(seen_tx, release_rx).await;
         let fast = slow_echo_server(std::time::Duration::ZERO, std::time::Duration::ZERO).await;
         let pool = ws_pool(&[("slow", slow), ("fast", fast)]);
 
         let slow_pool = pool.clone();
-        let slow_task = tokio::spawn(async move {
-            let start = std::time::Instant::now();
-            let reply = slow_pool.send("slow", "{\"id\":1}", None).await.unwrap();
-            (reply, start.elapsed())
-        });
-        // Let the slow request take its connection lock first.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let slow_task =
+            tokio::spawn(async move { slow_pool.send("slow", "{\"id\":1}", None).await });
 
-        let start = std::time::Instant::now();
-        let reply = pool.send("fast", "{\"id\":2}", None).await.unwrap();
-        let fast_elapsed = start.elapsed();
+        // The slow server has read its request, so its connection stays busy until release.
+        tokio::time::timeout(HANG_GUARD, seen_rx)
+            .await
+            .expect("slow request never reached its server")
+            .unwrap();
+
+        // The fast server must answer while the slow reply is still held back.
+        let reply = tokio::time::timeout(HANG_GUARD, pool.send("fast", "{\"id\":2}", None))
+            .await
+            .expect("fast server waited for the slow one")
+            .unwrap();
         assert_eq!(reply, "{\"id\":2}");
-        assert!(
-            fast_elapsed < std::time::Duration::from_millis(1000),
-            "fast server waited for the slow one: {:?}",
-            fast_elapsed
-        );
+        assert!(!slow_task.is_finished());
 
-        let (slow_reply, slow_elapsed) = slow_task.await.unwrap();
+        release_tx.send(true).unwrap();
+        let slow_reply = slow_task.await.unwrap().unwrap();
         assert_eq!(slow_reply, "{\"id\":1}");
-        assert!(slow_elapsed >= std::time::Duration::from_millis(1400));
     }
 
     #[tokio::test]
     async fn health_check_runs_pings_in_parallel() {
-        let delay = std::time::Duration::from_millis(800);
-        let mut servers = Vec::new();
         let names = ["a", "b", "c", "d"];
+        let (pinged_tx, mut pinged_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release_tx, release_rx) = tokio::sync::watch::channel(false);
+        let mut servers = Vec::new();
         for _ in names {
-            servers.push(slow_echo_server(std::time::Duration::ZERO, delay).await);
+            servers.push(ping_gated_server(pinged_tx.clone(), release_rx.clone()).await);
         }
+        drop(pinged_tx);
         let pairs: Vec<(&str, std::net::SocketAddr)> =
             names.iter().copied().zip(servers.iter().copied()).collect();
         let pool = ws_pool(&pairs);
 
-        // Open every connection; each server then stalls before it can pong.
+        // Open every connection first.
         for name in names {
             pool.send(name, "{}", None).await.unwrap();
         }
 
-        let start = std::time::Instant::now();
-        let status = pool.health_check().await;
-        let elapsed = start.elapsed();
+        let health_pool = pool.clone();
+        let health = tokio::spawn(async move { health_pool.health_check().await });
 
+        // Every server must receive its ping while all pongs are still held back.
+        // A serial health check would only ever reach the first server here.
+        tokio::time::timeout(HANG_GUARD, async {
+            for _ in names {
+                pinged_rx.recv().await.expect("ping channel closed");
+            }
+        })
+        .await
+        .expect("health_check did not ping every server while the first pong was pending");
+
+        release_tx.send(true).unwrap();
+        let status = health.await.unwrap();
         assert_eq!(status.len(), 4);
         assert!(status.values().all(|alive| *alive), "{:?}", status);
-        // Serial pings would take about 4 x 800 ms.
-        assert!(
-            elapsed < std::time::Duration::from_millis(2000),
-            "health_check was not parallel: {:?}",
-            elapsed
-        );
     }
 
     #[tokio::test]
@@ -946,10 +1008,18 @@ Content-Length: 0
         // The stuck server reads the request and never answers.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let stuck = listener.local_addr().unwrap();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
             let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
-            while ws.next().await.is_some() {}
+            let mut seen_tx = Some(seen_tx);
+            while let Some(Ok(msg)) = ws.next().await {
+                if matches!(msg, Message::Text(_)) {
+                    if let Some(tx) = seen_tx.take() {
+                        let _ = tx.send(());
+                    }
+                }
+            }
         });
         let ok = slow_echo_server(std::time::Duration::ZERO, std::time::Duration::ZERO).await;
         let pool = ws_pool(&[("stuck", stuck), ("ok", ok)]);
@@ -957,23 +1027,22 @@ Content-Length: 0
 
         let stuck_pool = pool.clone();
         let stuck_task = tokio::spawn(async move { stuck_pool.send("stuck", "{}", None).await });
-        // Let the request take the slot of the stuck server.
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // The request has reached the stuck server, so it holds that server's slot.
+        tokio::time::timeout(HANG_GUARD, seen_rx)
+            .await
+            .expect("request never reached the stuck server")
+            .unwrap();
 
-        let start = std::time::Instant::now();
-        let status = pool
-            .health_check_with(std::time::Duration::from_millis(300))
-            .await;
-        let elapsed = start.elapsed();
+        let status = tokio::time::timeout(
+            HANG_GUARD,
+            pool.health_check_with(std::time::Duration::from_millis(300)),
+        )
+        .await
+        .expect("health_check waited for the busy server");
         stuck_task.abort();
 
         assert_eq!(status.get("ok"), Some(&true), "{:?}", status);
         assert_eq!(status.get("stuck"), Some(&false), "{:?}", status);
-        assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "health_check waited for the busy server: {:?}",
-            elapsed
-        );
     }
 
     #[test]
