@@ -591,3 +591,12 @@ test('phone numbers: look-alikes with no-break or double spaces stay unflagged',
     assert.ok(!P.findPii(t, {}).some((x) => x.type === 'PHONE'), JSON.stringify(t));
   }
 });
+
+test('ipv4Public: only the reserved /24 blocks are non-public, not the /16 around them', () => {
+  for (const ip of ['192.0.0.8', '192.0.2.10', '198.51.100.7', '203.0.113.9', '198.18.0.1', '198.19.255.1']) {
+    assert.strictEqual(P.ipv4Public(ip), false, ip);
+  }
+  for (const ip of ['192.0.1.1', '192.0.3.1', '198.51.99.1', '198.51.101.1', '203.0.112.1', '203.0.114.1']) {
+    assert.strictEqual(P.ipv4Public(ip), true, ip);
+  }
+});
