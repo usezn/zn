@@ -10,7 +10,6 @@ const { assertLinear } = require('./helpers/time_ratio');
 const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 const { scan } = require('../lib/scrub/engine');
 const { normalisedView } = require('../lib/scrub/normalize');
-const { assertLinear } = require('./helpers/time_ratio');
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE';
 const V = 'fakeSecretValue1234';
