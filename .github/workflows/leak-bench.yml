@@ -46,6 +46,11 @@ jobs:
         # "leak bench (node 22 / ubuntu-latest)" is a required check: it always runs.
         os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
+        # macOS runners are few (a job waited up to 39 minutes for one, and a job that never gets a runner is cancelled with no
+        # log): only Node.js 22 runs there. The other versions run on Linux and Windows. No macOS name is a required check.
+        exclude:
+          - { os: macos-latest, node: 20 }
+          - { os: macos-latest, node: 24 }
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
