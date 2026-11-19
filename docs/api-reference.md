@@ -69,6 +69,21 @@ const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 
 The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.ts`, `lib/evidence.d.ts`); no `@types` package is needed.
 
+### Supported entry points
+
+The package has an `exports` map, so only these paths can be imported (each also works with a `.js` ending, for example `zn-gate/lib/rules.js`):
+
+| Import | What it gives you |
+|---|---|
+| `zn-gate` | The same as `zn-gate/lib/client`. |
+| `zn-gate/lib/client` | `analyze`, `analyzeLocal`, `checkToolResult`, `checkCommand`, `checkToolCall`, `guardTool`, `GuardBlockError` and the cloud settings helpers. |
+| `zn-gate/lib/rules` | `evaluate`, `redactSecrets`, `sanitizeToolResult`. |
+| `zn-gate/lib/evidence` | `logEvidence`, `verifyEvidenceLedger`, `EVIDENCE_FILE`. |
+| `zn-gate/lib/guard` | The tool-call guard (`checkToolCall`, `guardTool`, `GuardBlockError`), also re-exported by `zn-gate/lib/client`. |
+| `zn-gate/package.json` | The package manifest. |
+
+Any other path, such as `zn-gate/lib/hooks/policy.js`, is internal and fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Those files can change in any release. Use the entry points above, or the `zn-gate` command line, instead.
+
 ### `evaluate(text, options)`
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
@@ -181,7 +196,7 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 ### `sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`
 
 - Also exported from `zn-gate/lib/client`, so `require('zn-gate')` gives them too (the package `main` is `lib/client.js`). The `lib/rules` and `lib/evidence` paths keep working.
-- The import paths that are supported are `zn-gate`, `zn-gate/lib/client`, `zn-gate/lib/rules`, `zn-gate/lib/evidence`, `zn-gate/lib/guard` (each with or without `.js`) and `zn-gate/package.json`. Other files under `lib/` are internal: the package `exports` map refuses them, and they can change in any release.
+- Only some import paths are supported; see [Supported entry points](#supported-entry-points).
 
 ### `logEvidence(event, filePath, options)`
 
