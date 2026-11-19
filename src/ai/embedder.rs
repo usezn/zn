@@ -354,9 +354,9 @@ mod tests {
 
     #[test]
     fn test_cache_hit() {
-        let dir = std::env::temp_dir().join("zn-phaseF-cache-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        let e = Embedder::with_cache(&dir, 300).expect("model must load");
+        // Unique per run; removed when `dir` drops at the end of the test.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let e = Embedder::with_cache(dir.path(), 300).expect("model must load");
 
         let text = "test cache hit";
         let _ = e.embed(text).expect("embed");
@@ -368,13 +368,13 @@ mod tests {
 
     #[test]
     fn test_cache_enabled() {
-        let dir = std::env::temp_dir().join("zn-phaseF-cache-enabled");
-        let _ = std::fs::remove_dir_all(&dir);
+        // Unique per run; removed when `dir` drops at the end of the test.
+        let dir = tempfile::tempdir().expect("temp dir");
 
-        let e_no_cache = Embedder::new(&dir).expect("model must load");
+        let e_no_cache = Embedder::new(dir.path()).expect("model must load");
         assert!(!e_no_cache.cache_enabled());
 
-        let e_with_cache = Embedder::with_cache(&dir, 300).expect("model must load");
+        let e_with_cache = Embedder::with_cache(dir.path(), 300).expect("model must load");
         assert!(e_with_cache.cache_enabled());
     }
 
