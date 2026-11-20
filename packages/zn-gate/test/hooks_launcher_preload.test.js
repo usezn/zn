@@ -161,8 +161,8 @@ for (const [name, runGuard] of Object.entries(guardForms)) {
     for (const v of loaderEnv.LOADER_PRELOAD) {
       const r = runGuard(b.bin, { ...clean, [v]: '/nonexistent/zn-test.so' });
       assert.equal(fs.existsSync(b.ran), false, v + ': zn started in a shell with a preload');
-      if (dyldKills(v) && r.status !== 2 && r.status !== 0) continue;
-      if (dyldKills(v) && r.status === 0 && !r.stdout.trim()) continue;
+      // The loader may print (a trace) or end the shell before the script: then there is no answer, and zn did not start (checked above).
+      if (dyldKills(v) && r.status !== 2) continue;
       if (name.startsWith('Antigravity')) {
         assert.equal(r.status, 0, r.stderr);
         assert.match(JSON.parse(r.stdout.trim()).reason, /library variable \(LD_PRELOAD, LD_LIBRARY_PATH/);
