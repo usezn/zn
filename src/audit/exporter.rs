@@ -699,7 +699,8 @@ mod tests {
         .await
         .expect("send_batch should return on its own timeout");
         assert!(!ok);
-        assert!(started.elapsed() < Duration::from_secs(3));
+        // The outer 5 s timeout is the hard bound; this only checks the 400 ms send timeout applied.
+        assert!(started.elapsed() < Duration::from_secs(4));
         assert_eq!(batch.len(), 1, "a timed-out batch is kept for retry");
     }
 

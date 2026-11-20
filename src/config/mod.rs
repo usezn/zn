@@ -1618,6 +1618,7 @@ mod parse_message_tests {
 
     #[test]
     fn duplicate_key_fails_to_load() {
+        let _env = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("dup.json");
         std::fs::write(
@@ -1644,6 +1645,7 @@ mod parse_message_tests {
 
     #[test]
     fn load_reports_the_file_that_failed() {
+        let _env = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("bad.json");
         std::fs::write(&file, "{\"server\": {\"port\": \"eighty\"}}").expect("write");
@@ -1755,6 +1757,7 @@ mod parse_message_tests {
 
     #[test]
     fn loading_a_file_with_a_misspelt_security_key_fails() {
+        let _env = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("zn.json");
         std::fs::write(&file, "{\"audit\": {\"encryption_enabld\": false}}").expect("write");
@@ -1764,6 +1767,7 @@ mod parse_message_tests {
 
     #[test]
     fn the_init_template_loads_without_notices_or_errors() {
+        let _env = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("zn.json");
         let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
@@ -1782,6 +1786,7 @@ mod parse_message_tests {
 
     #[test]
     fn a_missing_config_file_is_an_error() {
+        let _env = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let err = ZnConfig::load(Some(&dir.path().join("nope.json"))).expect_err("must fail");
         let msg = err.to_string();
@@ -1794,6 +1799,7 @@ mod parse_message_tests {
 
     #[test]
     fn a_config_file_that_is_not_json_is_an_error() {
+        let _env = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("temp dir");
         let file = dir.path().join("zn.toml");
         std::fs::write(&file, "port = 1").expect("write");
@@ -1807,6 +1813,7 @@ mod parse_message_tests {
 
     #[test]
     fn an_invalid_port_variable_is_reported_and_the_port_is_kept() {
+        let _env = crate::test_support::env_lock();
         let mut config = ZnConfig::default();
         config.server.port = 9090;
         let mut notices = Vec::new();
