@@ -19,8 +19,10 @@ func ExampleClient_Analyze() {
 		fmt.Println("check failed:", err)
 		return
 	}
-	if res.Blocked() {
-		fmt.Println("blocked:", res.Rule)
+	if !res.Allowed() {
+		// Stop on anything that is not an explicit allow, including an
+		// empty or unknown verdict.
+		fmt.Println("stopped:", res.Verdict, res.Rule)
 		return
 	}
 	fmt.Println("allowed")
