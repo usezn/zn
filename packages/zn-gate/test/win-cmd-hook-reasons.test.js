@@ -4,6 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const loaderEnv = require('../lib/loader-env');
 const launcher = require('../lib/agents/launcher');
 const { getAdapter } = require('../lib/agents');
 const { tempDir } = require('./helpers/tmp');
@@ -54,7 +55,10 @@ test('antigravity install on win32: the install warnings name zn-gate.cmd check'
 
 // Prose stays as it is: win32 and linux launcher texts differ only between backticks.
 test('launcher texts on win32 differ from linux only inside backticks, for every agent', () => {
-  const spans = (s) => s.replace(/`[^`\n]+`/g, '``');
+  // The scrub lines differ by platform on purpose (a named unset on Linux and macOS, a case-insensitive scan on Git Bash): they are
+  // checked on their own below. Everything else, the user-facing text, must match outside backticks.
+  const scrubOf = (fast) => loaderEnv.shScrubLines({ fast }).join('\n');
+  const spans = (s) => s.replace(scrubOf(true), '').replace(scrubOf(false), '').replace(/`[^`\n]+`/g, '``');
   const ids = ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity', 'zcode', 'copilot', 'gemini'];
   let checked = 0;
   for (const id of ids) {
@@ -64,6 +68,8 @@ test('launcher texts on win32 differ from linux only inside backticks, for every
       lin = launcher.unixScript(id, '/usr/bin/node', '/x/runner.js', { platform: 'linux', runnerDigest: '' });
     } catch (e) { continue; }
     assert.equal(spans(win), spans(lin), id + ': a sentence outside backticks changed on win32');
+    assert.ok(win.includes(scrubOf(false)) && win.includes('export -p'), id + ': win32 uses the case-insensitive scan');
+    assert.ok(lin.includes(scrubOf(true)) && !lin.includes('export -p'), id + ': linux uses the named unset only');
     assert.match(win, /`[^`\n]*\.cmd[^`\n]*`/, id + ': a command in backticks names .cmd');
     checked++;
   }
