@@ -47,13 +47,19 @@ jobs:
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         # "scrubber + vault (node 22 / ubuntu-latest)" is a required check: it always runs.
         os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[18, 20, 22, 24]' || '[22]') }}
+        # macOS runners are few (a job waited up to 39 minutes for one, and a job that never gets a runner is cancelled with no
+        # log): only Node.js 22 runs there. The other versions run on Linux and Windows. No macOS name is a required check.
+        exclude:
+          - { os: macos-latest, node: 18 }
+          - { os: macos-latest, node: 20 }
+          - { os: macos-latest, node: 24 }
     defaults:
       run:
         working-directory: packages/zn-gate
@@ -100,8 +106,18 @@ jobs:
       - name: Vault tests (native keychain, Linux Secret Service)
         if: steps.scope.outputs.run == 'true' && (runner.os == 'Linux')
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11 >/dev/null
+          # A package mirror that stops answering held this step for the whole job limit (10 minutes) and cancelled the job.
+          # Every apt call is bounded and retried once, and nothing is installed when the tools are already there.
+          if ! command -v secret-tool >/dev/null || ! command -v gnome-keyring-daemon >/dev/null || ! command -v dbus-run-session >/dev/null; then
+            apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+            installed=no
+            for attempt in 1 2; do
+              # shellcheck disable=SC2086
+              if sudo timeout 120 apt-get $apt_opts update -qq && sudo timeout 120 apt-get $apt_opts install -y -qq libsecret-tools gnome-keyring dbus-x11 >/dev/null; then installed=yes; break; fi
+              echo "apt attempt $attempt did not finish; trying again"; sleep 10
+            done
+            [ "$installed" = yes ] || { echo "::error::apt-get could not install the keyring packages in two attempts"; exit 1; }
+          fi
           dbus-run-session -- bash -c 'printf "ci-keyring" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && ZN_TEST_NATIVE_KEYCHAIN=1 node test/vault.test.js'
       - name: Vault tests (native keychain, macOS Keychain)
         if: steps.scope.outputs.run == 'true' && (runner.os == 'macOS')

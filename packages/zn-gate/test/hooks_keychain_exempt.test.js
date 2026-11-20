@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const os = require('os');
 const policy = require('../lib/hooks/policy');
 const { budget } = require('./helpers/time_budget');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const opts = { home: os.homedir(), cwd: process.cwd(), env: {} };
 const denied = (c) => policy.bashDenial(c, opts);
@@ -109,13 +110,15 @@ test('escapes split by shell quotes or a line continuation, and shell-only escap
   for (const c of cmds) assert.ok(denied(c), 'not refused: ' + c);
 });
 
-test('the escape decoding is fast on a long run of escapes and ignores impossible code points', () => {
-  const start = process.hrtime.bigint();
-  denied('node -e "require(\'' + '\\x2f'.repeat(15000) + 'x\').loadStoredKey()"');
-  denied('node -e "require(\'' + '\\u{110000}\\u{ffffff}'.repeat(3000) + '\').loadStoredKey()"');
-  denied('node -e "require(\'' + '\\x"'.repeat(20000) + 'x\').loadStoredKey()"');
-  const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(ms < budget(1000), 'took ' + ms + ' ms');
+// An absolute limit (1 s here once) failed on a slow Windows runner (1.27 s for the same work that takes about 0.2 s on Linux):
+// the check is that 4x the escapes cost about 4x the CPU, not a number of milliseconds.
+test('the escape decoding takes time in proportion to a long run of escapes and ignores impossible code points', () => {
+  const build = (k) => [
+    'node -e "require(\'' + '\\x2f'.repeat(k) + 'x\').loadStoredKey()"',
+    'node -e "require(\'' + '\\u{110000}\\u{ffffff}'.repeat(Math.ceil(k / 5)) + '\').loadStoredKey()"',
+    'node -e "require(\'' + '\\x"'.repeat(Math.ceil((k * 4) / 3)) + 'x\').loadStoredKey()"',
+  ];
+  assertLinear((cmds) => { for (const c of cmds) denied(c); }, build, 15000, 'long runs of escapes');
 });
 
 test('a name built from quoted pieces, a path join or a Bun cache folder is recognised', () => {
