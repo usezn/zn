@@ -718,21 +718,25 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_ocr_uses_private_temporary_files_and_removes_them() {
-        // Stand-in for tesseract: writes the input path, the permissions of
-        // the input file and of its directory, and the input bytes to
-        // "<output base>.txt".
+        // Stand-in for tesseract: writes the input path, the octal mode of the
+        // input file and of its directory, and the input bytes to
+        // "<output base>.txt". Only the permission bits (mode & 0o777) are
+        // compared: a setgid parent directory adds a bit above them.
         let mut command = Command::new("sh");
         command
             .arg("-c")
             .arg(
-                r#"{ printf '%s\n' "$1"; ls -ld "$1" | cut -c1-10; ls -ld "$(dirname "$1")" | cut -c1-10; cat "$1"; } > "$2.txt""#,
+                r#"mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }; { printf '%s\n' "$1"; mode "$1"; mode "$(dirname "$1")"; cat "$1"; } > "$2.txt""#,
             )
             .arg("sh");
         let text = run_ocr(command, b"text from the image", "png", OCR_TIMEOUT).expect("OCR text");
         let mut lines = text.lines();
         let input = std::path::PathBuf::from(lines.next().unwrap());
-        assert_eq!(lines.next(), Some("-rw-------"), "input file is 0600");
-        assert_eq!(lines.next(), Some("drwx------"), "directory is 0700");
+        let permission_bits = |line: Option<&str>| {
+            u32::from_str_radix(line.expect("mode line").trim(), 8).expect("octal mode") & 0o777
+        };
+        assert_eq!(permission_bits(lines.next()), 0o600, "input file is 0600");
+        assert_eq!(permission_bits(lines.next()), 0o700, "directory is 0700");
         assert_eq!(lines.next(), Some("text from the image"));
         assert_eq!(input.extension().and_then(|e| e.to_str()), Some("png"));
         let dir = input.parent().unwrap();
