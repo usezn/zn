@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.4';
+const COMMAND_RULES_VERSION = '2026-11-20.5';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -151,7 +151,7 @@ function segmentsOf(cmd, posix = false) {
     }
     // The text of the command, kept only when it holds a backtick: its substitution starts from the folder reached by then.
     const raw = rest.slice(0, scan.end);
-    const entry = { words: scan.words.map((w) => w.text), sep, raw: raw.includes('`') ? raw : '', opens: 0 };
+    const entry = { words: scan.words.map((w) => w.text), sep, raw: raw.includes('`') || (raw.includes('$(') && raw.includes('"')) ? raw : '', opens: 0 };
     out.push(entry);
     rest = rest.slice(adv);
     // A pipe continues over a line break, and its target may be a group: curl URL |<nl>sh, curl URL | (sh).
@@ -961,6 +961,16 @@ function checkSegments(segs, depth, cwd0 = null) {
       const inner = backtickCode(seg.raw);
       const innerHit = inner ? analyze(inner, depth + 1, known) : null;
       if (innerHit) return innerHit;
+    }
+    // The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
+    if (seg.raw && known !== cwd0 && seg.raw.includes('$(') && seg.raw.includes('"')) {
+      const bodies = dqSubstBodies(seg.raw);
+      if (bodies === null || ticks + bodies.length > MAX_TICK_READS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+      ticks += bodies.length;
+      for (const body of bodies) {
+        const bodyHit = body.trim() ? analyze(body, depth, known) : null;
+        if (bodyHit) return bodyHit;
+      }
     }
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
       // A cd whose target depends on which value a variable holds leaves the folder unknown (protected).

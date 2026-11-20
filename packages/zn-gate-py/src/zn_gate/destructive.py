@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.4"
+COMMAND_RULES_VERSION = "2026-11-20.5"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -345,7 +345,7 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
                 adv += 1
         out.append((words, sep))
         raw = rest[:end]
-        out.raws.append(raw if "`" in raw else "")
+        out.raws.append(raw if "`" in raw or ("$(" in raw and '"' in raw) else "")
         out.opens.append(0)
         rest = rest[adv:]
         if sep in ("|", "|&"):
@@ -1712,6 +1712,16 @@ def _check_segments(
             inner_hit = _analyze(inner, depth + 1, known) if inner else None
             if inner_hit:
                 return inner_hit
+        # The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
+        if raws and raws[idx] and known is not cwd0 and "$(" in raws[idx] and '"' in raws[idx]:
+            bodies = _dq_subst_bodies(raws[idx])
+            if bodies is None or ticks + len(bodies) > _MAX_TICK_READS:
+                return _OVERFLOW
+            ticks += len(bodies)
+            for body in bodies:
+                body_hit = _analyze(body, depth, known) if body.strip() else None
+                if body_hit:
+                    return body_hit
         if sep not in ("|", "|&", "&"):
             # A cd whose target depends on which value a variable holds leaves the folder unknown (protected).
             to: Any = _NOT_CD

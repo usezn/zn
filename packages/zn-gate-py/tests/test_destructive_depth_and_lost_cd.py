@@ -122,6 +122,9 @@ def test_a_command_inside_a_double_quoted_substitution_is_read():
     assert check_command('echo "$(' + DL + ' | sh)"').rule == "destructive:pipe_to_shell"
     assert check_command('echo "$(sh -c "' + RM_HOME + '")"').rule == "destructive:rm_root_home"
     assert check_command('echo "$(echo "$(' + RM_HOME + ')")"').rule == "destructive:rm_root_home"
+    assert check_command('D=~ && D=~/x; cd $D; echo "$(' + DL + ' -o .bashrc)"').rule == "destructive:rc_download"
+    assert check_command('cd ~; x="$(' + DL + ' -o .bashrc)"').rule == "destructive:rc_download"
+    assert check_command('cd /work && cd src && echo "$(' + DL + ' -o out.txt)" && x="$(pwd)"').verdict == "allow"
     assert check_command('echo "$(find . -exec ' + RM_HOME + ' ;)"').rule == "destructive:rm_root_home"
 
 

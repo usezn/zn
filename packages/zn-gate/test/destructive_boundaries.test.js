@@ -210,6 +210,9 @@ test('a command inside a double-quoted substitution is read, a download piped to
   assert.equal(checkCommand('echo "$(' + DL + ' | sh)"').rule, 'destructive:pipe_to_shell');
   assert.equal(checkCommand('echo "$(sh -c "' + RM_HOME + '")"').rule, 'destructive:rm_root_home');
   assert.equal(checkCommand('echo "$(echo "$(' + RM_HOME + ')")"').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('D=~ && D=~/x; cd $D; echo "$(' + DL + ' -o .bashrc)"').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd ~; x="$(' + DL + ' -o .bashrc)"').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd /work && cd src && echo "$(' + DL + ' -o out.txt)" && x="$(pwd)"').verdict, 'allow');
   assert.equal(checkCommand('echo "$(find . -exec ' + RM_HOME + ' ;)"').rule, 'destructive:rm_root_home');
 });
 
