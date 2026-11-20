@@ -1,0 +1,2 @@
+### Fixed
+- The scrubber no longer breaks JSON when an email address follows an escape sequence such as `é` or `\n`: the address is masked without leaving a stray backslash, so scrubbed JSON stays valid. Secrets that start right after a JSON escape (an AWS access key id after `\n` or `\t`, and card, SSN, phone, GitHub and Stripe candidates) are now masked too, instead of being skipped because the escape's letter touched them.

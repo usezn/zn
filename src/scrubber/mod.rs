@@ -73,6 +73,33 @@ fn email_re() -> &'static Regex {
         .get_or_init(|| Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap())
 }
 
+/// Email addresses. The local part may swallow the letters of a JSON escape right before
+/// it (`éuser@example.com`, `\nuser@example.com`); those are left out of the span so
+/// the backslash is never stranded and the output of valid JSON stays valid JSON. An escape
+/// with nothing between it and the `@` leaves no local part, so there is no address to mask.
+fn email_spans(text: &str) -> Vec<(usize, usize)> {
+    let b = text.as_bytes();
+    email_re()
+        .find_iter(text)
+        .filter_map(|m| {
+            let (s, e) = (m.start(), m.end());
+            let skip = if s > 0 && b[s - 1] == b'\\' && odd_backslashes(b, s) {
+                if b[s] == b'u' && s + 5 <= e && b[s + 1..s + 5].iter().all(u8::is_ascii_hexdigit) {
+                    5
+                } else if matches!(b[s], b'n' | b't' | b'r' | b'b' | b'f') {
+                    1
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let at = s + m.as_str().find('@')?;
+            (at > s + skip).then_some((s + skip, e))
+        })
+        .collect()
+}
+
 fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
         // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
@@ -538,7 +565,41 @@ fn formatted_nanp_valid(raw: &str) -> bool {
 /* (letters and digits of any script count as part of a token)        */
 /* ------------------------------------------------------------------ */
 
+/// `true` when an odd number of backslashes ends `bytes[..end]`, so the next byte after
+/// them is escaped (in JSON, `\\` is a backslash on its own and escapes nothing).
+fn odd_backslashes(bytes: &[u8], end: usize) -> bool {
+    bytes[..end]
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
+/// `true` when `text[..end]` ends with a complete JSON escape that holds letters or digits:
+/// `\n`, `\t`, `\r`, `\b`, `\f` or `\uXXXX`. Those characters belong to the escape, not to
+/// the word that follows it, so they never glue a key or a number to what comes next.
+fn ends_with_json_escape(text: &str, end: usize) -> bool {
+    let b = text.as_bytes();
+    if end >= 2
+        && matches!(b[end - 1], b'n' | b't' | b'r' | b'b' | b'f')
+        && odd_backslashes(b, end - 1)
+    {
+        return true;
+    }
+    end >= 6
+        && b[end - 4..end].iter().all(u8::is_ascii_hexdigit)
+        && b[end - 5] == b'u'
+        && odd_backslashes(b, end - 5)
+}
+
+/// The character before `start`, or `None` (as at the start of the text) when it belongs to
+/// a JSON escape such as `\n` or `é`, so a value right after one still starts on a boundary.
 fn char_before(text: &str, start: usize) -> Option<char> {
+    if ends_with_json_escape(text, start) {
+        return None;
+    }
     text[..start].chars().next_back()
 }
 
@@ -868,9 +929,7 @@ impl Scrubber {
     pub fn scrub(input: &str) -> String {
         // Apply scrubbing in order of specificity
         let mut output = jwt_re().replace_all(input, "[JWT_REDACTED]").to_string();
-        output = email_re()
-            .replace_all(&output, "[EMAIL_REDACTED]")
-            .to_string();
+        output = replace_spans(&output, &email_spans(&output), "[EMAIL_REDACTED]");
         output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
         output = replace_spans(&output, &github_token_spans(&output), "[SECRET_REDACTED]");
         output = replace_spans(&output, &stripe_key_spans(&output), "[SECRET_REDACTED]");
@@ -2166,5 +2225,104 @@ mod table_parity_tests {
         assert_eq!(v["n"], serde_json::json!([1, 2]));
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+
+    // JSON escapes: masking must not split an escape, and a key after one is still masked.
+
+    fn parses(s: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(s).is_ok()
+    }
+
+    #[test]
+    fn email_after_json_unicode_escape_keeps_json_valid() {
+        // Minimised fuzz reproducer: NUL, then an address-shaped tail.
+        let json = serde_json::json!({ "v": "\u{0}@m.mm" }).to_string();
+        assert!(json.contains(r"\u0000@m.mm"));
+        assert!(parses(&Scrubber::scrub(&json)));
+        let json = serde_json::json!({ "v": "é@example.com" }).to_string();
+        assert!(parses(&Scrubber::scrub(&json)));
+    }
+
+    #[test]
+    fn email_after_json_escape_is_masked_whole_and_json_stays_valid() {
+        let user = ["user", "@", "example", ".com"].concat();
+        for lead in ["\u{e9}", "\u{0}", "\n", "\t", "\r", "a\n"] {
+            let json = serde_json::json!({ "v": format!("{lead}{user}") }).to_string();
+            let out = Scrubber::scrub(&json);
+            assert!(parses(&out), "invalid JSON for {json}: {out}");
+            assert!(!out.contains(&user), "address survived in {out}");
+            assert!(out.contains("[EMAIL_REDACTED]"), "no mask in {out}");
+        }
+    }
+
+    #[test]
+    fn email_after_escaped_backslash_is_unchanged_in_behaviour() {
+        // `\\n` is a backslash and a letter n: the n is part of the address.
+        let out = Scrubber::scrub(r#"{"v":"\\nuser@example.com"}"#);
+        assert_eq!(out, r#"{"v":"\\[EMAIL_REDACTED]"}"#);
+        assert!(parses(&out));
+    }
+
+    #[test]
+    fn aws_key_after_json_escaped_newline_or_tab_is_masked() {
+        let key = ["AKIA", "IOSFODNN7", "EXAMPLE"].concat();
+        for esc in ["\n", "\t", "\r", "\u{e9}", "\u{1}"] {
+            let json = serde_json::json!({ "cmd": format!("x{esc}{key}{esc}y") }).to_string();
+            let out = Scrubber::scrub(&json);
+            assert!(!out.contains(&key), "key survived in {out}");
+            assert!(parses(&out), "invalid JSON: {out}");
+        }
+    }
+
+    #[test]
+    fn letter_that_is_not_an_escape_still_glues_the_key() {
+        let key = ["AKIA", "IOSFODNN7", "EXAMPLE"].concat();
+        // `\\n` is a literal backslash then n: n touches the key, as before.
+        let text = format!(r"a\\n{key}");
+        assert!(Scrubber::scrub(&text).contains(&key));
+        // A plain letter too.
+        assert!(Scrubber::scrub(&format!("n{key}")).contains(&key));
+    }
+
+    mod json_escape_property {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn scrubbed_json_stays_valid_and_planted_secrets_are_gone(
+                parts in proptest::collection::vec(
+                    prop_oneof![
+                        Just("\n".to_string()),
+                        Just("\t".to_string()),
+                        Just("\"".to_string()),
+                        Just("\\".to_string()),
+                        Just("\u{0}".to_string()),
+                        Just("\u{e9}".to_string()),
+                        Just("\u{1f600}".to_string()),
+                        Just(" ".to_string()),
+                        "[a-f0-9@._-]{0,6}",
+                    ],
+                    0..8,
+                ),
+                which in 0usize..3,
+                esc in prop_oneof![
+                    Just("\n"), Just("\t"), Just("\u{0}"), Just("\u{e9}"), Just(" "),
+                ],
+            ) {
+                let secrets = [
+                    ["AKIA", "IOSFODNN7", "EXAMPLE"].concat(),
+                    ["user", "@", "example", ".com"].concat(),
+                    ["ghp", "_", "aB3dE5gH7jK9mN1pQ3sT", "5vW7yZ2bC4dF6hJ8"].concat(),
+                ];
+                let secret = &secrets[which];
+                let head: String = parts.concat();
+                let value = format!("{head}{esc}{secret}{esc}");
+                let json = serde_json::json!({ "k": value }).to_string();
+                let out = Scrubber::scrub(&json);
+                prop_assert!(parses(&out), "invalid JSON: {}", out);
+                prop_assert!(!out.contains(secret.as_str()), "secret survived: {}", out);
+            }
+        }
     }
 }
