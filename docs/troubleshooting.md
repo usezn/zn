@@ -585,7 +585,7 @@ The message gives the rule in brackets, for example `(rule: destructive:rm_root_
 | "it downloads a script and runs it without anyone reading it first" | A download piped into a shell, such as `curl ... \| sh`. Off unless you turn it on. |
 | "it changes permissions or owners across the whole filesystem or a system folder" | `chmod -R 777` or `chown -R` on the root or a system folder. Off unless you turn it on. |
 | "it is a fork bomb, which freezes the machine" | The classic shell fork bomb. Off unless you turn it on. |
-| "it writes downloaded content into a shell startup file, which runs in every new terminal" | A download written into a file such as `~/.bashrc`. Off unless you turn it on. |
+| "it writes downloaded content into a shell startup file or the SSH authorized_keys file, which run on every login or let a key log in" | A download written into a file such as `~/.bashrc` or `~/.ssh/authorized_keys`. Off unless you turn it on. |
 | "it has more commands than can be checked, so it is refused rather than guessed at" | A command line too long to check in full. |
 
 **Is it safe?** Yes. The command did not run.

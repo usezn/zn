@@ -103,3 +103,13 @@ def test_a_download_into_authorized_keys_is_refused_also_after_a_lost_cd():
     assert check_command("D=~ && D=~/x; cd $D; " + DL + " > " + keys).rule == "destructive:rc_download"
     assert check_command("cd /work && cd src && " + DL + " -o out.txt").verdict == "allow"
     assert check_command("D=~ && D=~/x; cd $D; " + DL + " -o keys.txt").verdict == "allow"
+
+
+def test_deeply_nested_quoted_substitutions_are_refused_quickly():
+    import time
+
+    k = 30
+    t0 = time.time()
+    assert check_command("echo " + '"$(echo ' * k + "x" + ')"' * k).rule == "destructive:too_many_commands"
+    assert check_command('$("' * 1365).rule == "destructive:too_many_commands"
+    assert time.time() - t0 < 1.0

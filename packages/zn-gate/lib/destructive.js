@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.2';
+const COMMAND_RULES_VERSION = '2026-11-20.3';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -36,7 +36,7 @@ const REASONS = {
   disk_overwrite: 'it writes to or formats a disk device',
   perm_root: 'it changes permissions or owners across the whole filesystem or a system folder',
   fork_bomb: 'it is a fork bomb, which freezes the machine',
-  rc_download: 'it writes downloaded content into a shell startup file, which runs in every new terminal',
+  rc_download: 'it writes downloaded content into a shell startup file or the SSH authorized_keys file, which run on every login or let a key log in',
 };
 
 const MAX_DEPTH = 3;
@@ -337,6 +337,9 @@ function requoteSubstitutions(text) {
 }
 
 function requoteText(text, state, lvl) {
+  // Each level escapes the quotes of the one inside it again, so the text doubles per level: past the shell nesting limit
+  // (plus the one level the outer string adds) the line is refused anyway, and the rewriting stops here.
+  if (lvl > MAX_DEPTH + 1) { state.deep = true; return text; }
   let out = '';
   let dq = false;
   for (let i = 0; i < text.length; i++) {
@@ -358,6 +361,7 @@ function requoteText(text, state, lvl) {
       continue;
     }
     out += ch;
+    if (out.length > MAX_CHARS) { state.deep = true; return text; }
   }
   return out;
 }

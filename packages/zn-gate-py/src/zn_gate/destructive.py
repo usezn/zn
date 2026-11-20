@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.2"
+COMMAND_RULES_VERSION = "2026-11-20.3"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -36,7 +36,7 @@ _REASONS = {
     "disk_overwrite": "it writes to or formats a disk device",
     "perm_root": "it changes permissions or owners across the whole filesystem or a system folder",
     "fork_bomb": "it is a fork bomb, which freezes the machine",
-    "rc_download": "it writes downloaded content into a shell startup file, which runs in every new terminal",
+    "rc_download": "it writes downloaded content into a shell startup file or the SSH authorized_keys file, which run on every login or let a key log in",
 }
 
 _MAX_DEPTH = 3
@@ -750,6 +750,11 @@ def _requote_substitutions(text: str) -> Optional[str]:
 
 
 def _requote_text(text: str, state: dict, lvl: int) -> str:
+    # Each level escapes the quotes of the one inside it again, so the text doubles per level: past the shell nesting limit
+    # (plus the one level the outer string adds) the line is refused anyway, and the rewriting stops here.
+    if lvl > _MAX_DEPTH + 1:
+        state["deep"] = True
+        return text
     out: List[str] = []
     dq = False
     i = 0
@@ -778,7 +783,11 @@ def _requote_text(text: str, state: dict, lvl: int) -> str:
             continue
         out.append(ch)
         i += 1
-    return "".join(out)
+    result = "".join(out)
+    if len(result) > _MAX_CHARS:
+        state["deep"] = True
+        return text
+    return result
 
 
 def _backtick_code(text: str) -> str:

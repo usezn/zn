@@ -194,3 +194,11 @@ test('a download into authorized_keys is refused, also after a cd that cannot be
   assert.equal(checkCommand('cd /work && cd src && ' + DL + ' -o out.txt').verdict, 'allow');
   assert.equal(checkCommand('D=~ && D=~/x; cd $D; ' + DL + ' -o keys.txt').verdict, 'allow');
 });
+
+test('deeply nested quoted substitutions are refused quickly, not rewritten without end', () => {
+  const k = 30;
+  const t0 = Date.now();
+  assert.equal(checkCommand('echo ' + '"$(echo '.repeat(k) + 'x' + ')"'.repeat(k)).rule, 'destructive:too_many_commands');
+  assert.equal(checkCommand('$("'.repeat(1365)).rule, 'destructive:too_many_commands');
+  assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
+});
