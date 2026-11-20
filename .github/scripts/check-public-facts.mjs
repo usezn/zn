@@ -97,12 +97,12 @@ export function pinnedFiles(all, exclude) {
   return all.filter((f) => /\.(md|json)$/.test(f) && !exclude.some((p) => f === p || f.startsWith(p)));
 }
 
-/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name a release tag. */
+/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name the release tag. */
 export function marketplaceFiles(all) {
   return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
 }
 // The short form and the URL form (with or without .git); `usezn/zn-other` is another repository.
-const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(#v\S*|\s+--ref\s+v\S*)?/g;
+const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(#\S*|\s+--ref\s+\S*)?/g;
 
 /**
  * All differences between the facts and the files, as readable lines (empty = consistent).
@@ -196,21 +196,27 @@ export function check(facts, files, read, options = {}) {
     const cmpMinor = cmp === null ? null : compareVersions(minor(exampleVersion), minor(version));
     // lastPublished (optional) is the release on npm and PyPI now: examples may stay on it while the next release is cut.
     const lastPublished = facts.examplesVersion.lastPublished;
-    // It only counts when it is the release listed just before version in CHANGELOG.md, so a value left behind on an
-    // older release cannot hide examples that are behind. Without a readable CHANGELOG.md it does not count.
-    // options.published is what the registry serves as the current release (a version string), null when it could not
-    // be read, and undefined when the caller does not look it up: a string must equal lastPublished (or version, once the
-    // release itself is out and the examples have not moved yet), null fails
-    // closed when options.requirePublished is set (CI).
-    let onLastPublished = Boolean(lastPublished) && !isPrerelease(exampleVersion)
-      && compareVersions(base(exampleVersion), base(lastPublished)) === 0
-      && previousRelease(read, version) === lastPublished;
-    if (onLastPublished && cmpMinor < 0 && typeof options.published === 'string' && options.published !== lastPublished && options.published !== version) {
-      errors.push(`public-facts.json: examplesVersion.lastPublished ${lastPublished} is not the release published on npm (${options.published}); npm must serve lastPublished or ${version}`);
-      onLastPublished = false;
-    } else if (onLastPublished && cmpMinor < 0 && options.published === null && options.requirePublished) {
-      errors.push(`public-facts.json: examplesVersion.lastPublished ${lastPublished} could not be checked against npm (registry unreachable)`);
-      onLastPublished = false;
+    // It only counts when it is the release published just before version. options.publishedVersions is the list npm
+    // serves (`npm view zn-gate versions --json`, immutable, so a pull request cannot move it): lastPublished must be
+    // the highest final release strictly lower than version, or version itself once it is published (the examples
+    // have not moved yet). null (registry unreachable) fails closed when options.requirePublished is set (CI).
+    // Without the list (undefined, or null outside CI) the release listed just before version in CHANGELOG.md is the
+    // offline fallback.
+    const candidate = Boolean(lastPublished) && !isPrerelease(exampleVersion)
+      && compareVersions(base(exampleVersion), base(lastPublished)) === 0;
+    let onLastPublished = false;
+    if (candidate) {
+      const versions = options.publishedVersions;
+      if (Array.isArray(versions)) {
+        const lower = versions.filter((v) => !isPrerelease(v) && compareVersions(v, version) === -1).sort(compareVersions);
+        const previous = lower.length ? lower[lower.length - 1] : null;
+        onLastPublished = lastPublished === previous || (lastPublished === version && versions.includes(version));
+        if (!onLastPublished && cmpMinor < 0) errors.push(`public-facts.json: examplesVersion.lastPublished ${lastPublished} is not the release published on npm just before ${version} (${previous ?? 'none'})`);
+      } else if (versions === null && options.requirePublished) {
+        if (cmpMinor < 0) errors.push(`public-facts.json: examplesVersion.lastPublished ${lastPublished} could not be checked against npm (registry unreachable)`);
+      } else {
+        onLastPublished = previousRelease(read, version) === lastPublished;
+      }
     }
     if (cmp === null) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is not a version (X.Y.Z)`);
     else if (cmpMinor < 0 && !onLastPublished) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
@@ -231,15 +237,25 @@ export function check(facts, files, read, options = {}) {
     }
   }
 
-  // Adding the plugin marketplace without a tag follows the default branch, so every command that adds it names a tag
-  // (the version of the tag itself is checked above, with the other pins).
+  // Adding the plugin marketplace without a tag follows the default branch, and a moving ref (vnext, v1, a branch) is no
+  // better, so every command that adds it names exactly the release tag v<docs version> (Claude Code: usezn/zn#vX.Y.Z,
+  // Codex: usezn/zn --ref vX.Y.Z). A pre-release tag is accepted only when it is the version the docs pin. Under the
+  // plugin folders the tag is the plugin pin (pluginVersion), like the other pins there. A placeholder such as
+  // v<version> or vX.Y.Z (a template in the docs) names no ref and is accepted.
+  const pluginPrefixes = (facts.pluginVersion && facts.pluginVersion.pins) || [];
   for (const f of marketplaceFiles(files)) {
+    const want = facts.pluginVersion && pluginPrefixes.some((p) => f.startsWith(p)) ? facts.pluginVersion.value : docs;
     const s = text(f);
     if (s === null) continue;
     for (const m of s.matchAll(MARKETPLACE_ADD)) {
-      if (m[1]) continue;
       const line = s.slice(0, m.index).split('\n').length;
-      errors.push(`${f}:${line}: "${m[0]}" has no release tag: use usezn/zn#v<version> (Claude Code) or usezn/zn --ref v<version> (Codex)`);
+      if (!m[1]) {
+        errors.push(`${f}:${line}: "${m[0]}" has no release tag: use usezn/zn#v${want} (Claude Code) or usezn/zn --ref v${want} (Codex)`);
+        continue;
+      }
+      const ref = m[1].replace(/^#|^\s+--ref\s+/, '').replace(/[`'")\],;].*$/s, '').replace(/[.*]+$/, '');
+      if (ref === `v${want}` || /^v(?:<[a-z-]+>|X\.Y\.Z)$/.test(ref)) continue;
+      errors.push(`${f}:${line}: "${m[0].trim()}" names the ref "${ref}", which is not the release tag v${want}: use usezn/zn#v${want} (Claude Code) or usezn/zn --ref v${want} (Codex)`);
     }
   }
 
@@ -405,12 +421,17 @@ function tagReader(root) {
   };
 }
 
-/** The zn-gate version npm serves now (`npm view zn-gate version`), or null when it cannot be read. */
-export function publishedVersion(run = (cmd, args, opts) => execFileSync(cmd, args, opts)) {
+/**
+ * Every zn-gate version npm has published (`npm view zn-gate versions --json`), or null when it cannot be read.
+ * run(cmd, args, opts) is injectable for tests.
+ */
+export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, args, opts)) {
   try {
-    const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'version'], { encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
-    const v = String(out).trim();
-    return /^\d+\.\d+\.\d+$/.test(v) ? v : null;
+    const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'versions', '--json'], { encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
+    let list = JSON.parse(String(out));
+    if (typeof list === 'string') list = [list];
+    if (!Array.isArray(list) || list.length === 0) return null;
+    return list.every((v) => typeof v === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v)) ? list : null;
   } catch { return null; }
 }
 
@@ -422,7 +443,7 @@ function main() {
   // Set by the workflow on release pull requests only (see .github/workflows/public-facts.yml).
   const pluginWarnings = process.env.PLUGIN_PIN_PENDING === 'true' ? [] : undefined;
   const warnings = [];
-  const errors = check(facts, files, read, { pluginWarnings, warnings, published: publishedVersion(), requirePublished: Boolean(process.env.CI || process.env.GITHUB_ACTIONS) });
+  const errors = check(facts, files, read, { pluginWarnings, warnings, publishedVersions: publishedVersions(), requirePublished: Boolean(process.env.CI || process.env.GITHUB_ACTIONS) });
   errors.push(...checkStatusSamples(files, read, tagReader(root)));
   for (const w of warnings) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   for (const w of pluginWarnings || []) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);

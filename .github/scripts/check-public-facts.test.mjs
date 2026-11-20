@@ -1,7 +1,7 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions, previousRelease, publishedVersion } from './check-public-facts.mjs';
+import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions, previousRelease, publishedVersions } from './check-public-facts.mjs';
 
 const FACTS = {
   version: {
@@ -389,6 +389,25 @@ test('every marketplace add on a public surface names a release tag', () => {
     assert.match(errs[0], /has no release tag/);
   }
   assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn-algo\nclaude plugin marketplace add https://github.com/usezn/zn-algo.git\n' }), []);
+  // Only the exact release tag passes: moving refs and other versions fail in both forms.
+  for (const ref of ['vnext', 'v1', 'v1.17', 'v2.0', 'v2.0.0-rc.1', 'v2.0.0.1', 'main', 'v1.0.0']) {
+    for (const cmd of [`claude plugin marketplace add usezn/zn#${ref}`, `codex plugin marketplace add usezn/zn --ref ${ref}`]) {
+      const errs = run({ ...GOOD, 'README.md': GOOD['README.md'] + cmd + '\n' });
+      assert.match(errs.join('\n'), new RegExp(`README[.]md:\\d+: .*(names the ref "${ref}"|pins )`), cmd);
+    }
+  }
+  assert.match(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#vnext\n' }).join('\n'), /names the ref "vnext", which is not the release tag v2[.]0[.]0/);
+  // The exact tag passes with trailing punctuation, quotes or backticks around the command.
+  const wrapped = '`claude plugin marketplace add usezn/zn#v2.0.0`, then "codex plugin marketplace add usezn/zn --ref v2.0.0". See (usezn/zn marketplace add usezn/zn#v2.0.0).\n';
+  assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + wrapped }), []);
+  // Templates with a placeholder name no ref and pass.
+  assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#vX.Y.Z and add usezn/zn#v<version>`, then marketplace add usezn/zn --ref v<version>\n' }), []);
+  // Under the plugin folders the tag is the plugin pin, which follows the release one step later.
+  const withPlugin = { ...FACTS, version: { ...FACTS.version, pinsExclude: [...FACTS.version.pinsExclude, 'plugins/'] }, pluginVersion: { value: '1.9.0', files: [], pins: ['plugins/'] } };
+  const tree = { ...GOOD, 'plugins/README.md': 'claude plugin marketplace add usezn/zn#v1.9.0\ncodex plugin marketplace add usezn/zn --ref v1.9.0\n', 'docs/a.md': 'claude plugin marketplace add usezn/zn#v2.0.0\n' };
+  assert.deepEqual(check(withPlugin, Object.keys(tree), (f) => tree[f]), []);
+  tree['plugins/README.md'] = 'claude plugin marketplace add usezn/zn#vnext\n';
+  assert.match(check(withPlugin, Object.keys(tree), (f) => tree[f]).join('\n'), /plugins\/README[.]md:1: .*names the ref "vnext", which is not the release tag v1[.]9[.]0/);
   // A tag of another version is caught by the pin check.
   assert.match(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#v1.0.0\n' }).join('\n'), /pins usezn[/]zn#v1[.]0[.]0/);
   // The changelog and code are not public install surfaces.
@@ -476,7 +495,7 @@ test('a release tag where a version constant cannot be read is reported, not rep
 
 // examplesVersion may stay on the last published release while the next one is being cut.
 const CHANGELOG = '## [1.17.0] - 2026-11-20\n\n## [1.16.0] - 2026-11-13\n\n## [1.15.0] - 2026-11-06\n';
-const withPublished = (version, examples, lastPublished, extraOptions = {}) => {
+const withPublished = (version, examples, lastPublished, { changelog = CHANGELOG, ...extraOptions } = {}) => {
   const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples, lastPublished }, docsVersion: { value: '1.0.0' } };
   const tree = {
     'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
@@ -484,7 +503,7 @@ const withPublished = (version, examples, lastPublished, extraOptions = {}) => {
     'py/pyproject.toml': `[project]\nversion = "${version}"\n`,
     'README.md': 'Works with Claude Code, Cursor.\n',
     // lastPublished only counts when it is the release just before version: CHANGELOG has 1.16.0 before 1.17.0
-    'CHANGELOG.md': CHANGELOG,
+    'CHANGELOG.md': changelog,
   };
   const warnings = [];
   const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings, ...extraOptions });
@@ -516,21 +535,35 @@ test('lastPublished: a tampered value (examples and lastPublished both on a stal
   assert.match(errs[0], /examplesVersion 1\.15\.0 is on an older release line than version 1\.17\.0/);
 });
 
-test('lastPublished: it must match the release npm serves when that is known', () => {
-  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { published: '1.16.0' }), { errs: [], warnings: [] });
-  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { published: '1.17.0' }), { errs: [], warnings: [] }, 'the release itself is out, examples not moved yet');
-  const tampered = withPublished('1.17.0', '1.16.0', '1.16.0', { published: '1.18.0' });
-  assert.match(tampered.errs.join('\n'), /lastPublished 1\.16\.0 is not the release published on npm \(1\.18\.0\)/);
+const NPM = ['1.15.0', '1.16.0-rc.1', '1.16.0', '1.17.0-rc.1'];
+
+test('lastPublished: it must be the highest final release npm published before version', () => {
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: NPM }), { errs: [], warnings: [] });
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: [...NPM, '1.17.0'] }), { errs: [], warnings: [] }, 'the release itself is out, examples not moved yet');
+  assert.deepEqual(withPublished('1.17.0', '1.17.0', '1.17.0', { publishedVersions: [...NPM, '1.17.0'] }), { errs: [], warnings: [] });
+  // Lowered examplesVersion and lastPublished, with the CHANGELOG heading edited to match: the registry still serves 1.17.0.
+  const tampered = withPublished('1.17.0', '1.15.0', '1.15.0', { publishedVersions: [...NPM, '1.17.0'], changelog: CHANGELOG.replace('## [1.16.0]', '## [1.15.0]') });
+  assert.match(tampered.errs.join('\n'), /lastPublished 1\.15\.0 is not the release published on npm just before 1\.17\.0 \(1\.16\.0\)/);
   assert.match(tampered.errs.join('\n'), /older release line/);
+  // lastPublished ahead of what npm has (not published yet) fails too.
+  assert.match(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: ['1.15.0'] }).errs.join('\n'), /not the release published on npm just before 1\.17\.0 \(1\.15\.0\)/);
 });
 
-test('lastPublished: an unreachable registry fails closed in CI and is tolerated elsewhere', () => {
-  assert.match(withPublished('1.17.0', '1.16.0', '1.16.0', { published: null, requirePublished: true }).errs.join('\n'), /could not be checked against npm/);
-  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { published: null, requirePublished: false }), { errs: [], warnings: [] });
+test('lastPublished: an unreachable registry fails closed in CI and falls back to the changelog elsewhere', () => {
+  assert.match(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: null, requirePublished: true }).errs.join('\n'), /could not be checked against npm/);
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: null, requirePublished: false }), { errs: [], warnings: [] });
+  // Offline fallback still compares with the changelog.
+  assert.match(withPublished('1.17.0', '1.15.0', '1.15.0', { publishedVersions: null, requirePublished: false }).errs.join('\n'), /older release line/);
 });
 
-test('publishedVersion: returns a clean X.Y.Z, and null on a failure or odd output', () => {
-  assert.equal(publishedVersion(() => '1.16.0\n'), '1.16.0');
-  assert.equal(publishedVersion(() => 'npm error 404'), null);
-  assert.equal(publishedVersion(() => { throw new Error('offline'); }), null);
+test('publishedVersions: parses the npm list, a single version and fails closed on odd output', () => {
+  const calls = [];
+  const ok = publishedVersions((cmd, args) => { calls.push(args.join(' ')); return JSON.stringify(['1.16.0', '1.17.0-rc.1']); });
+  assert.deepEqual(ok, ['1.16.0', '1.17.0-rc.1']);
+  assert.match(calls[0], /view zn-gate versions --json/);
+  assert.deepEqual(publishedVersions(() => '"1.0.0"\n'), ['1.0.0']);
+  assert.equal(publishedVersions(() => 'npm error 404'), null);
+  assert.equal(publishedVersions(() => '[]'), null);
+  assert.equal(publishedVersions(() => '["1.0.0", 5]'), null);
+  assert.equal(publishedVersions(() => { throw new Error('offline'); }), null);
 });
