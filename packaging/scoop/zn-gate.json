@@ -1,0 +1,31 @@
+{
+    "version": "1.17.0",
+    "description": "The local security layer for coding agents",
+    "homepage": "https://usezn.com",
+    "license": "MIT",
+    "depends": "nodejs-lts",
+    "url": "https://registry.npmjs.org/zn-gate/-/zn-gate-1.17.0.tgz",
+    "hash": "sha512:461a6a8264d31e992549e609ab194768b912adde389c279af3abe04d0306d4e6c670200263140806dbbf514339c895588fb5df359592edfd7c68b2d6d461ec94",
+    "extract_dir": "package",
+    "post_install": [
+        "Set-Content -Path \"$dir\\zn-gate.cmd\" -Value '@node \"%~dp0bin\\cli.js\" %*' -Encoding ascii",
+        "Set-Content -Path \"$dir\\zn.cmd\" -Value '@node \"%~dp0bin\\cli.js\" %*' -Encoding ascii",
+        "Set-Content -Path \"$dir\\zn-mcp.cmd\" -Value '@node \"%~dp0bin\\cli.js\" %*' -Encoding ascii"
+    ],
+    "bin": [
+        "zn-gate.cmd",
+        "zn.cmd",
+        "zn-mcp.cmd"
+    ],
+    "checkver": {
+        "url": "https://registry.npmjs.org/zn-gate/latest",
+        "jsonpath": "$.version"
+    },
+    "autoupdate": {
+        "url": "https://registry.npmjs.org/zn-gate/-/zn-gate-$version.tgz",
+        "hash": {
+            "url": "https://registry.npmjs.org/zn-gate/$version",
+            "jsonpath": "$.dist.shasum"
+        }
+    }
+}
