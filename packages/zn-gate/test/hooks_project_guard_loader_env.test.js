@@ -13,6 +13,9 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const launcher = require('../lib/agents/launcher');
 const loaderEnv = require('../lib/loader-env');
+const { shQuote } = require('../lib/shell-quote');
+// The inside of shQuote(s): what s looks like once the command quotes it (each quote in s becomes '"'"').
+const escaped = (s) => shQuote(s).slice(1, -1);
 const { tempDir } = require('./helpers/tmp');
 
 const skip = { skip: process.platform === 'win32' };
@@ -97,11 +100,13 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
     const cmd = launcher.projectShCommand(agent, e);
     // Linux and macOS get the fast scrub (one unset of the listed names). Windows gets the case-insensitive export scan (loader-env.js,
     // shScrubLines with fast off): each platform must carry the scrub its generator emits.
+    // The command carries the script shQuote-escaped (each quote in it comes out as '"'"'), so the scrub is compared in that form.
     const scrub = process.platform === 'win32'
       ? loaderEnv.shScrubLines({ fast: false }).filter((l) => !l.startsWith('#')).join('\n')
       : 'unset ' + loaderEnv.SH_UNSET_NAMES.join(' ');
     assert.ok(cmd.startsWith("sh -c 'LP="), cmd.slice(0, 80));
-    assert.ok(cmd.includes('\n' + scrub + '\n'), 'the shared scrub follows the preload check');
+    assert.ok(cmd.includes(escaped(scrub + '\n')), 'the shared scrub follows the preload check');
+    assert.ok(cmd.indexOf(escaped(scrub)) < cmd.indexOf(escaped('"$Z" hook ' + agent)), 'the scrub comes before zn runs');
     if (process.platform === 'win32') assert.ok(cmd.includes('[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]'), 'the export scan matches NODE_OPTIONS in any case');
     assert.ok(cmd.indexOf('command -v zn') > cmd.indexOf('set +f'), 'the scrub ends before zn is looked for');
     assert.equal(launcher.isProjectGuard(cmd, agent), true);
@@ -114,16 +119,19 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
   assert.equal(launcher.isProjectGuard(ag, 'antigravity'), true);
 });
 
-test('project guard, sh -c form with process.platform stubbed to win32: the case-insensitive export scan is emitted', () => {
+test('project guard, sh -c form with process.platform stubbed to win32: the case-insensitive export scan is emitted before zn runs', () => {
   // The generator reads process.platform when it loads, so the win32 branch runs in a child process with the platform replaced.
   const code = "Object.defineProperty(process, 'platform', { value: 'win32' });\n" +
     'const l = require(' + JSON.stringify(path.join(__dirname, '..', 'lib', 'agents', 'launcher')) + ');\n' +
     "process.stdout.write(l.projectShCommand('claude-code', 'PreToolUse'));\n";
   const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(r.stdout.includes('for ZN_V in $(export -p)'), 'the win32 command has the export scan');
-  assert.ok(r.stdout.includes('[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]'), 'the scan matches NODE_OPTIONS in any case');
-  assert.ok(r.stdout.includes('unset ' + loaderEnv.LOADER_NAMES.join(' ') + '\n'), 'the listed names are unset');
+  const cmd = r.stdout;
+  const scrub = loaderEnv.shScrubLines({ fast: false }).filter((l) => !l.startsWith('#')).join('\n');
+  assert.ok(cmd.includes(escaped(scrub + '\n')), 'the win32 scrub (export scan) is in the command');
+  assert.ok(cmd.includes('[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]'), 'the scan matches NODE_OPTIONS in any case');
+  assert.ok(cmd.includes('unset ' + loaderEnv.LOADER_NAMES.join(' ') + '\n'), 'the listed names are unset');
+  assert.ok(cmd.indexOf(escaped(scrub)) < cmd.indexOf(escaped('"$Z" hook claude-code')), 'the scrub comes before zn runs');
 });
 
 test('project guard, PowerShell form (static: not run on Windows here): the loader variables are removed before zn.cmd starts', () => {
