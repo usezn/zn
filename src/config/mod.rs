@@ -316,7 +316,7 @@ fn default_policy_dir() -> String {
 }
 
 /// Audit configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuditConfig {
     /// Database file path
     #[serde(default = "default_db_path")]
@@ -361,6 +361,23 @@ impl Default for AuditConfig {
     }
 }
 
+/// Debug output hides the database encryption key, so a `{:?}` of the configuration never leaks it.
+impl std::fmt::Debug for AuditConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuditConfig")
+            .field("db_path", &self.db_path)
+            .field("max_logs_in_memory", &self.max_logs_in_memory)
+            .field("encryption_enabled", &self.encryption_enabled)
+            .field(
+                "encryption_key",
+                &self.encryption_key.as_ref().map(|_| "***"),
+            )
+            .field("store_payloads", &self.store_payloads)
+            .field("require_write", &self.require_write)
+            .finish()
+    }
+}
+
 fn default_db_path() -> String {
     "zn.db".to_string()
 }
@@ -369,7 +386,7 @@ fn default_max_logs() -> usize {
 }
 
 /// SIEM (External Audit Export) configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SiemConfig {
     /// External SIEM endpoint (HTTP/HTTPS)
     pub endpoint: Option<String>,
@@ -378,6 +395,17 @@ pub struct SiemConfig {
     /// Export batch size
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
+}
+
+/// Debug output hides the SIEM token.
+impl std::fmt::Debug for SiemConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SiemConfig")
+            .field("endpoint", &self.endpoint)
+            .field("token", &self.token.as_ref().map(|_| "***"))
+            .field("batch_size", &self.batch_size)
+            .finish()
+    }
 }
 
 fn default_batch_size() -> usize {
@@ -1960,5 +1988,62 @@ mod bool_flag_tests {
             })
             .expect_err("must fail");
         assert!(err.to_string().contains("ZN_NEURAL_BLOCKING"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod secret_debug_tests {
+    use super::*;
+
+    #[test]
+    fn audit_config_debug_never_prints_the_key() {
+        let c = AuditConfig {
+            encryption_key: Some("fake-db-key-0000".to_string()),
+            ..AuditConfig::default()
+        };
+        let out = format!("{:?} {:#?}", c, c);
+        assert!(!out.contains("fake-db-key-0000"), "key leaked: {out}");
+        assert!(out.contains("***"));
+        let none = AuditConfig {
+            encryption_key: None,
+            ..AuditConfig::default()
+        };
+        assert!(format!("{:?}", none).contains("encryption_key: None"));
+    }
+
+    #[test]
+    fn siem_config_debug_never_prints_the_token() {
+        let c = SiemConfig {
+            endpoint: Some("https://siem.example.com/ingest".to_string()),
+            token: Some("fake-siem-token-0000".to_string()),
+            batch_size: 10,
+        };
+        let out = format!("{:?} {:#?}", c, c);
+        assert!(!out.contains("fake-siem-token-0000"), "token leaked: {out}");
+        assert!(out.contains("siem.example.com"));
+    }
+
+    #[test]
+    fn whole_config_debug_never_prints_any_secret() {
+        let mut c = ZnConfig::default();
+        c.audit.encryption_key = Some("fake-db-key-0000".to_string());
+        c.siem.token = Some("fake-siem-token-0000".to_string());
+        c.security.api_key = Some("fake-api-key-0000".to_string());
+        c.webhooks = vec![crate::webhooks::WebhookConfig {
+            url: "https://hooks.example.com/services/T000/B000/fake-hook-secret-0000".to_string(),
+            webhook_type: crate::webhooks::WebhookType::Slack,
+            event_filter: vec![],
+            status_filter: vec![],
+            enabled: true,
+        }];
+        let out = format!("{:?} {:#?}", c, c);
+        for secret in [
+            "fake-db-key-0000",
+            "fake-siem-token-0000",
+            "fake-api-key-0000",
+            "fake-hook-secret-0000",
+        ] {
+            assert!(!out.contains(secret), "{secret} leaked");
+        }
     }
 }

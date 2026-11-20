@@ -136,9 +136,16 @@ struct Args {
     #[arg(long, short, global = true)]
     config: Option<String>,
 
-    /// API key for Management API authentication (also accepted after `start` and `dashboard`)
-    #[arg(long, global = true)]
+    /// API key for Management API authentication (also accepted after `start` and `dashboard`).
+    /// Deprecated: the value shows in the process list (`ps`, `/proc`). Use `--api-key-file` or
+    /// the ZN_API_KEY environment variable instead.
+    #[arg(long, global = true, conflicts_with = "api_key_file")]
     api_key: Option<String>,
+
+    /// Read the API key from this file (first line, trimmed) instead of the command line, so it
+    /// does not show in `ps` or `/proc`. Without --api-key or this option, ZN_API_KEY is used.
+    #[arg(long, global = true, value_name = "PATH")]
+    api_key_file: Option<String>,
 
     /// Database path for audit logs (also accepted after `start`)
     #[arg(long, global = true)]
@@ -268,13 +275,35 @@ async fn main() -> Result<()> {
 
 /// Open the dashboard on the port given with --port, or else the port from the
 /// settings file or ZN_PORT, or else the default one.
+/// The API key given on the command line: from `--api-key-file` (the first line, trimmed) or from
+/// the deprecated `--api-key` flag, which also prints a warning because its value is visible in
+/// the process list. `None` when neither is given, so ZN_API_KEY applies as before.
+fn cli_api_key(args: &Args) -> Result<Option<String>> {
+    if let Some(path) = &args.api_key_file {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("Cannot read the API key file {path}: {e}"))?;
+        let key = text.lines().next().unwrap_or("").trim().to_string();
+        if key.is_empty() {
+            return Err(anyhow!("The API key file {path} is empty."));
+        }
+        return Ok(Some(key));
+    }
+    if let Some(key) = &args.api_key {
+        eprintln!(
+            "Warning: --api-key is deprecated: its value is visible to other users in the process list. Use --api-key-file <path> or set ZN_API_KEY instead."
+        );
+        return Ok(Some(key.clone()));
+    }
+    Ok(None)
+}
+
 async fn run_dashboard(args: &Args) -> Result<()> {
     let port = args.port.or_else(|| {
         ZnConfig::load(args.config.as_ref().map(std::path::Path::new))
             .ok()
             .map(|c| c.server.port)
     });
-    tui::TuiApp::run(args.api_key.clone(), port).await
+    tui::TuiApp::run(cli_api_key(args)?, port).await
 }
 
 /// The startup error for a Management API address that cannot be bound.
@@ -302,7 +331,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     if let Some(port) = args.port {
         zn_config.server.port = port;
     }
-    if let Some(api_key) = args.api_key {
+    if let Some(api_key) = cli_api_key(&args)? {
         zn_config.security.api_key = zn::config::normalize_credential(Some(api_key));
     }
     if let Some(db_path) = args.db_path {
@@ -3012,7 +3041,7 @@ mod audit_metadata_tests {
 
 #[cfg(test)]
 mod cli_form_tests {
-    use super::{Args, Commands};
+    use super::{cli_api_key, Args, Commands};
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -3056,6 +3085,52 @@ mod cli_form_tests {
         assert!(matches!(args.command, Some(Commands::Dashboard)));
         assert_eq!(args.port, Some(9191));
         assert_eq!(args.api_key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn the_api_key_file_is_read_and_trimmed() {
+        let dir = std::env::temp_dir().join(format!("zn-key-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("key.txt");
+        std::fs::write(
+            &file,
+            "  fake-key-0000  
+second line
+",
+        )
+        .unwrap();
+        let args = Args::try_parse_from(["zn", "start", "--api-key-file", file.to_str().unwrap()])
+            .unwrap();
+        assert_eq!(
+            cli_api_key(&args).unwrap().as_deref(),
+            Some("fake-key-0000")
+        );
+        std::fs::write(
+            &file, "  
+",
+        )
+        .unwrap();
+        assert!(cli_api_key(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("empty"));
+        std::fs::remove_file(&file).unwrap();
+        assert!(cli_api_key(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot read"));
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn the_flag_still_works_and_cannot_be_mixed_with_the_file() {
+        let args = Args::try_parse_from(["zn", "start", "--api-key", "k"]).unwrap();
+        assert_eq!(cli_api_key(&args).unwrap().as_deref(), Some("k"));
+        let none = Args::try_parse_from(["zn", "start"]).unwrap();
+        assert_eq!(cli_api_key(&none).unwrap(), None);
+        assert!(
+            Args::try_parse_from(["zn", "start", "--api-key", "k", "--api-key-file", "f"]).is_err()
+        );
     }
 
     #[test]

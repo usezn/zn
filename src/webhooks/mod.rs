@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 /// Webhook configuration
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct WebhookConfig {
     /// Webhook URL to send alerts to
     pub url: String,
@@ -24,6 +24,29 @@ pub struct WebhookConfig {
     /// Whether this webhook is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+/// Debug output keeps the scheme and host of the URL and hides the rest: the path of a Slack or
+/// Discord webhook URL is its secret.
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let origin = match self.url.split_once("://") {
+            Some((scheme, rest)) => {
+                let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+                // A userinfo part (user:password@host) is a secret too.
+                let host = host.rsplit('@').next().unwrap_or("");
+                format!("{scheme}://{host}/***")
+            }
+            None => "***".to_string(),
+        };
+        f.debug_struct("WebhookConfig")
+            .field("url", &origin)
+            .field("webhook_type", &self.webhook_type)
+            .field("event_filter", &self.event_filter)
+            .field("status_filter", &self.status_filter)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 fn default_webhook_type() -> WebhookType {
