@@ -563,6 +563,12 @@ Three features are off by default. Each one helps in a narrow case and has limit
   already running in that shell can still change what the shell prints; the block narrows the window, it does not
   make a hostile agent environment safe. Setting the environment of the agent is a step the project is not meant to
   have.
+- **Some loader variables stop the shell before the script runs.** With `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG=help` set in
+  the environment of the agent, the dynamic loader prints its output and the shell exits with status 0 without running
+  any line of the launcher, so the refusal cannot fire and the agent sees a successful hook that did nothing. The
+  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them
+  before it runs. This has the same cause as the preloaded library above and is open until the environment is
+  cleaned before the shell starts.
 - **Re-pinning the hook launchers is the user's.** A hook launcher runs the hook only while the installed zn-gate
   files match the digest it recorded. The commands that record the files again are refused to an agent, like
   `zn hooks install`: running the package's launcher refresh (`lib/agents/refresh.js`, its install step) with
