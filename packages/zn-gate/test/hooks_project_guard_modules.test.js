@@ -67,10 +67,13 @@ for (const [name, run] of Object.entries(forms)) {
 
 test('project guard, PowerShell form: PATH entries in node_modules are dropped before zn.cmd and node are looked for', () => {
   const s = launcher.projectWindowsScript('claude-code', 'PreToolUse');
-  const drop = s.indexOf("-notmatch 'node_modules'");
-  assert.ok(drop > 0, 'no node_modules filter');
-  assert.ok(drop < s.indexOf("(zf 'zn.cmd')"), 'the filter comes after the lookup starts');
-  assert.ok(s.indexOf('function zf') < drop);
+  // Not a text filter any more: each PATH entry and each program found is resolved, links followed, and checked (see
+  // hooks_project_guard_windows_paths.test.js for the behavior on Windows).
+  const drop = s.indexOf("\\node_modules\\'");
+  assert.ok(drop > 0, 'no node_modules check');
+  assert.ok(s.indexOf('function zs(') < drop);
+  assert.ok(drop < s.indexOf("(zg 'zn.cmd')"), 'the check comes before the lookup');
+  assert.ok(s.indexOf('function zf') < s.indexOf('function zg'));
 });
 
 test('OpenCode project plugin: the PATH given to zn has no node_modules entry', () => {

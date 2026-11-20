@@ -52,9 +52,10 @@ function hostileEnv(f, extra = {}) {
     NODE_OPTIONS: '--require ' + f.pre + ' --import ' + pathToFileURL(f.preM).href,
     NODE_PATH: f.dir,
     NODE_V8_COVERAGE: path.join(f.dir, 'cov'),
-    LD_PRELOAD: path.join(f.dir, 'missing-zn-test.so'),
+    // LD_PRELOAD, LD_AUDIT and DYLD_INSERT_LIBRARIES are not here: the launcher refuses to run with one set (they load into the
+    // shell before its first line), see hooks_launcher_preload.test.js. Another library variable shows the cleaning still works.
+    LD_LIBRARY_PATH: path.join(f.dir, 'libs'),
     LD_ZN_TEST_ANY: '1',
-    DYLD_INSERT_LIBRARIES: path.join(f.dir, 'missing.dylib'),
     BASH_ENV: path.join(f.dir, 'bashenv'),
     ENV: path.join(f.dir, 'shenv'),
     OPENSSL_CONF: path.join(f.dir, 'openssl.cnf'),
