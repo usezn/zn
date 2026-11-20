@@ -116,9 +116,9 @@ test('assemble moves the compare links to the new version', (t) => {
 
 test('shipped files: plugin skills and manifests count; repo tools, tests and fixtures do not', () => {
   for (const f of ['plugins/zn-gate/skills/zn-secrets/SKILL.md', '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json',
-    'packages/zn-gate/server.json', 'skill/SKILL.md', 'Cargo.lock']) assert.equal(needsFragment(f), true, f);
+    'packages/zn-gate/server.json', 'skill/SKILL.md', 'Cargo.lock', 'go/client.go', 'go/go.mod']) assert.equal(needsFragment(f), true, f);
   for (const f of ['plugins/tools/check-plugins.js', 'plugins/zn-gate/README.md', 'packages/zn-gate/lib/x.test.js',
-    'packages/zn-gate/test/fixtures/a.json', 'plugins/zn-gate/tests/a.js']) assert.equal(needsFragment(f), false, f);
+    'packages/zn-gate/test/fixtures/a.json', 'plugins/zn-gate/tests/a.js', 'go/README.md', 'go/client_test.go']) assert.equal(needsFragment(f), false, f);
 });
 
 test('a fragment with a byte order mark, a non-ASCII name, or in a subfolder', (t) => {

@@ -30,8 +30,9 @@ const SHIPPED = [
   /^skill\//,
   /^action\.ya?ml$/,
   /^Cargo\.(?:toml|lock)$/,
+  /^go\//,
 ];
-const NEVER = [/(?:^|\/)README[^/]*\.md$/i, /(?:^|\/)tests?\//, /(?:^|\/)__tests__\//, /(?:^|\/)fixtures\//, /\.test\.[cm]?[jt]s$/];
+const NEVER = [/(?:^|\/)README[^/]*\.md$/i, /(?:^|\/)tests?\//, /(?:^|\/)__tests__\//, /(?:^|\/)fixtures\//, /\.test\.[cm]?[jt]s$/, /_test\.go$/];
 
 export function needsFragment(file) {
   return SHIPPED.some((re) => re.test(file)) && !NEVER.some((re) => re.test(file));

@@ -45,6 +45,8 @@ scope ci-scope.sh true  "docs/audit.md (read by a test) runs" docs/audit.md
 scope ci-scope.sh true  "docs file read by a test plus an unread one runs" docs/glossary.md docs/cli.md
 scope ci-scope.sh false "Rust-only change skips the Node and Python jobs" src/main.rs Cargo.lock
 scope ci-scope.sh true  "package change runs" packages/zn-gate/lib/x.js
+scope ci-scope.sh true  "Go change runs" go/client.go
+scope ci-scope.sh true  "Go mod change runs" go/go.mod
 scope ci-scope.sh true  "workflow change runs" .github/workflows/ci.yml
 
 # SKIP_LEG=true skips even a code change (a matrix leg left to the merge queue)
