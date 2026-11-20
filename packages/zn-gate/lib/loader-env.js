@@ -22,6 +22,9 @@ const LOADER_PREFIXES = ['LD_', 'DYLD_'];
 // looked for, or change which file a library name resolves to.
 const LOADER_PRELOAD = [
   'LD_PRELOAD', 'LD_AUDIT', 'LD_LIBRARY_PATH', 'LD_ORIGIN_PATH', 'LD_PROFILE', 'LD_LIBMAP', 'LD_ELF_HINTS_PATH', 'LD_32_LIBRARY_PATH', 'LD_32_PRELOAD',
+  // ld.so makes the shell exit 0 without running the script for these two (a trace or the debug help), and sends its output elsewhere:
+  'LD_TRACE_LOADED_OBJECTS', 'LD_TRACE_LOADED_OBJECTS_FMT1', 'LD_TRACE_LOADED_OBJECTS_FMT2', 'LD_TRACE_LOADED_OBJECTS_ALL', 'LD_DEBUG', 'LD_DEBUG_OUTPUT',
+  'LD_PRELOAD_FDS', 'LD_LIBRARY_PATH_FDS', 'LD_LIBMAP_DISABLE', 'LD_LOADFLTR',
   'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'DYLD_FALLBACK_FRAMEWORK_PATH',
   'DYLD_VERSIONED_LIBRARY_PATH', 'DYLD_VERSIONED_FRAMEWORK_PATH', 'DYLD_IMAGE_SUFFIX', 'DYLD_ROOT_PATH', 'DYLD_SHARED_CACHE_DIR', 'DYLD_SHARED_REGION',
 ];
@@ -56,8 +59,8 @@ function withoutLoaderVars(env) {
 
 // The names the fast scrub unsets: the list above, the loader variables the launchers refuse (LOADER_PRELOAD) and the other
 // named ld.so and dyld settings.
-const SH_UNSET_NAMES = [...new Set([...LOADER_NAMES, ...LOADER_PRELOAD, 'LD_DEBUG', 'LD_DEBUG_OUTPUT', 'LD_BIND_NOW', 'LD_BIND_NOT', 'LD_DYNAMIC_WEAK',
-  'LD_USE_LOAD_BIAS', 'LD_HWCAP_MASK', 'LD_TRACE_LOADED_OBJECTS', 'LD_WARN', 'LD_SHOW_AUXV', 'LD_ASSUME_KERNEL', 'LD_PROFILE_OUTPUT',
+const SH_UNSET_NAMES = [...new Set([...LOADER_NAMES, ...LOADER_PRELOAD, 'LD_BIND_NOW', 'LD_BIND_NOT', 'LD_DYNAMIC_WEAK',
+  'LD_USE_LOAD_BIAS', 'LD_HWCAP_MASK', 'LD_WARN', 'LD_SHOW_AUXV', 'LD_ASSUME_KERNEL', 'LD_PROFILE_OUTPUT',
   'LD_PREFER_MAP_32BIT_EXEC', 'DYLD_FORCE_FLAT_NAMESPACE', 'DYLD_BIND_AT_LAUNCH', 'DYLD_NO_FIX_PREBINDING', 'DYLD_PRINT_LIBRARIES'])];
 
 // A shell pattern that matches a name in any case: NODE_PATH -> [Nn][Oo][Dd][Ee]_[Pp][Aa][Tt][Hh].

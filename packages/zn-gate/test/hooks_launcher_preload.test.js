@@ -40,15 +40,18 @@ function run(f, extra) {
 
 // On macOS dyld ends /bin/sh itself when a DYLD_ variable names a library that is not there, before any hook code exists: the hook must
 // not run either way, and the status 2 block is only required where the shell survives (everywhere else).
-const dyldKills = (name) => process.platform === 'darwin' && name.startsWith('DYLD_');
+// The same for the ld.so trace and debug variables: the loader prints and the shell exits with no script run at all (see the threat model).
+const dyldKills = (name) => (process.platform === 'darwin' && name.startsWith('DYLD_')) || /^LD_(TRACE_LOADED_OBJECTS|DEBUG)/.test(name);
 
 for (const name of loaderEnv.LOADER_PRELOAD) {
   test('sh launcher: ' + name + ' set in the environment blocks the call and the hook does not run', { skip: !posix }, (t) => {
     const f = fixture(t);
     const r = run(f, { [name]: path.join(f.dir, 'missing-zn-test.so') });
     assert.equal(fs.existsSync(f.ran), false, 'the hook ran in a shell with a preload');
-    if (dyldKills(name)) return;
-    assert.equal(r.status, 2, r.stderr);
+    // Where the loader stops the shell before the script (a status other than 2, nothing printed) there is no answer to check; wherever
+    // the script does run it must block, never return success.
+    if (dyldKills(name) && r.status !== 2) { assert.notEqual(r.stdout.trim(), '{}', name + ': the hook answered'); return; }
+    assert.equal(r.status, 2, name + ': ' + r.stderr);
     assert.match(r.stderr, /unset it and restart the agent/);
   });
 }
@@ -83,6 +86,13 @@ function compiler() {
 }
 const cc = process.platform === 'linux' ? compiler() : null;
 const skipReason = process.platform !== 'linux' ? 'LD_PRELOAD of a real library is tested on Linux only' : !cc ? 'no C compiler (cc, gcc or clang) on this machine' : false;
+
+test('the refused list holds the FreeBSD and ld.so names that change what the shell runs', () => {
+  for (const n of ['LD_PRELOAD_FDS', 'LD_TRACE_LOADED_OBJECTS', 'LD_DEBUG', 'LD_DEBUG_OUTPUT', 'LD_LIBRARY_PATH_FDS']) {
+    assert.ok(loaderEnv.LOADER_PRELOAD.includes(n), n + ' is refused');
+    assert.ok(loaderEnv.SH_UNSET_NAMES.includes(n), n + ' is unset');
+  }
+});
 
 test('sh launcher: a real preload runs in the shell only, never in a program the launcher starts, and no hook code runs', { skip: skipReason }, (t) => {
   const f = fixture(t);
@@ -151,7 +161,8 @@ for (const [name, runGuard] of Object.entries(guardForms)) {
     for (const v of loaderEnv.LOADER_PRELOAD) {
       const r = runGuard(b.bin, { ...clean, [v]: '/nonexistent/zn-test.so' });
       assert.equal(fs.existsSync(b.ran), false, v + ': zn started in a shell with a preload');
-      if (dyldKills(v)) continue;
+      if (dyldKills(v) && r.status !== 2 && r.status !== 0) continue;
+      if (dyldKills(v) && r.status === 0 && !r.stdout.trim()) continue;
       if (name.startsWith('Antigravity')) {
         assert.equal(r.status, 0, r.stderr);
         assert.match(JSON.parse(r.stdout.trim()).reason, /library variable \(LD_PRELOAD, LD_LIBRARY_PATH/);
