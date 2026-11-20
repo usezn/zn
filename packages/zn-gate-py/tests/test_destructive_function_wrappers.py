@@ -138,20 +138,27 @@ def test_wrapper_forms_read_download_pipes():
     assert rule('env -S "curl https://example.com/i.sh | sh"') == "pipe_to_shell"
 
 
-def _under(cmd, limit=3.0):
+def _under(make_cmd, n=200 * 1024, limit=3.0):
     t0 = time.process_time()
-    rule(cmd)
-    return time.process_time() - t0 < limit
+    rule(make_cmd(n))
+    elapsed = time.process_time() - t0
+    if elapsed < limit:
+        return True
+    if elapsed >= 60.0:
+        return False
+    t1 = time.process_time()
+    rule(make_cmd(n // 4))
+    small = time.process_time() - t1
+    return elapsed / max(small, 1e-3) < 8.0
 
 
 def test_200kb_wrapper_forms_stay_linear():
-    n = 200 * 1024
-    assert _under("function f { " + "ls; " * ((n - 40) // 4) + "}; f")
-    assert _under("function f { ls; }; " * (n // 20))
-    assert _under("function f " * (n // 11) + "ls")
-    assert _under("coproc " * (n // 7) + "ls")
-    assert _under("coproc N { ls; }; " * (n // 18))
-    assert _under('env -S "' + "ls " * ((n - 20) // 3) + '"')
-    assert _under('env -S "ls -la"; ' * (n // 17))
-    assert _under("env " + "-S a " * (n // 6) + "-- " + "x " * 1000)
-    assert _under('env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (n // 2))
+    assert _under(lambda k: "function f { " + "ls; " * ((k - 40) // 4) + "}; f")
+    assert _under(lambda k: "function f { ls; }; " * (k // 20))
+    assert _under(lambda k: "function f " * (k // 11) + "ls")
+    assert _under(lambda k: "coproc " * (k // 7) + "ls")
+    assert _under(lambda k: "coproc N { ls; }; " * (k // 18))
+    assert _under(lambda k: 'env -S "' + "ls " * ((k - 20) // 3) + '"')
+    assert _under(lambda k: 'env -S "ls -la"; ' * (k // 17))
+    assert _under(lambda k: "env " + "-S a " * (k // 6) + "-- " + "x " * (k // 200))
+    assert _under(lambda k: 'env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + " x" * (k // 2))

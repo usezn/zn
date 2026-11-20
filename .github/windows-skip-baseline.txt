@@ -3,5 +3,5 @@
 # When tests stop being skipped on Windows, lower the number to the one the job prints. Raise it only for a
 # test that cannot run on Windows, and give that test a skip reason.
 # The value is the count the job printed on the GitHub runner.
-# 446: the 432 of main plus 14 tests that cannot run on Windows, each with its reason in its skip: 4 symbolic-link and folder-mode tests from #1190, 1 symbolic-link test from #805, and 9 from #878 (4 Linux quota errno, 2 POSIX shell script, 3 Linux clipboard tools).
-446
+# 448: the 446 above (432 of main plus 14 from #1190, #805 and #878) plus 2 symbolic-link and hard-link tests from #1226 (skipped on Windows where link creation may be refused).
+448
