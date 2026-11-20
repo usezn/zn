@@ -1,0 +1,21 @@
+[package]
+name = "zn-hook-exec"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+description = "Static first-process launcher for zn-gate hooks: removes dynamic-loader variables, then execs the hook launcher. Fails closed."
+publish = false
+
+[[bin]]
+name = "zn-hook-exec"
+path = "src/main.rs"
+
+# Nothing else: std only. A hook launcher with dependencies is more surface to trust.
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
