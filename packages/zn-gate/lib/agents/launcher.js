@@ -40,7 +40,7 @@ const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath } = require('../shell-quote');
 const { winCommandText } = require('../zn-command');
-const { shScrubLines, psScrub, LOADER_NAMES, LOADER_PRELOAD } = require('../loader-env');
+const { shScrubLines, psScrub, SH_UNSET_NAMES, LOADER_PRELOAD } = require('../loader-env');
 
 // Events where exit 2 with a reason on stderr is the documented block.
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
@@ -271,7 +271,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '# A library preloaded into the shell (LD_PRELOAD and the like) ran before this first line and cannot be undone from in here: the hook',
     '# then refuses to answer, and blocks, instead of trusting a shell it cannot vouch for. The variable is read before it is removed below.',
     'ZN_LOADER=; [ -z "' + PRELOAD_VALUE + '" ] || ZN_LOADER=1',
-    ...shScrubLines(),
+    ...shScrubLines({ fast: platform !== 'win32' }),
     'ZN_EVENT="${1:-}"',
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
@@ -576,7 +576,7 @@ const PROJECT_TRUST = [
 ];
 
 // The sh scrub of loader-env.js without its comment lines (it spans lines: the loop reads `export -p` one line at a time).
-const PROJECT_SCRUB = shScrubLines().filter((l) => !l.startsWith('#')).join('\n');
+const PROJECT_SCRUB = shScrubLines({ fast: process.platform !== 'win32' }).filter((l) => !l.startsWith('#')).join('\n');
 
 // Where $Z and $N really are, links resolved (ZP, NP): with readlink -f or realpath, or, for a file that is not a link,
 // its folder read with cd -P (which resolves a linked folder). A PATH entry outside node_modules can be a link into
@@ -652,7 +652,7 @@ function projectShCommand(agentId, event) {
     [test('"x$LP"', '!=', 'x'), ...say(stop), sp('exit', String(stop.exit))].join('&&'),
     'Z=$(' + sp('command', '-v', 'zn') + ')',
     'N=$(' + sp('command', '-v', 'node') + ')',
-    sp('unset', ...LOADER_NAMES),
+    sp('unset', ...SH_UNSET_NAMES),
     ...PROJECT_TRUST.map((x) => x.replace(/^\[ (.*) \] && /, (_, w) => test(...w.split(' ').map((o) => (o === '!=' ? o : o.replace(/^"/, '"x')))) + '&&')),
     ...PROJECT_REAL.map(splitFormLine),
     'R=missing',

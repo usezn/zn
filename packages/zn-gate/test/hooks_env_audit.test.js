@@ -53,13 +53,12 @@ function hostileEnv(f, extra = {}) {
     NODE_PATH: f.dir,
     NODE_V8_COVERAGE: path.join(f.dir, 'cov'),
     // LD_PRELOAD, LD_AUDIT and DYLD_INSERT_LIBRARIES are not here: the launcher refuses to run with one set (they load into the
-    // shell before its first line), see hooks_launcher_preload.test.js. Another LD_ name shows the cleaning still works.
-    LD_ZN_TEST_ANY: '1',
+    // shell before its first line), see hooks_launcher_preload.test.js. Names that are not in the list are left alone on Linux and macOS (the scrub there is `unset` of the listed names only).
     BASH_ENV: path.join(f.dir, 'bashenv'),
     ENV: path.join(f.dir, 'shenv'),
     OPENSSL_CONF: path.join(f.dir, 'openssl.cnf'),
     // Windows reads names in any case; the sh launcher (Git Bash) must catch these too.
-    Node_Options: '--require ' + f.pre,
+    ...(process.platform === 'win32' ? { Node_Options: '--require ' + f.pre } : {}),
     // Kept: they load no code.
     NODE_EXTRA_CA_CERTS: path.join(f.dir, 'extra-ca.pem'),
     HTTPS_PROXY: 'http://proxy.example.invalid:3128',
@@ -99,12 +98,12 @@ test('sh launcher: the scrub comes before the first program the script starts an
   const lines = text.split('\n');
   assert.equal(lines[0], '#!/bin/sh');
   assert.match(lines[1], /^# Written by `zn hooks install codex`; replaced on every install\. Do not edit\.$/);
-  const scrub = loaderEnv.shScrubLines().join('\n');
+  const scrub = loaderEnv.shScrubLines({ fast: process.platform !== 'win32' }).join('\n');
   const at = text.indexOf(scrub);
   assert.ok(at > 0, 'the scrub lines are in the launcher');
   for (const first of ['ZN_EVENT=', 'zn_mk ack', '"$ZN_NODE"']) assert.ok(text.indexOf(first) > at, first + ' comes after the scrub');
   for (const n of loaderEnv.LOADER_NAMES) assert.ok(text.includes(' ' + n + ' ') || text.includes(' ' + n + '\n'), n + ' is unset');
-  const code = loaderEnv.shScrubLines().filter((l) => !l.startsWith('#')).join('\n');
+  const code = loaderEnv.shScrubLines({ fast: process.platform !== 'win32' }).filter((l) => !l.startsWith('#')).join('\n');
   assert.doesNotMatch(code, /NODE_EXTRA_CA_CERTS|PROXY/);
 });
 

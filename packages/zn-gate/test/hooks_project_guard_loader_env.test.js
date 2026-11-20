@@ -44,7 +44,7 @@ function mkbin(t, sub = 'bin') {
     // The system folders come after the test folder: the guard reads real paths with readlink -f or realpath.
     PATH: bin + ':/usr/bin:/bin',
     NODE_OPTIONS: '--require ' + pre,
-    Node_Options: '--require ' + pre,
+    ...(process.platform === 'win32' ? { Node_Options: '--require ' + pre } : {}),
     NODE_PATH: root,
     NODE_EXTRA_CA_CERTS: path.join(root, 'ca.pem'),
     HTTPS_PROXY: 'http://proxy.example.invalid:3128',
@@ -95,7 +95,7 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
   for (const e of [undefined, 'PreToolUse', 'beforeShellExecution']) {
     const agent = e === 'beforeShellExecution' ? 'cursor' : 'claude-code';
     const cmd = launcher.projectShCommand(agent, e);
-    const unset = 'unset ' + loaderEnv.LOADER_NAMES.join(' ');
+    const unset = 'unset ' + loaderEnv.SH_UNSET_NAMES.join(' ');
     assert.ok(cmd.startsWith("sh -c 'LP="), cmd.slice(0, 80));
     assert.ok(cmd.includes('\n' + unset + '\n'), 'the shared scrub follows the preload check');
     assert.ok(cmd.indexOf('command -v zn') > cmd.indexOf('set +f'), 'the scrub ends before zn is looked for');
