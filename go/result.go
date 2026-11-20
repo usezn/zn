@@ -13,9 +13,11 @@ const (
 type Result struct {
 	// Verdict is "allow" or "block".
 	Verdict string `json:"verdict"`
-	// Confidence and Score are the model score for the input, 0 to 1.
-	// Score is nil when no model scored the text (the rules decided, or
-	// the model was unavailable).
+	// Confidence is how sure the API is of the verdict, 0 to 1. When the
+	// rules decide, it comes from the rules, not from a model.
+	// Score is the model score for the input, 0 to 1, and is nil when no
+	// model scored the text (the rules decided, or the model was
+	// unavailable).
 	Confidence float64  `json:"confidence"`
 	Score      *float64 `json:"score"`
 	// Threshold is the score at or above which the model that decided
