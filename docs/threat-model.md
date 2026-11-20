@@ -563,12 +563,13 @@ Three features are off by default. Each one helps in a narrow case and has limit
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
 - **Trace and debug variables stop the shell before any hook runs (accepted, documented limit).** If `LD_TRACE_LOADED_OBJECTS`
-  or `LD_DEBUG` is set in the environment that starts the agent, the dynamic loader prints its own output and usually ends the
-  shell with status 0, before any line of the hook runs. The hook then does nothing, the agent sees no error, and zn-gate cannot
-  block a shell command or a file write in that session. Only whoever starts the agent can set these variables: a shell profile,
-  direnv, or the project's own settings. The agent cannot set them through a tool call, and shell commands are inert in the same
-  way while they are set. `zn-gate check` and the hook install warn when either variable is set. The fix is to unset them before
-  the agent starts.
+  is set in the environment that starts the agent (to any value, even an empty one), or `LD_DEBUG` contains the word `help`
+  (for example `LD_DEBUG=help`), the dynamic loader prints its own output and ends the shell with status 0, before any line of the
+  hook runs. The hook then does nothing, the agent sees no error, and zn-gate cannot block a shell command or a file write in that
+  session. Other `LD_DEBUG` values, such as `LD_DEBUG=libs`, only print diagnostics and do not stop the shell. Only whoever starts
+  the agent can set these variables: a shell profile, direnv, or the project's own settings. The agent cannot set them through a
+  tool call, and shell commands are inert in the same way while they are set. `zn-gate check` and the hook install warn when these
+  variables are set. The fix is to unset them before the agent starts.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell

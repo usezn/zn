@@ -189,17 +189,29 @@ test('zn-gate check warns when a loader variable is set, and only then', () => {
   assert.deepEqual(checkInternal.loaderWarnings({ PATH: '/usr/bin', HTTPS_PROXY: 'http://proxy.example.invalid', NODE_EXTRA_CA_CERTS: '/etc/ca.pem' }), []);
 });
 
-test('zn-gate check: LD_TRACE_LOADED_OBJECTS and LD_DEBUG get their own warning (the hooks do not run with them set)', () => {
-  for (const n of ['LD_TRACE_LOADED_OBJECTS', 'LD_DEBUG']) {
-    const w = checkInternal.loaderWarnings({ [n]: '1', PATH: '/usr/bin' });
-    assert.equal(w.length, 1, n);
-    assert.match(w[0], new RegExp('^' + n + ' is set in this environment\\.'));
-    assert.match(w[0], /the hooks do not run at all/);
+test('zn-gate check: LD_TRACE_LOADED_OBJECTS, and LD_DEBUG with the word help, get the hooks-do-not-run warning', () => {
+  for (const env of [{ LD_TRACE_LOADED_OBJECTS: '1' }, { LD_TRACE_LOADED_OBJECTS: '' }, { LD_DEBUG: 'help' }, { LD_DEBUG: 'libs,help' },
+    { LD_DEBUG: 'libs help' }, { LD_DEBUG: 'libs:help:files' }, { LD_DEBUG: 'help:' }]) {
+    const name = Object.keys(env)[0];
+    const w = checkInternal.loaderWarnings(Object.assign({ PATH: '/usr/bin' }, env));
+    assert.equal(w.length, 1, JSON.stringify(env));
+    assert.match(w[0], new RegExp('^' + name + ' is set in this environment\\. With this variable set, the hooks do not run at all'));
     assert.match(w[0], /Unset it before you start the agent/);
+  }
+});
+
+test('zn-gate check: LD_DEBUG with other words, and the trace format variables, get the normal loader warning', () => {
+  for (const env of [{ LD_DEBUG: 'libs' }, { LD_DEBUG: 'all' }, { LD_DEBUG: '' }, { LD_DEBUG: 'HELP' }, { LD_DEBUG: 'helpx' },
+    { LD_DEBUG: 'libs,helpx' }, { LD_TRACE_LOADED_OBJECTS_FMT1: '1' }, { LD_DEBUG_OUTPUT: '/dev/null' }]) {
+    const name = Object.keys(env)[0];
+    const w = checkInternal.loaderWarnings(Object.assign({ PATH: '/usr/bin' }, env));
+    assert.equal(w.length, 1, JSON.stringify(env));
+    assert.match(w[0], new RegExp('^' + name + ' is set in this environment\\. It makes'));
+    assert.doesNotMatch(w[0], /do not run at all/);
   }
   const both = checkInternal.loaderWarnings({ LD_DEBUG: 'help', LD_PRELOAD: 'a' });
   assert.equal(both.length, 2);
-  assert.match(both[0], /^LD_DEBUG is set in this environment\./);
+  assert.match(both[0], /^LD_DEBUG is set in this environment\. With this variable set, the hooks do not run at all/);
   assert.match(both[1], /^LD_PRELOAD is set in this environment\. It makes/);
 });
 

@@ -1460,14 +1460,14 @@ function loaderWarnings(env) {
     const names = L.loaderVarsIn(env);
     if (!names.length) return [];
     const out = [];
-    const stop = names.filter((n) => L.isShellStopVar(n));
+    const stop = L.shellStopVarsIn(env);
     if (stop.length) {
       const one = stop.length === 1;
       out.push(stop.join(', ') + (one ? ' is' : ' are') + ' set in this environment. With ' + (one ? 'this variable' : 'these variables') +
         ' set, the hooks do not run at all, so zn-gate cannot block anything. Unset ' + (one ? 'it' : 'them') +
         ' before you start the agent, and find out where ' + (one ? 'it comes' : 'they come') + ' from (a shell profile, direnv, or a project\'s own settings).');
     }
-    const other = names.filter((n) => !L.isShellStopVar(n));
+    const other = names.filter((n) => !stop.includes(n));
     if (other.length) {
       const one = other.length === 1;
       const list = other.length > 6 ? other.slice(0, 6).join(', ') + ' and ' + (other.length - 6) + ' more' : other.join(', ');

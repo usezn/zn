@@ -64,18 +64,21 @@ function withoutLoaderVars(env) {
   return out;
 }
 
-// Variables that end the shell before any hook runs: the dynamic loader prints its trace or debug output and exits, so the
-// launcher never gets to refuse anything. Named separately from the rest of the list so zn-gate can warn about them by name.
-const SHELL_STOP_NAMES = ['LD_TRACE_LOADED_OBJECTS', 'LD_TRACE_LOADED_OBJECTS_FMT1', 'LD_TRACE_LOADED_OBJECTS_FMT2', 'LD_TRACE_LOADED_OBJECTS_ALL', 'LD_DEBUG'];
-const SHELL_STOP_VAR = new RegExp('^(' + SHELL_STOP_NAMES.join('|') + ')$', 'i');
-
-function isShellStopVar(name) {
-  return SHELL_STOP_VAR.test(String(name));
+// Variables that end the shell before any hook runs: the dynamic loader prints its own output and exits, so the launcher never
+// gets to refuse anything. Checked with glibc (ld.so): LD_TRACE_LOADED_OBJECTS stops the shell whatever its value, also an empty
+// one. LD_DEBUG stops it only when one of its words is exactly "help"; the words are separated by a comma, a colon or a space
+// (LD_DEBUG=libs prints diagnostics and the shell goes on). The LD_TRACE_LOADED_OBJECTS_FMT1, _FMT2 and _ALL variables only change
+// the trace format and do not stop the shell.
+function isShellStop(name, value) {
+  const n = String(name);
+  if (n === 'LD_TRACE_LOADED_OBJECTS') return true;
+  if (n === 'LD_DEBUG') return String(value == null ? '' : value).split(/[ ,:]/).includes('help');
+  return false;
 }
 
-/** The shell-stop variables set (to any value, also empty) in an environment object, sorted. */
+/** The variables of an environment object that stop the shell before a hook runs (see isShellStop), sorted. */
 function shellStopVarsIn(env) {
-  return Object.keys(env || {}).filter(isShellStopVar).sort();
+  return Object.keys(env || {}).filter((k) => isShellStop(k, env[k])).sort();
 }
 
 // The names the fast scrub unsets: the list above, the loader variables the launchers refuse (LOADER_PRELOAD) and the other
@@ -132,4 +135,4 @@ function psScrub() {
   return WINDOWS_NAMES.map((n) => '$env:' + n + '=$null; ').join('');
 }
 
-module.exports = { isShellStopVar, shellStopVarsIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { isShellStop, shellStopVarsIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
