@@ -10,3 +10,5 @@ packages/zn-gate/test/fixtures/benign-commands.expected.json text eol=lf
 # Most example pull requests add one line to the same group of the examples index, so two of them used to conflict
 # there. A union merge keeps the lines of both sides instead. Review the order of the group after such a merge.
 docs/examples/README.md merge=union
+# The public facts check is run by Node from every checkout: keep LF so it does not turn CRLF on Windows.
+.github/scripts/check-public-facts.mjs text eol=lf

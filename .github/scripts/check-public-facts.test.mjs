@@ -1,7 +1,7 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions } from './check-public-facts.mjs';
+import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions, previousRelease, publishedVersion } from './check-public-facts.mjs';
 
 const FACTS = {
   version: {
@@ -374,6 +374,27 @@ test('a short description is checked word for word on each surface', () => {
   assert.match(errors[0], /short description \(MCP Registry\) is Local layer\. Sends nothing/);
 });
 
+test('every marketplace add on a public surface names a release tag', () => {
+  const tagged = { ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#v2.0.0\n' + 'codex plugin marketplace add usezn/zn --ref v2.0.0\n' };
+  assert.deepEqual(run(tagged), []);
+  for (const [file, cmd] of [['README.md', 'claude plugin marketplace add usezn/zn'], ['packages/zn-gate/README.md', 'claude plugin marketplace add usezn/zn'], ['plugins/zn-gate/README.md', 'codex plugin marketplace add usezn/zn'], ['docs/a.md', '/plugin marketplace add usezn/zn and then']]) {
+    const errs = run({ ...GOOD, [file]: (GOOD[file] || '') + cmd + '\n' });
+    assert.equal(errs.length, 1, file);
+    assert.match(errs[0], /has no release tag/);
+  }
+  // The URL form must name a tag too, and another repository whose name starts with usezn/zn is not this one.
+  for (const cmd of ['claude plugin marketplace add https://github.com/usezn/zn', 'claude plugin marketplace add https://github.com/usezn/zn.git']) {
+    const errs = run({ ...GOOD, 'README.md': GOOD['README.md'] + cmd + '\n' });
+    assert.equal(errs.length, 1, cmd);
+    assert.match(errs[0], /has no release tag/);
+  }
+  assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn-algo\nclaude plugin marketplace add https://github.com/usezn/zn-algo.git\n' }), []);
+  // A tag of another version is caught by the pin check.
+  assert.match(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#v1.0.0\n' }).join('\n'), /pins usezn[/]zn#v1[.]0[.]0/);
+  // The changelog and code are not public install surfaces.
+  assert.deepEqual(run({ ...GOOD, 'CHANGELOG.md': 'claude plugin marketplace add usezn/zn\n' }), []);
+});
+
 const LIB = {
   'packages/zn-gate/lib/rules.js': "const RULES_VERSION = '2026-11-11.2';\n",
   'packages/zn-gate/lib/scrub/patterns.js': "const SCRUB_RULES_VERSION = '2026-11-11.1';\n",
@@ -454,16 +475,19 @@ test('a release tag where a version constant cannot be read is reported, not rep
 });
 
 // examplesVersion may stay on the last published release while the next one is being cut.
-const withPublished = (version, examples, lastPublished) => {
+const CHANGELOG = '## [1.17.0] - 2026-11-20\n\n## [1.16.0] - 2026-11-13\n\n## [1.15.0] - 2026-11-06\n';
+const withPublished = (version, examples, lastPublished, extraOptions = {}) => {
   const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples, lastPublished }, docsVersion: { value: '1.0.0' } };
   const tree = {
     'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
     'pkg/server.json': JSON.stringify({ packages: [{ version }] }),
     'py/pyproject.toml': `[project]\nversion = "${version}"\n`,
     'README.md': 'Works with Claude Code, Cursor.\n',
+    // lastPublished only counts when it is the release just before version: CHANGELOG has 1.16.0 before 1.17.0
+    'CHANGELOG.md': CHANGELOG,
   };
   const warnings = [];
-  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings });
+  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings, ...extraOptions });
   return { errs, warnings };
 };
 
@@ -477,4 +501,36 @@ test('final release: examples older than the last published version fail', () =>
     assert.equal(errs.length, 1, ex);
     assert.match(errs[0], /is on an older release line than version 1\.17\.0/, ex);
   }
+});
+
+test('lastPublished: previousRelease reads the release just before version, with LF or CRLF', () => {
+  assert.equal(previousRelease(() => CHANGELOG, '1.17.0'), '1.16.0');
+  assert.equal(previousRelease(() => CHANGELOG.replace(/\n/g, '\r\n'), '1.17.0'), '1.16.0');
+  assert.equal(previousRelease(() => CHANGELOG, '9.9.9'), null);
+  assert.equal(previousRelease(() => { throw new Error('missing'); }, '1.17.0'), null);
+});
+
+test('lastPublished: a tampered value (examples and lastPublished both on a stale release) fails', () => {
+  const { errs } = withPublished('1.17.0', '1.15.0', '1.15.0');
+  assert.equal(errs.length, 1, errs.join('\n'));
+  assert.match(errs[0], /examplesVersion 1\.15\.0 is on an older release line than version 1\.17\.0/);
+});
+
+test('lastPublished: it must match the release npm serves when that is known', () => {
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { published: '1.16.0' }), { errs: [], warnings: [] });
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { published: '1.17.0' }), { errs: [], warnings: [] }, 'the release itself is out, examples not moved yet');
+  const tampered = withPublished('1.17.0', '1.16.0', '1.16.0', { published: '1.18.0' });
+  assert.match(tampered.errs.join('\n'), /lastPublished 1\.16\.0 is not the release published on npm \(1\.18\.0\)/);
+  assert.match(tampered.errs.join('\n'), /older release line/);
+});
+
+test('lastPublished: an unreachable registry fails closed in CI and is tolerated elsewhere', () => {
+  assert.match(withPublished('1.17.0', '1.16.0', '1.16.0', { published: null, requirePublished: true }).errs.join('\n'), /could not be checked against npm/);
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { published: null, requirePublished: false }), { errs: [], warnings: [] });
+});
+
+test('publishedVersion: returns a clean X.Y.Z, and null on a failure or odd output', () => {
+  assert.equal(publishedVersion(() => '1.16.0\n'), '1.16.0');
+  assert.equal(publishedVersion(() => 'npm error 404'), null);
+  assert.equal(publishedVersion(() => { throw new Error('offline'); }), null);
 });
