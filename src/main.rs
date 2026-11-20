@@ -3064,6 +3064,127 @@ mod cli_form_tests {
     }
 }
 
+#[cfg(test)]
+mod cors_layer_tests {
+    use super::build_cors_layer;
+    use axum::{routing::get, Router};
+    use reqwest::{Method, Response};
+
+    async fn serve(origins: &[&str]) -> String {
+        let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
+        let app = Router::new()
+            .route("/ping", get(|| async { "pong" }))
+            .layer(build_cors_layer(&origins));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/ping")
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    async fn preflight(url: &str, origin: &str) -> Response {
+        client()
+            .request(Method::OPTIONS, url)
+            .header("Origin", origin)
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", "authorization")
+            .send()
+            .await
+            .unwrap()
+    }
+
+    fn header(resp: &Response, name: &str) -> Option<String> {
+        resp.headers()
+            .get(name)
+            .map(|v| v.to_str().unwrap().to_ascii_lowercase())
+    }
+
+    #[tokio::test]
+    async fn a_preflight_from_a_default_origin_is_answered_with_the_configured_policy() {
+        let url = serve(&[]).await;
+        let resp = preflight(&url, "http://localhost:5173").await;
+        assert!(resp.status().is_success(), "{}", resp.status());
+        assert_eq!(
+            header(&resp, "access-control-allow-origin").as_deref(),
+            Some("http://localhost:5173")
+        );
+        assert_eq!(
+            header(&resp, "access-control-allow-credentials").as_deref(),
+            Some("true")
+        );
+        let methods = header(&resp, "access-control-allow-methods").unwrap();
+        for m in ["get", "post", "options"] {
+            assert!(methods.contains(m), "{methods}");
+        }
+        assert!(!methods.contains("delete"), "{methods}");
+        let headers = header(&resp, "access-control-allow-headers").unwrap();
+        for h in ["content-type", "authorization", "x-api-key"] {
+            assert!(headers.contains(h), "{headers}");
+        }
+        assert!(header(&resp, "vary").unwrap().contains("origin"));
+    }
+
+    #[tokio::test]
+    async fn an_origin_that_is_not_listed_gets_no_allow_origin_header() {
+        let url = serve(&[]).await;
+        let resp = preflight(&url, "https://evil.example.com").await;
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+        let resp = client()
+            .get(&url)
+            .header("Origin", "https://evil.example.com")
+            .send()
+            .await
+            .unwrap();
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+    }
+
+    #[tokio::test]
+    async fn configured_origins_replace_the_defaults() {
+        let url = serve(&["https://dashboard.example.com"]).await;
+        let resp = preflight(&url, "https://dashboard.example.com").await;
+        assert_eq!(
+            header(&resp, "access-control-allow-origin").as_deref(),
+            Some("https://dashboard.example.com")
+        );
+        let resp = preflight(&url, "http://localhost:5173").await;
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_normal_request_from_a_listed_origin_carries_the_allow_headers() {
+        let url = serve(&["https://dashboard.example.com"]).await;
+        let resp = client()
+            .get(&url)
+            .header("Origin", "https://dashboard.example.com")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            header(&resp, "access-control-allow-origin").as_deref(),
+            Some("https://dashboard.example.com")
+        );
+        assert_eq!(
+            header(&resp, "access-control-allow-credentials").as_deref(),
+            Some("true")
+        );
+        assert_eq!(resp.text().await.unwrap(), "pong");
+    }
+
+    #[tokio::test]
+    async fn entries_that_are_not_valid_header_values_are_dropped() {
+        // Nothing valid is left, so no origin is allowed (the defaults are not used).
+        let url = serve(&["bad\nvalue"]).await;
+        let resp = preflight(&url, "http://localhost:5173").await;
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+    }
+}
+
 /// Paths that used to fail open: a neural check that cannot run while neural blocking is on, fast boot
 /// with neural blocking, and approvals or loop counts shared between namespaces.
 #[cfg(test)]
