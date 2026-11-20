@@ -1,0 +1,2 @@
+### Security
+- The command check now refuses a shell command nested more than three levels deep (for example sh -c inside sh -c several times, or a backtick substitution inside the third level) instead of letting it through unchecked, and it blocks a write to a shell startup file such as .bashrc after a cd whose target cannot be resolved (for example a variable with several possible values). The Python package gets the same fixes.

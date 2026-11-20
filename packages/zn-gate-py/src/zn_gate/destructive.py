@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.29"
+COMMAND_RULES_VERSION = "2026-11-20.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1189,6 +1189,14 @@ def _from_cwd(cwd: Any, word: str) -> str:
     return _folder_text(cwd, ups + 4) + "/" + word
 
 
+def _rc_from_cwd(cwd: Any, word: str) -> str:
+    """A startup-file name written from a folder the line lost track of: it may be in the home folder, so it is read from
+    the root (a name that is not anchored still ends in the same file name). Used for rc targets only; rm keeps _from_cwd."""
+    if cwd is _CWD_LOST and not _ANCHORED_RE.match(str(word)):
+        return "/" + str(word)
+    return _from_cwd(cwd, word)
+
+
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
     args, chdir, overflow, splits, unsure, chain_words, split_tail = _unwrap_dir(words)
     if overflow:
@@ -1270,6 +1278,9 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
         and _SHELL_RUNS_DOWNLOAD_RE.search('sh -c "' + code + '"')
     ):
         return "pipe_to_shell"
+    # Past the nesting limit a shell string is refused, not skipped: its commands would not be checked.
+    if code is not None and depth >= _MAX_DEPTH and code.strip() != "":
+        return _OVERFLOW
     if code is not None and depth < _MAX_DEPTH:
         hit = _analyze(code, depth + 1, known)
         if hit:
@@ -1489,7 +1500,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                     target = w[3:]
                 if target is not None:
                     # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
-                    alts = _brace_alts(_from_cwd(heads[j][4], target))
+                    alts = _brace_alts(_rc_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
@@ -1609,6 +1620,9 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
         return "pipe_to_shell"
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
+    # Past the nesting limit a backtick substitution is refused, not skipped: its commands would not be checked.
+    if depth >= _MAX_DEPTH and "`" in text and _backtick_code(text):
+        return _OVERFLOW
     segs, truncated = _segments_of(text)
     hit = _check_segments(segs, depth, known)
     if hit:
