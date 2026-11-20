@@ -1,0 +1,2 @@
+### Changed
+- The gateway checks large tool calls faster: text made of plain ASCII skips the character-by-character folding pass of the managed rules, the arguments are folded once per pass instead of once per check, and the log redaction copies the text only when it changes something. A single log or audit field is now cut at 1 MiB (at a word boundary, with a `[TRUNCATED n BYTES]` marker) after redaction, so a very large call cannot make logging slow. Blocking decisions do not change.

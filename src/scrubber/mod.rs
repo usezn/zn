@@ -20,6 +20,7 @@
 //! Regex patterns are compiled once and cached using `OnceLock` for optimal performance.
 
 use regex::Regex;
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 /// Writer for the gateway's own log lines: redacts each line with
@@ -227,9 +228,9 @@ fn quoted_open_re() -> &'static Regex {
 /// whitespace in it (api_re() does the rest); a value shorter than 8 characters, a placeholder,
 /// or one with no closing quote within MAX_QUOTED_VALUE bytes is left as it is (api_re() still
 /// sees it afterwards).
-fn redact_quoted_values(text: &str) -> String {
+fn redact_quoted_values(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
+    let mut out = String::new();
     let mut done = 0; // bytes of `text` already copied or replaced
     let mut from = 0; // where to look for the next opening
     while let Some(caps) = quoted_open_re().captures_at(text, from) {
@@ -311,8 +312,12 @@ fn redact_quoted_values(text: &str) -> String {
         done = after;
         from = done;
     }
+    if done == 0 {
+        // Nothing was redacted: the caller keeps its text and no copy was made.
+        return None;
+    }
     out.push_str(&text[done..]);
-    out
+    Some(out)
 }
 
 /// Replacement for one api_re() match. A plain `name=value` becomes `name: [SECRET_REDACTED]`.
@@ -847,6 +852,52 @@ fn iban_valid(raw: &str) -> bool {
     rem == 1
 }
 
+/// The most text of one field `redact_for_log` scans and keeps. Longer text is cut (see
+/// `log_head`), which bounds what a log or audit record costs however large the call is.
+pub const MAX_LOG_REDACT_BYTES: usize = 1 << 20;
+
+/// The head of `input` to keep for a log: at most MAX_LOG_REDACT_BYTES, ending at a white space
+/// or line break found in the last 4 KiB when there is one (else at a character boundary), plus
+/// the number of bytes left out.
+fn log_head(input: &str) -> (&str, usize) {
+    let mut end = MAX_LOG_REDACT_BYTES.min(input.len());
+    while !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    let floor = end.saturating_sub(4096);
+    if let Some(pos) = input.as_bytes()[floor..end]
+        .iter()
+        .rposition(|b| b.is_ascii_whitespace())
+    {
+        end = floor + pos;
+    }
+    (&input[..end], input.len() - end)
+}
+
+/// Runs one scrub stage on the text. A stage returns the new text, or `None` when it changed
+/// nothing, so the text is only copied when something was redacted.
+fn stage<'a>(text: Cow<'a, str>, f: impl FnOnce(&str) -> Option<String>) -> Cow<'a, str> {
+    match f(&text) {
+        Some(changed) => Cow::Owned(changed),
+        None => text,
+    }
+}
+
+fn regex_stage(re: &Regex, text: &str, marker: &str) -> Option<String> {
+    match re.replace_all(text, marker) {
+        Cow::Owned(o) => Some(o),
+        Cow::Borrowed(_) => None,
+    }
+}
+
+fn span_stage(text: &str, spans: &[(usize, usize)], marker: &str) -> Option<String> {
+    if spans.is_empty() {
+        None
+    } else {
+        Some(replace_spans(text, spans, marker))
+    }
+}
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -866,22 +917,42 @@ impl Scrubber {
     /// assert!(scrubbed.contains("[SECRET_REDACTED]"));
     /// ```
     pub fn scrub(input: &str) -> String {
-        // Apply scrubbing in order of specificity
-        let mut output = jwt_re().replace_all(input, "[JWT_REDACTED]").to_string();
-        output = email_re()
-            .replace_all(&output, "[EMAIL_REDACTED]")
-            .to_string();
-        output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
-        output = replace_spans(&output, &github_token_spans(&output), "[SECRET_REDACTED]");
-        output = replace_spans(&output, &stripe_key_spans(&output), "[SECRET_REDACTED]");
-        output = auth_re().replace_all(&output, redact_auth).to_string();
-        output = redact_quoted_values(&output);
-        output = api_re().replace_all(&output, redact_secret).to_string();
-        output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
-        output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
-        output = replace_spans(&output, &e164_spans(&output), "[PHONE_REDACTED]");
-        output = replace_spans(&output, &nanp_spans(&output), "[PHONE_REDACTED]");
+        Self::scrub_cow(Cow::Borrowed(input)).into_owned()
+    }
 
+    /// The scrub pipeline on text that may already be owned. Each stage copies the text only
+    /// when it changes something, so clean text costs the matching passes and no copies.
+    fn scrub_cow(input: Cow<'_, str>) -> Cow<'_, str> {
+        // Apply scrubbing in order of specificity
+        let mut output = input;
+        output = stage(output, |t| regex_stage(jwt_re(), t, "[JWT_REDACTED]"));
+        output = stage(output, |t| regex_stage(email_re(), t, "[EMAIL_REDACTED]"));
+        output = stage(output, |t| {
+            span_stage(t, &aws_key_spans(t), "[SECRET_REDACTED]")
+        });
+        output = stage(output, |t| {
+            span_stage(t, &github_token_spans(t), "[SECRET_REDACTED]")
+        });
+        output = stage(output, |t| {
+            span_stage(t, &stripe_key_spans(t), "[SECRET_REDACTED]")
+        });
+        output = stage(output, |t| match auth_re().replace_all(t, redact_auth) {
+            Cow::Owned(o) => Some(o),
+            Cow::Borrowed(_) => None,
+        });
+        output = stage(output, redact_quoted_values);
+        output = stage(output, |t| match api_re().replace_all(t, redact_secret) {
+            Cow::Owned(o) => Some(o),
+            Cow::Borrowed(_) => None,
+        });
+        output = stage(output, |t| span_stage(t, &card_spans(t), "[CARD_REDACTED]"));
+        output = stage(output, |t| span_stage(t, &ssn_spans(t), "[SSN_REDACTED]"));
+        output = stage(output, |t| {
+            span_stage(t, &e164_spans(t), "[PHONE_REDACTED]")
+        });
+        output = stage(output, |t| {
+            span_stage(t, &nanp_spans(t), "[PHONE_REDACTED]")
+        });
         output
     }
 
@@ -892,19 +963,33 @@ impl Scrubber {
     /// host, payment and chat tokens, private key blocks, IBANs). This is for
     /// what the gateway records about a call, never for what it forwards.
     pub fn redact_for_log(input: &str) -> String {
-        let mut output = token_re()
-            .replace_all(input, "[SECRET_REDACTED]")
-            .to_string();
-        output = iban_re()
-            .replace_all(&output, |c: &regex::Captures| {
+        if input.len() > MAX_LOG_REDACT_BYTES {
+            // A log or audit record never needs more than this much of one field. The text is cut
+            // at a word boundary (so no secret is cut in half), the head is redacted as usual,
+            // and the cut is marked with the number of bytes left out.
+            let (head, dropped) = log_head(input);
+            let mut out = Self::redact_for_log(head);
+            out.push_str(&format!(" [TRUNCATED {dropped} BYTES]"));
+            return out;
+        }
+        let mut output = Cow::Borrowed(input);
+        output = stage(output, |t| regex_stage(token_re(), t, "[SECRET_REDACTED]"));
+        output = stage(output, |t| {
+            let mut changed = false;
+            let out = iban_re().replace_all(t, |c: &regex::Captures| {
                 if iban_valid(&c[0]) {
+                    changed = true;
                     "[IBAN_REDACTED]".to_string()
                 } else {
                     c[0].to_string()
                 }
-            })
-            .to_string();
-        Self::scrub(&output)
+            });
+            match out {
+                Cow::Owned(o) if changed => Some(o),
+                _ => None,
+            }
+        });
+        Self::scrub_cow(output).into_owned()
     }
 
     /// Check if a string contains any detectable PII
@@ -915,8 +1000,10 @@ impl Scrubber {
     /// # Returns
     /// `true` if any PII patterns are detected
     pub fn contains_pii(input: &str) -> bool {
-        let scrubbed = Self::scrub(input);
-        scrubbed != input
+        match Self::scrub_cow(Cow::Borrowed(input)) {
+            Cow::Borrowed(_) => false,
+            Cow::Owned(scrubbed) => scrubbed != input,
+        }
     }
 
     /// Get a list of PII types found in the input
@@ -932,7 +1019,7 @@ impl Scrubber {
         if api_re()
             .captures_iter(input)
             .any(|c| !secret_placeholder(secret_value(&c)))
-            || redact_quoted_values(input) != input
+            || redact_quoted_values(input).is_some_and(|redacted| redacted != input)
         {
             types.push("api_key_or_secret");
         }
@@ -2166,5 +2253,95 @@ mod table_parity_tests {
         assert_eq!(v["n"], serde_json::json!([1, 2]));
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn clean_text_is_not_copied_by_any_stage() {
+        // Work counted, not time: text the scrubber leaves alone comes back borrowed, so the
+        // pipeline made no copy for any of its stages, however large or odd the input.
+        for input in [
+            "plain words ".repeat(100_000),
+            "token=\"".to_string() + &"a".repeat(1 << 20),
+            "'".repeat(1 << 20),
+            "token=".repeat(100_000),
+        ] {
+            let out = Scrubber::scrub_cow(Cow::Borrowed(&input));
+            if input.starts_with("token=\"") || input.starts_with("token=token") {
+                // An unclosed quote and a bare `token=` run may or may not be redacted; only
+                // the result matters here.
+                assert_eq!(out.as_ref(), Scrubber::scrub(&input));
+            } else {
+                assert!(matches!(out, Cow::Borrowed(_)));
+            }
+        }
+        assert!(!Scrubber::contains_pii(&"plain words ".repeat(100_000)));
+    }
+
+    #[test]
+    fn log_redaction_is_bounded_and_marks_the_cut() {
+        // A huge field: the head is redacted, the rest is dropped and counted.
+        let mut text = String::from("api_key=fakekeyfakekeyfakekey user@example.com ");
+        text.push_str(&"plain words ".repeat(MAX_LOG_REDACT_BYTES / 6));
+        text.push_str("tail secret ghp_fakefakefakefakefakefakefakefake0000");
+        let start = std::time::Instant::now();
+        let out = Scrubber::redact_for_log(&text);
+        assert!(start.elapsed() < std::time::Duration::from_secs(20));
+        assert!(out.len() < MAX_LOG_REDACT_BYTES + 64, "kept {}", out.len());
+        assert!(out.contains("[SECRET_REDACTED]") && out.contains("[EMAIL_REDACTED]"));
+        assert!(!out.contains("fakekeyfake") && !out.contains("ghp_"));
+        let marker = out.rsplit(" [TRUNCATED ").next().unwrap();
+        assert!(marker.ends_with(" BYTES]"), "{marker}");
+        let dropped: usize = marker.trim_end_matches(" BYTES]").parse().unwrap();
+        assert!(dropped > 0 && dropped < text.len());
+    }
+
+    #[test]
+    fn log_redaction_is_unchanged_up_to_the_cap() {
+        let text = "api_key=fakekeyfakekeyfakekey ".to_string()
+            + &"word ".repeat((MAX_LOG_REDACT_BYTES - 64) / 5);
+        assert!(text.len() <= MAX_LOG_REDACT_BYTES);
+        let out = Scrubber::redact_for_log(&text);
+        assert!(!out.contains("TRUNCATED"));
+        assert!(out.contains("[SECRET_REDACTED]"));
+    }
+
+    #[test]
+    fn log_cut_is_never_inside_a_character() {
+        let text = "é".repeat(MAX_LOG_REDACT_BYTES);
+        let (head, dropped) = log_head(&text);
+        assert!(head.len() <= MAX_LOG_REDACT_BYTES);
+        assert_eq!(head.len() + dropped, text.len());
+        let _ = Scrubber::redact_for_log(&text);
+    }
+
+    #[test]
+    fn large_scrub_stays_within_a_generous_time_bound() {
+        // A ceiling, not a benchmark (20 s against about a second): a quadratic pass would miss it
+        // by orders of magnitude, a loaded CI runner will not reach it.
+        let start = std::time::Instant::now();
+        for input in [
+            "plain words ".repeat(1 << 17),
+            "user a@b.co token=xxxxxxxxxxxx ".repeat(1 << 15),
+            "token=".repeat(1 << 18),
+        ] {
+            let _ = Scrubber::scrub(&input);
+            let _ = Scrubber::contains_pii(&input);
+            let _ = Scrubber::detect_pii_types(&input);
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn redaction_past_a_large_prefix_is_found() {
+        let mut text = "plain words ".repeat(80_000);
+        text.push_str("api_key=fakekeyfakekeyfakekey user@example.com");
+        let out = Scrubber::redact_for_log(&text);
+        assert!(out.contains("[SECRET_REDACTED]") && out.contains("[EMAIL_REDACTED]"));
+        assert!(Scrubber::contains_pii(&text));
+        assert!(Scrubber::detect_pii_types(&text).contains(&"email"));
     }
 }

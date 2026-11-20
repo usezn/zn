@@ -16,7 +16,8 @@ impl ManagedRuleset {
         Self::evaluate_folded(config, tool_name, arguments, fold_system1)?;
         // An invisible character used as a space ("ignore<U+3164>all previous instructions") joins the words
         // in the folded text above, so the same checks run again with each one read as a space.
-        if arguments.chars().any(is_invisible) || tool_name.chars().any(is_invisible) {
+        let has_invisible = |t: &str| !is_fold_neutral_ascii(t) && t.chars().any(is_invisible);
+        if has_invisible(arguments) || has_invisible(tool_name) {
             Self::evaluate_folded(config, tool_name, arguments, fold_system1_spaced)?;
         }
 
@@ -43,6 +44,9 @@ impl ManagedRuleset {
         arguments: &str,
         fold: fn(&str) -> String,
     ) -> std::result::Result<(), String> {
+        // The arguments are folded once per pass and shared by all four checks.
+        let folded = fold(arguments);
+
         // 1. Restricted Commands
         // Both the tool name and the argument text match whole words only:
         // "confirm"/"address"/"odd" are not "rm"/"dd", and neither are the
@@ -52,7 +56,6 @@ impl ManagedRuleset {
                 "rm", "format", "mkfs", "dd", "chmod", "chown", "shutdown", "reboot",
             ];
             let folded_tool = fold(tool_name);
-            let folded_args = fold(arguments);
             // Each part of the tool name is checked whole (lowercased, so
             // "ShutDown" and "chMod" count) and split on camelCase.
             let tool_hit = folded_tool
@@ -60,7 +63,7 @@ impl ManagedRuleset {
                 .map(|part| part.to_ascii_lowercase())
                 .chain(tool_name_words(&folded_tool))
                 .any(|w| restricted_tool_word(&w));
-            let args_hit = folded_args
+            let args_hit = folded
                 .split(|c: char| !c.is_ascii_alphanumeric())
                 .any(|w| dangerous.iter().any(|&cmd| w.eq_ignore_ascii_case(cmd)));
             if tool_hit || args_hit {
@@ -69,7 +72,6 @@ impl ManagedRuleset {
         }
 
         // 2. LFI Protection
-        let folded = fold(arguments);
         if config.lfi_protection && lfi_guard::contains_lfi(&folded) {
             return Err("Local File Inclusion (LFI) attempt detected".to_string());
         }
@@ -188,7 +190,32 @@ pub fn fold_system1_spaced(input: &str) -> String {
     fold_with(input, true)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Number of folds that took the plain-ASCII shortcut on the current thread.
+    static FOLD_FAST_PATH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Number of fold passes the current thread has run (tests count work, not time).
+    static FOLD_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// True when no character of `input` can change under folding: printable ASCII and the usual white
+/// space. Folding only touches NUL and the other invisible control characters, bidi marks, and
+/// non-ASCII look-alikes, so such text is returned as it is without the per-character pass.
+fn is_fold_neutral_ascii(input: &str) -> bool {
+    input
+        .bytes()
+        .all(|b| (0x20..0x7F).contains(&b) || matches!(b, 0x09..=0x0D | 0x1B))
+}
+
 fn fold_with(input: &str, space_invisible: bool) -> String {
+    #[cfg(test)]
+    FOLD_CALLS.with(|c| c.set(c.get() + 1));
+    if is_fold_neutral_ascii(input) {
+        #[cfg(test)]
+        FOLD_FAST_PATH.with(|c| c.set(c.get() + 1));
+        return input.to_string();
+    }
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
         if is_invisible(ch) {
@@ -241,6 +268,83 @@ fn fold_with(input: &str, space_invisible: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fold_calls_for(tool: &str, args: &str) -> (usize, bool) {
+        let cfg = ManagedRulesConfig::default();
+        let before = FOLD_CALLS.with(|c| c.get());
+        let ok = ManagedRuleset::evaluate(&cfg, tool, args).is_ok();
+        (FOLD_CALLS.with(|c| c.get()) - before, ok)
+    }
+
+    #[test]
+    fn evaluate_folds_each_text_once_per_pass() {
+        // One pass: the tool name once, the arguments once (not once per check).
+        let (calls, ok) = fold_calls_for("read_file", &"hello world ".repeat(100_000));
+        assert!(ok);
+        assert_eq!(calls, 2);
+        // An invisible character adds the second pass, and only that one.
+        let (calls, ok) = fold_calls_for("read_file", "plain \u{3164} text");
+        assert!(ok);
+        assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn plain_ascii_shortcut_gives_the_same_fold() {
+        // Every ASCII byte in context: the shortcut applies exactly when the full pass would
+        // leave the text alone.
+        for b in 0u8..=0x7F {
+            let text = format!("a{}b rm", b as char);
+            let neutral = is_fold_neutral_ascii(&text);
+            let slow: String = text
+                .chars()
+                .filter(|&ch| !is_invisible(ch) && ch != '\u{0000}')
+                .collect();
+            if neutral {
+                assert_eq!(fold_system1(&text), text);
+                assert_eq!(fold_system1_spaced(&text), text);
+            }
+            assert!(neutral || slow != text || b == 0x7F, "byte {b:#x}");
+            if neutral {
+                assert_eq!(slow, text, "byte {b:#x}");
+            }
+        }
+        assert!(!is_fold_neutral_ascii("caf\u{e9}"));
+        assert_eq!(fold_system1("a\u{3164}b"), "ab");
+    }
+
+    #[test]
+    fn large_arguments_are_evaluated_within_a_generous_time_bound() {
+        // A ceiling, not a benchmark: 4 MiB takes well under a second on a slow runner, and the
+        // bound is 20 s so a loaded CI machine never fails it while a quadratic pass would.
+        let cfg = ManagedRulesConfig::default();
+        let big = "plain words about files ".repeat((4 << 20) / 24);
+        let start = std::time::Instant::now();
+        assert!(ManagedRuleset::evaluate(&cfg, "read_file", &big).is_ok());
+        assert!(ManagedRuleset::evaluate(&cfg, &"a".repeat(1 << 20), "{}").is_ok());
+        assert!(ManagedRuleset::evaluate(&cfg, "read_file", &"\u{3164}x ".repeat(1 << 19)).is_ok());
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn large_plain_input_takes_the_shortcut() {
+        let before = FOLD_FAST_PATH.with(|c| c.get());
+        let (calls, ok) = fold_calls_for("read_file", &"hello world ".repeat(100_000));
+        assert!(ok);
+        assert_eq!(calls, 2);
+        assert_eq!(FOLD_FAST_PATH.with(|c| c.get()) - before, 2);
+    }
+
+    #[test]
+    fn evaluate_still_blocks_after_a_large_input() {
+        let mut args = "a ".repeat(1 << 20);
+        args.push_str("rm -rf /");
+        let (_, ok) = fold_calls_for("read_file", &args);
+        assert!(!ok, "a restricted command past 2 MiB must still be found");
+    }
     use crate::config::ManagedRulesConfig;
 
     fn cfg() -> ManagedRulesConfig {
