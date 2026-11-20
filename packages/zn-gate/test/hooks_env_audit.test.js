@@ -53,8 +53,7 @@ function hostileEnv(f, extra = {}) {
     NODE_PATH: f.dir,
     NODE_V8_COVERAGE: path.join(f.dir, 'cov'),
     // LD_PRELOAD, LD_AUDIT and DYLD_INSERT_LIBRARIES are not here: the launcher refuses to run with one set (they load into the
-    // shell before its first line), see hooks_launcher_preload.test.js. Another library variable shows the cleaning still works.
-    LD_LIBRARY_PATH: path.join(f.dir, 'libs'),
+    // shell before its first line), see hooks_launcher_preload.test.js. Another LD_ name shows the cleaning still works.
     LD_ZN_TEST_ANY: '1',
     BASH_ENV: path.join(f.dir, 'bashenv'),
     ENV: path.join(f.dir, 'shenv'),

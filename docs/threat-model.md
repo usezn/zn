@@ -552,9 +552,10 @@ Three features are off by default. Each one helps in a narrow case and has limit
   folder and every `zn.cmd`, `node.exe` or `node.cmd` it finds (junctions and symbolic links followed, with .NET
   calls and no cmdlet), drops the ones whose real place is inside the folder the agent runs in or inside a
   `node_modules` folder, and trusts nothing it cannot resolve. The comparison is by path text after the links are followed, so a program
-  reached through an 8.3 short name of the project folder (`PROJEC~1`) is not recognised as inside it. A user install (`zn hooks install <agent>` without `--project`) names its
+  reached through an 8.3 short name of the project folder is not recognised as inside it. A user install (`zn hooks install <agent>` without `--project`) names its
   Node.js and runner by full path and is not affected.
-- **A preloaded library cannot be undone by the hook.** `LD_PRELOAD`, `LD_AUDIT` and `DYLD_INSERT_LIBRARIES` make the
+- **A preloaded library cannot be undone by the hook.** `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`,
+  `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH` and the two `DYLD_FALLBACK_*` paths make the
   dynamic loader load a library into the shell that runs a hook launcher before its first line, so the launcher cannot
   remove them in time. When one of them is set the launcher, and the project hook guard, do not run the hook: they
   block the call with a message that asks to unset the variable and restart the agent. The launcher still removes the

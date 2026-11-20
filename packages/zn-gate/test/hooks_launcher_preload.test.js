@@ -14,6 +14,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const launcher = require('../lib/agents/launcher');
+const loaderEnv = require('../lib/loader-env');
 const { tempDir } = require('./helpers/tmp');
 const { hasPosixSh: posix } = require('./helpers/posix_sh');
 
@@ -37,20 +38,24 @@ function run(f, extra) {
   return spawnSync('/bin/sh', [f.launcherFile, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
 }
 
-for (const name of ['LD_PRELOAD', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES']) {
+// On macOS dyld ends /bin/sh itself when a DYLD_ variable names a library that is not there, before any hook code exists: the hook must
+// not run either way, and the status 2 block is only required where the shell survives (everywhere else).
+const dyldKills = (name) => process.platform === 'darwin' && name.startsWith('DYLD_');
+
+for (const name of loaderEnv.LOADER_PRELOAD) {
   test('sh launcher: ' + name + ' set in the environment blocks the call and the hook does not run', { skip: !posix }, (t) => {
     const f = fixture(t);
     const r = run(f, { [name]: path.join(f.dir, 'missing-zn-test.so') });
-    assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, new RegExp(name));
-    assert.match(r.stderr, /unset it and restart the agent/);
     assert.equal(fs.existsSync(f.ran), false, 'the hook ran in a shell with a preload');
+    if (dyldKills(name)) return;
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /unset it and restart the agent/);
   });
 }
 
-test('sh launcher: an empty preload variable is not a refusal, and a library search path alone is cleaned as before', { skip: !posix }, (t) => {
+test('sh launcher: an empty preload variable is not a refusal, and another LD_ variable is cleaned as before', { skip: !posix }, (t) => {
   const f = fixture(t);
-  for (const extra of [{}, { LD_PRELOAD: '' }, { LD_LIBRARY_PATH: f.dir }]) {
+  for (const extra of [{}, { LD_PRELOAD: '' }, { LD_ZN_TEST_ANY: f.dir }]) {
     fs.rmSync(f.ran, { force: true });
     const r = run(f, extra);
     assert.equal(r.status, 0, JSON.stringify(extra) + ' ' + r.stderr);
@@ -99,6 +104,19 @@ test('sh launcher: a real preload runs in the shell only, never in a program the
   assert.equal(fs.readFileSync(f.mark, 'utf8'), 'preload\n');
 });
 
+test('sh launcher: LD_LIBRARY_PATH naming a real library folder blocks the call and the hook does not run', { skip: skipReason }, (t) => {
+  const f = fixture(t);
+  const libs = path.join(f.dir, 'libs');
+  fs.mkdirSync(libs);
+  const src = path.join(f.dir, 'alt.c');
+  fs.writeFileSync(src, 'int zn_test_alt(void) { return 1; }\n');
+  const b = spawnSync(cc, ['-shared', '-fPIC', '-o', path.join(libs, 'libznalt.so'), src], { encoding: 'utf8' });
+  assert.equal(b.status, 0, b.stderr);
+  const r = run(f, { LD_LIBRARY_PATH: libs });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(fs.existsSync(f.ran), false, 'the hook ran in a shell with an alternate library folder');
+});
+
 // ---- the project guard (sh -c form for most agents, the split-on-spaces form of Antigravity)
 function mkbin(t) {
   const dir = tempDir(t, 'zn-guard-preload-');
@@ -130,12 +148,13 @@ for (const [name, runGuard] of Object.entries(guardForms)) {
     assert.equal(ok.status, 0, ok.stderr);
     assert.equal(fs.existsSync(b.ran), true, 'sanity: zn runs with a clean environment');
     fs.rmSync(b.ran);
-    for (const v of ['LD_PRELOAD', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES']) {
+    for (const v of loaderEnv.LOADER_PRELOAD) {
       const r = runGuard(b.bin, { ...clean, [v]: '/nonexistent/zn-test.so' });
       assert.equal(fs.existsSync(b.ran), false, v + ': zn started in a shell with a preload');
+      if (dyldKills(v)) continue;
       if (name.startsWith('Antigravity')) {
         assert.equal(r.status, 0, r.stderr);
-        assert.match(JSON.parse(r.stdout.trim()).reason, /LD_PRELOAD, LD_AUDIT or DYLD_INSERT_LIBRARIES/);
+        assert.match(JSON.parse(r.stdout.trim()).reason, /library variable \(LD_PRELOAD, LD_LIBRARY_PATH/);
       } else {
         assert.equal(r.status, 2, r.stderr);
         assert.match(r.stderr, /unset it and restart the agent/);
