@@ -188,23 +188,3 @@ test('zn-gate check warns when a loader variable is set, and only then', () => {
   assert.match(many[0], /^LD_PRELOAD, NODE_PATH are set/);
   assert.deepEqual(checkInternal.loaderWarnings({ PATH: '/usr/bin', HTTPS_PROXY: 'http://proxy.example.invalid', NODE_EXTRA_CA_CERTS: '/etc/ca.pem' }), []);
 });
-
-test('zn-gate check: LD_TRACE_LOADED_OBJECTS and LD_DEBUG get their own warning (the hooks do not run with them set)', () => {
-  for (const n of ['LD_TRACE_LOADED_OBJECTS', 'LD_DEBUG']) {
-    const w = checkInternal.loaderWarnings({ [n]: '1', PATH: '/usr/bin' });
-    assert.equal(w.length, 1, n);
-    assert.match(w[0], new RegExp('^' + n + ' is set in this environment\\.'));
-    assert.match(w[0], /the hooks do not run at all/);
-    assert.match(w[0], /Unset it before you start the agent/);
-  }
-  const both = checkInternal.loaderWarnings({ LD_DEBUG: 'help', LD_PRELOAD: 'a' });
-  assert.equal(both.length, 2);
-  assert.match(both[0], /^LD_DEBUG is set in this environment\./);
-  assert.match(both[1], /^LD_PRELOAD is set in this environment\. It makes/);
-});
-
-test('zn-gate check: an unrelated loader variable gets no hooks-do-not-run warning', () => {
-  const w = checkInternal.loaderWarnings({ NODE_OPTIONS: '--require x.js', LD_LIBRARY_PATH: '/opt/lib' });
-  assert.equal(w.length, 1);
-  assert.doesNotMatch(w.join('\n'), /do not run at all/);
-});

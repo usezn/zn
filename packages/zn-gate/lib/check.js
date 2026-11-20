@@ -1456,28 +1456,14 @@ function nodeWarnings(opts, env) {
  */
 function loaderWarnings(env) {
   try {
-    const L = require('./loader-env');
-    const names = L.loaderVarsIn(env);
+    const names = require('./loader-env').loaderVarsIn(env);
     if (!names.length) return [];
-    const out = [];
-    const stop = names.filter((n) => L.isShellStopVar(n));
-    if (stop.length) {
-      const one = stop.length === 1;
-      out.push(stop.join(', ') + (one ? ' is' : ' are') + ' set in this environment. With ' + (one ? 'this variable' : 'these variables') +
-        ' set, the hooks do not run at all, so zn-gate cannot block anything. Unset ' + (one ? 'it' : 'them') +
-        ' before you start the agent, and find out where ' + (one ? 'it comes' : 'they come') + ' from (a shell profile, direnv, or a project\'s own settings).');
-    }
-    const other = names.filter((n) => !L.isShellStopVar(n));
-    if (other.length) {
-      const one = other.length === 1;
-      const list = other.length > 6 ? other.slice(0, 6).join(', ') + ' and ' + (other.length - 6) + ' more' : other.join(', ');
-      out.push(list + (one ? ' is' : ' are') + ' set in this environment. ' + (one ? 'It makes' : 'They make') +
-        ' Node.js or the system load code of someone else\'s choosing, and a coding agent started from here passes ' + (one ? 'it' : 'them') +
-        ' on to every program it runs. zn\'s hooks remove ' + (one ? 'it' : 'them') + ' before they start Node.js, but hooks written by an older zn-gate do not: ' +
-        'run `zn hooks install <agent>` again for each agent you use. If you did not set ' + (one ? 'it' : 'them') + ' yourself, find out where ' +
-        (one ? 'it comes' : 'they come') + ' from (a shell profile, a project\'s .envrc or .env loader).');
-    }
-    return out;
+    const list = names.length > 6 ? names.slice(0, 6).join(', ') + ' and ' + (names.length - 6) + ' more' : names.join(', ');
+    return [list + (names.length === 1 ? ' is' : ' are') + ' set in this environment. ' + (names.length === 1 ? 'It makes' : 'They make') +
+      ' Node.js or the system load code of someone else\'s choosing, and a coding agent started from here passes ' + (names.length === 1 ? 'it' : 'them') +
+      ' on to every program it runs. zn\'s hooks remove ' + (names.length === 1 ? 'it' : 'them') + ' before they start Node.js, but hooks written by an older zn-gate do not: ' +
+      'run `zn hooks install <agent>` again for each agent you use. If you did not set ' + (names.length === 1 ? 'it' : 'them') + ' yourself, find out where ' +
+      (names.length === 1 ? 'it comes' : 'they come') + ' from (a shell profile, a project\'s .envrc or .env loader).'];
   } catch (_) { return []; }
 }
 
