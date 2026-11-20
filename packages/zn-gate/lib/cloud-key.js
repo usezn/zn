@@ -24,6 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeFileAtomic } = require('./atomic-file');
 
 const KEY_RE = /^[A-Za-z0-9._-]{16,256}$/;
 const VAULT_SECRET = 'ZN_CLOUD_API_KEY';
@@ -132,12 +133,11 @@ function readConfig() {
   return readConfigAt(configFile());
 }
 
+// Throws with err.path = the config file when the write fails; the config is then unchanged (no temp file is left).
 function writeConfig(cfg) {
   const file = configFile();
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', 0o600);
 }
 
 /** {store, connectedAt, last4} when `connect` stored a key, else null. Never the key. */

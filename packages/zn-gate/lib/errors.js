@@ -62,7 +62,8 @@ function fsCodeOf(err, platform) {
  * path when the error does not carry one. The code is added only with ZN_VERBOSE=1 or DEBUG=zn. */
 function fsErrorText(err, file, env = process.env, platform = process.platform) {
   let code = fsCodeOf(err, platform);
-  const shown = shownPath((err && err.path) || file || 'a file');
+  // Without a known path, the sentence names the zn file.
+  const shown = shownPath((err && err.path) || file || 'the zn file');
   // Windows answers a path of 260 characters or more with "not found" or "invalid argument", not with ENAMETOOLONG.
   if (platform === 'win32' && shown.length >= 260 && ['ENOENT', 'EINVAL'].includes(code)) code = 'ENAMETOOLONG';
   const make = FS_ERRORS[code];

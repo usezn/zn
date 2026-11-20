@@ -14,6 +14,8 @@ const path = require('path');
 const { colorEnabled } = require('../term');
 const { audit, AGENTS } = require('./index');
 const report = require('./report');
+const { fsErrorText } = require('../errors');
+const { writeFileAtomic } = require('../atomic-file');
 
 const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--approve]';
 const FORMATS = ['text', 'json', 'sarif'];
@@ -112,7 +114,8 @@ async function main(args, ioIn) {
     };
     const text = opts.format === 'json' ? report.toJson(result, meta) : opts.format === 'sarif' ? report.toSarif(result, meta) : report.toText(result, meta);
     if (opts.output) {
-      fs.writeFileSync(path.resolve(io.cwd, opts.output), text, 'utf8');
+      // Written through a temp file next to the target: a failed write leaves no partial file and keeps an existing one.
+      writeFileAtomic(path.resolve(io.cwd, opts.output), text, 0o644);
       const s = report.summarize(result, opts.failOn);
       io.stderr.write('zn audit: ' + s.findings + ' finding' + (s.findings === 1 ? '' : 's') + ' written to ' + opts.output + '\n');
     } else {
@@ -120,7 +123,7 @@ async function main(args, ioIn) {
     }
     return report.summarize(result, opts.failOn).failed ? 1 : 0;
   } catch (err) {
-    io.stderr.write('zn audit: ' + err.message + '\n');
+    io.stderr.write('zn audit: ' + (fsErrorText(err, opts && opts.output) || err.message) + '\n');
     return 2;
   }
 }

@@ -11,6 +11,7 @@
 
 const stats = require('./stats');
 const share = require('./stats-share');
+const { fsErrorText } = require('./errors');
 
 const LAYER_NAMES = { hook: 'agent hooks', shield: 'shield (wrapped MCP servers)', mcp: 'MCP tools', broker: 'secrets broker', cli: 'command line' };
 
@@ -86,6 +87,21 @@ function explainShare(out) {
   out(`Where: ${share.ENDPOINT}.\n`);
 }
 
+// A config write that fails (a full disk, for example) leaves the setting as it was: say so, with the file, and
+// return false so the command exits non-zero. The sharing state is not changed on disk in that case.
+function setShareOrSay(out, on) {
+  try {
+    share.setShare(on);
+    return true;
+  } catch (err) {
+    const text = fsErrorText(err, null) || (err && err.message) || String(err);
+    // The file was not replaced, so the stored setting is still the one read here.
+    const still = share.status().share ? 'on' : 'off';
+    out(text + '\nSharing is still ' + still + '; the setting did not change.\n');
+    return false;
+  }
+}
+
 async function run(args, out = (s) => process.stdout.write(s), { confirm = confirmInTerminal } = {}) {
   const o = parse(args);
   if (o.bad) { out(USAGE); return 2; }
@@ -98,12 +114,12 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
         out('Sharing stays off. (It can only be turned on by you, in your own terminal.)\n');
         return 1;
       }
-      share.setShare(true);
+      if (!setShareOrSay(out, true)) return 1;
       out('Sharing pseudonymous daily counts is on. Counts from today on are sent when you run `zn-gate stats`.\n');
       return 0;
     }
     if (sub === 'off') {
-      share.setShare(false);
+      if (!setShareOrSay(out, false)) return 1;
       out('Sharing is off. Nothing more is sent; your local counts stay on this machine.\n');
       return 0;
     }

@@ -377,6 +377,9 @@ async function runLogExport(args) {
     warn();
     return 0;
   } catch (e) {
+    // A write error names the file that was being exported (the --out path), not the temporary file.
+    const outFile = flag(args, '--out');
+    if (outFile && e && typeof e === 'object') e.path = outFile;
     err('[zn] ' + (fsErrorText(e) || (e && e.message ? e.message : e)));
     return 1;
   }

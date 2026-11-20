@@ -165,20 +165,25 @@ async function decryptWithPassphrase(passphrase, ciphertext) {
 /* Atomic private files                                                */
 /* ------------------------------------------------------------------ */
 
+// A failed write (a full disk, for example) removes the temp file it created, leaves the file as it was, and reports
+// err.path = file, so the message names the vault file rather than the temp name.
 function writePrivateFile(file, data) {
   ensurePrivateDir(path.dirname(file));
   const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(6).toString('hex') + '.tmp';
-  const fd = fs.openSync(tmp, 'wx', 0o600);
+  let fd;
+  let ours = false;
   try {
+    fd = fs.openSync(tmp, 'wx', 0o600);
+    ours = true;
     fs.writeSync(fd, data);
     fs.fsyncSync(fd);
-  } finally {
     fs.closeSync(fd);
-  }
-  try {
+    fd = undefined;
     fs.renameSync(tmp, file);
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch (e) { /* ignore */ }
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) { /* already closed */ } }
+    if (ours) { try { fs.unlinkSync(tmp); } catch (e) { /* gone */ } }
+    if (err && typeof err === 'object') err.path = file;
     throw err;
   }
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);

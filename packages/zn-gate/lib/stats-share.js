@@ -18,6 +18,7 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const stats = require('./stats');
+const { writeFileAtomic } = require('./atomic-file');
 
 const ENDPOINT = 'https://api.usezn.com/v1/telemetry';
 const MAX_TYPES = 100;
@@ -34,12 +35,11 @@ function readConfig() {
   try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')) || {}; } catch { return {}; }
 }
 
+// Throws with err.path = the config file when the write fails; the config is then unchanged (no temp file is left).
 function writeConfig(cfg) {
   const file = configFile();
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', 0o600);
 }
 
 function status() {
