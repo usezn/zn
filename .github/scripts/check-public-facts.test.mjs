@@ -1,6 +1,7 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
 import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions, previousRelease, publishedVersions } from './check-public-facts.mjs';
 
 const FACTS = {
@@ -566,4 +567,26 @@ test('publishedVersions: parses the npm list, a single version and fails closed 
   assert.equal(publishedVersions(() => '[]'), null);
   assert.equal(publishedVersions(() => '["1.0.0", 5]'), null);
   assert.equal(publishedVersions(() => { throw new Error('offline'); }), null);
+});
+
+test('publishedVersions: asks the public registry from a neutral directory with a clean environment', () => {
+  const saved = { a: process.env.npm_config_registry, b: process.env.NPM_CONFIG_REGISTRY, c: process.env['npm_config_@usezn:registry'] };
+  process.env.npm_config_registry = 'https://fake.invalid/';
+  process.env.NPM_CONFIG_REGISTRY = 'https://fake.invalid/';
+  process.env['npm_config_@usezn:registry'] = 'https://fake.invalid/';
+  try {
+    let seen;
+    // A project .npmrc sits in the repository root; npm runs in the temp directory, so it is never read.
+    const out = publishedVersions((cmd, args, opts) => { seen = { args, opts }; return '["1.0.0"]'; });
+    assert.deepEqual(out, ['1.0.0']);
+    assert.ok(seen.args.includes('--registry=https://registry.npmjs.org/'));
+    assert.equal(seen.opts.cwd, tmpdir());
+    for (const k of Object.keys(seen.opts.env)) assert.ok(!/^npm_config_(registry|@.*:registry)$/i.test(k), k);
+    assert.equal(seen.opts.env.npm_config_userconfig, '/dev/null');
+    assert.equal(seen.opts.env.npm_config_globalconfig, '/dev/null');
+  } finally {
+    for (const [k, v] of [['npm_config_registry', saved.a], ['NPM_CONFIG_REGISTRY', saved.b], ['npm_config_@usezn:registry', saved.c]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
 });

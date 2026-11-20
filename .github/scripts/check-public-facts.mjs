@@ -20,6 +20,7 @@
 // is already published (examplesVersion): they move only after a release is on npm and PyPI.
 import { readFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -427,7 +428,13 @@ function tagReader(root) {
  */
 export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, args, opts)) {
   try {
-    const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'versions', '--json'], { encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
+    // The public registry is named explicitly and npm runs outside the repository with the registry variables removed,
+    // so a project .npmrc or an environment variable cannot point the check at a registry that serves made-up versions.
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (/^npm_config_(registry|userconfig|globalconfig)$/i.test(k) || /^npm_config_@.*:registry$/i.test(k)) delete env[k];
+    env.npm_config_userconfig = '/dev/null';
+    env.npm_config_globalconfig = '/dev/null';
+    const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'versions', '--json', '--registry=https://registry.npmjs.org/'], { encoding: 'utf8', timeout: 30000, cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
     let list = JSON.parse(String(out));
     if (typeof list === 'string') list = [list];
     if (!Array.isArray(list) || list.length === 0) return null;
