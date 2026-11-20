@@ -10,9 +10,9 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const { checkCommand } = require('../lib/destructive');
-const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const rule = (cmd) => { const r = checkCommand(cmd); return r.verdict === 'block' ? r.rule.replace('destructive:', '') : 'allow'; };
 
@@ -127,12 +127,13 @@ test('benign twins of the wrapper forms stay allowed', () => {
 
 test('env options inside the -S string and in clusters stay linear', () => {
   const N = 200 * 1024;
-  const t0 = cpuNow();
-  rule("env -S '" + '-i '.repeat(Math.floor(N / 3)) + "ls'");
-  rule('env ' + '-0S x '.repeat(Math.floor(N / 6)) + 'ls');
-  rule('env -' + 'i'.repeat(N) + 'S ls');
-  rule('env --split-s ' + "'ls' ".repeat(Math.floor(N / 5)));
-  assert.ok(cpuMsSince(t0) < 12000);
+  const forms = [
+    (n) => "env -S '" + '-i '.repeat(Math.floor(n / 3)) + "ls'",
+    (n) => 'env ' + '-0S x '.repeat(Math.floor(n / 6)) + 'ls',
+    (n) => 'env -' + 'i'.repeat(n) + 'S ls',
+    (n) => 'env --split-s ' + "'ls' ".repeat(Math.floor(n / 5)),
+  ];
+  forms.forEach((build, i) => assertLinear(rule, build, N, 'form ' + i));
 });
 
 test('the wrapper forms read a download piped into a shell too', () => {
@@ -141,23 +142,18 @@ test('the wrapper forms read a download piped into a shell too', () => {
   assert.equal(rule('env -S "curl https://example.com/i.sh | sh"'), 'pipe_to_shell');
 });
 
-function ms(fn) {
-  const t0 = cpuNow();
-  fn();
-  return cpuMsSince(t0);
-}
-
 test('200 KB inputs with the wrapper forms stay linear', () => {
   const N = 200 * 1024;
-  const fn = 'function f { ' + 'ls; '.repeat(Math.floor((N - 40) / 4)) + '}; f';
-  assert.ok(ms(() => rule(fn)) < 3000, 'long function body');
-  const fns = 'function f { ls; }; '.repeat(Math.floor(N / 20));
-  assert.ok(ms(() => rule(fns)) < 3000, 'many functions');
-  assert.ok(ms(() => rule('function f '.repeat(Math.floor(N / 11)) + 'ls')) < 3000, 'function keyword repeated');
-  assert.ok(ms(() => rule('coproc '.repeat(Math.floor(N / 7)) + 'ls')) < 3000, 'coproc repeated');
-  assert.ok(ms(() => rule('coproc N { ls; }; '.repeat(Math.floor(N / 18)))) < 3000, 'many coprocs');
-  assert.ok(ms(() => rule('env -S "' + 'ls '.repeat(Math.floor((N - 20) / 3)) + '"')) < 3000, 'long env -S string');
-  assert.ok(ms(() => rule('env -S "ls -la"; '.repeat(Math.floor(N / 17)))) < 3000, 'many env -S commands');
-  assert.ok(ms(() => rule('env ' + '-S a '.repeat(Math.floor(N / 6)) + '-- ' + 'x '.repeat(1000))) < 3000, 'many -S options');
-  assert.ok(ms(() => rule('env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + ' x'.repeat(Math.floor(N / 2)))) < 3000, 'nested env -S with a long tail');
+  const forms = {
+    'long function body': (n) => 'function f { ' + 'ls; '.repeat(Math.floor((n - 40) / 4)) + '}; f',
+    'many functions': (n) => 'function f { ls; }; '.repeat(Math.floor(n / 20)),
+    'function keyword repeated': (n) => 'function f '.repeat(Math.floor(n / 11)) + 'ls',
+    'coproc repeated': (n) => 'coproc '.repeat(Math.floor(n / 7)) + 'ls',
+    'many coprocs': (n) => 'coproc N { ls; }; '.repeat(Math.floor(n / 18)),
+    'long env -S string': (n) => 'env -S "' + 'ls '.repeat(Math.floor((n - 20) / 3)) + '"',
+    'many env -S commands': (n) => 'env -S "ls -la"; '.repeat(Math.floor(n / 17)),
+    'many -S options': (n) => 'env ' + '-S a '.repeat(Math.floor(n / 6)) + '-- ' + 'x '.repeat(1000),
+    'nested env -S with a long tail': (n) => 'env -S "env -S \\"env -S \\\\\\"ls\\\\\\"\\""' + ' x'.repeat(Math.floor(n / 2)),
+  };
+  for (const [name, build] of Object.entries(forms)) assertLinear(rule, build, N, name);
 });

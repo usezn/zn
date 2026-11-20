@@ -6,6 +6,7 @@
 
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -168,12 +169,10 @@ test('the plain forms still behave as before', () => {
 
 test('a long run of carets or expansions costs time in proportion to its length', () => {
   const { opts } = project();
-  for (const text of ['type ' + '^'.repeat(20000) + '.env', 'cat ' + '${E}'.repeat(5000) + 'notes.md', 'cat .e' + '$()'.repeat(5000) + 'nv']) {
-    const t0 = process.hrtime.bigint();
-    asPlatform('win32', () => policy.bashDenial(text, opts));
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 5000, 'took ' + ms + ' ms');
-  }
+  const run = (text) => asPlatform('win32', () => policy.bashDenial(text, opts));
+  assertLinear(run, (n) => 'type ' + '^'.repeat(n) + '.env', 20000, 'carets');
+  assertLinear(run, (n) => 'cat ' + '${E}'.repeat(n) + 'notes.md', 5000, 'expansions');
+  assertLinear(run, (n) => 'cat .e' + '$()'.repeat(n) + 'nv', 5000, 'empty substitutions');
 });
 
 test('cmd substring and replacement modifiers inside a name: refused on Windows and wherever cmd is named', () => {

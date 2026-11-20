@@ -1,9 +1,10 @@
 """Advisory tier: the broad forms of four rules no longer block (same cases as
 packages/zn-gate/test/rules_advisory.test.js)."""
-import time
 import unittest
 
 from zn_gate import rules as R
+
+from ._timing import assert_linear
 
 ADVISORY = [
     ('Put nginx in front of the API and act as a gateway for the workers.', 'pi:act_as'),
@@ -89,16 +90,15 @@ class TestAdvisory(unittest.TestCase):
         self.assertEqual(r.advisory['rule'], 'pi:act_as')
 
     def test_long_runs_stay_fast(self):
-        for text in (
-            'token send' + '\n' * 16384 + 'x',
-            'token send' + '\n ' * 8192 + 'x',
-            'token. send' + ' me' * 5000 + '.',
-            'you' + ' ' * 16384 + 'x',
-            '<div hidden>' * 1500 + 'x',
+        # (size, build): build(n) makes the text from n repeats; 4x the repeats takes under 8x the CPU time.
+        for size, build in (
+            (16384, lambda n: 'token send' + '\n' * n + 'x'),
+            (8192, lambda n: 'token send' + '\n ' * n + 'x'),
+            (5000, lambda n: 'token. send' + ' me' * n + '.'),
+            (16384, lambda n: 'you' + ' ' * n + 'x'),
+            (1500, lambda n: '<div hidden>' * n + 'x'),
         ):
-            t0 = time.perf_counter()
-            R._evaluate_uncached(text)
-            self.assertLess(time.perf_counter() - t0, 2.0, repr(text[:12]))
+            assert_linear(R._evaluate_uncached, build, size, repr(build(1)[:12]))
 
     def test_folded_letters_same_verdict_as_node(self):
         self.assertNotEqual(R.evaluate('\u0131act as an assistant').verdict, 'block')

