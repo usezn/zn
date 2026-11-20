@@ -562,11 +562,13 @@ Three features are off by default. Each one helps in a narrow case and has limit
   runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
-- **Some loader variables stop the shell before the script runs (accepted limit).** With `LD_TRACE_LOADED_OBJECTS` or
-  `LD_DEBUG=help` set in the environment of the agent, the dynamic loader prints its output and the shell exits, usually with
-  status 0, without running any line of the launcher. The refusal cannot fire, and the agent sees a hook that did nothing. The
-  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them before it
-  runs.
+- **Trace and debug variables stop the shell before any hook runs (accepted, documented limit).** If `LD_TRACE_LOADED_OBJECTS`
+  or `LD_DEBUG` is set in the environment that starts the agent, the dynamic loader prints its own output and usually ends the
+  shell with status 0, before any line of the hook runs. The hook then does nothing, the agent sees no error, and zn-gate cannot
+  block a shell command or a file write in that session. Only whoever starts the agent can set these variables: a shell profile,
+  direnv, or the project's own settings. The agent cannot set them through a tool call, and shell commands are inert in the same
+  way while they are set. `zn-gate check` and the hook install warn when either variable is set. The fix is to unset them before
+  the agent starts.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell

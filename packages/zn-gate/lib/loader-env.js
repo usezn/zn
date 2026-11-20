@@ -64,6 +64,20 @@ function withoutLoaderVars(env) {
   return out;
 }
 
+// Variables that end the shell before any hook runs: the dynamic loader prints its trace or debug output and exits, so the
+// launcher never gets to refuse anything. Named separately from the rest of the list so zn-gate can warn about them by name.
+const SHELL_STOP_NAMES = ['LD_TRACE_LOADED_OBJECTS', 'LD_TRACE_LOADED_OBJECTS_FMT1', 'LD_TRACE_LOADED_OBJECTS_FMT2', 'LD_TRACE_LOADED_OBJECTS_ALL', 'LD_DEBUG'];
+const SHELL_STOP_VAR = new RegExp('^(' + SHELL_STOP_NAMES.join('|') + ')$', 'i');
+
+function isShellStopVar(name) {
+  return SHELL_STOP_VAR.test(String(name));
+}
+
+/** The shell-stop variables set (to any value, also empty) in an environment object, sorted. */
+function shellStopVarsIn(env) {
+  return Object.keys(env || {}).filter(isShellStopVar).sort();
+}
+
 // The names the fast scrub unsets: the list above, the loader variables the launchers refuse (LOADER_PRELOAD) and the other
 // named ld.so and dyld settings.
 const SH_UNSET_NAMES = [...new Set([...LOADER_NAMES, ...LOADER_PRELOAD, ...LOADER_LIBPATH, 'LD_BIND_NOW', 'LD_BIND_NOT', 'LD_DYNAMIC_WEAK',
@@ -118,4 +132,4 @@ function psScrub() {
   return WINDOWS_NAMES.map((n) => '$env:' + n + '=$null; ').join('');
 }
 
-module.exports = { SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { isShellStopVar, shellStopVarsIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
