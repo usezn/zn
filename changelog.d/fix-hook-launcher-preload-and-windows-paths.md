@@ -1,6 +1,6 @@
 ### Security
 - The sh hook launchers and the project hook guard now refuse to run the hook when `LD_PRELOAD`, `LD_AUDIT`,
-  `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES` or another `DYLD_*` library path variable is set in the agent's environment. The dynamic loader loads such a library into the shell
+  `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES` or another variable that picks a library for the loader is set in the agent's environment. The dynamic loader loads such a library into the shell
   before the first line of the launcher, so removing the variable there came too late: the call is now blocked with a
   message that asks to unset it and restart the agent. Programs the launcher starts itself still get a clean
   environment.

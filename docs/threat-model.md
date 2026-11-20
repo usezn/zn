@@ -555,8 +555,8 @@ Three features are off by default. Each one helps in a narrow case and has limit
   reached through an 8.3 short name of the project folder is not recognised as inside it. A user install (`zn hooks install <agent>` without `--project`) names its
   Node.js and runner by full path and is not affected.
 - **A preloaded library cannot be undone by the hook.** `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`,
-  `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH` and the two `DYLD_FALLBACK_*` paths make the
-  dynamic loader load a library into the shell that runs a hook launcher before its first line, so the launcher cannot
+  the `DYLD_*` library, framework and versioned path variables and the other loader variables listed in
+  `lib/loader-env.js` make the dynamic loader load a library into the shell that runs a hook launcher before its first line, so the launcher cannot
   remove them in time. When one of them is set the launcher, and the project hook guard, do not run the hook: they
   block the call with a message that asks to unset the variable and restart the agent. The launcher still removes the
   variable before it starts any other program (`mktemp`, `rm`, Node.js), so the library runs in the shell only. Code

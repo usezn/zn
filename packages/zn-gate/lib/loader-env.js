@@ -18,8 +18,13 @@
 const LOADER_PREFIXES = ['LD_', 'DYLD_'];
 // The variables that load a library into a program, or choose where it looks for one, before its first line runs (the shell of a hook
 // launcher included): a script cannot undo them once it runs, so a launcher that finds one set refuses to answer.
-const LOADER_PRELOAD = ['LD_PRELOAD', 'LD_AUDIT', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH',
-  'DYLD_FALLBACK_LIBRARY_PATH', 'DYLD_FALLBACK_FRAMEWORK_PATH'];
+// From ld.so(8) (glibc), ld-elf.so.1(1) (FreeBSD) and dyld(1) (macOS): the ones that name a library to load, choose where libraries are
+// looked for, or change which file a library name resolves to.
+const LOADER_PRELOAD = [
+  'LD_PRELOAD', 'LD_AUDIT', 'LD_LIBRARY_PATH', 'LD_ORIGIN_PATH', 'LD_PROFILE', 'LD_LIBMAP', 'LD_ELF_HINTS_PATH', 'LD_32_LIBRARY_PATH', 'LD_32_PRELOAD',
+  'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'DYLD_FALLBACK_FRAMEWORK_PATH',
+  'DYLD_VERSIONED_LIBRARY_PATH', 'DYLD_VERSIONED_FRAMEWORK_PATH', 'DYLD_IMAGE_SUFFIX', 'DYLD_ROOT_PATH', 'DYLD_SHARED_CACHE_DIR', 'DYLD_SHARED_REGION',
+];
 const LOADER_NAMES = [
   'GCONV_PATH', 'GLIBC_TUNABLES', 'LOCPATH', 'NLSPATH', 'HOSTALIASES', 'RES_OPTIONS', 'OPENSSL_CONF',
   'NODE_OPTIONS', 'NODE_PATH', 'NODE_REPL_EXTERNAL_MODULE', 'NODE_V8_COVERAGE',
