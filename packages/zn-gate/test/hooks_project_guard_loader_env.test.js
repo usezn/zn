@@ -96,7 +96,8 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
     const agent = e === 'beforeShellExecution' ? 'cursor' : 'claude-code';
     const cmd = launcher.projectShCommand(agent, e);
     const unset = 'unset ' + loaderEnv.LOADER_NAMES.join(' ');
-    assert.ok(cmd.startsWith("sh -c '" + unset + '\n'), cmd.slice(0, 80));
+    assert.ok(cmd.startsWith("sh -c 'LP="), cmd.slice(0, 80));
+    assert.ok(cmd.includes('\n' + unset + '\n'), 'the shared scrub follows the preload check');
     assert.ok(cmd.indexOf('command -v zn') > cmd.indexOf('set +f'), 'the scrub ends before zn is looked for');
     assert.equal(launcher.isProjectGuard(cmd, agent), true);
     assert.equal(launcher.isProjectGuardExact(cmd, agent), true);
@@ -104,7 +105,7 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
   const ag = launcher.projectShCommand('antigravity');
   assert.ok(!/\s/.test(ag.slice(6)), 'the Antigravity form holds no space');
   assert.ok(ag.includes('unset${IFS}NODE_OPTIONS${IFS}') || ag.includes('NODE_OPTIONS'), 'NODE_OPTIONS is unset');
-  assert.ok(ag.indexOf('NODE_OPTIONS') < ag.indexOf('hook'), 'before zn starts');
+  assert.ok(ag.indexOf('NODE_OPTIONS') < ag.indexOf('${IFS}hook${IFS}'), 'before zn starts');
   assert.equal(launcher.isProjectGuard(ag, 'antigravity'), true);
 });
 
@@ -113,7 +114,7 @@ test('project guard, PowerShell form (static: not run on Windows here): the load
     const s = launcher.projectWindowsScript(agent, e);
     const at = s.indexOf(loaderEnv.psScrub());
     assert.ok(at > 0, agent + ': the scrub is in the script');
-    assert.ok(at < s.indexOf("(zf 'zn.cmd')"), agent + ': before zn.cmd is looked for');
+    assert.ok(at < s.indexOf("(zg 'zn.cmd')"), agent + ': before zn.cmd is looked for');
     assert.equal(launcher.isProjectWindowsScript(s, agent), true, agent);
     assert.ok(launcher.windowsScriptCommand(s).length < 8191, agent);
   }

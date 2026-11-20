@@ -7,5 +7,4 @@
 - The project hook guard (sh, and the OpenCode project plugin) now checks where `zn` and `node` really are, with links
   followed: a PATH folder that is a link into a `node_modules/.bin` folder, or a `zn` that is a link into one or into the
   project, is no longer run. A global npm install, which links `zn` into `<prefix>/lib/node_modules/zn-gate`, still runs.
-  Where a link cannot be followed (no `readlink -f` or `realpath`), the guard blocks. The Windows PowerShell guard still
-  checks only the PATH text.
+  Where a link cannot be followed (no `readlink -f` or `realpath`), the guard blocks.

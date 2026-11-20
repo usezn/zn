@@ -42,7 +42,7 @@ test('every Windows hook script cleans the PATH and turns off the current-folder
     assert.ok(at > 0, name + ': no PATH guard');
     assert.equal(s.indexOf(PREFIX, at + 1), -1, name + ': PATH guard twice');
     assert.ok(at < s.indexOf('function zf('), name + ': PATH guard after zf');
-    assert.ok(at < s.indexOf("zf 'zn.cmd'"), name + ': PATH guard after the zn.cmd lookup');
+    assert.ok(at < s.search(/z[fg] 'zn\.cmd'/), name + ': PATH guard after the zn.cmd lookup');
   }
 });
 
