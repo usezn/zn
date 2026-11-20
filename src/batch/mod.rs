@@ -460,15 +460,17 @@ mod tests {
                 .await
                 .unwrap();
         }
+        let processed_before = crate::metrics::BATCH_PROCESSED_TOTAL.get();
         pipeline.clone().start_worker();
-        for _ in 0..200 {
-            if pipeline.receiver.is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        crate::test_support::wait_until("worker consumed all items", Duration::from_secs(5), || {
+            pipeline.receiver.is_empty()
+        })
+        .await;
         assert!(pipeline.receiver.is_empty(), "worker consumed all items");
-        // Let the timeout flush the final partial batch.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Two batches are processed: one full batch of 2 and the final partial batch, flushed by the timeout.
+        crate::test_support::wait_until("both batches flushed", Duration::from_secs(5), || {
+            crate::metrics::BATCH_PROCESSED_TOTAL.get() >= processed_before + 2
+        })
+        .await;
     }
 }

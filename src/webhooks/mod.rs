@@ -320,16 +320,10 @@ mod tests {
     }
 
     async fn wait_for(bodies: &Arc<Mutex<Vec<String>>>, n: usize) {
-        for _ in 0..200 {
-            if bodies.lock().unwrap().len() >= n {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
-        panic!(
-            "expected {n} requests, got {}",
-            bodies.lock().unwrap().len()
-        );
+        crate::test_support::wait_until(&format!("{n} requests"), std::time::Duration::from_secs(5), || {
+            bodies.lock().unwrap().len() >= n
+        })
+        .await;
     }
 
     #[test]
@@ -494,7 +488,11 @@ mod tests {
         send_alert(&tx, alert("FIRST")).await;
         let tx2 = tx.clone();
         let pending = tokio::spawn(async move { send_alert(&tx2, alert("SECOND")).await });
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // The test runtime is single-threaded: yielding lets the spawned send run until it blocks on the full
+        // channel, with no wall-clock wait.
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
         assert!(!pending.is_finished(), "second send blocks while full");
         assert_eq!(rx.recv().await.unwrap().status, "FIRST");
         pending.await.unwrap();

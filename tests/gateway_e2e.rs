@@ -583,7 +583,20 @@ fn logs_and_audit_rows_never_hold_secrets_and_stdout_has_no_logs() {
         );
         thread::sleep(Duration::from_millis(100));
     };
-    thread::sleep(Duration::from_millis(500));
+    // Let the logger flush: wait until stderr has stopped growing for a few polls (bounded by STEP).
+    let settle_deadline = Instant::now() + STEP;
+    let mut seen_len = gw.stderr_text().len();
+    let mut quiet_polls = 0;
+    while quiet_polls < 5 && Instant::now() < settle_deadline {
+        thread::sleep(Duration::from_millis(50));
+        let len = gw.stderr_text().len();
+        if len == seen_len {
+            quiet_polls += 1;
+        } else {
+            seen_len = len;
+            quiet_polls = 0;
+        }
+    }
     let stderr = gw.stderr_text();
     let stray = gw.stray_stdout.lock().unwrap().join("\n");
 

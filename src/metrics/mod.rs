@@ -471,7 +471,10 @@ mod tests {
     fn test_render_metrics() {
         let output = render();
         // Output should be valid Prometheus format (empty if not initialized)
-        assert!(output.is_empty() || output.contains("# HELP") || true);
+        assert!(
+            output.is_empty() || output.contains("# HELP"),
+            "not Prometheus text: {output}"
+        );
     }
 
     #[test]
