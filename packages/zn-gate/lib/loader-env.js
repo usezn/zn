@@ -54,6 +54,12 @@ function withoutLoaderVars(env) {
   return out;
 }
 
+// The names the fast scrub unsets: the list above, the loader variables the launchers refuse (LOADER_PRELOAD) and the other
+// named ld.so and dyld settings.
+const SH_UNSET_NAMES = [...new Set([...LOADER_NAMES, ...LOADER_PRELOAD, 'LD_DEBUG', 'LD_DEBUG_OUTPUT', 'LD_BIND_NOW', 'LD_BIND_NOT', 'LD_DYNAMIC_WEAK',
+  'LD_USE_LOAD_BIAS', 'LD_HWCAP_MASK', 'LD_TRACE_LOADED_OBJECTS', 'LD_WARN', 'LD_SHOW_AUXV', 'LD_ASSUME_KERNEL', 'LD_PROFILE_OUTPUT',
+  'LD_PREFER_MAP_32BIT_EXEC', 'DYLD_FORCE_FLAT_NAMESPACE', 'DYLD_BIND_AT_LAUNCH', 'DYLD_NO_FIX_PREBINDING', 'DYLD_PRINT_LIBRARIES'])];
+
 // A shell pattern that matches a name in any case: NODE_PATH -> [Nn][Oo][Dd][Ee]_[Pp][Aa][Tt][Hh].
 const anyCase = (s) => s.replace(/[A-Za-z]/g, (c) => '[' + c.toUpperCase() + c.toLowerCase() + ']');
 
@@ -63,7 +69,17 @@ const anyCase = (s) => s.replace(/[A-Za-z]/g, (c) => '[' + c.toUpperCase() + c.t
  * that match (in any case: Git Bash passes Windows names through as they were written) are unset too, which also covers
  * every LD_* and DYLD_* name. A value that spans lines can only add a name that matches the list, never keep one.
  */
-function shScrubLines() {
+function shScrubLines(opts = {}) {
+  // fast: only the names listed here are unset, with `unset` alone: no `export -p`, no subshell and no loop over the whole environment
+  // (that scan costs a measurable part of the start of every hook). It leaves the other LD_ and DYLD_ names (LD_DEBUG, LD_BIND_NOW ...)
+  // and the same names written in another case, which only a Windows program reads that way, so it is for sh on Linux and macOS.
+  if (opts.fast) {
+    return [
+      '# Variables that make Node.js or the dynamic loader load code of the caller\'s choosing (NODE_OPTIONS=--require, LD_PRELOAD and the',
+      '# like) are removed before anything is started: a project can set the environment of the agent. NODE_EXTRA_CA_CERTS and the proxy settings stay.',
+      'unset ' + SH_UNSET_NAMES.join(' '),
+    ];
+  }
   const pattern = [...LOADER_PREFIXES.map((p) => anyCase(p) + '*'), ...LOADER_NAMES.map(anyCase)].join('|');
   return [
     '# Variables that make Node.js or the dynamic loader load code of the caller\'s choosing (NODE_OPTIONS=--require, LD_PRELOAD and the',
@@ -92,4 +108,4 @@ function psScrub() {
   return WINDOWS_NAMES.map((n) => '$env:' + n + '=$null; ').join('');
 }
 
-module.exports = { LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { SH_UNSET_NAMES, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
