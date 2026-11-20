@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -25,6 +26,11 @@ const (
 	maxBackoff          = 8 * time.Second
 	maxResponseBytes    = 1 << 20
 	userAgent           = "zn-go"
+	analyzePath         = "/v30/analyze"
+	// A Retry-After above this is capped (it also keeps time.Duration from
+	// overflowing). The cap is above any maxRetryWait, so the client still
+	// stops retrying.
+	maxRetryAfter = 366 * 24 * time.Hour
 )
 
 // Client calls the zn Cloud API. It is safe for concurrent use.
@@ -112,19 +118,53 @@ func NewClient(apiKey string, opts ...Option) *Client {
 }
 
 type analyzeRequest struct {
-	Input     string `json:"input"`
-	Model     string `json:"model,omitempty"`
-	LongInput string `json:"long_input,omitempty"`
+	Input     string   `json:"input"`
+	LongInput string   `json:"long_input,omitempty"`
+	Threshold *float64 `json:"threshold,omitempty"`
+	Mode      string   `json:"mode,omitempty"`
+
+	// noStore is sent as a header, not in the body.
+	noStore bool
+	err     error
 }
+
+// Bounds the API accepts for the threshold of a request.
+const (
+	MinThreshold = 0.5
+	MaxThreshold = 0.999
+)
 
 // AnalyzeOption changes one Analyze call.
 type AnalyzeOption func(*analyzeRequest)
 
-// Model chooses the Galvanize model for this call, for example
-// "galvanize-3.1" or "galvanize-3". Leave it out to use the model of your
-// plan. A model your plan does not include is answered with a 403.
-func Model(name string) AnalyzeOption {
-	return func(r *analyzeRequest) { r.Model = name }
+// Threshold sets the score at or above which this call blocks. It must be
+// a number from MinThreshold (0.5) to MaxThreshold (0.999); anything else
+// makes Analyze return ErrInvalidThreshold before anything is sent. Leave
+// the option out to use the detector's default, which the response reports
+// in Result.Threshold. A lower threshold blocks more (and raises false
+// positives); a higher one blocks less.
+func Threshold(v float64) AnalyzeOption {
+	return func(r *analyzeRequest) {
+		if !(v >= MinThreshold && v <= MaxThreshold) { // also true for NaN
+			r.err = fmt.Errorf("%w: %v, the range is %v to %v", ErrInvalidThreshold, v, MinThreshold, MaxThreshold)
+			return
+		}
+		r.Threshold = &v
+	}
+}
+
+// Monitor runs the call in monitor mode: the verdict is always "allow" and
+// Result.WouldBlock says what the verdict would have been. Use it to
+// measure the detector on your own traffic before you enforce it. Calls and
+// billing are the same as in enforce mode.
+func Monitor() AnalyzeOption {
+	return func(r *analyzeRequest) { r.Mode = "monitor" }
+}
+
+// NoStore asks the API to store nothing from this call (it sends the header
+// X-Zn-No-Store: 1). It can only turn storage off for the request, never on.
+func NoStore() AnalyzeOption {
+	return func(r *analyzeRequest) { r.noStore = true }
 }
 
 // LongInputWindows asks for an input of 2,000 characters or fewer to be
@@ -153,6 +193,9 @@ func (c *Client) Analyze(ctx context.Context, input string, opts ...AnalyzeOptio
 	for _, o := range opts {
 		o(&req)
 	}
+	if req.err != nil {
+		return nil, req.err
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("zn: encode request: %w", err)
@@ -160,7 +203,7 @@ func (c *Client) Analyze(ctx context.Context, input string, opts ...AnalyzeOptio
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		res, retryAfter, err := c.do(ctx, body)
+		res, retryAfter, err := c.do(ctx, body, req.noStore)
 		if err == nil {
 			return res, nil
 		}
@@ -186,11 +229,11 @@ func (c *Client) Analyze(ctx context.Context, input string, opts ...AnalyzeOptio
 
 // do sends one attempt. retryAfter is -1 when the answer has no usable
 // Retry-After header.
-func (c *Client) do(ctx context.Context, body []byte) (*Result, time.Duration, error) {
+func (c *Client) do(ctx context.Context, body []byte, noStore bool) (*Result, time.Duration, error) {
 	actx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(actx, http.MethodPost, c.baseURL+"/analyze", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(actx, http.MethodPost, c.baseURL+analyzePath, bytes.NewReader(body))
 	if err != nil {
 		return nil, -1, fmt.Errorf("zn: build request: %w", err)
 	}
@@ -198,6 +241,9 @@ func (c *Client) do(ctx context.Context, body []byte) (*Result, time.Duration, e
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("User-Agent", userAgent)
+	if noStore {
+		httpReq.Header.Set("X-Zn-No-Store", "1")
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -285,8 +331,11 @@ func parseRetryAfter(v string) (time.Duration, bool) {
 		return 0, false
 	}
 	if secs, err := strconv.ParseFloat(v, 64); err == nil {
-		if secs < 0 {
+		if math.IsNaN(secs) || math.IsInf(secs, 0) || secs < 0 {
 			return 0, false
+		}
+		if secs >= maxRetryAfter.Seconds() {
+			return maxRetryAfter, true
 		}
 		return time.Duration(secs * float64(time.Second)), true
 	}
@@ -294,6 +343,9 @@ func parseRetryAfter(v string) (time.Duration, bool) {
 		d := time.Until(t)
 		if d < 0 {
 			d = 0
+		}
+		if d > maxRetryAfter {
+			d = maxRetryAfter
 		}
 		return d, true
 	}
@@ -303,12 +355,11 @@ func parseRetryAfter(v string) (time.Duration, bool) {
 func parseAPIError(status int, data []byte) *APIError {
 	ae := &APIError{Status: status}
 	var b struct {
-		Error         string   `json:"error"`
-		Message       string   `json:"message"`
-		Code          string   `json:"code"`
-		Required      int      `json:"required"`
-		Remaining     int      `json:"remaining"`
-		AllowedModels []string `json:"allowed_models"`
+		Error     string `json:"error"`
+		Message   string `json:"message"`
+		Code      string `json:"code"`
+		Required  int    `json:"required"`
+		Remaining int    `json:"remaining"`
 	}
 	if json.Unmarshal(data, &b) == nil {
 		ae.Message = b.Error
@@ -326,7 +377,6 @@ func parseAPIError(status int, data []byte) *APIError {
 		}
 		ae.Required = b.Required
 		ae.Remaining = b.Remaining
-		ae.AllowedModels = b.AllowedModels
 	}
 	if ae.Message == "" {
 		ae.Message = http.StatusText(status)

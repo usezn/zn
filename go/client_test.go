@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,7 +46,7 @@ func TestAnalyzeBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotMethod != "POST" || gotPath != "/analyze" {
+	if gotMethod != "POST" || gotPath != "/v30/analyze" {
 		t.Errorf("request = %s %s", gotMethod, gotPath)
 	}
 	if gotAuth != "Bearer zn_live_test" {
@@ -85,11 +86,11 @@ func TestAnalyzeOptionsAndLongInput(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotReq)
 		writeJSON(w, 200, `{"verdict":"allow","long_input":{"mode":"windows","windows":3,"scored":2,"top_window":1,"capped":false,"partial":true},"billed_calls":2}`)
 	}))
-	res, err := c.Analyze(context.Background(), "text", Model("galvanize-3"), LongInputWindows())
+	res, err := c.Analyze(context.Background(), "text", LongInputWindows())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotReq["model"] != "galvanize-3" || gotReq["long_input"] != "windows" {
+	if _, has := gotReq["model"]; has || gotReq["long_input"] != "windows" {
 		t.Errorf("body = %v", gotReq)
 	}
 	if !res.Partial() || res.LongInput.Windows != 3 || res.LongInput.Scored != 2 || res.LongInput.TopWindow != 1 {
@@ -111,16 +112,27 @@ func TestErrorStatuses(t *testing.T) {
 		check        func(t *testing.T, ae *APIError)
 	}{
 		{name: "400", status: 400, body: `{"error":"Input too long (max 20000 characters)"}`, wantMsg: "Input too long (max 20000 characters)"},
-		{name: "400 unknown model", status: 400, body: `{"error":"Unknown model","code":"unknown_model"}`, wantCode: "unknown_model", wantMsg: "Unknown model"},
+		{name: "400 invalid threshold", status: 400, body: `{"error":"threshold must be a number between 0.5 and 0.999","code":"invalid_threshold"}`, wantCode: "invalid_threshold", wantMsg: "threshold must be a number between 0.5 and 0.999",
+			check: func(t *testing.T, ae *APIError) {
+				if !IsInvalidThreshold(ae) || IsInvalidMode(ae) || IsAccountBanned(ae) {
+					t.Error("typed helpers do not match invalid_threshold")
+				}
+			}},
+		{name: "400 invalid mode", status: 400, body: `{"error":"mode must be monitor or enforce","code":"invalid_mode"}`, wantCode: "invalid_mode", wantMsg: "mode must be monitor or enforce",
+			check: func(t *testing.T, ae *APIError) {
+				if !IsInvalidMode(ae) || IsInvalidThreshold(ae) {
+					t.Error("typed helpers do not match invalid_mode")
+				}
+			}},
+		{name: "403 account banned", status: 403, body: `{"error":"This account has been suspended","code":"account_banned"}`, wantCode: "account_banned", wantMsg: "This account has been suspended",
+			check: func(t *testing.T, ae *APIError) {
+				if !IsAccountBanned(ae) || IsUnauthorized(ae) {
+					t.Error("typed helpers do not match account_banned")
+				}
+			}},
 		{name: "401", status: 401, body: `{"error":"Invalid API key"}`, wantMsg: "Invalid API key", unauthorized: true},
 		{name: "402", status: 402, body: `{"error":"Trial ended","code":"TRIAL_ENDED"}`, wantCode: "TRIAL_ENDED", wantMsg: "Trial ended", quota: true},
 		{name: "403 key scope", status: 403, body: `{"error":"key_scope","message":"This key can only analyze prompts."}`, wantCode: "key_scope", wantMsg: "This key can only analyze prompts."},
-		{name: "403 model", status: 403, body: `{"error":"Model not in plan","code":"model_not_in_plan","allowed_models":["galvanize-3.1"]}`, wantCode: "model_not_in_plan", wantMsg: "Model not in plan",
-			check: func(t *testing.T, ae *APIError) {
-				if len(ae.AllowedModels) != 1 || ae.AllowedModels[0] != "galvanize-3.1" {
-					t.Errorf("AllowedModels = %v", ae.AllowedModels)
-				}
-			}},
 		{name: "429 monthly", status: 429, body: `{"error":"Monthly call limit reached","code":"MONTHLY_LIMIT_REACHED"}`, header: map[string]string{"Retry-After": "86400"},
 			wantCode: "MONTHLY_LIMIT_REACHED", wantMsg: "Monthly call limit reached", quota: true, rateLimited: true,
 			check: func(t *testing.T, ae *APIError) {
@@ -428,6 +440,98 @@ func TestOptions(t *testing.T) {
 	d := NewClient("k")
 	if d.baseURL != DefaultBaseURL || d.timeout != 12*time.Second || d.maxRetries != 2 {
 		t.Errorf("defaults = %+v", d)
+	}
+}
+
+const monitorBody = `{"verdict":"allow","confidence":0.97,"score":0.97,"threshold":0.9,"request_mode":"monitor","would_block":true,"rule":"neural-v29","reason":"ML score","decided_by":"ml","rules_version":"2026-09-06.1","ml_version":"zn-galvanize3-fp32-s512","ml_threshold":0.9,"router_level":"rules","mode":"active","model":"galvanize-3.1","evidence_id":"ev_03c4d212ff5f9e9b385f483a","latency_ms":11,"input_chars":42,"billed_calls":1}`
+
+func TestThresholdMonitorNoStore(t *testing.T) {
+	var gotReq map[string]any
+	var gotNoStore string
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotNoStore = r.Header.Get("X-Zn-No-Store")
+		gotReq = nil
+		_ = json.NewDecoder(r.Body).Decode(&gotReq)
+		writeJSON(w, 200, monitorBody)
+	}))
+	res, err := c.Analyze(context.Background(), "text", Threshold(0.9), Monitor(), NoStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotReq["threshold"] != 0.9 || gotReq["mode"] != "monitor" || gotNoStore != "1" {
+		t.Errorf("body = %v, header = %q", gotReq, gotNoStore)
+	}
+	if res.Verdict != VerdictAllow || res.Blocked() || !res.WouldHaveBlocked() || res.RequestMode != "monitor" ||
+		res.Threshold != 0.9 || res.RouterLevel != "rules" {
+		t.Errorf("result = %+v", res)
+	}
+
+	// Without the options nothing extra is sent.
+	if _, err := c.Analyze(context.Background(), "text"); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"threshold", "mode", "model"} {
+		if _, has := gotReq[k]; has {
+			t.Errorf("unexpected %q in default request", k)
+		}
+	}
+	if gotNoStore != "" {
+		t.Errorf("unexpected X-Zn-No-Store %q", gotNoStore)
+	}
+}
+
+func TestEnforceResultHasNoWouldBlock(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, blockBody)
+	}))
+	res, err := c.Analyze(context.Background(), "text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WouldBlock != nil || res.WouldHaveBlocked() || res.RequestMode != "" {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestThresholdRangeCheckedClientSide(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		writeJSON(w, 200, allowBody)
+	}))
+	for _, v := range []float64{0.49, 1, 0, -1, 1.5, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if _, err := c.Analyze(context.Background(), "text", Threshold(v)); !errors.Is(err, ErrInvalidThreshold) {
+			t.Errorf("Threshold(%v): err = %v", v, err)
+		}
+	}
+	for _, v := range []float64{MinThreshold, 0.9, MaxThreshold} {
+		if _, err := c.Analyze(context.Background(), "text", Threshold(v)); err != nil {
+			t.Errorf("Threshold(%v): err = %v", v, err)
+		}
+	}
+	if n := atomic.LoadInt32(&calls); n != 3 {
+		t.Errorf("server calls = %d, want 3 (invalid thresholds must not be sent)", n)
+	}
+}
+
+func TestParseRetryAfterRejectsNonFinite(t *testing.T) {
+	for _, v := range []string{"NaN", "nan", "Inf", "+Inf", "-Inf", "Infinity", "-1"} {
+		if d, ok := parseRetryAfter(v); ok {
+			t.Errorf("%q parsed as %v", v, d)
+		}
+	}
+	for _, v := range []string{"1e300", "99999999999", "1e18"} {
+		d, ok := parseRetryAfter(v)
+		if !ok || d != maxRetryAfter {
+			t.Errorf("%q = %v %v, want cap %v", v, d, ok, maxRetryAfter)
+		}
+	}
+	if d, ok := parseRetryAfter("1.5"); !ok || d != 1500*time.Millisecond {
+		t.Errorf("1.5 = %v %v", d, ok)
+	}
+	far := time.Now().Add(1000 * 24 * time.Hour).UTC().Format(http.TimeFormat)
+	if d, ok := parseRetryAfter(far); !ok || d != maxRetryAfter {
+		t.Errorf("far date = %v %v", d, ok)
 	}
 }
 

@@ -1,5 +1,5 @@
 // Package zn is a small client for the optional zn Cloud API
-// (POST https://api.usezn.com/analyze).
+// (POST https://api.usezn.com/v30/analyze).
 //
 // It checks text, such as a tool result, a web page or an email, for
 // prompt-injection attempts before a model reads it. It uses only the Go

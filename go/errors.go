@@ -11,6 +11,9 @@ const (
 	CodeMonthlyLimitReached = "MONTHLY_LIMIT_REACHED"
 	CodeInsufficientQuota   = "INSUFFICIENT_QUOTA"
 	CodeTrialEnded          = "TRIAL_ENDED"
+	CodeInvalidThreshold    = "invalid_threshold"
+	CodeInvalidMode         = "invalid_mode"
+	CodeAccountBanned       = "account_banned"
 )
 
 // Client-side errors.
@@ -22,6 +25,10 @@ var (
 	// ErrInputTooLong is returned, wrapped, when the input is longer than
 	// MaxInputUnits UTF-16 code units. Nothing is sent.
 	ErrInputTooLong = errors.New("zn: input is too long")
+	// ErrInvalidThreshold is returned, wrapped, when the Threshold option is
+	// outside MinThreshold to MaxThreshold or is not a number. Nothing is
+	// sent.
+	ErrInvalidThreshold = errors.New("zn: invalid threshold")
 )
 
 // APIError is an error answer from the API.
@@ -41,8 +48,6 @@ type APIError struct {
 	// the input needs and the monthly calls left.
 	Required  int
 	Remaining int
-	// AllowedModels is set with model_not_in_plan.
-	AllowedModels []string
 }
 
 func (e *APIError) Error() string {
@@ -88,6 +93,27 @@ func IsQuotaExceeded(err error) bool {
 		return true
 	}
 	return false
+}
+
+// IsInvalidThreshold reports whether the API refused the threshold of the
+// request (400 invalid_threshold). Nothing is billed for a refused request.
+func IsInvalidThreshold(err error) bool {
+	ae, ok := asAPIError(err)
+	return ok && ae.Status == 400 && ae.Code == CodeInvalidThreshold
+}
+
+// IsInvalidMode reports whether the API refused the mode of the request
+// (400 invalid_mode).
+func IsInvalidMode(err error) bool {
+	ae, ok := asAPIError(err)
+	return ok && ae.Status == 400 && ae.Code == CodeInvalidMode
+}
+
+// IsAccountBanned reports whether the account of the key is suspended
+// (403 account_banned). Retrying does not help.
+func IsAccountBanned(err error) bool {
+	ae, ok := asAPIError(err)
+	return ok && ae.Status == 403 && ae.Code == CodeAccountBanned
 }
 
 // IsUnauthorized reports whether err is a 401 answer: the key is missing,

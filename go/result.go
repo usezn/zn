@@ -6,7 +6,7 @@ const (
 	VerdictBlock = "block"
 )
 
-// Result is the response of POST /analyze.
+// Result is the response of POST /v30/analyze.
 //
 // Fields the API leaves out or sets to null are left at their zero value
 // (nil for pointers).
@@ -21,6 +21,11 @@ type Result struct {
 	// Threshold is the score at or above which the model that decided
 	// blocks.
 	Threshold float64 `json:"threshold"`
+	// RequestMode is "monitor" or "enforce" when the call set a mode, empty
+	// otherwise. WouldBlock is set only in monitor mode: the verdict is then
+	// always "allow" and WouldBlock says what it would have been.
+	RequestMode string `json:"request_mode"`
+	WouldBlock  *bool  `json:"would_block"`
 	// Rule and Reason say what decided the verdict. Reason may be empty.
 	Rule   string `json:"rule"`
 	Reason string `json:"reason"`
@@ -32,10 +37,14 @@ type Result struct {
 	RulesVersion string   `json:"rules_version"`
 	MLVersion    string   `json:"ml_version"`
 	MLThreshold  *float64 `json:"ml_threshold"`
-	Mode         string   `json:"mode"`
+	// RouterLevel is "rules", "advanced" or "deep": how far the call went.
+	RouterLevel string `json:"router_level"`
+	// Mode is the server-side detector mode, not the mode of the request
+	// (see RequestMode).
+	Mode string `json:"mode"`
 	// Model is the Galvanize model that checked the text, or empty when no
-	// model scored it. ModelRequested is set only when it differs from
-	// Model.
+	// model scored it. ModelRequested is the model the call was routed to,
+	// and is set only when it differs from Model.
 	Model          string `json:"model"`
 	ModelRequested string `json:"model_requested"`
 	// EvidenceID is the record in your dashboard evidence vault.
@@ -67,6 +76,12 @@ type LongInput struct {
 	Capped bool `json:"capped"`
 	// Partial is true when some windows were not scored in time.
 	Partial bool `json:"partial"`
+}
+
+// WouldHaveBlocked reports whether a monitor-mode call would have been
+// blocked in enforce mode. It is false outside monitor mode.
+func (r *Result) WouldHaveBlocked() bool {
+	return r != nil && r.WouldBlock != nil && *r.WouldBlock
 }
 
 // Blocked reports whether the verdict is "block".
