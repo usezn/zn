@@ -49,7 +49,8 @@ func safeToRead(ctx context.Context, toolResult string) bool {
 | Field | Meaning |
 | - | - |
 | `Verdict` | `allow` or `block`. `res.Blocked()` is true for `block`; `res.Allowed()` is true only for `allow`. |
-| `Score`, `Confidence` | Model score for the input, 0 to 1. `Score` is `nil` when no model scored the text (the rules decided). |
+| `Confidence` | How sure the API is of the verdict, 0 to 1. When the rules decide (`DecidedBy` is `rules`), it comes from the rules, not from a model. |
+| `Score` | Model score for the input, 0 to 1. It is `nil` when no model scored the text (the rules decided, or the model was unavailable). |
 | `Threshold` | Score at or above which the model that decided blocks. It echoes the `Threshold` option when you set one, and is the detector default otherwise. |
 | `RequestMode`, `WouldBlock` | `RequestMode` is `monitor` or `enforce` whenever the call sets a mode. `WouldBlock` is set only in [monitor mode](#threshold-monitor-mode-and-no-store): the verdict is always `allow` and `WouldBlock` says what it would have been. `res.WouldHaveBlocked()` is true if it would have blocked. |
 | `Rule`, `Reason`, `DecidedBy` | What decided the verdict: `rules` or `ml`. Values such as `ml-error-rules-fallback` mean the model was unavailable and the rules decided. |
