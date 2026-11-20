@@ -265,6 +265,13 @@ function fromCwd(cwd, word) {
   return folderText(cwd, ups + 4) + '/' + w;
 }
 
+/* A startup-file name written from a folder the line lost track of: it may be in the home folder, so it is read from the
+   root (a name that is not anchored still ends in the same file name). Used for rc targets only; rm keeps fromCwd. */
+function rcFromCwd(cwd, word) {
+  if (cwd === CWD_LOST && !ANCHORED_RE.test(String(word))) return '/' + String(word);
+  return fromCwd(cwd, word);
+}
+
 /* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read
    as commands, or '' when there is none. An escaped backtick inside one is a nested substitution. One pass over the text. */
 function backtickCode(text) {
@@ -621,6 +628,8 @@ function checkHead(args, depth, known) {
   }
   // The code is a download in a substitution (X="$(curl URL)"; sh -c "$X"): the same as sh -c "$(curl URL)".
   if (code !== null && (SHELLS.has(head) || head === 'su' || head === 'eval') && /^\s*(?:\$\(|`)/.test(code) && SHELL_RUNS_DOWNLOAD_RE.test('sh -c "' + code + '"') && on('pipe_to_shell')) return 'pipe_to_shell';
+  // Past the nesting limit a shell string is refused, not skipped: its commands would not be checked.
+  if (code !== null && depth >= MAX_DEPTH && code.trim() !== '' && (ENABLED === null || ENABLED.size > 0)) return OVERFLOW;
   if (code !== null && depth < MAX_DEPTH) {
     const hit = analyze(code, depth + 1, known);
     if (hit) return hit;
@@ -788,7 +797,7 @@ function checkPipeline(pipe, known = null) {
         else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
         else if (heads[j].head === 'dd' && w.startsWith('of=')) target = w.slice(3);
         // A relative file is read from the folder an earlier cd, pushd or env -C moved to.
-        if ((target !== null && isRcTarget(fromCwd(heads[j].dir, target))) && on('rc_download')) return 'rc_download';
+        if ((target !== null && isRcTarget(rcFromCwd(heads[j].dir, target))) && on('rc_download')) return 'rc_download';
       }
     }
   }
@@ -880,6 +889,8 @@ function checkSegments(segs, depth, cwd0 = null) {
 function analyze(cmd, depth = 0, known = null) {
   const text = String(cmd);
   if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  // Past the nesting limit a backtick substitution is refused, not skipped: its commands would not be checked.
+  if (depth >= MAX_DEPTH && backtickCode(text) && (ENABLED === null || ENABLED.size > 0)) return OVERFLOW;
   // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
   // again on its own below, so the patterns that do not need the quotes read the text without them.
   // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
