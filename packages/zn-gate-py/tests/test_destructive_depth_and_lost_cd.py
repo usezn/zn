@@ -55,3 +55,51 @@ def test_known_cd_and_ordinary_multi_cd_are_not_blocked():
         "cd ~/proj | cat; " + DL + " > .bashrc",
     ):
         assert check_command(cmd).verdict == "allow", cmd
+
+
+def nest_find(cmd, levels):
+    s = cmd
+    for _ in range(levels):
+        s = "find . -exec sh -c " + SQ + s.replace(SQ, SQ + BS + SQ + SQ) + SQ + " ;"
+    return s
+
+
+def nest_requoted(cmd, levels):
+    """bash -c "echo $(bash -c "x")": the inner quotes re-open the double quotes inside the substitution."""
+    s = 'bash -c "' + cmd + '"'
+    for _ in range(1, levels):
+        s = 'bash -c "echo $(' + s + ')"'
+    return s
+
+
+def test_a_find_exec_shell_four_levels_deep_is_refused_three_are_read():
+    assert check_command(nest_find(RM_HOME, 3)).rule == "destructive:rm_root_home"
+    assert check_command(nest_find("ls", 3)).verdict == "allow"
+    assert check_command(nest_find(RM_HOME, 4)).rule == "destructive:too_many_commands"
+    assert check_command(nest_find("ls", 4)).rule == "destructive:too_many_commands"
+
+
+def test_a_command_run_by_find_exec_is_read_and_ordinary_ones_stay_allowed():
+    assert check_command("find . -exec sh -c " + SQ + RM_HOME + SQ + " ;").rule == "destructive:rm_root_home"
+    assert check_command("find . -execdir " + RM_HOME + " +").rule == "destructive:rm_root_home"
+    assert check_command("find . -name " + SQ + "*.log" + SQ + " -exec ls -l {} ;").verdict == "allow"
+    assert check_command("find . -type f -exec grep -l TODO {} +").verdict == "allow"
+    assert check_command("find . -exec sh -c " + SQ + "echo {}" + SQ + " ;").verdict == "allow"
+
+
+def test_a_substitution_inside_a_requoted_c_string_counts_toward_the_limit():
+    assert check_command(nest_requoted(RM_HOME, 2)).rule == "destructive:rm_root_home"
+    assert check_command(nest_requoted(RM_HOME, 3)).rule == "destructive:rm_root_home"
+    assert check_command(nest_requoted(RM_HOME, 4)).rule == "destructive:too_many_commands"
+    assert check_command(nest_requoted("ls", 3)).verdict == "allow"
+    assert check_command(nest_requoted("ls", 4)).rule == "destructive:too_many_commands"
+    assert check_command('bash -c "echo $(date)"').verdict == "allow"
+
+
+def test_a_download_into_authorized_keys_is_refused_also_after_a_lost_cd():
+    keys = ".ssh/authorized_keys"
+    assert check_command(DL + " -o ~/" + keys).rule == "destructive:rc_download"
+    assert check_command("D=~ && D=~/x; cd $D; " + DL + " -o " + keys).rule == "destructive:rc_download"
+    assert check_command("D=~ && D=~/x; cd $D; " + DL + " > " + keys).rule == "destructive:rc_download"
+    assert check_command("cd /work && cd src && " + DL + " -o out.txt").verdict == "allow"
+    assert check_command("D=~ && D=~/x; cd $D; " + DL + " -o keys.txt").verdict == "allow"

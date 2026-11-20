@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.1"
+COMMAND_RULES_VERSION = "2026-11-20.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -78,7 +78,7 @@ _BLOCK_DEVICE_RE = re.compile(
 )
 _RC_UNIX_RE = re.compile(
     r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)\Z"
-    r"|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|environment)\Z|^/etc/profile\.d/",
+    r"|/\.ssh/authorized_keys2?\Z|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|environment)\Z|^/etc/profile\.d/",
     _A,
 )
 _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1\Z", _AI)
@@ -687,6 +687,98 @@ def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, 
 
 # Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
+
+
+def _subst_end(text: str, start: int, state: dict, lvl: int) -> int:
+    """The index of the ) that closes a $( opened just before `start` (len(text) when there is none). Quotes inside the
+    substitution start afresh, so in "echo $(sh -c "x")" the quoted x belongs to the substitution. state["deep"] is set
+    when the nesting is too deep to follow."""
+    if lvl > 64:
+        state["deep"] = True
+        return len(text)
+    parens = 0
+    i = start
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 1
+        elif ch == "'":
+            e = text.find("'", i + 1)
+            if e < 0:
+                return n
+            i = e
+        elif ch == '"':
+            i = _dq_end(text, i, state, lvl)
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            i = _subst_end(text, i + 2, state, lvl + 1)
+        elif ch == "(":
+            parens += 1
+        elif ch == ")":
+            if parens == 0:
+                return i
+            parens -= 1
+        i += 1
+    return n
+
+
+def _dq_end(text: str, at: int, state: dict, lvl: int) -> int:
+    """The index of the " that closes the double-quoted string opened at `at` (a $( inside it is read to its end)."""
+    i = at + 1
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 1
+        elif ch == '"':
+            return i
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            i = _subst_end(text, i + 2, state, lvl + 1)
+        i += 1
+    return n
+
+
+def _requote_substitutions(text: str) -> Optional[str]:
+    """A command with a $( ) substitution whose own quotes sit inside a double-quoted string (bash -c "echo $(bash -c "x")")
+    is valid bash, but the word scanner reads the inner quote as the end of the outer string and so misreads the shell code
+    of the -c. The same command is written here with the quotes of every substitution inside a double-quoted string escaped
+    (bash -c "echo $(bash -c \\"x\\")"), the form the scanner reads right, and the nesting is counted as for any other shell
+    string. None when the nesting is too deep to follow."""
+    state = {"deep": False}
+    out = _requote_text(text, state, 0)
+    return None if state["deep"] else out
+
+
+def _requote_text(text: str, state: dict, lvl: int) -> str:
+    out: List[str] = []
+    dq = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            e = text.find("'", i + 1)
+            stop = n - 1 if e < 0 else e
+            out.append(text[i:stop + 1])
+            i = stop + 1
+            continue
+        if ch == '"':
+            dq = not dq
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            end = _subst_end(text, i + 2, state, lvl)
+            body = _requote_text(text[i + 2:end], state, lvl + 1)
+            if dq:
+                body = re.sub(r'[\\"]', lambda m: "\\" + m.group(0), body)
+            out.append("$(" + body + (")" if end < n else ""))
+            i = end + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _backtick_code(text: str) -> str:
@@ -1327,6 +1419,19 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
         # over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
         if delete and "-files0-from" in rest:
             return "rm_root_home"
+        # The command an -exec, -execdir, -ok or -okdir runs (up to its ; or +) is read like any other command, at the same
+        # depth: a shell -c inside it counts toward the nesting limit the way a shell -c inside a shell -c does.
+        i = first
+        while i < len(rest):
+            if re.match(r"^-(?:exec|execdir|ok|okdir)\Z", rest[i]):
+                j = i + 1
+                while j < len(rest) and not re.match(r"^\\?;\Z|^\+\Z", rest[j]):
+                    j += 1
+                exec_hit = _check_simple(rest[i + 1:j], depth, known) if j > i + 1 else None
+                if exec_hit:
+                    return exec_hit
+                i = j
+            i += 1
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
@@ -1597,10 +1702,19 @@ def _check_segments(
     return _check_pipeline_readings(pipe, known) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
+    # The same command with the quotes of its substitutions escaped (see _requote_substitutions), read at the same depth.
+    if not requoted and "$(" in text and '"' in text:
+        fixed = _requote_substitutions(text)
+        if fixed is None:
+            return _OVERFLOW
+        if fixed != text:
+            fixed_hit = _analyze(fixed, depth, known, True)
+            if fixed_hit:
+                return fixed_hit
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"

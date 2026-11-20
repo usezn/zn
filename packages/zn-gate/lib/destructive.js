@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.1';
+const COMMAND_RULES_VERSION = '2026-11-20.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -67,7 +67,7 @@ const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '
   '/sbin', '/srv', '/sys', '/usr', '/var', '/Users', '/System', '/Library', '/Applications', '/private', '/Volumes']);
 const HOME_WORDS = new Set(['~', '$home', '${home}', '$userprofile', '${userprofile}', '%userprofile%', '$env:userprofile', '$env:home', '$env:homepath']);
 const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/;
-const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|environment)$|^\/etc\/profile\.d\//;
+const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/\.ssh\/authorized_keys2?$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|environment)$|^\/etc\/profile\.d\//;
 const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
 
 const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
@@ -294,6 +294,72 @@ function backtickCode(text) {
     i = j;
   }
   return bodies.join('\n');
+}
+
+/* The index of the ) that closes a $( opened just before `from` (text.length when there is none). Quotes inside the
+   substitution start afresh, so in "echo $(sh -c "x")" the quoted x belongs to the substitution. `state.deep` is set when
+   the nesting is too deep to follow. */
+function substEnd(text, from, state, lvl) {
+  if (lvl > 64) { state.deep = true; return text.length; }
+  let parens = 0;
+  for (let i = from; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\') { i++; continue; }
+    if (ch === "'") { const e = text.indexOf("'", i + 1); if (e < 0) return text.length; i = e; continue; }
+    if (ch === '"') { i = dqEnd(text, i, state, lvl); continue; }
+    if (ch === '$' && text[i + 1] === '(') { i = substEnd(text, i + 2, state, lvl + 1); continue; }
+    if (ch === '(') parens++;
+    else if (ch === ')') { if (parens === 0) return i; parens--; }
+  }
+  return text.length;
+}
+
+/* The index of the " that closes the double-quoted string opened at `at` (a $( inside it is read to its end). */
+function dqEnd(text, at, state, lvl) {
+  for (let i = at + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') return i;
+    if (ch === '$' && text[i + 1] === '(') i = substEnd(text, i + 2, state, lvl + 1);
+  }
+  return text.length;
+}
+
+/* A command with a $( ) substitution whose own quotes sit inside a double-quoted string (bash -c "echo $(bash -c "x")")
+   is valid bash, but the word scanner reads the inner quote as the end of the outer string and so misreads the shell code
+   of the -c. The same command is written here with the quotes of every substitution inside a double-quoted string escaped
+   (bash -c "echo $(bash -c \"x\")"), the form the scanner reads right, and the nesting is counted as for any other shell
+   string. Returns null when the nesting is too deep to follow. */
+function requoteSubstitutions(text) {
+  const state = { deep: false };
+  const out = requoteText(text, state, 0);
+  return state.deep ? null : out;
+}
+
+function requoteText(text, state, lvl) {
+  let out = '';
+  let dq = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\') { out += text.slice(i, i + 2); i++; continue; }
+    if (ch === "'" && !dq) {
+      const e = text.indexOf("'", i + 1);
+      const stop = e < 0 ? text.length - 1 : e;
+      out += text.slice(i, stop + 1);
+      i = stop;
+      continue;
+    }
+    if (ch === '"') dq = !dq;
+    else if (ch === '$' && text[i + 1] === '(') {
+      const end = substEnd(text, i + 2, state, lvl);
+      const body = requoteText(text.slice(i + 2, end), state, lvl + 1);
+      out += '$(' + (dq ? body.replace(/[\\"]/g, '\\$&') : body) + (end < text.length ? ')' : '');
+      i = end;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 /* The folder a command runs in when it is wrapped in env -C / sudo -D: `dirs` are the words of its chdir options in
@@ -664,6 +730,16 @@ function checkHead(args, depth, known) {
     // -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
     // over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
     if ((del && rest.includes('-files0-from')) && on('rm_root_home')) return 'rm_root_home';
+    // The command an -exec, -execdir, -ok or -okdir runs (up to its ; or +) is read like any other command, at the same
+    // depth: a shell -c inside it counts toward the nesting limit the way a shell -c inside a shell -c does.
+    for (let i = first; i < rest.length; i++) {
+      if (!/^-(?:exec|execdir|ok|okdir)$/.test(rest[i])) continue;
+      let j = i + 1;
+      while (j < rest.length && !/^\\?;$|^\+$/.test(rest[j])) j++;
+      const hit = j > i + 1 ? checkSimple(rest.slice(i + 1, j), depth, known) : null;
+      if (hit) return hit;
+      i = j;
+    }
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
@@ -886,9 +962,18 @@ function checkSegments(segs, depth, cwd0 = null) {
   return pipe.length ? checkPipelineReadings(pipe, known) : null;
 }
 
-function analyze(cmd, depth = 0, known = null) {
+function analyze(cmd, depth = 0, known = null, requoted = false) {
   const text = String(cmd);
   if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  // The same command with the quotes of its substitutions escaped (see requoteSubstitutions), read at the same depth.
+  if (!requoted && text.includes('$(') && text.includes('"')) {
+    const fixed = requoteSubstitutions(text);
+    if (fixed === null) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+    if (fixed !== text) {
+      const fixedHit = analyze(fixed, depth, known, true);
+      if (fixedHit) return fixedHit;
+    }
+  }
   // Past the nesting limit a backtick substitution is refused, not skipped: its commands would not be checked.
   if (depth >= MAX_DEPTH && backtickCode(text) && (ENABLED === null || ENABLED.size > 0)) return OVERFLOW;
   // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked

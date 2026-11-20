@@ -147,3 +147,50 @@ test('an allowed command reports the local engine and no rule', () => {
   assert.equal(r.engine, 'oss-local');
   assert.equal(r.confidence, 1);
 });
+
+// A find -exec command is read like any other command, and its shell -c counts toward the nesting limit.
+function nestFind(cmd, levels) {
+  let s = cmd;
+  for (let i = 0; i < levels; i++) s = "find . -exec sh -c '" + s.replace(/'/g, "'\\''") + "' ;";
+  return s;
+}
+
+// A -c string whose $( ) holds another -c string in re-opened double quotes: bash -c "echo $(bash -c "x")".
+function nestRequoted(cmd, levels) {
+  let s = 'bash -c "' + cmd + '"';
+  for (let i = 1; i < levels; i++) s = 'bash -c "echo $(' + s + ')"';
+  return s;
+}
+
+test('a find -exec shell nested four levels deep is refused, three levels are read', () => {
+  assert.equal(checkCommand(nestFind(RM_HOME, 3)).rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand(nestFind('ls', 3)).verdict, 'allow');
+  assert.equal(checkCommand(nestFind(RM_HOME, 4)).rule, 'destructive:too_many_commands');
+  assert.equal(checkCommand(nestFind('ls', 4)).rule, 'destructive:too_many_commands');
+});
+
+test('a command run by find -exec, -execdir or -ok is read, and ordinary ones stay allowed', () => {
+  assert.equal(checkCommand("find . -exec sh -c '" + RM_HOME + "' ;").rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('find . -execdir ' + RM_HOME + ' +').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand("find . -name '*.log' -exec ls -l {} ;").verdict, 'allow');
+  assert.equal(checkCommand("find . -type f -exec grep -l TODO {} +").verdict, 'allow');
+  assert.equal(checkCommand("find . -exec sh -c 'echo {}' ;").verdict, 'allow');
+});
+
+test('a command substitution inside a re-quoted -c string counts toward the nesting limit', () => {
+  assert.equal(checkCommand(nestRequoted(RM_HOME, 2)).rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand(nestRequoted(RM_HOME, 3)).rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand(nestRequoted(RM_HOME, 4)).rule, 'destructive:too_many_commands');
+  assert.equal(checkCommand(nestRequoted('ls', 3)).verdict, 'allow');
+  assert.equal(checkCommand(nestRequoted('ls', 4)).rule, 'destructive:too_many_commands');
+  assert.equal(checkCommand('bash -c "echo $(date)"').verdict, 'allow');
+});
+
+test('a download into authorized_keys is refused, also after a cd that cannot be resolved', () => {
+  const keys = '.ssh/authorized_keys';
+  assert.equal(checkCommand(DL + ' -o ~/' + keys).rule, 'destructive:rc_download');
+  assert.equal(checkCommand('D=~ && D=~/x; cd $D; ' + DL + ' -o ' + keys).rule, 'destructive:rc_download');
+  assert.equal(checkCommand('D=~ && D=~/x; cd $D; ' + DL + ' > ' + keys).rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd /work && cd src && ' + DL + ' -o out.txt').verdict, 'allow');
+  assert.equal(checkCommand('D=~ && D=~/x; cd $D; ' + DL + ' -o keys.txt').verdict, 'allow');
+});
