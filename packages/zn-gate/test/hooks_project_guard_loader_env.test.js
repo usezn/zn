@@ -95,9 +95,14 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
   for (const e of [undefined, 'PreToolUse', 'beforeShellExecution']) {
     const agent = e === 'beforeShellExecution' ? 'cursor' : 'claude-code';
     const cmd = launcher.projectShCommand(agent, e);
-    const unset = 'unset ' + loaderEnv.SH_UNSET_NAMES.join(' ');
+    // Linux and macOS get the fast scrub (one unset of the listed names). Windows gets the case-insensitive export scan (loader-env.js,
+    // shScrubLines with fast off): each platform must carry the scrub its generator emits.
+    const scrub = process.platform === 'win32'
+      ? loaderEnv.shScrubLines({ fast: false }).filter((l) => !l.startsWith('#')).join('\n')
+      : 'unset ' + loaderEnv.SH_UNSET_NAMES.join(' ');
     assert.ok(cmd.startsWith("sh -c 'LP="), cmd.slice(0, 80));
-    assert.ok(cmd.includes('\n' + unset + '\n'), 'the shared scrub follows the preload check');
+    assert.ok(cmd.includes('\n' + scrub + '\n'), 'the shared scrub follows the preload check');
+    if (process.platform === 'win32') assert.ok(cmd.includes('[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]'), 'the export scan matches NODE_OPTIONS in any case');
     assert.ok(cmd.indexOf('command -v zn') > cmd.indexOf('set +f'), 'the scrub ends before zn is looked for');
     assert.equal(launcher.isProjectGuard(cmd, agent), true);
     assert.equal(launcher.isProjectGuardExact(cmd, agent), true);
@@ -107,6 +112,18 @@ test('project guard, sh -c form: the shared scrub comes first, and the guard is 
   assert.ok(ag.includes('unset${IFS}NODE_OPTIONS${IFS}') || ag.includes('NODE_OPTIONS'), 'NODE_OPTIONS is unset');
   assert.ok(ag.indexOf('NODE_OPTIONS') < ag.indexOf('${IFS}hook${IFS}'), 'before zn starts');
   assert.equal(launcher.isProjectGuard(ag, 'antigravity'), true);
+});
+
+test('project guard, sh -c form with process.platform stubbed to win32: the case-insensitive export scan is emitted', () => {
+  // The generator reads process.platform when it loads, so the win32 branch runs in a child process with the platform replaced.
+  const code = "Object.defineProperty(process, 'platform', { value: 'win32' });\n" +
+    'const l = require(' + JSON.stringify(path.join(__dirname, '..', 'lib', 'agents', 'launcher')) + ');\n' +
+    "process.stdout.write(l.projectShCommand('claude-code', 'PreToolUse'));\n";
+  const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('for ZN_V in $(export -p)'), 'the win32 command has the export scan');
+  assert.ok(r.stdout.includes('[Nn][Oo][Dd][Ee]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss]'), 'the scan matches NODE_OPTIONS in any case');
+  assert.ok(r.stdout.includes('unset ' + loaderEnv.LOADER_NAMES.join(' ') + '\n'), 'the listed names are unset');
 });
 
 test('project guard, PowerShell form (static: not run on Windows here): the loader variables are removed before zn.cmd starts', () => {
