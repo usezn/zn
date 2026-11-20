@@ -2,13 +2,13 @@
 
 zn-gate is a **lightweight checkpoint on your machine**, placed between your AI coding agent and everything it does not control: your prompts, the files it reads, web pages, and the tools and MCP servers it calls. It runs locally, needs no account, and sends nothing off the machine by default.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/architecture-animated-dark.svg"><img alt="Architecture diagram. Untrusted input such as prompts, files, web pages and MCP servers passes through zn-gate on your machine before it reaches the agent. zn-gate checks the prompt, the tool call and the tool result, using a local rules engine, a PII and secret scrubber, an encrypted vault and a hash-chained decision log. Only with ZN_CLOUD=1 and ZN_API_KEY set, prompts with detected secrets removed go to the optional Galvanize 3 classifier at api.usezn.com." src="diagrams/architecture-animated-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/architecture-animated-dark.svg"><img alt="Architecture diagram. Untrusted input such as prompts, files, web pages and MCP servers passes through zn-gate on your machine before it reaches the agent. zn-gate checks the prompt, the tool call and the tool result, using a local rules engine, a PII and secret scrubber, an encrypted vault and a hash-chained decision log. Only with ZN_CLOUD=1 and ZN_API_KEY set, prompts with detected secrets removed go to the optional Galvanize 3.1 classifier at api.usezn.com." src="diagrams/architecture-animated-light.svg" width="800"></picture>
 
 **How to read this diagram**
 
 - The boxes: untrusted input (prompts, files, web, MCP) on the left, the agent and its tools on the right, and zn-gate between them with one box per check (`analyze_prompt`, `check_tool_call`, `check_tool_result`).
 - The arrows: input goes through the three checks and reaches the agent as clean input, and output comes back redacted. The bottom row (rules engine, scrubber, encrypted vault, and the hash-chained decision log, the "audit log" box in the diagram) is used by all three checks.
-- The cloud path: only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`.
+- The cloud path: only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3.1 classifier at `api.usezn.com`.
 
 ## Three checks, one local engine
 
@@ -61,13 +61,13 @@ Where each check sits in a tool call, as an MCP server or as the `shield` proxy 
 
 What goes where on your machine, and what can leave it:
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3 classifier." src="diagrams/data-flow-animated-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3.1 classifier." src="diagrams/data-flow-animated-light.svg" width="800"></picture>
 
 **How to read this diagram**
 
 - The boxes: the agent, zn-gate (rules engine and secret redaction) and the tools and MCP servers (files, shell, web, databases), all inside "Your machine".
 - The arrows: tool calls and prompts go to zn-gate, allowed calls reach the tools with secrets masked, and tool output comes back through zn-gate as redacted output and verdicts.
-- The cloud arrow: nothing leaves the machine by default. Only after `zn-gate connect`, or with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`. A capped sample of tool output is sent only if you also turn on `cloudCheckToolOutput` (see [What runs locally and what goes to the API](local-checks-and-api-data.md)).
+- The cloud arrow: nothing leaves the machine by default. Only after `zn-gate connect`, or with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3.1 classifier at `api.usezn.com`. A capped sample of tool output is sent only if you also turn on `cloudCheckToolOutput` (see [What runs locally and what goes to the API](local-checks-and-api-data.md)).
 
 ## Key Architectural Principles
 
