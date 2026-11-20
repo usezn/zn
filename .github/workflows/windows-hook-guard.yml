@@ -1,0 +1,65 @@
+# Windows PowerShell 5.1 tests of the hook launchers and the project hook guard, on pull requests that touch the agent code.
+name: Windows hook guard
+
+# windows-paths.yml runs the whole Node.js suite on Windows, but only for pull requests into main and release branches. The project
+# hook guard resolves junctions and links with Windows PowerShell 5.1 (powershell.exe, not pwsh), and that code is only exercised by
+# the Windows-only tests below, so a pull request into next that changes it needs this smaller run. It also runs on the others.
+
+on:
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - 'packages/zn-gate/lib/agents/**'
+      - 'packages/zn-gate/lib/loader-env.js'
+      - 'packages/zn-gate/lib/shell-quote.js'
+      - 'packages/zn-gate/test/hooks_project_guard_*.test.js'
+      - 'packages/zn-gate/test/windows_path_guard.test.js'
+      - '.github/workflows/windows-hook-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-hook-guard-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows-powershell:
+    name: Windows PowerShell 5.1 hook guard
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Check that Windows PowerShell 5.1 is the one the tests start
+        # `shell: powershell` is Windows PowerShell 5.1; the tests start powershell.exe from System32, never pwsh.
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw "expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)" }
+          $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          if (-not (Test-Path $ps)) { throw "no powershell.exe at $ps" }
+      - name: Install zn-gate dependencies
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Project hook guard tests (junctions, PATH entries, script text)
+        working-directory: packages/zn-gate
+        shell: powershell
+        run: |
+          node --test test/hooks_project_guard_windows_paths.test.js test/windows_path_guard.test.js test/ps_no_cmdlets.test.js test/hooks_project_guard_loader_env.test.js test/hooks_project_guard_modules.test.js test/hooks_antigravity_project.test.js test/check_project_guard_win32.test.js test/hook_dir_windows.test.js
+          exit $LASTEXITCODE
+      - name: The Windows-only guard tests did run
+        # Fails when the junction tests were skipped, so the run cannot pass without exercising the PowerShell target lookup.
+        working-directory: packages/zn-gate
+        shell: powershell
+        run: |
+          $out = node --test --test-reporter=spec test/hooks_project_guard_windows_paths.test.js | Out-String
+          if ($out -match 'skipped [1-9]') { throw 'the Windows guard tests were skipped' }
+          if ($out -notmatch 'junction') { throw 'the junction tests did not run' }
