@@ -294,6 +294,8 @@ class VaultClient {
   mapToken(project, type, value) { return this.call('mapToken', [project, type, value]); }
   resolve(project, token, opts) { return this.call('resolve', [project, token, opts || {}]); }
   setSecret(name, value, meta) { return this.call('setSecret', [name, value, meta || {}]); }
+  // [{name, value, meta}, ...]: all stored in one save, or none.
+  setSecrets(entries) { return this.call('setSecrets', [entries]); }
   // opts {effective, agent}: the organization policy applied for that agent.
   listSecrets(opts) { return this.call('listSecrets', opts ? [opts] : []); }
   removeSecret(name) { return this.call('removeSecret', [name]); }
@@ -344,6 +346,7 @@ async function mapToken(project, type, value) { return client().mapToken(project
 // {destination, agent, tool} for the daemon's policy check and audit.
 async function resolve(project, token) { return client().resolve(project, token, arguments[2]); }
 async function setSecret(name, value, meta) { return client().setSecret(name, value, meta); }
+async function setSecrets(entries) { return client().setSecrets(entries); }
 // Contract arity is 0; an optional argument {effective, agent} applies the
 // organization policy for that agent (zn Team).
 async function listSecrets() { return client().listSecrets(arguments[0]); }
@@ -366,6 +369,7 @@ module.exports = {
   mapToken,
   resolve,
   setSecret,
+  setSecrets,
   listSecrets,
   removeSecret,
   maskInfo,

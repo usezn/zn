@@ -412,6 +412,46 @@ function appendChecked(state, event, extra) {
   return rec;
 }
 
+/* A vault change is saved before its audit records are written. If the save fails (a full disk), the change is undone
+ * in memory and nothing is audited. If an audit write fails after the save, the change is undone and saved back.
+ * change(secrets) applies the change and returns its audit events. The checkpoint that names the new records is saved
+ * right after; if that save fails the records stay past the checkpoint (verify accepts that) and the flush retries. */
+async function commitChange(state, writeAudit, change) {
+  const secrets = await state.loadSecrets();
+  const before = JSON.parse(JSON.stringify(secrets));
+  const undo = () => {
+    for (const k of Object.keys(secrets)) delete secrets[k];
+    Object.assign(secrets, before);
+  };
+  let events;
+  try {
+    events = change(secrets);
+    await state.saveSecrets();
+  } catch (err) {
+    undo();
+    throw err;
+  }
+  try {
+    for (const ev of events) writeAudit(ev);
+  } catch (err) {
+    undo();
+    await state.saveSecrets().catch(() => {});
+    throw err;
+  }
+  await state.saveSecrets().catch(() => {});
+}
+
+/* Sets one secret in memory (no save). Returns the audit reason. */
+function applySet(secrets, n, value, meta) {
+  const prev = secrets.secrets[n];
+  // The same value again is not a new secret: it keeps its generation and its approvals.
+  const sameValue = !!prev && typeof prev.generation === 'string' && prev.generation !== '' && prev.value === value;
+  const generation = sameValue ? prev.generation : newGeneration();
+  if (!sameValue) dropApprovalsOf(secrets, n);
+  secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
+  return prev ? 'updated' : 'created';
+}
+
 function makeOps(state, ctl) {
   const auditFile = state.paths.auditFile;
   const channel = ctl.channel;
@@ -687,13 +727,36 @@ function makeOps(state, ctl) {
           const bad = validateSecretValue(value);
           if (bad) throw znError(CODES.POLICY_DENIED, 'invalid value: ' + bad);
         }
-        // The same value again is not a new secret: it keeps its generation and its approvals.
-        const sameValue = !!prev && typeof prev.generation === 'string' && prev.generation !== '' && prev.value === value;
-        const generation = sameValue ? prev.generation : newGeneration();
-        if (!sameValue) dropApprovalsOf(secrets, n);
-        secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
-        await writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: prev ? 'updated' : 'created' });
-        await state.saveSecrets();
+        await commitChange(state, writeAudit, (s) => {
+          const reason = applySet(s, n, value, meta);
+          return [{ secret: n, mode: 'set', decision: 'allow', reason }];
+        });
+        return true;
+      });
+    },
+
+    /* Several secrets in one save: all of them are stored or none is (`zn secret import`, `zn env shadow`). */
+    async setSecrets(entries) {
+      if (!Array.isArray(entries) || entries.length === 0 || entries.length > 200) {
+        throw znError(CODES.POLICY_DENIED, 'invalid request: give between 1 and 200 secrets. Next step: store them one at a time.');
+      }
+      const items = entries.map((e) => {
+        const n = checkName(e && e.name);
+        str(e && e.value, 'value');
+        return { n, value: e.value, meta: e.meta, backup: Boolean(e.meta && typeof e.meta === 'object' && e.meta.mode === 'backup') };
+      });
+      return state.serial(async () => {
+        const secrets = await state.loadSecrets();
+        for (const it of items) {
+          const prev = secrets.secrets[it.n];
+          if (!it.backup && !(prev && prev.value === it.value)) {
+            const bad = validateSecretValue(it.value);
+            if (bad) throw znError(CODES.POLICY_DENIED, 'invalid value: ' + bad);
+          }
+        }
+        await commitChange(state, writeAudit, (s) => items.map((it) => ({
+          secret: it.n, mode: 'set', decision: 'allow', reason: applySet(s, it.n, it.value, it.meta),
+        })));
         return true;
       });
     },
@@ -887,10 +950,11 @@ function makeOps(state, ctl) {
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         if (!Object.prototype.hasOwnProperty.call(secrets.secrets, n)) return false;
-        delete secrets.secrets[n];
-        dropApprovalsOf(secrets, n);
-        await writeAudit({ secret: n, mode: 'remove', decision: 'allow' });
-        await state.saveSecrets();
+        await commitChange(state, writeAudit, (s) => {
+          delete s.secrets[n];
+          dropApprovalsOf(s, n);
+          return [{ secret: n, mode: 'remove', decision: 'allow' }];
+        });
         return true;
       });
     },
@@ -1069,6 +1133,9 @@ function makeOps(state, ctl) {
     },
 
     async lock() {
+      // The vault is saved before the lock is reported: a failed save (a full disk) throws, the vault stays unlocked,
+      // and the lock is not audited.
+      await state.serial(async () => { if (state.secrets) await state.saveSecrets(); });
       setImmediate(() => ctl.shutdown('lock'));
       return true;
     },
@@ -1172,6 +1239,8 @@ async function serve(opts) {
       await state.serial(async () => {
         if (state.secrets) {
           try {
+            // The vault is saved first: a lock or expiry is recorded only once the vault has been saved.
+            await state.saveSecrets();
             appendChecked(state, { mode: reason === 'lock' ? 'lock' : 'expire', decision: 'allow', reason }, {});
           } finally {
             await state.saveSecrets();

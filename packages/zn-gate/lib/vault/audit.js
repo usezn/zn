@@ -164,8 +164,20 @@ function append(event, opts) {
   // power loss the checkpoint then never points past the end of the log.
   const fd = fs.openSync(file, 'a', 0o600);
   try {
-    fs.writeSync(fd, JSON.stringify(record) + '\n');
-    try { fs.fsyncSync(fd); } catch (err) { /* a file system without fsync: keep going */ }
+    const before = fs.fstatSync(fd).size;
+    try {
+      const line = Buffer.from(JSON.stringify(record) + '\n', 'utf8');
+      for (let off = 0; off < line.length;) {
+        const n = fs.writeSync(fd, line, off, line.length - off);
+        if (!(n > 0)) throw Object.assign(new Error('write made no progress'), { code: 'EIO' });
+        off += n;
+      }
+      try { fs.fsyncSync(fd); } catch (err) { /* a file system without fsync: keep going */ }
+    } catch (err) {
+      // A write that fails part-way (a full disk) leaves no partial record behind.
+      try { fs.ftruncateSync(fd, before); } catch (e) { /* keep the original error */ }
+      throw err;
+    }
   } finally {
     fs.closeSync(fd);
   }

@@ -339,8 +339,11 @@ function planImport(text, flags) {
   return { parsed, items, skipped, notes };
 }
 
-async function storeItems(vault, items, flags, source, io) {
+/* Stores the new values in one vault save, together with the extra entries (the backup of env shadow): all of them
+ * are stored or none is. `written` (optional) receives the names this call stored. */
+async function storeItems(vault, items, flags, source, io, extra = [], written = []) {
   const stored = [];
+  const entries = extra.slice();
   for (const it of items) {
     const cur = await existingMeta(vault, it.name);
     if (cur && !flags.force) {
@@ -352,8 +355,13 @@ async function storeItems(vault, items, flags, source, io) {
       stored.push(it);
       continue;
     }
-    await vault.setSecret(it.name, it.value, metaFromFlags(flags, { mode: 'env', source }));
+    entries.push({ name: it.name, value: it.value, meta: metaFromFlags(flags, { mode: 'env', source }) });
     stored.push(it);
+  }
+  if (entries.length) {
+    if (typeof vault.setSecrets === 'function') await vault.setSecrets(entries);
+    else for (const e of entries) await vault.setSecret(e.name, e.value, e.meta);
+    for (const e of entries) written.push(e.name);
   }
   return stored;
 }
@@ -400,15 +408,22 @@ async function envShadow(args, io) {
   }
   const vault = await vaultOf(io);
   const bak = backupName(file);
-  await vault.setSecret(bak, text, { mode: 'backup', allowHosts: [], allowCommands: [], source: 'env-shadow:' + path.basename(file) });
-  const stored = await storeItems(vault, plan.items, flags, 'dotenv:' + path.basename(file), io);
+  const backup = { name: bak, value: text, meta: { mode: 'backup', allowHosts: [], allowCommands: [], source: 'env-shadow:' + path.basename(file) } };
+  const written = [];
+  const stored = await storeItems(vault, plan.items, flags, 'dotenv:' + path.basename(file), io, [backup], written);
   const storedNames = new Set(stored.map((s) => s.name));
   const edits = plan.items.filter((it) => storedNames.has(it.name))
     .map((it) => ({ lineIndex: it.entry.lineIndex, start: it.start, end: it.end, text: markers.markerFor(it.name) }));
   const shadowed = dotenv.applyEdits(plan.parsed, edits);
   let mode = 0o600;
   try { mode = fs.statSync(file).mode & 0o777; } catch (_) { /* default */ }
-  writeFileAtomic(file, shadowed, mode);
+  try {
+    writeFileAtomic(file, shadowed, mode);
+  } catch (err) {
+    // The .env file was not rewritten: take the values back out of the vault (best effort; on a full disk it may fail too).
+    for (const n of written) await vault.removeSecret(n).catch(() => {});
+    throw err;
+  }
   out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. ' + (plan.skipped.length ? 'The values that moved are in the local vault and the file holds markers in their place; some values were left, see below.' : 'The file now holds only markers; the values are in the local vault.'));
   out(io, 'Encrypted copy of the original: ' + bak + ' (restore with: zn env unshadow ' + path.relative(io.cwd, file) + ' --backup ' + bak + ')');
   for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);

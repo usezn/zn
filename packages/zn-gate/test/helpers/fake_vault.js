@@ -50,6 +50,9 @@ function createFakeVault(opts = {}) {
     async setSecret(name, value, meta = {}) {
       secrets.set(name, { value: String(value), meta: { ...meta } });
     },
+    async setSecrets(entries) {
+      for (const e of entries) secrets.set(e.name, { value: String(e.value), meta: { ...(e.meta || {}) } });
+    },
     // Like the daemon: the policy changes, the value stays.
     async updateSecretMeta(name, meta = {}) {
       if (!secrets.has(name)) {
