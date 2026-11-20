@@ -110,12 +110,22 @@ const STALE_AFTER: Duration = Duration::from_secs(3600);
 
 /// Write `bytes` to `path` as a private file, replacing a regular file that is
 /// already there. See the module documentation for the exact behaviour.
+///
+/// # Errors
+///
+/// Returns an error when `path` is a link or not a regular file, when the protected temporary file
+/// cannot be created or written, or when it cannot be moved over `path`.
 pub fn create_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_private(path, bytes, true)
 }
 
 /// Like [`create_private_file`], but fails with [`io::ErrorKind::AlreadyExists`]
 /// instead of replacing an existing target. The existing file is left as it is.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::AlreadyExists`] when `path` exists, and the errors of
+/// [`create_private_file`] otherwise.
 pub fn create_private_file_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_private(path, bytes, false)
 }
@@ -126,11 +136,21 @@ pub fn create_private_file_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// is the file checked. Fails with [`io::ErrorKind::PermissionDenied`] when the
 /// protection is wrong and [`io::ErrorKind::InvalidInput`] for a link or a file
 /// that is not regular.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::PermissionDenied`] when the file is not owner-only,
+/// [`io::ErrorKind::InvalidInput`] when it is a link or not a regular file, and the usual I/O error
+/// when it cannot be opened.
 pub fn open_private(path: &Path) -> io::Result<File> {
     sys::open_private(path)
 }
 
 /// Read a whole private file, with the checks of [`open_private`].
+///
+/// # Errors
+///
+/// Returns the errors of [`open_private`], or an I/O error while reading.
 pub fn read_private_file(path: &Path) -> io::Result<Vec<u8>> {
     let mut file = open_private(path)?;
     let mut bytes = Vec::new();
@@ -143,6 +163,10 @@ pub fn read_private_file(path: &Path) -> io::Result<Vec<u8>> {
 /// on Unix; owned by the current user with a protected DACL that has no entry for
 /// anybody else on Windows. Returns [`io::ErrorKind::PermissionDenied`] when it
 /// is not. This is [`open_private`] without keeping the handle.
+///
+/// # Errors
+///
+/// Returns the errors of [`open_private`].
 pub fn verify_private(path: &Path) -> io::Result<()> {
     open_private(path).map(|_| ())
 }
@@ -151,6 +175,10 @@ pub fn verify_private(path: &Path) -> io::Result<()> {
 /// (left behind by a process that died while writing). Only regular files with
 /// the exact name shape of this module are touched. Returns how many were
 /// removed. Failures on single files are ignored.
+///
+/// # Errors
+///
+/// Returns an error when `dir` cannot be read. Files that cannot be removed are skipped.
 pub fn remove_stale_temp_files(dir: &Path) -> io::Result<usize> {
     remove_temp_files_older_than(dir, STALE_AFTER)
 }

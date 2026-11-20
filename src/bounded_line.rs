@@ -22,6 +22,11 @@ pub enum BoundedLine {
 }
 
 /// Read one line of at most `max` bytes (the line ending not counted).
+///
+/// # Errors
+///
+/// Returns the error of the underlying reader. A line longer than `max` is not an error: it is
+/// reported as [`BoundedLine::TooLong`].
 pub async fn read_line_bounded<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     max: usize,

@@ -242,6 +242,7 @@ impl Default for SecurityConfig {
 /// `ZN_API_KEY` and `ZN_MCP_WS_TOKEN` (and their config file values), so
 /// `ZN_API_KEY=` from an unset compose variable never matches an empty token
 /// and a key pasted with a trailing newline still works.
+#[must_use]
 pub fn normalize_credential(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
@@ -723,6 +724,7 @@ impl ZnConfig {
     /// when they equal the current environment value (a value set in the
     /// config itself is kept). Cleared values are read from the environment
     /// again at start.
+    #[must_use]
     pub fn without_env_values(&self) -> Self {
         fn same_as_env(value: &mut Option<String>, var: &str) {
             if let (Some(v), Ok(env)) = (value.as_ref(), std::env::var(var)) {
@@ -744,16 +746,25 @@ impl ZnConfig {
 
     /// The configuration `zn init` writes: the defaults, without any value
     /// read from the environment.
+    #[must_use]
     pub fn init_template() -> Self {
         Self::default().without_env_values()
     }
 
     /// Write `init_template()` to `path` as JSON, owner-only on Unix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be written. See [`ZnConfig::write_private_file`].
     pub fn write_init_file(path: &Path) -> Result<()> {
         Self::write_private_json(path, &Self::init_template())
     }
 
     /// Write `config` to `path` as pretty JSON through `write_private_file`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `config` cannot be serialized or the file cannot be written.
     pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
         let json = serde_json::to_string_pretty(config)?;
         Self::write_private_file(path, json.as_bytes())
@@ -766,6 +777,10 @@ impl ZnConfig {
     /// existing regular file is replaced atomically and ends up owner-only. A
     /// `path` that is a symbolic link or is not a regular file (a directory, a
     /// FIFO, a device) is refused and left untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `path` is a link or not a regular file, or when the file cannot be written.
     pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
         crate::private_file::create_private_file(path, bytes)
             .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
@@ -773,6 +788,11 @@ impl ZnConfig {
 
     /// Parse the text of a settings file. `file` is only used in the error
     /// message, which names the file and, when it can, the setting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `content` is not a valid configuration. The message names `file` and, when
+    /// it can, the setting.
     pub fn parse_text(file: &str, content: &str) -> Result<Self> {
         serde_json::from_str(content).map_err(|e| anyhow!(config_parse_problem(file, content, &e)))
     }
@@ -790,6 +810,11 @@ impl ZnConfig {
     /// Load configuration from file with environment variable overrides.
     /// Warnings about settings that were ignored are dropped here; use
     /// `load_with_notices` to show them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or is not a valid configuration, or when an
+    /// environment value is invalid.
     pub fn load(path: Option<&Path>) -> Result<Self> {
         Self::load_with_notices(path).map(|(config, _)| config)
     }
@@ -801,6 +826,11 @@ impl ZnConfig {
     ///
     /// An explicit `path` must exist and must be a `.json` file; otherwise the
     /// call fails with a message that says what to do.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or is not a valid configuration, or when an
+    /// environment value is invalid.
     pub fn load_with_notices(path: Option<&Path>) -> Result<(Self, Vec<String>)> {
         let mut notices = Vec::new();
         let mut config = if let Some(p) = path {
@@ -998,6 +1028,10 @@ impl ZnConfig {
     }
 
     /// Validate configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error describing the first setting that is out of range or inconsistent.
     pub fn validate(&self) -> Result<()> {
         if let Some(secret) = &self.security.jwt_secret {
             if secret.len() < MIN_JWT_SECRET_BYTES {
@@ -1053,11 +1087,13 @@ impl ZnConfig {
     }
 
     /// Get neural blocking mode based on paranoia level and alert_only
+    #[must_use]
     pub fn is_neural_blocking(&self) -> bool {
         !self.guardrails.alert_only && self.neural.active_blocking
     }
 
     /// Get paranoia-adjusted threshold multiplier
+    #[must_use]
     pub fn paranoia_threshold_multiplier(&self) -> f32 {
         match self.guardrails.paranoia_level {
             1 => 1.5, // relaxed
@@ -1070,6 +1106,7 @@ impl ZnConfig {
     }
 
     /// Get paranoia-adjusted classifier threshold
+    #[must_use]
     pub fn paranoia_classifier_threshold(&self) -> f32 {
         match self.guardrails.paranoia_level {
             1 => 0.7, // relaxed
@@ -1221,6 +1258,7 @@ fn known_setting_paths() -> Vec<String> {
 
 /// Settings in `content` that zn does not know, as dotted paths. Keys that
 /// start with `_` or `$` (comments, `$schema`) are not reported.
+#[must_use]
 pub fn unknown_settings(content: &str) -> Vec<String> {
     fn walk(
         prefix: &str,
@@ -1366,6 +1404,7 @@ fn checked_setting_notices(file: &str, content: &str) -> Result<Vec<String>> {
 
 /// Plain-English text for a settings file that cannot be parsed: the file, the
 /// setting if it is known, the line, and what to do.
+#[must_use]
 pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) -> String {
     use serde_json::error::Category;
     let at = format!("line {}, column {}", err.line(), err.column());
