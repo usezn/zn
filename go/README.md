@@ -36,8 +36,8 @@ func safeToRead(ctx context.Context, toolResult string) bool {
 		fmt.Println("zn could not answer, failing closed:", err)
 		return false
 	}
-	if res.Blocked() {
-		fmt.Println("blocked:", res.Rule, res.EvidenceID)
+	if !res.Allowed() {
+		fmt.Println("not allowed, failing closed:", res.Verdict, res.Rule, res.EvidenceID)
 		return false
 	}
 	return true
@@ -51,7 +51,7 @@ func safeToRead(ctx context.Context, toolResult string) bool {
 | `Verdict` | `allow` or `block`. `res.Blocked()` is true for `block`; `res.Allowed()` is true only for `allow`. |
 | `Score`, `Confidence` | Model score for the input, 0 to 1. `Score` is `nil` when no model scored the text (the rules decided). |
 | `Threshold` | Score at or above which the model that decided blocks. It echoes the `Threshold` option when you set one, and is the detector default otherwise. |
-| `RequestMode`, `WouldBlock` | Set in [monitor mode](#threshold-monitor-mode-and-no-store): the verdict is always `allow` and `WouldBlock` says what it would have been. `res.WouldHaveBlocked()` is true if it would have blocked. |
+| `RequestMode`, `WouldBlock` | `RequestMode` is `monitor` or `enforce` whenever the call sets a mode. `WouldBlock` is set only in [monitor mode](#threshold-monitor-mode-and-no-store): the verdict is always `allow` and `WouldBlock` says what it would have been. `res.WouldHaveBlocked()` is true if it would have blocked. |
 | `Rule`, `Reason`, `DecidedBy` | What decided the verdict: `rules` or `ml`. Values such as `ml-error-rules-fallback` mean the model was unavailable and the rules decided. |
 | `Model`, `ModelRequested`, `MLVersion`, `RulesVersion` | Which model and versions produced the verdict, for audits. `ModelRequested` is set only when the call was routed to a different model than the one that answered. |
 | `RouterLevel`, `Mode` | How far the call went (`rules`, `advanced` or `deep`) and the server-side detector mode. |
@@ -98,7 +98,7 @@ if err == nil && res.WouldHaveBlocked() {
 
 ## Timeouts and retries
 
-- The default timeout is 12 seconds per attempt. Long inputs are scored in windows and usually answer within 7 to 8 seconds, never more than 10, so keep the timeout at 10 seconds or more. On AWS Lambda, set the function timeout above the client timeout and pass the Lambda context to `Analyze`.
+- The default timeout is 12 seconds per attempt. Long inputs are scored in windows and take longer, so pass a context with a deadline that fits your use. On AWS Lambda, set the function timeout above the client timeout and pass the Lambda context to `Analyze`.
 - The client retries up to 2 times on a network error, a 429 or a 5xx answer, with exponential backoff and jitter. It honours `Retry-After` and stops waiting when the context is cancelled.
 - The client ignores a `Retry-After` that is not a finite number of seconds or a date, and caps a very large one.
 - It does not retry 400, 401, 402 or 403, and it does not retry a quota answer (`MONTHLY_LIMIT_REACHED`, `INSUFFICIENT_QUOTA`, `TRIAL_ENDED`): those do not clear in seconds. If `Retry-After` is longer than `WithMaxRetryWait` (the monthly reset, for example), the error is returned at once.

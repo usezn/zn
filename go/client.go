@@ -65,8 +65,8 @@ func WithHTTPClient(h *http.Client) Option {
 
 // WithTimeout sets the time limit of each attempt (not of all attempts
 // together; use the context deadline for that). The default is 12 seconds.
-// Long inputs are scored in windows and can take 7 to 8 seconds, so keep it
-// at 10 seconds or more.
+// Long inputs are scored in windows and take longer; use a context deadline
+// that fits your use.
 func WithTimeout(d time.Duration) Option {
 	return func(c *Client) {
 		if d > 0 {

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const blockBody = `{"verdict":"block","confidence":0.9994,"score":0.9994,"threshold":0.98,"rule":"neural-v29","reason":"ML score","decided_by":"ml","rules_version":"2026-09-06.1","ml_version":"zn-galvanize3-fp32-s512","ml_threshold":0.98,"mode":"active","model":"galvanize-3.1","evidence_id":"ev_03c4d212ff5f9e9b385f483a","latency_ms":11,"input_chars":42,"billed_calls":1}`
+const blockBody = `{"verdict":"block","confidence":0.9994,"score":0.9994,"threshold":0.98,"rule":"test-rule","reason":"ML score","decided_by":"ml","rules_version":"test","ml_version":"test-ml-version","ml_threshold":0.98,"mode":"active","model":"test-model","evidence_id":"ev_03c4d212ff5f9e9b385f483a","latency_ms":11,"input_chars":42,"billed_calls":1}`
 
 const allowBody = `{"verdict":"allow","confidence":0.01,"score":null,"threshold":0.98,"rule":"none","reason":null,"decided_by":"rules","model":null,"evidence_id":"ev_aaaaaaaaaaaaaaaaaaaaaaaa","latency_ms":1,"input_chars":5,"billed_calls":1}`
 
@@ -58,7 +58,7 @@ func TestAnalyzeBlock(t *testing.T) {
 	if !res.Blocked() || res.Allowed() || res.Partial() {
 		t.Errorf("Blocked/Allowed/Partial = %v/%v/%v", res.Blocked(), res.Allowed(), res.Partial())
 	}
-	if res.Score == nil || *res.Score != 0.9994 || res.Model != "galvanize-3.1" || res.DecidedBy != "ml" ||
+	if res.Score == nil || *res.Score != 0.9994 || res.Model != "test-model" || res.DecidedBy != "ml" ||
 		res.EvidenceID != "ev_03c4d212ff5f9e9b385f483a" || res.BilledCalls != 1 || res.InputChars != 42 || res.LatencyMS != 11 {
 		t.Errorf("result = %+v", res)
 	}
@@ -443,7 +443,7 @@ func TestOptions(t *testing.T) {
 	}
 }
 
-const monitorBody = `{"verdict":"allow","confidence":0.97,"score":0.97,"threshold":0.9,"request_mode":"monitor","would_block":true,"rule":"neural-v29","reason":"ML score","decided_by":"ml","rules_version":"2026-09-06.1","ml_version":"zn-galvanize3-fp32-s512","ml_threshold":0.9,"router_level":"rules","mode":"active","model":"galvanize-3.1","evidence_id":"ev_03c4d212ff5f9e9b385f483a","latency_ms":11,"input_chars":42,"billed_calls":1}`
+const monitorBody = `{"verdict":"allow","confidence":0.97,"score":0.97,"threshold":0.9,"request_mode":"monitor","would_block":true,"rule":"test-rule","reason":"ML score","decided_by":"ml","rules_version":"test","ml_version":"test-ml-version","ml_threshold":0.9,"router_level":"rules","mode":"active","model":"test-model","evidence_id":"ev_03c4d212ff5f9e9b385f483a","latency_ms":11,"input_chars":42,"billed_calls":1}`
 
 func TestThresholdMonitorNoStore(t *testing.T) {
 	var gotReq map[string]any
