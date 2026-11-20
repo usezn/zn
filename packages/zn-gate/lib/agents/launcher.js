@@ -174,11 +174,11 @@ function parseManifest(text) {
 // The environment of the agent sets a variable that loads a library into every program it starts (the shell that runs this hook
 // included), before any line of the hook can run. A launcher cannot undo that, so it refuses to answer for the hook.
 function loaderText() {
-  return 'zn: its hook was blocked because the environment of the agent sets LD_PRELOAD, LD_AUDIT or DYLD_INSERT_LIBRARIES, which loads code into the hook before it can start. Ask the user to unset it and restart the agent.';
+  return 'zn: its hook was blocked because the environment of the agent sets a library variable (LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Ask the user to unset it and restart the agent.';
 }
 
 function loaderWarnText() {
-  return 'zn is NOT protecting this session: the environment of the agent sets LD_PRELOAD, LD_AUDIT or DYLD_INSERT_LIBRARIES, which loads code into the hook before it can start. Please unset it and restart the agent.';
+  return 'zn is NOT protecting this session: the environment of the agent sets a library variable (LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Please unset it and restart the agent.';
 }
 
 function crashText(agentId) {
@@ -492,15 +492,15 @@ const ZF = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PA
   "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
 
 // The Windows project guard resolves a path to its real place without a cmdlet: zr looks at the path and each of its parents, leaf first,
-// and for a link or junction (the ReparsePoint attribute) swaps it for its target (the Target property that Windows PowerShell 5.1 adds to
-// every file system item) and starts again, at most 30 times. It returns $null for a path that cannot be read or a link with no readable
+// and for a link or junction (the ReparsePoint attribute) swaps it for its target (the Target property that Windows PowerShell 5.1 adds to each
+// item the file system provider returns, read with InvokeProvider.Item.Get, which is no cmdlet) and starts again, at most 30 times. It returns $null for a path that cannot be read or a link with no readable
 // target. zs says whether a resolved path may run: outside the project folder ($zq; empty when the agent runs in a drive root or in the
 // home folder, where every program would be inside) and outside any node_modules folder. When the project folder cannot be read ($zq is
 // $null) nothing is trusted. zg is zf (the first program of that name on the PATH) with that check.
 const PROJECT_PS_RESOLVE =
   '$zo = @(); $fp = [System.IO.Path]; $ff = [System.IO.File]; $fd = [System.IO.Directory]; ' +
   'function zr($p, $n) { try { $p = $fp::GetFullPath($p); $q = $p; $s = \'\'; while ($q) { if ([int]$ff::GetAttributes($q) -band 1024) { if ($n -gt 30) { return $null }; ' +
-  'if ($fd::Exists($q)) { $i = [System.IO.DirectoryInfo]::new($q) } else { $i = [System.IO.FileInfo]::new($q) }; $t = $i.Target; $t = @($t)[0]; if (-not $t) { return $null }; ' +
+  '$t = @($ExecutionContext.InvokeProvider.Item.Get($q, $true, $true))[0].Target; $t = @($t)[0]; if (-not $t) { return $null }; ' +
   'return zr ($fp::Combine($fp::Combine($fp::GetDirectoryName($q), (([string]$t) -replace \'^\\\\+\\?+\\\\\', \'\')), $s)) ($n + 1) }; ' +
   '$s = $fp::Combine($fp::GetFileName($q), $s); $q = $fp::GetDirectoryName($q) }; return $p } catch { return $null } }; ' +
   '$zq = zr ($fd::GetCurrentDirectory()); $zh = zr $env:USERPROFILE; ' +

@@ -16,9 +16,10 @@
  */
 
 const LOADER_PREFIXES = ['LD_', 'DYLD_'];
-// The variables that load a library into a program before its first line runs (the shell of a hook launcher included): a script
-// cannot undo them once it runs, so a launcher that finds one set refuses to answer.
-const LOADER_PRELOAD = ['LD_PRELOAD', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES'];
+// The variables that load a library into a program, or choose where it looks for one, before its first line runs (the shell of a hook
+// launcher included): a script cannot undo them once it runs, so a launcher that finds one set refuses to answer.
+const LOADER_PRELOAD = ['LD_PRELOAD', 'LD_AUDIT', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH',
+  'DYLD_FALLBACK_LIBRARY_PATH', 'DYLD_FALLBACK_FRAMEWORK_PATH'];
 const LOADER_NAMES = [
   'GCONV_PATH', 'GLIBC_TUNABLES', 'LOCPATH', 'NLSPATH', 'HOSTALIASES', 'RES_OPTIONS', 'OPENSSL_CONF',
   'NODE_OPTIONS', 'NODE_PATH', 'NODE_REPL_EXTERNAL_MODULE', 'NODE_V8_COVERAGE',
