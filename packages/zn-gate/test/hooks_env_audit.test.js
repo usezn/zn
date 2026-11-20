@@ -52,6 +52,8 @@ function hostileEnv(f, extra = {}) {
     NODE_OPTIONS: '--require ' + f.pre + ' --import ' + pathToFileURL(f.preM).href,
     NODE_PATH: f.dir,
     NODE_V8_COVERAGE: path.join(f.dir, 'cov'),
+    LD_LIBRARY_PATH: path.join(f.dir, 'libs'),
+    DYLD_LIBRARY_PATH: path.join(f.dir, 'libs'),
     // LD_PRELOAD, LD_AUDIT and DYLD_INSERT_LIBRARIES are not here: the launcher refuses to run with one set (they load into the
     // shell before its first line), see hooks_launcher_preload.test.js. Names that are not in the list are left alone on Linux and macOS (the scrub there is `unset` of the listed names only).
     BASH_ENV: path.join(f.dir, 'bashenv'),

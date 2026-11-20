@@ -21,6 +21,7 @@ const { hasPosixSh: posix } = require('./helpers/posix_sh');
 // A stub runner: records that it ran, confirms its answer like the real runner and prints an empty JSON answer.
 const RUNNER = "const fs = require('fs');" +
   "fs.appendFileSync(process.env.ZN_TEST_RAN, 'hook ran\\n');" +
+  "fs.writeFileSync(process.env.ZN_TEST_SEEN, JSON.stringify(Object.keys(process.env).filter((k) => /^(ld_|dyld_)/i.test(k))));" +
   "if (process.env.ZN_HOOK_ACK) fs.writeFileSync(process.env.ZN_HOOK_ACK, 'ok');" +
   "process.stdout.write('{}\\n');\n";
 
@@ -30,11 +31,11 @@ function fixture(t) {
   fs.writeFileSync(runner, RUNNER);
   const launcherFile = path.join(dir, 'zn-hook-claude-code.sh');
   fs.writeFileSync(launcherFile, launcher.unixScript('claude-code', process.execPath, runner, { manifest: '' }), { mode: 0o755 });
-  return { dir, launcherFile, ran: path.join(dir, 'ran.txt'), mark: path.join(dir, 'preload-mark.txt') };
+  return { dir, launcherFile, seenFile: path.join(dir, 'seen.json'), ran: path.join(dir, 'ran.txt'), mark: path.join(dir, 'preload-mark.txt') };
 }
 
 function run(f, extra) {
-  const env = { PATH: process.env.PATH, HOME: f.dir, TMPDIR: f.dir, ZN_TEST_RAN: f.ran, ZN_TEST_PRELOAD_MARK: f.mark, ...extra };
+  const env = { PATH: process.env.PATH, HOME: f.dir, TMPDIR: f.dir, ZN_TEST_RAN: f.ran, ZN_TEST_SEEN: f.seenFile, ZN_TEST_PRELOAD_MARK: f.mark, ...extra };
   return spawnSync('/bin/sh', [f.launcherFile, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
 }
 
@@ -88,7 +89,7 @@ const cc = process.platform === 'linux' ? compiler() : null;
 const skipReason = process.platform !== 'linux' ? 'LD_PRELOAD of a real library is tested on Linux only' : !cc ? 'no C compiler (cc, gcc or clang) on this machine' : false;
 
 test('the refused list holds the FreeBSD and ld.so names that change what the shell runs', () => {
-  for (const n of ['LD_PRELOAD_FDS', 'LD_TRACE_LOADED_OBJECTS', 'LD_DEBUG', 'LD_DEBUG_OUTPUT', 'LD_LIBRARY_PATH_FDS']) {
+  for (const n of ['LD_PRELOAD_FDS', 'LD_TRACE_LOADED_OBJECTS', 'LD_DEBUG', 'LD_DEBUG_OUTPUT', 'LD_PRELOAD', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES']) {
     assert.ok(loaderEnv.LOADER_PRELOAD.includes(n), n + ' is refused');
     assert.ok(loaderEnv.SH_UNSET_NAMES.includes(n), n + ' is unset');
   }
@@ -114,7 +115,7 @@ test('sh launcher: a real preload runs in the shell only, never in a program the
   assert.equal(fs.readFileSync(f.mark, 'utf8'), 'preload\n');
 });
 
-test('sh launcher: LD_LIBRARY_PATH naming a real library folder blocks the call and the hook does not run', { skip: skipReason }, (t) => {
+test('sh launcher: LD_LIBRARY_PATH naming a real library folder does not block, and the hook does not see it', { skip: skipReason }, (t) => {
   const f = fixture(t);
   const libs = path.join(f.dir, 'libs');
   fs.mkdirSync(libs);
@@ -123,8 +124,23 @@ test('sh launcher: LD_LIBRARY_PATH naming a real library folder blocks the call 
   const b = spawnSync(cc, ['-shared', '-fPIC', '-o', path.join(libs, 'libznalt.so'), src], { encoding: 'utf8' });
   assert.equal(b.status, 0, b.stderr);
   const r = run(f, { LD_LIBRARY_PATH: libs });
-  assert.equal(r.status, 2, r.stderr);
-  assert.equal(fs.existsSync(f.ran), false, 'the hook ran in a shell with an alternate library folder');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), '{}');
+  assert.equal(fs.readFileSync(f.ran, 'utf8'), 'hook ran\n');
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.seenFile, 'utf8')), [], 'a library path reached the hook');
+});
+
+test('sh launcher: every library path variable lets the hook run and is gone for it', { skip: !posix }, (t) => {
+  const f = fixture(t);
+  for (const name of loaderEnv.LOADER_LIBPATH) {
+    fs.rmSync(f.ran, { force: true });
+    const r = run(f, { [name]: f.dir });
+    // dyld may refuse a missing path on macOS, so only a run that started is checked.
+    assert.equal(r.status, 0, name + ': ' + r.stderr);
+    assert.equal(r.stdout.trim(), '{}', name);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f.seenFile, 'utf8')), [], name + ' reached the hook');
+  }
+  assert.ok(!loaderEnv.LOADER_LIBPATH.some((n) => loaderEnv.LOADER_PRELOAD.includes(n)), 'a name is either refused or removed');
 });
 
 // ---- the project guard (sh -c form for most agents, the split-on-spaces form of Antigravity)
@@ -165,11 +181,23 @@ for (const [name, runGuard] of Object.entries(guardForms)) {
       if (dyldKills(v) && r.status !== 2) continue;
       if (name.startsWith('Antigravity')) {
         assert.equal(r.status, 0, r.stderr);
-        assert.match(JSON.parse(r.stdout.trim()).reason, /library variable \(LD_PRELOAD, LD_LIBRARY_PATH/);
+        assert.match(JSON.parse(r.stdout.trim()).reason, /loader variable \(LD_PRELOAD, LD_AUDIT/);
       } else {
         assert.equal(r.status, 2, r.stderr);
         assert.match(r.stderr, /unset it and restart the agent/);
       }
+    }
+  });
+}
+
+for (const [name, runGuard] of Object.entries(guardForms)) {
+  test('project guard (' + name + '): a library path variable does not block, zn runs without it', { skip: !posix }, (t) => {
+    const b = mkbin(t);
+    for (const v of loaderEnv.LOADER_LIBPATH) {
+      fs.rmSync(b.ran, { force: true });
+      const r = runGuard(b.bin, { PATH: b.bin + ':/usr/bin:/bin', [v]: b.bin });
+      assert.equal(r.status, 0, v + ': ' + r.stderr);
+      assert.equal(fs.existsSync(b.ran), true, v + ': zn did not run');
     }
   });
 }

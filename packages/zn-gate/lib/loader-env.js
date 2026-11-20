@@ -18,15 +18,22 @@
 const LOADER_PREFIXES = ['LD_', 'DYLD_'];
 // The variables that load a library into a program, or choose where it looks for one, before its first line runs (the shell of a hook
 // launcher included): a script cannot undo them once it runs, so a launcher that finds one set refuses to answer.
-// From ld.so(8) (glibc), ld-elf.so.1(1) (FreeBSD) and dyld(1) (macOS): the ones that name a library to load, choose where libraries are
-// looked for, or change which file a library name resolves to.
+// From ld.so(8) (glibc), ld-elf.so.1(1) (FreeBSD) and dyld(1) (macOS): the variables that load a library or change what the program
+// does before its first line (a preload, an audit library, a trace or debug mode that ends the program). A launcher that finds one set
+// refuses to answer, because it cannot undo them from inside the script.
 const LOADER_PRELOAD = [
-  'LD_PRELOAD', 'LD_AUDIT', 'LD_LIBRARY_PATH', 'LD_ORIGIN_PATH', 'LD_PROFILE', 'LD_LIBMAP', 'LD_ELF_HINTS_PATH', 'LD_32_LIBRARY_PATH', 'LD_32_PRELOAD',
-  // ld.so makes the shell exit 0 without running the script for these two (a trace or the debug help), and sends its output elsewhere:
+  'LD_PRELOAD', 'LD_AUDIT', 'LD_PROFILE', 'LD_LIBMAP', 'LD_32_PRELOAD',
+  // ld.so makes the shell exit 0 without running the script for these (a trace or the debug help), and sends its output elsewhere:
   'LD_TRACE_LOADED_OBJECTS', 'LD_TRACE_LOADED_OBJECTS_FMT1', 'LD_TRACE_LOADED_OBJECTS_FMT2', 'LD_TRACE_LOADED_OBJECTS_ALL', 'LD_DEBUG', 'LD_DEBUG_OUTPUT',
-  'LD_PRELOAD_FDS', 'LD_LIBRARY_PATH_FDS', 'LD_LIBMAP_DISABLE', 'LD_LOADFLTR',
-  'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'DYLD_FALLBACK_FRAMEWORK_PATH',
-  'DYLD_VERSIONED_LIBRARY_PATH', 'DYLD_VERSIONED_FRAMEWORK_PATH', 'DYLD_IMAGE_SUFFIX', 'DYLD_ROOT_PATH', 'DYLD_SHARED_CACHE_DIR', 'DYLD_SHARED_REGION',
+  'LD_PRELOAD_FDS', 'LD_LIBMAP_DISABLE', 'LD_LOADFLTR',
+  'DYLD_INSERT_LIBRARIES', 'DYLD_IMAGE_SUFFIX', 'DYLD_SHARED_CACHE_DIR', 'DYLD_SHARED_REGION',
+];
+// Library search path variables: they only say where libraries are looked for, and many people set them (CUDA, vendor tools), so a launcher
+// that finds one does not refuse; it removes them for the hook it starts, like the interpreter variables.
+const LOADER_LIBPATH = [
+  'LD_LIBRARY_PATH', 'LD_LIBRARY_PATH_FDS', 'LD_ORIGIN_PATH', 'LD_32_LIBRARY_PATH', 'LD_ELF_HINTS_PATH',
+  'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'DYLD_FALLBACK_FRAMEWORK_PATH',
+  'DYLD_VERSIONED_LIBRARY_PATH', 'DYLD_VERSIONED_FRAMEWORK_PATH', 'DYLD_ROOT_PATH',
 ];
 const LOADER_NAMES = [
   'GCONV_PATH', 'GLIBC_TUNABLES', 'LOCPATH', 'NLSPATH', 'HOSTALIASES', 'RES_OPTIONS', 'OPENSSL_CONF',
@@ -59,7 +66,7 @@ function withoutLoaderVars(env) {
 
 // The names the fast scrub unsets: the list above, the loader variables the launchers refuse (LOADER_PRELOAD) and the other
 // named ld.so and dyld settings.
-const SH_UNSET_NAMES = [...new Set([...LOADER_NAMES, ...LOADER_PRELOAD, 'LD_BIND_NOW', 'LD_BIND_NOT', 'LD_DYNAMIC_WEAK',
+const SH_UNSET_NAMES = [...new Set([...LOADER_NAMES, ...LOADER_PRELOAD, ...LOADER_LIBPATH, 'LD_BIND_NOW', 'LD_BIND_NOT', 'LD_DYNAMIC_WEAK',
   'LD_USE_LOAD_BIAS', 'LD_HWCAP_MASK', 'LD_WARN', 'LD_SHOW_AUXV', 'LD_ASSUME_KERNEL', 'LD_PROFILE_OUTPUT',
   'LD_PREFER_MAP_32BIT_EXEC', 'DYLD_FORCE_FLAT_NAMESPACE', 'DYLD_BIND_AT_LAUNCH', 'DYLD_NO_FIX_PREBINDING', 'DYLD_PRINT_LIBRARIES'])];
 
@@ -111,4 +118,4 @@ function psScrub() {
   return WINDOWS_NAMES.map((n) => '$env:' + n + '=$null; ').join('');
 }
 
-module.exports = { SH_UNSET_NAMES, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };

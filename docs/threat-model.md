@@ -554,21 +554,23 @@ Three features are off by default. Each one helps in a narrow case and has limit
   `node_modules` folder, and trusts nothing it cannot resolve. The comparison is by path text after the links are followed, so a program
   reached through an 8.3 short name of the project folder is not recognised as inside it. A user install (`zn hooks install <agent>` without `--project`) names its
   Node.js and runner by full path and is not affected.
-- **A preloaded library cannot be undone by the hook.** `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`,
-  the `DYLD_*` library, framework and versioned path variables and the other loader variables listed in
-  `lib/loader-env.js` make the dynamic loader load a library into the shell that runs a hook launcher before its first line, so the launcher cannot
-  remove them in time. When one of them is set the launcher, and the project hook guard, do not run the hook: they
-  block the call with a message that asks to unset the variable and restart the agent. The launcher still removes the
-  variable before it starts any other program (`mktemp`, `rm`, Node.js), so the library runs in the shell only. Code
-  already running in that shell can still change what the shell prints; the block narrows the window, it does not
-  make a hostile agent environment safe. Setting the environment of the agent is a step the project is not meant to
-  have.
-- **Some loader variables stop the shell before the script runs.** With `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG=help` set in
-  the environment of the agent, the dynamic loader prints its output and the shell exits with status 0 without running
-  any line of the launcher, so the refusal cannot fire and the agent sees a successful hook that did nothing. The
-  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them
-  before it runs. This has the same cause as the preloaded library above and is open until the environment is
-  cleaned before the shell starts.
+- **A preloaded library cannot be undone by the hook (accepted limit).** `LD_PRELOAD`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES` and the
+  other loader variables listed in `lib/loader-env.js` make the dynamic loader load a library into the shell that runs a hook
+  launcher before its first line, so the launcher cannot remove them in time. When one of them is set the launcher, and the
+  project hook guard, do not run the hook: they block the call with a message that asks to unset the variable and restart the
+  agent. The launcher still removes the variable before it starts any other program (`mktemp`, `rm`, Node.js), so the library
+  runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
+  before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
+  environment of the agent can already run code as the user; this is accepted, not solved.
+- **Some loader variables stop the shell before the script runs (accepted limit).** With `LD_TRACE_LOADED_OBJECTS` or
+  `LD_DEBUG=help` set in the environment of the agent, the dynamic loader prints its output and the shell exits, usually with
+  status 0, without running any line of the launcher. The refusal cannot fire, and the agent sees a hook that did nothing. The
+  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them before it
+  runs.
+- **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
+  library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
+  tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
+  itself before the launcher runs.
 - **Re-pinning the hook launchers is the user's.** A hook launcher runs the hook only while the installed zn-gate
   files match the digest it recorded. The commands that record the files again are refused to an agent, like
   `zn hooks install`: running the package's launcher refresh (`lib/agents/refresh.js`, its install step) with

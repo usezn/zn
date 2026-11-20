@@ -174,11 +174,11 @@ function parseManifest(text) {
 // The environment of the agent sets a variable that loads a library into every program it starts (the shell that runs this hook
 // included), before any line of the hook can run. A launcher cannot undo that, so it refuses to answer for the hook.
 function loaderText() {
-  return 'zn: its hook was blocked because the environment of the agent sets a library variable (LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Ask the user to unset it and restart the agent.';
+  return 'zn: its hook was blocked because the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Ask the user to unset it and restart the agent.';
 }
 
 function loaderWarnText() {
-  return 'zn is NOT protecting this session: the environment of the agent sets a library variable (LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Please unset it and restart the agent.';
+  return 'zn is NOT protecting this session: the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Please unset it and restart the agent.';
 }
 
 function crashText(agentId) {
