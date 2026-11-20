@@ -113,3 +113,28 @@ def test_deeply_nested_quoted_substitutions_are_refused_quickly():
     assert check_command("echo " + '"$(echo ' * k + "x" + ')"' * k).rule == "destructive:too_many_commands"
     assert check_command('$("' * 1365).rule == "destructive:too_many_commands"
     assert time.time() - t0 < 1.0
+
+
+def test_a_command_inside_a_double_quoted_substitution_is_read():
+    assert check_command('echo "$(' + RM_HOME + ')"').rule == "destructive:rm_root_home"
+    assert check_command('x="$(' + RM_HOME + ')"').rule == "destructive:rm_root_home"
+    assert check_command('echo "a $(' + RM_HOME + ') b"').rule == "destructive:rm_root_home"
+    assert check_command('echo "$(' + DL + ' | sh)"').rule == "destructive:pipe_to_shell"
+    assert check_command('echo "$(sh -c "' + RM_HOME + '")"').rule == "destructive:rm_root_home"
+    assert check_command('echo "$(echo "$(' + RM_HOME + ')")"').rule == "destructive:rm_root_home"
+    assert check_command('echo "$(find . -exec ' + RM_HOME + ' ;)"').rule == "destructive:rm_root_home"
+
+
+def test_ordinary_double_quoted_substitutions_and_quoted_data_stay_allowed():
+    for c in (
+        'echo "$(date)"',
+        'x="$(git rev-parse HEAD)"',
+        'printf "%s" "$(pwd)"',
+        'git commit -m "fix: $(date)"',
+        'echo "$(echo "$(date)")"',
+        'VER="$(node -p "1+1")"',
+        "echo '$(" + RM_HOME + ")'",
+        'echo "' + RM_HOME + '"',
+        'echo "$(ls "$HOME")"',
+    ):
+        assert check_command(c).verdict == "allow", c

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.3"
+COMMAND_RULES_VERSION = "2026-11-20.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -788,6 +788,36 @@ def _requote_text(text: str, state: dict, lvl: int) -> str:
         state["deep"] = True
         return text
     return result
+
+
+def _dq_subst_bodies(text: str) -> Optional[List[str]]:
+    """The text of every $( ) command substitution that sits inside a double-quoted string (echo "$(...)", x="$(...)"),
+    with its own quotes read afresh. The word scanner takes a double-quoted string as data, but bash runs these. None when
+    the nesting is too deep to follow. An unquoted $( ) is not listed: its commands are read as commands of the line."""
+    bodies: List[str] = []
+    state = {"deep": False}
+    dq = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            e = text.find("'", i + 1)
+            if e < 0:
+                break
+            i = e + 1
+            continue
+        if ch == '"':
+            dq = not dq
+        elif dq and ch == "$" and text[i + 1:i + 2] == "(":
+            end = _subst_end(text, i + 2, state, 0)
+            bodies.append(text[i + 2:end])
+            i = end
+        i += 1
+    return None if state["deep"] else bodies
 
 
 def _backtick_code(text: str) -> str:
@@ -1756,6 +1786,16 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
         inner_hit = _analyze(inner, depth + 1, known) if inner else None
         if inner_hit:
             return inner_hit
+    # A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
+    # -c inside it counts as it does anywhere else; the text shrinks with every step, and the quote rewriting above is capped).
+    if "$(" in text and '"' in text:
+        bodies = _dq_subst_bodies(text)
+        if bodies is None or len(bodies) > _MAX_TICK_READS:
+            return _OVERFLOW
+        for body in bodies:
+            body_hit = _analyze(body, depth, known) if body.strip() else None
+            if body_hit:
+                return body_hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:

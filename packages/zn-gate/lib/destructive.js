@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.3';
+const COMMAND_RULES_VERSION = '2026-11-20.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -364,6 +364,26 @@ function requoteText(text, state, lvl) {
     if (out.length > MAX_CHARS) { state.deep = true; return text; }
   }
   return out;
+}
+
+/* The text of every $( ) command substitution that sits inside a double-quoted string (echo "$(...)", x="$(...)"), with
+   its own quotes read afresh. The word scanner takes a double-quoted string as data, but bash runs these. Null when the
+   nesting is too deep to follow. An unquoted $( ) is not listed: its commands are read as commands of the line. */
+function dqSubstBodies(text) {
+  const bodies = [];
+  const state = { deep: false };
+  let dq = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\') { i++; continue; }
+    if (ch === "'" && !dq) { const e = text.indexOf("'", i + 1); if (e < 0) break; i = e; continue; }
+    if (ch === '"') { dq = !dq; continue; }
+    if (!dq || ch !== '$' || text[i + 1] !== '(') continue;
+    const end = substEnd(text, i + 2, state, 0);
+    bodies.push(text.slice(i + 2, end));
+    i = end;
+  }
+  return state.deep ? null : bodies;
 }
 
 /* The folder a command runs in when it is wrapped in env -C / sudo -D: `dirs` are the words of its chdir options in
@@ -1000,6 +1020,16 @@ function analyze(cmd, depth = 0, known = null, requoted = false) {
     const inner = backtickCode(text);
     const innerHit = inner ? analyze(inner, depth + 1, known) : null;
     if (innerHit) return innerHit;
+  }
+  // A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
+  // -c inside it counts as it does anywhere else; the text shrinks with every step, and the quote rewriting above is capped).
+  if (text.includes('$(') && text.includes('"')) {
+    const bodies = dqSubstBodies(text);
+    if (bodies === null || bodies.length > MAX_TICK_READS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+    for (const body of bodies) {
+      const bodyHit = body.trim() ? analyze(body, depth, known) : null;
+      if (bodyHit) return bodyHit;
+    }
   }
   // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
   // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.

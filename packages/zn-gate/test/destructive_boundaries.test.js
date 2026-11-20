@@ -202,3 +202,20 @@ test('deeply nested quoted substitutions are refused quickly, not rewritten with
   assert.equal(checkCommand('$("'.repeat(1365)).rule, 'destructive:too_many_commands');
   assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
 });
+
+test('a command inside a double-quoted substitution is read, a download piped to a shell too', () => {
+  assert.equal(checkCommand('echo "$(' + RM_HOME + ')"').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('x="$(' + RM_HOME + ')"').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('echo "a $(' + RM_HOME + ') b"').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('echo "$(' + DL + ' | sh)"').rule, 'destructive:pipe_to_shell');
+  assert.equal(checkCommand('echo "$(sh -c "' + RM_HOME + '")"').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('echo "$(echo "$(' + RM_HOME + ')")"').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('echo "$(find . -exec ' + RM_HOME + ' ;)"').rule, 'destructive:rm_root_home');
+});
+
+test('ordinary double-quoted substitutions and quoted data stay allowed', () => {
+  for (const c of ['echo "$(date)"', 'x="$(git rev-parse HEAD)"', 'printf "%s" "$(pwd)"', 'git commit -m "fix: $(date)"',
+    'echo "$(echo "$(date)")"', 'VER="$(node -p "1+1")"', "echo '$(" + RM_HOME + ")'", 'echo "' + RM_HOME + '"', 'echo "$(ls "$HOME")"']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
