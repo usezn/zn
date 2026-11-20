@@ -71,7 +71,8 @@ These reports are not accepted as vulnerabilities:
 * Automated scanner spam without actionable proof-of-concept
 * Missing hardening headers or best practices without a demonstrable security impact
 * Findings that require physical access or a compromised end-user device
-* A hook launcher that cannot undo a library the dynamic loader already put into the shell (`LD_PRELOAD` and similar), or a shell that the loader ends before the launcher runs: the launcher refuses to run the hook when it sees these variables, and the remaining limit is described in the threat model
+* A hook launcher that cannot undo a library the dynamic loader already put into the shell (`LD_PRELOAD` and similar): the launcher refuses to run the hook when it sees these variables.
+* A shell that ends before the hook runs because `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG` is set in the environment that starts the agent. This is an accepted, documented limit (see the threat model); zn-gate warns when these variables are set.
 * Unverified reports (no reproduced steps and no observed result)
 
 ### If you find a malicious package in our dependencies
