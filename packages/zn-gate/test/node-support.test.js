@@ -42,10 +42,13 @@ test('end-of-life even lines are reported as eol, with the patched releases list
   }
 });
 
-test('odd-numbered lines are never judged', () => {
+test('odd-numbered lines are end-of-life once their support has ended, and newer ones are not judged', () => {
   for (const v of ['19.9.0', '21.7.3', '23.11.0', '25.0.0']) {
-    assert.equal(ns.nodeAdvice(v), null, v);
+    const a = ns.nodeAdvice(v);
+    assert.equal(a.level, 'eol', v);
+    assert.match(a.message, /end-of-life/);
   }
+  for (const v of ['27.0.0', '27.1.0']) assert.equal(ns.nodeAdvice(v), null, v);
 });
 
 test('an even line this module does not know yet is not judged', () => {

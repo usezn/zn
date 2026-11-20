@@ -28,7 +28,7 @@ test('a supported line below its patched release is outdated, at or above it is 
 });
 
 test('odd lines, newer lines, nightlies and garbage get no warning', () => {
-  for (const v of ['25.0.0', '25.9.1', '23.5.0', '27.1.0', '28.0.0', '22', '22.23', '', null, undefined, 'abc', 'node', {}, 42]) assert.equal(nodeAdvice(v), null, String(v));
+  for (const v of ['27.1.0', '28.0.0', '22', '22.23', '', null, undefined, 'abc', 'node', {}, 42]) assert.equal(nodeAdvice(v), null, String(v));
   assert.equal(nodeAdvice('24.22.1-nightly20261101abc'), null);
 });
 
@@ -55,7 +55,8 @@ test('check reports the warning for this Node.js and for the one the hooks run o
 });
 
 test('odd lines below the end-of-life cutoff are never judged, older even lines are end-of-life', () => {
-  for (const v of ['19.9.0', '21.7.3', '17.0.0']) assert.equal(nodeAdvice(v), null, v);
+  for (const v of ['19.9.0', '21.7.3', '23.11.0', '25.0.0', '17.0.0']) assert.equal(nodeAdvice(v).level, 'eol', v);
+  for (const v of ['27.0.0', '27.1.0']) assert.equal(nodeAdvice(v), null, v);
   for (const v of ['16.20.2', '14.0.0', '0.12.18']) assert.equal(nodeAdvice(v).level, 'eol', v);
 });
 
@@ -63,7 +64,7 @@ test('the advice carries the plain version and surrounding whitespace is ignored
   const a = nodeAdvice('  v22.23.3\n');
   assert.equal(a.version, '22.23.3');
   assert.equal(a.level, 'outdated');
-  assert.ok(a.message.startsWith('Node.js 22.23.3 has known security issues'));
+  assert.ok(a.message.startsWith('Node.js 22.23.3 is still supported but is missing security fixes'));
   assert.ok(a.message.endsWith(ADVISORY_URL));
 });
 

@@ -6,7 +6,10 @@
 
 // The first patched release of each supported even-numbered line (Node.js security releases of 21 Oct 2026).
 const PATCHED_MINIMUM = { 22: '22.23.4', 24: '24.22.1', 26: '26.12.1' };
-// Even-numbered lines below this one are end-of-life (18 and 20 today). Odd-numbered lines are never judged.
+// Even-numbered lines below this one are end-of-life (18 and 20 today).
+// Odd-numbered lines below ODD_EOL_BELOW are end-of-life too: they get about eight months of support, so 25 ended on
+// 1 June 2026. Update ODD_EOL_BELOW when 27 ends (1 June 2027). Lines from 27 on are not judged.
+const ODD_EOL_BELOW = 27;
 const EOL_BELOW = 22;
 const ADVISORY_URL = 'https://nodejs.org/en/blog/vulnerability/october-2026-security-releases';
 
@@ -27,7 +30,7 @@ function atLeast(have, want) {
   return have[3] <= want[3];
 }
 
-/* nodeAdvice('20.19.0') -> null when there is nothing to say (patched, odd-numbered line, newer line, or a
+/* nodeAdvice('20.19.0') -> null when there is nothing to say (patched, odd-numbered line still in support, newer line, or a
    version it cannot read); otherwise {level: 'eol' | 'outdated', version, minimum, message}. Pure. */
 function nodeAdvice(version) {
   const v = parse(version);
@@ -35,18 +38,19 @@ function nodeAdvice(version) {
   const major = v[0];
   const shown = v.slice(0, 3).join('.') + (v[3] ? (/-[0-9A-Za-z.-]+/.exec(version) || [''])[0] : '');
   const patched = Object.values(PATCHED_MINIMUM).join(', ');
-  if (major % 2 === 0 && major < EOL_BELOW) {
+  const endOfLife = (major % 2 === 0 && major < EOL_BELOW) || (major % 2 === 1 && major < ODD_EOL_BELOW);
+  if (endOfLife) {
     const minimum = PATCHED_MINIMUM[EOL_BELOW];
     return {
       level: 'eol', version: shown, minimum,
-      message: 'Node.js ' + shown + ' is end-of-life and no longer gets security fixes. Update to Node.js ' + minimum + ' or later (the patched releases are ' + patched + '): ' + ADVISORY_URL,
+      message: 'Node.js ' + shown + ' is end-of-life (unsupported): its release line gets no security fixes at all. Update to Node.js ' + minimum + ' or later (the patched releases are ' + patched + '): ' + ADVISORY_URL,
     };
   }
   const minimum = PATCHED_MINIMUM[major];
   if (minimum && !atLeast(v, parse(minimum))) {
     return {
       level: 'outdated', version: shown, minimum,
-      message: 'Node.js ' + shown + ' has known security issues that Node.js ' + minimum + ' fixes. Update to Node.js ' + minimum + ' or later: ' + ADVISORY_URL,
+      message: 'Node.js ' + shown + ' is still supported but is missing security fixes: Node.js ' + minimum + ' fixes known security issues. Update to Node.js ' + minimum + ' or later: ' + ADVISORY_URL,
     };
   }
   return null;

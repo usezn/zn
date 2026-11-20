@@ -110,7 +110,7 @@ setLock({ package: 'zn-gate', version: '9.9.9', files });
 function setConfig(cfg) { write(path.join(home, '.zn', 'config.json'), JSON.stringify(cfg)); }
 
 function run(args, input, opts = {}) {
-  return spawnSync(process.execPath, [path.join(opts.real ? pluginReal : pluginTest, 'zn-launch.js'), ...args], {
+  return spawnSync(process.execPath, [...(opts.preload ? ['-r', opts.preload] : []), path.join(opts.real ? pluginReal : pluginTest, 'zn-launch.js'), ...args], {
     input: input === undefined ? '{"hook_event_name":"PreToolUse"}' : input,
     encoding: 'utf8',
     maxBuffer: opts.maxBuffer || 1024 * 1024,
@@ -806,6 +806,18 @@ try {
   test('unknown agent is a usage error', () => {
     assert.strictEqual(run(['hook', 'other']).status, 1);
   });
+  test('an older Node.js is refused with a plain 20.19 message, not a syntax or loader error', () => {
+    const preload = path.join(tmp, 'fake-node-version.js');
+    for (const version of ['18.20.8', '21.6.2']) {
+      write(preload, "Object.defineProperty(process.versions, 'node', { value: '" + version + "' });\n" +
+        "Object.defineProperty(process, 'version', { value: 'v" + version + "' });\n");
+      const r = run(['hook', 'claude-code'], undefined, { preload });
+      refused(r, /^zn plugin: the zn-gate plugin needs Node\.js 20\.19 or later \(21\.7 or later on the 21 line\)\. This is Node\.js v/);
+      assert.ok(r.stderr.includes('This is Node.js v' + version + ';'), r.stderr);
+      assert.doesNotMatch(r.stderr, /USE_MAIN_CONTEXT|SyntaxError|ERR_/);
+    }
+  });
+
   test('the launcher usage lists the agents it supports, and each one is an adapter of the package', () => {
     const { listAdapters } = require('../../packages/zn-gate/lib/agents');
     const src = fs.readFileSync(LAUNCHER, 'utf8');
