@@ -149,6 +149,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 
 ## Scripts, CI and APIs
 
+- [analyze-text.md](analyze-text.md): check one short text with `zn-gate analyze`, read its JSON answer, and see one example for each exit code (0, 1 and 2).
 - [ci-secret-scan-gate.md](ci-secret-scan-gate.md): a GitHub Actions job that fails when `zn-gate scan` finds a secret, with the Action and with `npx`.
 - [ci-step-example.md](ci-step-example.md): a fake CI job that runs the audit and reads its exit code.
 - [node-api.md](node-api.md): a short tour of the Node.js API, with one small example per call.
