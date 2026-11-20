@@ -14,7 +14,7 @@
 
 # --- Stage 1: build ----------------------------------------------------------
 # Base images are pinned by multi-arch index digest; Dependabot (docker) updates the digests.
-FROM rust:1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
+FROM rust:1-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS builder
 
 # Pinned protoc (matches the version the project is verified against).
 # candle-onnx's build script (prost-build) compiles the ONNX protobuf schema;
