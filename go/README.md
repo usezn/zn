@@ -85,7 +85,7 @@ res, err := client.Analyze(ctx, text,
 res, err := client.Analyze(ctx, text,
 	zn.Threshold(0.9), // block at a score of 0.9 or more; from 0.5 to 0.999
 	zn.Monitor(),      // never block: report what would have been blocked
-	zn.NoStore(),      // ask the API to store nothing from this call
+	zn.NoStore(),      // do not keep the text of this call (Contributor Mode)
 )
 if err == nil && res.WouldHaveBlocked() {
 	log.Println("would block:", res.Rule, res.EvidenceID)
@@ -94,7 +94,7 @@ if err == nil && res.WouldHaveBlocked() {
 
 - `Threshold(v)` overrides the detector's default threshold for one call. A value outside 0.5 to 0.999 (or NaN) makes `Analyze` return an error that wraps `zn.ErrInvalidThreshold`, and nothing is sent. A lower threshold blocks more and raises false positives.
 - `Monitor()` runs the call in monitor mode: the verdict is always `allow` and `res.WouldBlock` says what it would have been. Use it to measure the detector on your own traffic before you enforce it. Calls and billing are the same as in enforce mode.
-- `NoStore()` sends the header `X-Zn-No-Store: 1`, which asks the API to store nothing from the call. It can only turn storage off for that request.
+- `NoStore()` sends the header `X-Zn-No-Store: 1`, which asks the API not to keep the text of the call for Contributor Mode. The usual evidence record with the verdict is still written. It can only turn storage off for that request.
 
 ## Timeouts and retries
 

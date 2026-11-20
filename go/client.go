@@ -161,8 +161,9 @@ func Monitor() AnalyzeOption {
 	return func(r *analyzeRequest) { r.Mode = "monitor" }
 }
 
-// NoStore asks the API to store nothing from this call (it sends the header
-// X-Zn-No-Store: 1). It can only turn storage off for the request, never on.
+// NoStore asks the API not to keep the text of this call for Contributor Mode
+// (it sends the header X-Zn-No-Store: 1). The usual evidence record with the
+// verdict is still written. It can only turn storage off, never on.
 func NoStore() AnalyzeOption {
 	return func(r *analyzeRequest) { r.noStore = true }
 }
