@@ -23,6 +23,8 @@ Eleven short recipes for the common jobs. Each one lists the steps and links to 
 
 Full page: [Check that it works](check.md).
 
+Next: [2. Install zn-gate](#2-install-zn-gate).
+
 ## 2. Install zn-gate
 
 1. Run `npm install -g zn-gate`.
@@ -30,6 +32,8 @@ Full page: [Check that it works](check.md).
 3. Run `zn-gate status` to see the version and whether the optional cloud check is on.
 
 Full page: [First 5 minutes](first-5-minutes.md).
+
+Next: [3. Set up your coding agents](#3-set-up-your-coding-agents).
 
 ## 3. Set up your coding agents
 
@@ -39,6 +43,8 @@ Full page: [First 5 minutes](first-5-minutes.md).
 
 Full page: [First 5 minutes](first-5-minutes.md), and [`init`](cli.md#init) in the reference.
 
+Next: [4. Check that you are protected](#4-check-that-you-are-protected).
+
 ## 4. Check that you are protected
 
 1. Run `zn-gate check`.
@@ -47,6 +53,8 @@ Full page: [First 5 minutes](first-5-minutes.md), and [`init`](cli.md#init) in t
 
 Full page: [Check that it works](check.md).
 
+Next: [5. See what your agents can reach](#5-see-what-your-agents-can-reach).
+
 ## 5. See what your agents can reach
 
 1. Go to the project folder.
@@ -54,6 +62,8 @@ Full page: [Check that it works](check.md).
 3. Add `--json` if you want the result for another program.
 
 Full page: [Reach](reach.md).
+
+Next: [6. Protect one project](#6-protect-one-project).
 
 ## 6. Protect one project
 
@@ -66,6 +76,8 @@ Everyone who uses the project needs zn-gate installed globally, because the shar
 
 Full page: [Editors and coding agents](editors/README.md), and [`hooks`](cli.md#hooks) in the reference.
 
+Next: [7. Turn on the optional cloud check](#7-turn-on-the-optional-cloud-check).
+
 ## 7. Turn on the optional cloud check
 
 1. Run `zn-gate connect`.
@@ -77,6 +89,8 @@ Without this, nothing leaves your machine.
 
 Full page: [Connect](connect.md).
 
+Next: [8. Read the weekly report](#8-read-the-weekly-report).
+
 ## 8. Read the weekly report
 
 1. Run `zn-gate report`. It covers the last 7 days.
@@ -87,6 +101,8 @@ The report is built from local files and nothing is sent.
 
 Full page: [Report](report.md).
 
+Next: [9. Upgrade](#9-upgrade).
+
 ## 9. Upgrade
 
 1. Run `npm install -g zn-gate`. With the Python package, also run `pip install -U zn-gate`.
@@ -95,6 +111,8 @@ Full page: [Report](report.md).
 
 Full page: [Upgrading](upgrading.md).
 
+Next: [10. Uninstall](#10-uninstall).
+
 ## 10. Uninstall
 
 1. Run `zn-gate uninstall --dry-run` to see the plan. Nothing changes.
@@ -102,6 +120,8 @@ Full page: [Upgrading](upgrading.md).
 3. Run `npm uninstall -g zn-gate` to remove the program itself.
 
 Full page: [Remove zn-gate](uninstall.md).
+
+Next: [11. Pin an MCP server](#11-pin-an-mcp-server).
 
 ## 11. Pin an MCP server
 

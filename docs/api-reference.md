@@ -56,6 +56,59 @@ A live check of the API and any published incident notes are on the [status page
   - [`ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`](#znllamaguardon_blockraise-mask_secretstrue-raise_on_violationnone-fallbacknone)
   - [`call_api(prompt, options=None, context=None) -> dict`](#call_apiprompt-optionsnone-contextnone---dict)
   - [Typing](#typing)
+- [Return values at a glance](#return-values-at-a-glance)
+
+## Return values at a glance
+
+What each function returns, copied from its section. Follow the link for the full description, the options and the error cases.
+
+Node.js (`zn-gate`):
+
+| Function | Returns |
+| --- | --- |
+| [`evaluate(text, options)`](#evaluatetext-options) | `{ verdict: 'allow' \| 'block', confidence, rule, reason, engine, rules_version }`, plus `truncated` and `advisory` in some cases |
+| [`analyze(text, options)`](#analyzetext-options) | `Promise<{ verdict, confidence, rule, reason, engine, rules_version, mode, ... }>`; never rejects for a cloud failure |
+| [`analyzeLocal(text, options)`](#analyzelocaltext-options) | The `evaluate` result plus `mode` |
+| [`isCloudEnabled(options)`](#iscloudenabledoptions) | `boolean` |
+| [`usesStoredKey(options)`](#usesstoredkeyoptions) | `boolean` |
+| [`usableApiKey(value)`](#usableapikeyvalue) | The trimmed key, or `null` |
+| [`longInputMode(options)`](#longinputmodeoptions) | `'windows'` or `'off'` |
+| [`resolveEndpoint(options, flags)`](#resolveendpointoptions-flags) | The URL `analyze` posts to (string) |
+| [`sanitizeToolResult(toolName, content, options)`](#sanitizetoolresulttoolname-content-options) | `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }`; with one value only, `{ sanitized, detections }` |
+| [`redactSecrets(text)`](#redactsecretstext) | `{ sanitized: string, detections: Array<{ rule, index }> }` |
+| [`checkToolResult(toolName, content, options)`](#checktoolresulttoolname-content-options) | `Promise<{ tool_name, safe_to_ingest, truncated, secrets_redacted, sanitized_content, assessment }>` |
+| [`checkCommand(command)`](#checkcommandcommand) | The `evaluate` shape: `{ verdict, confidence, rule, reason, engine, rules_version }` |
+| [`checkToolCall(toolName, args, options)`](#checktoolcalltoolname-args-options) | `{ allowed: boolean, verdict: 'allow' \| 'block', confidence, rule, reason, advisory? }` |
+| [`guardTool(fn, options)`](#guardtoolfn-options) | A function with the same name, `this` and (async or sync) behavior |
+| [`logEvidence(event, filePath, options)`](#logevidenceevent-filepath-options) | The record that was written, or `null` |
+| [`verifyEvidenceLedger(filePath)`](#verifyevidenceledgerfilepath) | `{ valid, total, verified, broken_index, error }` |
+
+Python (`zn-gate`):
+
+| Function | Returns |
+| --- | --- |
+| [`evaluate(text, strict=None)`](#evaluatetext-str-strict-bool--none--none---assessment) | `Assessment` |
+| [`@guard(...)`](#guardon_blockraisereturncustom-fallbacknone-check_argstrue-check_resultfalse-mask_secretsfalse-callbacknone-block_truncatedfalse) | The decorated function, with the same signature and return type |
+| [`check_tool_call(tool_name, arguments=None, ...)`](#check_tool_calltool_name-str-arguments-any--none-strict-bool--none--none-block_truncated-bool--false---assessment) | `Assessment` |
+| [`check_tool_result(result, ...)`](#check_tool_resultresult-any-block_truncated-bool--false-strict-bool--none--none-allow_truncated-bool--false---assessment) | `Assessment` |
+| [`check_command(command)`](#check_commandcommand-str---assessment) | `Assessment` |
+| [`normalize_input(text)`](#normalize_inputtext-str---tuplestr-str) | `tuple[str, str]`: `(normalized, stripped)` |
+| [`redact_secrets(text)`](#redact_secretstext-str---tuplestr-listdict) | `tuple[str, list[dict]]`: `(clean_text, detections)` |
+| [`sanitize_tool_result(tool_or_result, content=None, ...)`](#sanitize_tool_resulttool_or_result-contentnone-mask_secretstrue-block_truncatedfalse-strictnone-allow_truncatedfalse) | `SanitizedToolResult` (a dict) with a tool name and content; a tuple `(clean_data, detections)` with one value only |
+| [`analyze(input_text, ...)`](#analyzeinput_text-api_keynone-endpointnone-timeoutnone-local_onlyfalse-long_inputnone-kwargs---dict) | `dict` |
+| [`analyze_cloud(input_text, api_key, ...)`](#analyze_cloudinput_text-api_key-endpoint_urlnone-timeout40-long_inputnone---dict) | `dict`; raises on any failure |
+| [`is_cloud_enabled(api_key=None, local_only=False)`](#is_cloud_enabledapi_key-str--none--none-local_only-bool--false---bool) | `bool` |
+| [`resolve_endpoint(options=None)`](#resolve_endpointoptions-dict--none--none---str) | `str` |
+| [`log_evidence(event, ...)`](#log_evidenceevent-dict-file_path-str--evidence_file-lock_wait-float--20---dict--none) | `dict \| None` |
+| [`verify_evidence_ledger(file_path=EVIDENCE_FILE)`](#verify_evidence_ledgerfile_path-str--evidence_file---dict) | `dict`: `{'valid', 'total', 'verified', 'broken_index', 'error'}` |
+| [`get_evidence_stats(file_path=EVIDENCE_FILE, limit=50)`](#get_evidence_statsfile_path-str--evidence_file-limit-int--50---dict) | `dict`: `{ total, blocks, allows, shadows, valid, error, top_rules, top_tools, recent }` |
+| [`export_evidence_ledger(file_path=None, format='jsonl')`](#export_evidence_ledgerfile_path-str--none--none-format-str--jsonl---dict) | `dict`: `{ content, format, valid, tip_hash, total }`, plus `error` for a damaged log |
+| [`guard_langchain_tool(tool, ...)`](#guard_langchain_tooltool-on_blockraise-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone) | A new LangChain tool with the same name, description and arguments |
+| [`adk_tool_callbacks(...)`](#adk_tool_callbackson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone) | `(before_tool_callback, after_tool_callback)` |
+| [`openai_agents_tool_guardrails(...)`](#openai_agents_tool_guardrailson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone) | `(tool_input_guardrails, tool_output_guardrails)` |
+| [`call_api(prompt, options=None, context=None)`](#call_apiprompt-optionsnone-contextnone---dict) | `dict`: `{ output, tokenUsage, cost, cached, metadata }` |
+
+`GuardBlockError`, `ZnGuardCallbackHandler` and `ZnLlamaGuard` are classes, and `guarded_tool` and `guard_pydantic_ai_toolset` wrap your tools; see their sections for what they do.
 
 ## Node.js (`zn-gate`)
 

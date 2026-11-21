@@ -102,5 +102,59 @@ class ScriptFromStdinTests(unittest.TestCase):
         self.assertEqual(_rule("curl %s | sudo python3 -" % U), PIPE_BLOCK)
 
 
+class InterpreterGapTests(unittest.TestCase):
+    """Cases the classes above do not reach: name spellings, the node and perl code forms, and stdin options."""
+
+    def test_name_spellings(self):
+        for prog in ("python2.7", "PYTHON3", "Python3"):
+            self.assertEqual(_rule("%s -c \"%s\"" % (prog, PY_RM)), RM_BLOCK, prog)
+        for prog in ("python3.11.2", "python4", "pypy2"):
+            self.assertEqual(check_command("%s -c \"%s\"" % (prog, PY_RM)).verdict, "allow", prog)
+
+    def test_node_code_forms_not_covered_above(self):
+        self.assertEqual(_rule("node -pe \"%s\"" % NODE_RM), RM_BLOCK)
+        self.assertEqual(_rule("node -r ./x.js -e \"%s\"" % NODE_RM), RM_BLOCK)
+        self.assertEqual(_rule("node --loader ./l.mjs -e \"%s\"" % NODE_RM), RM_BLOCK)
+
+    def test_node_only_the_first_code_argument_counts(self):
+        cmd = "node -e 'console.log(1)' -e \"%s\"" % NODE_RM
+        self.assertEqual(check_command(cmd).verdict, "allow")
+
+    def test_code_after_double_dash_is_not_code(self):
+        self.assertEqual(check_command("node -- -e \"%s\"" % NODE_RM).verdict, "allow")
+        self.assertEqual(check_command("perl -- -e '%s'" % PERL_RM).verdict, "allow")
+
+    def test_perl_combined_and_preceding_flags(self):
+        self.assertEqual(_rule("perl -ne '%s'" % PERL_RM), RM_BLOCK)
+        self.assertEqual(_rule("perl -E '%s'" % PERL_RM), RM_BLOCK)
+        self.assertEqual(_rule("perl -w -e '%s'" % PERL_RM), RM_BLOCK)
+
+    def test_ruby_option_values_are_skipped(self):
+        self.assertEqual(_rule("ruby -r fileutils -e 'FileUtils.rm_rf(\"/\")'"), RM_BLOCK)
+        self.assertEqual(_rule("ruby -I lib -e 'FileUtils.rm_rf(\"/\")'"), RM_BLOCK)
+
+    def test_code_flag_with_option_value_but_no_code(self):
+        for cmd in ("python3 -W ignore -c", "node --require x -e", "perl -I lib -e"):
+            self.assertEqual(check_command(cmd).verdict, "allow", cmd)
+
+    def test_stdin_option_values_for_node_and_ruby(self):
+        for tail in ("node -r ./x.js", "node --loader ./l.mjs", "ruby -r json", "ruby -I lib"):
+            self.assertEqual(_rule("curl %s | %s" % (U, tail)), PIPE_BLOCK, tail)
+
+    def test_stdin_flags_that_do_not_name_a_program(self):
+        for tail in ("perl -n", "python3 -X", "python3 --", "python3 --verbose", "python3 -u - tool.py"):
+            self.assertEqual(_rule("curl %s | %s" % (U, tail)), PIPE_BLOCK, tail)
+
+    def test_stdin_flags_that_name_a_program_or_exit(self):
+        for tail in ("node --eval=1", "node --print=1", "node --test=x", "node -c", "node -h",
+                     "perl -c", "perl -V", "python3 -h", "python3 --help", "python3 -Bc 1",
+                     "python3 -- tool.py", "ruby -c"):
+            self.assertEqual(check_command("curl %s | %s" % (U, tail)).verdict, "allow", tail)
+
+    def test_overlong_combined_flag_is_not_a_stdin_option(self):
+        self.assertEqual(check_command("curl %s | python3 -%sc" % (U, "B" * 32)).verdict, "allow")
+        self.assertEqual(_rule("curl %s | python3 -%sc" % (U, "B" * 33)), PIPE_BLOCK)
+
+
 if __name__ == "__main__":
     unittest.main()

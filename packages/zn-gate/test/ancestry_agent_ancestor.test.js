@@ -84,3 +84,24 @@ test('agentAncestor: win32 where the query fails or throws gives null', () => {
     });
   }
 });
+
+test('agentAncestor: linux without /proc where ps fails or throws gives null', () => {
+  const failures = [() => ({ status: 1, stdout: '' }), () => ({ error: new Error('spawn failed'), status: null, stdout: '' }), () => { throw new Error('boom'); }];
+  for (const fail of failures) {
+    withFresh(() => {
+      fs.existsSync = (p) => String(p).endsWith('/ps');
+      childProcess.spawnSync = fail;
+    }, (agentAncestor) => {
+      assert.equal(agentAncestor({ pid: 4242, platform: 'linux' }), null);
+    });
+  }
+});
+
+test('agentAncestor: darwin without a ps program gives null', () => {
+  withFresh(() => {
+    noFiles();
+    childProcess.spawnSync = () => { throw new Error('must not run'); };
+  }, (agentAncestor) => {
+    assert.equal(agentAncestor({ pid: 4242, platform: 'darwin' }), null);
+  });
+});

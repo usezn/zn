@@ -33,6 +33,7 @@ Every command of the `zn-gate` program, with its options and exit codes. For a f
 - [`stats`](#stats)
 - [`report`](#report)
 - [`team`](#team)
+- [Worked examples](#worked-examples)
 
 ## Program names
 
@@ -788,6 +789,329 @@ zn-gate team managed-config [--agent claude-code|cursor|codex|all] [--os macos|l
 ```
 
 For administrators. Prints the managed configuration files you deploy with MDM or configuration management so that the zn hooks run for every developer. Nothing is written and nothing is read from the machine. `--agent` defaults to `all` and `--os` to this computer's system. `--managed-hooks-only` makes the agent run only managed hooks. `--exclusive-mcp` also prints the managed MCP file for Claude Code (it takes exclusive control of MCP servers). `--json` prints the files as JSON. zn-gate must be installed on each machine. Exit codes: `0` done, `2` wrong usage.
+
+## Worked examples
+
+One example for each command of the npm package, run on a made-up project. The project folder `/home/user/projects/example-app` is only an example: use the path of your own project. Run the examples from that folder:
+
+```bash
+cd /home/user/projects/example-app
+```
+
+Under each example are the lines that `zn-gate --help` prints for that command, copied from the current help text. They tell you what to expect from the command; the exact output on your machine depends on what is set up there. The section of each command above lists all its options and exit codes.
+
+[`init`](#init): set up zn for the coding agents that work on the project.
+
+```bash
+zn-gate init
+```
+
+```text
+  init                Set up zn for the coding agents on this machine, one step at a time, then check it
+```
+
+[`uninstall`](#uninstall): see what would be removed, without changing anything.
+
+```bash
+zn-gate uninstall --dry-run
+```
+
+```text
+  uninstall           Remove zn-gate from this computer in one step: the Claude Code plugin, zn's
+                      hooks, wrapped MCP servers. Shows the plan first; the vault is only deleted if
+                      you confirm it separately [--dry-run]. Your own terminal only
+```
+
+[`check`](#check): check that the agents are protected, as JSON for a support request.
+
+```bash
+zn-gate check --json
+```
+
+```text
+  check --json        Same check as one JSON object for scripts, CI and support requests
+```
+
+[`status`](#status): show how zn-gate is set up.
+
+```bash
+zn-gate status
+```
+
+```text
+  status              Show engine configuration and gateway connectivity
+```
+
+[`test`](#test): run the built-in self-test.
+
+```bash
+zn-gate test
+```
+
+```text
+  test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
+```
+
+[`version`](#version): print the version.
+
+```bash
+zn-gate version
+```
+
+```text
+  version, -V         Show package version
+```
+
+[`connect`](#connect): turn on the optional cloud check. The key is asked for at a hidden prompt, never on the command line.
+
+```bash
+zn-gate connect
+```
+
+```text
+  connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
+                      you paste an analysis-only API key at a hidden prompt; it is kept in your system
+                      keychain or the zn vault, never in a file. Your own terminal only
+                      With --reconnect, replace the key that is already saved.
+```
+
+[`disconnect`](#disconnect): turn the cloud check off on this computer and do not revoke the key.
+
+```bash
+zn-gate disconnect --no-revoke
+```
+
+```text
+  disconnect          Remove that key from this computer, and ask whether to revoke it on
+                      usezn.com too (default no) [--revoke | --no-revoke]. Your own terminal only
+```
+
+[`scan`](#scan): scan the project for injection traps and secrets, with JSON output.
+
+```bash
+zn-gate scan /home/user/projects/example-app --format json
+```
+
+```text
+  scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
+                      [--format text|json|github] (matched values are never printed)
+```
+
+[`audit`](#audit): review the agent configs of the project before you open it in an agent.
+
+```bash
+zn-gate audit /home/user/projects/example-app --fail-on high
+```
+
+```text
+  audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
+                      endpoint overrides, permissions, instructions, planted executables
+                      [--format text|json|sarif] [--output FILE] [--fail-on high]
+                      [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
+```
+
+[`reach`](#reach): show what the agents can reach from the project, as JSON.
+
+```bash
+zn-gate reach /home/user/projects/example-app --json
+```
+
+```text
+  reach [path]        Show what your coding agents can reach: secrets (names only),
+                      credential files, MCP servers [--json | --sarif]
+                      [--fail-on high|medium|low|none] [--remember]. Read only, nothing is sent
+                      reach --history: which secrets your agents kept in their session
+                      history (types and counts, never values) [--json] [--max-seconds N]
+```
+
+[`analyze`](#analyze): check one piece of text.
+
+```bash
+zn-gate analyze "Summarize the README of this project"
+```
+
+```text
+  analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
+```
+
+[`pins`](#pins): list the tool pins of the MCP servers that `shield` wraps.
+
+```bash
+zn-gate pins
+```
+
+```text
+  pins                Tool pins of the MCP servers that shield wraps ("pins approve <server>|--all" accepts changes)
+```
+
+[`secret`](#secret): list the stored secrets, by name only.
+
+```bash
+zn-gate secret list
+```
+
+```text
+  secret list         List stored secrets (names and policy, never values)
+```
+
+[`env`](#env): move the values of the project's `.env` file into the vault.
+
+```bash
+zn-gate env shadow /home/user/projects/example-app/.env
+```
+
+```text
+  env shadow [FILE]   Move .env values into the vault and leave markers in the file
+```
+
+[`run`](#run): run the project's tests with one stored secret, `EXAMPLE_API_KEY`, in their environment.
+
+```bash
+zn-gate run --secrets EXAMPLE_API_KEY -- npm test
+```
+
+```text
+  run -- <command>    Run a command with secrets in its environment (allowed commands only)
+                      and its output masked [--secrets A,B to set env vars]
+                      -s is a short form of --secrets; --agent ID names the agent in the audit log
+                      --egress-allow HOST[:PORT],... lets the command reach only those hosts over
+                      HTTP(S) through a local proxy (off by default; see docs/secrets.md)
+                      (a marker in the command's arguments is refused, never filled in)
+```
+
+[`unlock`](#unlock): unlock the vault for eight hours.
+
+```bash
+zn-gate unlock --ttl 8h
+```
+
+```text
+  unlock              Unlock the vault for this session [--ttl 8h] [--idle 30m]
+                      [--backend NAME]: macos, windows, libsecret or passphrase
+                      (first run creates it; --passphrase-stdin without a keychain)
+```
+
+[`lock`](#lock): lock the vault again.
+
+```bash
+zn-gate lock
+```
+
+```text
+  lock                Lock the vault now
+```
+
+[`vault`](#vault): show whether the vault exists and is unlocked.
+
+```bash
+zn-gate vault status
+```
+
+```text
+  vault status        Show whether the vault exists and is unlocked
+```
+
+[`hooks`](#hooks): install the Claude Code hooks for this project only.
+
+```bash
+zn-gate hooks install claude-code --project
+```
+
+```text
+  hooks install <agent> [--project] [--no-mcp]
+                      Install zn's hooks for claude-code, codex, cursor, opencode, antigravity, copilot, gemini, zcode
+                      (zn-gate init picks the right setup for each agent)
+```
+
+[`hook`](#hook): agents call this entry point themselves. To try it by hand, pass a saved event file on standard input.
+
+```bash
+zn-gate hook claude-code < /home/user/projects/example-app/event.json
+```
+
+```text
+  hook <agent>        Hook entry point used by agents (reads the event on stdin)
+```
+
+[`secrets-mcp`](#secrets-mcp): start the `secrets` MCP server. Agents usually start it from their MCP config.
+
+```bash
+zn-gate secrets-mcp
+```
+
+```text
+  secrets-mcp         Run the "secrets" MCP server (stdio)
+```
+
+[`mcp`](#mcp): start zn-gate as an MCP server. Agents usually start it from their MCP config.
+
+```bash
+zn-gate mcp
+```
+
+```text
+  mcp                 Run as standalone bidirectional MCP server for AI agents
+```
+
+[`shield`](#shield): wrap one MCP server.
+
+```bash
+zn-gate shield -- uvx mcp-server-fetch
+```
+
+```text
+  shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
+```
+
+[`evidence`](#evidence): show the last five records of the decision log.
+
+```bash
+zn-gate evidence --tail 5
+```
+
+```text
+  evidence            Query the local hash-chained decision log and run the UI dashboard
+```
+
+[`why`](#why): explain the last block.
+
+```bash
+zn-gate why
+```
+
+```text
+  why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
+```
+
+[`stats`](#stats): show the counts of the last seven days.
+
+```bash
+zn-gate stats --days 7
+```
+
+```text
+  stats               What zn-gate did on this machine (local counts; --days N, --json; "stats share" to opt in)
+```
+
+[`report`](#report): show the report of the last seven days.
+
+```bash
+zn-gate report --since 7d
+```
+
+```text
+  report              Weekly report of what zn-gate did on this machine (--since Nd, --json, --no-team-line; nothing is sent)
+```
+
+[`team`](#team): show the organization and the policy of this machine.
+
+```bash
+zn-gate team status
+```
+
+```text
+  team status         Organization, policy version and upload state [--json] [--rules]
+```
 
 ## The Python package
 
