@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.5"
+COMMAND_RULES_VERSION = "2026-11-20.6"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1466,7 +1466,13 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
                 j = i + 1
                 while j < len(rest) and not re.match(r"^\\?;\Z|^\+\Z", rest[j]):
                     j += 1
-                exec_hit = _check_simple(rest[i + 1:j], depth, known) if j > i + 1 else None
+                # -execdir and -okdir run it from the folder of each matched file, not from the folder find was started in.
+                exec_hit = None
+                if j > i + 1:
+                    if re.match(r"^-(?:execdir|okdir)\Z", rest[i]):
+                        exec_hit = _check_execdir(rest[i + 1:j], depth, known, paths or ["."])
+                    else:
+                        exec_hit = _check_child(rest[i + 1:j], depth, known)
                 if exec_hit:
                     return exec_hit
                 i = j
@@ -1486,6 +1492,56 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
     if _DISK_TOOLS.match(head) and any(_BLOCK_DEVICE_RE.match(w) for w in rest):
         return "disk_overwrite"
     return None
+
+
+def _check_child(words: List[str], depth: int, cwd: Any) -> Optional[str]:
+    """The command an -exec runs, read from the folder cwd: as a command, and as a one-command pipeline (its downloads)."""
+    return _check_simple(words, depth, cwd) or _check_pipeline([(words, None)], cwd)
+
+
+def _exec_root_folder(word: str, known: Any) -> Any:
+    """The folder a find starting path names: a folder chain, or None when it cannot be told (a variable, a substitution,
+    a glob, ~user, or a relative path from an unknown folder)."""
+    w = str(word)
+    if not w or re.search(r"[$`*?\[\]{}()%]", re.sub(r"^(?:~|\$HOME|\$\{HOME\})(?=/|\Z)", "", w, flags=re.I)):
+        return None
+    if _ANCHORED_RE.match(w):
+        f = _folder_of(w)
+        if f is not None and f is not _CWD_LOST and f is not _CWD_OVERFLOW and f.kind == "other":
+            return None
+        return f
+    return _folder_rel(known, w)
+
+
+# The startup-file and ssh key names a download must not be written to, in whatever folder (see _check_execdir).
+_RC_NAME_RE = re.compile(
+    r"^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)"
+    r"|authorized_keys2?|config\.fish)\Z",
+    _A,
+)
+_rc_name_only = False
+
+
+def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str]) -> Optional[str]:
+    """find -execdir runs its command from the folder of each matched file, which can be any folder below a starting path.
+    The command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
+    a protected startup file or authorized_keys counts as protected (_rc_name_only)."""
+    global _rc_name_only
+    for r in roots:
+        f = _exec_root_folder(r, known)
+        if f is None:
+            continue
+        if f is _CWD_OVERFLOW:
+            return _OVERFLOW
+        hit = _check_child(words, depth, f)
+        if hit:
+            return hit
+    saved = _rc_name_only
+    _rc_name_only = True
+    try:
+        return _check_child(words, depth, known)
+    finally:
+        _rc_name_only = saved
 
 
 def _is_rc_path(w: str) -> bool:
@@ -1646,6 +1702,8 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                     # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
                     alts = _brace_alts(_rc_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
+                        return "rc_download"
+                    if _rc_name_only and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):

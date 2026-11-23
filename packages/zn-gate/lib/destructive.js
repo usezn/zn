@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.5';
+const COMMAND_RULES_VERSION = '2026-11-20.6';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -760,7 +760,10 @@ function checkHead(args, depth, known) {
       if (!/^-(?:exec|execdir|ok|okdir)$/.test(rest[i])) continue;
       let j = i + 1;
       while (j < rest.length && !/^\\?;$|^\+$/.test(rest[j])) j++;
-      const hit = j > i + 1 ? checkSimple(rest.slice(i + 1, j), depth, known) : null;
+      // -execdir and -okdir run it from the folder of each matched file, not from the folder find was started in.
+      const child = rest.slice(i + 1, j);
+      let hit = null;
+      if (j > i + 1) hit = /^-(?:execdir|okdir)$/.test(rest[i]) ? checkExecdir(child, depth, known, paths.length ? paths : ['.']) : checkChild(child, depth, known);
       if (hit) return hit;
       i = j;
     }
@@ -779,6 +782,39 @@ function checkHead(args, depth, known) {
   }
   if ((DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) && on('disk_overwrite')) return 'disk_overwrite';
   return null;
+}
+
+/* The command an -exec runs, read from the folder `cwd`: as a command, and as a one-command pipeline (its downloads). */
+function checkChild(words, depth, cwd) {
+  return checkSimple(words, depth, cwd) || checkPipeline([{ words }], cwd);
+}
+
+/* The folder a find starting path names: a folder chain, or null when it cannot be told (a variable, a substitution, a
+   glob, ~user, or a relative path from an unknown folder). */
+function execRootFolder(word, known) {
+  const w = String(word);
+  if (!w || /[$`*?[\]{}()%]/.test(w.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/i, ''))) return null;
+  if (ANCHORED_RE.test(w)) {
+    const f = folderOf(w);
+    return f && f !== CWD_LOST && f !== CWD_OVERFLOW && f.kind === 'other' ? null : f;
+  }
+  return folderRel(known, w);
+}
+
+/* find -execdir runs its command from the folder of each matched file, which can be any folder below a starting path. The
+   command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
+   a protected startup file or authorized_keys counts as protected (RC_NAME_ONLY). */
+function checkExecdir(words, depth, known, roots) {
+  for (const r of roots) {
+    const f = execRootFolder(r, known);
+    if (f === null || f === undefined) continue;
+    if (f === CWD_OVERFLOW) return OVERFLOW;
+    const hit = checkChild(words, depth, f);
+    if (hit) return hit;
+  }
+  const saved = RC_NAME_ONLY;
+  RC_NAME_ONLY = true;
+  try { return checkChild(words, depth, known); } finally { RC_NAME_ONLY = saved; }
 }
 
 function worldWritable(mode) {
@@ -821,9 +857,13 @@ function braceAlts(w) {
   return policyModule().expandBraces(expandSequences(String(w)));
 }
 
+// The startup-file and ssh key names a download must not be written to, in whatever folder (see checkExecdir).
+const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)|authorized_keys2?|config\.fish)$/;
+let RC_NAME_ONLY = false;
+
 function isRcTarget(w) {
   const alts = braceAlts(w);
-  return alts === null || alts.some(isRcPath);
+  return alts === null || alts.some(isRcPath) || (RC_NAME_ONLY && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
 }
 
 /* The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL). */
