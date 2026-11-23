@@ -7,6 +7,7 @@ function runs and the output is checked and masked before the agent reads it.
 """
 from __future__ import annotations
 import copy
+import importlib
 from typing import Any, Optional
 
 from ..guard import GuardBlockError, block_message, validate_on_block, warn_ignored
@@ -14,6 +15,26 @@ from ..rules import evaluate, sanitize_tool_result
 
 
 ON_BLOCK_MODES = ("raise", "return", "ignore")
+
+
+def _bundle_text(query: Any) -> Any:
+    """The text of a real LlamaIndex QueryBundle, read from its stored fields (no property or hook runs); anything
+    else comes back as it is, so evaluate() accepts text and refuses the rest."""
+    kind = type(query)
+    if kind is str or kind is bytes:
+        return query
+    try:
+        QueryBundle = importlib.import_module("llama_index.core.schema").QueryBundle
+    except Exception:
+        return query
+    if kind is QueryBundle:
+        try:
+            text = object.__getattribute__(query, "__dict__").get("query_str")
+        except Exception:
+            return query
+        if type(text) is str:
+            return text
+    return query
 
 
 class ZnLlamaGuard:
@@ -41,8 +62,7 @@ class ZnLlamaGuard:
 
     def check_query(self, query_str: str) -> str:
         # A LlamaIndex QueryBundle carries the text as query_str; other types that are not text raise TypeError.
-        bundle_text = getattr(query_str, "query_str", None)
-        assessment = evaluate(bundle_text if isinstance(bundle_text, str) and not isinstance(query_str, str) else query_str)
+        assessment = evaluate(_bundle_text(query_str))
         if not assessment.allowed:
             if self.on_block == "raise":
                 raise GuardBlockError(assessment, target="llamaindex:query", payload=query_str)

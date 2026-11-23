@@ -13,7 +13,6 @@ from __future__ import annotations
 import base64
 import binascii
 import bisect
-import copy
 from array import array
 import math
 import os
@@ -35,6 +34,7 @@ from ._result_screen import (
     _TYPE_MODULE as _TYPE_MODULE,
     _TYPE_MRO as _TYPE_MRO,
     _TYPE_QUALNAME as _TYPE_QUALNAME,
+    _screen_kind as _screen_kind,
     _checked_json as _checked_json,
     _class_bound as _class_bound,
     _is_opaque_object as _is_opaque_object,
@@ -44,6 +44,8 @@ from ._result_screen import (
     unread_accessors as unread_accessors,
 )
 
+
+_BYTES_TYPES = (bytes, bytearray, memoryview)
 
 RULES_VERSION = "2026-11-17.2"
 
@@ -2592,9 +2594,9 @@ def sanitize_tool_result(
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        if isinstance(content, (bytes, bytearray, memoryview)):
+        if type(content) in _BYTES_TYPES:
             content = bytes(content).decode("utf-8", errors="replace")
-        if isinstance(content, str):
+        if type(content) is str:
             text_content = content
             assessment = scan_windows(text_content, strict=strict)
         else:
@@ -2703,15 +2705,12 @@ def sanitize_tool_result(
 
     def _sanitize(val: Any) -> Any:
         kind = type(val)
-        if kind not in _PLAIN_VALUE_TYPES and not issubclass(kind, _SCALAR_TYPES) and unread_accessors(val):
-            # A property or attribute hook could show a secret that no attribute holds: refuse the object (a
-            # subclass of dict or list too) before anything reads it, even isinstance(), which asks the object
-            # for __class__ (check_tool_result blocks it the same way).
-            raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
-        if kind not in _PLAIN_VALUE_TYPES and not issubclass(kind, _SCALAR_TYPES) and custom_text_form(val):
-            # Its own __str__/__repr__/__format__ could show a secret differently each time (check_tool_result
-            # blocks it the same way).
-            raise SanitizeLimitError("type:unscannable", CUSTOM_TEXT_REASON)
+        if kind not in _PLAIN_VALUE_TYPES:
+            # The same screen as check_tool_result, before anything reads the value (even isinstance(), which asks
+            # the object for __class__): a property or attribute hook, its own text form, or a subclass of a built-in
+            # type that redefines how it is read (__iter__, __len__, items...) could show a secret that the walk
+            # below does not see, or run code of the output. Such a value is refused, never walked.
+            _screen_kind(val)
         if not isinstance(val, (dict, list, tuple, set, frozenset)):
             names = _object_names(val)
             if not names:
@@ -2745,16 +2744,17 @@ def sanitize_tool_result(
         if len(detections) == before:
             target: Any = val
         else:
+            # A secret was found: the masked attributes go into a blank instance of the same class. It is built with
+            # object.__new__ and object.__setattr__, never copy.copy (which would run a __copy__ or __reduce__ of the
+            # output) and never the class's own __new__, __init__ or __setattr__; the original is not written to.
+            # When no such instance can be made, a plain dict of the masked attributes is returned instead.
             try:
-                twin = copy.copy(val)
-                if twin is val:
-                    # A __copy__ that returns the object itself: never write onto the original.
-                    return clean
+                twin = object.__new__(type(val))
                 for n, v in clean.items():
                     object.__setattr__(twin, n, v)
-                target = twin
             except Exception:
                 return clean
+            target = twin
         # The text form (__str__, __repr__) can show a secret that no attribute holds. The object is then replaced by
         # its masked text, so the secret cannot reach the caller through str() of the result.
         try:
@@ -2791,14 +2791,17 @@ def sanitize_tool_result(
             return frozenset(_sanitize_members(val))
         elif isinstance(val, set):
             return set(_sanitize_members(val))
-        elif isinstance(val, (bytes, bytearray, memoryview)):
+        elif isinstance(val, _BYTES_TYPES):
+            if type(val) not in _BYTES_TYPES:
+                # A subclass of bytes could hand out other bytes through its buffer: refused, never read.
+                raise SanitizeLimitError("type:unscannable", OVERRIDDEN_READING_REASON)
             text = bytes(val).decode("utf-8", errors="replace")
             clean_text, det = redact_secrets(text)
             if not det:
                 return val
             detections.extend(det)
             encoded = clean_text.encode("utf-8")
-            return bytearray(encoded) if isinstance(val, bytearray) else encoded
+            return bytearray(encoded) if type(val) is bytearray else encoded
         elif _is_opaque_object(val):
             # An object with no attributes to walk: what its text form shows is masked, as a string.
             try:
@@ -2826,9 +2829,15 @@ _eval_cache_ver = RULES_VERSION
 def text_input(value: Any, what: str) -> Any:
     """The text to check: a str as it is, bytes read as UTF-8 (invalid bytes replaced), None as it is (empty input);
     any other type raises TypeError, because input that is not text is never allowed unread."""
-    if value is None or isinstance(value, str):
+    # The real type decides, never isinstance(), which asks the object for __class__ (a spoofed one passes as str), and
+    # bytes() is only called on the exact built-in types, since it runs a __bytes__ of its own. A subclass of str is
+    # read through its built-in storage (str.__str__ makes an exact copy without running its code); a subclass of
+    # bytes is refused like any other non-text input.
+    if value is None or type(value) is str:
         return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
+    if issubclass(type(value), str):
+        return str.__str__(value)
+    if type(value) in _BYTES_TYPES:
         return bytes(value).decode("utf-8", errors="replace")
     raise TypeError(f"{what} takes text (str or bytes), not {type(value).__name__}")
 

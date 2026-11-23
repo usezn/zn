@@ -80,6 +80,7 @@ _TYPE_MRO = type.__dict__["__mro__"]
 _TYPE_DICT = type.__dict__["__dict__"]
 _TYPE_MODULE = type.__dict__["__module__"]
 _TYPE_QUALNAME = type.__dict__["__qualname__"]
+_TYPE_NAME = type.__dict__["__name__"]
 _TYPE_FLAGS = type.__dict__["__flags__"]
 _HEAPTYPE = 1 << 9
 # Heap types written in C that their module does not bind under their qualified name, trusted by identity only:
@@ -126,6 +127,12 @@ def _class_bound(c: type) -> bool:
     return target is c
 
 
+def _type_defines(kind: type, name: str) -> bool:
+    """True when a class of the MRO of `kind` holds `name` in its own namespace. Reads the namespaces through the slots
+    of `type`, so a metaclass hook (__getattr__, a property) never runs, as hasattr(kind, name) could."""
+    return any(name in _TYPE_DICT.__get__(c) for c in _TYPE_MRO.__get__(kind))
+
+
 def _class_accessors(klass: type) -> Tuple[bool, Tuple[str, ...]]:
     """(whether a class of the MRO outside the trusted packages defines a data descriptor or an attribute hook,
     the names of its cached properties)."""
@@ -146,7 +153,7 @@ def _class_accessors(klass: type) -> Tuple[bool, Tuple[str, ...]]:
             if kind is _TUPLEGETTER and issubclass(klass, tuple):
                 # A namedtuple field: an item of the tuple, which is walked.
                 continue
-            if hasattr(kind, "__get__") and (hasattr(kind, "__set__") or hasattr(kind, "__delete__")):
+            if _type_defines(kind, "__get__") and (_type_defines(kind, "__set__") or _type_defines(kind, "__delete__")):
                 return True, ()
     return False, tuple(lazy)
 
@@ -421,17 +428,24 @@ def _object_names(val: Any) -> List[str]:
         return []
     names: List[str] = []
     try:
-        d = getattr(val, "__dict__", None)
-        if isinstance(d, dict):
+        try:
+            d = object.__getattribute__(val, "__dict__")
+        except AttributeError:
+            d = None
+        if type(d) is dict:
             names.extend(str(k) for k in d)
-        for klass in type(val).__mro__:
-            slots = klass.__dict__.get("__slots__", ())
+        for klass in _TYPE_MRO.__get__(type(val)):
+            slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
             for n in ((slots,) if isinstance(slots, str) else slots):
                 if n in ("__dict__", "__weakref__"):
                     continue
                 if n.startswith("__") and not n.endswith("__"):
-                    n = "_" + klass.__name__.lstrip("_") + n
-                if n not in names and hasattr(val, n):
+                    n = "_" + _TYPE_NAME.__get__(klass).lstrip("_") + n
+                if n not in names:
+                    try:
+                        object.__getattribute__(val, n)
+                    except AttributeError:
+                        continue
                     names.append(n)
     except Exception:
         # Attributes that cannot be listed cannot be masked: refuse instead of passing the object through unread.
