@@ -428,10 +428,12 @@ function tagReader(root) {
  */
 export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, args, opts)) {
   try {
-    // The public registry is named explicitly and npm runs outside the repository with the registry variables removed,
-    // so a project .npmrc or an environment variable cannot point the check at a registry that serves made-up versions.
+    // The public registry is named explicitly and npm runs outside the repository with every inherited npm setting
+    // removed, so a project .npmrc or an environment variable (a registry, a certificate authority, strict-ssl=false)
+    // cannot make the check accept a registry that serves made-up versions. TLS verification is required explicitly.
     const env = { ...process.env };
-    for (const k of Object.keys(env)) if (/^npm_config_(registry|userconfig|globalconfig)$/i.test(k) || /^npm_config_@.*:registry$/i.test(k)) delete env[k];
+    for (const k of Object.keys(env)) if (/^npm_config_/i.test(k) || /^(NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)$/i.test(k)) delete env[k];
+    env.npm_config_strict_ssl = 'true';
     // Two distinct empty files: npm refuses to load the same path as both the user and the global config
     // ("double-loading config"), which made every lookup fail and the check report the registry as unreachable.
     const blank = mkdtempSync(join(tmpdir(), 'zn-npmrc-'));
@@ -439,7 +441,7 @@ export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, a
     env.npm_config_globalconfig = join(blank, 'global-npmrc');
     writeFileSync(env.npm_config_userconfig, '');
     writeFileSync(env.npm_config_globalconfig, '');
-    const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'versions', '--json', '--registry=https://registry.npmjs.org/'], { encoding: 'utf8', timeout: 30000, cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
+    const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'versions', '--json', '--registry=https://registry.npmjs.org/', '--strict-ssl=true'], { encoding: 'utf8', timeout: 30000, cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
     let list = JSON.parse(String(out));
     if (typeof list === 'string') list = [list];
     if (!Array.isArray(list) || list.length === 0) return null;
