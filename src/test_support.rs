@@ -42,28 +42,45 @@ impl Drop for EnvRestore {
     }
 }
 
-/// Loads the embedding model into `dir` for a test. The model must be available: any
-/// failure to load it fails the test, so a missing model never passes silently. The one
-/// exception is an explicit opt-in on machines without network access: with
-/// `ZN_TEST_OFFLINE=1` a failed model download skips the model-backed test, and a
-/// `SKIPPED` line is printed (visible with `cargo test -- --nocapture`). HTTP errors and
-/// hash mismatches always fail.
-pub(crate) fn embedder_or_skip(dir: &Path, cache_ttl: Option<u64>) -> Option<Embedder> {
+/// Message for a model that could not be loaded. A missing model is always a test failure:
+/// a runtime skip would show as a passing test, because stable Rust has no skipped result.
+fn model_load_failure(err: &anyhow::Error) -> String {
+    format!(
+        "embedding model must load for this test: {err:#}
+         Without network access, deselect the model-backed tests: cargo test --          --skip ai::embedder::tests::sanity_attack_vs_benign          --skip ai::embedder::tests::test_cache_          --skip batch::tests::test_batch_pipeline_with_embedder"
+    )
+}
+
+/// Loads the embedding model into `dir` for a test and panics when it cannot be loaded
+/// (network failure, HTTP error, hash mismatch). Nothing is skipped silently. People without
+/// network access deselect the model-backed tests explicitly, see `model_load_failure`.
+pub(crate) fn embedder_or_fail(dir: &Path, cache_ttl: Option<u64>) -> Embedder {
     let loaded = match cache_ttl {
         Some(ttl) => Embedder::with_cache(dir, ttl),
         None => Embedder::new(dir),
     };
-    match loaded {
-        Ok(embedder) => Some(embedder),
-        Err(err) => {
-            let text = format!("{err:#}");
-            let transport = text.starts_with("downloading ") && !text.contains("HTTP status");
-            if transport && std::env::var("ZN_TEST_OFFLINE").is_ok_and(|v| v == "1") {
-                println!("SKIPPED: model-backed test not run (ZN_TEST_OFFLINE=1, model unreachable): {err}");
-                None
-            } else {
-                panic!("model must load (set ZN_TEST_OFFLINE=1 to skip when offline): {err}")
-            }
-        }
+    loaded.unwrap_or_else(|err| panic!("{}", model_load_failure(&err)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "embedding model must load")]
+    fn a_transport_failure_fails_the_test_instead_of_skipping() {
+        // No model in an empty directory and an unusable offline path: loading must panic.
+        let err = anyhow::anyhow!("downloading model.safetensors failed: error sending request");
+        let msg = model_load_failure(&err);
+        assert!(msg.contains("--skip"), "{msg}");
+        panic!("{msg}");
+    }
+
+    #[test]
+    fn the_failure_message_names_the_cause_and_the_deselect_filters() {
+        let err = anyhow::anyhow!("downloading x failed: connection refused");
+        let msg = model_load_failure(&err);
+        assert!(msg.contains("connection refused"), "{msg}");
+        assert!(msg.contains("test_batch_pipeline_with_embedder"), "{msg}");
     }
 }

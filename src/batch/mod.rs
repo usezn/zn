@@ -334,9 +334,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_pipeline_with_embedder() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(embedder) = crate::test_support::embedder_or_skip(dir.path(), Some(300)) else {
-            return;
-        };
+        let embedder = crate::test_support::embedder_or_fail(dir.path(), Some(300));
         let embedder = Arc::new(embedder);
 
         let config = BatchConfig {
