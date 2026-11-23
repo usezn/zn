@@ -14,9 +14,18 @@ pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Loads the embedding model into `dir` for a test. When the model cannot be
-/// downloaded (offline sandbox, Hugging Face unreachable) the test is skipped
-/// with a message. Any other failure, such as a hash mismatch, fails the test.
+/// True when the error is a transport failure (no network, DNS, connection refused) while
+/// fetching the model, as opposed to the server answering with an HTTP error status.
+fn is_offline_error(err: &anyhow::Error) -> bool {
+    let text = format!("{err:#}");
+    text.starts_with("downloading ") && !text.contains("HTTP status")
+}
+
+/// Loads the embedding model into `dir` for a test. The test is skipped, with a visible
+/// `SKIPPED` line, only when the model cannot be fetched because the machine is offline:
+/// either `ZN_TEST_OFFLINE=1` is set, or the failure is a transport error and `CI` is not
+/// set. In CI an unavailable model fails the test, and an HTTP error status (bad URL, 404,
+/// 500) or a hash mismatch always fails it.
 pub(crate) fn embedder_or_skip(dir: &Path, cache_ttl: Option<u64>) -> Option<Embedder> {
     let loaded = match cache_ttl {
         Some(ttl) => Embedder::with_cache(dir, ttl),
@@ -24,11 +33,17 @@ pub(crate) fn embedder_or_skip(dir: &Path, cache_ttl: Option<u64>) -> Option<Emb
     };
     match loaded {
         Ok(embedder) => Some(embedder),
-        Err(err) if err.to_string().starts_with("downloading ") => {
-            eprintln!(
-                "SKIP: embedding model unavailable (offline or Hugging Face unreachable): {err}"
-            );
-            None
+        Err(err) if is_offline_error(&err) => {
+            let forced = std::env::var("ZN_TEST_OFFLINE").is_ok_and(|v| v == "1");
+            let in_ci = std::env::var_os("CI").is_some();
+            if forced || !in_ci {
+                eprintln!(
+                    "SKIPPED: model-backed test not run, embedding model unreachable (offline): {err}"
+                );
+                None
+            } else {
+                panic!("model must load in CI (set ZN_TEST_OFFLINE=1 to skip when offline): {err}")
+            }
         }
         Err(err) => panic!("model must load: {err}"),
     }

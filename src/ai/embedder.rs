@@ -306,21 +306,17 @@ mod tests {
 
     static EMBEDDER: OnceLock<Option<Embedder>> = OnceLock::new();
 
-    /// ZN_EMBEDDER_TEST_DIR points at a pre-fetched model (CI). Otherwise each test
-    /// process downloads into its own directory, so two concurrent `cargo test`
-    /// runs never delete each other's model files.
+    /// ZN_EMBEDDER_TEST_DIR points at a pre-fetched model (CI). Otherwise the tests share one
+    /// fixed folder under the system temp dir, so the model is downloaded once and reused by
+    /// later runs instead of leaving a new copy behind every time. Downloads are atomic
+    /// (temp file, hash check, rename), so concurrent `cargo test` runs can share it. This is
+    /// test-only code; production cache behaviour is unchanged.
     fn embedder() -> Option<&'static Embedder> {
         EMBEDDER
             .get_or_init(|| {
                 let dir = std::env::var("ZN_EMBEDDER_TEST_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|_| {
-                        std::env::temp_dir().join(format!(
-                            "zn-embedder-test-{}-{}",
-                            std::process::id(),
-                            uuid::Uuid::new_v4()
-                        ))
-                    });
+                    .unwrap_or_else(|_| std::env::temp_dir().join("zn-embedder-test-cache"));
                 embedder_or_skip(&dir, None)
             })
             .as_ref()

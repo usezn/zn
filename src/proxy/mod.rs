@@ -1136,9 +1136,17 @@ mod retry_and_discovery_tests {
             g[3] > g[0],
             "the wait grows from the first retry to the last"
         );
-        // The four waits add up to 7.5 s of real sleep. The attempt count above is the exact check;
-        // this ceiling only catches a hang.
-        assert!(total < Duration::from_secs(60), "took {total:?}");
+        // The four waits add up to 7.5 s of real sleep. Nothing may sleep after the last failed
+        // attempt (that wait would be 8 s), so it must return right after the final arrival.
+        let after_last = start.elapsed() - times[4].duration_since(start);
+        assert!(
+            after_last < Duration::from_secs(3),
+            "slept {after_last:?} after the final attempt"
+        );
+        assert!(
+            total < Duration::from_millis(7500 + 15_000),
+            "took {total:?}, expected about 7.5 s of backoff"
+        );
         let msg = err.to_string();
         assert!(msg.contains("flaky"), "{msg}");
         assert!(msg.contains('5'), "{msg}");
