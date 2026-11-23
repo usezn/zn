@@ -199,8 +199,10 @@ def test_pydantic_model_without_own_properties_still_passes_through():
 
 
 def test_arguments_with_properties_are_still_checked_as_before():
-    # Only tool results are refused: an application object passed as an argument is never returned to the model.
-    assert check_tool_call("tool", {"client": PropertyOnlyKey()}).allowed
+    # A direct argument check blocks what it cannot read; the guard decorator (lenient objects) reads an application
+    # object passed as an argument as far as possible, as it is never returned to the model.
+    res = check_tool_call("tool", {"client": PropertyOnlyKey()})
+    assert not res.allowed and res.rule == "type:unscannable"
     assert check_tool_call("tool", {"client": PropertyOnlyKey()}, _lenient_objects=True).allowed
 
 

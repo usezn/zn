@@ -97,9 +97,11 @@ def test_plain_and_standard_library_types_still_pass(value):
     assert tool() is value
 
 
-def test_arguments_are_not_affected():
+def test_arguments_with_overridden_reading_are_blocked():
     @guard()
     def tool(items):
         return "done"
 
-    assert tool(IterList(["fine"])) == "done"
+    with pytest.raises(GuardBlockError):
+        tool(IterList(["fine"]))
+    assert tool(["fine"]) == "done"

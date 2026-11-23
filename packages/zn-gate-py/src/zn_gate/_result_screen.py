@@ -77,6 +77,36 @@ _SCALAR_TYPES = (str, bytes, bytearray, memoryview, bool, int, float, complex, t
 # The slots of `type` itself, read directly: a metaclass can override __mro__, __dict__, __module__ or
 # __qualname__ with a property of its own, so the class's own answer is never asked for.
 _TYPE_MRO = type.__dict__["__mro__"]
+
+
+def _is_mapping(val: Any) -> bool:
+    """isinstance(val, Mapping) from the real class: its MRO is compared by identity, so neither the registry of the
+    ABC (which hashes and compares the class) nor a hook of its metaclass runs."""
+    kind = type(val)
+    return (issubclass(kind, (dict, types.MappingProxyType))
+            or any(c is Mapping for c in _TYPE_MRO.__get__(kind)))
+
+
+def _defines_all(val: Any, *names: str) -> bool:
+    """True when the class of `val` defines every one of `names` (what the hooks of Iterator and Iterable ask), read
+    through the namespaces of its MRO."""
+    kind = type(val)
+    return all(any(n in _TYPE_DICT.__get__(c) for c in _TYPE_MRO.__get__(kind)) for n in names)
+
+
+def _is_iterator(val: Any) -> bool:
+    return _defines_all(val, "__iter__", "__next__") or _defines_all(val, "__aiter__", "__anext__")
+
+
+def _type_is(kind: Any, table: Any) -> bool:
+    """True when `kind` is one of the types in `table`, compared by identity only. `kind in table` would call __eq__
+    or __hash__ of the metaclass of `kind`, which a class of the output can define."""
+    for known in table:
+        if kind is known:
+            return True
+    return False
+
+
 _TYPE_DICT = type.__dict__["__dict__"]
 _TYPE_MODULE = type.__dict__["__module__"]
 _TYPE_QUALNAME = type.__dict__["__qualname__"]
@@ -147,7 +177,7 @@ def _class_accessors(klass: type) -> Tuple[bool, Tuple[str, ...]]:
             if kind is functools.cached_property:
                 lazy.append(attr.attrname or name)
                 continue
-            if kind in (types.MemberDescriptorType, types.GetSetDescriptorType):
+            if _type_is(kind, (types.MemberDescriptorType, types.GetSetDescriptorType)):
                 # __slots__ entries, __dict__ and __weakref__: what they hold is walked.
                 continue
             if kind is _TUPLEGETTER and issubclass(klass, tuple):
@@ -248,7 +278,7 @@ def overrides_builtin_reading(val: Any) -> bool:
     checked. A tool result holding one is refused (rule type:unscannable).
     """
     klass = type(val)
-    if klass in _EXACT_BUILTIN_TYPES or not issubclass(klass, _BUILTIN_READ_TYPES):
+    if _type_is(klass, _EXACT_BUILTIN_TYPES) or not issubclass(klass, _BUILTIN_READ_TYPES):
         return False
     try:
         return _class_overrides_reading(klass)
@@ -433,7 +463,11 @@ def _object_names(val: Any) -> List[str]:
         except AttributeError:
             d = None
         if type(d) is dict:
-            names.extend(str(k) for k in d)
+            for k in d:
+                if type(k) is not str:
+                    # A key of another type would be turned into text by its own code: refused, never coerced.
+                    raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it")
+                names.append(k)
         for klass in _TYPE_MRO.__get__(type(val)):
             slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
             for n in ((slots,) if isinstance(slots, str) else slots):
@@ -463,7 +497,7 @@ def _screen_kind(val: Any) -> None:
     """SanitizeLimitError (rule type:unscannable) when the class of `val` shows it through code that is not trusted by
     identity: properties or attribute hooks (unread_accessors), its own text form (custom_text_form, the metaclass's for
     a class) or a redefined reading method of a built-in type (overrides_builtin_reading). Runs none of that code."""
-    if type(val) in _EXACT_TEXT_TYPES:
+    if _type_is(type(val), _EXACT_TEXT_TYPES):
         return
     if unread_accessors(val):
         raise SanitizeLimitError("type:unscannable", UNREAD_ACCESSORS_REASON)
@@ -529,7 +563,7 @@ def _screen_text_graph(content: Any) -> None:
     stack: List[Tuple[Any, int]] = [(content, 0)]
     while stack:
         val, depth = stack.pop()
-        if type(val) in _EXACT_TEXT_TYPES or id(val) in seen:
+        if _type_is(type(val), _EXACT_TEXT_TYPES) or id(val) in seen:
             continue
         if depth > _TEXT_GRAPH_MAX_DEPTH:
             raise SanitizeLimitError("size:nesting", "The output is nested too deeply to check")

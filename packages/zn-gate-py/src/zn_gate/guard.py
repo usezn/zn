@@ -9,6 +9,7 @@ import argparse
 import dataclasses
 import functools
 import inspect
+import _io
 import io
 import itertools
 import logging
@@ -16,14 +17,15 @@ import os
 import re
 from pathlib import PurePath
 import types
-from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
+from collections.abc import Mapping
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invisible
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
 from .rules import OVERRIDDEN_READING_REASON, UNREAD_ACCESSORS_REASON, overrides_builtin_reading, unread_accessors
 from .rules import CUSTOM_TEXT_REASON, custom_text_form
-from .rules import _TYPE_MODULE, _TYPE_MRO, _TYPE_QUALNAME, _class_bound
+from .rules import _TYPE_DICT, _TYPE_MODULE, _TYPE_MRO, _TYPE_QUALNAME, _class_bound, _type_is
+from .rules import _defines_all, _is_iterator, _is_mapping
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -102,7 +104,15 @@ MAX_OBJECT_VALUES = 100_000
 LENIENT_MAX_DEPTH = 32
 _DEFAULT_MAX_DEPTH = 10
 
-_DICT_VIEWS = (KeysView, ValuesView, ItemsView)
+# The views of a dict, by identity: isinstance() with the ABCs (KeysView...) would hash and compare the class of the
+# output (and run hooks of its metaclass).
+_DICT_VIEWS: Tuple[Any, ...] = (type({}.keys()), type({}.values()), type({}.items()))
+_IO_BASES: Tuple[type, ...] = (io.IOBase, _io._IOBase)
+
+
+def _inherits_any(val: Any, bases: Tuple[type, ...]) -> bool:
+    """True when a class of the MRO of `val` is one of `bases` (identity); no ABC registry or metaclass hook runs."""
+    return any(c is b for c in _TYPE_MRO.__get__(type(val)) for b in bases)
 _PLAIN_CONTAINERS = (dict, list, tuple, set, frozenset)
 
 
@@ -110,15 +120,18 @@ def _object_fields(data: Any) -> Optional[List[Any]]:
     """Attribute names and values of an object (its __dict__ and __slots__), or None if it has none."""
     found = False
     children: List[Any] = []
-    attrs = getattr(data, "__dict__", None)
-    if isinstance(attrs, dict):
+    try:
+        attrs = object.__getattribute__(data, "__dict__")
+    except AttributeError:
+        attrs = None
+    if type(attrs) is dict:
         found = True
         for k, v in attrs.items():
             children.append(k)
             children.append(v)
     seen: Set[str] = set()
-    for klass in type(data).__mro__:
-        slots = klass.__dict__.get("__slots__", ())
+    for klass in _TYPE_MRO.__get__(type(data)):
+        slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
         if isinstance(slots, str):
             slots = (slots,)
         for name in slots:
@@ -165,13 +178,13 @@ _FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
 )
 
 
-def _is_framework_context(value: Any, verified: bool = False) -> bool:
+def _is_framework_context(value: Any, verified: bool = True) -> bool:
     """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES).
 
     The module and name that a class carries are only labels: any class can set them. With `verified` (a tool
     result, which skips the context unread), they count only when that module, already imported, holds this very
     class under that name (see rules._class_bound)."""
-    if issubclass(type(value), (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
+    if _is_mapping(value) or issubclass(type(value), (str, bytes, bytearray, list, tuple, set, frozenset, type)):
         return False
     try:
         mro = _TYPE_MRO.__get__(type(value))
@@ -280,8 +293,9 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     """
     # Judged by the real type: isinstance() also asks the object for __class__, which a property can answer.
     kind = type(data)
-    if _seen is not None and _seen.stop_hidden and overrides_builtin_reading(data):
-        # A tool result: a str, list or dict subclass that redefines how it is read could show other text later.
+    if overrides_builtin_reading(data):
+        # A str, list or dict subclass that redefines how it is read could show other text than the one checked
+        # (tool results and arguments alike): refused before any of its code runs.
         raise _Unscannable("type:unscannable", OVERRIDDEN_READING_REASON)
     if issubclass(kind, str):
         return [data]
@@ -294,15 +308,16 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or issubclass(kind, (bool, int, float, complex, type, types.ModuleType)):
         return []
     seen = _seen if _seen is not None else _Walk()
-    context = _is_framework_context(data, verified=seen.stop_hidden)
-    if kind not in _PLAIN_CONTAINERS and not context and unread_accessors(data):
+    context = _is_framework_context(data)
+    plain = _type_is(kind, _PLAIN_CONTAINERS)
+    if not plain and not context and unread_accessors(data):
         # Its properties or attribute hooks are not read (that would run its code): a result blocks on it,
         # before anything else here reads the object. Files and streams too: the standard-library ones
         # (io, sys.std*, logging) are trusted by unread_accessors, a subclass of them with a property is not.
         seen.hidden += 1
         if seen.stop_hidden:
             raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
-    if seen.stop_hidden and kind not in _PLAIN_CONTAINERS and not context and custom_text_form(data):
+    if seen.stop_hidden and not plain and not context and custom_text_form(data):
         # A tool result: str(), repr() or format() of it would run its own code, which could show text that
         # was never checked, so it is refused before it is read (sanitize_tool_result refuses it too).
         raise _Unscannable("type:unscannable", CUSTOM_TEXT_REASON)
@@ -315,9 +330,9 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
     children: Optional[List[Any]]
-    if isinstance(data, (Mapping, list, tuple, set, frozenset, _DICT_VIEWS)):
+    if _is_mapping(data) or isinstance(data, (list, tuple, set, frozenset)) or _type_is(kind, _DICT_VIEWS):
         try:
-            if isinstance(data, Mapping):
+            if _is_mapping(data):
                 children = []
                 for k, v in data.items():
                     children.append(k)
@@ -329,7 +344,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                 seen.unreadable += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
-    elif isinstance(data, os.PathLike):
+    elif _defines_all(data, "__fspath__"):
         path_value = os.fspath(data)
         found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects,
                                 lenient_depth=lenient_depth, best_effort_budget=best_effort_budget, _seen=seen)
@@ -338,14 +353,14 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
             found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects,
                                 lenient_depth=lenient_depth, best_effort_budget=best_effort_budget, _seen=seen)
         return found
-    elif isinstance(data, io.IOBase):
+    elif _inherits_any(data, _IO_BASES):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
         return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects,
                                 lenient_depth=lenient_depth,
                                 best_effort_budget=best_effort_budget, _seen=seen) if isinstance(name, (str, bytes)) else []
-    elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
+    elif _is_iterator(data):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
                            "without consuming it; pass a list instead")
@@ -371,7 +386,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                     lenient = True
                     if lenient_depth is not None:
                         max_depth += lenient_depth - _DEFAULT_MAX_DEPTH
-            elif isinstance(data, Iterable):
+            elif _defines_all(data, "__iter__"):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
                     children.append(item)
@@ -554,7 +569,7 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
                          lenient_objects=_lenient_objects,
                          lenient_depth=LENIENT_MAX_DEPTH if _lenient_objects else None,
-                         best_effort_budget=_lenient_objects, block_unreadable=False)
+                         best_effort_budget=_lenient_objects, block_unreadable=not _lenient_objects)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -847,8 +862,8 @@ def _jsonlike(data: Any, depth: int = 0) -> Any:
     if isinstance(data, Mapping):
         return {(k if isinstance(k, str) else str(_jsonlike(k, depth + 1))): _jsonlike(v, depth + 1)
                 for k, v in data.items()}
-    if isinstance(data, (list, tuple, set, frozenset, _DICT_VIEWS)):
-        return [_jsonlike(v, depth + 1) for v in data]
+    if isinstance(data, (list, tuple, set, frozenset, *_DICT_VIEWS)):
+        return [_jsonlike(v, depth + 1) for v in cast(Any, data)]
     dump = getattr(data, "model_dump", None)
     if callable(dump) and not isinstance(data, type):
         try:

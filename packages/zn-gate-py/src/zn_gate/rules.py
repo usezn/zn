@@ -32,9 +32,14 @@ from ._result_screen import (
     _PLAIN_VALUE_TYPES as _PLAIN_VALUE_TYPES,
     _SCALAR_TYPES as _SCALAR_TYPES,
     _TYPE_MODULE as _TYPE_MODULE,
+    _TYPE_DICT as _TYPE_DICT,
     _TYPE_MRO as _TYPE_MRO,
     _TYPE_QUALNAME as _TYPE_QUALNAME,
     _screen_kind as _screen_kind,
+    _type_is as _type_is,
+    _is_iterator as _is_iterator,
+    _is_mapping as _is_mapping,
+    _defines_all as _defines_all,
     _checked_json as _checked_json,
     _class_bound as _class_bound,
     _is_opaque_object as _is_opaque_object,
@@ -2594,7 +2599,7 @@ def sanitize_tool_result(
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        if type(content) in _BYTES_TYPES:
+        if _type_is(type(content), _BYTES_TYPES):
             content = bytes(content).decode("utf-8", errors="replace")
         if type(content) is str:
             text_content = content
@@ -2705,7 +2710,7 @@ def sanitize_tool_result(
 
     def _sanitize(val: Any) -> Any:
         kind = type(val)
-        if kind not in _PLAIN_VALUE_TYPES:
+        if not _type_is(kind, _PLAIN_VALUE_TYPES):
             # The same screen as check_tool_result, before anything reads the value (even isinstance(), which asks
             # the object for __class__): a property or attribute hook, its own text form, or a subclass of a built-in
             # type that redefines how it is read (__iter__, __len__, items...) could show a secret that the walk
@@ -2775,6 +2780,9 @@ def sanitize_tool_result(
             return clean_str
         elif isinstance(val, dict):
             items = list(val.items())
+            for key, _ in items:
+                # A key is screened before anything asks it for its class (isinstance) or its text.
+                _screen_kind(key)
             names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
             taken = {n for n, (k, _) in zip(names, items, strict=True) if n == k}
             out: Dict[Any, Any] = {}
@@ -2792,7 +2800,7 @@ def sanitize_tool_result(
         elif isinstance(val, set):
             return set(_sanitize_members(val))
         elif isinstance(val, _BYTES_TYPES):
-            if type(val) not in _BYTES_TYPES:
+            if not _type_is(type(val), _BYTES_TYPES):
                 # A subclass of bytes could hand out other bytes through its buffer: refused, never read.
                 raise SanitizeLimitError("type:unscannable", OVERRIDDEN_READING_REASON)
             text = bytes(val).decode("utf-8", errors="replace")
@@ -2837,7 +2845,7 @@ def text_input(value: Any, what: str) -> Any:
         return value
     if issubclass(type(value), str):
         return str.__str__(value)
-    if type(value) in _BYTES_TYPES:
+    if _type_is(type(value), _BYTES_TYPES):
         return bytes(value).decode("utf-8", errors="replace")
     raise TypeError(f"{what} takes text (str or bytes), not {type(value).__name__}")
 

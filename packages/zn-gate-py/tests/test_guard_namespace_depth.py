@@ -262,8 +262,12 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
         res = check_tool_result(value)
         self.assertFalse(res.allowed)
         self.assertEqual(res.rule, "type:unscannable")
-        # The same value in arguments is read as far as possible, not refused.
-        self.assertTrue(check_tool_call("example_tool", {"client": value}).allowed)
+        # A direct argument check blocks it too, since it cannot be read; the guard decorator (lenient objects)
+        # reads an application object as far as possible instead.
+        direct = check_tool_call("example_tool", {"client": value})
+        self.assertFalse(direct.allowed)
+        self.assertEqual(direct.rule, "type:unscannable")
+        self.assertTrue(check_tool_call("example_tool", {"client": value}, _lenient_objects=True).allowed)
 
     def test_logger_handlers_filters_and_subclass_attributes_are_read(self):
         logger = logging.getLogger("zn.example.capture")
