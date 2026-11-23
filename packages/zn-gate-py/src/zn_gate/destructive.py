@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.6"
+COMMAND_RULES_VERSION = "2026-11-20.7"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1519,7 +1519,7 @@ _RC_NAME_RE = re.compile(
     r"|authorized_keys2?|config\.fish)\Z",
     _A,
 )
-_rc_name_only = False
+_rc_name_only = 0  # 1: protected names count in any folder; 2: also any relative target that names a folder
 
 
 def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str]) -> Optional[str]:
@@ -1527,19 +1527,23 @@ def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str]) -
     The command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
     a protected startup file or authorized_keys counts as protected (_rc_name_only)."""
     global _rc_name_only
+    unsure = False
     for r in roots:
         f = _exec_root_folder(r, known)
         if f is None:
+            unsure = True
             continue
         if f is _CWD_OVERFLOW:
             return _OVERFLOW
         hit = _check_child(words, depth, f)
         if hit:
             return hit
+    # When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown
+    # folder), any relative target with a folder in it (etc/profile) is refused as well; a plain file name is not.
     saved = _rc_name_only
-    _rc_name_only = True
+    _rc_name_only = 2 if unsure else 1
     try:
-        return _check_child(words, depth, known)
+        return _check_child(words, depth, None if unsure else known)
     finally:
         _rc_name_only = saved
 
@@ -1702,6 +1706,8 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                     # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
                     alts = _brace_alts(_rc_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
+                        return "rc_download"
+                    if _rc_name_only == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
                         return "rc_download"
                     if _rc_name_only and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
                         return "rc_download"

@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.6';
+const COMMAND_RULES_VERSION = '2026-11-20.7';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -805,16 +805,19 @@ function execRootFolder(word, known) {
    command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
    a protected startup file or authorized_keys counts as protected (RC_NAME_ONLY). */
 function checkExecdir(words, depth, known, roots) {
+  let unsure = false;
   for (const r of roots) {
     const f = execRootFolder(r, known);
-    if (f === null || f === undefined) continue;
+    if (f === null || f === undefined) { unsure = true; continue; }
     if (f === CWD_OVERFLOW) return OVERFLOW;
     const hit = checkChild(words, depth, f);
     if (hit) return hit;
   }
+  // When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown
+  // folder), any relative target with a folder in it (etc/profile) is refused as well; a plain file name is not.
   const saved = RC_NAME_ONLY;
-  RC_NAME_ONLY = true;
-  try { return checkChild(words, depth, known); } finally { RC_NAME_ONLY = saved; }
+  RC_NAME_ONLY = unsure ? 2 : 1;
+  try { return checkChild(words, depth, unsure ? null : known); } finally { RC_NAME_ONLY = saved; }
 }
 
 function worldWritable(mode) {
@@ -859,11 +862,11 @@ function braceAlts(w) {
 
 // The startup-file and ssh key names a download must not be written to, in whatever folder (see checkExecdir).
 const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)|authorized_keys2?|config\.fish)$/;
-let RC_NAME_ONLY = false;
+let RC_NAME_ONLY = 0; // 1: protected names count in any folder; 2: also any relative target that names a folder
 
 function isRcTarget(w) {
   const alts = braceAlts(w);
-  return alts === null || alts.some(isRcPath) || (RC_NAME_ONLY && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
+  return alts === null || alts.some(isRcPath) || (RC_NAME_ONLY === 2 && alts.some((a) => !ANCHORED_RE.test(a) && /[\\/]/.test(a))) || (RC_NAME_ONLY > 0 && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
 }
 
 /* The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL). */

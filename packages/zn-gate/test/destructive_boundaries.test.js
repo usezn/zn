@@ -211,6 +211,12 @@ test('a download written by find -execdir to a bare startup or key file name is 
   assert.equal(checkCommand('find . -execdir curl -o out.txt ' + url + ' ;').verdict, 'allow');
   assert.equal(checkCommand('find ~ -execdir curl -o out.txt ' + url + ' ;').verdict, 'allow');
   assert.equal(checkCommand('find "$D" -execdir curl -o keys.txt ' + url + ' ;').verdict, 'allow');
+  // The folder find runs it in cannot be told (unknown caller folder, variable): a target with a folder in it is refused too.
+  assert.equal(checkCommand('find . -execdir curl ' + url + ' -o etc/profile ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('find . -execdir curl ' + url + ' -o etc/profile.d/custom.sh ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('find "$D" -execdir wget -O sub/dir/file ' + url + ' ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('find . -execdir curl ' + url + ' -o out.txt ;').verdict, 'allow');
+  assert.equal(checkCommand('cd /home/alice/proj && find . -execdir curl ' + url + ' -o build/out.txt ;').verdict, 'allow');
   // -exec runs from the folder find was started in: its folder is the one of the line, a bare name is read from there.
   assert.equal(checkCommand('find ~ -exec curl -o ~/.bashrc ' + url + ' ;').rule, 'destructive:rc_download');
   assert.equal(checkCommand('cd ~ && find . -exec curl -o .bashrc ' + url + ' ;').rule, 'destructive:rc_download');

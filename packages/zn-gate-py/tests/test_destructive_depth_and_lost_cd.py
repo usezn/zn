@@ -122,6 +122,12 @@ def test_a_download_written_by_find_execdir_to_a_bare_startup_or_key_file_name_i
     assert check_command("find . -execdir curl -o out.txt " + url + " ;").verdict == "allow"
     assert check_command("find ~ -execdir curl -o out.txt " + url + " ;").verdict == "allow"
     assert check_command('find "$D" -execdir curl -o keys.txt ' + url + " ;").verdict == "allow"
+    # The folder find runs it in cannot be told (unknown caller folder, variable): a target with a folder in it is refused too.
+    assert check_command("find . -execdir curl " + url + " -o etc/profile ;").rule == rc
+    assert check_command("find . -execdir curl " + url + " -o etc/profile.d/custom.sh ;").rule == rc
+    assert check_command('find "$D" -execdir wget -O sub/dir/file ' + url + " ;").rule == rc
+    assert check_command("find . -execdir curl " + url + " -o out.txt ;").verdict == "allow"
+    assert check_command("cd /home/alice/proj && find . -execdir curl " + url + " -o build/out.txt ;").verdict == "allow"
     # -exec runs from the folder find was started in: its folder is the one of the line, a bare name is read from there.
     assert check_command("find ~ -exec curl -o ~/.bashrc " + url + " ;").rule == rc
     assert check_command("cd ~ && find . -exec curl -o .bashrc " + url + " ;").rule == rc
