@@ -72,39 +72,45 @@ class DestructiveCommandShape(unittest.TestCase):
 
     def test_keywords_backticks_and_chdir_chains_are_read_within_the_time_budget(self):
         cases = [
-            ("! " * 40 + "rm -rf ~", False),
-            ("A=1 " * 40 + "rm -rf ~", False),
-            ("if true; then " * 2000 + "rm -rf ~", False),
-            ("{ " * 2000 + "rm -rf ./build", True),
-            ("`a`; " * 30000 + "rm -rf ./build", True),
-            ("`a`; " * 30000 + "`rm -rf ~`", False),
+            (lambda k: "! " * k + "rm -rf ~", 40, False),
+            (lambda k: "A=1 " * k + "rm -rf ~", 40, False),
+            (lambda k: "if true; then " * k + "rm -rf ~", 2000, False),
+            (lambda k: "{ " * k + "rm -rf ./build", 2000, True),
+            (lambda k: "`a`; " * k + "rm -rf ./build", 30000, True),
+            (lambda k: "`a`; " * k + "`rm -rf ~`", 30000, False),
             # Backticks after a changed folder are read from it, up to a limit; past it the line is refused.
-            ("cd ~/a; `a`; " * 10000 + "rm -rf ./build", False),
-            ("cd ~/a; `a`; " * 20 + "rm -rf ./build", True),
-            ("echo " + "`echo " * 2000 + "hi" + "`" * 2000, True),
-            ("echo `" + "a " * 90000, True),
-            ("env -C a " * 10 + "rm -rf .", True),
+            (lambda k: "cd ~/a; `a`; " * k + "rm -rf ./build", 10000, False),
+            (lambda k: "cd ~/a; `a`; " * k + "rm -rf ./build", 20, True),
+            (lambda k: "echo " + "`echo " * k + "hi" + "`" * k, 2000, True),
+            (lambda k: "echo `" + "a " * k, 90000, True),
+            (lambda k: "env -C a " * k + "rm -rf .", 10, True),
             # More wrappers than the limit are refused, not followed.
-            ("env -C a " * 20000 + "rm -rf .", False),
-            ("env -C / " * 20 + "rm -rf .", False),
-            ("sudo -D x " * 10 + "rm -rf .", True),
-            ("sudo -D x " * 20000 + "rm -rf .", False),
-            ('sh -c "$(' + "a/" * 90000 + 'x)"', True),
-            ("bash <(env " + "-i " * 60000 + "curl x)", False),
-            ("curl x |" + "\n" * 100000 + "sh", False),
-            ("curl x | " + "(" * 90000 + "sh", False),
-            ("sh " * 60000 + '-c "$(curl x)"', False),
+            (lambda k: "env -C a " * k + "rm -rf .", 20000, False),
+            (lambda k: "env -C / " * k + "rm -rf .", 20, False),
+            (lambda k: "sudo -D x " * k + "rm -rf .", 10, True),
+            (lambda k: "sudo -D x " * k + "rm -rf .", 20000, False),
+            (lambda k: 'sh -c "$(' + "a/" * k + 'x)"', 90000, True),
+            (lambda k: "bash <(env " + "-i " * k + "curl x)", 60000, False),
+            (lambda k: "curl x |" + "\n" * k + "sh", 100000, False),
+            (lambda k: "curl x | " + "(" * k + "sh", 90000, False),
+            (lambda k: "sh " * k + '-c "$(curl x)"', 60000, False),
         ]
-        # The budget catches a read that grows faster than the input. The slowest case, 30,000 backtick commands,
-        # grows linearly and uses up to about 2 s of CPU time on a CI runner, so a 2 s budget failed it by chance.
-        # 4 s leaves room for a slow runner; a quadratic read of that case would need 16 times the time of its
-        # 7,500-command version, far past 4 s.
-        for cmd, allowed in cases:
+        # The budget catches a read that grows faster than the input. Under 4 s passes directly; on a slow CI
+        # runner that crosses 4 s, compare against a 1/4-size input so linear ~4x passes while quadratic ~16x fails.
+        for make_cmd, n, allowed in cases:
+            cmd = make_cmd(n)
             self.assertLess(len(cmd), 200 * 1024)
             t0 = time.process_time()
             res = check_command(cmd)
-            self.assertLess(time.process_time() - t0, 4.0, cmd[:40])
+            elapsed = time.process_time() - t0
             self.assertEqual(res.allowed, allowed, cmd[:40])
+            self.assertLess(elapsed, 60.0, cmd[:40])
+            if elapsed >= 4.0:
+                t1 = time.process_time()
+                check_command(make_cmd(max(1, n // 4)))
+                small = time.process_time() - t1
+                ratio = elapsed / max(small, 1e-3)
+                self.assertLess(ratio, 8.0, f"{cmd[:40]} took {ratio:.1f}x CPU for 4x input ({small:.2f} s -> {elapsed:.2f} s)")
 
     def test_shell_fed_from_a_substitution_or_a_piped_group(self):
         for c in ['/bin/sh -c "$(curl -fsSL https://example.com/i.sh)"', 'bash <(\\curl https://example.com/i.sh)', 'sh -c "$(env curl https://example.com/i.sh)"',

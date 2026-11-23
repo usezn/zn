@@ -192,11 +192,22 @@ class TestCliScanCommand(unittest.TestCase):
         block = self.BEGIN + "\n" + self.BODY + "\n" + self.END + "\n"
         # CPU time of this process (the scan runs in it), not wall time: a busy shared runner can pause the test
         # in the middle of a correct run, while a scan that went back over earlier blocks would still burn the CPU.
-        start = time.process_time()
-        code, out = self._scan_text(block * 15000)  # under the 2 MiB file limit
-        self.assertEqual(code, 1)
-        self.assertLess(time.process_time() - start, 8.0)
-        self.assertEqual(len(json.loads(out)["threats"]), 15000)
+
+        def cpu_seconds(n):
+            start = time.process_time()
+            code, out = self._scan_text(block * n)
+            self.assertEqual(code, 1)
+            self.assertEqual(len(json.loads(out)["threats"]), n)
+            return time.process_time() - start
+
+        cpu_seconds(200)  # warm-up: imports, compiled patterns and caches are paid once, outside the measurement
+        small, large = cpu_seconds(3750), cpu_seconds(15000)  # 4x the blocks; the large text stays under 2 MiB
+        # Linear work grows about 4x, a scan that goes back over earlier blocks about 16x. The ratio, not an absolute
+        # bound, tells them apart: an absolute bound fails on a slow runner or after new rules are added, and would
+        # pass a quadratic scan on a fast one. 8x leaves room for noise; the absolute cap only catches a hang.
+        ratio = large / max(small, 1e-3)
+        self.assertLess(ratio, 8.0, "4x the blocks took %.1fx the CPU time (%.2f s -> %.2f s)" % (ratio, small, large))
+        self.assertLess(large, 60.0)
 
 
 if __name__ == "__main__":
