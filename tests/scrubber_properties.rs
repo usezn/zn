@@ -176,6 +176,35 @@ fn a_fake_email_is_redacted() {
 }
 
 #[test]
+fn an_email_with_a_json_escaped_local_part_is_redacted_and_json_stays_valid() {
+    // Each letter of the local part is a JSON escape, or only the first one is.
+    check(
+        ("[a-z]{1,6}", any::<bool>(), word()),
+        |(local, all, post)| {
+            let esc = |c: char| format!("\\u{:04x}", c as u32);
+            let mut chars = local.chars();
+            let first = esc(chars.next().unwrap());
+            let rest: String = chars.collect();
+            let encoded = if all {
+                format!("{first}{}", rest.chars().map(esc).collect::<String>())
+            } else {
+                format!("{first}{rest}")
+            };
+            let json = format!("{{\"v\":\"{encoded}@example.com {post}\"}}");
+            prop_assume!(serde_json::from_str::<serde_json::Value>(&json).is_ok());
+            let out = Scrubber::scrub(&json);
+            prop_assert!(!out.contains("@example.com"), "email survived: {out:?}");
+            prop_assert!(!out.contains("\\u00"), "escape left over: {out:?}");
+            prop_assert!(
+                serde_json::from_str::<serde_json::Value>(&out).is_ok(),
+                "invalid JSON: {out:?}"
+            );
+            Ok(())
+        },
+    );
+}
+
+#[test]
 fn a_test_card_number_is_redacted() {
     check((word(), card(), word()), |(pre, number, post)| {
         let text = format!("{pre} {number} {post}");

@@ -829,6 +829,40 @@ for (const ch of 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 function isAlnum(c) { return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122); }
 const EMAIL_DOMAIN = /(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])/y;
 
+/* JSON escapes before an address. The local part may swallow the letters of an escape right before it
+ * (`\nuser@x.com`, `auser@x.com`); the span must never cut an escape, or the masked text keeps a stray
+ * backslash and is no longer valid JSON. A `\uXXXX` escape that decodes to a local-part character is part of the
+ * address: the span starts at its backslash and takes in the escapes of that kind right before it. Any other
+ * escape (a space, a surrogate half, `\n`) is a boundary: the span starts after it. Same rules as the Rust scrubber. */
+function oddBackslashes(text, end) {
+  let n = 0;
+  while (end - n > 0 && text.charCodeAt(end - n - 1) === 92) n++;
+  return n % 2 === 1;
+}
+const HEX4 = /^[0-9a-fA-F]{4}$/;
+function unicodeEscapeAt(text, i) {
+  if (i < 0 || i + 6 > text.length || text.charCodeAt(i) !== 92 || text[i + 1] !== 'u') return -1;
+  const hex = text.slice(i + 2, i + 6);
+  if (!HEX4.test(hex) || !oddBackslashes(text, i + 1)) return -1;
+  return parseInt(hex, 16);
+}
+function isLocalCode(c) { return c >= 0 && c < 128 && LOCAL_CHARS[c] === 1; }
+/* Start of the address span given the start `s` found by the local-part scan, or -1 when no address is left. */
+function emailStartAfterEscape(text, s, at) {
+  if (!(s > 0 && text.charCodeAt(s - 1) === 92 && oddBackslashes(text, s))) return s;
+  const c = text[s];
+  if (c === 'u' && s + 5 <= at && HEX4.test(text.slice(s + 1, s + 5))) {
+    if (isLocalCode(unicodeEscapeAt(text, s - 1))) {
+      let start = s - 1;
+      while (isLocalCode(unicodeEscapeAt(text, start - 6))) start -= 6;
+      return start;
+    }
+    return s + 5 < at ? s + 5 : -1;
+  }
+  if (c === 'n' || c === 't' || c === 'r' || c === 'b' || c === 'f') return s + 1 < at ? s + 1 : -1;
+  return s;
+}
+
 function findEmails(text, check, out) {
   let at = text.indexOf('@');
   while (at >= 0) {
@@ -836,6 +870,12 @@ function findEmails(text, check, out) {
     while (s > 0 && at - s < 64 && text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]) s--;
     const boundaryOk = s === 0 || !(text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]);
     if (s < at && boundaryOk && isAlnum(text.charCodeAt(s)) && isAlnum(text.charCodeAt(at - 1))) {
+      s = emailStartAfterEscape(text, s, at);
+      if (s >= 0 && s !== at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s = -1;
+    } else {
+      s = -1;
+    }
+    if (s >= 0) {
       EMAIL_DOMAIN.lastIndex = at + 1;
       const m = EMAIL_DOMAIN.exec(text);
       if (m) {
