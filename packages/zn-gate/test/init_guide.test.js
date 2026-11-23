@@ -263,6 +263,9 @@ test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with
 
 test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: NEEDS_BASH }, async (t) => {
   const m = withBash(machine(t, ['claude-code']));
+  // The plugin's launcher script looks for Node.js on the PATH and in the usual install folders (/usr/local/bin ...). A Windows
+  // runner keeps its Node.js elsewhere, so the PATH names the folder of the Node.js running this test (it is not in the project).
+  if (WIN) m.env.PATH = path.dirname(process.execPath);
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const root = path.join(m.home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.9.0');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
