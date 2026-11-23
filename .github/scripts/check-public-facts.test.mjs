@@ -1,4 +1,5 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -582,8 +583,11 @@ test('publishedVersions: asks the public registry from a neutral directory with 
     assert.ok(seen.args.includes('--registry=https://registry.npmjs.org/'));
     assert.equal(seen.opts.cwd, tmpdir());
     for (const k of Object.keys(seen.opts.env)) assert.ok(!/^npm_config_(registry|@.*:registry)$/i.test(k), k);
-    assert.equal(seen.opts.env.npm_config_userconfig, '/dev/null');
-    assert.equal(seen.opts.env.npm_config_globalconfig, '/dev/null');
+    // npm refuses the same file as user and global config, so each one is its own empty file.
+    const { userconfig, globalconfig } = { userconfig: seen.opts.env.npm_config_userconfig, globalconfig: seen.opts.env.npm_config_globalconfig };
+    assert.notEqual(userconfig, globalconfig);
+    assert.equal(readFileSync(userconfig, 'utf8'), '');
+    assert.equal(readFileSync(globalconfig, 'utf8'), '');
   } finally {
     for (const [k, v] of [['npm_config_registry', saved.a], ['NPM_CONFIG_REGISTRY', saved.b], ['npm_config_@usezn:registry', saved.c]]) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;

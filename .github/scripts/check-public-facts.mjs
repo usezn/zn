@@ -18,7 +18,7 @@
 // form (1.14.0rc1), and the pins in the docs and the {minor} of the text facts follow docsVersion, the
 // last final release, because the docs keep telling people to install that one. The examples pin what
 // is already published (examplesVersion): they move only after a release is on npm and PyPI.
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -432,8 +432,13 @@ export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, a
     // so a project .npmrc or an environment variable cannot point the check at a registry that serves made-up versions.
     const env = { ...process.env };
     for (const k of Object.keys(env)) if (/^npm_config_(registry|userconfig|globalconfig)$/i.test(k) || /^npm_config_@.*:registry$/i.test(k)) delete env[k];
-    env.npm_config_userconfig = '/dev/null';
-    env.npm_config_globalconfig = '/dev/null';
+    // Two distinct empty files: npm refuses to load the same path as both the user and the global config
+    // ("double-loading config"), which made every lookup fail and the check report the registry as unreachable.
+    const blank = mkdtempSync(join(tmpdir(), 'zn-npmrc-'));
+    env.npm_config_userconfig = join(blank, 'user-npmrc');
+    env.npm_config_globalconfig = join(blank, 'global-npmrc');
+    writeFileSync(env.npm_config_userconfig, '');
+    writeFileSync(env.npm_config_globalconfig, '');
     const out = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate', 'versions', '--json', '--registry=https://registry.npmjs.org/'], { encoding: 'utf8', timeout: 30000, cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'ignore'], shell: process.platform === 'win32' });
     let list = JSON.parse(String(out));
     if (typeof list === 'string') list = [list];
