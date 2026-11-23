@@ -1817,9 +1817,8 @@ mod parse_message_tests {
         let mut config = ZnConfig::default();
         config.server.port = 9090;
         let mut notices = Vec::new();
-        std::env::set_var("ZN_PORT", "abc");
+        let _port = crate::test_support::EnvRestore::set("ZN_PORT", Some("abc"));
         let applied = config.apply_env_overrides(&mut notices);
-        std::env::remove_var("ZN_PORT");
         applied.expect("a bad port is only a notice");
         assert_eq!(config.server.port, 9090);
         assert_eq!(notices.len(), 1);

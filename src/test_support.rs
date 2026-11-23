@@ -14,18 +14,40 @@ pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// True when the error is a transport failure (no network, DNS, connection refused) while
-/// fetching the model, as opposed to the server answering with an HTTP error status.
-fn is_offline_error(err: &anyhow::Error) -> bool {
-    let text = format!("{err:#}");
-    text.starts_with("downloading ") && !text.contains("HTTP status")
+/// Sets (or removes, with `None`) a process-wide environment variable and restores the
+/// previous value, or removes it if it was unset, when dropped. Hold `env_lock()` for the
+/// whole test.
+pub(crate) struct EnvRestore {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
 }
 
-/// Loads the embedding model into `dir` for a test. The test is skipped, with a visible
-/// `SKIPPED` line, only when the model cannot be fetched because the machine is offline:
-/// either `ZN_TEST_OFFLINE=1` is set, or the failure is a transport error and `CI` is not
-/// set. In CI an unavailable model fails the test, and an HTTP error status (bad URL, 404,
-/// 500) or a hash mismatch always fails it.
+impl EnvRestore {
+    pub(crate) fn set(key: &'static str, value: Option<&str>) -> Self {
+        let previous = std::env::var_os(key);
+        match value {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        EnvRestore { key, previous }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// Loads the embedding model into `dir` for a test. The model must be available: any
+/// failure to load it fails the test, so a missing model never passes silently. The one
+/// exception is an explicit opt-in on machines without network access: with
+/// `ZN_TEST_OFFLINE=1` a failed model download skips the model-backed test, and a
+/// `SKIPPED` line is printed (visible with `cargo test -- --nocapture`). HTTP errors and
+/// hash mismatches always fail.
 pub(crate) fn embedder_or_skip(dir: &Path, cache_ttl: Option<u64>) -> Option<Embedder> {
     let loaded = match cache_ttl {
         Some(ttl) => Embedder::with_cache(dir, ttl),
@@ -33,18 +55,15 @@ pub(crate) fn embedder_or_skip(dir: &Path, cache_ttl: Option<u64>) -> Option<Emb
     };
     match loaded {
         Ok(embedder) => Some(embedder),
-        Err(err) if is_offline_error(&err) => {
-            let forced = std::env::var("ZN_TEST_OFFLINE").is_ok_and(|v| v == "1");
-            let in_ci = std::env::var_os("CI").is_some();
-            if forced || !in_ci {
-                eprintln!(
-                    "SKIPPED: model-backed test not run, embedding model unreachable (offline): {err}"
-                );
+        Err(err) => {
+            let text = format!("{err:#}");
+            let transport = text.starts_with("downloading ") && !text.contains("HTTP status");
+            if transport && std::env::var("ZN_TEST_OFFLINE").is_ok_and(|v| v == "1") {
+                println!("SKIPPED: model-backed test not run (ZN_TEST_OFFLINE=1, model unreachable): {err}");
                 None
             } else {
-                panic!("model must load in CI (set ZN_TEST_OFFLINE=1 to skip when offline): {err}")
+                panic!("model must load (set ZN_TEST_OFFLINE=1 to skip when offline): {err}")
             }
         }
-        Err(err) => panic!("model must load: {err}"),
     }
 }
