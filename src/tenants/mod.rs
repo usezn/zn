@@ -447,9 +447,11 @@ mod tests {
         // Use in-memory database for tests
         let conn = Connection::open_in_memory().expect("Failed to open in-memory DB");
         let conn = Arc::new(Mutex::new(conn));
-        // Set env var to avoid random key generation logs
-        std::env::set_var("ZN_API_KEY", "test_super_admin_key");
-        TenantStore::new(conn).expect("Failed to create TenantStore")
+        // Inject the key instead of setting ZN_API_KEY: the process env is
+        // shared by all parallel tests, so setting it here races with the
+        // config and tui tests that read it.
+        TenantStore::init(conn, Some("test_super_admin_key".to_string()), None)
+            .expect("Failed to create TenantStore")
     }
 
     #[test]

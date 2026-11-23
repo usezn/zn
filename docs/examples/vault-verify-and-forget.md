@@ -114,3 +114,8 @@ Purged: 5 files deleted, and a new check found none left. Run `zn-gate unlock` t
 The exit code is 0. After deleting, purge looks again and only then says `Purged`. If a file cannot be removed, it says `The vault was NOT fully purged` and lists what is left, and exits 1. A keychain entry that cannot be removed is reported the same way. Running purge when there is no vault prints `There is no vault here to purge. Nothing was changed.` and exits 0.
 
 Purging cannot be undone: the secrets stored in the vault are gone, so rotate and store again any value you still need with `zn-gate secret set NAME`.
+
+## More
+
+- [Keep secrets out of your coding agent](../secrets.md)
+- [Command reference](../cli.md)

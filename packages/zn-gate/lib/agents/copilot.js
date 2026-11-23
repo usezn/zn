@@ -140,7 +140,9 @@ function needsQuotes(value, skipEscape) {
  * read as an escape (vse), the bare value (raw) and a POSIX-quoted form (q); null when the piece has a shape zn
  * cannot read. VS Code wraps a plain string only when needsQuotes says so, without escaping a quote inside it, and
  * writes {value, quoting} with its own quoting (escape puts a backslash before a space, a double quote, a single
- * quote and a comma).
+ * quote and a comma). A backslash already in an escape value is left as it is by VS Code, and the shell then reads
+ * it together with the backslash VS Code adds, so the line could differ from the one judged: such a value is not
+ * read (null), and the call is blocked.
  */
 function taskPiece(x) {
   if (typeof x === 'string') {
@@ -156,6 +158,7 @@ function taskPiece(x) {
   const v = x.value;
   const k = x.quoting;
   if (k !== undefined && k !== 'escape' && k !== 'strong' && k !== 'weak') return null;
+  if (k === 'escape' && v.includes('\\')) return null;
   const vs = k === 'strong' ? "'" + v + "'" : k === 'weak' ? '"' + v + '"' : k === 'escape' ? v.replace(/[ "',]/g, '\\$&') : v;
   return { vs, vse: vs, vw: vs, raw: v, q: shQuote(v) };
 }

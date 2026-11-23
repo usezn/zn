@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { scan } = require('../lib/scrub/engine');
 const { normalisedView } = require('../lib/scrub/normalize');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE';
 const V = 'fakeSecretValue1234';
@@ -85,6 +86,19 @@ test('work is linear and no decode count leaves the rest of a text encoded', () 
   scan(long, CTX);
   // A quadratic scan of this text takes minutes; the linear one takes about half a second here, so 10 s leaves a wide margin for a loaded Windows runner.
   assert.ok(Date.now() - t0 < 10000, 'too slow');
+});
+
+test('many quote pairs and percent escapes with no newline take time in proportion to the size', () => {
+  const build = (k) => "a''".repeat(2 * k) + '%41'.repeat(k);
+  assertLinear((text) => scan(text, CTX), build, 100000, 'quote pairs then percent escapes');
+});
+
+test('a split secret after many changed spots is found whether or not the text has newlines', () => {
+  const noise = "a''b ".repeat(600);
+  const one = noise + AWS.slice(0, 4) + "''" + AWS.slice(4);
+  assert.equal(redacted(one), noise + '#');
+  const lines = (noise + '\n').repeat(3) + 'x=' + AWS.slice(0, 4) + '%' + '49' + AWS.slice(5) + '\n' + (noise + '\n').repeat(2);
+  assert.equal(redacted(lines), (noise + '\n').repeat(3) + 'x=#\n' + (noise + '\n').repeat(2));
 });
 
 test('a split secret far from the start and between long clean runs is redacted', () => {

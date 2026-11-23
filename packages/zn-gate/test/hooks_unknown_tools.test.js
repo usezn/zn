@@ -186,6 +186,12 @@ test('a task command or argument zn cannot read is blocked, never dropped', asyn
     { type: 'shell', command: 'echo', args: 'hello' },
     { type: 'shell', command: { foo: 'rm -rf ~' } },
     { type: 'shell', command: 'echo', args: [{ value: 'x', quoting: 'bogus' }] },
+    // quoting escape with a backslash in the value (before a quote, before a separator, at the end, in the command):
+    // blocked whatever the value holds.
+    { type: 'shell', command: 'echo', args: [{ value: 'a\\" ; ls ; "', quoting: 'escape' }] },
+    { type: 'shell', command: 'echo', args: [{ value: 'x\\;ls', quoting: 'escape' }] },
+    { type: 'shell', command: 'echo', args: [{ value: 'tail\\', quoting: 'escape' }, 'b'] },
+    { type: 'shell', command: { value: 'echo\\ hi', quoting: 'escape' } },
   ];
   for (const task of cases) {
     const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };

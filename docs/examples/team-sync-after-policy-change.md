@@ -69,3 +69,8 @@ To read the policy your organization signed, run [`zn team status --rules`](../t
 ## When the sync does not succeed
 
 `zn team sync` exits `1` when the machine is offline, the organization has no policy yet, the policy was refused, the machine was removed from the organization, or an upload failed. The command says why in plain words, and `zn team status` keeps the reason under `Last sync`. A policy that fails a check is refused and the last accepted policy stays in force.
+
+## More
+
+- [Teams](../team.md)
+- [Exit codes](../exit-codes.md)

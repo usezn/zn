@@ -221,7 +221,7 @@ test('shadows: default-ignorable characters and more look-alike letters do not h
   const home = freshHome(t);
   asHome(home, () => {
     pins.check('node', ['a.js'], [tool({ name: 'read_file' }), tool({ name: 'send_email' })], {});
-    for (const name of ['readㅤ_file', 'read️_file', 'read͏_file', 'send_emaıl'.replace('send_ema', 'send_ema')]) {
+    for (const name of ['readㅤ_file', 'read️_file', 'read͏_file', 'send_emaıl']) {
       const s = pins.shadows('node', ['b.js'], [tool({ name })]);
       assert.deepStrictEqual(s.collisions, [], name);
       assert.strictEqual(s.similar.length, 1, name);

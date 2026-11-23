@@ -208,7 +208,7 @@ try {
     const fastOk = Boolean(fastNode) && fs.existsSync(fastNode) &&
       spawnSync(fastNode, ['-e', 'process.exit(require("vm").constants && require("vm").constants.USE_MAIN_CONTEXT_DEFAULT_LOADER ? 0 : 1)']).status === 0;
     const PATHS = fastOk ? ['powershell', 'fast'] : ['powershell'];
-    const stubLaunch = "let d = '';\nprocess.stdin.on('data', (c) => { d += c; });\nprocess.stdin.on('end', () => {\n  if (process.env.ZN_STUB_HANG === 'launch') { setTimeout(() => {}, 300000); return; }\n  if (process.env.ZN_STUB_MARK) require('fs').writeFileSync(process.env.ZN_STUB_MARK, __filename);\n  process.stdout.write((process.env.ZN_STUB_OUT || '') + (process.env.ZN_STUB_ECHO ? d : ''));\n  process.exit(Number(process.env.ZN_STUB_RC || 0));\n});\n";
+    const stubLaunch = "let d = '';\nprocess.stdin.on('data', (c) => { d += c; });\nprocess.stdin.on('end', () => {\n  if (process.env.ZN_STUB_HANG === 'launch') { setTimeout(() => {}, 300000); return; }\n  if (process.env.ZN_STUB_MARK) require('fs').writeFileSync(process.env.ZN_STUB_MARK, __filename);\n  if (process.env.ZN_STUB_EXEC) require('fs').appendFileSync(process.env.ZN_STUB_EXEC, process.execPath + '\\n');\n  process.stdout.write((process.env.ZN_STUB_OUT || '') + (process.env.ZN_STUB_ECHO ? d : ''));\n  process.exit(Number(process.env.ZN_STUB_RC || 0));\n});\n";
     function wfixture(name, { launcher = true, deadline = 120, ps1 = true, cmd = true } = {}) {
       const dir = path.join(tmp, name);
       fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
@@ -368,7 +368,9 @@ try {
       const d = wfixture('w-planted');
       const work = path.join(tmp, 'w-planted-work');
       const marker = path.join(tmp, 'w-planted-ran.txt');
-      // Every node that starts records the program it is (NODE_OPTIONS), so a copy of node.exe planted in the project shows.
+      // The launch records the program it runs in (ZN_STUB_EXEC), so a copy of node.exe planted in the project shows. A
+      // NODE_OPTIONS=--require preload is set as well: the hook removes it, so it must never run (not in the probe either).
+      const ranFile = path.join(tmp, 'w-planted-exec.txt');
       const rec = path.join(tmp, 'w-planted-rec.js');
       fs.writeFileSync(rec, 'require("fs").appendFileSync(' + JSON.stringify(marker) + ', process.execPath + "\\n");\n');
       const bin = path.join(work, 'bin');
@@ -379,10 +381,12 @@ try {
       const sys = process.env.SystemRoot + '\\System32';
       for (const PATH of ['.;' + real + ';' + sys, 'bin;' + real + ';' + sys, ';' + real + ';' + sys, bin + ';' + real + ';' + sys, nm + ';' + real + ';' + sys, real + ';' + bin]) {
         fs.rmSync(marker, { force: true });
-        const r = wrun(d, 'PreToolUse', { PATH, ZN_STUB_OUT: '{"decision":"allow"}', NODE_OPTIONS: '--require ' + rec.split('\\').join('/') }, { cwd: work }).r;
+        fs.rmSync(ranFile, { force: true });
+        const r = wrun(d, 'PreToolUse', { PATH, ZN_STUB_OUT: '{"decision":"allow"}', ZN_STUB_EXEC: ranFile, NODE_OPTIONS: '--require ' + rec.split('\\').join('/') }, { cwd: work }).r;
         assert.strictEqual(r.status, 0, PATH + ': ' + r.stderr);
         assert.strictEqual(r.stdout, '{"decision":"allow"}', PATH);
-        const ran = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '';
+        assert.ok(!fs.existsSync(marker), PATH + ': a NODE_OPTIONS preload ran in a Node.js the hook started');
+        const ran = fs.existsSync(ranFile) ? fs.readFileSync(ranFile, 'utf8') : '';
         assert.ok(ran.length > 0, PATH + ': the node.exe run was not recorded');
         assert.ok(!ran.toLowerCase().includes(work.toLowerCase()), PATH + ': a node.exe planted in the project ran: ' + ran);
       }
