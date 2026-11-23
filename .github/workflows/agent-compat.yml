@@ -276,7 +276,8 @@ jobs:
           Set-Location $proj
           git init -q
           # The Python package has no doctor command: it refuses npm-only commands with exit 2 and names the npm package.
-          $doctorOut = (& $zn doctor) | Out-String
+          # The Python CLI prints this refusal on stderr: capture it too, as the macOS step does with 2>&1.
+          $doctorOut = (& $zn doctor 2>&1) | Out-String
           $doctorCode = $LASTEXITCODE
           Write-Host $doctorOut
           if ($doctorCode -ne 2) { Fail "zn-gate doctor exited with $doctorCode, expected 2 (npm-only command in the Python package)" }
