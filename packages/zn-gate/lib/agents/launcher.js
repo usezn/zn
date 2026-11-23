@@ -719,11 +719,11 @@ function isProjectWindowsScript(script, agentId) {
 const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'ConfigChange', 'InstructionsLoaded', 'PermissionRequest', 'BeforeTool',
   'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
 
-/** Whether a command is exactly a POSIX project guard that this version writes (any event of this agent). */
-function isProjectGuardExact(command, agentId) {
+/** Whether a command is exactly a POSIX project guard that this version writes for `platform` (default: this system; any event of this agent). */
+function isProjectGuardExact(command, agentId, platform = process.platform) {
   try {
-    // Either scrub form: a managed file written for another system carries the other one.
-    return typeof command === 'string' && GUARD_EVENTS.some((e) => command === projectShCommand(agentId, e) || command === projectShCommand(agentId, e, { platform: 'win32' }) || command === projectShCommand(agentId, e, { platform: 'linux' }));
+    // Only the form written for this system: the short scrub leaves a name in another case (Node_Options) set, which Windows reads as NODE_OPTIONS.
+    return typeof command === 'string' && GUARD_EVENTS.some((e) => command === projectShCommand(agentId, e, { platform }));
   } catch (_) { return false; }
 }
 
