@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-23.1';
+const SCRUB_RULES_VERSION = '2026-11-23.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -847,16 +847,31 @@ function unicodeEscapeAt(text, i) {
   return parseInt(hex, 16);
 }
 function isLocalCode(c) { return c >= 0 && c < 128 && LOCAL_CHARS[c] === 1; }
+/* Move the start back over what is still the local part: raw local-part characters and `\uXXXX` escapes that decode
+ * to one, in any mix. It stops at the first other character and at an escape that decodes to something else. A raw
+ * character that ends a short escape (`\n`) belongs to that escape, so the walk never splits one. */
+function extendEmailStart(text, start) {
+  for (;;) {
+    if (start >= 6) {
+      const c = unicodeEscapeAt(text, start - 6);
+      if (c >= 0) {
+        if (!isLocalCode(c)) break;
+        start -= 6;
+        continue;
+      }
+    }
+    const endsEscape = start >= 2 && text.charCodeAt(start - 2) === 92 && oddBackslashes(text, start - 1);
+    if (start > 0 && isLocalCode(text.charCodeAt(start - 1)) && !endsEscape) { start--; continue; }
+    break;
+  }
+  return start;
+}
 /* Start of the address span given the start `s` found by the local-part scan, or -1 when no address is left. */
 function emailStartAfterEscape(text, s, at) {
   if (!(s > 0 && text.charCodeAt(s - 1) === 92 && oddBackslashes(text, s))) return s;
   const c = text[s];
   if (c === 'u' && s + 5 <= at && HEX4.test(text.slice(s + 1, s + 5))) {
-    if (isLocalCode(unicodeEscapeAt(text, s - 1))) {
-      let start = s - 1;
-      while (isLocalCode(unicodeEscapeAt(text, start - 6))) start -= 6;
-      return start;
-    }
+    if (isLocalCode(unicodeEscapeAt(text, s - 1))) return s - 1;
     return s + 5 < at ? s + 5 : -1;
   }
   if (c === 'n' || c === 't' || c === 'r' || c === 'b' || c === 'f') return s + 1 < at ? s + 1 : -1;
@@ -871,6 +886,9 @@ function findEmails(text, check, out) {
     const boundaryOk = s === 0 || !(text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]);
     if (s < at && boundaryOk && isAlnum(text.charCodeAt(s)) && isAlnum(text.charCodeAt(at - 1))) {
       s = emailStartAfterEscape(text, s, at);
+      if (s >= 0) s = extendEmailStart(text, s);
+      // the span may now start on a raw '.', '_', '%', '+' or '-': an address starts with a letter or digit
+      while (s >= 0 && s < at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s++;
       if (s >= 0 && s !== at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s = -1;
     } else {
       s = -1;

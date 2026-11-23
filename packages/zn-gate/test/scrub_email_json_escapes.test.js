@@ -39,3 +39,30 @@ test('an escaped backslash does not make an escape: the letter belongs to the ad
 test('a plain address is unchanged in behaviour', async () => {
   assert.strictEqual(await run('mail jane@' + DOMAIN + ' now'), 'mail ' + TOKEN + ' now');
 });
+
+test('a local part that mixes raw characters and JSON escapes is masked whole', async () => {
+  const u = (hex) => BS + 'u' + hex;
+  for (const local of [
+    'a' + u('0061') + 'bc', 'a' + u('0061'), 'ab' + u('0063') + 'd', u('0061') + 'b' + u('0063') + 'd',
+    'x' + u('0061') + 'y' + u('0062') + 'z', u('0061') + u('0062') + 'c' + u('0064'), 'a.' + u('0062'), 'abc' + u('0064'),
+  ]) {
+    const json = wrap(local + '@' + DOMAIN);
+    JSON.parse(json);
+    const out = await run(json);
+    assert.strictEqual(out, wrap(TOKEN), 'for ' + local);
+    JSON.parse(out);
+  }
+});
+
+test('a raw prefix after a boundary escape starts after the escape', async () => {
+  const u = (hex) => BS + 'u' + hex;
+  for (const before of [u('0020'), BS + 'n', 'a' + u('0020'), 'a' + BS + 'n', u('00e9')]) {
+    for (const local of ['abc', 'a' + u('0062') + 'c', u('0061') + 'bc']) {
+      const json = wrap(before + local + '@' + DOMAIN);
+      JSON.parse(json);
+      const out = await run(json);
+      assert.strictEqual(out, wrap(before + TOKEN), 'for ' + before + local);
+      JSON.parse(out);
+    }
+  }
+});

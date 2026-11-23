@@ -94,12 +94,37 @@ fn is_email_local_char(c: u32) -> bool {
         .is_ok_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'%' | b'+' | b'-'))
 }
 
+/// Move the start of an address back over what is still its local part: raw local-part characters
+/// and `\uXXXX` escapes that decode to one, in any mix. It stops at the first character that is
+/// not one, and at an escape that decodes to something else (a boundary). A raw character that
+/// ends a short escape (`\n`) is part of that escape, so the walk never splits one.
+fn extend_email_start(b: &[u8], mut start: usize) -> usize {
+    loop {
+        if start >= 6 {
+            if let Some(c) = unicode_escape_at(b, start - 6) {
+                if is_email_local_char(c) {
+                    start -= 6;
+                    continue;
+                }
+                break;
+            }
+        }
+        let ends_escape = start >= 2 && b[start - 2] == b'\\' && odd_backslashes(b, start - 1);
+        if start > 0 && is_email_local_char(u32::from(b[start - 1])) && !ends_escape {
+            start -= 1;
+            continue;
+        }
+        break;
+    }
+    start
+}
+
 /// Email addresses. The local part may swallow the letters of a JSON escape right before
 /// it (`éuser@example.com`, `\nuser@example.com`); those are left out of the span so
 /// the backslash is never stranded and the output of valid JSON stays valid JSON. An escape
 /// that decodes to a local-part character (`\u0061@example.com` is `a@example.com`) is part
 /// of the address: the span starts at its backslash, with the whole escape, and takes in the
-/// escapes of that kind right before it. An escape that decodes to anything else (a space, a
+/// raw characters and escapes of that kind right before it. An escape that decodes to anything else (a space, a
 /// surrogate half) or is a short escape (`\n`) is a boundary, so the span starts after it, and
 /// when nothing is left between it and the `@` there is no address to mask.
 fn email_spans(text: &str) -> Vec<(usize, usize)> {
@@ -113,11 +138,6 @@ fn email_spans(text: &str) -> Vec<(usize, usize)> {
                 if b[s] == b'u' && s + 5 <= e && b[s + 1..s + 5].iter().all(u8::is_ascii_hexdigit) {
                     if unicode_escape_at(b, s - 1).is_some_and(is_email_local_char) {
                         start = s - 1;
-                        while start >= 6
-                            && unicode_escape_at(b, start - 6).is_some_and(is_email_local_char)
-                        {
-                            start -= 6;
-                        }
                     } else {
                         start = s + 5;
                     }
@@ -125,6 +145,7 @@ fn email_spans(text: &str) -> Vec<(usize, usize)> {
                     start = s + 1;
                 }
             }
+            let start = extend_email_start(b, start);
             let at = s + m.as_str().find('@')?;
             (at > start).then_some((start, e))
         })
@@ -2323,6 +2344,44 @@ mod table_parity_tests {
         // A lone surrogate half is not valid JSON on its own, but it is a boundary too.
         let out = Scrubber::scrub(&format!(r"\ud83duser@{domain}"));
         assert_eq!(out, r"\ud83d[EMAIL_REDACTED]");
+    }
+
+    #[test]
+    fn email_local_part_mixing_raw_characters_and_json_escapes_is_masked_whole() {
+        let domain = ["example", ".com"].concat();
+        for local in [
+            r"aabc", r"aa", r"abcd", r"abcd", r"xaybz", r"abcd", r"a.b", r"abcd",
+        ] {
+            let json = format!(r#"{{"v":"{local}@{domain}"}}"#);
+            assert!(parses(&json), "bad fixture {json}");
+            let out = Scrubber::scrub(&json);
+            assert_eq!(out, r#"{"v":"[EMAIL_REDACTED]"}"#, "for {json}");
+            assert!(parses(&out));
+        }
+    }
+
+    #[test]
+    fn email_raw_prefix_after_a_boundary_escape_starts_after_the_escape() {
+        let domain = ["example", ".com"].concat();
+        for (before, expect_keep) in [
+            (r" ", r" "),
+            (r"\n", r"\n"),
+            (r"a ", r"a "),
+            (r"a\n", r"a\n"),
+            (r"é", r"é"),
+        ] {
+            for local in ["abc", r"abc", r"abc"] {
+                let json = format!(r#"{{"v":"{before}{local}@{domain}"}}"#);
+                assert!(parses(&json), "bad fixture {json}");
+                let out = Scrubber::scrub(&json);
+                assert_eq!(
+                    out,
+                    format!(r#"{{"v":"{expect_keep}[EMAIL_REDACTED]"}}"#),
+                    "for {json}"
+                );
+                assert!(parses(&out));
+            }
+        }
     }
 
     #[test]
