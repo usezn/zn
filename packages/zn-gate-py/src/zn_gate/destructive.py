@@ -689,7 +689,7 @@ def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, 
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
 
 
-def _subst_end(text: str, start: int, state: dict, lvl: int) -> int:
+def _subst_end(text: str, start: int, state: dict[str, bool], lvl: int) -> int:
     """The index of the ) that closes a $( opened just before `start` (len(text) when there is none). Quotes inside the
     substitution start afresh, so in "echo $(sh -c "x")" the quoted x belongs to the substitution. state["deep"] is set
     when the nesting is too deep to follow."""
@@ -722,7 +722,7 @@ def _subst_end(text: str, start: int, state: dict, lvl: int) -> int:
     return n
 
 
-def _dq_end(text: str, at: int, state: dict, lvl: int) -> int:
+def _dq_end(text: str, at: int, state: dict[str, bool], lvl: int) -> int:
     """The index of the " that closes the double-quoted string opened at `at` (a $( inside it is read to its end)."""
     i = at + 1
     n = len(text)
@@ -749,7 +749,7 @@ def _requote_substitutions(text: str) -> Optional[str]:
     return None if state["deep"] else out
 
 
-def _requote_text(text: str, state: dict, lvl: int) -> str:
+def _requote_text(text: str, state: dict[str, bool], lvl: int) -> str:
     # Each level escapes the quotes of the one inside it again, so the text doubles per level: past the shell nesting limit
     # (plus the one level the outer string adds) the line is refused anyway, and the rewriting stops here.
     if lvl > _MAX_DEPTH + 1:
