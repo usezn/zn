@@ -105,6 +105,7 @@ const STOPPING = [
 ];
 
 for (const [id, a] of Object.entries(AGENTS)) {
+  if (!sl.STATIC_ENABLED.includes(id)) continue; // the others are detection only on Linux: see the gating test below
   for (const [label, extra] of STOPPING) {
     test(id + ': the installed hook with ' + label + ' denies in the agent\'s format and the hook does not run', { skip: e2eSkip }, (t) => {
       const f = fixture(t);
@@ -152,6 +153,7 @@ test('a launcher that does not match its recorded SHA-256 is not used: today\'s 
 
 test('a copy of zn-gate without the launcher keeps today\'s form and says so, for each agent', { skip: KEY ? false : 'Linux only' }, (t) => {
   for (const [id, a] of Object.entries(AGENTS)) {
+    if (!sl.STATIC_ENABLED.includes(id)) continue;
     const f = fixture(t);
     f.nativeDir = path.join(f.home, 'none');
     const rep = a.install(f);
@@ -187,6 +189,33 @@ test('the launcher answers with the same texts as the sh launcher, and knows the
   assert.deepEqual(sl.STATIC_AGENTS, ['claude-code', 'zcode', 'antigravity']);
   for (const id of ['claude-code', 'zcode', 'antigravity']) {
     for (const ev of launcher.blockExit(id)) assert.ok(src.includes('"' + ev + '"'), id + ' ' + ev);
+  }
+});
+
+// Only a launch form that was run with the real agent gets the launcher. The rest keep today's hook form and say nothing about it.
+test('only ZCode gets the static launcher on Linux: Claude Code and Antigravity stay detection only', { skip: KEY ? false : 'Linux only' }, (t) => {
+  assert.deepEqual(sl.STATIC_ENABLED, ['zcode']);
+  for (const id of sl.STATIC_ENABLED) assert.ok(sl.STATIC_AGENTS.includes(id), id);
+  for (const [id, a] of Object.entries(AGENTS)) {
+    const f = fixture(t);
+    const rep = a.install(f);
+    const entry = a.entry(f);
+    const text = typeof entry === 'string' ? entry : entry.exec || [entry.command, ...(entry.args || [])].join(' ') || entry.bash;
+    if (sl.STATIC_ENABLED.includes(id)) {
+      if (haveBin) assert.match(String(text), /zn-hook-launcher/, id);
+      continue;
+    }
+    assert.doesNotMatch(String(text), /zn-hook-launcher/, id);
+    assert.equal(Array.isArray(entry.args), false, id + ' has no exec form');
+    assert.ok(!rep.warnings.some((w) => /static hook launcher/.test(w)), id + ': ' + rep.warnings.join('\n'));
+    assert.equal(fs.existsSync(sl.staticFile({ home: f.home, env: {} })), false, id);
+  }
+});
+
+test('Antigravity on Windows and macOS keeps its launcher script form', () => {
+  for (const platform of ['win32', 'darwin']) {
+    assert.equal(sl.useStatic({ platform }, [], 'antigravity'), null, platform);
+    assert.equal(sl.useStatic({ platform }, [], 'claude-code'), null, platform);
   }
 });
 

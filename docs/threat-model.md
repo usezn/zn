@@ -567,19 +567,21 @@ Three features are off by default. Each one helps in a narrow case and has limit
   of the agent, the glibc dynamic loader prints its output and exits with status 0 before the first line of any dynamically
   linked program (sh, bash, Node.js). A hook started that way never runs, and most agents read exit 0 with plain text as "no
   objection", so the call goes ahead unchecked.
-  - On Linux, Claude Code, ZCode and Antigravity can start a hook program directly, with no shell (Claude Code's `args`,
-    ZCode's `process` hook, Antigravity's command split on spaces). For a user
-    install on Linux (x64 and arm64), `zn hooks install` puts a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`,
+  - On Linux, ZCode can start a hook program directly, with no shell (its `process` hook). For a user
+    install on Linux (x64 and arm64), `zn hooks install zcode` puts a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`,
     first in the hook. No dynamic loader runs before it. When one of these variables, or a preload variable (`LD_PRELOAD`,
-    `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers the
-    agent's own deny with its blocking exit code (exit 2 with the reason for Claude Code and ZCode, the deny JSON with exit 0
-    for Antigravity). Otherwise it removes every loader variable (every `LD_*` and
+    `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers
+    ZCode's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
     start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
     the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
-    prints a warning that this protection is missing on that machine. Claude Code's exec form (`args`) is implemented from
-    Claude Code's documentation and has not yet been run against a real Claude Code.
-  - Codex CLI, Gemini CLI and GitHub Copilot CLI are detection only: `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Codex CLI and Gemini CLI always start hooks
+    prints a warning that this protection is missing on that machine.
+  - Claude Code and Antigravity are detection only on every platform for now. The launcher program can already answer for them,
+    but a launch form is used only after it has been run with the real agent. Claude Code's exec form (`args`) is implemented from
+    Claude Code's documentation and has not been run against a real Claude Code. Antigravity's start with no shell was seen on
+    Windows only, where there is no dynamic loader, and not on Linux. Until that is verified, their hooks keep the launcher
+    script form: `zn audit` reports the variables as critical, the hook cannot refuse them, and a call can go ahead.
+  - Codex CLI, Gemini CLI and GitHub Copilot CLI are detection only too: `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Codex CLI and Gemini CLI always start hooks
     through a shell (`$SHELL -lc` and `bash -c`), so no hook form can avoid the loader there; zn keeps Copilot's shell form
     too. Cursor is not verified: it has no form
     without a shell, and its hooks documentation says that its permission hooks (`beforeShellExecution`,
@@ -587,7 +589,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
     match the hook's schema, so the loader's plain text should block those calls, but this has not been confirmed with a
     real Cursor. Do not count Cursor as protected against these variables. Project installs (`--project`) and the managed configuration
     (`zn team managed-config`) name `zn` on the PATH, because the file is shared and cannot name one machine's launcher, so
-    they keep the shell form for every agent. Antigravity's start with no shell was seen on Windows only.
+    they keep the shell form for every agent.
   - macOS has no such launcher: dyld prints with its `DYLD_PRINT_*` variables and goes on, and no dyld variable is known to
     end a program before `main` (not tested). Windows has no `ld.so`. Linux on other processors (32-bit, RISC-V) gets no
     prebuilt launcher and keeps the earlier form, with the warning.

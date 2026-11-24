@@ -27,8 +27,14 @@ const { shQuote } = require('../shell-quote');
 
 const NAME = 'zn-hook-launcher';
 // The agents whose user hooks start through the launcher on Linux: the one list. An adapter asks for the launcher with its id
-// (useStatic), and an id that is not here keeps today's hook form. GitHub Copilot is not here on purpose: it is detection only.
+// (useStatic), and an id that is not in STATIC_ENABLED keeps today's hook form. GitHub Copilot is not here on purpose: it is detection only.
 const STATIC_AGENTS = ['claude-code', 'zcode', 'antigravity'];
+// The agents that actually get it, on Linux: only those whose hook start with no shell was observed there. ZCode's `process` hook is
+// one. Claude Code's exec form (`args`) is implemented from its documentation and has not been run against a real Claude Code, and
+// Antigravity's start with no shell was seen on Windows only (where there is no dynamic loader). Those two keep today's hook form
+// (detection only) until a run with the real agent shows the launcher is started directly. The launcher program already answers for
+// them, so enabling one later is a change to this list and its docs.
+const STATIC_ENABLED = ['zcode'];
 
 /** The platform key of the prebuilt binary for this system, '' when none is built for it, null when the system needs none. */
 function platformKey(platform = process.platform, arch = process.arch) {
@@ -108,7 +114,7 @@ function installStatic(opts = {}) {
  * added to `notes` (the install report), so the install never claims a protection that is not there.
  */
 function useStatic(opts = {}, notes = [], agentId = '') {
-  if (!STATIC_AGENTS.includes(agentId)) return null;
+  if (!STATIC_ENABLED.includes(agentId)) return null;
   const r = installStatic(opts);
   if (!r) return null;
   if (r.warning) { notes.push(r.warning); return null; }
@@ -134,4 +140,4 @@ function execText(parts) {
   return parts.map((w, i) => (i === 0 || /[^A-Za-z0-9._-]/.test(String(w)) ? shQuote(String(w)) : String(w))).join(' ');
 }
 
-module.exports = { NAME, STATIC_AGENTS, platformKey, staticFile, bundled, installStatic, useStatic, execParts, execText, isStaticLauncher };
+module.exports = { NAME, STATIC_AGENTS, STATIC_ENABLED, platformKey, staticFile, bundled, installStatic, useStatic, execParts, execText, isStaticLauncher };
