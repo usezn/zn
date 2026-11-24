@@ -22,6 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
+const { hookStopAssignedIn } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -29,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-18.2';
+const POLICY_RULES_VERSION = '2026-11-24.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -979,6 +980,27 @@ function credentialDenial(p, c) {
 
 function agentConfigDenial(p, c) {
   return 'zn: ' + c.reason + ' (' + p + ') is protected: an agent may not change how zn and its hooks run. Ask the user to make this change.';
+}
+
+/**
+ * A write that would set a variable which stops every hook before it runs (LD_TRACE_LOADED_OBJECTS, LD_DEBUG with help: see
+ * isHookStopVar in loader-env.js, the same test `zn audit` uses for ZNA008) in a file the agent loads into its environment. Gemini CLI
+ * loads a project .env and .gemini/.env; the agents' own settings files are refused whole (AGENT_CONFIG_RES), so the .env files are the
+ * ones that need this check. `texts` is what the call would write (a file body, a replacement, a patch); returns a deny message or null.
+ */
+function loaderEnvWriteDenial(p, texts, opts = {}) {
+  const c = classifyPath(p, opts);
+  if (!c || c.kind !== 'dotenv') return null;
+  for (const t of texts || []) {
+    const name = typeof t === 'string' ? hookStopAssignedIn(t) : null;
+    if (name) return loaderEnvDenial(name, p);
+  }
+  return null;
+}
+
+function loaderEnvDenial(name, p) {
+  return 'zn: ' + path.basename(String(p)) + ' would set ' + name + ' for the agent. On Linux that makes the dynamic loader end every program the agent starts ' +
+    'before it runs, the shell of every zn hook included, so zn could no longer check any action. An agent may not make this change. Ask the user to make it.';
 }
 
 /** Writes are only blocked for zn's own state and the agents' hook and plugin configuration. */
@@ -2946,6 +2968,11 @@ function bashDenialOf(cmd, opts = {}) {
       if (w.redirectTarget || writing) return agentConfigDenial(text, c);
       continue; // reading the settings is allowed
     }
+    if (c.kind === 'dotenv' && (w.redirectTarget || writing)) {
+      // echo NAME=1 >> .env, tee, sed -i, a heredoc, Set-Content: the command text carries what is written.
+      const stop = hookStopAssignedIn(cmd);
+      if (stop) return loaderEnvDenial(stop, text);
+    }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
     if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) && gpgReadOnlyCall(listed, w)) continue;
@@ -4317,6 +4344,7 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  loaderEnvWriteDenial,
   adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,

@@ -747,6 +747,44 @@ function searchFolderAsk(dirs, pathOpts) {
   return null;
 }
 
+/*
+ * What a file-writing call would write, as strings: the texts the adapter listed and every string of the call's own arguments
+ * (Write content, Edit new_string, Gemini write_file content and replace new_string, a Codex patch, a filesystem MCP server's content),
+ * plus the file as an Edit or replace would leave it. Used to refuse a write that would set a variable that stops the hooks.
+ */
+function writtenTextsOf(ev, p, cwd) {
+  const out = [];
+  const seen = new Set();
+  const walk = (v, depth) => {
+    if (typeof v === 'string') {
+      out.push(v);
+      // GitHub Copilot CLI sends its arguments as a JSON text.
+      if (depth < 3 && v.length < 4000000 && /^\s*[{[]/.test(v)) {
+        try { walk(JSON.parse(v), depth + 1); } catch (_) { /* plain text */ }
+      }
+    } else if (v && typeof v === 'object' && depth < 6 && !seen.has(v)) {
+      seen.add(v);
+      for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
+    }
+  };
+  const input = ev.input || {};
+  for (const t of Array.isArray(input.texts) ? input.texts : []) if (t && typeof t.value === 'string') out.push(t.value);
+  walk(ev.raw, 0);
+  walk(input.args, 0);
+  // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it.
+  const args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs;
+  if (args && typeof args === 'object' && typeof args.old_string === 'string' && typeof args.new_string === 'string' && args.old_string && p) {
+    try {
+      const file = path.resolve(cwd || process.cwd(), String(p));
+      if (fs.statSync(file).size < 4000000) {
+        const body = fs.readFileSync(file, 'utf8');
+        out.push(args.replace_all === true || args.allow_multiple === true ? body.split(args.old_string).join(args.new_string) : body.replace(args.old_string, () => args.new_string));
+      }
+    } catch (_) { /* a new file: only what is written counts */ }
+  }
+  return out;
+}
+
 async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
   const input = ev.input || {};
@@ -767,7 +805,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
     return { decision: 'allow' };
@@ -782,7 +820,8 @@ async function decidePre(ev, d, agentId, opts) {
     let instruction = null;
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
-      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
+      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts) ||
+        policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
       if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
     }
@@ -811,7 +850,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && Array.isArray(input.paths)) {
     // An MCP tool that takes a file path (a filesystem server): its output cannot be redacted in every agent.
     for (const p of input.paths) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
