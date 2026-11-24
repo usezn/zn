@@ -29,8 +29,10 @@ function run(args) {
       env: { ...process.env, HOME: home, USERPROFILE: home },
       timeout: 60000,
     });
-    // The messages name the folder the run used: compare them without it.
-    return { status: r.status, stderr: (r.stderr || '').split(home).join('<home>') };
+    // The messages name the folder the run used: compare them without it, also when the CLI prints its real path
+    // (a temporary folder behind a symbolic link, such as /var on macOS).
+    const real = fs.realpathSync(home);
+    return { status: r.status, stderr: (r.stderr || '').split(real).join('<home>').split(home).join('<home>') };
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
