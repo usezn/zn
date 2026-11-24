@@ -22,7 +22,8 @@ const PLUGINS = path.join(__dirname, '..', '..', '..', 'plugins');
 const ZN_NODE_SH = path.join(PLUGINS, 'zn-gate', 'scripts', 'zn-node.sh');
 const ZCODE_SH = path.join(PLUGINS, 'zcode', 'scripts', 'zn-hook.sh');
 const ZCODE_PS1 = path.join(PLUGINS, 'zcode', 'scripts', 'zn-hook.ps1');
-const read = (f) => fs.readFileSync(f, 'utf8');
+// A Windows checkout may turn the line ends of the scripts into CRLF.
+const read = (f) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
 
 // Stands in for scripts/zn-launch.js: reports the loader-related names it got and answers like an allowed call.
 const STUB_LAUNCH = "const fs = require('fs');" +

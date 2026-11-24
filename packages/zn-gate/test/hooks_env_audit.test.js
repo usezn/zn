@@ -154,7 +154,9 @@ for (const scope of ['user', 'project']) {
     if (scope === 'project') {
       const bin = path.join(f.dir, 'bin');
       fs.mkdirSync(bin);
-      fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(f.runner) + '\n', { mode: 0o755 });
+      // On Windows the plugin starts `zn` through cmd.exe (zn is zn.cmd there), which cannot run an sh script: the stub is a .cmd.
+      if (process.platform === 'win32') fs.writeFileSync(path.join(bin, 'zn.cmd'), '@echo off\r\n"' + process.execPath + '" "' + f.runner + '" %*\r\n');
+      else fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(f.runner) + '\n', { mode: 0o755 });
       src = src.replace('const NODE = "zn";', 'const NODE = ' + JSON.stringify(path.join(bin, 'zn')) + ';');
     }
     assert.match(src, /env: hookEnv\(/);

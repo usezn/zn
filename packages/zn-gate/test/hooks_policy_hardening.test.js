@@ -760,8 +760,9 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   assert.equal(deny, null, 'the body is data, so the command is allowed');
   // Windows runners measured 32 ms of CPU time for the same check (the CPU clock there ticks in about 16 ms steps, and
   // the runner CPU is slower), so Windows gets a larger budget. A check that rescans the body, which is what this test
-  // guards against, takes seconds on 100 KB, so both budgets still catch it.
-  assert.ok(ms < budgetWin(25, 150), 'checked in ' + ms + ' ms');
+  // guards against, takes seconds on 100 KB, so both budgets still catch it. Linux runners with Node.js 18 measured 26 ms, so the
+  // limit leaves room above that.
+  assert.ok(ms < budgetWin(60, 150), 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {

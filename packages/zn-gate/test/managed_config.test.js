@@ -85,7 +85,7 @@ test('Claude Code: official settings shape, hooks are zn\'s, allowManagedHooksOn
       for (const h of g.hooks) {
         assert.equal(h.type, 'command');
         // zn from the PATH inside zn's start guard, never a bare `zn hook claude-code`.
-        assert.ok(launcher.isProjectGuardExact(h.command, 'claude-code'), h.command);
+        assert.ok(launcher.isProjectGuardExact(h.command, 'claude-code', 'linux'), h.command);
         assert.ok(cfg.isOurs(h.command, 'claude-code'));
         assert.ok(Number.isInteger(h.timeout) && h.timeout > 0);
       }
@@ -146,7 +146,7 @@ test('Codex: valid TOML in the documented layout, recognized by the policy check
     const h = groups[0].hooks[0];
     assert.equal(h.type, 'command');
     // The same guarded forms as `zn hooks install codex --project`: never a bare `zn hook codex` (cmd.exe would look in the project folder).
-    assert.ok(launcher.isProjectGuardExact(h.command, 'codex'), h.command);
+    assert.ok(launcher.isProjectGuardExact(h.command, 'codex', 'linux'), h.command);
     assert.match(h.command_windows, /^%SystemRoot%\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
     assert.ok(launcher.isProjectWindowsScriptExact(windowsCommandScript(h.command_windows), 'codex'));
     assert.ok(!/(^|\s)zn hook codex$/.test(h.command_windows));
