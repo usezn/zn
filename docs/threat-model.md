@@ -573,8 +573,8 @@ Three features are off by default. Each one helps in a narrow case and has limit
   (Windows, October 2026; not tested on Linux). The OpenCode plugin is not affected: it starts the zn hook itself, without a
   shell and without these variables. None of the other agents lets a hook run anything before the loader reads them, so
   there is no fail-closed answer from inside the hook. What zn does instead: `zn audit` reports a project that sets either
-  variable for the agent (Claude Code `env`, a committed `.env`, Codex `shell_environment_policy.set`, the `env` of an MCP
-  server) as critical, and the same finding blocks a change to Claude Code's project settings that adds one (zn's
+  variable for the agent (Claude Code `env`, a committed `.env`, Codex `shell_environment_policy.set`) as critical (in the
+  `env` of an MCP server it only stops that server from starting, and is reported as medium), and the same finding blocks a change to Claude Code's project settings that adds one (zn's
   configuration change check), provided the hook for that change still runs. Whoever can set the environment of the
   agent can also preload a library of their own (see the limit above), so this gives no new power; it only needs no file.
   The other loader settings that only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`,
