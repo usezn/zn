@@ -120,6 +120,35 @@ jobs:
           python-version: "3.12"
       - name: Set a reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      # The static hook launcher (tools/hook-launcher) for Linux x64 and arm64 ships inside the npm package with its SHA-256
+      # (lib/native/hook-launcher.json); the installer copies it only when the SHA-256 matches. Standard library only, so no
+      # crate is downloaded; aarch64 links with the rust-lld that ships with the toolchain. No cache in a release build.
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - name: Build the static hook launcher
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/hook-launcher"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build"
+          cargo +1.99.0 test --locked --manifest-path tools/hook-launcher/Cargo.toml
+          for t in x86_64 aarch64; do
+            cargo +1.99.0 build --locked --release --target "$t-unknown-linux-musl" --manifest-path tools/hook-launcher/Cargo.toml
+          done
+          N=packages/zn-gate/lib/native
+          mkdir -p "$N/linux-x64" "$N/linux-arm64"
+          install -m 0755 "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/zn-hook-launcher" "$N/linux-x64/zn-hook-launcher"
+          install -m 0755 "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/zn-hook-launcher" "$N/linux-arm64/zn-hook-launcher"
+          X=$(sha256sum "$N/linux-x64/zn-hook-launcher" | cut -d' ' -f1)
+          A=$(sha256sum "$N/linux-arm64/zn-hook-launcher" | cut -d' ' -f1)
+          printf '{"linux-x64":"%s","linux-arm64":"%s"}\n' "$X" "$A" > "$N/hook-launcher.json"
+          cat "$N/hook-launcher.json"
+          # The x64 launcher must give its own fail-closed answer before it ships: no hook program, so exit 2.
+          rc=0; "$N/linux-x64/zn-hook-launcher" zcode PreToolUse /nonexistent 2>/dev/null || rc=$?
+          test "$rc" = 2
       - name: Pack the npm tarball
         working-directory: packages/zn-gate
         run: |
@@ -129,7 +158,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release"
           npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
       - name: Check tarball contents
-        run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate
+        run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate --hook-launcher
       - name: Install hash-pinned Python build tools
         run: |
           set -euo pipefail
