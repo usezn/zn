@@ -579,8 +579,11 @@ Three features are off by default. Each one helps in a narrow case and has limit
     the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
     prints a warning that this protection is missing on that machine.
   - Still open: Codex CLI and Gemini CLI always start hooks through a shell (`$SHELL -lc` and `bash -c`), so no hook form
-    can avoid the loader there. Cursor has no form without a shell, but its documentation says that output that is not valid
-    JSON blocks its permission hooks (not tested here). Project installs (`--project`) and the managed configuration
+    can avoid the loader there: only detection is possible, and the call goes ahead. Cursor is not verified: it has no form
+    without a shell, and its hooks documentation says that its permission hooks (`beforeShellExecution`,
+    `beforeMCPExecution`, `beforeReadFile`, `preToolUse` and the like) block on output that is not valid JSON or does not
+    match the hook's schema, so the loader's plain text should block those calls, but this has not been confirmed with a
+    real Cursor. Do not count Cursor as protected against these variables. Project installs (`--project`) and the managed configuration
     (`zn team managed-config`) name `zn` on the PATH, because the file is shared and cannot name one machine's launcher, so
     they keep the shell form for every agent. GitHub documents `exec` for Copilot CLI only: Copilot in VS Code may not run
     the exec-form hook (not tested). Antigravity's start with no shell was seen on Windows only.
