@@ -562,11 +562,25 @@ Three features are off by default. Each one helps in a narrow case and has limit
   runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
-- **Some loader variables stop the shell before the script runs (accepted limit).** With `LD_TRACE_LOADED_OBJECTS` or
-  `LD_DEBUG=help` set in the environment of the agent, the dynamic loader prints its output and the shell exits, usually with
-  status 0, without running any line of the launcher. The refusal cannot fire, and the agent sees a hook that did nothing. The
-  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them before it
-  runs.
+- **Two loader variables stop the shell before the script runs (accepted limit, Linux with glibc).** With
+  `LD_TRACE_LOADED_OBJECTS` set (to any value, even empty) or `LD_DEBUG` naming `help` in the environment of the agent, the
+  dynamic loader prints the library list or the debug options on standard output and ends the program with status 0 before
+  its first line. Every hook that an agent starts through a shell or a `#!/bin/sh` script is such a program: the launcher, the
+  project hook guard (`sh -c`) and the plugin scripts. No line of zn runs, so the refusal cannot fire. Claude Code, Codex,
+  Cursor, Gemini CLI, Copilot CLI and ZCode block on exit code 2 or a deny answer, and none of them documents a block for an
+  exit status 0 with text that is not an answer (Gemini CLI documents that such text counts as allow), so expect the call to
+  go ahead unchecked. Antigravity denied every call whose hook printed text that is not JSON in our tests
+  (Windows, October 2026; not tested on Linux). The OpenCode plugin is not affected: it starts the zn hook itself, without a
+  shell and without these variables. None of the other agents lets a hook run anything before the loader reads them, so
+  there is no fail-closed answer from inside the hook. What zn does instead: `zn audit` reports a project that sets either
+  variable for the agent (Claude Code `env`, a committed `.env`, Codex `shell_environment_policy.set`, the `env` of an MCP
+  server) as critical, and the same finding blocks a change to Claude Code's project settings that adds one (zn's
+  configuration change check), provided the hook for that change still runs. Whoever can set the environment of the
+  agent can also preload a library of their own (see the limit above), so this gives no new power; it only needs no file.
+  The other loader settings that only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`,
+  `LD_VERBOSE`, `LD_WARN`) let the script run; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
+  FreeBSD's loader. macOS (dyld) has `DYLD_PRINT_*` variables that print and then go on; we know of none that ends the
+  program before it runs, but we have not tested this on macOS.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell

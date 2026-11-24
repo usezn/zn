@@ -507,6 +507,8 @@ function checkEnv(ctx, env, keyPath, opts) {
       ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k, true) });
     } else if (c.kind === 'confdir') {
       ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' moves where the agent reads its own configuration (to ' + v + '), so a config shipped in the repository is loaded instead of yours.', { title: 'Environment variable redirects the agent configuration' });
+    } else if (c.kind === 'hookstop') {
+      ctx.add('ZNA008', capHome(ctx, 'critical'), line, k + ' is set for every process the agent starts: on Linux the dynamic loader then stops each program before it runs, the shell of every hook included, so the hooks check nothing and tool calls go ahead.', { title: 'Environment variable that stops the agent\'s hooks before they run' });
     } else {
       ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' is set for every process the agent starts.');
     }
