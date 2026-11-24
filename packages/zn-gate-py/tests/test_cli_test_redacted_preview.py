@@ -96,3 +96,13 @@ def test_mask_pii_preview_password_value_forms():
     assert mask_pii_preview('password="a \\"b\\" c" next') == "password=[REDACTED_PASSWORD] next"
     # Unquoted: to the end of the token only.
     assert mask_pii_preview("pwd=hunter two") == "pwd=[REDACTED_PASSWORD] two"
+
+
+def test_mask_pii_preview_leaves_ipv4_addresses_as_written():
+    # IPv4 is masked only by the Node.js package (off by default there); the Python preview leaves it out.
+    text = f"Server 8.8.8.8 and 203.0.113.5 were contacted by {FAKE_EMAIL}"
+    out = mask_pii_preview(text)
+    assert FAKE_EMAIL not in out
+    assert "[REDACTED_EMAIL]" in out
+    assert "8.8.8.8" in out
+    assert "203.0.113.5" in out

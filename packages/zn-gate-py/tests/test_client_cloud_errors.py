@@ -78,6 +78,33 @@ class TestCloudErrors(unittest.TestCase):
     def test_http_500(self):
         self._assert_fallback(self._run(self._raising(_http_error(500, "Server Error"))), "500")
 
+    def test_http_403_account_banned(self):
+        # The API answers 403 with code account_banned when the account of the key is suspended.
+        # The client does not retry and falls back to the local rules, like for any other HTTP error.
+        body = io.BytesIO(b'{"error":"This account has been suspended","code":"account_banned"}')
+        err = urllib.error.HTTPError(ENDPOINT, 403, "Forbidden", {}, body)
+        calls = []
+
+        def opener(req, timeout=None):
+            calls.append(req)
+            raise err
+
+        res = self._run(opener)
+        self._assert_fallback(res, "403")
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(body.closed)
+        self.assertNotIn(FAKE_KEY, json.dumps(res))
+
+    def test_http_400_invalid_threshold(self):
+        # The API answers 400 with code invalid_threshold when the threshold is outside 0.5 to 0.999.
+        # The Python client sends no threshold, so the error can only come from the gateway: it is
+        # handled as any other HTTP error and the call falls back to the local rules.
+        body = io.BytesIO(b'{"error":"threshold must be a number between 0.5 and 0.999","code":"invalid_threshold"}')
+        err = urllib.error.HTTPError(ENDPOINT, 400, "Bad Request", {}, body)
+        res = self._run(self._raising(err))
+        self._assert_fallback(res, "400")
+        self.assertTrue(body.closed)
+
     def test_http_error_response_is_closed(self):
         # The error carries the open response; leaving it to the GC keeps the socket open
         # and Python 3.14 warns "Implicitly cleaning up HTTPError".
