@@ -13,6 +13,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+// Started, not looked up: on Windows /bin/sh is /bin/sh.exe, which fs.existsSync does not find.
+const shellStarts = (sh) => { try { return spawnSync(sh, ['-c', 'exit 0'], { stdio: 'ignore' }).status === 0; } catch { return false; } };
 const { pathToFileURL } = require('url');
 
 const launcher = require('../lib/agents/launcher');
@@ -80,7 +82,7 @@ test('sanity: the preloads in the hostile environment do run when Node.js is sta
 });
 
 for (const shell of ['/bin/sh', '/bin/bash']) {
-  test('sh launcher run by ' + shell + ': no loader variable reaches the hook, nothing preloads, CA and proxy settings stay', { skip: !posix || !fs.existsSync(shell) ? shell + ' is not on this system; the Windows launcher is PowerShell, covered by the Windows tests' : false }, (t) => {
+  test('sh launcher run by ' + shell + ': no loader variable reaches the hook, nothing preloads, CA and proxy settings stay', { skip: !posix || !shellStarts(shell) ? shell + ' does not start on this system' : false }, (t) => {
     const f = fixture(t);
     const file = path.join(f.dir, 'zn-hook-claude-code.sh');
     fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, f.runner, { manifest: '' }), { mode: 0o755 });
