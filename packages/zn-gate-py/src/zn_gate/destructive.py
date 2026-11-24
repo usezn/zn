@@ -1328,7 +1328,7 @@ def _rc_from_cwd(cwd: Any, word: str) -> str:
     return _from_cwd(cwd, word)
 
 
-def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
+def _check_simple(words: List[str], depth: int, known: Any = None, rc: int = 0) -> Optional[str]:
     args, chdir, overflow, splits, unsure, chain_words, split_tail = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
@@ -1346,16 +1346,16 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
         tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in split_tail)
         # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
         text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
-        hit = _analyze("env " + text + " " + tail, depth + 1, known)
+        hit = _analyze("env " + text + " " + tail, depth + 1, known, rc=rc)
         if hit:
             return hit
     if not args:
         return None
-    hit = _check_head(args, depth, known)
+    hit = _check_head(args, depth, known, rc)
     if hit or not unsure:
         return hit
     # From the first wrapper on, so a word skipped as an option's value is read as a possible command as well.
-    return _check_later_heads(chain_words, depth, known)
+    return _check_later_heads(chain_words, depth, known, rc)
 
 
 def _head_is_read(name: str) -> bool:
@@ -1364,7 +1364,7 @@ def _head_is_read(name: str) -> bool:
             or name in ("su", "eval", "cmd", "find", "chmod", "chown", "chgrp", "dd") or bool(_interpreter_kind(name)))
 
 
-def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]:
+def _check_later_heads(args: List[str], depth: int, known: Any, rc: int = 0) -> Optional[str]:
     """A wrapper chain that may not end on the program (an option zn does not know may have taken the next word as its
     value): each later word that names a program these rules read is checked as the head too, so the option cannot hide
     the command."""
@@ -1375,13 +1375,13 @@ def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]
         n += 1
         if n > _LATER_HEADS_MAX:
             return _OVERFLOW
-        hit = _check_head(args[j:], depth, known)
+        hit = _check_head(args[j:], depth, known, rc)
         if hit:
             return hit
     return None
 
 
-def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
+def _check_head(args: List[str], depth: int, known: Any, rc: int = 0) -> Optional[str]:
     """The rules for one simple command whose head is args[0]."""
     head = _program_name(args[0])
     rest = args[1:]
@@ -1413,7 +1413,7 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
     if code is not None and depth >= _MAX_DEPTH and code.strip() != "":
         return _OVERFLOW
     if code is not None and depth < _MAX_DEPTH:
-        hit = _analyze(code, depth + 1, known)
+        hit = _analyze(code, depth + 1, known, rc=rc)
         if hit:
             return hit
 
@@ -1470,9 +1470,9 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
                 exec_hit = None
                 if j > i + 1:
                     if re.match(r"^-(?:execdir|okdir)\Z", rest[i]):
-                        exec_hit = _check_execdir(rest[i + 1:j], depth, known, paths or ["."])
+                        exec_hit = _check_execdir(rest[i + 1:j], depth, known, paths or ["."], rc)
                     else:
-                        exec_hit = _check_child(rest[i + 1:j], depth, known)
+                        exec_hit = _check_child(rest[i + 1:j], depth, known, rc)
                 if exec_hit:
                     return exec_hit
                 i = j
@@ -1494,9 +1494,9 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
     return None
 
 
-def _check_child(words: List[str], depth: int, cwd: Any) -> Optional[str]:
+def _check_child(words: List[str], depth: int, cwd: Any, rc: int = 0) -> Optional[str]:
     """The command an -exec runs, read from the folder cwd: as a command, and as a one-command pipeline (its downloads)."""
-    return _check_simple(words, depth, cwd) or _check_pipeline([(words, None)], cwd)
+    return _check_simple(words, depth, cwd, rc) or _check_pipeline([(words, None)], cwd, rc)
 
 
 def _exec_root_folder(word: str, known: Any) -> Any:
@@ -1519,14 +1519,13 @@ _RC_NAME_RE = re.compile(
     r"|authorized_keys2?|config\.fish)\Z",
     _A,
 )
-_rc_name_only = 0  # 1: protected names count in any folder; 2: also any relative target that names a folder
+# rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
 
 
-def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str]) -> Optional[str]:
+def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str], rc: int = 0) -> Optional[str]:
     """find -execdir runs its command from the folder of each matched file, which can be any folder below a starting path.
     The command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
-    a protected startup file or authorized_keys counts as protected (_rc_name_only)."""
-    global _rc_name_only
+    a protected startup file or authorized_keys counts as protected (the rc mode)."""
     unsure = False
     for r in roots:
         f = _exec_root_folder(r, known)
@@ -1535,17 +1534,13 @@ def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str]) -
             continue
         if f is _CWD_OVERFLOW:
             return _OVERFLOW
-        hit = _check_child(words, depth, f)
+        hit = _check_child(words, depth, f, rc)
         if hit:
             return hit
     # When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown
     # folder), any relative target with a folder in it (etc/profile) is refused as well; a plain file name is not.
-    saved = _rc_name_only
-    _rc_name_only = 2 if unsure else 1
-    try:
-        return _check_child(words, depth, None if unsure else known)
-    finally:
-        _rc_name_only = saved
+    # The mode is passed down with the call (never kept in module state), so overlapping checks cannot see each other's.
+    return _check_child(words, depth, None if unsure else known, 2 if unsure else 1)
 
 
 def _is_rc_path(w: str) -> bool:
@@ -1656,7 +1651,9 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
     return a[j:] if j > 0 else a
 
 
-def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
+def _check_pipeline(
+    pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None, rc: int = 0
+) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
         a, d, _ovf, _spl, unsure, _all, _tail = _unwrap_dir(_strip_redirects(words))
@@ -1707,9 +1704,9 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                     alts = _brace_alts(_rc_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
                         return "rc_download"
-                    if _rc_name_only == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
+                    if rc == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
                         return "rc_download"
-                    if _rc_name_only and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
+                    if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
@@ -1722,7 +1719,9 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
 _MAX_TICK_READS = 200
 
 
-def _check_pipeline_readings(pipe: List[List[Tuple[List[str], Optional[str]]]], known: Any = None) -> Optional[str]:
+def _check_pipeline_readings(
+    pipe: List[List[Tuple[List[str], Optional[str]]]], known: Any = None, rc: int = 0
+) -> Optional[str]:
     """A pipeline whose commands each have several readings is checked once for every combination."""
     total = 1
     for r in pipe:
@@ -1731,7 +1730,7 @@ def _check_pipeline_readings(pipe: List[List[Tuple[List[str], Optional[str]]]], 
             return _OVERFLOW
     idx = [0] * len(pipe)
     for _ in range(total):
-        hit = _check_pipeline([r[idx[i]] for i, r in enumerate(pipe)], known)
+        hit = _check_pipeline([r[idx[i]] for i, r in enumerate(pipe)], known, rc)
         if hit:
             return hit
         for i in range(len(idx) - 1, -1, -1):
@@ -1743,7 +1742,7 @@ def _check_pipeline_readings(pipe: List[List[Tuple[List[str], Optional[str]]]], 
 
 
 def _check_segments(
-    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None, rc: int = 0
 ) -> Optional[str]:
     """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[List[Tuple[List[str], Optional[str]]]] = []  # for each command of the pipeline, its readings
@@ -1763,7 +1762,7 @@ def _check_segments(
         if sep == "(" and len(groups) < _MAX_SEGMENTS:
             groups.append(known)
         for w1 in readings:
-            hit = _check_simple(w1, depth, known)
+            hit = _check_simple(w1, depth, known, rc)
             if hit:
                 return hit
         # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
@@ -1773,7 +1772,7 @@ def _check_segments(
             if ticks > _MAX_TICK_READS:
                 return _OVERFLOW
             inner = _backtick_code(raws[idx])
-            inner_hit = _analyze(inner, depth + 1, known) if inner else None
+            inner_hit = _analyze(inner, depth + 1, known, rc=rc) if inner else None
             if inner_hit:
                 return inner_hit
         # The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
@@ -1783,7 +1782,7 @@ def _check_segments(
                 return _OVERFLOW
             ticks += len(bodies)
             for body in bodies:
-                body_hit = _analyze(body, depth, known) if body.strip() else None
+                body_hit = _analyze(body, depth, known, rc=rc) if body.strip() else None
                 if body_hit:
                     return body_hit
         if sep not in ("|", "|&", "&"):
@@ -1801,7 +1800,7 @@ def _check_segments(
                 known = to
         pipe.append([(w1, sep) for w1 in readings])
         if not _is_pipe(sep):
-            hit2 = _check_pipeline_readings(pipe, known)
+            hit2 = _check_pipeline_readings(pipe, known, rc)
             if hit2:
                 return hit2
             pipe = []
@@ -1812,10 +1811,10 @@ def _check_segments(
                     groups.append(known)
         if sep == ")" and groups:
             known = groups.pop()
-    return _check_pipeline_readings(pipe, known) if pipe else None
+    return _check_pipeline_readings(pipe, known, rc) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False, rc: int = 0) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
@@ -1825,7 +1824,7 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
         if fixed is None:
             return _OVERFLOW
         if fixed != text:
-            fixed_hit = _analyze(fixed, depth, known, True)
+            fixed_hit = _analyze(fixed, depth, known, True, rc)
             if fixed_hit:
                 return fixed_hit
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
@@ -1851,13 +1850,13 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
     if depth >= _MAX_DEPTH and "`" in text and _backtick_code(text):
         return _OVERFLOW
     segs, truncated = _segments_of(text)
-    hit = _check_segments(segs, depth, known)
+    hit = _check_segments(segs, depth, known, rc)
     if hit:
         return hit
     # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
     if depth < _MAX_DEPTH and "`" in text:
         inner = _backtick_code(text)
-        inner_hit = _analyze(inner, depth + 1, known) if inner else None
+        inner_hit = _analyze(inner, depth + 1, known, rc=rc) if inner else None
         if inner_hit:
             return inner_hit
     # A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
@@ -1867,20 +1866,20 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
         if bodies is None or len(bodies) > _MAX_TICK_READS:
             return _OVERFLOW
         for body in bodies:
-            body_hit = _analyze(body, depth, known) if body.strip() else None
+            body_hit = _analyze(body, depth, known, rc=rc) if body.strip() else None
             if body_hit:
                 return body_hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
-        posix_hit = _check_segments(_segments_of(text, True)[0], depth, known)
+        posix_hit = _check_segments(_segments_of(text, True)[0], depth, known, rc)
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
     # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
-        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known)
+        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known, rc)
         if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
