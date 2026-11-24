@@ -87,9 +87,13 @@ func (r *Result) WouldHaveBlocked() bool {
 // Blocked reports whether the verdict is "block".
 func (r *Result) Blocked() bool { return r != nil && r.Verdict == VerdictBlock }
 
-// Allowed reports whether the verdict is exactly "allow". To fail closed,
-// treat anything that is not Allowed as a stop.
-func (r *Result) Allowed() bool { return r != nil && r.Verdict == VerdictAllow }
+// Allowed reports whether the verdict is exactly "allow" and the whole input
+// was checked. It is false for a partial result (see Partial), where some
+// windows were not scored in time. To fail closed, treat anything that is not
+// Allowed as a stop.
+func (r *Result) Allowed() bool {
+	return r != nil && r.Verdict == VerdictAllow && !r.Partial()
+}
 
 // Partial reports whether only part of a long input was scored in time:
 // the windows already scored decided the verdict, and the rest were not
