@@ -87,3 +87,20 @@ test('the 64-character limit counts characters of the address, not the hex digit
   const long = wrap(u('0061') + 'r'.repeat(64) + '@' + DOMAIN);
   assert.strictEqual(await run(long), long);
 });
+
+test('a local part over 64 characters once decoded is not an address, however it is written', async () => {
+  const u = (hex) => BS + 'u' + hex;
+  const esc = (str) => [...str].map((c) => u(c.charCodeAt(0).toString(16).padStart(4, '0'))).join('');
+  // exactly 64 decoded characters is still an address
+  for (const local of [esc('a'.repeat(64)), esc('a'.repeat(32)) + 'b'.repeat(32), 'b'.repeat(32) + esc('a'.repeat(32))]) {
+    const json = wrap(local + '@' + DOMAIN);
+    assert.strictEqual(await run(json), wrap(TOKEN), 'for 64: ' + local.slice(0, 30));
+  }
+  // 65 decoded characters is not
+  for (const local of [esc('a'.repeat(65)), esc('a'.repeat(33)) + 'b'.repeat(32), 'b'.repeat(33) + esc('a'.repeat(32)),
+    esc('a'.repeat(11)) + 'b'.repeat(54), esc('a'.repeat(200))]) {
+    const json = wrap(local + '@' + DOMAIN);
+    assert.strictEqual(JSON.parse(json).v.split('@')[0].length > 64, true);
+    assert.strictEqual(await run(json), json, 'for 65+: ' + local.slice(0, 30));
+  }
+});

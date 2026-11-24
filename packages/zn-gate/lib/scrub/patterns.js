@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-24.1';
+const SCRUB_RULES_VERSION = '2026-11-24.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -878,6 +878,14 @@ function emailStartAfterEscape(text, s, at) {
   return s;
 }
 
+/* Characters of the local part between `s` and the '@' once decoded: a `\uXXXX` escape counts as one. Counting stops
+ * past `limit`, so a long run costs at most limit + 1 steps. */
+function decodedLocalLength(text, s, at, limit) {
+  let n = 0;
+  for (let i = s; i < at && n <= limit; n++) i += unicodeEscapeAt(text, i) >= 0 ? 6 : 1;
+  return n;
+}
+
 function findEmails(text, check, out) {
   let at = text.indexOf('@');
   while (at >= 0) {
@@ -896,6 +904,8 @@ function findEmails(text, check, out) {
       // the span may now start on a raw '.', '_', '%', '+' or '-': an address starts with a letter or digit
       while (s >= 0 && s < at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s++;
       if (s >= 0 && s !== at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s = -1;
+      // an address has at most 64 characters before the '@', counted once escapes are decoded
+      if (s >= 0 && decodedLocalLength(text, s, at, 64) > 64) s = -1;
     } else {
       s = -1;
     }
