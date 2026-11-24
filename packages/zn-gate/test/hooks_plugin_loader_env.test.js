@@ -67,7 +67,7 @@ function hostileEnv(f) {
   };
 }
 
-test('sanity: the preload runs when Node.js is started with the hostile environment directly', { skip: !posix }, (t) => {
+test('sanity: the preload runs when Node.js is started with the hostile environment directly', { skip: posix ? false : 'POSIX sh launcher; the Windows launcher is PowerShell, covered by the Windows tests' }, (t) => {
   const f = fixture(t);
   const r = spawnSync(process.execPath, ['-e', '0'], { encoding: 'utf8', env: hostileEnv(f) });
   assert.equal(r.status, 0, r.stderr);

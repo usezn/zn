@@ -4,4 +4,5 @@
 # test that cannot run on Windows, and give that test a skip reason.
 # The value is the count the job printed on the GitHub runner.
 # 446: the 432 of main plus 14 tests that cannot run on Windows, each with its reason in its skip: 4 symbolic-link and folder-mode tests from #1190, 1 symbolic-link test from #805, and 9 from #878 (4 Linux quota errno, 2 POSIX shell script, 3 Linux clipboard tools).
-446
+# 479: the 446 above plus 33 tests that cannot run on Windows, each with its reason in its skip: the POSIX sh launcher and project guard tests of the loader-variable and node_modules fixes (hooks_launcher_preload, hooks_env_audit, hooks_plugin_loader_env, hooks_project_guard_loader_env, hooks_project_guard_modules) and the POSIX link tests of hooks_project_guard_links and hooks_project_guard_links_case. Their Windows behavior is covered by the PowerShell launcher and Windows guard tests.
+479
