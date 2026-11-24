@@ -88,11 +88,23 @@ func (r *Result) WouldHaveBlocked() bool {
 func (r *Result) Blocked() bool { return r != nil && r.Verdict == VerdictBlock }
 
 // Allowed reports whether the verdict is exactly "allow" and the whole input
-// was checked. It is false for a partial result (see Partial), where some
-// windows were not scored in time. To fail closed, treat anything that is not
-// Allowed as a stop.
+// was checked (see WholeInputChecked). It is false when only part of a long
+// input was scored: a partial result, a capped input or a truncated one. To
+// fail closed, treat anything that is not Allowed as a stop.
 func (r *Result) Allowed() bool {
-	return r != nil && r.Verdict == VerdictAllow && !r.Partial()
+	return r != nil && r.Verdict == VerdictAllow && r.WholeInputChecked()
+}
+
+// WholeInputChecked reports whether every part of the input was scored. A
+// short input (no LongInput) always is. A long input is only when it was scored
+// in windows ("windows" mode), it did not need more windows than the limit
+// (not Capped) and every window was scored in time (not Partial).
+func (r *Result) WholeInputChecked() bool {
+	if r == nil {
+		return false
+	}
+	li := r.LongInput
+	return li == nil || (li.Mode == "windows" && !li.Capped && !li.Partial)
 }
 
 // Partial reports whether only part of a long input was scored in time:
