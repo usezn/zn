@@ -18,7 +18,7 @@ const { shQuote } = require('../lib/shell-quote');
 const escaped = (s) => shQuote(s).slice(1, -1);
 const { tempDir } = require('./helpers/tmp');
 
-const skip = { skip: process.platform === 'win32' };
+const skip = { skip: process.platform === 'win32' ? 'POSIX sh guard; the Windows guard is PowerShell, covered by the Windows tests' : false };
 const shellArgs = (sh) => (/(^|\/)bash$/.test(sh) ? ['--norc', '--noprofile'] : []);
 
 function whichSh() {
