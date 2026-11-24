@@ -1047,9 +1047,6 @@ mod retry_and_discovery_tests {
     use std::time::{Duration, Instant};
     use tokio::net::TcpListener;
 
-    /// `auto_discover` reads HOME, which is process-wide: these tests take turns.
-    static HOME_LOCK: StdMutex<()> = StdMutex::new(());
-
     struct HomeGuard {
         home: Option<std::ffi::OsString>,
         profile: Option<std::ffi::OsString>,
@@ -1058,7 +1055,8 @@ mod retry_and_discovery_tests {
 
     impl HomeGuard {
         fn set(home: Option<&Path>) -> Self {
-            let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            // auto_discover reads HOME process-wide: the shared env lock makes these tests take turns.
+            let lock = crate::test_support::env_lock();
             let guard = HomeGuard {
                 home: std::env::var_os("HOME"),
                 profile: std::env::var_os("USERPROFILE"),
@@ -1138,8 +1136,17 @@ mod retry_and_discovery_tests {
             g[3] > g[0],
             "the wait grows from the first retry to the last"
         );
-        // No sleep after the final failure: the four waits add up to 7.5 s, and one more (8 s) would pass 15 s.
-        assert!(total < Duration::from_secs(12), "took {total:?}");
+        // The four waits add up to 7.5 s of real sleep. Nothing may sleep after the last failed
+        // attempt (that wait would be 8 s), so it must return right after the final arrival.
+        let after_last = start.elapsed() - times[4].duration_since(start);
+        assert!(
+            after_last < Duration::from_secs(3),
+            "slept {after_last:?} after the final attempt"
+        );
+        assert!(
+            total < Duration::from_millis(7500 + 15_000),
+            "took {total:?}, expected about 7.5 s of backoff"
+        );
         let msg = err.to_string();
         assert!(msg.contains("flaky"), "{msg}");
         assert!(msg.contains('5'), "{msg}");
