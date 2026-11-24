@@ -67,7 +67,7 @@ function hostileEnv(f) {
   };
 }
 
-test('sanity: the preload runs when Node.js is started with the hostile environment directly', { skip: posix ? false : 'POSIX sh launcher; the Windows launcher is PowerShell, covered by the Windows tests' }, (t) => {
+test('sanity: the preload runs when Node.js is started with the hostile environment directly', (t) => {
   const f = fixture(t);
   const r = spawnSync(process.execPath, ['-e', '0'], { encoding: 'utf8', env: hostileEnv(f) });
   assert.equal(r.status, 0, r.stderr);
@@ -75,7 +75,7 @@ test('sanity: the preload runs when Node.js is started with the hostile environm
 });
 
 for (const shell of ['/bin/sh', '/bin/bash']) {
-  test('plugin zn-node.sh run by ' + shell + ': NODE_OPTIONS and NODE_PATH do not reach Node.js, the hook still answers', { skip: !posix || !fs.existsSync(shell) || process.execPath.includes('/node_modules/') }, (t) => {
+  test('plugin zn-node.sh run by ' + shell + ': NODE_OPTIONS and NODE_PATH do not reach Node.js, the hook still answers', { skip: (!posix || !fs.existsSync(shell) || process.execPath.includes('/node_modules/')) ? shell + ' is not on this system or Node.js runs from a package folder; the Windows hook is covered by the Windows tests' : false }, (t) => {
     const f = fixture(t);
     const sh = path.join(f.plugin, 'scripts', 'zn-node.sh');
     const r = spawnSync(shell, [sh, 'PreToolUse', 'hook', 'claude-code'], { input: '{"tool_name":"Read"}', encoding: 'utf8', cwd: f.work, env: hostileEnv(f) });
