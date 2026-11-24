@@ -125,7 +125,7 @@
   },
   "examplesVersion": {
     "_comment": "The release the examples pin: always one that is published on npm and PyPI (value; lastPublished is the same release, read by the check while the next release is cut). It moves after a release is published, and so does lastPublished (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
-    "value": "1.16.0",
+    "value": "1.17.0",
     "lastPublished": "1.16.0",
     "files": [
       {
