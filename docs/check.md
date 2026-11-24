@@ -316,7 +316,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook cannot start: its launcher program (<path>) is missing
   ```
 
-  On Linux, the ZCode hooks start a small program, `~/.zn/hooks/zn-hook-launcher`, that `zn hooks install zcode` copies there. If it was deleted or is no longer executable, the agent cannot start the hook: run `zn hooks install zcode` again.
+  On Linux, the Claude Code and ZCode hooks start a small program, `~/.zn/hooks/zn-hook-launcher`, that `zn hooks install <agent>` copies there. If it was deleted or is no longer executable, the agent cannot start the hook: run `zn hooks install <agent>` again.
 
 - **Antigravity runs the hook command without a shell, and the launcher path is in quotes.**
 
