@@ -120,4 +120,30 @@ function psScrub() {
   return WINDOWS_NAMES.map((n) => '$env:' + n + '=$null; ').join('');
 }
 
-module.exports = { SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+/**
+ * Whether one environment variable, set for the agent, makes glibc's dynamic loader end every dynamically linked program before its
+ * first line: LD_TRACE_LOADED_OBJECTS (to any value, even empty) or LD_DEBUG naming "help". The shell that runs a hook is such a program,
+ * so each hook exits 0 having checked nothing. The one definition, used by `zn audit` (ZNA008) and by the checks on writes.
+ */
+function isHookStopVar(key, value) {
+  return String(key) === 'LD_TRACE_LOADED_OBJECTS' || (String(key) === 'LD_DEBUG' && /(?:^|[\s,:])help(?:$|[\s,:])/.test(String(value)));
+}
+
+// NAME=value as it is written in a .env file, in a shell command (echo, printf, tee, sed, a heredoc, `$env:NAME='x'`) or in a patch: the
+// value is quoted, or runs to the end of the line or to a shell separator, a sed slash or a closing bracket. A bare NAME with no "=" sets nothing.
+const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*=[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
+
+/** The name of the first variable in `text` that is assigned a value that stops the hooks (see isHookStopVar), or null. */
+function hookStopAssignedIn(text) {
+  const s = String(text);
+  if (!s.includes('LD_')) return null;
+  HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
+  let m;
+  while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
+    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
+    if (isHookStopVar(m[1], value)) return m[1];
+  }
+  return null;
+}
+
+module.exports = { isHookStopVar, hookStopAssignedIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
