@@ -219,7 +219,7 @@ A short summary of the last 7 days on this computer: blocked actions, secrets hi
 npx -y zn-gate connect
 ```
 
-Optional, and you do it yourself in your own terminal (an agent cannot). It opens usezn.com so you can create an analysis-only API key (it cannot read your usage or manage keys), then asks you to paste it at a hidden prompt. A full-access key is refused. The key is kept in your system keychain (or the zn vault when there is no keychain), never written to a file, and zn's hooks refuse the direct ways for your agent to read it. After that, the text you or your agent send through `analyze_prompt`, with detected secrets removed first, is also checked by the Galvanize 3 classifier at usezn.com. Until you run it, nothing is sent. `zn-gate disconnect` removes the key from this computer and asks whether to revoke it on usezn.com too (default no). [How it works](docs/connect.md).
+Optional, and you do it yourself in your own terminal (an agent cannot). It opens usezn.com so you can create an analysis-only API key (it cannot read your usage or manage keys), then asks you to paste it at a hidden prompt. A full-access key is refused. The key is kept in your system keychain (or the zn vault when there is no keychain), never written to a file, and zn's hooks refuse the direct ways for your agent to read it. After that, the text you or your agent send through `analyze_prompt`, with detected secrets removed first, is also checked by the Galvanize 3.1 classifier at usezn.com. Until you run it, nothing is sent. `zn-gate disconnect` removes the key from this computer and asks whether to revoke it on usezn.com too (default no). [How it works](docs/connect.md).
 
 ## Check that it works
 
@@ -267,7 +267,7 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 ### Galvanize: prompt-injection detection
 
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud check:** the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
+- **Today, optional cloud check:** the Galvanize 3.1 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3.1); [announcement](https://usezn.com/blog/galvanize-3-1/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3-1); the previous models, [Galvanize 3](https://huggingface.co/usezn/Galvanize-3) and [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also have open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust
@@ -288,11 +288,11 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 
 **Nothing, by default.**
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3.1 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
 
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
-| Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
+| Tool output (`check_tool_result`, `shield`) | Locally | **Never**, with one opt-in exception in Claude Code: a capped sample of web, MCP and shell results, only after `zn-gate connect` and `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json` (see the opt-in cloud check of tool output) |
 | Results of web fetches, MCP tools and shell commands, seen by the Claude Code hook | Locally first | Off by default. Only if you ran `zn-gate connect` and also turned it on with `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json`. The setting and the record `zn-gate connect` leaves are read only from the `.zn` folder in the home folder of your operating-system account (the one the system reports for your user, not the `HOME` or `USERPROFILE` variable), and the path stays off when `HOME`, `USERPROFILE` or `ZN_HOME` points zn-gate at another folder. So `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot turn it on, because a project can set environment variables for the agent. zn-gate then sends a sample of each result, at most 16 KiB, counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), to `api.usezn.com` to look for hidden instructions aimed at the agent. It skips a result the local check already flagged. Secrets and personal data (email addresses, phone numbers, IBANs, card numbers and national ID numbers: Spanish DNI and NIE, US SSN) are removed before sending, and each personal value is replaced with [EMAIL], [PHONE], [IBAN], [CARD] or [ID]; IP addresses, names, postal addresses and usernames are not removed, and a secret zn-gate does not recognize is sent as written. `Read` results, other agents and the other hooks send nothing. If the call fails (no connection, a timeout, an error from the service), nothing is blocked or added; if the service answers with a verdict that is neither allow nor block (rule `cloud:unknown-verdict`), the same note is added, and the output is still not blocked or changed. Remove that setting, or set it to `false`, to turn this path off. |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
@@ -314,7 +314,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, the rules can flag ordinary code comments. Version 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own source files, run `zn-gate scan --code <path>`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
 - **Known limitation:** credentials under prefixed upper-case variable names (`OPENAI_API_KEY=`, `MY_APP_DB_PASSWORD=`, `export X_SECRET=`) are redacted in env files, JSON, YAML, Dockerfile and shell forms, and placeholders such as `YOUR_KEY` or `${VAR}` are left alone (tested in the npm and PyPI packages). Lower-case or dotted names such as `openai_api_key=` or `my.app.db.password=` are not redacted by the prompt and tool-result rules.
-- **Detection rates:** on a multilingual set of 3,309 examples, Galvanize 3 has 89.6% recall at a 0.6% false positive rate, and it flags 2.9% of 658 long legitimate documents; these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test and latency above. The set was not used for training; it was used to choose between candidate models. Method and the comparison with nine open detectors are in the [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3). The previous model, Galvanize 2, has open weights and its own results on its [model card](https://huggingface.co/usezn/Galvanize-2). It is one layer of defense, not a guarantee.
+- **Detection rates:** on a multilingual set of 3,309 examples, Galvanize 3.1 has 96.4% recall at a 1.9% false positive rate on short harmless texts, and it flags 1.2% of 658 long legitimate documents (for Galvanize 3 the same figures are 89.6%, 0.6% and 2.9%); these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test and latency above. The set was not used for training; it was used to choose between candidate models. Method, and where Galvanize 3.1 does worse than Galvanize 3, are in the [announcement](https://usezn.com/blog/galvanize-3-1/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3-1). The earlier models, Galvanize 3 and Galvanize 2, have open weights and their own results on their model cards ([Galvanize 3](https://huggingface.co/usezn/Galvanize-3), [Galvanize 2](https://huggingface.co/usezn/Galvanize-2)). It is one layer of defense, not a guarantee.
 
 ## What zn-gate is not
 
@@ -375,10 +375,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@1a3d7be9659340b8e24bb208e80094a3b2cc4a44 # v1.16.0
+        uses: usezn/zn@72c65423e76ecaa6bb0aa75d0cc6dae475cf3962 # v1.17.0
         with:
-          version: '1.16.0'
-          package-sha256: '7669c55de5cbf71ac9c818e98f271c4f55d357276272438334fb62e91e69166c'
+          version: '1.17.0'
+          package-sha256: '804d80e8086efdcccbb975129fd9281019a1ee9ec4b633ccb9afe279e7fe3a63'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -410,9 +410,9 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@1a3d7be9659340b8e24bb208e80094a3b2cc4a44 # v1.16.0
+        uses: usezn/zn@72c65423e76ecaa6bb0aa75d0cc6dae475cf3962 # v1.17.0
         with:
-          version: '1.16.0'
+          version: '1.17.0'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
@@ -535,4 +535,4 @@ New here? Start with the small tasks in [CONTRIBUTING.md](CONTRIBUTING.md#where-
 
 ## License
 
-MIT. Copyright (c) 2026 usezn ([usezn.com](https://usezn.com)). The [Galvanize 3](https://huggingface.co/usezn/Galvanize-3), [Galvanize 2](https://huggingface.co/usezn/Galvanize-2) and [Galvanize-60M](https://huggingface.co/usezn/Galvanize-60M) weights are Apache-2.0. The [zn-prompt-injection-bench](https://huggingface.co/datasets/usezn/zn-prompt-injection-bench) dataset is CC-BY-4.0. The npm package bundles third-party code listed in [THIRD_PARTY_NOTICES.md](packages/zn-gate/THIRD_PARTY_NOTICES.md).
+MIT. Copyright (c) 2026 usezn ([usezn.com](https://usezn.com)). The [Galvanize 3.1](https://huggingface.co/usezn/Galvanize-3.1), [Galvanize 3](https://huggingface.co/usezn/Galvanize-3), [Galvanize 2](https://huggingface.co/usezn/Galvanize-2) and [Galvanize-60M](https://huggingface.co/usezn/Galvanize-60M) weights are Apache-2.0. The [zn-prompt-injection-bench](https://huggingface.co/datasets/usezn/zn-prompt-injection-bench) dataset is CC-BY-4.0. The npm package bundles third-party code listed in [THIRD_PARTY_NOTICES.md](packages/zn-gate/THIRD_PARTY_NOTICES.md).
