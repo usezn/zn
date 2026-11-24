@@ -559,28 +559,29 @@ test('lastPublished: an unreachable registry fails closed in CI and falls back t
 });
 
 test('publishedVersions drops every inherited npm and Node TLS setting and requires TLS verification', () => {
-  const keys = ['npm_config_strict_ssl', 'NPM_CONFIG_STRICT_SSL', 'npm_config_cafile', 'npm_config_proxy', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS'];
-  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  process.env.npm_config_strict_ssl = 'false';
-  process.env.NPM_CONFIG_STRICT_SSL = 'false';
-  process.env.npm_config_cafile = '/example/ca.pem';
-  process.env.npm_config_proxy = 'http://proxy.example.invalid:8080';
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-  process.env.NODE_EXTRA_CA_CERTS = '/example/extra-ca.pem';
-  process.env.NODE_OPTIONS = '--require /example/hook.js';
-  try {
-    let seen;
-    const out = publishedVersions((cmd, args, opts) => { seen = { args, opts }; return '["1.0.0"]'; });
-    assert.deepEqual(out, ['1.0.0']);
-    assert.ok(seen.args.includes('--strict-ssl=true'));
-    assert.equal(seen.opts.env.npm_config_strict_ssl, 'true');
-    for (const k of Object.keys(seen.opts.env)) {
-      assert.ok(!/^(NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)$/i.test(k), k);
-      if (/^npm_config_/i.test(k)) assert.ok(['npm_config_strict_ssl', 'npm_config_userconfig', 'npm_config_globalconfig'].includes(k), k);
-    }
-  } finally {
-    for (const k of keys) if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+  // A synthetic environment is passed in, so the test never weakens TLS for the running process.
+  const baseEnv = {
+    PATH: '/usr/bin',
+    npm_config_strict_ssl: 'false',
+    NPM_CONFIG_STRICT_SSL: 'false',
+    npm_config_cafile: '/example/ca.pem',
+    npm_config_proxy: 'http://proxy.example.invalid:8080',
+    NODE_TLS_REJECT_UNAUTHORIZED: '0',
+    NODE_EXTRA_CA_CERTS: '/example/extra-ca.pem',
+    NODE_OPTIONS: '--require /example/hook.js',
+  };
+  let seen;
+  const out = publishedVersions((cmd, args, opts) => { seen = { args, opts }; return '["1.0.0"]'; }, baseEnv);
+  assert.deepEqual(out, ['1.0.0']);
+  assert.ok(seen.args.includes('--strict-ssl=true'));
+  assert.equal(seen.opts.env.npm_config_strict_ssl, 'true');
+  assert.equal(seen.opts.env.PATH, '/usr/bin');
+  for (const k of Object.keys(seen.opts.env)) {
+    assert.ok(!/^(NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)$/i.test(k), k);
+    if (/^npm_config_/i.test(k)) assert.ok(['npm_config_strict_ssl', 'npm_config_userconfig', 'npm_config_globalconfig'].includes(k), k);
   }
+  // The caller's object is left untouched.
+  assert.equal(baseEnv.NODE_TLS_REJECT_UNAUTHORIZED, '0');
 });
 
 test('publishedVersions: parses the npm list, a single version and fails closed on odd output', () => {

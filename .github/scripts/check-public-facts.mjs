@@ -424,14 +424,14 @@ function tagReader(root) {
 
 /**
  * Every zn-gate version npm has published (`npm view zn-gate versions --json`), or null when it cannot be read.
- * run(cmd, args, opts) is injectable for tests.
+ * run(cmd, args, opts) and the base environment are injectable for tests.
  */
-export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, args, opts)) {
+export function publishedVersions(run = (cmd, args, opts) => execFileSync(cmd, args, opts), baseEnv = process.env) {
   try {
     // The public registry is named explicitly and npm runs outside the repository with every inherited npm setting
     // removed, so a project .npmrc or an environment variable (a registry, a certificate authority, strict-ssl=false)
     // cannot make the check accept a registry that serves made-up versions. TLS verification is required explicitly.
-    const env = { ...process.env };
+    const env = { ...baseEnv };
     for (const k of Object.keys(env)) if (/^npm_config_/i.test(k) || /^(NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)$/i.test(k)) delete env[k];
     env.npm_config_strict_ssl = 'true';
     // Two distinct empty files: npm refuses to load the same path as both the user and the global config
