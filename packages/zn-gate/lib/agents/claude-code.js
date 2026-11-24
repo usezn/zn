@@ -430,7 +430,7 @@ function commandFor(opts = {}, notes = []) {
   // Linux: the static launcher in exec form (`args`: Claude Code starts it with no shell), so no dynamic loader runs before zn can
   // refuse a loader variable (see static-launcher.js). Elsewhere, or when it cannot be set up, the launcher script as before.
   const sl = require('./static-launcher');
-  const st = sl.useStatic(opts, notes);
+  const st = sl.useStatic(opts, notes, id);
   if (st) return (event) => ({ command: st, args: sl.execParts(st, id, event, file, [event]).slice(1) });
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }

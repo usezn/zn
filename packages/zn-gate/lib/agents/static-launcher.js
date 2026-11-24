@@ -2,8 +2,8 @@
 
 /**
  * The static hook launcher (tools/hook-launcher): a small statically linked program that zn puts in front of the hook on Linux,
- * for the agents that can start a hook program directly, with no shell: Claude Code (a hook with `args`), GitHub Copilot CLI
- * (`exec` and `args`), ZCode (a `process` hook) and Antigravity (the command split on spaces).
+ * for the agents that can start a hook program directly, with no shell: Claude Code (a hook with `args`), ZCode (a `process`
+ * hook) and Antigravity (the command split on spaces).
  *
  * Why: every dynamically linked program (sh, bash, node) goes through the dynamic loader first, and the loader reads variables
  * from the environment the agent passes on. With LD_TRACE_LOADED_OBJECTS (any value) or LD_DEBUG naming `help` the loader prints
@@ -26,8 +26,9 @@ const { writeFileAtomic } = require('../broker/files');
 const { shQuote } = require('../shell-quote');
 
 const NAME = 'zn-hook-launcher';
-// The agents the launcher knows (tools/hook-launcher/src/main.rs agent_of).
-const STATIC_AGENTS = ['claude-code', 'copilot', 'zcode', 'antigravity'];
+// The agents whose user hooks start through the launcher on Linux: the one list. An adapter asks for the launcher with its id
+// (useStatic), and an id that is not here keeps today's hook form. GitHub Copilot is not here on purpose: it is detection only.
+const STATIC_AGENTS = ['claude-code', 'zcode', 'antigravity'];
 
 /** The platform key of the prebuilt binary for this system, '' when none is built for it, null when the system needs none. */
 function platformKey(platform = process.platform, arch = process.arch) {
@@ -106,7 +107,8 @@ function installStatic(opts = {}) {
  * The installed launcher for an adapter: its path, or null when the hook must keep today's form. A warning that says why is
  * added to `notes` (the install report), so the install never claims a protection that is not there.
  */
-function useStatic(opts = {}, notes = []) {
+function useStatic(opts = {}, notes = [], agentId = '') {
+  if (!STATIC_AGENTS.includes(agentId)) return null;
   const r = installStatic(opts);
   if (!r) return null;
   if (r.warning) { notes.push(r.warning); return null; }
