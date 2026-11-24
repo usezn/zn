@@ -567,19 +567,24 @@ Three features are off by default. Each one helps in a narrow case and has limit
   of the agent, the glibc dynamic loader prints its output and exits with status 0 before the first line of any dynamically
   linked program (sh, bash, Node.js). A hook started that way never runs, and most agents read exit 0 with plain text as "no
   objection", so the call goes ahead unchecked.
-  - On Linux, ZCode can start a hook program directly, with no shell (its `process` hook). For a user
-    install on Linux (x64 and arm64), `zn hooks install zcode` puts a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`,
-    first in the hook. No dynamic loader runs before it. When one of these variables, or a preload variable (`LD_PRELOAD`,
+  - On Linux, ZCode and Claude Code can start a hook program directly, with no shell (ZCode's `process` hook, Claude Code's
+    exec form with `args`). For a user install on Linux (x64 and arm64), `zn hooks install zcode` and `zn hooks install claude-code`
+    put a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`, first in the hook. No dynamic loader runs before it.
+    When one of these variables, or a preload variable (`LD_PRELOAD`,
     `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers
-    ZCode's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
+    the agent's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
     start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
     the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
     prints a warning that this protection is missing on that machine.
-  - Claude Code and Antigravity are detection only on every platform for now. The launcher program can already answer for them,
-    but a launch form is used only after it has been run with the real agent. Claude Code's exec form (`args`) is implemented from
-    Claude Code's documentation and has not been run against a real Claude Code. Antigravity's start with no shell was seen on
-    Windows only, where there is no dynamic loader, and not on Linux. Until that is verified, their hooks keep the launcher
+  - Claude Code on Linux was checked with a real Claude Code 2.1.331 (headless, x86_64, Ubuntu 24.04, November 2026): with the
+    exec form the parent of the hook is Claude Code itself, with no shell in between; `LD_LIBRARY_PATH` in the settings is
+    removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny
+    before any dynamically linked program starts, and the tool call is blocked, while the earlier shell form with
+    `LD_TRACE_LOADED_OBJECTS=1` let the tool run with no hook decision. The arm64 launcher is built but was not run with a real agent.
+  - Antigravity is detection only on every platform for now. The launcher program can already answer for it,
+    but a launch form is used only after it has been run with the real agent. Antigravity's start with no shell was seen on
+    Windows only, where there is no dynamic loader, and not on Linux. Until that is verified, its hook keeps the launcher
     script form: `zn audit` reports the variables as critical, the hook cannot refuse them, and a call can go ahead.
   - Codex CLI, Gemini CLI and GitHub Copilot CLI are detection only too: `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Codex CLI and Gemini CLI always start hooks
     through a shell (`$SHELL -lc` and `bash -c`), so no hook form can avoid the loader there; zn keeps Copilot's shell form

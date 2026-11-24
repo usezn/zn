@@ -193,8 +193,8 @@ test('the launcher answers with the same texts as the sh launcher, and knows the
 });
 
 // Only a launch form that was run with the real agent gets the launcher. The rest keep today's hook form and say nothing about it.
-test('only ZCode gets the static launcher on Linux: Claude Code and Antigravity stay detection only', { skip: KEY ? false : 'Linux only' }, (t) => {
-  assert.deepEqual(sl.STATIC_ENABLED, ['zcode']);
+test('ZCode and Claude Code get the static launcher on Linux: Antigravity stays detection only', { skip: KEY ? false : 'Linux only' }, (t) => {
+  assert.deepEqual(sl.STATIC_ENABLED, ['zcode', 'claude-code']);
   for (const id of sl.STATIC_ENABLED) assert.ok(sl.STATIC_AGENTS.includes(id), id);
   for (const [id, a] of Object.entries(AGENTS)) {
     const f = fixture(t);
@@ -216,6 +216,7 @@ test('Antigravity on Windows and macOS keeps its launcher script form', () => {
   for (const platform of ['win32', 'darwin']) {
     assert.equal(sl.useStatic({ platform }, [], 'antigravity'), null, platform);
     assert.equal(sl.useStatic({ platform }, [], 'claude-code'), null, platform);
+    assert.equal(sl.useStatic({ platform }, [], 'zcode'), null, platform);
   }
 });
 

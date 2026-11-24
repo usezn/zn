@@ -29,12 +29,13 @@ const NAME = 'zn-hook-launcher';
 // The agents whose user hooks start through the launcher on Linux: the one list. An adapter asks for the launcher with its id
 // (useStatic), and an id that is not in STATIC_ENABLED keeps today's hook form. GitHub Copilot is not here on purpose: it is detection only.
 const STATIC_AGENTS = ['claude-code', 'zcode', 'antigravity'];
-// The agents that actually get it, on Linux: only those whose hook start with no shell was observed there. ZCode's `process` hook is
-// one. Claude Code's exec form (`args`) is implemented from its documentation and has not been run against a real Claude Code, and
-// Antigravity's start with no shell was seen on Windows only (where there is no dynamic loader). Those two keep today's hook form
-// (detection only) until a run with the real agent shows the launcher is started directly. The launcher program already answers for
-// them, so enabling one later is a change to this list and its docs.
-const STATIC_ENABLED = ['zcode'];
+// The agents that actually get it, on Linux: only those whose hook start with no shell was observed with the real agent. ZCode's
+// `process` hook is one, and so is Claude Code's exec form (`args`), run against Claude Code 2.1.331 on x86_64 Linux: the hook's parent
+// was Claude Code itself, a loader variable in its settings was refused by the launcher before any dynamic program started, and the
+// old shell form let the same call run unchecked. Antigravity's start with no shell was seen on Windows only, so it keeps today's hook
+// form (detection only) until a run with the real agent on Linux shows the launcher is started directly. The launcher program already
+// answers for it, so enabling it later is a change to this list and its docs.
+const STATIC_ENABLED = ['zcode', 'claude-code'];
 
 /** The platform key of the prebuilt binary for this system, '' when none is built for it, null when the system needs none. */
 function platformKey(platform = process.platform, arch = process.arch) {
