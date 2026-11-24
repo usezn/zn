@@ -139,7 +139,6 @@ ALLOWED = [
     "echo hi | sh",
     "bash -c 'echo hi'",
     "echo a && echo b | cat",
-    "sh -c 'sh -c \"sh -c \\\"sh -c rm\\\"\"'",
 ]
 
 
@@ -155,11 +154,13 @@ def test_branch_is_allowed(cmd):
     assert check_command(cmd).verdict == "allow", cmd
 
 
-def test_nesting_depth_is_limited():
+def test_nesting_past_the_depth_limit_is_refused():
     cmd = "rm -rf /"
     for _ in range(4):
         cmd = "sh -c " + "'" + cmd.replace("'", "'\\''") + "'"
-    assert check_command(cmd).verdict == "allow"
+    r = check_command(cmd)
+    assert r.verdict == "block"
+    assert r.rule == "destructive:too_many_commands"
 
 
 def test_non_string_is_allowed():
