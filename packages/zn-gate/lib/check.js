@@ -189,12 +189,15 @@ function hookEntries(tree, agentId, opts = {}) {
         if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async, ...extra });
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
         // On Windows Copilot CLI runs "powershell" instead, so that is the command to read there.
-        const copilotCmd = agentId !== 'copilot' ? null : process.platform === 'win32' && typeof g.powershell === 'string' ? g.powershell : g.bash;
+        // Copilot CLI's exec form (exec + args, the static launcher on Linux) is read as one command line.
+        const copilotExec = agentId === 'copilot' && typeof g.exec === 'string' && Array.isArray(g.args) ? require('./agents/static-launcher').execText([g.exec, ...g.args.map(String)]) : null;
+        const copilotCmd = agentId !== 'copilot' ? null : copilotExec || (process.platform === 'win32' && typeof g.powershell === 'string' ? g.powershell : g.bash);
         if (typeof copilotCmd === 'string') out.push({ event, matcher: g.matcher, command: copilotCmd });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           // Codex on Windows runs commandWindows (command_windows in TOML), not command.
           const win = agentId === 'codex' && process.platform === 'win32' && h ? (typeof h.commandWindows === 'string' ? h.commandWindows : h.command_windows) : null;
-          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? h.command : '';
+          // Claude Code's exec form (command + args) is read as one command line.
+          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? (Array.isArray(h.args) ? require('./agents/static-launcher').execText([h.command, ...h.args.map(String)]) : h.command) : '';
           if (text) out.push({ event, matcher: g.matcher, command: text, onFailure: h.onFailure, async: h.async, ...extra });
         }
       }
@@ -239,6 +242,13 @@ function parseCommand(command, agentId, platform = process.platform) {
   const { _internal: audit } = require('./audit');
   const launcher = require('./agents/launcher');
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
+  // The static launcher in front of the hook (agents/static-launcher.js): '<dir>/zn-hook-launcher' <agent> <Event> <hook command>.
+  // The rest is read as the hook command it starts; the launcher path is kept so that check can see that it is there.
+  const sm = new RegExp("^('?)(" + audit.SAFE_ABS + "/zn-hook-launcher)\\1 " + agentId + ' ([A-Za-z]+) (.+)$').exec(c);
+  if (sm) {
+    const inner = parseCommand(sm[4], agentId, platform);
+    return inner ? { ...inner, staticLauncher: sm[2], ...(inner.raw !== undefined ? { raw: c } : {}) } : null;
+  }
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
   // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
   // Antigravity runs the command split on spaces with no shell, so zn writes the path unquoted there (an older
@@ -865,6 +875,11 @@ function cliHooks(spec, ctx, userFile, given) {
       return out;
     }
   }
+  if (cmd && cmd.staticLauncher && !(() => { try { const st = fs.statSync(cmd.staticLauncher); return st.isFile() && (st.mode & 0o111) !== 0; } catch (err) { return false; } })()) {
+    out.problem = 'its hook cannot start: its launcher program (' + cmd.staticLauncher + ') is missing';
+    out.fix = REINSTALL(spec.id);
+    return out;
+  }
   if (cmd.launcher || cmd.winScript) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
@@ -903,7 +918,8 @@ function cliHooks(spec, ctx, userFile, given) {
       const exe = require('./exe');
       const run = cmd.winScript ? { file: exe.systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: exe.findProgram(cmd.raw.split(' ')[0], ctx.env || process.env), args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
-          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] }
+            : cmd.staticLauncher ? { file: cmd.staticLauncher, args: [spec.id, cmd.event, cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       // The system PowerShell, and sh (Git Bash) from the absolute PATH entries only; without one the live test is skipped.
       if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
       else out.notes.push('the program that runs the hook was not found, so the hook was not run here; zn\'s rules were checked directly');

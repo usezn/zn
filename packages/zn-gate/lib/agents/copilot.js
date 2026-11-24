@@ -593,7 +593,9 @@ function hooksFile(opts = {}) {
   return path.join(copilotHome(opts), 'hooks', FILE_NAME);
 }
 
-const handlerIsOurs = (h) => isObj(h) && ['bash', 'powershell', 'command'].some((k) => cfg.isOurs(h[k], id));
+// The exec form (exec + args, the static launcher on Linux) is read as one command line.
+const handlerIsOurs = (h) => isObj(h) && (['bash', 'powershell', 'command'].some((k) => cfg.isOurs(h[k], id)) ||
+  (typeof h.exec === 'string' && Array.isArray(h.args) && cfg.isOurs(require('./static-launcher').execText([h.exec, ...h.args.map(String)]), id)));
 
 /** Removes zn's handlers from a hooks file's data; true when something was removed. */
 function stripOurs(data) {
@@ -622,7 +624,13 @@ function install(opts = {}) {
   // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand / projectWindowsScript): a missing zn or Node.js denies the call.
   const guarded = project && !opts.command;
   const bash = cfg.hookCommand(id, opts);
+  // Linux, user install: the static launcher in exec form (Copilot CLI starts `exec` with no shell), so no dynamic loader runs
+  // before zn can refuse a loader variable (see static-launcher.js). Elsewhere, or when it cannot be set up, the command as before.
+  const notes = [];
+  const sl = require('./static-launcher');
+  const st = !project && !opts.command ? sl.useStatic(opts, notes) : null;
   const handlerFor = (event) => {
+    if (st) return { type: 'command', exec: st, args: sl.execParts(st, id, event, opts.nodePath || process.execPath, [opts.runnerPath || cfg.runnerPath(), id]).slice(1), timeoutSec: HOOK_TIMEOUT_S };
     if (guarded) return { type: 'command', bash: launcher.projectShCommand(id, event), powershell: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event)), timeoutSec: HOOK_TIMEOUT_S };
     const h = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
     if (opts.command) h.powershell = opts.command;
@@ -642,6 +650,8 @@ function install(opts = {}) {
     data.hooks[event] = [...list, handlerFor(event)];
   }
   cfg.writeJson(file, data);
+  report.warnings.push(...notes);
+  if (st) report.warnings.push('On Linux the hook starts zn\'s static launcher in exec form (exec and args), which GitHub documents for Copilot CLI only: Copilot in VS Code may not run it. The hook was tested with Copilot CLI.');
   report.warnings.push('GitHub Copilot (VS Code and Copilot CLI) reads this file. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
   report.warnings.push('Copilot drops the output of a command hook for a typed prompt (userPromptSubmitted), in VS Code and in Copilot CLI, so a secret pasted into a prompt is not stopped.');
