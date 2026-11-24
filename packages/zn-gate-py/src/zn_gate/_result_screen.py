@@ -5,6 +5,7 @@ imported and documented by zn_gate.rules."""
 from __future__ import annotations
 
 import _thread
+import abc
 import functools
 import inspect
 import itertools
@@ -12,7 +13,7 @@ import json
 import sys
 import types
 from collections import namedtuple
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from typing import Any, List, Optional, Tuple
 
 # Limits of the deep-data form of sanitize_tool_result, the same as the walker of
@@ -83,8 +84,23 @@ def _is_mapping(val: Any) -> bool:
     """isinstance(val, Mapping) from the real class: its MRO is compared by identity, so neither the registry of the
     ABC (which hashes and compares the class) nor a hook of its metaclass runs."""
     kind = type(val)
-    return (issubclass(kind, (dict, types.MappingProxyType))
-            or any(c is Mapping for c in _TYPE_MRO.__get__(kind)))
+    if issubclass(kind, (dict, types.MappingProxyType)):
+        return True
+    mro = _TYPE_MRO.__get__(kind)
+    if any(c is Mapping for c in mro):
+        return True
+    # Classes registered with the ABC (Mapping.register) count too: its registry is read as plain data and compared by
+    # identity with the classes of the MRO.
+    for abc_class in (Mapping, MutableMapping):
+        try:
+            registry = abc._get_dump(abc_class)[0]  # type: ignore[attr-defined]
+        except Exception:
+            return True  # the registry cannot be read: the class is treated as a Mapping that must be refused
+        for ref in list(registry):
+            registered = ref()
+            if registered is not None and any(c is registered for c in mro):
+                return True
+    return False
 
 
 def _defines_all(val: Any, *names: str) -> bool:

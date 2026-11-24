@@ -171,3 +171,113 @@ def test_instance_dict_key_that_is_not_a_str_is_refused_without_coercion():
         sanitize_tool_result(obj)
     assert exc.value.rule == "type:unscannable"
     assert RAN == []
+
+
+# ---- 5. a Mapping of the output is not read through its own items()
+
+import collections
+import collections.abc
+import types as _types
+
+
+class HidingMapping(collections.abc.Mapping):
+    def __init__(self, data):
+        self._data = data
+
+    def __getitem__(self, key):
+        RAN.append("__getitem__")
+        return self._data[key]
+
+    def __iter__(self):
+        RAN.append("__iter__")
+        return iter(())
+
+    def __len__(self):
+        RAN.append("__len__")
+        return 0
+
+    def items(self):
+        RAN.append("items")
+        return []
+
+
+class RegisteredMapping:
+    def items(self):
+        RAN.append("items")
+        return []
+
+    def __getitem__(self, key):
+        RAN.append("__getitem__")
+        raise KeyError(key)
+
+    def __iter__(self):
+        RAN.append("__iter__")
+        return iter(())
+
+    def __len__(self):
+        RAN.append("__len__")
+        return 0
+
+
+collections.abc.Mapping.register(RegisteredMapping)
+
+
+@pytest.mark.parametrize("make", [
+    lambda: HidingMapping({"k": INJECTION}),
+    lambda: {"a": HidingMapping({"k": INJECTION})},
+    lambda: [RegisteredMapping()],
+])
+def test_a_mapping_of_its_own_is_blocked_unread(make):
+    res = check_tool_call("t", make())
+    assert not res.allowed and res.rule == "type:unscannable"
+    assert RAN == []
+
+    @guard(on_block="raise")
+    def tool(value):
+        RAN.append("tool")
+        return "ok"
+
+    with pytest.raises(GuardBlockError):
+        tool(make())
+    assert "tool" not in RAN and "items" not in RAN
+
+
+class Client:
+    """An application object (such as an SDK client) that holds a mapping of its own."""
+
+    def __init__(self, mapping):
+        self.options = mapping
+
+
+@pytest.mark.parametrize("hidden, blocked", [(INJECTION, True), ("hello", False)])
+def test_inside_an_application_object_a_mapping_is_read_from_what_it_stores(hidden, blocked):
+    # @guard reads application objects best effort: the mapping inside is read from its stored attributes, so a
+    # value that its items() hides is still found, and neither items() nor __iter__ runs.
+    @guard(on_block="raise")
+    def tool(client):
+        RAN.append("tool")
+        return "ok"
+
+    if blocked:
+        with pytest.raises(GuardBlockError):
+            tool(Client(HidingMapping({"k": hidden})))
+        assert "tool" not in RAN
+    else:
+        assert tool(Client(HidingMapping({"k": hidden}))) == "ok"
+    assert not {"items", "__iter__", "__len__", "__getitem__"} & set(RAN)
+
+
+def test_plain_and_standard_library_mappings_are_still_read():
+    for value in (
+        {"a": {"b": INJECTION}},
+        collections.OrderedDict(a=INJECTION),
+        collections.defaultdict(list, a=[INJECTION]),
+        collections.Counter({INJECTION: 1}),
+        collections.UserDict(a=INJECTION),
+        collections.ChainMap({"a": INJECTION}),
+        _types.MappingProxyType({"a": INJECTION}),
+    ):
+        assert not check_tool_call("t", value).allowed
+    for value in ({"a": "hello"}, collections.OrderedDict(a="hello"), _types.MappingProxyType({"a": "hello"}),
+                  collections.UserDict(a="hello"), collections.ChainMap({"a": "hello"})):
+        assert check_tool_call("t", value).allowed

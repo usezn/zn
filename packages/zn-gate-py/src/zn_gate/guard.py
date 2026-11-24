@@ -26,6 +26,7 @@ from .rules import OVERRIDDEN_READING_REASON, UNREAD_ACCESSORS_REASON, overrides
 from .rules import CUSTOM_TEXT_REASON, custom_text_form
 from .rules import _TYPE_DICT, _TYPE_MODULE, _TYPE_MRO, _TYPE_QUALNAME, _class_bound, _type_is
 from .rules import _defines_all, _is_iterator, _is_mapping
+from ._result_screen import _trusted_class
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -330,11 +331,24 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
     children: Optional[List[Any]]
-    if _is_mapping(data) or isinstance(data, (list, tuple, set, frozenset)) or _type_is(kind, _DICT_VIEWS):
+    mapping = _is_mapping(data)
+    own_mapping = mapping and not issubclass(kind, (dict, types.MappingProxyType)) and not _trusted_class(kind)
+    if own_mapping:
+        # A Mapping of its own (inheriting from or registered with collections.abc.Mapping) answers items() and
+        # __iter__ with its own code, which could hide values from the scan. As data it is refused unread, as a
+        # subclass of dict that redefines items. Inside an application object (@guard, best effort) it is read from
+        # the attributes it really stores, never through items() or __iter__ (a requests.Session holds such
+        # mappings: its headers and its urllib3 pool container).
+        if not lenient:
+            raise _Unscannable("type:unscannable", OVERRIDDEN_READING_REASON)
+        mapping = False
+    if mapping or isinstance(data, (list, tuple, set, frozenset)) or _type_is(kind, _DICT_VIEWS):
         try:
-            if _is_mapping(data):
+            if mapping:
                 children = []
-                for k, v in data.items():
+                # A dict (subclasses that redefine items are refused above) is read through dict.items itself.
+                pairs = dict.items(data) if issubclass(kind, dict) else data.items()
+                for k, v in pairs:
                     children.append(k)
                     children.append(v)
             else:
@@ -386,6 +400,11 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                     lenient = True
                     if lenient_depth is not None:
                         max_depth += lenient_depth - _DEFAULT_MAX_DEPTH
+            elif own_mapping:
+                # No stored attributes to read, and its own iteration is not trusted: left out as unreadable.
+                seen.skipped += 1
+                seen.unreadable += 1
+                return []
             elif _defines_all(data, "__iter__"):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
