@@ -752,6 +752,8 @@ function searchFolderAsk(dirs, pathOpts) {
  * (Write content, Edit new_string, Gemini write_file content and replace new_string, a Codex patch, a filesystem MCP server's content),
  * plus the file as an Edit or replace would leave it. Used to refuse a write that would set a variable that stops the hooks.
  */
+const SEARCH_ONLY_KEYS = new Set(['old_string', 'oldString']);
+
 function writtenTextsOf(ev, p, cwd) {
   const out = [];
   const seen = new Set();
@@ -764,11 +766,15 @@ function writtenTextsOf(ev, p, cwd) {
       }
     } else if (v && typeof v === 'object' && depth < 6 && !seen.has(v)) {
       seen.add(v);
-      for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
+      // The text an edit searches for is not written: only what replaces it, and the file as it ends up, are judged.
+      for (const [k, x] of Array.isArray(v) ? v.map((y) => ['', y]) : Object.entries(v)) if (!SEARCH_ONLY_KEYS.has(k)) walk(x, depth + 1);
     }
   };
   const input = ev.input || {};
-  for (const t of Array.isArray(input.texts) ? input.texts : []) if (t && typeof t.value === 'string') out.push(t.value);
+  for (const t of Array.isArray(input.texts) ? input.texts : []) {
+    const key = Array.isArray(t && t.key) ? t.key[t.key.length - 1] : t && t.key;
+    if (t && typeof t.value === 'string' && !SEARCH_ONLY_KEYS.has(key)) out.push(t.value);
+  }
   walk(ev.raw, 0);
   walk(input.args, 0);
   // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it: every edit shape
