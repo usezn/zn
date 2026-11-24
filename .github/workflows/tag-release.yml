@@ -83,7 +83,10 @@ jobs:
           head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
           [ "$head" = "$SHA" ] || { echo "::error::$SHA is not the head of $branch (head: ${head:-none})"; exit 1; }
           [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION already exists"; exit 1; }
-          [ -z "$(git ls-remote origin "refs/tags/go/v$VERSION")" ] || { echo "::error::tag go/v$VERSION already exists"; exit 1; }
+          # go/v$VERSION may exist from an earlier run that pushed it and then failed to push v$VERSION: it is accepted
+          # only on the same commit (its signature is checked later), so that run can be finished.
+          go_remote="$(git ls-remote origin "refs/tags/go/v$VERSION^{}" | cut -f1)"
+          [ -z "$go_remote" ] || [ "$go_remote" = "$SHA" ] || { echo "::error::tag go/v$VERSION exists on $go_remote, not $SHA"; exit 1; }
           [ -f .github/workflows/tag-release.yml ] || { echo "::error::$SHA has no tag-release.yml, so the Release workflow would not check the tag signature"; exit 1; }
           # The same version checks as the Release workflow: a tag cannot be deleted, so a mismatch found
           # only after tagging would burn the version.
@@ -179,7 +182,8 @@ jobs:
           head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
           [ "$head" = "$SHA" ] || { echo "::error::$branch moved to ${head:-nothing} since the check"; exit 1; }
           [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION exists now"; exit 1; }
-          [ -z "$(git ls-remote origin "refs/tags/go/v$VERSION")" ] || { echo "::error::tag go/v$VERSION exists now"; exit 1; }
+          go_remote="$(git ls-remote origin "refs/tags/go/v$VERSION^{}" | cut -f1)"
+          [ -z "$go_remote" ] || [ "$go_remote" = "$SHA" ] || { echo "::error::tag go/v$VERSION exists on $go_remote, not $SHA"; exit 1; }
       - name: Install gitsign (checked by SHA-256)
         run: |
           set -euo pipefail
@@ -203,16 +207,24 @@ jobs:
           git cat-file -p "v$VERSION" | sed -n '1,4p'
           # The Go client is the module github.com/usezn/zn/go, in the go/ folder: Go finds its versions by tags with
           # that folder as prefix, so `go get github.com/usezn/zn/go@vX.Y.Z` needs go/vX.Y.Z on the same commit.
-          git tag -s -m "zn-gate Go client $VERSION" "go/v$VERSION" "$SHA"
+          if [ -n "$(git ls-remote origin "refs/tags/go/v$VERSION")" ]; then
+            # Left by an earlier run: fetch it as it is; the next step verifies its signature and target.
+            git fetch --no-tags origin "refs/tags/go/v$VERSION:refs/tags/go/v$VERSION"
+            echo "go/v$VERSION already pushed by an earlier run: reused"
+          else
+            git tag -s -m "zn-gate Go client $VERSION" "go/v$VERSION" "$SHA"
+          fi
       - name: Verify the tag signature
         env:
           VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
           for t in "v$VERSION" "go/v$VERSION"; do
             gitsign verify-tag "$t" \
               --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            [ "$(git rev-parse "$t^{commit}")" = "$SHA" ] || { echo "::error::$t does not point to $SHA"; exit 1; }
           done
       - name: Create a token of the release-tag app
         id: token
@@ -237,9 +249,11 @@ jobs:
           echo "::add-mask::$auth"
           # The Go module tag goes first: it starts no workflow, so the Release workflow (started by v$VERSION) never
           # runs while the Go client of that version cannot be fetched yet.
-          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "refs/tags/go/v$VERSION"
+          if [ -z "$(git ls-remote origin "refs/tags/go/v$VERSION")" ]; then
+            git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "refs/tags/go/v$VERSION"
+          fi
           remote="$(git ls-remote origin "refs/tags/go/v$VERSION^{}" | cut -f1)"
-          [ "$remote" = "$SHA" ] || { echo "::error::pushed tag go/v$VERSION points to '${remote}', expected $SHA"; exit 1; }
+          [ "$remote" = "$SHA" ] || { echo "::error::tag go/v$VERSION points to '${remote}', expected $SHA"; exit 1; }
           git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "refs/tags/v$VERSION"
           remote="$(git ls-remote origin "refs/tags/v$VERSION^{}" | cut -f1)"
           [ "$remote" = "$SHA" ] || { echo "::error::pushed tag points to '${remote}', expected $SHA"; exit 1; }
