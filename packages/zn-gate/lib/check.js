@@ -189,9 +189,7 @@ function hookEntries(tree, agentId, opts = {}) {
         if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async, ...extra });
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
         // On Windows Copilot CLI runs "powershell" instead, so that is the command to read there.
-        // Copilot CLI's exec form (exec + args, the static launcher on Linux) is read as one command line.
-        const copilotExec = agentId === 'copilot' && typeof g.exec === 'string' && Array.isArray(g.args) ? require('./agents/static-launcher').execText([g.exec, ...g.args.map(String)]) : null;
-        const copilotCmd = agentId !== 'copilot' ? null : copilotExec || (process.platform === 'win32' && typeof g.powershell === 'string' ? g.powershell : g.bash);
+        const copilotCmd = agentId !== 'copilot' ? null : process.platform === 'win32' && typeof g.powershell === 'string' ? g.powershell : g.bash;
         if (typeof copilotCmd === 'string') out.push({ event, matcher: g.matcher, command: copilotCmd });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           // Codex on Windows runs commandWindows (command_windows in TOML), not command.

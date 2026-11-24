@@ -562,31 +562,32 @@ Three features are off by default. Each one helps in a narrow case and has limit
   runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
-- **Some loader variables stop the shell before the script runs (closed on Linux for four agents, accepted limit for the
+- **Some loader variables stop the shell before the script runs (closed on Linux for three agents, accepted limit for the
   others).** With `LD_TRACE_LOADED_OBJECTS` (any value, also `0` or empty) or `LD_DEBUG` naming `help` set in the environment
   of the agent, the glibc dynamic loader prints its output and exits with status 0 before the first line of any dynamically
   linked program (sh, bash, Node.js). A hook started that way never runs, and most agents read exit 0 with plain text as "no
   objection", so the call goes ahead unchecked.
-  - On Linux, Claude Code, GitHub Copilot CLI, ZCode and Antigravity can start a hook program directly, with no shell (Claude
-    Code's `args`, Copilot CLI's `exec` and `args`, ZCode's `process` hook, Antigravity's command split on spaces). For a user
+  - On Linux, Claude Code, ZCode and Antigravity can start a hook program directly, with no shell (Claude Code's `args`,
+    ZCode's `process` hook, Antigravity's command split on spaces). For a user
     install on Linux (x64 and arm64), `zn hooks install` puts a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`,
     first in the hook. No dynamic loader runs before it. When one of these variables, or a preload variable (`LD_PRELOAD`,
     `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers the
-    agent's own deny with its blocking exit code (exit 2 with the reason for Claude Code and ZCode, the deny JSON with exit 2
-    for Copilot CLI, the deny JSON with exit 0 for Antigravity). Otherwise it removes every loader variable (every `LD_*` and
+    agent's own deny with its blocking exit code (exit 2 with the reason for Claude Code and ZCode, the deny JSON with exit 0
+    for Antigravity). Otherwise it removes every loader variable (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
     start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
     the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
-    prints a warning that this protection is missing on that machine.
-  - Still open: Codex CLI and Gemini CLI always start hooks through a shell (`$SHELL -lc` and `bash -c`), so no hook form
-    can avoid the loader there: only detection is possible, and the call goes ahead. Cursor is not verified: it has no form
+    prints a warning that this protection is missing on that machine. Claude Code's exec form (`args`) is implemented from
+    Claude Code's documentation and has not yet been run against a real Claude Code.
+  - Codex CLI, Gemini CLI and GitHub Copilot CLI are detection only: `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Codex CLI and Gemini CLI always start hooks
+    through a shell (`$SHELL -lc` and `bash -c`), so no hook form can avoid the loader there; zn keeps Copilot's shell form
+    too. Cursor is not verified: it has no form
     without a shell, and its hooks documentation says that its permission hooks (`beforeShellExecution`,
     `beforeMCPExecution`, `beforeReadFile`, `preToolUse` and the like) block on output that is not valid JSON or does not
     match the hook's schema, so the loader's plain text should block those calls, but this has not been confirmed with a
     real Cursor. Do not count Cursor as protected against these variables. Project installs (`--project`) and the managed configuration
     (`zn team managed-config`) name `zn` on the PATH, because the file is shared and cannot name one machine's launcher, so
-    they keep the shell form for every agent. GitHub documents `exec` for Copilot CLI only: Copilot in VS Code may not run
-    the exec-form hook (not tested). Antigravity's start with no shell was seen on Windows only.
+    they keep the shell form for every agent. Antigravity's start with no shell was seen on Windows only.
   - macOS has no such launcher: dyld prints with its `DYLD_PRINT_*` variables and goes on, and no dyld variable is known to
     end a program before `main` (not tested). Windows has no `ld.so`. Linux on other processors (32-bit, RISC-V) gets no
     prebuilt launcher and keeps the earlier form, with the warning.

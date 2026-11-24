@@ -411,7 +411,7 @@ function handlerFor(opts = {}, notes = []) {
   const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: LAUNCHER_DEADLINE_S });
   // Linux: the static launcher first (see static-launcher.js), which starts the launcher script with no loader variable left.
   const sl = require('./static-launcher');
-  const st = sl.useStatic(opts, notes);
+  const st = sl.useStatic(opts, notes, id);
   if (st) return (event) => ({ type: 'process', command: st, args: sl.execParts(st, id, event, portablePath(file, platform), [event]).slice(1), ...base });
   return (event) => ({ type: 'process', command: portablePath(file, platform), args: [event], ...base });
 }

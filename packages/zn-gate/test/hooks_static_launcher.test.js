@@ -3,7 +3,7 @@ process.env.ZN_STATS = 'off';
 
 // The static hook launcher (tools/hook-launcher, lib/agents/static-launcher.js) on Linux. With LD_TRACE_LOADED_OBJECTS (any value) or
 // LD_DEBUG naming `help`, the dynamic loader prints text and exits 0 before the first line of any dynamically linked program, so a hook
-// started through sh or node never runs, and Claude Code, Copilot CLI and ZCode read exit 0 with plain text as "no objection". The
+// started through sh or node never runs, and Claude Code and ZCode read exit 0 with plain text as "no objection". The
 // installed hook of each agent that can start a program with no shell is run here the way that agent runs it, with each of those
 // variables and with a preload variable: every run must be the deny of that agent with its blocking exit code, and the hook must not
 // run. A run with none of them must reach the hook, with no loader variable left in its environment. Nothing destructive is run: the
@@ -64,17 +64,6 @@ const AGENTS = {
     entry: (f) => readJson(path.join(f.home, '.claude', 'settings.json')).hooks.PreToolUse.at(-1).hooks[0],
     denied: (r) => { assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /unset it and restart the agent/); },
   },
-  copilot: {
-    event: 'preToolUse',
-    install: (f) => require('../lib/agents/copilot').install({ ...opts(f), scope: 'user' }),
-    entry: (f) => readJson(path.join(f.home, '.copilot', 'hooks', 'zn-gate.json')).hooks.preToolUse.at(-1),
-    denied: (r) => {
-      assert.equal(r.status, 2, r.stdout + r.stderr);
-      const o = JSON.parse(r.stdout);
-      assert.equal(o.permissionDecision, 'deny');
-      assert.match(o.permissionDecisionReason, /unset it and restart the agent/);
-    },
-  },
   zcode: {
     event: 'PreToolUse',
     install: (f) => require('../lib/agents/zcode').install(opts(f)),
@@ -97,13 +86,12 @@ const AGENTS = {
   },
 };
 
-// Runs an installed entry the way its agent runs it: exec + args (Copilot CLI), command + args (Claude Code exec form, ZCode
+// Runs an installed entry the way its agent runs it: command + args (Claude Code exec form, ZCode
 // process), a string split on spaces with no shell (Antigravity), or the shell form (sh -c) of a command string.
 function runEntry(entry, f, extra) {
   const env = { PATH: process.env.PATH, HOME: f.home, TMPDIR: f.home, ZN_STATS: 'off', ZN_TEST_RAN: f.ran, ZN_TEST_SEEN: f.seen, ...extra };
   const o = { input: '{}', encoding: 'utf8', env, timeout: 60000 };
   if (typeof entry === 'string') { const p = entry.split(' '); return spawnSync(p[0], p.slice(1), o); }
-  if (typeof entry.exec === 'string') return spawnSync(entry.exec, entry.args || [], o);
   if (Array.isArray(entry.args)) return spawnSync(entry.command, entry.args, o);
   return spawnSync('/bin/sh', ['-c', entry.bash || entry.command], o);
 }
@@ -196,10 +184,23 @@ test('the launcher answers with the same texts as the sh launcher, and knows the
   assert.deepEqual(list('LOADER_NAMES'), loaderEnv.LOADER_NAMES);
   assert.deepEqual(list('LOADER_PRELOAD'), loaderEnv.LOADER_PRELOAD);
   // The agents and blocking events the launcher answers for are the ones the adapters use.
-  assert.deepEqual(sl.STATIC_AGENTS, ['claude-code', 'copilot', 'zcode', 'antigravity']);
+  assert.deepEqual(sl.STATIC_AGENTS, ['claude-code', 'zcode', 'antigravity']);
   for (const id of ['claude-code', 'zcode', 'antigravity']) {
     for (const ev of launcher.blockExit(id)) assert.ok(src.includes('"' + ev + '"'), id + ' ' + ev);
   }
+});
+
+test('GitHub Copilot keeps today\'s hook form on Linux (detection only), with no launcher warning', (t) => {
+  const f = fixture(t);
+  const rep = require('../lib/agents/copilot').install({ ...opts(f), scope: 'user' });
+  const entry = readJson(path.join(f.home, '.copilot', 'hooks', 'zn-gate.json')).hooks.preToolUse.at(-1);
+  assert.equal(entry.exec, undefined);
+  assert.equal(entry.args, undefined);
+  assert.equal(typeof entry.bash, 'string');
+  assert.doesNotMatch(entry.bash, /zn-hook-launcher/);
+  assert.ok(!rep.warnings.some((w) => /static hook launcher/.test(w)), rep.warnings.join('\n'));
+  assert.equal(fs.existsSync(sl.staticFile({ home: f.home, env: {} })), false);
+  assert.throws(() => sl.execParts('/x/zn-hook-launcher', 'copilot', 'preToolUse', '/usr/bin/node'), /no static launcher for copilot/);
 });
 
 test('the exec-form entries are recognized as zn\'s and read back by check', () => {
@@ -209,8 +210,6 @@ test('the exec-form entries are recognized as zn\'s and read back by check', () 
   const zText = zc.commandText({ type: 'process', command: st, args: ['zcode', 'PreToolUse', '/home/u/.zn/hooks/zn-hook-zcode.sh', 'PreToolUse'] });
   assert.equal(zText, "'" + st + "' zcode PreToolUse '/home/u/.zn/hooks/zn-hook-zcode.sh' PreToolUse");
   assert.ok(cfg.isOurs(zText, 'zcode'));
-  const cop = sl.execText([st, 'copilot', 'preToolUse', '/usr/bin/node', '/usr/lib/node_modules/zn-gate/lib/hooks/runner.js', 'copilot']);
-  assert.ok(cfg.isOurs(cop, 'copilot'));
   assert.ok(cfg.isOurs([st, 'antigravity', 'PreToolUse', '/home/u/.zn/hooks/zn-hook-antigravity.sh', 'PreToolUse'].join(' '), 'antigravity'));
 });
 

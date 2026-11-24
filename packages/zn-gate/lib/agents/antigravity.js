@@ -455,7 +455,7 @@ function commandFor(opts = {}, notes = []) {
   const script = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   // Linux: the static launcher first (see static-launcher.js), in the same folder, so its path needs no quotes either.
   const sl = require('./static-launcher');
-  const st = sl.useStatic(opts, notes);
+  const st = sl.useStatic(opts, notes, id);
   if (st && launcher.plainPathOk(st)) return sl.execParts(st, id, 'PreToolUse', script, ['PreToolUse']).join(' ');
   return launcher.launcherCommand(script, 'PreToolUse', platform, { plain: true });
 }
