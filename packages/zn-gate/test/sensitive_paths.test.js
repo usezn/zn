@@ -5,6 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { assertLinear } = require('./helpers/time_ratio');
 const path = require('path');
 const { checkToolCall } = require('../lib/guard');
 const { sensitivePathView } = require('../lib/rules');
@@ -37,8 +38,5 @@ test('the path view is lexical and keeps relative parents', () => {
 });
 
 test('the path view stays linear on long runs', () => {
-  const long = '.'.repeat(200000) + 'x ' + '/..'.repeat(50000) + ' ' + '\\'.repeat(100000);
-  const t0 = process.hrtime.bigint();
-  sensitivePathView(long);
-  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 1000);
+  assertLinear(sensitivePathView, (n) => '.'.repeat(n) + 'x ' + '/..'.repeat(Math.floor(n / 4)) + ' ' + '\\'.repeat(Math.floor(n / 2)), 200000);
 });

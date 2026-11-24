@@ -6,6 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const { isUnsafeText, hasUnsafeText } = require('../lib/safe-text');
 
 const MB = 1024 * 1024;
@@ -59,12 +60,13 @@ test('non-string values are not unsafe text', () => {
   assert.equal(isUnsafeText(null), false);
 });
 
-test('a 1 MB string is checked within the time bound', () => {
-  const t0 = Date.now();
+test('a 1 MB string is checked in linear time', () => {
   assert.equal(isUnsafeText('a'.repeat(MB)), false);
   assert.equal(isUnsafeText('\uD83D\uDE00'.repeat(MB / 2)), false); // U+1F600 pairs, not U+10000
   assert.equal(isUnsafeText('\uDC00'.repeat(MB)), true);
-  assert.ok(Date.now() - t0 < 2000, 'took too long');
+  assertLinear(isUnsafeText, (n) => 'a'.repeat(n), MB, 'plain text');
+  assertLinear(isUnsafeText, (n) => '\uD83D\uDE00'.repeat(n / 2), MB, 'surrogate pairs');
+  assertLinear(isUnsafeText, (n) => '\uDC00'.repeat(n), MB, 'lone surrogates');
 });
 
 test('hasUnsafeText looks at keys and values at any depth', () => {

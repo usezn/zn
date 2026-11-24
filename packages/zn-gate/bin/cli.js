@@ -41,7 +41,7 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
-const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { verifyEvidenceLedger, getEvidenceStats, writeEvidenceExport, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -51,6 +51,34 @@ const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
 const { fsErrorText, humanError } = require('../lib/errors');
+
+// The evidence log, a link to it and a hard link to it are one file. An output that is any of them must
+// never be opened with 'w': that would empty the log before it is read.
+function canonicalFilePath(p) {
+  // Follows links to their end, also to a target that does not exist yet, then resolves the folder.
+  let cur = path.resolve(p);
+  for (let hop = 0; hop < 40; hop++) {
+    let st;
+    try { st = fs.lstatSync(cur); } catch (e) { break; }
+    if (!st.isSymbolicLink()) break;
+    cur = path.resolve(path.dirname(cur), fs.readlinkSync(cur));
+  }
+  let dir = path.dirname(cur);
+  try { dir = fs.realpathSync.native(dir); } catch (e) { /* the folder does not exist: keep the text */ }
+  const full = path.join(dir, path.basename(cur));
+  return process.platform === 'win32' ? full.toLowerCase() : full;
+}
+
+function isEvidenceLogFile(output, ledger) {
+  if (canonicalFilePath(output) === canonicalFilePath(ledger)) return true;
+  try {
+    const a = fs.statSync(output);
+    const b = fs.statSync(ledger);
+    return a.ino !== 0 && a.dev === b.dev && a.ino === b.ino;
+  } catch (e) {
+    return false;
+  }
+}
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 const { safeText } = require('../lib/audit/report');
 const { cliName } = require('../lib/zn-command');
@@ -1367,19 +1395,51 @@ ${ruleLine(process.env, 60)}\n`);
         process.exitCode = 2;
         return;
       }
-      const res = exportEvidenceLedger(EVIDENCE_FILE, format);
-      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+      // The log is streamed to the output while its chain is checked, so a log of any size exports
+      // in bounded memory. The output file is opened first, so a path that cannot be written fails
+      // before anything is read.
+      let out = process.stdout;
       if (options.output) {
+        // Checked before the output is opened, so neither file is touched when the output is the log.
+        if (isEvidenceLogFile(options.output, EVIDENCE_FILE)) {
+          process.stderr.write('zn-gate: the output file is the evidence log itself; choose another path.\n');
+          process.exitCode = 2;
+          return;
+        }
         try {
-          fs.writeFileSync(options.output, res.content, 'utf8');
+          out = fs.createWriteStream(options.output, { fd: fs.openSync(options.output, 'w') });
         } catch (err) {
           process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + '\n');
           process.exit(1);
         }
-        process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
-      } else {
-        process.stdout.write(res.content);
       }
+      let res;
+      try {
+        res = await writeEvidenceExport(EVIDENCE_FILE, format, out);
+        if (out !== process.stdout) {
+          await new Promise((resolve, reject) => {
+            const fail = (e) => { if (e) e.writeError = true; reject(e); };
+            out.once('error', fail);
+            out.end((e) => (e ? fail(e) : resolve()));
+          });
+        }
+      } catch (err) {
+        if (out !== process.stdout) out.destroy();
+        const incomplete = options.output ? ` ${options.output} is incomplete: do not use it.` : '';
+        if (err && err.writeError) {
+          process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + incomplete + '\n');
+        } else {
+          process.stderr.write(`zn-gate: the export stopped. ${err.message}.${incomplete}\n`);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+      if (options.output) {
+        process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
+      }
+      // A log whose chain does not verify in full is not proof: exit 1, like --verify.
+      if (!res.valid) process.exitCode = 1;
       return;
     }
 

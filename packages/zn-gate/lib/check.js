@@ -235,7 +235,7 @@ function antigravityOtherHooks(files) {
 }
 
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
-function parseCommand(command, agentId) {
+function parseCommand(command, agentId, platform = process.platform) {
   const { _internal: audit } = require('./audit');
   const launcher = require('./agents/launcher');
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
@@ -283,7 +283,7 @@ function parseCommand(command, agentId) {
   }
   // The project hook (shared file): `zn` on the PATH inside zn's own guard (launcher.projectShCommand / projectWindowsScript).
   // Only the exact guard this version writes counts as guarded; a guard-looking command that differs is reported as modified.
-  if (launcher.isProjectGuardExact(c, agentId) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
+  if (launcher.isProjectGuardExact(c, agentId, platform) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
   if (launcher.isProjectGuard(c, agentId) || (ws && launcher.isProjectWindowsScript(ws, agentId))) return { onPath: true, guarded: true, modified: true };
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
@@ -1450,6 +1450,24 @@ function nodeWarnings(opts, env) {
 }
 
 /**
+ * One warning when this environment holds a variable that makes Node.js or the dynamic loader load code of the caller's
+ * choosing (lib/loader-env.js). An agent started from here passes it on to everything it runs; zn's hooks remove it before
+ * they start Node.js, but a hook written by an older zn-gate does not.
+ */
+function loaderWarnings(env) {
+  try {
+    const names = require('./loader-env').loaderVarsIn(env);
+    if (!names.length) return [];
+    const list = names.length > 6 ? names.slice(0, 6).join(', ') + ' and ' + (names.length - 6) + ' more' : names.join(', ');
+    return [list + (names.length === 1 ? ' is' : ' are') + ' set in this environment. ' + (names.length === 1 ? 'It makes' : 'They make') +
+      ' Node.js or the system load code of someone else\'s choosing, and a coding agent started from here passes ' + (names.length === 1 ? 'it' : 'them') +
+      ' on to every program it runs. zn\'s hooks remove ' + (names.length === 1 ? 'it' : 'them') + ' before they start Node.js, but hooks written by an older zn-gate do not: ' +
+      'run `zn hooks install <agent>` again for each agent you use. If you did not set ' + (names.length === 1 ? 'it' : 'them') + ' yourself, find out where ' +
+      (names.length === 1 ? 'it comes' : 'they come') + ' from (a shell profile, a project\'s .envrc or .env loader).'];
+  } catch (_) { return []; }
+}
+
+/**
  * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
  * (each result then has checked: false, and "protected" means set up with no problem found).
@@ -1468,7 +1486,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true, warnings: nodeWarnings(opts, env) };
+    return { results, removed: true, warnings: [...nodeWarnings(opts, env), ...loaderWarnings(env)] };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
@@ -1489,7 +1507,7 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
+  return { results, removed: !fs.existsSync(dir), warnings: [...nodeWarnings(opts, env), ...loaderWarnings(env)] };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */
@@ -1613,4 +1631,4 @@ function toJson({ results, removed, warnings }, opts = {}) {
   };
 }
 
-module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, loaderWarnings, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
