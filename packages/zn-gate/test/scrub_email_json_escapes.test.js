@@ -66,3 +66,24 @@ test('a raw prefix after a boundary escape starts after the escape', async () =>
     }
   }
 });
+
+test('the 64-character limit counts characters of the address, not the hex digits of its escapes', async () => {
+  const u = (hex) => BS + 'u' + hex;
+  const esc = (str) => [...str].map((c) => u(c.charCodeAt(0).toString(16).padStart(4, '0'))).join('');
+  const locals = [esc('abcdefghijk'), esc('abcdefghijklmnop'), 'r' + esc('abcdefghijk'), esc('abcdefghijk') + 'r'.repeat(50)];
+  // one or two escapes and then 60 to 63 raw characters: 61 to 64 characters once decoded, still an address
+  for (let raw = 60; raw <= 63; raw++) {
+    locals.push(u('0061') + 'r'.repeat(raw));
+    if (raw <= 62) locals.push(u('0061') + u('0062') + 'r'.repeat(raw));
+  }
+  for (const local of locals) {
+    const json = wrap(local + '@' + DOMAIN);
+    assert.ok(JSON.parse(json).v.split('@')[0].length <= 64);
+    const out = await run(json);
+    assert.strictEqual(out, wrap(TOKEN), 'for ' + local);
+    JSON.parse(out);
+  }
+  // 65 raw characters before the '@' are not an address: left as they are, still valid JSON
+  const long = wrap(u('0061') + 'r'.repeat(64) + '@' + DOMAIN);
+  assert.strictEqual(await run(long), long);
+});

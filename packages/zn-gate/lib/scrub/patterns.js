@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-23.2';
+const SCRUB_RULES_VERSION = '2026-11-24.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -881,8 +881,14 @@ function emailStartAfterEscape(text, s, at) {
 function findEmails(text, check, out) {
   let at = text.indexOf('@');
   while (at >= 0) {
+    // Raw local-part characters right before the '@', at most 64. The scan stops at a `\uXXXX` escape, on its 'u'
+    // as it stops on any backslash: the hex digits of an escape are never counted as characters of the address and
+    // the start never lands inside an escape (extendEmailStart reads the escapes that come before).
     let s = at;
-    while (s > 0 && at - s < 64 && text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]) s--;
+    while (s > 0 && at - s < 64 && text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]) {
+      if (s >= 6 && unicodeEscapeAt(text, s - 6) >= 0) { s -= 5; break; }
+      s--;
+    }
     const boundaryOk = s === 0 || !(text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]);
     if (s < at && boundaryOk && isAlnum(text.charCodeAt(s)) && isAlnum(text.charCodeAt(at - 1))) {
       s = emailStartAfterEscape(text, s, at);
