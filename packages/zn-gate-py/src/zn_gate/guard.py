@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import functools
+import gc
 import inspect
 import _io
 import io
@@ -346,11 +347,23 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         try:
             if mapping:
                 children = []
-                # A dict (subclasses that redefine items are refused above) is read through dict.items itself.
-                pairs = dict.items(data) if issubclass(kind, dict) else data.items()
-                for k, v in pairs:
-                    children.append(k)
-                    children.append(v)
+                if issubclass(kind, dict):
+                    # A dict (subclasses that redefine items are refused above) is read through dict.items itself.
+                    for k, v in dict.items(data):
+                        children.append(k)
+                        children.append(v)
+                elif _type_is(kind, (types.MappingProxyType,)):
+                    # A mappingproxy answers items() from the mapping it wraps, which can be a mapping of its own:
+                    # that mapping is read instead (gc runs no Python code), through the same checks.
+                    children = list(gc.get_referents(data))
+                else:
+                    # A mapping of the standard library that is not a dict (UserDict, ChainMap) answers items() from
+                    # what it stores (data, maps), which can be a mapping of its own: what it stores is read instead,
+                    # through the same checks.
+                    fields = _object_fields(data)
+                    if fields is None:
+                        raise _Unscannable("type:unscannable", "An object could not be read to check it")
+                    children = fields
             else:
                 children = list(data)
         except Exception:

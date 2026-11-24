@@ -267,6 +267,33 @@ def test_inside_an_application_object_a_mapping_is_read_from_what_it_stores(hidd
     assert not {"items", "__iter__", "__len__", "__getitem__"} & set(RAN)
 
 
+def _user_dict_over(mapping):
+    value = collections.UserDict()
+    value.data = mapping
+    return value
+
+
+@pytest.mark.parametrize("make", [
+    lambda: _user_dict_over(HidingMapping({"k": INJECTION})),
+    lambda: collections.ChainMap(HidingMapping({"k": INJECTION})),
+    lambda: _types.MappingProxyType(HidingMapping({"k": INJECTION})),
+    lambda: {"a": _user_dict_over(HidingMapping({"k": INJECTION}))},
+])
+def test_a_standard_library_mapping_over_a_mapping_of_its_own_is_not_read_through_items(make):
+    # UserDict, ChainMap and mappingproxy answer items() from what they wrap: what they wrap is checked instead,
+    # so a wrapped mapping of its own is refused unread, and its items() never runs.
+    res = check_tool_call("t", make())
+    assert not res.allowed and res.rule == "type:unscannable"
+    assert not {"items", "__iter__", "__len__", "__getitem__"} & set(RAN)
+
+
+def test_a_standard_library_mapping_over_a_dict_is_still_read():
+    assert not check_tool_call("t", _user_dict_over({"k": INJECTION})).allowed
+    assert not check_tool_call("t", collections.ChainMap({"a": "x"}, {"k": INJECTION})).allowed
+    assert check_tool_call("t", _user_dict_over({"k": "hello"})).allowed
+    assert check_tool_call("t", collections.ChainMap({"a": "x"}, {"k": "hello"})).allowed
+
+
 def test_plain_and_standard_library_mappings_are_still_read():
     for value in (
         {"a": {"b": INJECTION}},
