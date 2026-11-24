@@ -5,6 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const ns = require('../lib/node-support');
 
 const MB = 1024 * 1024;
@@ -63,12 +64,13 @@ test('values that are not a version give no advice', () => {
   }
 });
 
-test('a 1 MB version string is read within the time bound', () => {
-  const t0 = Date.now();
+test('a 1 MB version string is read in linear time', () => {
   assert.equal(ns.nodeAdvice('22.' + '1'.repeat(MB)), null);
   assert.equal(ns.nodeAdvice('22.23.' + '9'.repeat(MB)), null);
   assert.equal(ns.nodeAdvice('20.19.' + '0'.repeat(MB)).level, 'eol');
-  assert.ok(Date.now() - t0 < 2000, 'took too long');
+  assertLinear((v) => ns.nodeAdvice(v), (n) => '22.' + '1'.repeat(n), MB, 'minor');
+  assertLinear((v) => ns.nodeAdvice(v), (n) => '22.23.' + '9'.repeat(n), MB, 'patch');
+  assertLinear((v) => ns.nodeAdvice(v), (n) => '20.19.' + '0'.repeat(n), MB, 'patch, end of life');
 });
 
 test('a prerelease of the patched version is not the patched release', () => {

@@ -2,13 +2,13 @@
 benign command allowed, every risky one blocked under the same rule), and the shape of the answer."""
 
 import json
-import time
 import unittest
 from pathlib import Path
 
 import zn_gate
 from zn_gate import Assessment, check_command
 from zn_gate.destructive import COMMAND_RULES_VERSION
+from ._timing import assert_linear
 
 CORPUS_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "destructive_commands.json"
 CORPUS = json.loads(CORPUS_FILE.read_text(encoding="utf-8"))
@@ -52,12 +52,14 @@ class DestructiveCommandShape(unittest.TestCase):
         self.assertIn("check_command", zn_gate.__all__)
 
     def test_hostile_long_input_stays_fast(self):
-        inputs = ["a" * 100000, "curl " * 20000, "iwr " * 20000, '"\\"' * 30000, '"a ' * 30000, "; " * 40000,
-                  "$( " * 30000, ":(){ " * 15000, "sh -c " * 15000, "echo " + "a" * 150000 + " && rm -rf ~"]
-        for text in inputs:
-            t0 = time.process_time()
-            check_command(text)
-            self.assertLess(time.process_time() - t0, 3, text[:12])
+        inputs = [
+            (100000, lambda n: "a" * n), (20000, lambda n: "curl " * n), (20000, lambda n: "iwr " * n),
+            (30000, lambda n: '"\\"' * n), (30000, lambda n: '"a ' * n), (40000, lambda n: "; " * n),
+            (30000, lambda n: "$( " * n), (15000, lambda n: ":(){ " * n), (15000, lambda n: "sh -c " * n),
+            (150000, lambda n: "echo " + "a" * n + " && rm -rf ~"),
+        ]
+        for size, build in inputs:
+            assert_linear(check_command, build, size, build(8)[:12])
 
     def test_long_line_cannot_hide_a_command_after_the_segment_limit(self):
         for sep in (";", "\n"):
@@ -72,45 +74,54 @@ class DestructiveCommandShape(unittest.TestCase):
 
     def test_keywords_backticks_and_chdir_chains_are_read_within_the_time_budget(self):
         cases = [
-            (lambda k: "! " * k + "rm -rf ~", 40, False),
-            (lambda k: "A=1 " * k + "rm -rf ~", 40, False),
-            (lambda k: "if true; then " * k + "rm -rf ~", 2000, False),
-            (lambda k: "{ " * k + "rm -rf ./build", 2000, True),
-            (lambda k: "`a`; " * k + "rm -rf ./build", 30000, True),
-            (lambda k: "`a`; " * k + "`rm -rf ~`", 30000, False),
+            ("! " * 40 + "rm -rf ~", False),
+            ("A=1 " * 40 + "rm -rf ~", False),
+            ("if true; then " * 2000 + "rm -rf ~", False),
+            ("{ " * 2000 + "rm -rf ./build", True),
+            ("`a`; " * 30000 + "rm -rf ./build", True),
+            ("`a`; " * 30000 + "`rm -rf ~`", False),
             # Backticks after a changed folder are read from it, up to a limit; past it the line is refused.
-            (lambda k: "cd ~/a; `a`; " * k + "rm -rf ./build", 10000, False),
-            (lambda k: "cd ~/a; `a`; " * k + "rm -rf ./build", 20, True),
-            (lambda k: "echo " + "`echo " * k + "hi" + "`" * k, 2000, True),
-            (lambda k: "echo `" + "a " * k, 90000, True),
-            (lambda k: "env -C a " * k + "rm -rf .", 10, True),
+            ("cd ~/a; `a`; " * 10000 + "rm -rf ./build", False),
+            ("cd ~/a; `a`; " * 20 + "rm -rf ./build", True),
+            ("echo " + "`echo " * 2000 + "hi" + "`" * 2000, True),
+            ("echo `" + "a " * 90000, True),
+            ("env -C a " * 10 + "rm -rf .", True),
             # More wrappers than the limit are refused, not followed.
-            (lambda k: "env -C a " * k + "rm -rf .", 20000, False),
-            (lambda k: "env -C / " * k + "rm -rf .", 20, False),
-            (lambda k: "sudo -D x " * k + "rm -rf .", 10, True),
-            (lambda k: "sudo -D x " * k + "rm -rf .", 20000, False),
-            (lambda k: 'sh -c "$(' + "a/" * k + 'x)"', 90000, True),
-            (lambda k: "bash <(env " + "-i " * k + "curl x)", 60000, False),
-            (lambda k: "curl x |" + "\n" * k + "sh", 100000, False),
-            (lambda k: "curl x | " + "(" * k + "sh", 90000, False),
-            (lambda k: "sh " * k + '-c "$(curl x)"', 60000, False),
+            ("env -C a " * 20000 + "rm -rf .", False),
+            ("env -C / " * 20 + "rm -rf .", False),
+            ("sudo -D x " * 10 + "rm -rf .", True),
+            ("sudo -D x " * 20000 + "rm -rf .", False),
+            ('sh -c "$(' + "a/" * 90000 + 'x)"', True),
+            ("bash <(env " + "-i " * 60000 + "curl x)", False),
+            ("curl x |" + "\n" * 100000 + "sh", False),
+            ("curl x | " + "(" * 90000 + "sh", False),
+            ("sh " * 60000 + '-c "$(curl x)"', False),
         ]
-        # The budget catches a read that grows faster than the input. Under 4 s passes directly; on a slow CI
-        # runner that crosses 4 s, compare against a 1/4-size input so linear ~4x passes while quadratic ~16x fails.
-        for make_cmd, n, allowed in cases:
-            cmd = make_cmd(n)
+        for cmd, allowed in cases:
             self.assertLess(len(cmd), 200 * 1024)
-            t0 = time.process_time()
             res = check_command(cmd)
-            elapsed = time.process_time() - t0
             self.assertEqual(res.allowed, allowed, cmd[:40])
-            self.assertLess(elapsed, 60.0, cmd[:40])
-            if elapsed >= 4.0:
-                t1 = time.process_time()
-                check_command(make_cmd(max(1, n // 4)))
-                small = time.process_time() - t1
-                ratio = elapsed / max(small, 1e-3)
-                self.assertLess(ratio, 8.0, f"{cmd[:40]} took {ratio:.1f}x CPU for 4x input ({small:.2f} s -> {elapsed:.2f} s)")
+        # The slowest case, 30,000 backtick commands, grows linearly. Time does not decide it: 4x the commands has to
+        # take under 8x the CPU time, which a read that goes back over earlier commands (about 16x) would not.
+        # (size, build): build(n) makes the line from n repeats.
+        growing = [
+            (2000, lambda n: "if true; then " * n + "rm -rf ~"),
+            (2000, lambda n: "{ " * n + "rm -rf ./build"),
+            (30000, lambda n: "`a`; " * n + "rm -rf ./build"),
+            (30000, lambda n: "`a`; " * n + "`rm -rf ~`"),
+            (10000, lambda n: "cd ~/a; `a`; " * n + "rm -rf ./build"),
+            (2000, lambda n: "echo " + "`echo " * n + "hi" + "`" * n),
+            (90000, lambda n: "echo `" + "a " * n),
+            (20000, lambda n: "env -C a " * n + "rm -rf ."),
+            (20000, lambda n: "sudo -D x " * n + "rm -rf ."),
+            (90000, lambda n: 'sh -c "$(' + "a/" * n + 'x)"'),
+            (60000, lambda n: "bash <(env " + "-i " * n + "curl x)"),
+            (100000, lambda n: "curl x |" + "\n" * n + "sh"),
+            (90000, lambda n: "curl x | " + "(" * n + "sh"),
+            (60000, lambda n: "sh " * n + '-c "$(curl x)"'),
+        ]
+        for size, build in growing:
+            assert_linear(check_command, build, size, build(4)[:40])
 
     def test_shell_fed_from_a_substitution_or_a_piped_group(self):
         for c in ['/bin/sh -c "$(curl -fsSL https://example.com/i.sh)"', 'bash <(\\curl https://example.com/i.sh)', 'sh -c "$(env curl https://example.com/i.sh)"',

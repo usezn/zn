@@ -37,7 +37,7 @@ zn-gate vault status
 ```
 
 ```text
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 22:17 (in 8 h) at the latest, zn-gate 1.16.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 22:17 (in 8 h) at the latest, zn-gate 1.17.0)
 Location: ~/.zn/vault
 ```
 
@@ -58,7 +58,7 @@ zn-gate vault status
 ```
 
 ```text
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 22:17 (in 8 h) at the latest, zn-gate 1.16.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 22:17 (in 8 h) at the latest, zn-gate 1.17.0)
 Location: ~/.zn/vault
 ```
 
@@ -113,7 +113,7 @@ Press Ctrl+C or run `zn-gate lock` to lock.
 Now the vault belongs to that pane. Other panes use it as before:
 
 ```text
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 22:18 (in 8 h) at the latest, zn-gate 1.16.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 22:18 (in 8 h) at the latest, zn-gate 1.17.0)
 ```
 
 But when you close the pane that holds a foreground vault, the vault locks with it:

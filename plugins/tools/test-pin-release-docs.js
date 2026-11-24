@@ -14,7 +14,7 @@ const assert = require('assert');
 const { versionedTexts } = require('./pin-release');
 
 const REL = 'claude-dir/README.md';
-const OLD = '1.15.0';
+const OLD = require('../zn-gate/.claude-plugin/plugin.json').version;
 const NEW = '9.9.9';
 
 const changes = versionedTexts(OLD, NEW);

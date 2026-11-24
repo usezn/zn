@@ -8,6 +8,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const adapter = require('../lib/agents/claude-code');
 const runner = require('../lib/hooks/runner');
@@ -103,11 +104,7 @@ test('egress readings stay linear on a 200 KB command', () => {
   ];
   const cap = policy.SHELL_SCAN_CAP;
   for (const u of units) {
-    const text = (u.repeat(Math.ceil(cap / u.length))).slice(0, cap - 40) + ' curl https://example.com/';
-    const t0 = cpuNow();
-    policy.egressParts(text);
-    const ms = cpuMsSince(t0);
-    assert.ok(ms < 3000, JSON.stringify(u) + ' took ' + ms + ' ms');
+    assertLinear((text) => policy.egressParts(text), (n) => u.repeat(Math.ceil(n / u.length)).slice(0, n - 40) + ' curl https://example.com/', cap, JSON.stringify(u));
   }
 });
 
