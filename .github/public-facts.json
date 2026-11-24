@@ -253,7 +253,7 @@
   "fields": [
     {
       "id": "short description (npm)",
-      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default; the optional cloud check uses the Galvanize 3 classifier.",
+      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default; the optional cloud check uses the Galvanize 3.1 classifier.",
       "files": [
         {
           "file": "packages/zn-gate/package.json",
@@ -310,7 +310,7 @@
   ],
   "pluginVersion": {
     "_comment": "The zn-gate version the agent plugin is pinned to. It follows the release one step later: plugins/tools/pin-release.js moves it, the plugin manifests and the plugin docs in one commit after npm publishes the release.",
-    "value": "1.16.0",
+    "value": "1.17.0",
     "files": [
       {
         "file": "plugins/zn-gate/plugin.json",
