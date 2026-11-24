@@ -433,7 +433,7 @@ function selfCheck(command, opts = {}) {
  * no text from zn (or not at all). A project install writes `sh -c` (PowerShell on Windows) around `zn hook
  * antigravity` with the same deny answer when zn or node is missing. A command given by the caller stays as it is.
  */
-function commandFor(opts = {}) {
+function commandFor(opts = {}, notes = []) {
   const platform = opts.platform || process.platform;
   if (opts.command) return cfg.hookCommand(id, opts);
   // A project install is shared through the repository, so it names `zn` on the PATH instead of this machine's
@@ -452,14 +452,21 @@ function commandFor(opts = {}) {
   // No path without spaces: nothing that Antigravity can start can be written, so refuse instead of writing a hook that never runs.
   const file = launcher.launcherFile(id, opts);
   if (!launcher.plainPathOk(file)) throw new Error(launcher.spaceMessage(file));
-  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true }), 'PreToolUse', platform, { plain: true });
+  const script = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
+  // Linux: the static launcher first (see static-launcher.js), in the same folder, so its path needs no quotes either.
+  const sl = require('./static-launcher');
+  const st = sl.useStatic(opts, notes);
+  if (st && launcher.plainPathOk(st)) return sl.execParts(st, id, 'PreToolUse', script, ['PreToolUse']).join(' ');
+  return launcher.launcherCommand(script, 'PreToolUse', platform, { plain: true });
 }
 
 function install(opts = {}) {
   const file = hooksFile(opts);
-  const command = commandFor(opts); // may refuse (a launcher path Antigravity cannot start): before anything is written
+  const notes = [];
+  const command = commandFor(opts, notes); // may refuse (a launcher path Antigravity cannot start): before anything is written
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  report.warnings.push(...notes);
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   stripOurs(data);
   // Antigravity splits the hook command on spaces and ignores quotes, so on

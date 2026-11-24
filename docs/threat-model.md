@@ -562,11 +562,31 @@ Three features are off by default. Each one helps in a narrow case and has limit
   runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
-- **Some loader variables stop the shell before the script runs (accepted limit).** With `LD_TRACE_LOADED_OBJECTS` or
-  `LD_DEBUG=help` set in the environment of the agent, the dynamic loader prints its output and the shell exits, usually with
-  status 0, without running any line of the launcher. The refusal cannot fire, and the agent sees a hook that did nothing. The
-  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them before it
-  runs.
+- **Some loader variables stop the shell before the script runs (closed on Linux for four agents, accepted limit for the
+  others).** With `LD_TRACE_LOADED_OBJECTS` (any value, also `0` or empty) or `LD_DEBUG` naming `help` set in the environment
+  of the agent, the glibc dynamic loader prints its output and exits with status 0 before the first line of any dynamically
+  linked program (sh, bash, Node.js). A hook started that way never runs, and most agents read exit 0 with plain text as "no
+  objection", so the call goes ahead unchecked.
+  - On Linux, Claude Code, GitHub Copilot CLI, ZCode and Antigravity can start a hook program directly, with no shell (Claude
+    Code's `args`, Copilot CLI's `exec` and `args`, ZCode's `process` hook, Antigravity's command split on spaces). For a user
+    install on Linux (x64 and arm64), `zn hooks install` puts a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`,
+    first in the hook. No dynamic loader runs before it. When one of these variables, or a preload variable (`LD_PRELOAD`,
+    `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers the
+    agent's own deny with its blocking exit code (exit 2 with the reason for Claude Code and ZCode, the deny JSON with exit 2
+    for Copilot CLI, the deny JSON with exit 0 for Antigravity). Otherwise it removes every loader variable (every `LD_*` and
+    `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
+    start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
+    the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
+    prints a warning that this protection is missing on that machine.
+  - Still open: Codex CLI and Gemini CLI always start hooks through a shell (`$SHELL -lc` and `bash -c`), so no hook form
+    can avoid the loader there. Cursor has no form without a shell, but its documentation says that output that is not valid
+    JSON blocks its permission hooks (not tested here). Project installs (`--project`) and the managed configuration
+    (`zn team managed-config`) name `zn` on the PATH, because the file is shared and cannot name one machine's launcher, so
+    they keep the shell form for every agent. GitHub documents `exec` for Copilot CLI only: Copilot in VS Code may not run
+    the exec-form hook (not tested). Antigravity's start with no shell was seen on Windows only.
+  - macOS has no such launcher: dyld prints with its `DYLD_PRINT_*` variables and goes on, and no dyld variable is known to
+    end a program before `main` (not tested). Windows has no `ld.so`. Linux on other processors (32-bit, RISC-V) gets no
+    prebuilt launcher and keeps the earlier form, with the warning.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
