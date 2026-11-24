@@ -51,15 +51,20 @@ fn model_load_failure(err: &anyhow::Error) -> String {
     )
 }
 
+/// Returns the loaded value, or panics with `model_load_failure` when loading failed. Kept
+/// separate from the loader so the failure path can be tested without a network.
+fn load_or_fail<T>(loaded: anyhow::Result<T>) -> T {
+    loaded.unwrap_or_else(|err| panic!("{}", model_load_failure(&err)))
+}
+
 /// Loads the embedding model into `dir` for a test and panics when it cannot be loaded
 /// (network failure, HTTP error, hash mismatch). Nothing is skipped silently. People without
 /// network access deselect the model-backed tests explicitly, see `model_load_failure`.
 pub(crate) fn embedder_or_fail(dir: &Path, cache_ttl: Option<u64>) -> Embedder {
-    let loaded = match cache_ttl {
+    load_or_fail(match cache_ttl {
         Some(ttl) => Embedder::with_cache(dir, ttl),
         None => Embedder::new(dir),
-    };
-    loaded.unwrap_or_else(|err| panic!("{}", model_load_failure(&err)))
+    })
 }
 
 #[cfg(test)]
@@ -69,11 +74,28 @@ mod tests {
     #[test]
     #[should_panic(expected = "embedding model must load")]
     fn a_transport_failure_fails_the_test_instead_of_skipping() {
-        // No model in an empty directory and an unusable offline path: loading must panic.
-        let err = anyhow::anyhow!("downloading model.safetensors failed: error sending request");
-        let msg = model_load_failure(&err);
+        let failed: anyhow::Result<u32> = Err(anyhow::anyhow!(
+            "downloading model.safetensors failed: error sending request"
+        ));
+        load_or_fail(failed);
+    }
+
+    #[test]
+    fn a_load_failure_panics_with_the_cause_and_the_deselect_filters() {
+        let failed: anyhow::Result<u32> = Err(anyhow::anyhow!("connection refused"));
+        let payload = std::panic::catch_unwind(|| load_or_fail(failed))
+            .expect_err("a failed load must panic, not return");
+        let msg = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .expect("panic message is a String");
+        assert!(msg.contains("connection refused"), "{msg}");
         assert!(msg.contains("--skip"), "{msg}");
-        panic!("{msg}");
+    }
+
+    #[test]
+    fn a_successful_load_is_returned_unchanged() {
+        assert_eq!(load_or_fail(Ok(7u32)), 7);
     }
 
     #[test]
