@@ -120,7 +120,7 @@ test('the hook scripts, the ZCode launcher included, find zn and node with .NET 
     assert.match(s, /function zf\(\$x\)/);
     assert.match(s, /\[System\.IO\.File\]::Exists\('C:\/node\/node\.exe'\)/);
     assert.doesNotMatch(s, /Get-Command|Test-Path|New-Object|Start-Process|Wait-Process|Stop-Process/);
-    if (opts.deadlineS) assert.match(s, /\[System\.Diagnostics\.ProcessStartInfo\]::new\(\)/);
+    if (opts.deadlineS) assert.match(s, /\[System\.Diagnostics\.ProcessStartInfo\]::new\(\$f, \$a\)/);
   }
   const s = launcher.windowsScript('cursor', 'beforeShellExecution', 'C:/node/node.exe', 'C:/z/runner.js');
   assert.match(s, /& \(zf 'zn\.cmd'\) hook cursor/);

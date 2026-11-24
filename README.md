@@ -464,6 +464,7 @@ Run both checks before each commit with the [pre-commit](https://pre-commit.com)
 
 - `packages/zn-gate`: Node.js CLI, MCP server and `shield` proxy (npm).
 - `packages/zn-gate-py`: Python SDK and CLI (PyPI).
+- `go/`: Go client for the optional zn Cloud API (`go get github.com/usezn/zn/go`).
 - `src/`: legacy Rust gateway, not released ([docs/rust-core.md](docs/rust-core.md)).
 - `bench/`: benchmark scripts and results.
 - `assets/brand/`: logo files (SVG master and light/dark variants, PNG lockup and banners).
