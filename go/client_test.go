@@ -96,6 +96,9 @@ func TestAnalyzeOptionsAndLongInput(t *testing.T) {
 	if !res.Partial() || res.LongInput.Windows != 3 || res.LongInput.Scored != 2 || res.LongInput.TopWindow != 1 {
 		t.Errorf("long_input = %+v", res.LongInput)
 	}
+	if res.Verdict != VerdictAllow || res.Allowed() {
+		t.Errorf("a partial allow must not count as Allowed: verdict %q, Allowed %v", res.Verdict, res.Allowed())
+	}
 }
 
 func TestErrorStatuses(t *testing.T) {
