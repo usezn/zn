@@ -174,7 +174,7 @@ A path that does not exist returns `404` with `{"message": "Not Found"}` from th
 | Status | `code` | What it means | What to do |
 |---|---|---|---|
 | 400 | `missing_input` | The body has no `input` field, or `input` is empty or not a string. | Send `input` as a non-empty string. |
-| 400 | `input_too_long` | `input` is longer than 20,000 characters. | Split the text into shorter parts and send each part. |
+| 400 | `input_too_long` | `input` is longer than 20,000 UTF-16 code units. Most characters count once; emoji and some rare characters count twice. | Split the text into shorter parts and send each part. |
 | 401 | `invalid_api_key` | The key is missing, wrong or revoked. | Check `ZN_API_KEY`. If the key was revoked, create a new one on the [connect page](https://usezn.com/connect/). |
 | 402 | `TRIAL_ENDED` | The account has no plan quota and no prepaid credits left to use. | Check your plan, or add credits, on the [pricing page](https://usezn.com/pricing/). Retrying will not help until then. |
 | 403 | none | This endpoint does not return 403. | If you get a 403, check that the URL matches the one in this guide. |
