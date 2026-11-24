@@ -154,3 +154,54 @@ test('shell commands that write a .env without those variables, or write elsewhe
     passes(await decide(gemini, gem('run_shell_command', { command }, dir)));
   }
 });
+
+test('a MultiEdit or camelCase edit that changes only a value is judged on the file it leaves', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1\nLD_DEBUG=all\n');
+  blocked(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'FOO=1', new_string: 'FOO=2' }, { old_string: '=all', new_string: '=help' }] }, dir)), STOP);
+  // Applied in order: the second edit finds what the first one wrote.
+  blocked(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'LD_DEBUG=all', new_string: 'LD_DEBUG=x' }, { old_string: '=x', new_string: '=help' }] }, dir)), STOP);
+  blocked(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ oldString: '=all', newString: '=help' }] }, dir)), STOP);
+  blocked(await decide(claude, cc('Edit', { file_path: env, oldString: '=all', newString: '=help' }, dir)), STOP);
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'all', new_string: 'help', replaceAll: true }, dir)), STOP);
+  passes(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'FOO=1', new_string: 'FOO=2' }, { old_string: '=all', new_string: '=libs' }] }, dir)));
+  passes(await decide(claude, cc('Edit', { file_path: env, oldString: 'FOO=1', newString: 'FOO=3' }, dir)));
+});
+
+test('an edit of a .env that cannot be resolved against the file is refused', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1\nFOO=1\nLD_DEBUG=all\n');
+  // The text to replace is not in the file, or is there twice without replace-all, or an edit has no new text.
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'MISSING', new_string: 'X=1' }, dir)));
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'FOO=1', new_string: 'FOO=2' }, dir)));
+  blocked(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'LD_DEBUG=all', new_string: 'A=1' }, { old_string: 'LD_DEBUG=all', new_string: 'LD_DEBUG=help' }] }, dir)));
+  blocked(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: '=all' }] }, dir)));
+  // A .env that cannot be read (here a folder).
+  const odd = path.join(dir, '.env.local');
+  fs.mkdirSync(odd);
+  blocked(await decide(claude, cc('Edit', { file_path: odd, old_string: 'a', new_string: 'b' }, dir)));
+  // Other files are not guarded.
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'x\n');
+  passes(await decide(claude, cc('Edit', { file_path: path.join(dir, 'notes.txt'), old_string: 'nope', new_string: 'b' }, dir)));
+});
+
+test('shell commands that write a .env with a computed loader value are blocked, a plain literal passes', async (t) => {
+  const dir = project(t);
+  const bad = [
+    'V=help; echo LD_DEBUG=$V >> .env',
+    'echo "LD_DEBUG=${V}" >> .env',
+    'echo LD_DEBUG=$(echo he)lp >> .env',
+    'echo LD_DEBUG=`echo help` >> .env',
+    'echo LD_DEBUG=$((1+1)) >> .env',
+    "echo LD_DEBUG=he''lp >> .env",
+    'echo LD_DEBUG=he\\lp >> .env',
+    "printf 'LD_DEBUG=%s\\n' help >> .env",
+    'echo LD_TRACE_LOADED_OBJECTS=$X >> .env',
+  ];
+  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
+  for (const command of ['echo LD_DEBUG=libs >> .env', "echo 'LD_DEBUG=all' >> .env", 'echo LD_DEBUG=$V > notes.txt', 'echo LD_DEBUG= >> .env']) {
+    passes(await decide(claude, cc('Bash', { command }, dir)));
+  }
+});

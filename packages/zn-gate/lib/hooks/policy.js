@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
-const { hookStopAssignedIn } = require('../loader-env');
+const { hookStopAssignedIn, hookStopOrComputedIn } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-24.1';
+const POLICY_RULES_VERSION = '2026-11-24.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -991,6 +991,11 @@ function agentConfigDenial(p, c) {
 function loaderEnvWriteDenial(p, texts, opts = {}) {
   const c = classifyPath(p, opts);
   if (!c || c.kind !== 'dotenv') return null;
+  // An edit that could not be applied to the file as it is: the result is unknown, so the write is refused.
+  if (texts && texts.unresolved) {
+    return 'zn: ' + path.basename(String(p)) + ' is a file the agent loads into its environment, and zn could not work out what this edit would leave in it. ' +
+      'An agent may not make this change. Ask the user to make it, or rewrite the whole file.';
+  }
   for (const t of texts || []) {
     const name = typeof t === 'string' ? hookStopAssignedIn(t) : null;
     if (name) return loaderEnvDenial(name, p);
@@ -2970,7 +2975,8 @@ function bashDenialOf(cmd, opts = {}) {
     }
     if (c.kind === 'dotenv' && (w.redirectTarget || writing)) {
       // echo NAME=1 >> .env, tee, sed -i, a heredoc, Set-Content: the command text carries what is written.
-      const stop = hookStopAssignedIn(cmd);
+      // A loader value the shell computes (a variable, $(..), printf formats) is refused too: the text does not show what gets written.
+      const stop = hookStopOrComputedIn(cmd);
       if (stop) return loaderEnvDenial(stop, text);
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
