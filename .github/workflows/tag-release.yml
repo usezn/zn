@@ -83,6 +83,7 @@ jobs:
           head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
           [ "$head" = "$SHA" ] || { echo "::error::$SHA is not the head of $branch (head: ${head:-none})"; exit 1; }
           [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION already exists"; exit 1; }
+          [ -z "$(git ls-remote origin "refs/tags/go/v$VERSION")" ] || { echo "::error::tag go/v$VERSION already exists"; exit 1; }
           [ -f .github/workflows/tag-release.yml ] || { echo "::error::$SHA has no tag-release.yml, so the Release workflow would not check the tag signature"; exit 1; }
           # The same version checks as the Release workflow: a tag cannot be deleted, so a mismatch found
           # only after tagging would burn the version.
@@ -178,6 +179,7 @@ jobs:
           head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
           [ "$head" = "$SHA" ] || { echo "::error::$branch moved to ${head:-nothing} since the check"; exit 1; }
           [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION exists now"; exit 1; }
+          [ -z "$(git ls-remote origin "refs/tags/go/v$VERSION")" ] || { echo "::error::tag go/v$VERSION exists now"; exit 1; }
       - name: Install gitsign (checked by SHA-256)
         run: |
           set -euo pipefail
@@ -199,14 +201,19 @@ jobs:
           git config gpg.x509.program gitsign
           git tag -s -m "zn-gate $VERSION" "v$VERSION" "$SHA"
           git cat-file -p "v$VERSION" | sed -n '1,4p'
+          # The Go client is the module github.com/usezn/zn/go, in the go/ folder: Go finds its versions by tags with
+          # that folder as prefix, so `go get github.com/usezn/zn/go@vX.Y.Z` needs go/vX.Y.Z on the same commit.
+          git tag -s -m "zn-gate Go client $VERSION" "go/v$VERSION" "$SHA"
       - name: Verify the tag signature
         env:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          gitsign verify-tag "v$VERSION" \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          for t in "v$VERSION" "go/v$VERSION"; do
+            gitsign verify-tag "$t" \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          done
       - name: Create a token of the release-tag app
         id: token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -228,6 +235,11 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
           # The token is masked in the log; its base64 form is a new string, so it is masked too.
           echo "::add-mask::$auth"
+          # The Go module tag goes first: it starts no workflow, so the Release workflow (started by v$VERSION) never
+          # runs while the Go client of that version cannot be fetched yet.
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "refs/tags/go/v$VERSION"
+          remote="$(git ls-remote origin "refs/tags/go/v$VERSION^{}" | cut -f1)"
+          [ "$remote" = "$SHA" ] || { echo "::error::pushed tag go/v$VERSION points to '${remote}', expected $SHA"; exit 1; }
           git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "refs/tags/v$VERSION"
           remote="$(git ls-remote origin "refs/tags/v$VERSION^{}" | cut -f1)"
           [ "$remote" = "$SHA" ] || { echo "::error::pushed tag points to '${remote}', expected $SHA"; exit 1; }
