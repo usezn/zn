@@ -13,6 +13,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+// Started, not looked up: on Windows /bin/sh is /bin/sh.exe, which fs.existsSync does not find.
+const shellStarts = (sh) => { try { return spawnSync(sh, ['-c', 'exit 0'], { stdio: 'ignore' }).status === 0; } catch { return false; } };
 
 const loaderEnv = require('../lib/loader-env');
 const { tempDir } = require('./helpers/tmp');
@@ -75,7 +77,7 @@ test('sanity: the preload runs when Node.js is started with the hostile environm
 });
 
 for (const shell of ['/bin/sh', '/bin/bash']) {
-  test('plugin zn-node.sh run by ' + shell + ': NODE_OPTIONS and NODE_PATH do not reach Node.js, the hook still answers', { skip: (!posix || !fs.existsSync(shell) || process.execPath.includes('/node_modules/')) ? shell + ' is not on this system or Node.js runs from a package folder; the Windows hook is covered by the Windows tests' : false }, (t) => {
+  test('plugin zn-node.sh run by ' + shell + ': NODE_OPTIONS and NODE_PATH do not reach Node.js, the hook still answers', { skip: (!posix || !shellStarts(shell) || process.execPath.includes('/node_modules/')) ? shell + ' does not start on this system, or Node.js runs from a package folder' : false }, (t) => {
     const f = fixture(t);
     const sh = path.join(f.plugin, 'scripts', 'zn-node.sh');
     const r = spawnSync(shell, [sh, 'PreToolUse', 'hook', 'claude-code'], { input: '{"tool_name":"Read"}', encoding: 'utf8', cwd: f.work, env: hostileEnv(f) });
