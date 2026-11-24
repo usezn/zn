@@ -496,6 +496,7 @@ function checkEnv(ctx, env, keyPath, opts) {
       const who = 'MCP server "' + opts.server + '": ';
       if (c.kind === 'endpoint') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' points to ' + P.safeUrl(v) + '; the server sends its requests and credentials there.', { title: 'MCP server endpoint overridden by the project', evidence: urlEvidence(ctx, line, String(v), k) });
       else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k, true) });
+      else if (c.kind === 'hookstop') ctx.add('ZNA008', capHome(ctx, 'medium'), line, who + k + ' is set for the server process: on Linux the dynamic loader then stops the server before it runs, so it fails to start. Only this server is affected; the agent and its hooks are not.', { title: 'MCP server environment stops the server from starting' });
       else ctx.add('ZNA008', capHome(ctx, 'high'), line, who + k + ' is set for the server process' + (c.kind === 'confdir' ? ' and moves where it reads its configuration.' : ' and loads code or certificates into it.'));
       continue;
     }
