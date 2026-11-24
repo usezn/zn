@@ -1,3 +1,5 @@
 # Synthetic AWS-format key used by the launcher tests in one commit (not a credential);
 # the tests now use the allowlisted AWS example key.
 8f60d42deed0634ede6e6431b3e431ef9446dd70:plugins/tools/test-launch.js:aws-access-token:236
+# Synthetic JWT-shaped fuzz corpus entry for the scrubber (not a credential).
+15c40cde7e70566b12a4a802e455c7797e209427:fuzz/corpus/scrubber/jwt-shape:jwt:1
