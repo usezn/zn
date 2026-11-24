@@ -9,6 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-26
+
+### Added
+- A Go client for the optional zn Cloud API, `github.com/usezn/zn/go`. `zn.NewClient(key).Analyze(ctx, text)` checks a tool result, a web page or an email before a model reads it, with timeouts, retries that honour `Retry-After`, typed errors (`IsRateLimited`, `IsQuotaExceeded`, `IsUnauthorized`), a check of the 20,000 UTF-16 unit limit before sending, and `SplitForAnalyze` for callers that want to send long text in pieces. Standard library only. See [go/README.md](https://github.com/usezn/zn/blob/main/go/README.md).
+
+### Changed
+- `zn-gate init` and `zn-gate check` now add the Claude Code plugin marketplace at the tag of the installed release (`claude plugin marketplace add usezn/zn#v<version>`), and the READMEs say the same, so `claude plugin update` no longer follows the default branch.
+- The Claude Code plugin does not update by itself when its marketplace is added at a release tag. The upgrade guide and the plugin README now say how to move to a new release (remove the marketplace, add it at the new tag, install the plugin), and `zn-gate check` and `zn-gate init` say so when the installed plugin is older than zn-gate.
+- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace (pinned to the release tag) and how to remove it.
+
+### Fixed
+- `zn-gate evidence --export` of a large log (over about 512 MB) no longer writes an empty file and reports it as valid. The export
+  now reads the log in parts, so every record is exported in bounded memory, and the dashboard export does the same. In the npm
+  package, if the log cannot be read to the end the export says so and exits 1, and an export whose chain does not verify
+  also exits 1. The Python package reports a non-verifying export and still exits 0.
+- `evidence --export --output` (Node and Python) refuses an output path that is the evidence log itself, or a link or hard
+  link to it, and exits 2. Before, the log was emptied and the command could report zero records as valid. Nothing is touched
+  when it refuses.
+- `zn team managed-config` now writes the same Claude Code hook command for a given system whichever system runs it: the Windows file keeps the scrub that reads variable names in any case (Git Bash), and the Linux and macOS files the short one.
+- `zn-gate check` on Windows reports a project hook guard with the short Linux and macOS scrub as modified instead of guarded, because that scrub leaves a loader variable written in another case set.
+- With the opt-in public IPv4 masking on, addresses in 192.0.x.x, 198.51.x.x and 203.0.x.x outside the reserved blocks (192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), and 192.0.0.9 and 192.0.0.10, are now masked as public addresses.
+- The scrubber no longer breaks JSON when an email address follows an escape sequence such as `é` or `\n`: the address is masked without leaving a stray backslash, so scrubbed JSON stays valid. Secrets that start right after a JSON escape (an AWS access key id after `\n` or `\t`, and card, SSN, phone, GitHub and Stripe candidates) are now masked too, instead of being skipped because the escape's letter touched them. An address written with JSON unicode escapes (`\u0061user@example.com`, which decodes to `auser@example.com`) is now masked whole, escape included, instead of leaving its first characters outside the mask, and the Node scrubber follows the same rules so its masked output no longer keeps a stray backslash before an escape. In the Node scrubber the 64-character limit of a local part counts the characters of the address once escapes are decoded, not the hex digits of its escapes: an address with escapes and a long raw part is no longer left unmasked, and a local part over 64 decoded characters is not taken for an address.
+- `zn start` now answers on its management port on a machine with one CPU (a 1-vCPU VM or container). The policy watcher read its events with a blocking call inside the async runtime, which held the only worker thread, so the management API accepted connections but never answered a request. The watcher now waits on an async channel.
+
+### Security
+- The gateway is built with `url` 2.5.9, which fixes a stack overflow in `Url::origin()` on nested `blob:` URLs (RUSTSEC-2026-0592).
+- The gateway is built with `wasmtime` 48.0.9, which fixes eight advisories published on 20 November (RUSTSEC-2026-0566 to RUSTSEC-2026-0573), among them a panic, a process abort and unbounded memory growth through `AsyncWriteStream`.
+- The plugin hook scripts now remove the variables that load code into Node.js before they start it. The Claude Code and
+  Codex plugin script (`scripts/zn-node.sh`) and the ZCode plugin scripts (`zn-hook.sh`, and `zn-hook.ps1` on Windows)
+  passed the agent's environment, which a project can set, to Node.js unchanged, so a `NODE_OPTIONS=--require` preload ran
+  before the plugin launcher could check anything. They now drop the same list as the `zn hooks install` launchers
+  (`NODE_OPTIONS`, `NODE_PATH`, every `LD_*` and `DYLD_*` and the others; on Windows `NODE_OPTIONS`, `NODE_PATH` and
+  `OPENSSL_CONF`). `NODE_EXTRA_CA_CERTS` and the proxy settings are kept. Update the plugin to get the new scripts.
+- The hook launchers no longer pass variables that load code into Node.js. The agent's environment, which a project can
+  set, reached the hook unchanged, so `NODE_OPTIONS=--require` (or `--import`, or `LD_PRELOAD`) could run code inside the
+  hook and turn a blocked call into an allowed one. The sh launcher and the OpenCode plugin now remove the loader and
+  interpreter start-up variables that `zn run` already removed (`NODE_OPTIONS`, `NODE_PATH`, `BASH_ENV` and the others)
+  plus `OPENSSL_CONF`, `NODE_V8_COVERAGE`, and the named library variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`,
+  `DYLD_INSERT_LIBRARIES` and the other `LD_` and `DYLD_` names listed in the source) before they start Node.js. On Linux
+  and macOS only the named variables are removed; on Windows with Git Bash every `LD_*` and `DYLD_*` variable is removed,
+  in any letter case. The Windows PowerShell launcher removes `NODE_OPTIONS`, `NODE_PATH` and `OPENSSL_CONF`. `NODE_EXTRA_CA_CERTS` and the proxy settings are kept.
+  `zn-gate check` warns when one of these variables is set. `npm update -g zn-gate` rewrites the sh launchers; for
+  OpenCode, and for the agents that use the PowerShell launcher on Windows, run `zn hooks install <agent>` again.
+- The sh hook launchers and the project hook guard now refuse to run the hook when a loader variable that loads code or changes
+  what the shell does before its first line is set in the agent's environment: `LD_PRELOAD`, `LD_AUDIT`, `LD_PROFILE`,
+  `LD_TRACE_LOADED_OBJECTS`, `LD_DEBUG`, `LD_PRELOAD_FDS` and the other names listed in the source, and
+  `DYLD_INSERT_LIBRARIES` with the other `DYLD_` preload settings. The dynamic loader loads such a library into the shell
+  before the first line of the launcher, so removing the variable there came too late: the call is now blocked with a
+  message that asks to unset it and restart the agent. Library search paths (`LD_LIBRARY_PATH` and the `DYLD_*_PATH`
+  variables) do not block the hook; they are removed for the hook only. Two limits remain and are written in the threat
+  model: a library that is already loaded runs before the check, and with the trace or debug variables the shell can exit
+  before the script runs.
+- The Windows PowerShell project hook guard now resolves every PATH folder and every `zn.cmd`, `node.exe` and `node.cmd`
+  with junctions and symbolic links followed, and does not run one whose real place is inside the folder the agent runs
+  in or inside a `node_modules` folder. Before, it dropped PATH entries by the text `node_modules` only, so an absolute
+  project folder or a junction into `node_modules\.bin` on the PATH could supply `zn.cmd` or `node.exe`. Run
+  `zn hooks install <agent> --project` again to update an existing project hook.
+- The project hook guard (the command `zn hooks install <agent> --project` writes, for sh and for Windows PowerShell) now
+  removes the variables that load code into Node.js before it starts `zn`, like the user hook launchers do, so a project
+  that sets `NODE_OPTIONS=--require` in the agent's environment cannot run code inside the hook. It also no longer runs a
+  `zn` or `node` from a `node_modules` folder written in another case (`Node_Modules`), which is the same folder on macOS
+  and Windows. Run `zn hooks install <agent> --project` again to update an existing project hook.
+- The project hook guard (sh, and the OpenCode project plugin) now checks where `zn` and `node` really are, with links
+  followed: a PATH folder that is a link into a `node_modules/.bin` folder, or a `zn` that is a link into one or into the
+  project, is no longer run. A global npm install, which links `zn` into `<prefix>/lib/node_modules/zn-gate`, still runs.
+  Where a link cannot be followed (no `readlink -f` or `realpath`), the guard blocks.
+- The hook guard that project installs write (the `sh -c` command, its PowerShell twin and the OpenCode project plugin) no
+  longer runs a `zn` or `node` that sits in a `node_modules` folder. A package can plant a `zn` in `node_modules/.bin`, and
+  `npm run` or direnv put that folder on the PATH, so the planted program could answer for the hook and allow a blocked
+  call. The guard now blocks with its usual message instead. Run `zn hooks install <agent> --project` again to update an
+  existing project hook.
+
 ## [1.17.0] - 2026-11-19
 
 zn-gate 1.17.0 tightens how zn-gate protects its own files from the coding agent it guards. The agent is now refused the commands that would make the hook launchers trust zn-gate files that were changed, and the plugin build refuses more ways of reaching Node's module loader. Both fixes are partial: some indirect ways of running these commands are not covered yet, and coverage will be extended in a later release. The rest of the release adds new checks and reports, and fixes in the CLI, the Python package and the scrubber.
@@ -1501,7 +1573,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.17.0...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.18.0...next
+[1.18.0]: https://github.com/usezn/zn/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/usezn/zn/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/usezn/zn/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/usezn/zn/compare/v1.14.1...v1.15.0

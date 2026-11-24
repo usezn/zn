@@ -25,7 +25,7 @@ npx -y zn-gate vault status
 ```
 
 ```text
-Vault: not created yet (run `npx -y zn-gate@1.17.0 unlock`).
+Vault: not created yet (run `npx -y zn-gate@1.18.0 unlock`).
 ```
 
 ## 2. Run `init` on the second account
@@ -50,7 +50,7 @@ The second account:
 This is not an interactive terminal, so zn only prints the steps. Nothing was changed.
 Run them in your own terminal:
 
-  in Claude Code, type /plugin marketplace add usezn/zn#v1.17.0 and then /plugin install zn-gate@usezn
+  in Claude Code, type /plugin marketplace add usezn/zn#v1.18.0 and then /plugin install zn-gate@usezn
 ```
 
 The rest of the list is cut here. See [`init`](../cli.md#init).
