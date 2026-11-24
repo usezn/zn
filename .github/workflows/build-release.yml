@@ -123,18 +123,22 @@ jobs:
       # The static hook launcher (tools/hook-launcher) for Linux x64 and arm64 ships inside the npm package with its SHA-256
       # (lib/native/hook-launcher.json); the installer copies it only when the SHA-256 matches. Standard library only, so no
       # crate is downloaded; aarch64 links with the rust-lld that ships with the toolchain. No cache in a release build.
-      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+      # The launcher is compiled only for a tag push. A manual run (workflow_dispatch, a dry run of an existing tag) runs
+      # in the default branch context and must not execute code from the commit it checks out, so it skips the
+      # launcher and packs without it; nothing from a manual run is signed or published.
+      - if: github.event_name == 'push'
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: 1.99.0
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
       - name: Build the static hook launcher
+        if: github.event_name == 'push'
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
         run: |
           set -euo pipefail
           export CARGO_TARGET_DIR="$RUNNER_TEMP/hook-launcher"
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build"
-          cargo +1.99.0 test --locked --manifest-path tools/hook-launcher/Cargo.toml
           for t in x86_64 aarch64; do
             cargo +1.99.0 build --locked --release --target "$t-unknown-linux-musl" --manifest-path tools/hook-launcher/Cargo.toml
           done
@@ -158,7 +162,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release"
           npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
       - name: Check tarball contents
+        if: github.event_name == 'push'
         run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate --hook-launcher
+      - name: Check tarball contents (manual dry run, no launcher)
+        if: github.event_name != 'push'
+        run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate
       - name: Install hash-pinned Python build tools
         run: |
           set -euo pipefail
