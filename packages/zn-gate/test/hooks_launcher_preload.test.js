@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const launcher = require('../lib/agents/launcher');
 const loaderEnv = require('../lib/loader-env');
 const { tempDir } = require('./helpers/tmp');
-const { hasPosixSh: posix } = require('./helpers/posix_sh');
+const { hasPosixSh: posix, skipUnlessPosixSh } = require('./helpers/posix_sh');
 
 // A stub runner: records that it ran, confirms its answer like the real runner and prints an empty JSON answer.
 const RUNNER = "const fs = require('fs');" +
@@ -42,7 +42,8 @@ function run(f, extra) {
 // On macOS dyld ends /bin/sh itself when a DYLD_ variable names a library that is not there, before any hook code exists: the hook must
 // not run either way, and the status 2 block is only required where the shell survives (everywhere else).
 // The same for the ld.so trace and debug variables: the loader prints and the shell exits with no script run at all (see the threat model).
-const dyldKills = (name) => (process.platform === 'darwin' && name.startsWith('DYLD_')) || /^LD_(TRACE_LOADED_OBJECTS|DEBUG)/.test(name);
+// On Windows the sh of Git Bash (MSYS) reads LD_PRELOAD itself and ends with a fatal error when it names a file it cannot load: no hook code runs there either.
+const dyldKills = (name) => (process.platform === 'darwin' && name.startsWith('DYLD_')) || /^LD_(TRACE_LOADED_OBJECTS|DEBUG)/.test(name) || (process.platform === 'win32' && name === 'LD_PRELOAD');
 
 for (const name of loaderEnv.LOADER_PRELOAD) {
   test('sh launcher: ' + name + ' set in the environment blocks the call and the hook does not run', { skip: !posix }, (t) => {
@@ -144,6 +145,8 @@ test('sh launcher: every library path variable lets the hook run and is gone for
 });
 
 // ---- the project guard (sh -c form for most agents, the split-on-spaces form of Antigravity)
+// These tests build a POSIX bin folder of links to /bin/sh and node and a PATH with ':' entries: on Windows (where the guard is PowerShell) they are not run.
+const GUARD_ON_WINDOWS = 'the POSIX guard is built from links and a ":" PATH, which Windows has not; its Windows form is PowerShell';
 function mkbin(t) {
   const dir = tempDir(t, 'zn-guard-preload-');
   const bin = path.join(dir, 'bin');
@@ -167,7 +170,7 @@ const guardForms = {
   },
 };
 for (const [name, runGuard] of Object.entries(guardForms)) {
-  test('project guard (' + name + '): a preload variable blocks the call and zn is not started; without it zn runs', { skip: !posix }, (t) => {
+  test('project guard (' + name + '): a preload variable blocks the call and zn is not started; without it zn runs', { skip: skipUnlessPosixSh(GUARD_ON_WINDOWS) }, (t) => {
     const b = mkbin(t);
     const clean = { PATH: b.bin + ':/usr/bin:/bin' };
     const ok = runGuard(b.bin, clean);
@@ -191,7 +194,7 @@ for (const [name, runGuard] of Object.entries(guardForms)) {
 }
 
 for (const [name, runGuard] of Object.entries(guardForms)) {
-  test('project guard (' + name + '): a library path variable does not block, zn runs without it', { skip: !posix }, (t) => {
+  test('project guard (' + name + '): a library path variable does not block, zn runs without it', { skip: skipUnlessPosixSh(GUARD_ON_WINDOWS) }, (t) => {
     const b = mkbin(t);
     for (const v of loaderEnv.LOADER_LIBPATH) {
       fs.rmSync(b.ran, { force: true });

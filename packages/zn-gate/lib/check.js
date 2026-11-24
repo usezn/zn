@@ -235,7 +235,7 @@ function antigravityOtherHooks(files) {
 }
 
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
-function parseCommand(command, agentId) {
+function parseCommand(command, agentId, platform = process.platform) {
   const { _internal: audit } = require('./audit');
   const launcher = require('./agents/launcher');
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
@@ -283,7 +283,7 @@ function parseCommand(command, agentId) {
   }
   // The project hook (shared file): `zn` on the PATH inside zn's own guard (launcher.projectShCommand / projectWindowsScript).
   // Only the exact guard this version writes counts as guarded; a guard-looking command that differs is reported as modified.
-  if (launcher.isProjectGuardExact(c, agentId) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
+  if (launcher.isProjectGuardExact(c, agentId, platform) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
   if (launcher.isProjectGuard(c, agentId) || (ws && launcher.isProjectWindowsScript(ws, agentId))) return { onPath: true, guarded: true, modified: true };
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };

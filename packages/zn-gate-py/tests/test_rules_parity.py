@@ -10,11 +10,12 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
 from zn_gate import rules as R
+
+from ._timing import assert_linear
 
 NODE_PKG = Path(__file__).resolve().parents[2] / "zn-gate"
 EXPORT_SCRIPT = NODE_PKG / "test" / "helpers" / "export_rules.js"
@@ -471,10 +472,8 @@ class TestPrefixedCredentialNames(unittest.TestCase):
         self.assertEqual(lines[-1], "SERVICE_TOKEN=[REDACTED_SECRET]")
 
     def test_trailing_separators_are_linear(self):
-        for text in ("A_TOKEN=" + ";" * 200000, "API_KEY=" + "," * 200000, "A_TOKEN=a" + ";" * 200000):
-            start = time.process_time()
-            R.redact_secrets(text)
-            self.assertLess(time.process_time() - start, 5.0)
+        for build in (lambda n: "A_TOKEN=" + ";" * n, lambda n: "API_KEY=" + "," * n, lambda n: "A_TOKEN=a" + ";" * n):
+            assert_linear(R.redact_secrets, build, 200000, build(4))
 
 
 if __name__ == "__main__":

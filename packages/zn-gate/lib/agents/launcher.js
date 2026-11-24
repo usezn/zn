@@ -576,7 +576,10 @@ const PROJECT_TRUST = [
 ];
 
 // The sh scrub of loader-env.js without its comment lines (it spans lines: the loop reads `export -p` one line at a time).
-const PROJECT_SCRUB = shScrubLines({ fast: process.platform !== 'win32' }).filter((l) => !l.startsWith('#')).join('\n');
+// Two forms: the fast one (unset of the listed names) for sh on Linux and macOS, and the scan of the whole environment for sh on Windows
+// (Git Bash passes Windows names through in any case). The system the command is for decides, not the machine that writes it.
+const projectScrub = (fast) => shScrubLines({ fast }).filter((l) => !l.startsWith('#')).join('\n');
+const PROJECT_SCRUB = { fast: projectScrub(true), full: projectScrub(false) };
 
 // Where $Z and $N really are, links resolved (ZP, NP): with readlink -f or realpath, or, for a file that is not a link,
 // its folder read with cd -P (which resolves a linked folder). A PATH entry outside node_modules can be a link into
@@ -614,7 +617,7 @@ const splitFormLine = (line) => line.replace(/ 2>\/dev\/null/g, '').replace(/ (&
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
  * exit 127, which the agents run through as a non-blocking error.
  */
-function projectShCommand(agentId, event) {
+function projectShCommand(agentId, event, opts = {}) {
   checkAgentId(agentId);
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   // An agent that runs the command through a shell (every one but Antigravity) gets the readable script in single quotes: the
@@ -631,7 +634,7 @@ function projectShCommand(agentId, event) {
     // set the environment of the agent.
     const stop = projectAnswer(agentId, event, 'loader', false);
     // A library preloaded into this shell already ran: zn is not started and the call is blocked (see loaderText).
-    const script = 'LP=' + PRELOAD_VALUE + '\nif [ -n "$LP" ]; then ' + say(stop) + '; fi\n' + PROJECT_SCRUB + '\nZ=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; ' + PROJECT_REAL.join('; ') + '; R=missing; ' +
+    const script = 'LP=' + PRELOAD_VALUE + '\nif [ -n "$LP" ]; then ' + say(stop) + '; fi\n' + PROJECT_SCRUB[(opts.platform || process.platform) === 'win32' ? 'full' : 'fast'] + '\nZ=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; ' + PROJECT_REAL.join('; ') + '; R=missing; ' +
       'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
@@ -695,7 +698,7 @@ function projectWindowsScript(agentId, event) {
 function isProjectGuard(command, agentId) {
   try {
     if (typeof command !== 'string') return false;
-    if (command === projectShCommand(agentId)) return true;
+    if (command === projectShCommand(agentId) || command === projectShCommand(agentId, undefined, { platform: 'win32' }) || command === projectShCommand(agentId, undefined, { platform: 'linux' })) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
     if ((command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") || ((command.startsWith("sh -c 'unset ") || command.startsWith("sh -c 'LP=")) && command.includes("\nZ=$(command -v zn); N=$(command -v node); "))) &&
       command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
@@ -716,10 +719,11 @@ function isProjectWindowsScript(script, agentId) {
 const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'ConfigChange', 'InstructionsLoaded', 'PermissionRequest', 'BeforeTool',
   'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
 
-/** Whether a command is exactly a POSIX project guard that this version writes (any event of this agent). */
-function isProjectGuardExact(command, agentId) {
+/** Whether a command is exactly a POSIX project guard that this version writes for `platform` (default: this system; any event of this agent). */
+function isProjectGuardExact(command, agentId, platform = process.platform) {
   try {
-    return typeof command === 'string' && GUARD_EVENTS.some((e) => command === projectShCommand(agentId, e));
+    // Only the form written for this system: the short scrub leaves a name in another case (Node_Options) set, which Windows reads as NODE_OPTIONS.
+    return typeof command === 'string' && GUARD_EVENTS.some((e) => command === projectShCommand(agentId, e, { platform }));
   } catch (_) { return false; }
 }
 

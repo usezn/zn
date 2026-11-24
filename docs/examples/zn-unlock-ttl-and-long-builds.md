@@ -11,7 +11,7 @@ npx -y zn-gate unlock --ttl 6h --idle 2h
 ```
 
 ```text
-Vault unlocked: locks after 120 min idle, or at 19:13 (in 6 h) at the latest. Run `npx -y zn-gate@1.16.0 lock` to lock now.
+Vault unlocked: locks after 120 min idle, or at 19:13 (in 6 h) at the latest. Run `npx -y zn-gate@1.17.0 lock` to lock now.
 ```
 
 - `--ttl` is the most time the vault stays open, whatever the use. The default is `8h`. When it runs out, the vault locks, even while you are using it.
@@ -33,7 +33,7 @@ npx -y zn-gate vault status
 ```
 
 ```text
-Vault: unlocked (backend passphrase, locks after 120 min idle, or at 19:13 (in 6 h) at the latest, zn-gate 1.16.0)
+Vault: unlocked (backend passphrase, locks after 120 min idle, or at 19:13 (in 6 h) at the latest, zn-gate 1.17.0)
 ```
 
 (A second line names the folder of the vault and is left out here.) You cannot change the limits of a vault that is already open. A second `unlock` stops with `The vault is already unlocked, so there is nothing to do.` and exit code `1`. Run `lock` first, then unlock again with the new values.
@@ -56,7 +56,7 @@ Vault: locked (backend passphrase)
 The running program kept what it had been given and ended normally, with exit code `0`. What the lock stops is the next request. A second `zn run` after the lock stops with exit code `1` and runs nothing:
 
 ```text
-zn run: Your secret vault is locked. Unlock it in this terminal with: npx -y zn-gate@1.16.0 unlock. Then run this command again.
+zn run: Your secret vault is locked. Unlock it in this terminal with: npx -y zn-gate@1.17.0 unlock. Then run this command again.
 ```
 
 So the choice depends on the shape of the work:

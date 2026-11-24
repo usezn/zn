@@ -22,7 +22,7 @@ Location: ~/.zn/vault
 ```
 
 ```text
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 19:15 (in 8 h) at the latest, zn-gate 1.16.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 19:15 (in 8 h) at the latest, zn-gate 1.17.0)
 Location: ~/.zn/vault
 ```
 

@@ -6,6 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const path = require('path');
 const { tempDir } = require('./helpers/tmp');
@@ -167,12 +168,14 @@ test('Windows paths: the hook command and a C:\\ codex home', (t) => {
   assert.equal(findOtherHooks('C:\\Users\\me\\x', null), null);
 });
 
-test('a 200 KB command is read within the time bound', (t) => {
+test('a 200 KB command is read in linear time', (t) => {
   const dir = codexHome(t);
-  writeHooks(dir, under('PreToolUse', group('Bash', 'x'.repeat(200 * 1024) + ' check')));
-  const t0 = Date.now();
-  assert.equal(findOtherHooks(dir, null).event, 'PreToolUse');
-  assert.ok(Date.now() - t0 < 2000, 'took too long');
+  const build = (n) => {
+    writeHooks(dir, under('PreToolUse', group('Bash', 'x'.repeat(n) + ' check')));
+    return dir;
+  };
+  assert.equal(findOtherHooks(build(200 * 1024), null).event, 'PreToolUse');
+  assertLinear((d) => findOtherHooks(d, null), build, 200 * 1024);
 });
 
 test('a hooks file over the 256 KB cap is reported as too large to check', (t) => {
