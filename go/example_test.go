@@ -20,8 +20,9 @@ func ExampleClient_Analyze() {
 		return
 	}
 	if !res.Allowed() {
-		// Stop on anything that is not an explicit allow, including an
-		// empty or unknown verdict.
+		// Stop on anything that is not an explicit allow of the whole
+		// input, including an empty or unknown verdict and a partial
+		// check (res.Partial()).
 		fmt.Println("stopped:", res.Verdict, res.Rule)
 		return
 	}

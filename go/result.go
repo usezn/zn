@@ -56,7 +56,8 @@ type Result struct {
 	// your quota.
 	InputChars  int `json:"input_chars"`
 	BilledCalls int `json:"billed_calls"`
-	// LongInput is set when the text was scored in windows.
+	// LongInput is set for a long input: scored in windows (Mode "windows"), or
+	// not (Mode "truncate", with a Reason). See WholeInputChecked.
 	LongInput *LongInput `json:"long_input,omitempty"`
 }
 
@@ -87,9 +88,25 @@ func (r *Result) WouldHaveBlocked() bool {
 // Blocked reports whether the verdict is "block".
 func (r *Result) Blocked() bool { return r != nil && r.Verdict == VerdictBlock }
 
-// Allowed reports whether the verdict is exactly "allow". To fail closed,
-// treat anything that is not Allowed as a stop.
-func (r *Result) Allowed() bool { return r != nil && r.Verdict == VerdictAllow }
+// Allowed reports whether the verdict is exactly "allow" and the whole input
+// was checked (see WholeInputChecked). It is false when only part of a long
+// input was scored: a partial result, a capped input or a truncated one. To
+// fail closed, treat anything that is not Allowed as a stop.
+func (r *Result) Allowed() bool {
+	return r != nil && r.Verdict == VerdictAllow && r.WholeInputChecked()
+}
+
+// WholeInputChecked reports whether every part of the input was scored. A
+// short input (no LongInput) always is. A long input is only when it was scored
+// in windows ("windows" mode), it did not need more windows than the limit
+// (not Capped) and every window was scored in time (not Partial).
+func (r *Result) WholeInputChecked() bool {
+	if r == nil {
+		return false
+	}
+	li := r.LongInput
+	return li == nil || (li.Mode == "windows" && !li.Capped && !li.Partial)
+}
 
 // Partial reports whether only part of a long input was scored in time:
 // the windows already scored decided the verdict, and the rest were not
