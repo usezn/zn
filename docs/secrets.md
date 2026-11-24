@@ -168,6 +168,13 @@ They are personal data, not secrets: they follow the scrubber's `pii` setting
 with `pii: { name: false, address: false, username: false }`. They are on by
 default.
 
+IPv4 addresses have their own switch, `pii: { ipv4: true }`, and it is **off by
+default** (`pii: true` does not turn it on). When you turn it on, public IPv4
+addresses are masked. Private, loopback and link-local addresses, and these
+reserved blocks, always stay readable: 192.0.0.0/24, 192.0.2.0/24,
+198.51.100.0/24, 203.0.113.0/24 and 198.18.0.0/15 (192.0.0.9 and 192.0.0.10 are
+public and are masked). The Python package does not mask IPv4 addresses.
+
 A prompt that contains a secret is not sent. In prompts, zn also blocks a
 value of 8 characters or more given to a credential name, in the middle of a
 sentence too
