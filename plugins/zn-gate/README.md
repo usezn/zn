@@ -208,7 +208,7 @@ npm audit signatures
 Claude Code, from a marketplace pinned to the release tag:
 
 ```bash
-claude plugin marketplace add usezn/zn#v1.16.0
+claude plugin marketplace add usezn/zn#v1.17.0
 claude plugin install zn-gate@usezn
 ```
 

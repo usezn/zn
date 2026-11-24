@@ -70,7 +70,7 @@ plugin; for the other agents, first install zn-gate as shown above. Then:
 ### Claude Code
 
 ```bash
-claude plugin marketplace add usezn/zn#v1.16.0
+claude plugin marketplace add usezn/zn#v1.17.0
 claude plugin install zn-gate@usezn
 ```
 
@@ -85,7 +85,7 @@ zn-gate. If you installed hooks before with
 ### Codex
 
 ```bash
-codex plugin marketplace add usezn/zn --ref v1.16.0
+codex plugin marketplace add usezn/zn --ref v1.17.0
 ```
 
 Install `zn-gate` from the `usezn` marketplace with `/plugins`. That adds the
@@ -122,7 +122,7 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 Plugins with lifecycle hooks are not eligible for OpenAI's public plugin
 directory ([plugin packaging guide](https://developers.openai.com/codex/plugins/build)),
 so zn-gate's Codex plugin is distributed through the repository marketplace
-(`codex plugin marketplace add usezn/zn --ref v1.16.0`).
+(`codex plugin marketplace add usezn/zn --ref v1.17.0`).
 
 ### Cursor
 
