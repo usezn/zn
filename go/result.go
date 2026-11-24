@@ -56,7 +56,8 @@ type Result struct {
 	// your quota.
 	InputChars  int `json:"input_chars"`
 	BilledCalls int `json:"billed_calls"`
-	// LongInput is set when the text was scored in windows.
+	// LongInput is set for a long input: scored in windows (Mode "windows"), or
+	// not (Mode "truncate", with a Reason). See WholeInputChecked.
 	LongInput *LongInput `json:"long_input,omitempty"`
 }
 
