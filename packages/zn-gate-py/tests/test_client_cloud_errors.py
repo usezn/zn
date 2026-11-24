@@ -34,8 +34,8 @@ class _Resp:
         return False
 
 
-def _http_error(code, reason):
-    return urllib.error.HTTPError(ENDPOINT, code, reason, {}, io.BytesIO(b"{}"))
+def _http_error(code, reason, body=b"{}"):
+    return urllib.error.HTTPError(ENDPOINT, code, reason, {}, io.BytesIO(body))
 
 
 class TestCloudErrors(unittest.TestCase):
@@ -122,6 +122,68 @@ class TestCloudErrors(unittest.TestCase):
                 self.assertIn("Cloud gate error", stderr.getvalue())
                 self.assertNotIn(FAKE_KEY, json.dumps(res))
                 self.assertNotIn(FAKE_KEY, stderr.getvalue())
+
+    def test_banned_account_403_gets_its_own_hint(self):
+        err = _http_error(403, "Forbidden", b'{"error": "Account suspended", "code": "account_banned"}')
+        res = self._run(self._raising(err))
+        self._assert_fallback(res, "403")
+        self.assertIn("suspended", client.cloud_error_hint(err))
+        self.assertIn("contact support", client.cloud_error_hint(err))
+        self.assertNotIn("API key", client.cloud_error_hint(err))
+
+    def test_other_403_keeps_the_api_key_hint(self):
+        bodies = {
+            "other_code": b'{"code": "something_else"}',
+            "no_code": b'{"error": "Forbidden"}',
+            "empty": b"",
+            "not_json": b"<html>Forbidden</html>",
+            "json_list": b"[1, 2]",
+            "code_not_string": b'{"code": 5}',
+            "banned_on_401": None,
+        }
+        for name, body in bodies.items():
+            with self.subTest(body=name):
+                if body is None:
+                    err = _http_error(401, "Unauthorized", b'{"code": "account_banned"}')
+                else:
+                    err = _http_error(403, "Forbidden", body)
+                res = self._run(self._raising(err))
+                self._assert_fallback(res)
+                self.assertIn("did not accept the API key", client.cloud_error_hint(err))
+
+    def test_oversized_error_body_is_not_read_fully(self):
+        class _Counting(io.BytesIO):
+            total = 0
+
+            def read(self, n=-1):
+                data = super().read(n)
+                _Counting.total += len(data)
+                return data
+
+        body = _Counting(b'{"code": "account_banned", "pad": "' + b"x" * 1_000_000 + b'"}')
+        err = urllib.error.HTTPError(ENDPOINT, 403, "Forbidden", {}, body)
+        res = self._run(self._raising(err))
+        self._assert_fallback(res, "403")
+        self.assertLess(_Counting.total, 10_000)
+        self.assertTrue(body.closed)
+        self.assertIn("did not accept the API key", client.cloud_error_hint(err))
+
+    def test_banned_hint_never_shows_the_key_or_the_body(self):
+        err = _http_error(403, "Forbidden", b'{"code": "account_banned", "detail": "secret-detail-xyz"}')
+        res = self._run(self._raising(err))
+        hint = client.cloud_error_hint(err)
+        for text in (hint, json.dumps(res)):
+            self.assertNotIn(FAKE_KEY, text)
+            self.assertNotIn("secret-detail-xyz", text)
+
+    def test_banned_error_that_cannot_be_read_does_not_raise(self):
+        class _Broken(io.BytesIO):
+            def read(self, n=-1):
+                raise OSError("connection reset")
+
+        err = urllib.error.HTTPError(ENDPOINT, 403, "Forbidden", {}, _Broken(b""))
+        self._assert_fallback(self._run(self._raising(err)), "403")
+        self.assertIn("did not accept the API key", client.cloud_error_hint(err))
 
     def test_fallback_keeps_no_cloud_fields(self):
         res = self._run(self._raising(_http_error(500, "Server Error")))

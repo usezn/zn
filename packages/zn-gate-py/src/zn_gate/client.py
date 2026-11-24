@@ -188,9 +188,37 @@ def analyze_cloud(
         return parsed
 
 
+_ERROR_BODY_CAP = 4096
+
+
+def _error_code(exc: urllib.error.HTTPError) -> Optional[str]:
+    """The "code" field of the JSON body of an HTTP error, or None.
+
+    Reads at most _ERROR_BODY_CAP bytes, never raises, and remembers the answer on
+    the error so a body that was already read or closed is not read again."""
+    if hasattr(exc, "_zn_error_code"):
+        return cast(Optional[str], getattr(exc, "_zn_error_code"))
+    code: Optional[str] = None
+    try:
+        raw = exc.read(_ERROR_BODY_CAP + 1)
+        if isinstance(raw, bytes) and 0 < len(raw) <= _ERROR_BODY_CAP:
+            body = json.loads(raw.decode("utf-8"))
+            value = body.get("code") if isinstance(body, dict) else None
+            code = value if isinstance(value, str) else None
+    except Exception:
+        code = None
+    try:
+        setattr(exc, "_zn_error_code", code)
+    except Exception:
+        pass
+    return code
+
+
 def cloud_error_hint(exc: BaseException) -> str:
     """One plain sentence on what a failed cloud call means and what to do."""
     if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 403 and _error_code(exc) == "account_banned":
+            return "The cloud service says this account is suspended (account_banned): contact support."
         if exc.code in (401, 403):
             return "The cloud service did not accept the API key: check ZN_API_KEY."
         return f"The cloud service answered with an error (HTTP {exc.code}): try again later."
@@ -279,7 +307,8 @@ def analyze(
         return cloud_res
     except Exception as exc:
         if isinstance(exc, urllib.error.HTTPError):
-            # An HTTP error carries the open response: close it now instead of leaving the socket to the GC.
+            # Read the error code while the body is open, then close it instead of leaving the socket to the GC.
+            _error_code(exc)
             exc.close()
         if is_verbose():
             import sys
