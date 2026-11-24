@@ -44,9 +44,12 @@
  *    scrubber) and the ES modules of its bundled dependencies are loaded from
  *    disk by Node after the check, so a change made in between is not seen.
  *  - Whoever controls the environment the agent starts hooks with decides
- *    which `node` runs this file, can preload code with NODE_OPTIONS before
- *    this file starts, and chooses the PATH used to find zn-gate (only an
- *    exact copy of the pinned release passes the check).
+ *    which `node` runs this file and chooses the PATH used to find zn-gate
+ *    (only an exact copy of the pinned release passes the check). The hook
+ *    scripts (scripts/zn-node.sh, the ZCode zn-hook scripts) remove
+ *    NODE_OPTIONS, NODE_PATH and the other loader variables before they
+ *    start Node.js; started any other way, a preload set there runs before
+ *    this file.
  *  - Code running as the user can edit this plugin or ~/.zn/config.json.
  * It reduces what a prompt-injected agent can do through its own tools; it
  * is not a sandbox.

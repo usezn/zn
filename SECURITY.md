@@ -7,8 +7,8 @@ Upgrade to it to receive them.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 1.16.x   | :white_check_mark: |
-| < 1.16.0 | :x:                |
+| 1.17.x   | :white_check_mark: |
+| < 1.17.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
@@ -71,6 +71,7 @@ These reports are not accepted as vulnerabilities:
 * Automated scanner spam without actionable proof-of-concept
 * Missing hardening headers or best practices without a demonstrable security impact
 * Findings that require physical access or a compromised end-user device
+* A hook launcher that cannot undo a library the dynamic loader already put into the shell (`LD_PRELOAD` and similar), or a shell that the loader ends before the launcher runs: the launcher refuses to run the hook when it sees these variables, and the remaining limit is described in the threat model
 * Unverified reports (no reproduced steps and no observed result)
 
 ### If you find a malicious package in our dependencies

@@ -13,10 +13,20 @@ const { tempDir } = require('./helpers/tmp');
 const ev = require('../lib/evidence');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
-const LINKS_SKIP = process.platform === 'win32'
-  ? 'the symlink and hard link cases are not created on Windows (the file system may refuse them); the Linux run covers them'
-  : false;
 const REFUSAL = /the output file is the evidence log itself; choose another path/;
+
+function tryCreateLink(t, makeLink, reason) {
+  try {
+    makeLink();
+    return true;
+  } catch (err) {
+    if (process.platform === 'win32' && ['EPERM', 'EACCES', 'ENOTSUP'].includes(err && err.code)) {
+      t.skip(reason);
+      return false;
+    }
+    throw err;
+  }
+}
 
 function setup(t) {
   const home = tempDir(t, 'zn-export-same-');
@@ -53,20 +63,20 @@ test('export onto the evidence log path itself is refused and the log is kept', 
   assertRefused(r, file, before);
 });
 
-test('export onto a symlink to the evidence log is refused and the log is kept', { skip: LINKS_SKIP }, (t) => {
+test('export onto a symlink to the evidence log is refused and the log is kept', (t) => {
   const { home, file } = setup(t);
   const link = path.join(home, 'alias.jsonl');
-  fs.symlinkSync(file, link);
+  if (!tryCreateLink(t, () => fs.symlinkSync(file, link), 'symbolic links need privileges on Windows')) return;
   const before = fs.readFileSync(file);
   const r = run(home, ['--export', '--format', 'jsonl', '--output', link]);
   assertRefused(r, file, before);
   assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link is still a link');
 });
 
-test('export onto a hard link to the evidence log is refused and the log is kept', { skip: LINKS_SKIP }, (t) => {
+test('export onto a hard link to the evidence log is refused and the log is kept', (t) => {
   const { home, file } = setup(t);
   const hard = path.join(home, 'copy.jsonl');
-  fs.linkSync(file, hard);
+  if (!tryCreateLink(t, () => fs.linkSync(file, hard), 'hard links are refused on this Windows filesystem')) return;
   const before = fs.readFileSync(file);
   const r = run(home, ['--export', '--format', 'jsonl', '--output', hard]);
   assertRefused(r, file, before);

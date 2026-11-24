@@ -53,9 +53,8 @@ const USAGE = 'usage: zn run [--secrets NAME[,NAME...]] [--agent ID] [--egress-a
 // choosing: dynamic loader and glibc settings (LD_PRELOAD,
 // DYLD_INSERT_LIBRARIES, GCONV_PATH ...) and interpreter start-up options
 // (NODE_OPTIONS=--require, PYTHONPATH, PERL5OPT, JAVA_TOOL_OPTIONS, BASH_ENV ...).
-const LOADER_VAR = new RegExp('^(LD_|DYLD_)|^(GCONV_PATH|GLIBC_TUNABLES|LOCPATH|NLSPATH|HOSTALIASES|RES_OPTIONS|' +
-  'NODE_OPTIONS|NODE_PATH|NODE_REPL_EXTERNAL_MODULE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTHONINSPECT|PERL5OPT|PERL5LIB|PERLLIB|' +
-  'RUBYOPT|RUBYLIB|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|BASH_ENV|ENV)$', 'i');
+// The same list the hook launchers use (lib/loader-env.js).
+const { LOADER_VAR } = require('../loader-env');
 
 function splitList(v) {
   return String(v || '').split(',').map((s) => s.trim()).filter(Boolean);

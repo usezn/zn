@@ -1,2 +1,0 @@
-### Fixed
-- GitHub Copilot's tool output (`toolResult.textResultForLlm` or `tool_result.text_result_for_llm`) is now read as the text it is: it is scanned for secrets and injection like any other tool output and is never mistaken for a file path. Before, odd text there could make zn refuse the whole call, as it does for a malformed file path. Every other field of the event is still checked, and so is a `toolResult` or `tool_result` field sent by any other agent.
