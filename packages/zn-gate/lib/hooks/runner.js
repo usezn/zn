@@ -771,16 +771,41 @@ function writtenTextsOf(ev, p, cwd) {
   for (const t of Array.isArray(input.texts) ? input.texts : []) if (t && typeof t.value === 'string') out.push(t.value);
   walk(ev.raw, 0);
   walk(input.args, 0);
-  // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it.
+  // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it: every edit shape
+  // (one old/new pair in snake or camel case, a MultiEdit `edits` array applied in order, replace-all flags). When the file cannot be
+  // read, or an edit does not apply exactly once, `unresolved` is set and a guarded dotenv path is refused.
   const args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs;
-  if (args && typeof args === 'object' && typeof args.old_string === 'string' && typeof args.new_string === 'string' && args.old_string && p) {
-    try {
-      const file = path.resolve(cwd || process.cwd(), String(p));
-      if (fs.statSync(file).size < 4000000) {
-        const body = fs.readFileSync(file, 'utf8');
-        out.push(args.replace_all === true || args.allow_multiple === true ? body.split(args.old_string).join(args.new_string) : body.replace(args.old_string, () => args.new_string));
+  if (args && typeof args === 'object' && p) {
+    const pick = (o, a, b) => (typeof o[a] === 'string' ? o[a] : typeof o[b] === 'string' ? o[b] : null);
+    const edits = [];
+    const add = (o) => {
+      if (!o || typeof o !== 'object') return;
+      const oldS = pick(o, 'old_string', 'oldString');
+      const newS = pick(o, 'new_string', 'newString');
+      if (oldS === null && newS === null) return;
+      edits.push({ oldS, newS, all: o.replace_all === true || o.replaceAll === true || o.allow_multiple === true || o.allowMultiple === true });
+    };
+    add(args);
+    if (Array.isArray(args.edits)) for (const e of args.edits) add(e);
+    if (edits.length) {
+      try {
+        const file = path.resolve(cwd || process.cwd(), String(p));
+        const stat = fs.statSync(file);
+        if (stat.size >= 4000000) throw new Error('too large');
+        let body = fs.readFileSync(file, 'utf8');
+        for (const e of edits) {
+          if (e.oldS === null || e.newS === null) { out.unresolved = true; break; }
+          if (!e.oldS) continue; // nothing to find: only what is written counts
+          const at = body.indexOf(e.oldS);
+          if (at < 0 || (!e.all && body.indexOf(e.oldS, at + 1) >= 0)) { out.unresolved = true; break; }
+          body = e.all ? body.split(e.oldS).join(e.newS) : body.slice(0, at) + e.newS + body.slice(at + e.oldS.length);
+        }
+        if (!out.unresolved) out.push(body);
+      } catch (err) {
+        // A file that does not exist yet: only what is written counts. Any other failure leaves the result unknown.
+        if (!(err && err.code === 'ENOENT')) out.unresolved = true;
       }
-    } catch (_) { /* a new file: only what is written counts */ }
+    }
   }
   return out;
 }

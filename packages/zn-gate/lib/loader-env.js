@@ -146,4 +146,36 @@ function hookStopAssignedIn(text) {
   return null;
 }
 
-module.exports = { isHookStopVar, hookStopAssignedIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+// A value is proven safe only when it holds nothing the shell or printf would expand ($NAME, ${..}, $(..), `..`, $((..)), %s, a backslash,
+// an adjacent quote that glues pieces together): what such a value becomes is not known until it runs. An unquoted value runs to the end of the
+// line, so what follows it (a redirection, more words) is part of what is checked.
+const COMPUTED_VALUE_RE = /[$`\%]/;
+
+/**
+ * Like hookStopAssignedIn, for a shell command that writes a dotenv file: the command text is not what ends up in the file once the
+ * shell has expanded it. Fails closed: also returns the name when LD_DEBUG or LD_TRACE_LOADED_OBJECTS is assigned a value that is not
+ * plain literal text (a variable, a command substitution, arithmetic, quoting tricks, a printf format), because it could expand to help.
+ */
+function hookStopOrComputedIn(text) {
+  const s = String(text);
+  if (!s.includes('LD_')) return null;
+  HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
+  let m;
+  while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
+    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
+    if (isHookStopVar(m[1], value)) return m[1];
+    const next = s.charAt(m.index + m[0].length);
+    // An unquoted value stops at a quote, a backslash or a closing bracket. A quote that closes the quote the assignment sits in
+    // ('LD_DEBUG=all') ends the word; any other one, or a backslash or bracket, glues more text to the value.
+    let glued = false;
+    if (m[2] === undefined && m[3] === undefined) {
+      const before = s.charAt(m.index - 1);
+      const closes = (next === '"' || next === "'") && before === next && !/[^\s;&|<>)]/.test(s.charAt(m.index + m[0].length + 1));
+      glued = /["'\\)}]/.test(next) && !closes;
+    }
+    if (glued || COMPUTED_VALUE_RE.test(value)) return m[1];
+  }
+  return null;
+}
+
+module.exports = { isHookStopVar, hookStopAssignedIn, hookStopOrComputedIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
