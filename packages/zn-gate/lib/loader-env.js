@@ -164,15 +164,17 @@ function hookStopOrComputedIn(text) {
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
     const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
     if (isHookStopVar(m[1], value)) return m[1];
-    const next = s.charAt(m.index + m[0].length);
-    // An unquoted value stops at a quote, a backslash or a closing bracket. A quote that closes the quote the assignment sits in
-    // ('LD_DEBUG=all') ends the word; any other one, or a backslash or bracket, glues more text to the value.
-    let glued = false;
-    if (m[2] === undefined && m[3] === undefined) {
-      const before = s.charAt(m.index - 1);
-      const closes = (next === '"' || next === "'") && before === next && !/[^\s;&|<>)]/.test(s.charAt(m.index + m[0].length + 1));
-      glued = /["'\\)}]/.test(next) && !closes;
-    }
+    const end = m.index + m[0].length;
+    const next = s.charAt(end);
+    const before = s.charAt(m.index - 1);
+    // Where the word ends: whitespace, a separator, a redirection or the end. A quote that closes the quote the assignment sits in
+    // ('LD_DEBUG=all') ends it too. Anything else touching the value (he"lp", "he"lp, 'he'"lp", a backslash or bracket) glues more text
+    // to it, so the value as written is not the value that results.
+    const atEnd = (c) => c === '' || /[\s;&|<>)]/.test(c);
+    const wordEnds = (i) => atEnd(s.charAt(i)) || ((s.charAt(i) === '"' || s.charAt(i) === "'") && before === s.charAt(i) && atEnd(s.charAt(i + 1)));
+    let glued;
+    if (m[2] !== undefined || m[3] !== undefined) glued = !wordEnds(end); // the closing quote of the value is already inside the match
+    else glued = /["'\\)}]/.test(next) && !((next === '"' || next === "'") && before === next && atEnd(s.charAt(end + 1)));
     if (glued || COMPUTED_VALUE_RE.test(value)) return m[1];
   }
   return null;

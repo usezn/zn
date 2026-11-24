@@ -205,3 +205,33 @@ test('shell commands that write a .env with a computed loader value are blocked,
     passes(await decide(claude, cc('Bash', { command }, dir)));
   }
 });
+
+test('shell writes that join quoted and unquoted pieces of a loader value are blocked', async (t) => {
+  const dir = project(t);
+  const bad = [
+    'echo LD_DEBUG="he"lp >> .env',
+    "echo LD_DEBUG='he'lp >> .env",
+    'echo LD_DEBUG=he"lp" >> .env',
+    "echo LD_DEBUG=he'lp' >> .env",
+    `echo LD_DEBUG='he'"lp" >> .env`,
+    `echo LD_DEBUG="he"'lp' >> .env`,
+    `echo LD_DEBUG="a""b" >> .env`,
+  ];
+  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
+  for (const command of ['echo LD_DEBUG="all" >> .env', "echo LD_DEBUG='all' >> .env", `echo 'LD_DEBUG="all"' >> .env`]) {
+    passes(await decide(claude, cc('Bash', { command }, dir)));
+  }
+});
+
+test('an edit that removes or neutralises LD_DEBUG=help is allowed: the text it searches for is not written', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1\nLD_DEBUG=help\n');
+  passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'LD_DEBUG=help', new_string: 'LD_DEBUG=all' }, dir)));
+  passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'LD_DEBUG=help\n', new_string: '' }, dir)));
+  passes(await decide(claude, cc('Edit', { file_path: env, oldString: 'LD_DEBUG=help', newString: 'LD_DEBUG=all' }, dir)));
+  passes(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'LD_DEBUG=help', new_string: 'LD_DEBUG=all' }] }, dir)));
+  passes(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'LD_DEBUG=help\n', new_string: '' }, { old_string: 'FOO=1', new_string: 'FOO=2' }] }, dir)));
+  // Still refused when the edit leaves the value in place.
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'FOO=1', new_string: 'FOO=2' }, dir)), STOP);
+});
