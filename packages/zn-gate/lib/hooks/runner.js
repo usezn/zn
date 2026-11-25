@@ -53,6 +53,7 @@ const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand, winCommandText } = require('../zn-command');
 const { unsafeKind } = require('../safe-text');
+const { MAX_NEST_DEPTH } = require('../nest-limits');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -788,7 +789,10 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
         try { walk(JSON.parse(v), depth + 1); return; } catch (_) { /* plain text */ }
       }
       out.push(v);
-    } else if (v && typeof v === 'object' && depth < 6 && !seen.has(v)) {
+    } else if (v && typeof v === 'object' && !seen.has(v)) {
+      // Nested deeper than the path scan reads (the same limit): text may be skipped, so the result is unknown and a guarded
+      // dotenv path is refused.
+      if (depth > MAX_NEST_DEPTH) { out.unresolved = true; return; }
       seen.add(v);
       // The text an edit searches for is not written: only what replaces it, and the file as it ends up, are judged.
       for (const [k, x] of Array.isArray(v) ? v.map((y) => ['', y]) : Object.entries(v)) if (!SEARCH_ONLY_KEYS.has(k)) walk(x, depth + 1);

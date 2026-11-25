@@ -498,3 +498,29 @@ test('an escaped quote does not end an LD_DEBUG value in a .env write (dotenv ru
   fs.writeFileSync(env, String.raw`LD_DEBUG="a\"X"` + '\n');
   passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'X', new_string: 'b' }, dir)));
 });
+
+test('GitHub Copilot CLI: an unknown file tool with the .env path deep in its arguments is refused when the text next to it cannot be read', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1');
+  const other = path.join(dir, 'notes.txt');
+  const cop = (args) => ({ sessionId: 's1', timestamp: 1792400000000, cwd: dir, toolName: 'files_helper', toolArgs: JSON.stringify(args) });
+  const nest = (levels, leaf) => levels.reduceRight((acc, k) => ({ [k]: acc }), leaf);
+  const { MAX_NEST_DEPTH } = require('../lib/nest-limits');
+  assert.equal(copilot.MAX_NEST_DEPTH, MAX_NEST_DEPTH);
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  for (const target of [env, other]) {
+    const dotenv = target === env;
+    for (let levels = 1; levels <= MAX_NEST_DEPTH; levels++) {
+      // The path and its content at the same level, from near the top to past the limit.
+      const same = cop(nest(names.slice(0, levels), { path: target, content: 'LD_DEBUG=help' }));
+      // The content one level below the path: the hooks read the arguments inside a wrapper, so past the limit the text is unknown and a dotenv target is refused.
+      const below = cop(nest(names.slice(0, levels), { path: target, extra: { content: 'LD_DEBUG=help' } }));
+      if (dotenv) blocked(await decide(copilot, same), levels === 1 ? STOP : null, 'same level ' + levels);
+      else passes(await decide(copilot, same));
+      const d = await decide(copilot, below);
+      if (dotenv && levels < MAX_NEST_DEPTH) blocked(d, null, 'below ' + levels);
+      else if (!dotenv) passes(d);
+    }
+  }
+});

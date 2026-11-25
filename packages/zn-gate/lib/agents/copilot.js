@@ -364,7 +364,8 @@ function taskLinesUnsafe(v, workspace) {
 
 
 // Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
-const MAX_NEST_DEPTH = 6;
+// One depth limit for the text scan of the hooks runner and the path scan here (lib/nest-limits.js).
+const { MAX_NEST_DEPTH } = require('../nest-limits');
 const MAX_NEST_NODES = 500;
 
 /**
