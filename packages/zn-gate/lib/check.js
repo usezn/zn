@@ -133,7 +133,7 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
-    id: 'copilot', name: 'GitHub Copilot (VS Code, CLI)', event: 'preToolUse', tool: 'view',
+    id: 'copilot', name: 'Copilot CLI (experimental)', event: 'preToolUse', tool: 'view',
     fix: 'run `zn hooks install copilot` in your own terminal',
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
