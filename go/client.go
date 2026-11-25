@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -42,15 +43,44 @@ type Client struct {
 	maxRetries   int
 	maxRetryWait time.Duration
 	backoffBase  time.Duration
+	// baseErr is set when the base URL is refused; Analyze returns it.
+	baseErr error
 }
 
 // Option configures a Client.
 type Option func(*Client)
 
 // WithBaseURL sets the API host, for example for a test server. The
-// default is DefaultBaseURL.
+// default is DefaultBaseURL. The URL must use https, so the API key is
+// never sent in clear text; plain http is accepted only for a loopback
+// host (localhost, 127.0.0.1 or [::1]). Any other URL makes Analyze return
+// an error that wraps ErrInsecureBaseURL, and nothing is sent.
 func WithBaseURL(u string) Option {
-	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
+	return func(c *Client) {
+		c.baseURL = strings.TrimRight(u, "/")
+		c.baseErr = checkBaseURL(c.baseURL)
+	}
+}
+
+// checkBaseURL accepts an https URL, or an http URL whose host is exactly
+// a loopback name. The host is compared after parsing, so look-alikes such
+// as localhost.example.com or 127.0.0.1.nip.io are refused, and so is a
+// URL with credentials in front of a non-loopback host.
+func checkBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return fmt.Errorf("%w: not a valid URL with a host", ErrInsecureBaseURL)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		switch strings.ToLower(u.Hostname()) {
+		case "localhost", "127.0.0.1", "::1":
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: use https (plain http is allowed only for localhost, 127.0.0.1 and [::1])", ErrInsecureBaseURL)
 }
 
 // WithHTTPClient sets the HTTP client, for example to add a proxy or a
@@ -179,10 +209,16 @@ func LongInputWindows() AnalyzeOption {
 //
 // An input of more than MaxInputUnits UTF-16 code units is refused before
 // anything is sent (the error wraps ErrInputTooLong). API errors are
-// returned as *APIError.
+// returned as *APIError. A base URL that is not https (and not loopback)
+// returns ErrInsecureBaseURL, and a 200 answer without a verdict of allow or
+// block returns ErrUnexpectedResponse, so a caller never reads a missing
+// verdict as a pass.
 func (c *Client) Analyze(ctx context.Context, input string, opts ...AnalyzeOption) (*Result, error) {
 	if c.apiKey == "" {
 		return nil, ErrNoAPIKey
+	}
+	if c.baseErr != nil {
+		return nil, c.baseErr
 	}
 	if input == "" {
 		return nil, ErrEmptyInput
@@ -261,6 +297,9 @@ func (c *Client) do(ctx context.Context, body []byte, noStore bool) (*Result, ti
 		var res Result
 		if err := json.Unmarshal(data, &res); err != nil {
 			return nil, -1, fmt.Errorf("zn: decode response: %w", err)
+		}
+		if res.Verdict != VerdictAllow && res.Verdict != VerdictBlock {
+			return nil, -1, fmt.Errorf("%w: verdict is missing or not allow or block", ErrUnexpectedResponse)
 		}
 		return &res, -1, nil
 	}
