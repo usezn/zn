@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-17.1';
+const COMMAND_RULES_VERSION = '2026-11-25.3';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -266,7 +266,9 @@ function fromCwd(cwd, word) {
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
   if (cwd === CWD_LOST) return '/';
   const ups = w.split(/[\\/]/).filter((s) => s === '..').length;
-  return folderText(cwd, ups + 4) + '/' + w;
+  // The folder and the word joined are read lexically, so cd /opt && curl -o ../etc/profile names /etc/profile.
+  // A ".." out of a home folder stays in the text: dangerousPath and isRcPath read it at both home depths.
+  return resolveDots((folderText(cwd, ups + 4) + '/' + w).replace(/\\/g, '/'), 0);
 }
 
 /* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read
@@ -411,8 +413,8 @@ function unwrapDir(args) {
 function unwrap(args) { return unwrapDir(args).args; }
 
 /* Resolves "." and ".." segments lexically (no filesystem) for a path that starts at a known point: "/", a drive, or a home word.
-   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder names its parent. Relative paths are left alone. */
-function resolveDots(t) {
+   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder is read both ways, since the depth of the real home is not known here (/root is one level, /home/<user> two): depth 2 reads the first step as /home, depth 1 as "/", depth 0 leaves the text alone for a caller that reads both. Relative paths are left alone. */
+function resolveDots(t, depth = 2) {
   if (!/(?:^|\/)\.\.?(?:\/|$)/.test(t)) return t;
   let anchor = '';
   let rest = t;
@@ -430,16 +432,24 @@ function resolveDots(t) {
     if (seg === '' || seg === '.') continue;
     if (seg !== '..') { out.push(seg); continue; }
     if (out.length) out.pop();
-    else if (home) return '/home';
+    else if (home) {
+      if (depth === 0) return t;
+      home = false; anchor = '/';
+      if (depth === 2) out.push('home');
+    }
   }
   return anchor + out.join('/');
 }
 
 /* The dangerous path a word names, as 'root', 'home' or 'system', or ''. */
 function dangerousPath(word) {
+  return dangerousPathAt(word, 2) || dangerousPathAt(word, 1);
+}
+
+function dangerousPathAt(word, depth) {
   let t = String(word).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
   if (!t) return '';
-  t = resolveDots(t);
+  t = resolveDots(t, depth);
   // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.
   for (let n = 0; n < 4; n++) {
     let s = t.replace(/\/(?:\*|\.\*|\.|\{\*,\.\*\})?$/, '');
@@ -688,7 +698,9 @@ function worldWritable(mode) {
 
 function isRcPath(w) {
   const t = String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
-  return RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w));
+  if (RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w))) return true;
+  const slashed = String(w).replace(/\\/g, '/');
+  return [2, 1].some((d) => { const u = resolveDots(slashed, d); return u !== slashed && isRcPath(u); });
 }
 
 /* The flag before the file a download is saved to: curl -o / --output, wget -O / --output-document, iwr -OutFile. */
