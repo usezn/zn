@@ -214,9 +214,11 @@ The marketplace follows the default branch of the repository, which takes
 releases, the plugin pin that follows each release, and documentation fixes
 (feature work lands on another branch first). To confirm what you installed, run
 `claude plugin list`: it shows the installed `zn-gate` version, which must be
-the release you expect. The plugin pins exactly one zn-gate release, and its
-launcher checks that package against the npm integrity hash and the digest of
-every file in `scripts/zn-gate.lock.json` before it runs anything.
+the release you expect. The plugin pins exactly one zn-gate release: npm installs it with the
+integrity hash in the plugin's `package-lock.json`, and the launcher compares
+every file with the SHA-256 digests in `scripts/zn-gate.lock.json` before it
+runs anything. The plugin's own hook and launcher scripts are not part of that
+lock; they come from the repository when you add the marketplace.
 
 The files of the release carry build provenance attestations; see
 [Verifying a release](https://github.com/usezn/zn/blob/v1.17.0/docs/verify-release.md).
