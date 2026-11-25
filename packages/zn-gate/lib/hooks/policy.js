@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
-const { hookStopAssignedIn, preloadAssignedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES } = require('../loader-env');
+const { hookStopAssignedIn, preloadAssignedIn, obscureLoaderKeyIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.14';
+const POLICY_RULES_VERSION = '2026-11-25.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1004,6 +1004,12 @@ function loaderEnvWriteDenial(p, texts, opts = {}) {
     // LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES ... with a value: a library of the project's choosing loaded into every program.
     const preload = preloadAssignedIn(t);
     if (preload) return loaderPreloadDenial(preload, p);
+    // A line whose name mentions LD_ or DYLD_ but is not a plain name (quotes, backslashes, $ inside it): which variable it sets is
+    // not plain to see.
+    if (obscureLoaderKeyIn(t)) {
+      return 'zn: ' + path.basename(String(p)) + ' is a file the agent loads into its environment, and this write holds a variable name that mentions LD_ or DYLD_ ' +
+        'but is not a plain name, so zn cannot tell which variable it sets. An agent may not make this change. Ask the user to make it.';
+    }
   }
   return null;
 }

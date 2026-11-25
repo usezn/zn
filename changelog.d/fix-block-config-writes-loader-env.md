@@ -9,3 +9,5 @@
   redirections (also `<>`), `tee`, `sed -i`, `cp`, `Set-Content`, and any program that names the file (an interpreter, `awk`,
   `curl -o`) unless it only reads or touches it. zn cannot know what the shell really runs. Use the editor tool instead; zn checks
   what it writes.
+- Edits to a watched `.env` file are judged on the file they would leave, in every agent and through MCP servers too: zn
+  applies the edit or patch to the file on disk, and refuses the write when it cannot work out the result.

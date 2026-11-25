@@ -587,6 +587,9 @@ Three features are off by default. Each one helps in a narrow case and has limit
   `curl -o`, `iwr -OutFile`, an unknown tool) is refused too, unless it is a read-only or metadata-only command (`cat`, `head`,
   `tail`, `grep`, `wc`, `ls`, `stat`, `diff`, `test -f`, `[ -f ]`, `touch`, `git status`). Use the editor tool (Write, Edit, a
   patch) instead; zn checks what it writes on the real text. Reads of the file are not affected.
+  Every write to such a file through the editor tool, a patch, an unknown tool or an MCP server (all agents) is judged on the
+  file it would leave: zn applies the edit or patch to the file on disk, reads white space and line breaks around `=` or `:` and
+  names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file.
   `help` counts wherever it stands in the value as a separate word, also after a slash, a bracket or
   a backslash (`LD_DEBUG=libs/,help`), so no value is read shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`,
   `.codex/`, `.gemini/settings.json`) were already refused to every write. This cannot cover a file that a program writes
