@@ -131,10 +131,11 @@ function isHookStopVar(key, value) {
 
 
 // NAME=value as it is written in a .env file or a patch, and NAME: value (the dotenv package reads that form too, with a space after
-// the colon). The captured value is quoted, or runs to the end of the line or to a shell separator, a sed slash or a closing bracket; it
-// is only where the checks below start. Whether a write stops the hooks is decided on everything the value can run over (valueSpan), not
-// on this capture. A bare NAME with no "=" sets nothing.
-const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
+// the colon). Any white space, line breaks included, may stand around the = or the colon: the dotenv package reads NAME, a line break,
+// then =value as one assignment, and a value on the line after the = or the colon. The captured value is quoted, or runs to the end of
+// the line or to a shell separator, a sed slash or a closing bracket; it is only where the checks below start. Whether a write stops the
+// hooks is decided on everything the value can run over (valueSpan), not on this capture. A bare NAME with no "=" sets nothing.
+const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?\s*(?:=|:(?=\s))\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
 
 // glibc splits LD_DEBUG at spaces, commas and colons and acts on an option that reads exactly "help". A write is judged more widely:
 // "help" with no letter, digit or _ on either side, once quotes and backslashes are removed. A value that a file reader cuts in another
@@ -143,14 +144,14 @@ const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOA
 const HELP_WORD_RE = /(?:^|[^A-Za-z0-9_])help(?![A-Za-z0-9_])/;
 
 /**
- * The text a written value can run over, from just after the "=" of the assignment: to the end of the line or, when the value opens
- * with a quote, to the end of the line where that quote closes (the dotenv package reads a quoted value over several lines; an unclosed
- * quote runs to the end of the text).
+ * The text a written value can run over, from just after the "=" of the assignment: past any white space and line breaks (the value
+ * may stand on a later line), to the end of the line or, when the value opens with a quote, to the end of the line where that quote
+ * closes (the dotenv package reads a quoted value over several lines; an unclosed quote runs to the end of the text).
  */
 function valueSpan(s, from) {
   const rest = s.slice(from);
-  const q = /^[ \t]*(["'`])/.exec(rest);
-  let start = 0;
+  const q = /^\s*(["'`])/.exec(rest);
+  let start = /^\s*/.exec(rest)[0].length;
   if (q) {
     const close = quoteClose(rest, q[0].length, q[1]);
     if (close < 0) return rest;
@@ -179,7 +180,7 @@ function quoteClose(text, from, quote) {
 /** Whether the value of a file assignment opens a quote that nothing closes: unresolved, so an LD_DEBUG write is refused. */
 function unterminatedQuote(s, from) {
   const rest = s.slice(from);
-  const q = /^[ \t]*(["'`])/.exec(rest);
+  const q = /^\s*(["'`])/.exec(rest);
   return !!q && quoteClose(rest, q[0].length, q[1]) < 0;
 }
 
@@ -198,9 +199,30 @@ function writtenValueStopsHooks(key, span) {
 // Index of the first character after the "=" (or ":") of a match of HOOK_STOP_ASSIGNMENT_RE.
 const valueStart = (m) => m.index + m[0].search(/[=:]/) + 1;
 
+/**
+ * A .env text as a shell that sources it reads the names: a backslash before a line break joins the lines (LD_\ then PRELOAD=x), and
+ * quotes and backslashes inside a name vanish (LD_PRE''LOAD=x, LD_PRE\LOAD=x). Only the names change: the text before the first = or
+ * colon of a line, or a line that is one word naming LD_ or DYLD_ (a name whose = is on the next line). The values keep their quotes,
+ * so an empty value stays empty. The checks below judge the text both as written and in this form, so a name split that way is found.
+ */
+function flatDotenv(s) {
+  const strip = (t) => t.replace(/["'`\\]/g, '');
+  return String(s).replace(/\\\r?\n/g, '').split('\n').map((line) => {
+    if (/^\s*#/.test(line)) return line; // a comment
+    const at = line.search(/[=:]/);
+    if (at >= 0) return strip(line.slice(0, at)) + line.slice(at);
+    return /^\s*\S+\s*$/.test(line) && /(?:LD|DYLD)_/.test(strip(line)) ? strip(line) : line;
+  }).join('\n');
+}
+
 /** The name of the first variable in `text` that is assigned a value that stops the hooks (see isHookStopVar), or null. */
 function hookStopAssignedIn(text) {
-  const s = String(text);
+  const raw = String(text);
+  const flat = flatDotenv(raw);
+  return hookStopAssignedInText(raw) || (flat !== raw ? hookStopAssignedInText(flat) : null);
+}
+
+function hookStopAssignedInText(s) {
   if (!s.includes('LD_')) return null;
   HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
   let m;
@@ -219,17 +241,21 @@ const PRELOAD_WRITE_NAMES = LOADER_PRELOAD.filter((n) => n !== 'LD_DEBUG');
 const PRELOAD_NAME_SRC = '(' + PRELOAD_WRITE_NAMES.join('|') + ')';
 // NAME=value, NAME: value, export NAME=value, 'NAME'=value, $env:NAME='value', also right after a \n, \r or \t escape.
 const PRELOAD_ASSIGNMENT_RE = new RegExp(String.raw`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))` + PRELOAD_NAME_SRC +
-  String.raw`(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))`, 'g');
+  String.raw`(?![A-Za-z0-9_])["']?\s*(?:=|:(?=\s))`, 'g');
 const PRELOAD_NAME_RE = new RegExp(String.raw`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))` + PRELOAD_NAME_SRC + String.raw`(?![A-Za-z0-9_])`, 'g');
 
 /**
- * Whether the value of a file assignment that starts at `from` is empty: only blanks and quote characters up to the end of its line or,
- * for a quoted value, up to the end of the line where the quote closes (a line break inside the quotes counts as content). A quote that
- * nothing closes is not empty.
+ * Whether the value of a file assignment that starts at `from` is empty: past any white space and line breaks (the dotenv package can
+ * read a value from a later line), only blanks and quote characters up to the end of the line where the value starts or, for a quoted
+ * value, up to the end of the line where the quote closes (a line break inside the quotes counts as content). A quote that nothing
+ * closes is not empty. So an empty assignment is one at the end of the text: LD_PRELOAD= followed by any other line is refused, since a
+ * reader may take that line as the value.
  */
 function emptyFileValue(s, from) {
   let i = from;
-  while (s.charAt(i) === ' ' || s.charAt(i) === '\t') i++;
+  while (i < s.length && /\s/.test(s.charAt(i))) i++;
+  if (i >= s.length) return true;
+  from = i;
   const q = s.charAt(i);
   let eolFrom = i;
   if (q === '"' || q === "'" || q === '`') {
@@ -245,7 +271,12 @@ function emptyFileValue(s, from) {
 
 /** The name of the first preload variable (PRELOAD_WRITE_NAMES) that `text`, as a file body, assigns a non-empty value, or null. */
 function preloadAssignedIn(text) {
-  const s = String(text);
+  const raw = String(text);
+  const flat = flatDotenv(raw);
+  return preloadAssignedInText(raw) || (flat !== raw ? preloadAssignedInText(flat) : null);
+}
+
+function preloadAssignedInText(s) {
   if (!s.includes('LD_')) return null; // every name holds LD_ (DYLD_ too)
   PRELOAD_ASSIGNMENT_RE.lastIndex = 0;
   let m;
@@ -253,6 +284,30 @@ function preloadAssignedIn(text) {
     if (!emptyFileValue(s, m.index + m[0].length)) return m[1];
   }
   return null;
+}
+
+// A plain .env name before its = or colon: optional export, then letters, digits, _, . and - only (a patch line may start with +, - or
+// a space).
+const PLAIN_DOTENV_KEY_RE = /^[+\- ]?\s*(?:export\s+)?[A-Za-z0-9_.-]+\s*$/;
+const LOADER_FRAGMENT_RE = /(?<![A-Za-z0-9])(?:LD|DYLD)_/;
+
+/**
+ * Whether a .env text holds a line whose name, the text before its first = or colon, mentions a loader prefix (LD_, DYLD_) without being
+ * a plain name: quotes, backslashes, $, spaces inside it (export LD_PRE''LOAD, "LD_PRELOAD", LD_${X}PRELOAD). zn cannot tell which
+ * variable such a line sets, so a write that leaves one in a watched .env file is refused. Comment lines are skipped; lines joined by
+ * a backslash before the line break are read as one.
+ */
+function obscureLoaderKeyIn(text) {
+  const s = String(text);
+  if (!/(?:LD|DYLD)/.test(s)) return false;
+  for (const line of s.replace(/\\\r?\n/g, '').split(/[\n\r\v\f]/)) {
+    if (/^\s*#/.test(line)) continue;
+    const at = line.search(/[=:]/);
+    if (at < 0) continue;
+    const key = line.slice(0, at);
+    if (!PLAIN_DOTENV_KEY_RE.test(key) && LOADER_FRAGMENT_RE.test(key.replace(/["'`\\]/g, ''))) return true;
+  }
+  return false;
 }
 
 // What may follow a preload name in a shell write (quotes and backslashes removed) for the write to set it empty: = or ": ", blanks, at
@@ -486,4 +541,4 @@ function shellDotenvWrite(text, isDotenv) {
   return { verdict: null };
 }
 
-module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, obscureLoaderKeyIn,preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };

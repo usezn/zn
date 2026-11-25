@@ -310,6 +310,13 @@ function normalize(raw) {
     const dirs = scan.dirs;
     const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [], ...(dirs.length ? { scanDirs: dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
     if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
+    if (!SHELL_TOOLS.has(toolName)) {
+      // A tool zn does not know that carries a command and also names files: the files keep their read and write checks (a .env
+      // write among them is judged on what the call writes); an address zn cannot read refuses the call.
+      const named = pathsOf(args);
+      e.input.alsoPaths = named.paths;
+      if (named.bad && !e.unreadable) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    }
     return e;
   }
   const { paths, bad } = pathsOf(args);
