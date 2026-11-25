@@ -98,7 +98,11 @@ function refreshLaunchers(opts = {}) {
     const key = sl.platformKey(platform, opts.arch || process.arch);
     const b = key ? sl.bundled(key, opts) : {};
     if (st.isFile() && b.bytes && !b.bytes.equals(fs.readFileSync(file)) && sl.installStatic({ env, home: opts.home, platform, arch: opts.arch, nativeDir: opts.nativeDir }).file) done.push(sl.NAME);
-  } catch (_) { /* none installed, or it cannot be read: left as it is */ }
+  } catch (e) {
+    // Only a file-system error (none installed, or it cannot be read) leaves things as they are; anything else is a bug and surfaces.
+    // The postinstall entry (main) catches it, so an install never fails because of it.
+    if (!(e && typeof e.code === 'string' && e.code !== 'MODULE_NOT_FOUND')) throw e;
+  }
   return done;
 }
 
