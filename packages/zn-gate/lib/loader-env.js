@@ -133,6 +133,18 @@ function isHookStopVar(key, value) {
 // value is quoted, or runs to the end of the line or to a shell separator, a sed slash or a closing bracket. A bare NAME with no "=" sets nothing.
 const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*=[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
 
+// The rest of an unquoted word: up to whitespace, a quote or a shell separator. The value as glibc reads it runs on through a slash,
+// bracket or backslash (LD_DEBUG=x/,help names help), even where the match above stops for a sed slash or a closing bracket.
+const WORD_REST_RE = /^[^\s"';&|<>]*/;
+
+/** The value of a match as written, and for an unquoted one also the whole word it is part of. */
+function assignedValues(s, m) {
+  if (m[2] !== undefined) return [m[2]];
+  if (m[3] !== undefined) return [m[3]];
+  const value = m[4] || '';
+  return [value, value + WORD_REST_RE.exec(s.slice(m.index + m[0].length))[0]];
+}
+
 /** The name of the first variable in `text` that is assigned a value that stops the hooks (see isHookStopVar), or null. */
 function hookStopAssignedIn(text) {
   const s = String(text);
@@ -140,8 +152,7 @@ function hookStopAssignedIn(text) {
   HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
   let m;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
-    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
-    if (isHookStopVar(m[1], value)) return m[1];
+    if (assignedValues(s, m).some((v) => isHookStopVar(m[1], v))) return m[1];
   }
   return null;
 }
@@ -189,7 +200,7 @@ function hookStopOrComputedIn(text) {
   let literal = 0;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
     const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
-    if (isHookStopVar(m[1], value)) return m[1];
+    if (assignedValues(s, m).some((v) => isHookStopVar(m[1], v))) return m[1];
     const end = m.index + m[0].length;
     const next = s.charAt(end);
     const before = s.charAt(m.index - 1);

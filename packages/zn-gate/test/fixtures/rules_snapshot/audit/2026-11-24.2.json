@@ -53,6 +53,7 @@
   ],
   "sha256": {
     "lib/audit/rules.js": "d3cc85f739ccf7f55eaf325de8993580300ed78f593548e8ca550bec31ecf738",
-    "lib/audit/patterns.js": "cd47b631c63d1127a3ff8e8b04da20e59aa8ba39db2e07153f7983fb896d9f5a"
+    "lib/audit/patterns.js": "cd47b631c63d1127a3ff8e8b04da20e59aa8ba39db2e07153f7983fb896d9f5a",
+    "lib/loader-env.js": "18289565c26360f6168f1c9d095ab030b132cf70c3a796bb8c3ee415cff4f95a"
   }
 }
