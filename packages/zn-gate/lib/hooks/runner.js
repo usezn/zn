@@ -845,6 +845,7 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
     if (!args || typeof args !== 'object') { out.unresolved = true; args = null; }
   }
   const edits = [];
+  let hasBody = false;
   if (args && typeof args === 'object') {
     const pick = (o, keys) => { for (const k of keys) if (o[k] !== undefined) return typeof o[k] === 'string' ? o[k] : false; return null; };
     const visited = new Set();
@@ -853,6 +854,7 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
       if (depth > MAX_NEST_DEPTH) { out.unresolved = true; return; }
       visited.add(v);
       if (!Array.isArray(v)) {
+        if (FULL_BODY_KEYS.some((k) => typeof v[k] === 'string')) hasBody = true;
         const oldS = pick(v, EDIT_OLD_KEYS);
         const newS = pick(v, EDIT_NEW_KEYS);
         if (oldS !== null || newS !== null) {
@@ -875,17 +877,59 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
         if (at < 0 || (!e.all && body.indexOf(e.oldS, at + 1) >= 0)) { out.unresolved = true; break; }
         body = e.all ? body.split(e.oldS).join(e.newS) : body.slice(0, at) + e.newS + body.slice(at + e.oldS.length);
       }
-      if (!out.unresolved) out.push(body);
+      if (!out.unresolved) { out.push(body); out.complete = true; }
     } catch (err) {
       // A file that does not exist yet: only what is written counts. Any other failure leaves the result unknown.
       if (!(err && err.code === 'ENOENT')) out.unresolved = true;
+      else out.complete = true;
     }
   } else if (!patched && (ev.tool === 'edit' || ev.tool === 'multiedit' || EDIT_TOOL_NAME_RE.test(String(ev.toolName || ''))) &&
     !(args && typeof args === 'object' && FULL_BODY_KEYS.some((k) => typeof args[k] === 'string'))) {
     // An edit or replace tool whose change zn cannot read (no search and replacement text it knows, no whole body): unknown.
     out.unresolved = true;
   }
+  // The file this call leaves is known in full: a whole body, an edit applied to the file, or a patch section for it.
+  if (hasBody || patched) out.complete = true;
   return out;
+}
+
+// The string values of a call's arguments that name a watched dotenv file, as deep as the path scan reads (a copy or move tool may
+// name it under any key: from, to, src, dst ...).
+function dotenvNamesIn(args, pathOpts) {
+  const out = [];
+  const seen = new Set();
+  const walk = (v, depth) => {
+    if (typeof v === 'string') {
+      if (v.length <= 4096 && !/[\r\n]/.test(v)) {
+        const c = policy.classifyPath(v, pathOpts);
+        if (c && c.kind === 'dotenv') out.push(v);
+      }
+    } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
+      seen.add(v);
+      for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
+    }
+  };
+  walk(args, 0);
+  return out;
+}
+
+// The arguments of a call as an object, from the adapter or the agent's raw event (a JSON text is read as the object it holds).
+function argsObjectOf(ev) {
+  const input = ev.input || {};
+  const raw = ev.raw && typeof ev.raw === 'object' ? ev.raw : {};
+  let a = input.args !== undefined ? input.args : raw.args !== undefined ? raw.args : raw.toolArgs !== undefined ? raw.toolArgs : raw.tool_input;
+  if (typeof a === 'string') { try { a = JSON.parse(a); } catch (_) { a = undefined; } }
+  return a;
+}
+
+// A call that names a watched dotenv file but does not give the file it leaves (a copy, move, rename, link, upload, download or a
+// tool zn does not know): refused unless its name says it only reads. Edits go through the file editor tool.
+function dotenvUnseenDenial(ev, paths, pathOpts) {
+  for (const p of paths) {
+    const deny = policy.dotenvUnseenWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), ev.toolName || ev.tool, pathOpts);
+    if (deny) return deny;
+  }
+  return null;
 }
 
 /*
@@ -1019,6 +1063,8 @@ async function decidePre(ev, d, agentId, opts) {
       const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
+    const unseen = dotenvUnseenDenial(ev, (Array.isArray(input.paths) ? input.paths : []).concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts);
+    if (unseen) return { decision: 'deny', message: unseen };
     return { decision: 'allow' };
   }
   if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') {
@@ -1064,6 +1110,8 @@ async function decidePre(ev, d, agentId, opts) {
       const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
+    const unseen = dotenvUnseenDenial(ev, input.paths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts);
+    if (unseen) return { decision: 'deny', message: unseen };
   }
   const mcpArgs = input.args !== undefined ? input.args : (ev.raw && typeof ev.raw === 'object' ? ev.raw.args : undefined);
   if (tool === 'mcp' && !Array.isArray(input.paths) && mcpArgs !== undefined) {
@@ -1087,6 +1135,9 @@ async function decidePre(ev, d, agentId, opts) {
         const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
         if (deny) return { decision: 'deny', message: deny };
       }
+      // A copy, move, rename or unknown tool that names a watched dotenv file under any key leaves a file zn cannot see: refused.
+      const unseen = dotenvUnseenDenial(ev, named.paths.concat(dotenvNamesIn(args, pathOpts)), pathOpts);
+      if (unseen) return { decision: 'deny', message: unseen };
     }
   }
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
@@ -1109,6 +1160,8 @@ async function decidePre(ev, d, agentId, opts) {
         policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
+    const unseenAlso = Array.isArray(input.alsoPaths) ? dotenvUnseenDenial(ev, input.alsoPaths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts) : null;
+    if (unseenAlso) return { decision: 'deny', message: unseenAlso };
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);
     const instructionNotice = instructionMode === 'off' ? undefined : {};

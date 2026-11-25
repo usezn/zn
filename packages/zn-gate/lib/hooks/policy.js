@@ -1029,6 +1029,36 @@ function opaqueEnvWriteDenial(p) {
   return 'Edit ' + base + ' with the file editor tool; shell writes to .env files are blocked. zn cannot see what the shell actually writes.';
 }
 
+// Words in a tool name that say it only reads, and words that say it changes or moves files (a name with both counts as a change).
+const READ_ONLY_TOOL_WORDS = new Set(['read', 'get', 'list', 'view', 'search', 'find', 'stat', 'cat', 'show', 'head', 'tail', 'grep', 'glob',
+  'info', 'describe', 'tree', 'ls', 'open', 'query', 'inspect', 'diff', 'count', 'exists']);
+const CHANGE_TOOL_WORDS = new Set(['write', 'copy', 'cp', 'move', 'mv', 'rename', 'link', 'symlink', 'ln', 'upload', 'download', 'save', 'put',
+  'create', 'delete', 'remove', 'rm', 'edit', 'replace', 'append', 'set', 'patch', 'sync', 'exec', 'execute', 'run', 'truncate', 'restore',
+  'apply', 'insert', 'update', 'modify', 'change', 'extract', 'unzip', 'untar', 'clone', 'checkout', 'import', 'export', 'install',
+  'transfer', 'duplicate', 'overwrite', 'store', 'push', 'pull', 'mkdir', 'touch', 'chmod', 'chown', 'fetch', 'add', 'new', 'make', 'swap']);
+
+/** True when a tool's name says it only reads (read_file, list_directory, get_file_info), and says nothing about changing files. */
+function readOnlyToolName(name) {
+  const s = String(name || '').replace(/^mcp__.+?__/, '').replace(/^mcp:/i, '');
+  const words = s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.some((w) => READ_ONLY_TOOL_WORDS.has(w)) && !words.some((w) => CHANGE_TOOL_WORDS.has(w));
+}
+
+/**
+ * A call that names a watched dotenv file without giving zn the file it would leave there: a copy, move, rename, link, upload or
+ * download, or a tool zn does not know. `texts` is what writtenTextsOf found; its `complete` flag says the resulting file is known in
+ * full (a whole body, an edit applied to the file, a patch section). Refused unless the tool's name says it only reads.
+ */
+function dotenvUnseenWriteDenial(p, texts, toolName, opts = {}) {
+  const c = classifyPath(p, opts);
+  if (!c || c.kind !== 'dotenv') return null;
+  if (texts && texts.complete && !texts.unresolved) return null;
+  if (readOnlyToolName(toolName)) return null;
+  const base = path.basename(String(p));
+  return 'Edit ' + base + ' with the file editor tool; copies, moves, renames and tools zn does not know are blocked for .env files. ' +
+    'zn cannot see what this call would leave in the file.';
+}
+
 /** The refusal for what a shell write to a dotenv file would do: a loader name it sets or mentions, or OPAQUE_WRITE. */
 function dotenvShellWriteDenial(verdict, p) {
   if (verdict === OPAQUE_WRITE) return opaqueEnvWriteDenial(p);
@@ -4483,6 +4513,8 @@ module.exports = {
   readDenial,
   writeDenial,
   loaderEnvWriteDenial,
+  dotenvUnseenWriteDenial,
+  readOnlyToolName,
   adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,
