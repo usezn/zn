@@ -39,10 +39,15 @@ permissions: {}
 
 env:
   ARTIFACT_NAME: zn-gate-release
+  # The same gitsign as release.yml, to check the tag signature here too.
+  GITSIGN_VERSION: 0.17.1
+  GITSIGN_SHA256: 69213a8a0813a151e5a47d0060862952ff833a845d57309dff76f7ba6600abae
 
 jobs:
   # This workflow does not take a commit from its caller: it finds the commit of the tag itself and checks
-  # again that it is on main or a release/* branch. Nothing from the repository is run here.
+  # again that it is on main or a release/* branch. It also checks, itself, who called it and the tag: only release.yml,
+  # for the tag of the push that started the run or as a dry run of a manual run, and only a tag signed by tag-release.yml.
+  # Nothing from the repository is run here.
   resolve:
     name: Resolve the commit of the tag
     runs-on: ubuntu-latest
@@ -81,6 +86,42 @@ jobs:
             echo "::error::$TAG ($sha) is not on main or a release/* branch"; exit 1
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check the caller, the event and the tag signature
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.sha.outputs.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # In a reusable workflow GITHUB_WORKFLOW_REF names the calling workflow.
+          case "$GITHUB_WORKFLOW_REF" in
+            "$GITHUB_REPOSITORY/.github/workflows/release.yml@"*) ;;
+            *) echo "::error::this workflow is only called by release.yml, not $GITHUB_WORKFLOW_REF"; exit 1 ;;
+          esac
+          if [ "$EVENT" = push ]; then
+            # A tag push builds the pushed tag and nothing else.
+            [ "$GITHUB_REF" = "refs/tags/$TAG" ] || { echo "::error::the run was started by $GITHUB_REF, not by the tag $TAG"; exit 1; }
+          else
+            # Any other event (a manual run) is a dry run: nothing is signed or published.
+            [ "$DRY_RUN" = true ] || { echo "::error::a $EVENT run must be a dry run"; exit 1; }
+          fi
+          base="${TAG#v}"; base="${base%%-*}"
+          if ! git cat-file -e "$SHA:.github/workflows/tag-release.yml" 2>/dev/null \
+              && [ "$(printf '%s\n' 1.12.0 "$base" | sort -V | head -n 1)" != 1.12.0 ]; then
+            echo "$TAG predates signed tags (before 1.12.0): its tag is not signed."
+            exit 0
+          fi
+          # The annotated tag object, signed by tag-release.yml on main, still on the commit resolved above.
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] || { echo "::error::$TAG is not an annotated, signed tag"; exit 1; }
+          [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$SHA" ] || { echo "::error::$TAG no longer points to $SHA"; exit 1; }
+          url="https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitsign" "$url"
+          echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum --strict -c -
+          chmod +x "$RUNNER_TEMP/gitsign"
+          "$RUNNER_TEMP/gitsign" verify-tag "$TAG" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
   # The static hook launcher (tools/hook-launcher) for Linux x64 and arm64 ships inside the npm package with its SHA-256
   # (lib/native/hook-launcher.json); the installer copies it only when the SHA-256 matches. It is compiled only for a tag
@@ -108,8 +149,10 @@ jobs:
       - name: Require the commit the resolve job verified
         env:
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          [ "$GITHUB_REF" = "refs/tags/$TAG" ] || { echo "::error::the run was started by $GITHUB_REF, not by the tag $TAG"; exit 1; }
           head="$(git rev-parse HEAD)"
           [ "$head" = "$RESOLVED_SHA" ] || { echo "::error::checked out $head, but the tag resolves to $RESOLVED_SHA"; exit 1; }
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
