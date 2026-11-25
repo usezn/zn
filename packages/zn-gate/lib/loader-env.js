@@ -431,13 +431,14 @@ function opaqueByLines(s) {
  * sits anywhere but
  * - in the value of a literal assignment: after NAME= or NAME: , where NAME is a plain name ([A-Za-z_][A-Za-z0-9_]*) not glued to an
  *   expansion or pattern, up to the end of that shell word, a line break or a \n or \r escape (echo "API_URL=$URL", sed -i "s|^A=.*|A=$V|" .env);
- * - in an argument of printf whose format (the word right after printf) has every conversion in such a value (printf 'TOKEN=%s\n' "$T");
+ * - in an argument of printf whose format (the word right after printf) has every conversion in such a value (printf 'TOKEN=%s\n' "$T"); a printf conversion
+ *   anywhere else is opaque even with literal arguments (printf '%s%s\n' LD_ DEBUG=help);
  * - in the file a redirection names (>> "$DIR/.env"), or in a comment.
  * Everything else fails closed: printf "$X", echo "$LINE", printf '%s=%s\n' "$K" "$V", echo * > .env, and also expansions in other parts
  * of the command (cd "$D" && ...). One forward pass over the quote map.
  */
 function opaqueWriteIn(s) {
-  if (!/[$`*?[{]/.test(s)) return false;
+  if (!/[$`*?[{]/.test(s) && !(s.includes('%') && s.includes('printf'))) return false;
   const inside = quoteMap(s);
   if (inside.bad) return opaqueByLines(s);
   const n = s.length;
@@ -489,9 +490,9 @@ function opaqueWriteIn(s) {
     }
     if (target) continue; // the file a redirection names is not written text
     const allowed = inValue || (isPrintf && wordIdx >= 2 && fmtOk);
-    if (c === '%' && isPrintf && wordIdx === 1) {
+    if (c === '%' && isPrintf && (wordIdx === 1 || (wordIdx === 2 && !fmtOk))) {
       if (s.charAt(i + 1) === '%') i++;
-      else if (!inValue) fmtOk = false;
+      else if (!inValue) return true; // a conversion outside a literal NAME= value can assemble a name from literal arguments
       continue;
     }
     if (at !== 3 && ((c === '$' && EXPANDS_AFTER_DOLLAR.test(s.charAt(i + 1))) || c === '`')) {

@@ -166,3 +166,31 @@ test('the opaque-write scan is linear in the length of the command', () => {
   const names = (n) => "printf '" + 'A_B_C\\n'.repeat(n) + "%s' \"$X\" > .env";
   assertLinear((cmd) => loaderEnv.preloadOrOpaqueIn(cmd), names, 15000, 'many names after escapes');
 });
+
+test('a printf conversion outside a literal NAME= value is refused even with literal arguments: it can assemble a loader name', async (t) => {
+  const dir = project(t);
+  const bad = [
+    "printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "printf '%s%s=%s\\n' LD_ PRELOAD /tmp/x.so >> .env",
+    "printf '%s\\n' LD_DEBUG=help > .env",
+    "printf '%s_%s=%s\\n' LD PRELOAD /tmp/x.so >> .env",
+    "printf -- '%s%s\\n' LD_ DEBUG=help > .env",
+  ];
+  for (const command of bad) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), null, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), null, command);
+  }
+  for (const command of ["printf '%s%s\\n' LD_ DEBUG=help > .env", "printf '%s%s=%s\\n' LD_ PRELOAD /tmp/x.so >> .env"]) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), /name the shell computes|only the shell knows once it runs/, command);
+  }
+  const good = [
+    "printf 'TOKEN=%s\\n' abc >> .env",
+    "printf 'A=%s\\nB=%s\\n' x y >> .env",
+    "printf 'X=1\\n' >> .env",
+    "printf 'X=100%%\\n' >> .env",
+  ];
+  for (const command of good) {
+    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+    passes(await decide(gemini, gem('run_shell_command', { command }, dir)), command);
+  }
+});
