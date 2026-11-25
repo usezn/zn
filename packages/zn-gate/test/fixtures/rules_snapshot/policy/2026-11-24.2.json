@@ -43,6 +43,6 @@
     "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
     "lib/destructive.js": "88207ec6e190ccd3e2007e570d85dc9af3b8756ba9d055ab89b07ce10916e123",
     "lib/shell-vars.js": "47e859639e910b2d1919a29eedac06b5da6c731426ee1aa87c05d2469b7c6492",
-    "lib/loader-env.js": "5cd2930cc77d989e0cdadc04ac01c699f8de012accb98b5645e77f44bcd9b33b"
+    "lib/loader-env.js": "886034958ccb366c45b28711f6926a08305ab8afe9698ba9baaa0e1018500e87"
   }
 }

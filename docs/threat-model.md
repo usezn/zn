@@ -578,7 +578,8 @@ Three features are off by default. Each one helps in a narrow case and has limit
   configuration change check), provided the hook for that change still runs. While the variable is not yet set, the hooks do
   work, so they also refuse the edit that would set it: a Write, Edit or patch (Claude Code, Gemini CLI, Codex CLI and the
   other agents zn guards) or a shell command (`echo`, `printf`, `tee`, `sed -i`, a heredoc, `Set-Content`) that puts
-  either variable into a project `.env` or `.gemini/.env`. A shell command that writes such a file is also refused when its
+  either variable into a project `.env` or `.gemini/.env`, in either dotenv spelling (`NAME=value` or `NAME: value`) and with
+  the value bare or in double, single or back quotes. A shell command that writes such a file is also refused when its
   text does not show what it writes: a name or value the shell or printf computes, a name split by quotes, or characters
   written by their code. The agents' own settings files (`.claude/settings*.json`,
   `.codex/`, `.gemini/settings.json`) were already refused to every write. This cannot cover a file that is copied or
