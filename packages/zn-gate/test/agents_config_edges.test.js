@@ -293,12 +293,34 @@ test('claude-code: the managed policy is reported on install when present, and n
   assert.ok(present.warnings.some((w) => /turns off all hooks \(disableAllHooks\)/.test(w)));
 
   const h2 = fakeHome(t);
-  const absent = claude.install(opts(h2, { managedDir: path.join(h2, 'no-policy') }));
-  // No policy warning. The one other warning allowed is the static launcher's, and only on Linux: a copy of zn-gate without the
-  // prebuilt launcher (a source checkout) says so there.
-  const launcherWarnings = absent.warnings.filter((w) => /static hook launcher/.test(w));
-  assert.deepEqual(absent.warnings.filter((w) => !/static hook launcher/.test(w)), []);
-  assert.ok(launcherWarnings.length <= (process.platform === 'linux' ? 1 : 0), JSON.stringify(absent.warnings));
+  const absent = claude.install(opts(h2, { managedDir: path.join(h2, 'no-policy'), nativeDir: launcherNativeDir(h2) }));
+  assert.deepEqual(absent.warnings, []);
+});
+
+// The static launcher (Linux only) is set up from nativeDir, so these tests do not depend on the copy of zn-gate that runs them.
+// The fake launcher is a small script with the SHA-256 that nativeDir records: it answers the install's test run the way the real one does.
+function launcherNativeDir(home) {
+  const key = process.platform === 'linux' && process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64';
+  const dir = path.join(home, 'native');
+  const bytes = "#!/bin/sh\necho 'zn: its hook failed, so this was blocked' >&2\nexit 2\n";
+  write(path.join(dir, key, 'zn-hook-launcher'), bytes);
+  fs.chmodSync(path.join(dir, key, 'zn-hook-launcher'), 0o755);
+  write(path.join(dir, 'hook-launcher.json'), JSON.stringify({ [key]: require('crypto').createHash('sha256').update(bytes).digest('hex') }));
+  return dir;
+}
+
+test('claude-code: with no launcher in nativeDir, Linux gets exactly the static launcher warning and other systems none', (t) => {
+  const h = fakeHome(t);
+  const r = claude.install(opts(h, { managedDir: path.join(h, 'no-policy'), nativeDir: path.join(h, 'empty-native') }));
+  if (process.platform !== 'linux' || (process.arch !== 'x64' && process.arch !== 'arm64')) {
+    assert.deepEqual(r.warnings, []);
+    return;
+  }
+  assert.equal(r.warnings.length, 1, JSON.stringify(r.warnings));
+  assert.equal(r.warnings[0],
+    'zn could not set up its static hook launcher on this machine (this copy of zn-gate has no prebuilt launcher list), so the hook starts as before, through a dynamically linked program: ' +
+    'a loader variable in the agent\'s environment (LD_TRACE_LOADED_OBJECTS, or LD_DEBUG with help) can still stop the hook before it runs and let the call through. ' +
+    'Install zn-gate again from npm (npm install -g zn-gate) and run this command again to get it.');
 });
 
 /* ------------------------------- managed-policy ------------------------------- */

@@ -570,16 +570,17 @@ Three features are off by default. Each one helps in a narrow case and has limit
   - On Linux, ZCode and Claude Code can start a hook program directly, with no shell (ZCode's `process` hook, Claude Code's
     exec form with `args`). For a user install on Linux (x64 and arm64), `zn hooks install zcode` and `zn hooks install claude-code`
     put a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`, first in the hook. No dynamic loader runs before it.
-    When one of these variables, or a preload variable (`LD_PRELOAD`,
-    `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers
-    the agent's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
-    `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
+    It denies when the environment of the agent has `LD_TRACE_LOADED_OBJECTS` set to any value (the empty string and `0` included), or any of `LD_PRELOAD`, `LD_AUDIT`, `LD_PROFILE`, `LD_LIBMAP`, `LD_32_PRELOAD`, `LD_TRACE_LOADED_OBJECTS_FMT1`, `LD_TRACE_LOADED_OBJECTS_FMT2`, `LD_TRACE_LOADED_OBJECTS_ALL`, `LD_DEBUG` (any value, not only `help`), `LD_DEBUG_OUTPUT`, `LD_PRELOAD_FDS`, `LD_LIBMAP_DISABLE`, `LD_LOADFLTR`, `DYLD_INSERT_LIBRARIES`, `DYLD_IMAGE_SUFFIX`, `DYLD_SHARED_CACHE_DIR` or `DYLD_SHARED_REGION` set to a value that is not empty, in exactly that upper case (the loader reads no other case). It does not start the hook then and answers
+    the agent's own deny with its blocking exit code (exit 2 with the reason). Any other loader variable does not make it deny:
+    `LD_LIBRARY_PATH`, `LD_SHOW_AUXV` and every other `LD_*` or `DYLD_*` name, those names in another case, the names above with an
+    empty value, and the other names of `lib/loader-env.js`. It removes all of them (every `LD_*` and
+    `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) from the environment and replaces itself with the hook. When it cannot
     start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
     the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
     prints a warning that this protection is missing on that machine.
   - Claude Code on Linux was checked with a real Claude Code 2.1.331 (headless, x86_64, Ubuntu 24.04, November 2026): with the
     exec form the parent of the hook is Claude Code itself, with no shell in between; `LD_LIBRARY_PATH` in the settings is
-    removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny
+    removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny (so does any other value of `LD_DEBUG`)
     before any dynamically linked program starts, and the tool call is blocked, while the earlier shell form with
     `LD_TRACE_LOADED_OBJECTS=1` let the tool run with no hook decision. The arm64 launcher is built but was not run with a real agent.
   - Antigravity is detection only on every platform for now. The launcher program can already answer for it,
@@ -604,9 +605,11 @@ Three features are off by default. Each one helps in a narrow case and has limit
     project settings that adds one (zn's configuration change check), provided the hook for that change still runs. Whoever
     can set the environment of the agent can also preload a library of their own (see the limit above), so this gives no new
     power; it only needs no file.
-  - The other loader settings that only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`,
-    `LD_VERBOSE`, `LD_WARN`) let the script run; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
-    FreeBSD's loader.
+  - Where the launcher is not used (the shell launcher of the other agents, project installs, macOS), the other loader settings that
+    only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`, `LD_VERBOSE`, `LD_WARN`) let the script run;
+    the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with FreeBSD's loader. For Claude Code and ZCode user
+    installs on Linux the launcher denies `LD_DEBUG` with any non-empty value and `LD_DEBUG_OUTPUT` with a non-empty value
+    (they are in the list above), which is stricter than the shell launcher.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
