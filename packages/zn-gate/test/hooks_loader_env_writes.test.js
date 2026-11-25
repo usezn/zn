@@ -137,6 +137,11 @@ test('shell commands that write a .env with the variables are blocked', async (t
     blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), STOP);
   }
   blocked(await decide(claude, cc('PowerShell', { command: "Add-Content .env 'LD_TRACE_LOADED_OBJECTS=1'" }, dir)), STOP);
+  // Set-Content replaces the file: the same refusal, with -Path, -Value and the sc alias too.
+  for (const command of ["Set-Content .env 'LD_DEBUG=help'", "Set-Content -Path .env -Value 'LD_TRACE_LOADED_OBJECTS=1'", "sc .env 'LD_DEBUG=help'"]) {
+    blocked(await decide(claude, cc('PowerShell', { command }, dir)), STOP, command);
+  }
+  passes(await decide(claude, cc('PowerShell', { command: "Set-Content .env 'LD_DEBUG=all'" }, dir)));
 });
 
 test('shell commands that write a .env without those variables, or write elsewhere, pass', async (t) => {
