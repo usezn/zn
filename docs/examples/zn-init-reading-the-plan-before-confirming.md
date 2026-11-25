@@ -20,7 +20,7 @@ zn-gate init: set up zn for the coding agents on this machine
   >  Cursor       not set up yet
   -  OpenCode     not found on this machine
   -  Antigravity  not found on this machine
-  -  GitHub Copilot (VS Code, CLI) not found on this machine
+  -  Copilot CLI (experimental) not found on this machine
   -  Gemini CLI (experimental) not found on this machine
   -  ZCode        not found on this machine
 ```

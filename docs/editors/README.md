@@ -10,7 +10,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 | [Codex CLI](codex.md) | `zn hooks install codex`, then trust it in `/hooks` | Yes | Yes (replaces the result) | Yes | Yes | Yes, end to end |
 | OpenCode | `zn hooks install opencode` | Yes | Yes | Yes | Yes | Yes, end to end |
 | [Cursor](cursor.md) | `zn hooks install cursor` | Yes | **No** (Cursor does not allow it) | Yes | Yes | Formats checked; no end-to-end run |
-| [GitHub Copilot (VS Code, CLI)](vscode.md) | `zn hooks install copilot` | Yes | Yes (read-type and shell tools) | Only servers you wrap | No | Documented for VS Code, not tested in the app; run end to end with Copilot CLI 1.0.98 |
+| [Copilot CLI (experimental)](vscode.md) | `zn hooks install copilot` | Yes | Yes (read-type and shell tools) | Only servers you wrap | No | Documented for VS Code, not tested in the app; run end to end with Copilot CLI 1.0.98 |
 | [Google Antigravity](antigravity.md) | `zn hooks install antigravity` | Yes | **No** (Antigravity hooks cannot rewrite output) | Only servers you wrap | No | Formats checked; hand-tested on Windows; no automated end-to-end run |
 | [ZCode desktop app](zcode.md) | `zn hooks install zcode` | Yes | **No** (ZCode hooks cannot rewrite tool output; zn adds a notice) | Only servers you wrap | Yes (blocked, not cleaned) | Tested end to end on the official ZCode desktop app 3.16.3 on Linux x64 (October 2026). The same checks passed on Windows x64 (Windows Server 2022, same app version), for an administrator and for a standard user, through the agent the app ships; the Windows app window itself was not driven. macOS was not tested. |
 | [Windsurf (Devin Desktop)](windsurf.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |

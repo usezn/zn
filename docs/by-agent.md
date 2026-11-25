@@ -14,7 +14,7 @@ If the hooks of an agent do not seem to work, start with the page of that agent.
 | Codex CLI | [Troubleshooting](editors/codex.md#troubleshooting); [Codex asks you to trust the hooks again](editors/codex.md#codex-asks-you-to-trust-the-hooks-again) |
 | OpenCode | [Troubleshooting](editors/opencode.md#troubleshooting) |
 | Cursor | [Troubleshooting](editors/cursor.md#troubleshooting) |
-| GitHub Copilot (VS Code, CLI) | [Troubleshooting](editors/vscode.md#troubleshooting) |
+| Copilot CLI (experimental) | [Troubleshooting](editors/vscode.md#troubleshooting) |
 | Google Antigravity | [Troubleshooting](editors/antigravity.md#troubleshooting) |
 | ZCode desktop app | [Symptom index](troubleshooting.md#symptom-index) |
 | Gemini CLI | [Troubleshooting](editors/gemini.md#troubleshooting); [When a Gemini CLI setting switches the hook off](editors/gemini.md#when-a-gemini-cli-setting-switches-the-hook-off) |
@@ -31,7 +31,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | Codex CLI | [`zn hooks install codex`](editors/codex.md), then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
 | OpenCode | `zn hooks install opencode` | `npx -y zn-gate check` (checks zn's rules; the plugin runs inside OpenCode) | `zn hooks uninstall opencode` |
 | [Cursor](editors/cursor.md) | `zn hooks install cursor` | `npx -y zn-gate check` | `zn hooks uninstall cursor` |
-| [GitHub Copilot (VS Code, CLI)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
+| [Copilot CLI (experimental)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
 | [Google Antigravity](editors/antigravity.md) | `zn hooks install antigravity` | `npx -y zn-gate check` | `zn hooks uninstall antigravity` |
 | [ZCode desktop app](editors/zcode.md) | `zn hooks install zcode` | `npx -y zn-gate check` | `zn hooks uninstall zcode` |
 | Gemini CLI (experimental) | `zn hooks install gemini` | `npx -y zn-gate check` | `zn hooks uninstall gemini` |
