@@ -870,7 +870,7 @@ def _unwrap(args: List[str]) -> List[str]:
 
 def _resolve_dots(t: str) -> str:
     """Resolve "." and ".." lexically (no filesystem) for a path that starts at "/", a drive or a home word.
-    A ".." above "/" or a drive root stays there; a ".." out of the home folder names its parent. Relative paths are left alone."""
+    A ".." above "/" or a drive root stays there; a ".." out of the home folder reads it as /home/<user>, so it names /home and keeps climbing from there. Relative paths are left alone."""
     if not re.search(r"(?:^|/)\.\.?(?:/|\Z)", t):
         return t
     home = False
@@ -893,7 +893,8 @@ def _resolve_dots(t: str) -> str:
         elif out:
             out.pop()
         elif home:
-            return "/home"
+            home, anchor = False, "/"
+            out.append("home")
     return anchor + "/".join(out)
 
 
@@ -1186,7 +1187,7 @@ def _from_cwd(cwd: Any, word: str) -> str:
     if cwd is _CWD_LOST:
         return "/"
     ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
-    # The folder and the word joined are read lexically, so cd /srv && curl -o ../etc/profile names /etc/profile.
+    # The folder and the word joined are read lexically, so cd /opt && curl -o ../etc/profile names /etc/profile.
     return _resolve_dots((_folder_text(cwd, ups + 4) + "/" + word).replace("\\", "/"))
 
 

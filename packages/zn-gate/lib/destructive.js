@@ -262,7 +262,7 @@ function fromCwd(cwd, word) {
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
   if (cwd === CWD_LOST) return '/';
   const ups = w.split(/[\\/]/).filter((s) => s === '..').length;
-  // The folder and the word joined are read lexically, so cd /srv && curl -o ../etc/profile names /etc/profile.
+  // The folder and the word joined are read lexically, so cd /opt && curl -o ../etc/profile names /etc/profile.
   return resolveDots((folderText(cwd, ups + 4) + '/' + w).replace(/\\/g, '/'));
 }
 
@@ -407,7 +407,7 @@ function unwrapDir(args) {
 function unwrap(args) { return unwrapDir(args).args; }
 
 /* Resolves "." and ".." segments lexically (no filesystem) for a path that starts at a known point: "/", a drive, or a home word.
-   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder names its parent. Relative paths are left alone. */
+   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder reads it as /home/<user>, so it names /home and keeps climbing from there. Relative paths are left alone. */
 function resolveDots(t) {
   if (!/(?:^|\/)\.\.?(?:\/|$)/.test(t)) return t;
   let anchor = '';
@@ -426,7 +426,7 @@ function resolveDots(t) {
     if (seg === '' || seg === '.') continue;
     if (seg !== '..') { out.push(seg); continue; }
     if (out.length) out.pop();
-    else if (home) return '/home';
+    else if (home) { home = false; anchor = '/'; out.push('home'); }
   }
   return anchor + out.join('/');
 }

