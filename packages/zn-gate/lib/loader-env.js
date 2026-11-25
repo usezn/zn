@@ -130,23 +130,51 @@ function isHookStopVar(key, value) {
 }
 
 // NAME=value as it is written in a .env file, in a shell command (echo, printf, tee, sed, a heredoc, `$env:NAME='x'`) or in a patch, and
-// the `NAME: value` form the dotenv parser also reads: the value is in double, single or back quotes (dotenv strips all three), or runs
-// to the end of the line or to a shell separator, a sed slash or a closing bracket. A bare NAME with no "=" or ": " sets nothing.
-// Groups: 1 name, 2 "..", 3 '..', 4 `..`, 5 unquoted.
-const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|`([^`\n]*)`|([^\n"';&|/\\)}]*))?/g;
+// NAME: value (the dotenv package reads that form too, with a space after the colon). The captured value is quoted, or runs to the end of the line or to a shell separator,
+// a sed slash or a closing bracket; it is only where the checks below start. Whether a write stops the hooks is decided on everything the
+// value can run over (valueSpan), not on this capture. A bare NAME with no "=" sets nothing.
+const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
 
-// The rest of an unquoted word: up to whitespace, a quote or a shell separator. The value as glibc reads it runs on through a slash,
-// bracket or backslash (LD_DEBUG=x/,help names help), even where the match above stops for a sed slash or a closing bracket.
-const WORD_REST_RE = /^[^\s"';&|<>]*/;
+// glibc splits LD_DEBUG at spaces, commas and colons and acts on an option that reads exactly "help". A write is judged more widely:
+// "help" with no letter, digit or _ on either side, once quotes and backslashes are removed. A value that a file reader or the shell cuts
+// in another place than a regular expression would (x/,help, libs},help, help>>.env, "all" help) is then never taken as safe. This can
+// refuse a value glibc would ignore (/opt/help); it never allows one glibc acts on.
+const HELP_WORD_RE = /(?:^|[^A-Za-z0-9_])help(?![A-Za-z0-9_])/;
 
-/** The value of a match as written, and for an unquoted one also the whole word it is part of. */
-function assignedValues(s, m) {
-  if (m[2] !== undefined) return [m[2]];
-  if (m[3] !== undefined) return [m[3]];
-  if (m[4] !== undefined) return [m[4]];
-  const value = m[5] || '';
-  return [value, value + WORD_REST_RE.exec(s.slice(m.index + m[0].length))[0]];
+/**
+ * The text a written value can run over, from just after the "=" of the assignment:
+ * - in a file (.env, a patch, an edit): to the end of the line or, when the value opens with a quote, to the end of the line where that
+ *   quote closes (the dotenv package reads a quoted value over several lines; an unclosed quote runs to the end of the text);
+ * - in a shell command: to the end of the command. Quotes and line breaks inside one shell word are not tracked, so all the rest counts.
+ */
+function valueSpan(s, from, shell) {
+  const rest = s.slice(from);
+  if (shell) return rest;
+  const q = /^[ \t]*(["'`])/.exec(rest);
+  let start = 0;
+  if (q) {
+    const close = rest.indexOf(q[1], q[0].length);
+    if (close < 0) return rest;
+    start = close + 1;
+  }
+  const eol = rest.slice(start).search(/[\n\r]/);
+  return eol < 0 ? rest : rest.slice(0, start + eol);
 }
+
+/**
+ * Whether an assignment found in written text may stop the hooks: LD_TRACE_LOADED_OBJECTS to anything, or LD_DEBUG when "help" can be
+ * one of its options (HELP_WORD_RE over the span; an escape such as \n counts as a break). In a file, an LD_DEBUG value that refers to
+ * a variable ($X, ${X}) is refused too, because a loader that expands it would write a value the text does not show.
+ */
+function writtenValueStopsHooks(key, span, shell) {
+  if (key === 'LD_TRACE_LOADED_OBJECTS') return true;
+  if (key !== 'LD_DEBUG') return false;
+  const plain = String(span).replace(/\\[nrt]/g, ' ').replace(/["'`\\]/g, '');
+  return HELP_WORD_RE.test(plain) || (!shell && /\$/.test(String(span)));
+}
+
+// Index of the first character after the "=" (or ":") of a match of HOOK_STOP_ASSIGNMENT_RE.
+const valueStart = (m) => m.index + m[0].search(/[=:]/) + 1;
 
 /** The name of the first variable in `text` that is assigned a value that stops the hooks (see isHookStopVar), or null. */
 function hookStopAssignedIn(text) {
@@ -155,7 +183,8 @@ function hookStopAssignedIn(text) {
   HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
   let m;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
-    if (assignedValues(s, m).some((v) => isHookStopVar(m[1], v))) return m[1];
+    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
+    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), false), false)) return m[1];
   }
   return null;
 }
@@ -202,10 +231,8 @@ function hookStopOrComputedIn(text) {
   let m;
   let literal = 0;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
-    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] : (m[5] || '');
-    if (assignedValues(s, m).some((v) => isHookStopVar(m[1], v))) return m[1];
-    // In a shell command back quotes run a command: the value is computed.
-    if (m[4] !== undefined) return m[1];
+    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
+    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), true), true)) return m[1];
     const end = m.index + m[0].length;
     const next = s.charAt(end);
     const before = s.charAt(m.index - 1);
