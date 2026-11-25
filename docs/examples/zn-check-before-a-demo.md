@@ -4,7 +4,7 @@ You are about to show your coding agent to someone, and you want to be sure
 zn-gate is on and nothing leaves your machine. This page is a short checklist
 of four commands, with the real output to expect. Run every command in your own
 terminal, not through your agent. All values are made up. The output comes from
-a test run with zn-gate 1.16.0 and Claude Code set up for the user; the home
+a test run with zn-gate 1.17.0 and Claude Code set up for the user; the home
 folder is shown as `~`, and your lines for other agents will differ.
 
 The four commands only read files, or run a test in a temporary folder. None
@@ -23,7 +23,7 @@ folder. Expect `OK` next to the agent you will demo:
 
 ```text
   OK Claude Code  blocked the .env file and allowed the ordinary file. Your agent would be told:
-     "zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `npx -y zn-gate@1.16.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
+     "zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `npx -y zn-gate@1.17.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
 ```
 
 The summary ends with `Your agent cannot read secret files such as .env through
@@ -93,7 +93,7 @@ If you do not use secrets in the demo, skip this step. On a machine with no
 vault it prints:
 
 ```text
-Vault: not created yet (run `npx -y zn-gate@1.16.0 unlock`).
+Vault: not created yet (run `npx -y zn-gate@1.17.0 unlock`).
 ```
 
 If you do show secrets, the vault must be unlocked. Its other two answers start

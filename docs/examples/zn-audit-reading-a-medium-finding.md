@@ -26,7 +26,7 @@ npx -y zn-gate audit ./example-repo
 ```
 
 ```text
-zn audit  ./example-repo  (zn-gate 1.16.0)
+zn audit  ./example-repo  (zn-gate 1.17.0)
 
 MEDIUM    ZNA003  .mcp.json:3  [claude]
           Project MCP server starts a local command

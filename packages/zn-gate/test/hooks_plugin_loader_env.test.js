@@ -13,6 +13,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+// Started, not looked up: on Windows /bin/sh is /bin/sh.exe, which fs.existsSync does not find.
+const shellStarts = (sh) => { try { return spawnSync(sh, ['-c', 'exit 0'], { stdio: 'ignore' }).status === 0; } catch { return false; } };
 
 const loaderEnv = require('../lib/loader-env');
 const { tempDir } = require('./helpers/tmp');
@@ -22,7 +24,8 @@ const PLUGINS = path.join(__dirname, '..', '..', '..', 'plugins');
 const ZN_NODE_SH = path.join(PLUGINS, 'zn-gate', 'scripts', 'zn-node.sh');
 const ZCODE_SH = path.join(PLUGINS, 'zcode', 'scripts', 'zn-hook.sh');
 const ZCODE_PS1 = path.join(PLUGINS, 'zcode', 'scripts', 'zn-hook.ps1');
-const read = (f) => fs.readFileSync(f, 'utf8');
+// A Windows checkout may turn the line ends of the scripts into CRLF.
+const read = (f) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
 
 // Stands in for scripts/zn-launch.js: reports the loader-related names it got and answers like an allowed call.
 const STUB_LAUNCH = "const fs = require('fs');" +
@@ -66,7 +69,7 @@ function hostileEnv(f) {
   };
 }
 
-test('sanity: the preload runs when Node.js is started with the hostile environment directly', { skip: !posix }, (t) => {
+test('sanity: the preload runs when Node.js is started with the hostile environment directly', (t) => {
   const f = fixture(t);
   const r = spawnSync(process.execPath, ['-e', '0'], { encoding: 'utf8', env: hostileEnv(f) });
   assert.equal(r.status, 0, r.stderr);
@@ -74,7 +77,7 @@ test('sanity: the preload runs when Node.js is started with the hostile environm
 });
 
 for (const shell of ['/bin/sh', '/bin/bash']) {
-  test('plugin zn-node.sh run by ' + shell + ': NODE_OPTIONS and NODE_PATH do not reach Node.js, the hook still answers', { skip: !posix || !fs.existsSync(shell) || process.execPath.includes('/node_modules/') }, (t) => {
+  test('plugin zn-node.sh run by ' + shell + ': NODE_OPTIONS and NODE_PATH do not reach Node.js, the hook still answers', { skip: (!posix || !shellStarts(shell) || process.execPath.includes('/node_modules/')) ? shell + ' does not start on this system, or Node.js runs from a package folder' : false }, (t) => {
     const f = fixture(t);
     const sh = path.join(f.plugin, 'scripts', 'zn-node.sh');
     const r = spawnSync(shell, [sh, 'PreToolUse', 'hook', 'claude-code'], { input: '{"tool_name":"Read"}', encoding: 'utf8', cwd: f.work, env: hostileEnv(f) });

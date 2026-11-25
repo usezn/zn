@@ -96,6 +96,9 @@ func TestAnalyzeOptionsAndLongInput(t *testing.T) {
 	if !res.Partial() || res.LongInput.Windows != 3 || res.LongInput.Scored != 2 || res.LongInput.TopWindow != 1 {
 		t.Errorf("long_input = %+v", res.LongInput)
 	}
+	if res.Verdict != VerdictAllow || res.Allowed() {
+		t.Errorf("a partial allow must not count as Allowed: verdict %q, Allowed %v", res.Verdict, res.Allowed())
+	}
 }
 
 func TestErrorStatuses(t *testing.T) {
@@ -559,5 +562,58 @@ func TestBackoffBounds(t *testing.T) {
 				t.Fatalf("attempt %d: backoff %v out of range", attempt, d)
 			}
 		}
+	}
+}
+
+func TestBaseURLPolicy(t *testing.T) {
+	ok := []string{"https://api.usezn.com", "https://example.test/", "http://localhost", "http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]", "http://[::1]:9000/"}
+	for _, u := range ok {
+		if err := checkBaseURL(strings.TrimRight(u, "/")); err != nil {
+			t.Errorf("%s refused: %v", u, err)
+		}
+	}
+	bad := []string{"http://api.example.com", "http://localhost.example.com", "http://127.0.0.1.nip.io", "http://localhost@evil.example.com", "http://127.0.0.1:80@evil.example.com", "http://evil.example.com#@localhost", "ftp://localhost", "localhost:8080", "http://", ""}
+	for _, u := range bad {
+		if err := checkBaseURL(u); !errors.Is(err, ErrInsecureBaseURL) {
+			t.Errorf("%q: want ErrInsecureBaseURL, got %v", u, err)
+		}
+	}
+}
+
+func TestInsecureBaseURLSendsNothing(t *testing.T) {
+	c := NewClient("zn_live_test", WithBaseURL("http://api.example.com"))
+	c.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("request was sent")
+		return nil, errors.New("sent")
+	})}
+	_, err := c.Analyze(context.Background(), "hello")
+	if !errors.Is(err, ErrInsecureBaseURL) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestUnknownVerdictFailsClosed(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown": `{"verdict":"maybe"}`,
+		"empty":   `{"verdict":""}`,
+		"missing": `{"confidence":0.1}`,
+		"null":    `{"verdict":null}`,
+		"case":    `{"verdict":"ALLOW"}`,
+	} {
+		body := body
+		t.Run(name, func(t *testing.T) {
+			c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, body)
+			}), WithMaxRetries(0))
+			res, err := c.Analyze(context.Background(), "hello")
+			if !errors.Is(err, ErrUnexpectedResponse) || res != nil {
+				t.Fatalf("res=%v err=%v", res, err)
+			}
+		})
 	}
 }

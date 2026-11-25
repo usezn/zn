@@ -375,7 +375,7 @@ right before starting it, and starts that path; it never looks the name up on
 - **Interpreter start-up variables are removed too.** Since 1.5.1, the
   variables that make an interpreter load code of the caller's choosing
   (`NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`,
-  `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`,
+  `PYTHONUSERBASE`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`,
   `BASH_ENV`, `ENV` and similar) are removed together with the loader
   variables whenever secret values are injected. An interpreter still runs
   any code it is given (a script path, `-e`, a file it reads), so approve
@@ -562,11 +562,57 @@ Three features are off by default. Each one helps in a narrow case and has limit
   runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
-- **Some loader variables stop the shell before the script runs (accepted limit).** With `LD_TRACE_LOADED_OBJECTS` or
-  `LD_DEBUG=help` set in the environment of the agent, the dynamic loader prints its output and the shell exits, usually with
-  status 0, without running any line of the launcher. The refusal cannot fire, and the agent sees a hook that did nothing. The
-  launcher lists these variables as refused and unsets them, but only a program that starts the shell can stop them before it
-  runs.
+- **Some loader variables stop the shell before the script runs (closed on Linux for Claude Code and ZCode, accepted limit for the
+  others).** With `LD_TRACE_LOADED_OBJECTS` (any value, also `0` or empty) or `LD_DEBUG` naming `help` set in the environment
+  of the agent, the glibc dynamic loader prints its output and exits with status 0 before the first line of any dynamically
+  linked program (sh, bash, Node.js). A hook started that way never runs, and most agents read exit 0 with plain text as "no
+  objection", so the call goes ahead unchecked.
+  - On Linux, ZCode and Claude Code can start a hook program directly, with no shell (ZCode's `process` hook, Claude Code's
+    exec form with `args`). For a user install on Linux (x64 and arm64), `zn hooks install zcode` and `zn hooks install claude-code`
+    put a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`, first in the hook. No dynamic loader runs before it.
+    It denies when the environment of the agent has `LD_TRACE_LOADED_OBJECTS` set to any value (the empty string and `0` included), or any of `LD_PRELOAD`, `LD_AUDIT`, `LD_PROFILE`, `LD_LIBMAP`, `LD_32_PRELOAD`, `LD_TRACE_LOADED_OBJECTS_FMT1`, `LD_TRACE_LOADED_OBJECTS_FMT2`, `LD_TRACE_LOADED_OBJECTS_ALL`, `LD_DEBUG` (any value, not only `help`), `LD_DEBUG_OUTPUT`, `LD_PRELOAD_FDS`, `LD_LIBMAP_DISABLE`, `LD_LOADFLTR`, `DYLD_INSERT_LIBRARIES`, `DYLD_IMAGE_SUFFIX`, `DYLD_SHARED_CACHE_DIR` or `DYLD_SHARED_REGION` set to a value that is not empty, in exactly that upper case (the loader reads no other case). It does not start the hook then and answers
+    the agent's own deny with its blocking exit code (exit 2 with the reason). Any other loader variable does not make it deny:
+    `LD_LIBRARY_PATH`, `LD_SHOW_AUXV` and every other `LD_*` or `DYLD_*` name, those names in another case, the names above with an
+    empty value (except `LD_TRACE_LOADED_OBJECTS`, which denies when empty too), and the other names of `lib/loader-env.js`. It removes all of them (every `LD_*` and
+    `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) from the environment and replaces itself with the hook. When it cannot
+    start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it into the zn hooks folder
+    when the SHA-256 matches, then runs it once as a test. The hook entry is switched to the launcher only when that test run answers as
+    expected. Otherwise the copied file stays unused, the hook keeps the form it had before, and the install
+    prints a warning that this protection is missing on that machine.
+  - Claude Code on Linux was checked with a real Claude Code 2.1.331 (headless, x86_64, Ubuntu 24.04, November 2026): with the
+    exec form the parent of the hook is Claude Code itself, with no shell in between; `LD_LIBRARY_PATH` in the settings is
+    removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny (so does any other value of `LD_DEBUG`)
+    before any dynamically linked program starts, and the tool call is blocked, while the earlier shell form with
+    `LD_TRACE_LOADED_OBJECTS=1` let the tool run with no hook decision. The arm64 launcher is built but was not run with a real agent.
+  - Antigravity is detection only on every platform for now. The launcher program can already answer for it,
+    but a launch form is used only after it has been run with the real agent. Antigravity's start with no shell was seen on
+    Windows only, where there is no dynamic loader, and not on Linux. Until that is verified, its hook keeps the launcher
+    script form: `zn audit` reports the variables as critical, the hook cannot refuse them, and a call can go ahead.
+  - Codex CLI, Gemini CLI and GitHub Copilot CLI are detection only too: `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Codex CLI and Gemini CLI always start hooks
+    through a shell (`$SHELL -lc` and `bash -c`), so no hook form can avoid the loader there; zn keeps Copilot's shell form
+    too. Cursor is not verified: it has no form
+    without a shell, and its hooks documentation says that its permission hooks (`beforeShellExecution`,
+    `beforeMCPExecution`, `beforeReadFile`, `preToolUse` and the like) block on output that is not valid JSON or does not
+    match the hook's schema, so the loader's plain text should block those calls, but this has not been confirmed with a
+    real Cursor. Do not count Cursor as protected against these variables. Project installs (`--project`) and the managed configuration
+    (`zn team managed-config`) name `zn` on the PATH, because the file is shared and cannot name one machine's launcher, so
+    they keep the shell form for every agent.
+  - macOS has no such launcher: dyld prints with its `DYLD_PRINT_*` variables and goes on, and no dyld variable is known to
+    end a program before `main` (not tested). Windows has no `ld.so`. Linux on other processors (32-bit, RISC-V) gets no
+    prebuilt launcher and keeps the earlier form, with the warning.
+  - What `zn audit` checks on every platform: a project that sets either variable for the agent (Claude Code `env`, a
+    committed `.env`, Codex `shell_environment_policy.set`) is reported as critical (in the `env` of an MCP server it only
+    stops that server from starting, and is reported as medium), and the same finding blocks a change to Claude Code's
+    project settings that adds one (zn's configuration change check), provided the hook for that change still runs. Whoever
+    can set the environment of the agent can also preload a library of their own (see the limit above), so this gives no new
+    power; it only needs no file.
+  - Where the launcher is not used (the shell launcher of the other agents, project installs, macOS), the other loader settings that
+    only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`, `LD_VERBOSE`, `LD_WARN`) let the script run;
+    the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with FreeBSD's loader. For Claude Code and ZCode user
+    installs on Linux the static launcher also denies `LD_DEBUG` with any non-empty value and `LD_DEBUG_OUTPUT` with a non-empty
+    value (they are in the list above). The shell launcher refuses the same names. The difference is that the static launcher runs
+    before any dynamic loader, so its refusal always happens, while the loader can stop the shell launcher before its first line
+    (for `LD_TRACE_LOADED_OBJECTS` and `LD_DEBUG=help`).
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell

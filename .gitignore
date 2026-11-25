@@ -59,3 +59,6 @@ leak_bench_results.json
 *.p12
 *.pfx
 /data/
+# The static hook launcher binaries are built by the release workflow, never committed.
+/packages/zn-gate/lib/native/
+/tools/hook-launcher/target/

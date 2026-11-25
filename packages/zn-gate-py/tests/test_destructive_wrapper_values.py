@@ -3,13 +3,13 @@ written the way GNU timeout reads it (inf, 1e3, +5, 0x10) do not hide the comman
 packages/zn-gate/test/destructive_wrapper_values.test.js and reads the same cases
 (packages/zn-gate/test/fixtures/wrapper_value_cases.json). Only the text is checked: nothing is run."""
 import json
-import time
 from pathlib import Path
 
 import pytest
 
 from zn_gate import destructive
 from zn_gate.destructive import check_command
+from ._timing import assert_linear
 
 FIXTURE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "wrapper_value_cases.json"
 CASES = json.loads(FIXTURE.read_text(encoding="utf-8"))["cases"]
@@ -58,8 +58,8 @@ def test_unsure_marking(cmd, name, expected):
 
 
 def test_many_later_words_stay_within_budget():
-    cmd = "nice --adj 5 echo " + "rm sh find dd " * 4000
-    t0 = time.process_time()
-    r = check_command(cmd)
-    assert time.process_time() - t0 < 3.0
-    assert r.verdict == "block"
+    def build(n):
+        return "nice --adj 5 echo " + "rm sh find dd " * n
+
+    assert check_command(build(4000)).verdict == "block"
+    assert_linear(check_command, build, 4000)
