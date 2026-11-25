@@ -575,8 +575,9 @@ Three features are off by default. Each one helps in a narrow case and has limit
     `LD_LIBRARY_PATH`, `LD_SHOW_AUXV` and every other `LD_*` or `DYLD_*` name, those names in another case, the names above with an
     empty value, and the other names of `lib/loader-env.js`. It removes all of them (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) from the environment and replaces itself with the hook. When it cannot
-    start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
-    the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
+    start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it into the zn hooks folder
+    when the SHA-256 matches, then runs it once as a test. The hook entry is switched to the launcher only when that test run answers as
+    expected. Otherwise the copied file stays unused, the hook keeps the form it had before, and the install
     prints a warning that this protection is missing on that machine.
   - Claude Code on Linux was checked with a real Claude Code 2.1.331 (headless, x86_64, Ubuntu 24.04, November 2026): with the
     exec form the parent of the hook is Claude Code itself, with no shell in between; `LD_LIBRARY_PATH` in the settings is
