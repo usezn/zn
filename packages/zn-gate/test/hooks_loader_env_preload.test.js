@@ -194,3 +194,34 @@ test('a printf conversion outside a literal NAME= value is refused even with lit
     passes(await decide(gemini, gem('run_shell_command', { command }, dir)), command);
   }
 });
+
+test('printf is found in any position of a simple command, not only as the first word', async (t) => {
+  const dir = project(t);
+  const bad = [
+    "env printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "X=1 printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "command printf '%s%s\\n' LD_ DEBUG=help >> .env",
+    "\"printf\" '%s%s\\n' LD_ DEBUG=help > .env",
+    "\\printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "env printf '%s%s=%s\\n' LD_ PRELOAD /tmp/x.so > .env",
+    "true && env printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "sudo printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "echo x | xargs printf '%s%s\\n' LD_ DEBUG=help > .env",
+    "env printf -v V '%s%s' LD_ DEBUG=help > .env",
+  ];
+  for (const command of bad) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), null, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), null, command);
+  }
+  const good = [
+    "env printf 'TOKEN=%s\\n' abc >> .env",
+    "X=1 printf 'A=%s\\n' b >> .env",
+  ];
+  for (const command of good) {
+    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+    passes(await decide(gemini, gem('run_shell_command', { command }, dir)), command);
+  }
+  assert.equal(loaderEnv.preloadOrOpaqueIn("env printf '%s%s\\n' LD_ DEBUG=help > .env"), loaderEnv.OPAQUE_WRITE);
+  assert.equal(loaderEnv.preloadOrOpaqueIn('xargs printf > .env'), loaderEnv.OPAQUE_WRITE);
+  assert.equal(loaderEnv.preloadOrOpaqueIn("env printf 'A=%s\\n' b >> .env"), null);
+});

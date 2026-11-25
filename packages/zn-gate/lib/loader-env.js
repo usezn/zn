@@ -432,13 +432,15 @@ function opaqueByLines(s) {
  * - in the value of a literal assignment: after NAME= or NAME: , where NAME is a plain name ([A-Za-z_][A-Za-z0-9_]*) not glued to an
  *   expansion or pattern, up to the end of that shell word, a line break or a \n or \r escape (echo "API_URL=$URL", sed -i "s|^A=.*|A=$V|" .env);
  * - in an argument of printf whose format (the word right after printf) has every conversion in such a value (printf 'TOKEN=%s\n' "$T"); a printf conversion
- *   anywhere else is opaque even with literal arguments (printf '%s%s\n' LD_ DEBUG=help);
+ *   anywhere else is opaque even with literal arguments (printf '%s%s\n' LD_ DEBUG=help). Every word that is printf is analysed, in any position
+ *   (env printf, X=1 printf, command printf, "printf", \printf, sudo printf, xargs printf); options after it (--, -v VAR) and a missing format
+ *   make the write opaque;
  * - in the file a redirection names (>> "$DIR/.env"), or in a comment.
  * Everything else fails closed: printf "$X", echo "$LINE", printf '%s=%s\n' "$K" "$V", echo * > .env, and also expansions in other parts
  * of the command (cd "$D" && ...). One forward pass over the quote map.
  */
 function opaqueWriteIn(s) {
-  if (!/[$`*?[{]/.test(s) && !(s.includes('%') && s.includes('printf'))) return false;
+  if (!/[$`*?[{]/.test(s) && !s.replace(/["'\\]/g, '').includes('printf')) return false;
   const inside = quoteMap(s);
   if (inside.bad) return opaqueByLines(s);
   const n = s.length;
@@ -449,16 +451,20 @@ function opaqueWriteIn(s) {
   let target = false;
   let pendingTarget = false;
   let wordIdx = -1;
-  let headStart = 0;
-  let isPrintf = false;
+  let wordStart = 0;
+  let pIdx = -1; // index of the last word of this simple command that is printf (in any position: env printf, X=1 printf, "printf", \\printf)
   let fmtOk = true;
-  const reset = () => { wordIdx = -1; isPrintf = false; fmtOk = true; pendingTarget = false; };
+  let dangling = false; // a printf word with no word after it: its format cannot be known
+  const reset = () => {
+    if (pIdx >= 0 && wordIdx === pIdx) dangling = true;
+    wordIdx = -1; pIdx = -1; fmtOk = true; pendingTarget = false;
+  };
   const endWord = (i) => {
     if (!inWord) return;
     inWord = false;
-    if (!target && wordIdx === 0) {
-      const head = s.slice(headStart, i).replace(/["'\\]/g, '');
-      isPrintf = head.slice(head.lastIndexOf('/') + 1) === 'printf';
+    if (!target) {
+      const word = s.slice(wordStart, i).replace(/["'\\]/g, '');
+      if (word.slice(word.lastIndexOf('/') + 1) === 'printf') { pIdx = wordIdx; fmtOk = true; }
     }
   };
   for (let i = 0; i < n; i++) {
@@ -484,13 +490,13 @@ function opaqueWriteIn(s) {
       pendingTarget = false;
       if (!target) {
         wordIdx++;
-        if (wordIdx === 0) headStart = i;
-        else if (wordIdx === 1 && isPrintf && c === '-') fmtOk = false; // an option, not the format
+        wordStart = i;
+        if (pIdx >= 0 && wordIdx === pIdx + 1 && c === '-') fmtOk = false; // an option (--, -v VAR), not the format
       }
     }
     if (target) continue; // the file a redirection names is not written text
-    const allowed = inValue || (isPrintf && wordIdx >= 2 && fmtOk);
-    if (c === '%' && isPrintf && (wordIdx === 1 || (wordIdx === 2 && !fmtOk))) {
+    const allowed = inValue || (pIdx >= 0 && wordIdx >= pIdx + 2 && fmtOk);
+    if (c === '%' && pIdx >= 0 && (wordIdx === pIdx + 1 || (wordIdx > pIdx + 1 && !fmtOk))) {
       if (s.charAt(i + 1) === '%') i++;
       else if (!inValue) return true; // a conversion outside a literal NAME= value can assemble a name from literal arguments
       continue;
@@ -513,8 +519,11 @@ function opaqueWriteIn(s) {
       while (s.charAt(j) === ' ' || s.charAt(j) === '\t') j++;
       if (s.charAt(j) === '=' || (s.charAt(j) === ':' && /[ \t]/.test(s.charAt(j + 1)))) valueFrom = j + 1;
     }
+    if (dangling) return true;
   }
-  return false;
+  endWord(n);
+  reset();
+  return dangling;
 }
 
 // What preloadOrOpaqueIn returns for an opaque write.
