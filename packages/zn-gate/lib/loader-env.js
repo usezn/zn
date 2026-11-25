@@ -528,13 +528,17 @@ function preloadOrOpaqueIn(text, opts = {}) {
   return preloadNamedIn(s) || (opts.opaque !== false && opaqueWriteIn(s) ? OPAQUE_WRITE : null);
 }
 
-// The .NET profiler variables: with COR_ENABLE_PROFILING=1 (.NET Framework, which Windows PowerShell 5.1 runs on) or
-// CORECLR_ENABLE_PROFILING=1 (.NET), the runtime loads the DLL that COR_PROFILER / CORECLR_PROFILER and the *_PATH variables name
+// The .NET profiler variables: with COR_ENABLE_PROFILING=1 (.NET Framework, which Windows PowerShell 5.1 runs on),
+// CORECLR_ENABLE_PROFILING=1 (.NET) or DOTNET_ENABLE_PROFILING=1 (the DOTNET_ prefix that .NET 11 makes the standard one, with
+// CORECLR_ kept for compatibility), the runtime loads the DLL that COR_PROFILER / CORECLR_PROFILER / DOTNET_PROFILER and the
+// *_PATH variables name (also the bitness and architecture forms _32, _64, _ARM32 and _ARM64)
 // into the program before its first line: for powershell.exe, before the first line of a Windows hook script, the Windows twin of
 // LD_PRELOAD. `zn audit` reports them (docs/threat-model.md, accepted limits).
-const WINDOWS_PROFILER_SWITCHES = ['COR_ENABLE_PROFILING', 'CORECLR_ENABLE_PROFILING'];
+const WINDOWS_PROFILER_SWITCHES = ['COR_ENABLE_PROFILING', 'CORECLR_ENABLE_PROFILING', 'DOTNET_ENABLE_PROFILING'];
+const PROFILER_PATH_SUFFIXES = ['', '_32', '_64', '_ARM32', '_ARM64'];
 const WINDOWS_PROFILER_NAMES = [...WINDOWS_PROFILER_SWITCHES, 'COR_PROFILER', 'COR_PROFILER_PATH', 'COR_PROFILER_PATH_32', 'COR_PROFILER_PATH_64',
-  'CORECLR_PROFILER', 'CORECLR_PROFILER_PATH', 'CORECLR_PROFILER_PATH_32', 'CORECLR_PROFILER_PATH_64'];
+  'CORECLR_PROFILER', 'DOTNET_PROFILER',
+  ...['CORECLR_PROFILER_PATH', 'DOTNET_PROFILER_PATH'].flatMap((p) => PROFILER_PATH_SUFFIXES.map((s) => p + s))];
 
 /**
  * A PowerShell condition, true when a .NET profiler is on for this process (no cmdlet; names ignore case on Windows). The hooks run

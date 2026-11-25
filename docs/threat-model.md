@@ -636,8 +636,10 @@ Three features are off by default. Each one helps in a narrow case and has limit
   Windows twin of `LD_PRELOAD`). With `COR_ENABLE_PROFILING=1` set, the Windows hook scripts (the hook launcher and the
   project guard) do not start the hook and answer with the agent's block, or its warning for an event it cannot block. Like
   the refusal on Linux this narrows the path, it does not close it: the DLL is already loaded when the script checks, and
-  could change the answer. `zn audit` reports a project that turns it on for the agent (`CORECLR_ENABLE_PROFILING` too) as
-  critical. Whoever can set the environment of the agent can already run code
+  could change the answer. Windows PowerShell 5.1 runs on .NET Framework and reads only `COR_ENABLE_PROFILING`; `zn audit`
+  reports a project that turns on any of the profiler switches for the agent (`COR_ENABLE_PROFILING`,
+  `CORECLR_ENABLE_PROFILING` and the .NET 11 name `DOTNET_ENABLE_PROFILING`) as critical. Whoever can set the environment
+  of the agent can already run code
   of their own in it, so this gives no new power; it only needs no file.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor

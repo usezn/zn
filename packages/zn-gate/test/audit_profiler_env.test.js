@@ -26,13 +26,15 @@ const run = (dir) => audit({ root: dir, env: {} });
 const ids = (res) => res.findings.map((f) => f.id + '/' + f.severity + '@' + f.file).join(', ');
 
 test('classifyEnv: a .NET profiler turned on is its own kind; the profiler DLL settings load code', () => {
-  for (const k of ['COR_ENABLE_PROFILING', 'CORECLR_ENABLE_PROFILING', 'cor_enable_profiling']) {
+  for (const k of ['COR_ENABLE_PROFILING', 'CORECLR_ENABLE_PROFILING', 'DOTNET_ENABLE_PROFILING', 'cor_enable_profiling', 'dotnet_enable_profiling']) {
     assert.deepEqual(P.classifyEnv(k, '1'), { kind: 'profiler' }, k);
     assert.deepEqual(P.classifyEnv(k, ' 1 '), { kind: 'profiler' }, k + ' with spaces');
   }
   // The runtime acts only on 1.
   for (const v of ['0', 'true', '']) assert.notDeepEqual(P.classifyEnv('COR_ENABLE_PROFILING', v), { kind: 'profiler' }, JSON.stringify(v));
-  for (const k of ['COR_PROFILER', 'COR_PROFILER_PATH', 'COR_PROFILER_PATH_64', 'CORECLR_PROFILER_PATH']) {
+  for (const k of ['COR_PROFILER', 'COR_PROFILER_PATH', 'COR_PROFILER_PATH_64', 'CORECLR_PROFILER_PATH', 'CORECLR_PROFILER_PATH_ARM64',
+    'DOTNET_PROFILER', 'DOTNET_PROFILER_PATH', 'DOTNET_PROFILER_PATH_32', 'DOTNET_PROFILER_PATH_64', 'DOTNET_PROFILER_PATH_ARM32',
+    'DOTNET_PROFILER_PATH_ARM64']) {
     assert.deepEqual(P.classifyEnv(k, 'C:\\example\\p.dll'), { kind: 'code' }, k);
   }
   assert.ok(loaderEnv.isProfilerOn('COR_ENABLE_PROFILING', '1'));
@@ -74,6 +76,14 @@ test('a committed .env that turns on a .NET profiler is critical; set to 0 it is
   const on = run(build(t, { '.env': 'FOO=1\nCOR_ENABLE_PROFILING=1\n' }));
   assert.ok(on.findings.some((f) => f.id === 'ZNA008' && f.severity === 'critical' && /COR_ENABLE_PROFILING/.test(f.detail)), ids(on));
   const off = run(build(t, { '.env': 'FOO=1\nCOR_ENABLE_PROFILING=0\n' }));
+  assert.ok(!off.findings.some((f) => f.id === 'ZNA008' && f.severity === 'critical'), ids(off));
+});
+
+test('.NET 11 names: a committed .env with DOTNET_ENABLE_PROFILING=1 and a DOTNET_ profiler DLL is reported', (t) => {
+  const r = run(build(t, { '.env': 'DOTNET_ENABLE_PROFILING=1\nDOTNET_PROFILER={00000000-0000-0000-0000-000000000000}\nDOTNET_PROFILER_PATH_ARM64=/example/p.so\n' }));
+  assert.ok(r.findings.some((f) => f.id === 'ZNA008' && f.severity === 'critical' && /DOTNET_ENABLE_PROFILING/.test(f.detail)), ids(r));
+  assert.ok(r.findings.some((f) => f.id === 'ZNA008' && /DOTNET_PROFILER_PATH_ARM64/.test(f.detail)), ids(r));
+  const off = run(build(t, { '.env': 'DOTNET_ENABLE_PROFILING=0\n' }));
   assert.ok(!off.findings.some((f) => f.id === 'ZNA008' && f.severity === 'critical'), ids(off));
 });
 
