@@ -322,7 +322,7 @@ async function guide(opts = {}) {
     else w(`  >  ${i.name.padEnd(12)} ${i.state === 'not-protected' ? 'not protected: ' + i.problem : 'not set up yet'}\n`);
   }
   for (const i of items) if (i.note && i.steps.length) w(`${i.note}\n`);
-  // A plugin older than this zn-gate is not moved by init (the marketplace is pinned to a tag): say how to move it.
+  // A plugin older than this zn-gate is not moved by init (the plugin pins one release and has no auto-update): say how to move it.
   for (const i of items) if (i.update) w(`  (${i.name}: ${i.update})\n`);
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
