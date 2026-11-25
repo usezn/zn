@@ -39,10 +39,15 @@ permissions: {}
 
 env:
   ARTIFACT_NAME: zn-gate-release
+  # The same gitsign as release.yml, to check the tag signature here too.
+  GITSIGN_VERSION: 0.17.1
+  GITSIGN_SHA256: 69213a8a0813a151e5a47d0060862952ff833a845d57309dff76f7ba6600abae
 
 jobs:
   # This workflow does not take a commit from its caller: it finds the commit of the tag itself and checks
-  # again that it is on main or a release/* branch. Nothing from the repository is run here.
+  # again that it is on main or a release/* branch. It also checks, itself, who called it and the tag: only release.yml,
+  # for the tag of the push that started the run or as a dry run of a manual run, and only a tag signed by tag-release.yml.
+  # Nothing from the repository is run here.
   resolve:
     name: Resolve the commit of the tag
     runs-on: ubuntu-latest
@@ -81,10 +86,117 @@ jobs:
             echo "::error::$TAG ($sha) is not on main or a release/* branch"; exit 1
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check the caller, the event and the tag signature
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.sha.outputs.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # In a reusable workflow GITHUB_REPOSITORY and GITHUB_WORKFLOW_REF name the caller. The repository and the workflow are
+          # written out here, not taken from the caller: another repository's release.yml must not reach this build.
+          [ "$GITHUB_REPOSITORY" = usezn/zn ] || { echo "::error::this workflow builds usezn/zn only, not $GITHUB_REPOSITORY"; exit 1; }
+          case "$GITHUB_WORKFLOW_REF" in
+            "usezn/zn/.github/workflows/release.yml@"*) ;;
+            *) echo "::error::this workflow is only called by usezn/zn release.yml, not $GITHUB_WORKFLOW_REF"; exit 1 ;;
+          esac
+          if [ "$EVENT" = push ]; then
+            # A tag push builds the pushed tag and nothing else.
+            [ "$GITHUB_REF" = "refs/tags/$TAG" ] || { echo "::error::the run was started by $GITHUB_REF, not by the tag $TAG"; exit 1; }
+          else
+            # Any other event (a manual run) is a dry run: nothing is signed or published.
+            [ "$DRY_RUN" = true ] || { echo "::error::a $EVENT run must be a dry run"; exit 1; }
+          fi
+          base="${TAG#v}"; base="${base%%-*}"
+          if ! git cat-file -e "$SHA:.github/workflows/tag-release.yml" 2>/dev/null \
+              && [ "$(printf '%s\n' 1.12.0 "$base" | sort -V | head -n 1)" != 1.12.0 ]; then
+            echo "$TAG predates signed tags (before 1.12.0): its tag is not signed."
+            exit 0
+          fi
+          # The annotated tag object, signed by tag-release.yml on main, still on the commit resolved above.
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] || { echo "::error::$TAG is not an annotated, signed tag"; exit 1; }
+          [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$SHA" ] || { echo "::error::$TAG no longer points to $SHA"; exit 1; }
+          url="https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitsign" "$url"
+          echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum --strict -c -
+          chmod +x "$RUNNER_TEMP/gitsign"
+          "$RUNNER_TEMP/gitsign" verify-tag "$TAG" \
+            --certificate-identity "https://github.com/usezn/zn/.github/workflows/tag-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+  # The static hook launcher (tools/hook-launcher) for Linux x64 and arm64 ships inside the npm package with its SHA-256
+  # (lib/native/hook-launcher.json); the installer copies it only when the SHA-256 matches. It is compiled only for a tag
+  # push, in a job of its own with no cache: it checks out the commit of the push event itself (the tag) and requires it to
+  # be the commit the resolve job verified. A manual run (workflow_dispatch, a dry run of an existing tag) skips this job and
+  # packs without the launcher; nothing from a manual run is signed or published. Standard library only, so no crate is
+  # downloaded; aarch64 links with the rust-lld that ships with the toolchain.
+  hook-launcher:
+    name: Build the static hook launcher
+    needs: resolve
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require the commit the resolve job verified
+        env:
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/tags/$TAG" ] || { echo "::error::the run was started by $GITHUB_REF, not by the tag $TAG"; exit 1; }
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$RESOLVED_SHA" ] || { echo "::error::checked out $head, but the tag resolves to $RESOLVED_SHA"; exit 1; }
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - name: Build the static hook launcher
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/hook-launcher"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build"
+          for t in x86_64 aarch64; do
+            cargo +1.99.0 build --locked --release --target "$t-unknown-linux-musl" --manifest-path tools/hook-launcher/Cargo.toml
+          done
+          N="$RUNNER_TEMP/native"
+          mkdir -p "$N/linux-x64" "$N/linux-arm64"
+          install -m 0755 "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/zn-hook-launcher" "$N/linux-x64/zn-hook-launcher"
+          install -m 0755 "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/zn-hook-launcher" "$N/linux-arm64/zn-hook-launcher"
+          X=$(sha256sum "$N/linux-x64/zn-hook-launcher" | cut -d' ' -f1)
+          A=$(sha256sum "$N/linux-arm64/zn-hook-launcher" | cut -d' ' -f1)
+          printf '{"linux-x64":"%s","linux-arm64":"%s"}\n' "$X" "$A" > "$N/hook-launcher.json"
+          cat "$N/hook-launcher.json"
+          # The x64 launcher must give its own fail-closed answer before it ships: no hook program, so exit 2.
+          rc=0; "$N/linux-x64/zn-hook-launcher" zcode PreToolUse /nonexistent 2>/dev/null || rc=$?
+          test "$rc" = 2
+      - name: Upload the static hook launcher
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-hook-launcher
+          path: ${{ runner.temp }}/native/
+          if-no-files-found: error
+          retention-days: 1
 
   build:
     name: Build npm tarball and Python distributions
-    needs: resolve
+    needs: [resolve, hook-launcher]
+    # Runs after the launcher job, or without it in a manual dry run (where that job is skipped).
+    if: >-
+      !cancelled() && needs.resolve.result == 'success' &&
+      (needs.hook-launcher.result == 'success' || (github.event_name != 'push' && needs.hook-launcher.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -120,6 +232,24 @@ jobs:
           python-version: "3.12"
       - name: Set a reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      # The static hook launcher comes from the hook-launcher job (tag pushes only); a manual dry run packs without it.
+      - name: Download the static hook launcher
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-hook-launcher
+          path: packages/zn-gate/lib/native
+      - name: Check the static hook launcher against its SHA-256 list
+        if: github.event_name == 'push'
+        working-directory: packages/zn-gate/lib/native
+        run: |
+          set -euo pipefail
+          chmod 0755 linux-x64/zn-hook-launcher linux-arm64/zn-hook-launcher
+          for k in linux-x64 linux-arm64; do
+            want="$(jq -er --arg k "$k" '.[$k]' hook-launcher.json)"
+            got="$(sha256sum "$k/zn-hook-launcher" | cut -d' ' -f1)"
+            [ "$want" = "$got" ] || { echo "::error::$k launcher does not match hook-launcher.json"; exit 1; }
+          done
       - name: Pack the npm tarball
         working-directory: packages/zn-gate
         run: |
@@ -130,6 +260,25 @@ jobs:
           npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
       - name: Check tarball contents
         run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate
+      # A tag build must ship the launcher: both binaries and their list are in the tarball and match it.
+      - name: Check the static hook launcher in the tarball
+        if: github.event_name == 'push'
+        env:
+          NPM_VERSION: ${{ inputs.npm_version }}
+        run: |
+          set -euo pipefail
+          x="$RUNNER_TEMP/launcher-check"
+          rm -rf "$x" && mkdir -p "$x"
+          tar -xzf "$RUNNER_TEMP/release/zn-gate-${NPM_VERSION}.tgz" -C "$x" package/lib/native/hook-launcher.json \
+            package/lib/native/linux-x64/zn-hook-launcher package/lib/native/linux-arm64/zn-hook-launcher
+          for k in linux-x64 linux-arm64; do
+            f="$x/package/lib/native/$k/zn-hook-launcher"
+            [ -x "$f" ] || { echo "::error::$k launcher is not executable in the tarball"; exit 1; }
+            want="$(jq -er --arg k "$k" '.[$k]' "$x/package/lib/native/hook-launcher.json")"
+            got="$(sha256sum "$f" | cut -d' ' -f1)"
+            [ "$want" = "$got" ] || { echo "::error::$k launcher in the tarball does not match hook-launcher.json"; exit 1; }
+          done
+          rm -rf "$x"
       - name: Install hash-pinned Python build tools
         run: |
           set -euo pipefail

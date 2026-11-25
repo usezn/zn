@@ -104,7 +104,7 @@ function pluginNodeProblem(st) {
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
-    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn#v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
+    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn#plugin-v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.claude', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
   },
@@ -194,7 +194,8 @@ function hookEntries(tree, agentId, opts = {}) {
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           // Codex on Windows runs commandWindows (command_windows in TOML), not command.
           const win = agentId === 'codex' && process.platform === 'win32' && h ? (typeof h.commandWindows === 'string' ? h.commandWindows : h.command_windows) : null;
-          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? h.command : '';
+          // Claude Code's exec form (command + args) is read as one command line.
+          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? (Array.isArray(h.args) ? require('./agents/static-launcher').execText([h.command, ...h.args.map(String)]) : h.command) : '';
           if (text) out.push({ event, matcher: g.matcher, command: text, onFailure: h.onFailure, async: h.async, ...extra });
         }
       }
@@ -239,6 +240,13 @@ function parseCommand(command, agentId, platform = process.platform) {
   const { _internal: audit } = require('./audit');
   const launcher = require('./agents/launcher');
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
+  // The static launcher in front of the hook (agents/static-launcher.js): '<dir>/zn-hook-launcher' <agent> <Event> <hook command>.
+  // The rest is read as the hook command it starts; the launcher path is kept so that check can see that it is there.
+  const sm = new RegExp("^('?)(" + audit.SAFE_ABS + "/zn-hook-launcher)\\1 " + agentId + ' ([A-Za-z]+) (.+)$').exec(c);
+  if (sm) {
+    const inner = parseCommand(sm[4], agentId, platform);
+    return inner ? { ...inner, staticLauncher: sm[2], ...(inner.raw !== undefined ? { raw: c } : {}) } : null;
+  }
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
   // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
   // Antigravity runs the command split on spaces with no shell, so zn writes the path unquoted there (an older
@@ -350,9 +358,10 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
 
-// How to move the Claude Code plugin to this release. The marketplace is added at a release tag, so `claude plugin update`
-// keeps the plugin that tag holds: the marketplace is removed and added again at the new tag.
-const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
+// How to move the Claude Code plugin to this release: remove the usezn marketplace, add it again at the plugin tag of this
+// release and install the plugin. These steps work however the marketplace was added before. Why a plugin tag and not the
+// release tag: see MARKETPLACE_REF in init-guide.js.
+const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#plugin-v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
 const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so ' + PLUGIN_UPDATE_STEPS;
 
 /* Whether version `a` is older than `b` (numbers before any "-" are compared, so 1.15.0-rc.1 and 1.15.0 count as the same
@@ -400,7 +409,7 @@ function pluginVersionNote(root, own = require('../package.json').version) {
   const both = 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
   if (/-/.test(own)) return both;
   if (require('./init-guide')._internal.cmp(v, own) < 0) {
-    return both + ', so Claude Code\'s tool calls are protected by the rules of zn-gate ' + v + '. To match them, ' + PLUGIN_UPDATE_STEPS.replace('usezn/zn#v' + VERSION, 'usezn/zn#v' + own) + ' and start a new Claude Code session';
+    return both + ', so Claude Code\'s tool calls are protected by the rules of zn-gate ' + v + '. To match them, ' + PLUGIN_UPDATE_STEPS.replace('usezn/zn#plugin-v' + VERSION, 'usezn/zn#plugin-v' + own) + ' and start a new Claude Code session';
   }
   return both + ', so this check runs older rules than the plugin. To match them, run `npm install -g zn-gate@latest` (or `npx -y zn-gate@latest check`) in your own terminal';
 }
@@ -873,6 +882,11 @@ function cliHooks(spec, ctx, userFile, given) {
       return out;
     }
   }
+  if (cmd && cmd.staticLauncher && !(() => { try { const st = fs.statSync(cmd.staticLauncher); return st.isFile() && (st.mode & 0o111) !== 0; } catch (err) { return false; } })()) {
+    out.problem = 'its hook cannot start: its launcher program (' + cmd.staticLauncher + ') is missing';
+    out.fix = REINSTALL(spec.id);
+    return out;
+  }
   if (cmd.launcher || cmd.winScript) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
@@ -911,7 +925,8 @@ function cliHooks(spec, ctx, userFile, given) {
       const exe = require('./exe');
       const run = cmd.winScript ? { file: exe.systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: exe.findProgram(cmd.raw.split(' ')[0], ctx.env || process.env), args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
-          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] }
+            : cmd.staticLauncher ? { file: cmd.staticLauncher, args: [spec.id, cmd.event, cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       // The system PowerShell, and sh (Git Bash) from the absolute PATH entries only; without one the live test is skipped.
       if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
       else out.notes.push('the program that runs the hook was not found, so the hook was not run here; zn\'s rules were checked directly');

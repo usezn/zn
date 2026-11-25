@@ -420,7 +420,8 @@ const REINSTALL_USER = winCommandText('part of zn-gate is missing from this inst
 const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode' };
 function fixHint(agentId) {
   if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
-    return 'If it happens again, ask the user to reinstall the zn-gate plugin at its release in their terminal: `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#v' + ZN_VERSION + '`, `claude plugin install zn-gate@usezn`.';
+    // The plugin tag of this release, not the release tag: the release tag holds the previous pin (see MARKETPLACE_REF in init-guide.js).
+    return 'If it happens again, ask the user to reinstall the zn-gate plugin at its release in their terminal: `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#plugin-v' + ZN_VERSION + '`, `claude plugin install zn-gate@usezn`.';
   }
   const name = AGENT_NAMES[agentId];
   return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +
@@ -747,6 +748,105 @@ function searchFolderAsk(dirs, pathOpts) {
   return null;
 }
 
+/*
+ * What a file-writing call would write, as strings: the texts the adapter listed and every string of the call's own arguments
+ * (Write content, Edit new_string, Gemini write_file content and replace new_string, a Codex patch, a filesystem MCP server's content),
+ * plus the file as an Edit or replace would leave it. Used to refuse a write that would set a variable that stops the hooks.
+ */
+// The text an edit searches for, in each agent's spelling (GitHub Copilot CLI's edit tool uses old_str and new_str).
+const SEARCH_ONLY_KEYS = new Set(['old_string', 'oldString', 'old_str']);
+
+const READ_CAP = 4000000;
+
+// Reads a file for an edit judgement without trusting what it is: opened without blocking, it must be a regular file under the cap
+// (a FIFO, a device such as /dev/zero, a directory or a link to one throws), and at most the cap is read from it.
+function readRegularFile(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size >= READ_CAP) throw new Error('not a regular file or too large');
+    const buf = Buffer.alloc(st.size);
+    let got = 0;
+    while (got < buf.length) {
+      const n = fs.readSync(fd, buf, got, buf.length - got, got);
+      if (n <= 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writtenTextsOf(ev, p, cwd, pathOpts) {
+  const out = [];
+  const seen = new Set();
+  const walk = (v, depth) => {
+    if (typeof v === 'string') {
+      // GitHub Copilot CLI sends its arguments as a JSON text: one that reads as JSON is judged on what it holds, like an object
+      // (so the text an edit searches for is left out there too); any other text as it is.
+      if (depth < 3 && v.length < 4000000 && /^\s*[{[]/.test(v)) {
+        try { walk(JSON.parse(v), depth + 1); return; } catch (_) { /* plain text */ }
+      }
+      out.push(v);
+    } else if (v && typeof v === 'object' && depth < 6 && !seen.has(v)) {
+      seen.add(v);
+      // The text an edit searches for is not written: only what replaces it, and the file as it ends up, are judged.
+      for (const [k, x] of Array.isArray(v) ? v.map((y) => ['', y]) : Object.entries(v)) if (!SEARCH_ONLY_KEYS.has(k)) walk(x, depth + 1);
+    }
+  };
+  const input = ev.input || {};
+  for (const t of Array.isArray(input.texts) ? input.texts : []) {
+    const key = Array.isArray(t && t.key) ? t.key[t.key.length - 1] : t && t.key;
+    if (t && typeof t.value === 'string' && !SEARCH_ONLY_KEYS.has(key)) out.push(t.value);
+  }
+  walk(ev.raw, 0);
+  walk(input.args, 0);
+  // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it: every edit shape
+  // (one old/new pair in snake or camel case, a MultiEdit `edits` array applied in order, replace-all flags). When the file cannot be
+  // read, or an edit does not apply exactly once, `unresolved` is set and a guarded dotenv path is refused.
+  let args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs;
+  // GitHub Copilot CLI sends toolArgs as a JSON text: read it as the object it holds. Arguments that cannot be read as an object
+  // leave the edit unknown, and a guarded dotenv path is refused.
+  if (typeof args === 'string' && p) {
+    try { args = JSON.parse(args); } catch (_) { args = null; }
+    if (!args || typeof args !== 'object') { out.unresolved = true; args = null; }
+  }
+  if (args && typeof args === 'object' && p) {
+    const pick = (o, ...keys) => { for (const k of keys) if (typeof o[k] === 'string') return o[k]; return null; };
+    const edits = [];
+    const add = (o) => {
+      if (!o || typeof o !== 'object') return;
+      const oldS = pick(o, 'old_string', 'oldString', 'old_str');
+      const newS = pick(o, 'new_string', 'newString', 'new_str');
+      if (oldS === null && newS === null) return;
+      edits.push({ oldS, newS, all: o.replace_all === true || o.replaceAll === true || o.allow_multiple === true || o.allowMultiple === true });
+    };
+    add(args);
+    if (Array.isArray(args.edits)) for (const e of args.edits) add(e);
+    // The file is read only for a path that is a guarded dotenv file: any other path is never opened (a FIFO or a device there
+    // would block the hook), and the judgement of a non-dotenv path does not use the result.
+    const guarded = edits.length && (() => { const c = policy.classifyPath(String(p), pathOpts || { cwd }); return !!(c && c.kind === 'dotenv'); })();
+    if (guarded) {
+      try {
+        let body = readRegularFile(path.resolve(cwd || process.cwd(), String(p)));
+        for (const e of edits) {
+          if (e.oldS === null || e.newS === null) { out.unresolved = true; break; }
+          if (!e.oldS) continue; // nothing to find: only what is written counts
+          const at = body.indexOf(e.oldS);
+          if (at < 0 || (!e.all && body.indexOf(e.oldS, at + 1) >= 0)) { out.unresolved = true; break; }
+          body = e.all ? body.split(e.oldS).join(e.newS) : body.slice(0, at) + e.newS + body.slice(at + e.oldS.length);
+        }
+        if (!out.unresolved) out.push(body);
+      } catch (err) {
+        // A file that does not exist yet: only what is written counts. Any other failure leaves the result unknown.
+        if (!(err && err.code === 'ENOENT')) out.unresolved = true;
+      }
+    }
+  }
+  return out;
+}
+
 async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
   const input = ev.input || {};
@@ -767,7 +867,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
     return { decision: 'allow' };
@@ -782,7 +882,8 @@ async function decidePre(ev, d, agentId, opts) {
     let instruction = null;
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
-      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
+      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts) ||
+        policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
       if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
     }
@@ -811,7 +912,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && Array.isArray(input.paths)) {
     // An MCP tool that takes a file path (a filesystem server): its output cannot be redacted in every agent.
     for (const p of input.paths) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
