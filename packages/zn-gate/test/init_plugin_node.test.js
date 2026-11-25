@@ -308,7 +308,7 @@ test('resolveHookNode: finds nothing on an empty PATH and never throws', () => {
   assert.ok(own && own.version === process.versions.node);
 });
 
-// The marketplace is added at one release's tag, so the plugin never follows a newer release by itself.
+// The plugin pins one zn-gate release and has no auto-update, so it never follows a newer release by itself.
 function pluginWithVersion(m, version) {
   pluginIn(m.home);
   const file = path.join(m.home, '.claude', 'plugins', 'installed_plugins.json');
