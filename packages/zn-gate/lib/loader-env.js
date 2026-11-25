@@ -120,4 +120,17 @@ function psScrub() {
   return WINDOWS_NAMES.map((n) => '$env:' + n + '=$null; ').join('');
 }
 
-module.exports = { SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+// The .NET profiler variables: with COR_ENABLE_PROFILING=1 (.NET Framework, which Windows PowerShell 5.1 runs on) or
+// CORECLR_ENABLE_PROFILING=1 (.NET), the runtime loads the DLL that COR_PROFILER / CORECLR_PROFILER and the *_PATH variables name
+// into the program before its first line: for powershell.exe, before the first line of a Windows hook script, the Windows twin of
+// LD_PRELOAD. `zn audit` reports them (docs/threat-model.md, accepted limits).
+const WINDOWS_PROFILER_SWITCHES = ['COR_ENABLE_PROFILING', 'CORECLR_ENABLE_PROFILING'];
+const WINDOWS_PROFILER_NAMES = [...WINDOWS_PROFILER_SWITCHES, 'COR_PROFILER', 'COR_PROFILER_PATH', 'COR_PROFILER_PATH_32', 'COR_PROFILER_PATH_64',
+  'CORECLR_PROFILER', 'CORECLR_PROFILER_PATH', 'CORECLR_PROFILER_PATH_32', 'CORECLR_PROFILER_PATH_64'];
+
+/** Whether an environment variable turns on a .NET profiler (the runtime acts only on the value 1). Names ignore case, as on Windows. */
+function isProfilerOn(key, value) {
+  return WINDOWS_PROFILER_SWITCHES.includes(String(key).toUpperCase()) && String(value).trim() === '1';
+}
+
+module.exports = { WINDOWS_PROFILER_SWITCHES, WINDOWS_PROFILER_NAMES, isProfilerOn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };

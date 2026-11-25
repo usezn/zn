@@ -581,6 +581,12 @@ Three features are off by default. Each one helps in a narrow case and has limit
   `LD_VERBOSE`, `LD_WARN`) let the script run; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
   FreeBSD's loader. macOS (dyld) has `DYLD_PRINT_*` variables that print and then go on; we know of none that ends the
   program before it runs, but we have not tested this on macOS.
+- **A .NET profiler loads a DLL into the Windows hooks (accepted limit, Windows).** With `COR_ENABLE_PROFILING=1` and
+  `COR_PROFILER` / `COR_PROFILER_PATH` in the environment of the agent, .NET Framework loads that DLL into `powershell.exe`,
+  which runs every zn hook on Windows, before the first line of the hook script, so the DLL can answer for the hook (the
+  Windows twin of `LD_PRELOAD`). The hook scripts do not refuse it yet. `zn audit` reports a project that turns it on for
+  the agent (`CORECLR_ENABLE_PROFILING` too) as critical. Whoever can set the environment of the agent can already run code
+  of their own in it, so this gives no new power; it only needs no file.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
