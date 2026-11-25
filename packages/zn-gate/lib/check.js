@@ -268,7 +268,15 @@ function parseCommand(command, agentId, platform = process.platform) {
     // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
     // the current script (no cmdlet: zf and [System.IO.File]::Exists) is read as the older Test-Path form below
     // The ack file of the current script (zk, zx, zd) is read as the plain exit of the older one.
-    const wsOld = ws.replace(/\$za = \$null;.*?(?=function zf\()/s, '')
+    // The current script holds the node and runner paths once ($zn, $zj), its answer text in $zr, and a .NET profiler check: put
+    // the paths back where the older form had them and drop the rest, then read it as before.
+    const zp = /\$zn='([^']+)'; \$zj='([^']+)'; /.exec(ws);
+    const wsNew = !zp ? ws : ws.replace(zp[0], '')
+      .replace(/\$zr='[^']*'; if \(\$env:COR_ENABLE_PROFILING -eq '1'\) \{ \$zt=9; \$zr='[^']*' \}; /, '')
+      .replace('if (!$zt -and [System.IO.File]::Exists($zn) -and [System.IO.File]::Exists($zj))', () => "if ([System.IO.File]::Exists('" + zp[1] + "') -and [System.IO.File]::Exists('" + zp[2] + "'))")
+      .replace(/& \$zn \$zj ([a-z-]+); /, (m0, a) => "& '" + zp[1] + "' '" + zp[2] + "' " + a + '; ')
+      .replace(/zr \('"' \+ \$zn \+ '"'\) \('"' \+ \$zj \+ '" ([a-z-]+)'\)/, (m0, a) => "zr '\"" + zp[1] + "\"' '\"" + zp[2] + "\" " + a + "'");
+    const wsOld = wsNew.replace(/\$za = \$null;.*?(?=function zf\()/s, '')
       .replace(/if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx (0|\$LASTEXITCODE) \}/g, 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $1 }')
       .replace(/if \(\(\$rc -eq 0 -and \(zk\)\) -or \$rc -eq 2\) \{ zx (0|\$rc) \}/g, 'if ($rc -eq 0 -or $rc -eq 2) { exit $1 }')
       .replace(/zd; /g, '')
