@@ -15,10 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Go client for the optional zn Cloud API, `github.com/usezn/zn/go`. `zn.NewClient(key).Analyze(ctx, text)` checks a tool result, a web page or an email before a model reads it, with timeouts, retries that honour `Retry-After`, typed errors (`IsRateLimited`, `IsQuotaExceeded`, `IsUnauthorized`), a check of the 20,000 UTF-16 unit limit before sending, and `SplitForAnalyze` for callers that want to send long text in pieces. Standard library only. See [go/README.md](https://github.com/usezn/zn/blob/main/go/README.md).
 
 ### Changed
-- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace and how to remove it.
+- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace (at the plugin tag) and how to remove it.
 
 ### Fixed
-- `zn-gate init`, `zn-gate check` and the plugin messages add the Claude Code plugin marketplace without a release tag again (`claude plugin marketplace add usezn/zn`), so the plugin you install pins the latest published zn-gate and matches the installed release. A tag holds the plugin pin of the previous release, which left the plugin one release behind.
+- `zn-gate init`, `zn-gate check`, the plugin messages and the docs now add the plugin marketplace at a plugin tag: `claude plugin marketplace add usezn/zn#plugin-v<version>` for Claude Code and `codex plugin marketplace add usezn/zn --ref plugin-v<version>` for Codex. The tag is created on the commit that pins that zn-gate release and never moves, so the plugin you install pins the release you expect. The release tag (`usezn/zn#v<version>`) held the plugin pin of the previous release, which left the plugin one release behind.
 - `zn-gate evidence --export` of a large log (over about 512 MB) no longer writes an empty file and reports it as valid. The export
   now reads the log in parts, so every record is exported in bounded memory, and the dashboard export does the same. In the npm
   package, if the log cannot be read to the end the export says so and exits 1, and an export whose chain does not verify

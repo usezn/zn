@@ -376,81 +376,81 @@ test('a short description is checked word for word on each surface', () => {
   assert.match(errors[0], /short description \(MCP Registry\) is Local layer\. Sends nothing/);
 });
 
-test('a marketplace add at a tag is refused while the plugin pin is not the release', () => {
-  const lag = { ...FACTS, version: { ...FACTS.version, pinsExclude: [...FACTS.version.pinsExclude, 'plugins/'] }, pluginVersion: { value: '1.9.0', files: [], pins: ['plugins/'] } };
-  const runLag = (files) => check(lag, Object.keys(files), (f) => files[f]);
-  // The untagged form follows the default branch and its latest pin: it passes, in the short and the URL form.
-  const untagged = { ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn\ncodex plugin marketplace add usezn/zn\nclaude plugin marketplace add https://github.com/usezn/zn.git\n', 'docs/a.md': '/plugin marketplace add usezn/zn\n' };
-  assert.deepEqual(runLag(untagged), []);
-  assert.deepEqual(run(untagged), []);
-  // Any Claude Code ref is refused (the release tag, the plugin tag, a placeholder or a moving ref) on every surface.
-  for (const ref of ['v2.0.0', 'v1.9.0', 'vX.Y.Z', 'v<version>', 'vnext', 'main']) {
-    for (const [file, cmd] of [['README.md', `claude plugin marketplace add usezn/zn#${ref}`], ['packages/zn-gate/README.md', `claude plugin marketplace add usezn/zn#${ref}`], ['docs/a.md', `/plugin marketplace add usezn/zn#${ref}`], ['plugins/README.md', `claude plugin marketplace add usezn/zn#${ref}`]]) {
-      const errs = runLag({ ...untagged, [file]: (untagged[file] || '') + cmd + '\n' }).filter((e) => /adds the marketplace at a tag/.test(e));
-      assert.equal(errs.length, 1, `${file} ${cmd}`);
-      assert.match(errs[0], new RegExp(`^${file.replace(/[/.]/g, '\\$&')}:\\d+: .*plugin pin \\(1[.]9[.]0\\) is not the release \\(2[.]0[.]0\\)`));
-    }
-  }
-  // The URL form is refused with a tag too (with and without .git), and its error names the pin and the release.
-  for (const cmd of ['claude plugin marketplace add https://github.com/usezn/zn#v2.0.0', 'claude plugin marketplace add https://github.com/usezn/zn.git#v1.9.0']) {
-    const errs = runLag({ ...untagged, 'README.md': untagged['README.md'] + cmd + '\n' });
-    assert.equal(errs.length, 1, cmd);
-    assert.match(errs[0], /adds the marketplace at a tag while the plugin pin \(1[.]9[.]0\) is not the release \(2[.]0[.]0\): use the untagged usezn[/]zn/, cmd);
-  }
-  // The untagged form passes on every public surface, for Claude Code and for Codex, while the pin lags and once it is synced.
-  const SURFACES = ['README.md', 'packages/zn-gate/README.md', 'plugins/zn-gate/README.md', 'plugins/README.md', 'docs/a.md'];
-  const everywhere = {};
-  for (const f of SURFACES) everywhere[f] = (GOOD[f] || '') + 'claude plugin marketplace add usezn/zn\ncodex plugin marketplace add usezn/zn\n/plugin marketplace add usezn/zn\n';
-  const withSurfaces = { ...GOOD, ...everywhere };
-  assert.deepEqual(runLag(withSurfaces), []);
-  assert.deepEqual(check({ ...lag, pluginVersion: { ...lag.pluginVersion, value: '2.0.0' } }, Object.keys(withSurfaces), (f) => withSurfaces[f]), []);
-  // Codex's --ref is a tag as well: while the pin lags, every tag is refused, under plugins/ and outside it (the pin's tag,
-  // the release tag, a placeholder or a moving ref), with the same error as the Claude Code tag.
-  for (const ref of ['v2.0.0', 'v1.9.0', 'vX.Y.Z', 'v<version>', 'vnext', 'main']) {
-    for (const file of SURFACES) {
-      const errs = runLag({ ...withSurfaces, [file]: withSurfaces[file] + `codex plugin marketplace add usezn/zn --ref ${ref}\n` }).filter((e) => /adds the marketplace at a tag/.test(e));
-      assert.equal(errs.length, 1, `${file} --ref ${ref}`);
-      assert.match(errs[0], new RegExp(`^${file.replace(/[/.]/g, '\\$&')}:\\d+: "marketplace add usezn/zn --ref ${ref}" adds the marketplace at a tag while the plugin pin \\(1[.]9[.]0\\) is not the release \\(2[.]0[.]0\\): use the untagged usezn/zn`));
-    }
-  }
-  // Another repository whose name starts with usezn/zn is not this one.
-  assert.deepEqual(runLag({ ...untagged, 'README.md': untagged['README.md'] + 'claude plugin marketplace add usezn/zn-algo#v9.9.9\n' }), []);
-  // The changelog and code are not public install surfaces.
-  assert.deepEqual(runLag({ ...untagged, 'CHANGELOG.md': 'claude plugin marketplace add usezn/zn#v2.0.0\n' }), []);
-});
-
-test('once the plugin pin is the release, only that exact tag is accepted on a marketplace add', () => {
-  const synced = { ...FACTS, version: { ...FACTS.version, pinsExclude: [...FACTS.version.pinsExclude, 'plugins/'] }, pluginVersion: { value: '2.0.0', files: [], pins: ['plugins/'] } };
-  const runSynced = (files) => check(synced, Object.keys(files), (f) => files[f]);
-  const ok = { ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn#v2.0.0\ncodex plugin marketplace add usezn/zn --ref v2.0.0\n`claude plugin marketplace add usezn/zn#v2.0.0`, then "codex plugin marketplace add usezn/zn --ref v2.0.0".\nclaude plugin marketplace add usezn/zn#vX.Y.Z\n' };
-  assert.deepEqual(runSynced(ok), []);
-  for (const ref of ['vnext', 'v1', 'v1.17', 'v2.0', 'v2.0.0-rc.1', 'v2.0.0.1', 'main', 'v1.0.0']) {
-    for (const cmd of [`claude plugin marketplace add usezn/zn#${ref}`, `codex plugin marketplace add usezn/zn --ref ${ref}`]) {
-      const errs = runSynced({ ...ok, 'README.md': ok['README.md'] + cmd + '\n' });
-      assert.match(errs.join('\n'), new RegExp(`README[.]md:\\d+: .*(names the ref "${ref}"|pins )`), cmd);
-    }
-  }
-  // The error text for a moving ref and for the tag of another version, in both forms (short and URL, Claude Code and Codex).
-  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add usezn/zn#vnext\n' }).join('\n'), /names the ref "vnext", which is not the release tag v2[.]0[.]0: use the untagged usezn[/]zn or the exact tag/);
-  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add usezn/zn#v1.9.0\n' }).join('\n'), /names the ref "v1[.]9[.]0", which is not the release tag v2[.]0[.]0/);
-  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'codex plugin marketplace add usezn/zn --ref v1.9.0\n' }).join('\n'), /names the ref "v1[.]9[.]0", which is not the release tag v2[.]0[.]0/);
-  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add https://github.com/usezn/zn#v1.9.0\n' }).join('\n'), /names the ref "v1[.]9[.]0"/);
-  assert.deepEqual(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add https://github.com/usezn/zn.git#v2.0.0\n' }), []);
-  // The untagged form passes on every surface once the pin is synced, and the wrong forms fail on every surface: another
-  // version's tag, a URL with a tag and a moving ref, for Claude Code and for Codex.
-  const SURFACES = ['README.md', 'packages/zn-gate/README.md', 'plugins/zn-gate/README.md', 'docs/a.md'];
-  const base = { ...GOOD };
-  for (const f of SURFACES) base[f] = (GOOD[f] || '') + 'claude plugin marketplace add usezn/zn\ncodex plugin marketplace add usezn/zn\n';
-  assert.deepEqual(runSynced(base), []);
+test('a marketplace add names the plugin tag plugin-v<pluginVersion>, in the form of its agent, on every surface', () => {
+  const pf = { ...FACTS, version: { ...FACTS.version, pinsExclude: [...FACTS.version.pinsExclude, 'plugins/'] }, pluginVersion: { value: '1.9.0', files: [], pins: ['plugins/'] } };
+  const runP = (files, facts = pf) => check(facts, Object.keys(files), (f) => files[f]);
+  const SURFACES = ['README.md', 'packages/zn-gate/README.md', 'plugins/README.md', 'plugins/zn-gate/README.md', 'docs/a.md'];
+  const with_ = (f, lines) => ({ ...GOOD, [f]: (GOOD[f] || '') + lines.join('\n') + '\n' });
+  const mine = (errs, f) => errs.filter((e) => e.startsWith(f + ':') && /^[^"]*"[^"]*marketplace add/.test(e));
+  // Accepted: the plugin tag of the pin (not of the release), with `#` for Claude Code (terminal, /plugin, URL forms) and
+  // `--ref` for Codex, in a code block or inline in prose.
+  const CLAUDE_OK = [
+    'claude plugin marketplace add usezn/zn#plugin-v1.9.0',
+    '/plugin marketplace add usezn/zn#plugin-v1.9.0',
+    '`claude plugin marketplace add usezn/zn#plugin-v1.9.0`, then `claude plugin install zn-gate@usezn`.',
+    'claude plugin marketplace add https://github.com/usezn/zn#plugin-v1.9.0',
+    'claude plugin marketplace add https://github.com/usezn/zn.git#plugin-v1.9.0',
+  ];
+  const CODEX_OK = [
+    'codex plugin marketplace add usezn/zn --ref plugin-v1.9.0',
+    '(`codex plugin marketplace add usezn/zn --ref plugin-v1.9.0`).',
+  ];
+  for (const f of SURFACES) assert.deepEqual(runP(with_(f, [...CLAUDE_OK, ...CODEX_OK])), [], f);
+  // The tag follows pluginVersion: once the pin is the release, plugin-v2.0.0 is accepted and plugin-v1.9.0 is not.
+  const synced = { ...pf, pluginVersion: { ...pf.pluginVersion, value: '2.0.0' } };
+  assert.deepEqual(runP(with_('README.md', ['claude plugin marketplace add usezn/zn#plugin-v2.0.0', 'codex plugin marketplace add usezn/zn --ref plugin-v2.0.0']), synced), []);
+  assert.match(mine(runP(with_('README.md', ['claude plugin marketplace add usezn/zn#plugin-v1.9.0']), synced), 'README.md').join('\n'), /names the ref "plugin-v1[.]9[.]0", which is not the plugin tag plugin-v2[.]0[.]0/);
+  // Refused on every surface, for Claude Code: the untagged form (short, /plugin and URL), the release tag (of the pin and
+  // of the release), another plugin tag, a longer or shorter number, a placeholder, a branch or a moving ref, a URL with
+  // another ref, and Codex's --ref.
+  const BAD_CLAUDE = [
+    ['claude plugin marketplace add usezn/zn', /"marketplace add usezn\/zn" names no plugin tag: use usezn\/zn#plugin-v1[.]9[.]0 \(Claude Code\)/],
+    ['/plugin marketplace add usezn/zn', /names no plugin tag: use usezn\/zn#plugin-v1[.]9[.]0/],
+    ['claude plugin marketplace add https://github.com/usezn/zn.git', /names no plugin tag/],
+    ['claude plugin marketplace add usezn/zn#v1.9.0', /names the ref "v1[.]9[.]0", which is not the plugin tag plugin-v1[.]9[.]0: use usezn\/zn#plugin-v1[.]9[.]0/],
+    ['claude plugin marketplace add usezn/zn#v2.0.0', /names the ref "v2[.]0[.]0", which is not the plugin tag/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.8.0', /names the ref "plugin-v1[.]8[.]0"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.9.0.1', /names the ref "plugin-v1[.]9[.]0[.]1"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.9', /names the ref "plugin-v1[.]9"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.9.0-rc.1', /names the ref "plugin-v1[.]9[.]0-rc[.]1"/],
+    ['claude plugin marketplace add usezn/zn#plugin-vX.Y.Z', /names the ref "plugin-vX[.]Y[.]Z"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v<version>', /names the ref "plugin-v<version>"/],
+    ['claude plugin marketplace add usezn/zn#main', /names the ref "main"/],
+    ['claude plugin marketplace add usezn/zn#vnext', /names the ref "vnext"/],
+    ['claude plugin marketplace add https://github.com/usezn/zn#v1.9.0', /names the ref "v1[.]9[.]0"/],
+    ['claude plugin marketplace add https://github.com/usezn/zn.git#main', /names the ref "main"/],
+    ['claude plugin marketplace add usezn/zn --ref plugin-v1.9.0', /passes the tag with --ref, but Claude Code takes #: use usezn\/zn#plugin-v1[.]9[.]0/],
+  ];
+  // And for Codex: the untagged form, the release tag, another plugin tag, a placeholder, a branch, a URL with another
+  // ref, and Claude Code's `#`.
+  const BAD_CODEX = [
+    ['codex plugin marketplace add usezn/zn', /names no plugin tag: use usezn\/zn --ref plugin-v1[.]9[.]0 \(Codex\)/],
+    ['codex plugin marketplace add https://github.com/usezn/zn', /names no plugin tag: use usezn\/zn --ref plugin-v1[.]9[.]0/],
+    ['codex plugin marketplace add usezn/zn --ref v1.9.0', /names the ref "v1[.]9[.]0", which is not the plugin tag plugin-v1[.]9[.]0: use usezn\/zn --ref plugin-v1[.]9[.]0/],
+    ['codex plugin marketplace add usezn/zn --ref v2.0.0', /names the ref "v2[.]0[.]0"/],
+    ['codex plugin marketplace add usezn/zn --ref plugin-v1.8.0', /names the ref "plugin-v1[.]8[.]0"/],
+    ['codex plugin marketplace add usezn/zn --ref plugin-vX.Y.Z', /names the ref "plugin-vX[.]Y[.]Z"/],
+    ['codex plugin marketplace add usezn/zn --ref main', /names the ref "main"/],
+    ['codex plugin marketplace add https://github.com/usezn/zn --ref vnext', /names the ref "vnext"/],
+    ['codex plugin marketplace add usezn/zn#plugin-v1.9.0', /passes the tag with #, but Codex takes --ref: use usezn\/zn --ref plugin-v1[.]9[.]0/],
+  ];
   for (const f of SURFACES) {
-    assert.deepEqual(runSynced({ ...base, [f]: base[f] + `claude plugin marketplace add usezn/zn#v2.0.0\ncodex plugin marketplace add usezn/zn --ref v2.0.0\n` }), [], f);
-    for (const cmd of ['claude plugin marketplace add usezn/zn#v1.9.0', 'claude plugin marketplace add https://github.com/usezn/zn#v1.9.0', 'claude plugin marketplace add https://github.com/usezn/zn.git#vnext', 'claude plugin marketplace add usezn/zn#main', 'codex plugin marketplace add usezn/zn --ref v1.9.0', 'codex plugin marketplace add usezn/zn --ref main']) {
-      const errs = runSynced({ ...base, [f]: base[f] + cmd + '\n' });
-      assert.ok(errs.some((e) => e.startsWith(f + ':') && /names the ref "[^"]+", which is not the release tag v2[.]0[.]0/.test(e)), `${f}: ${cmd}\n${errs.join('\n')}`);
+    for (const [cmd, re] of [...BAD_CLAUDE, ...BAD_CODEX]) {
+      const errs = mine(runP(with_(f, [cmd])), f);
+      assert.equal(errs.length, 1, `${f}: ${cmd}\n${errs.join('\n')}`);
+      assert.match(errs[0], new RegExp(`^${f.replace(/[/.]/g, '\\$&')}:\\d+: `), `${f}: ${cmd}`);
+      assert.match(errs[0], re, `${f}: ${cmd}`);
     }
   }
-  // Under the plugin folders the tag is the plugin pin, which is the release here: another version is refused there too.
-  assert.match(runSynced({ ...ok, 'plugins/README.md': 'claude plugin marketplace add usezn/zn#v1.0.0\n' }).join('\n'), /plugins\/README[.]md:1: .*names the ref "v1[.]0[.]0", which is not the release tag v2[.]0[.]0/);
+  // Each wrong command is reported on its own line, next to correct ones.
+  const mixed = runP(with_('docs/a.md', ['claude plugin marketplace add usezn/zn#plugin-v1.9.0', 'claude plugin marketplace add usezn/zn', 'codex plugin marketplace add usezn/zn --ref v1.9.0']));
+  assert.deepEqual(mine(mixed, 'docs/a.md').map((e) => e.split(':')[1]), ['2', '3']);
+  // Without pluginVersion the tag follows the docs version.
+  assert.deepEqual(run(with_('README.md', ['claude plugin marketplace add usezn/zn#plugin-v2.0.0'])), []);
+  assert.match(run(with_('README.md', ['claude plugin marketplace add usezn/zn'])).join('\n'), /names no plugin tag: use usezn\/zn#plugin-v2[.]0[.]0/);
+  // Another repository whose name starts with usezn/zn is not this one, and the changelog is not an install surface.
+  assert.deepEqual(runP(with_('README.md', ['claude plugin marketplace add usezn/zn-algo#v9.9.9', 'claude plugin marketplace add usezn/zn-algo'])), []);
+  assert.deepEqual(runP({ ...GOOD, 'CHANGELOG.md': 'claude plugin marketplace add usezn/zn#v2.0.0\nclaude plugin marketplace add usezn/zn\n' }), []);
 });
 
 const LIB = {
