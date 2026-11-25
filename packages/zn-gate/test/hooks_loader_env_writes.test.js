@@ -425,3 +425,30 @@ test('GitHub Copilot CLI edits of a .env: unreadable edits are refused, other fi
   fs.writeFileSync(path.join(dir, 'notes.txt'), 'LD_DEBUG=all\n');
   passes(await decide(copilot, cop('edit', { path: path.join(dir, 'notes.txt'), old_str: 'all', new_str: 'help' })));
 });
+
+test('an edit never reads a target that is not a regular file: a FIFO or /dev/zero cannot hang the hook', { skip: process.platform === 'win32' }, async (t) => {
+  const { execFileSync } = require('child_process');
+  const dir = project(t);
+  const fifo = path.join(dir, 'pipe.txt');
+  execFileSync('mkfifo', [fifo]);
+  // A path that is not a dotenv file is never opened.
+  let t0 = Date.now();
+  passes(await decide(claude, cc('Edit', { file_path: fifo, old_string: 'a', new_string: 'b' }, dir)));
+  assert.ok(Date.now() - t0 < 5000);
+  // A guarded .env that is a FIFO is refused as unresolved, without blocking.
+  const env = path.join(dir, '.env');
+  execFileSync('mkfifo', [env]);
+  t0 = Date.now();
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'a', new_string: 'b' }, dir)));
+  assert.ok(Date.now() - t0 < 5000);
+  fs.unlinkSync(env);
+  // A .env that links to /dev/zero is refused too.
+  fs.symlinkSync('/dev/zero', env);
+  t0 = Date.now();
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'a', new_string: 'b' }, dir)));
+  assert.ok(Date.now() - t0 < 5000);
+  fs.unlinkSync(env);
+  // A normal .env with a benign value still passes.
+  fs.writeFileSync(env, 'FOO=1\n');
+  passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'FOO=1', new_string: 'FOO=2' }, dir)));
+});

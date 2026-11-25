@@ -755,7 +755,29 @@ function searchFolderAsk(dirs, pathOpts) {
 // The text an edit searches for, in each agent's spelling (GitHub Copilot CLI's edit tool uses old_str and new_str).
 const SEARCH_ONLY_KEYS = new Set(['old_string', 'oldString', 'old_str']);
 
-function writtenTextsOf(ev, p, cwd) {
+const READ_CAP = 4000000;
+
+// Reads a file for an edit judgement without trusting what it is: opened without blocking, it must be a regular file under the cap
+// (a FIFO, a device such as /dev/zero, a directory or a link to one throws), and at most the cap is read from it.
+function readRegularFile(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size >= READ_CAP) throw new Error('not a regular file or too large');
+    const buf = Buffer.alloc(st.size);
+    let got = 0;
+    while (got < buf.length) {
+      const n = fs.readSync(fd, buf, got, buf.length - got, got);
+      if (n <= 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writtenTextsOf(ev, p, cwd, pathOpts) {
   const out = [];
   const seen = new Set();
   const walk = (v, depth) => {
@@ -801,12 +823,12 @@ function writtenTextsOf(ev, p, cwd) {
     };
     add(args);
     if (Array.isArray(args.edits)) for (const e of args.edits) add(e);
-    if (edits.length) {
+    // The file is read only for a path that is a guarded dotenv file: any other path is never opened (a FIFO or a device there
+    // would block the hook), and the judgement of a non-dotenv path does not use the result.
+    const guarded = edits.length && (() => { const c = policy.classifyPath(String(p), pathOpts || { cwd }); return !!(c && c.kind === 'dotenv'); })();
+    if (guarded) {
       try {
-        const file = path.resolve(cwd || process.cwd(), String(p));
-        const stat = fs.statSync(file);
-        if (stat.size >= 4000000) throw new Error('too large');
-        let body = fs.readFileSync(file, 'utf8');
+        let body = readRegularFile(path.resolve(cwd || process.cwd(), String(p)));
         for (const e of edits) {
           if (e.oldS === null || e.newS === null) { out.unresolved = true; break; }
           if (!e.oldS) continue; // nothing to find: only what is written counts
@@ -844,7 +866,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd), pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
     return { decision: 'allow' };
@@ -860,7 +882,7 @@ async function decidePre(ev, d, agentId, opts) {
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
       const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts) ||
-        policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd), pathOpts);
+        policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
       if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
     }
@@ -889,7 +911,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && Array.isArray(input.paths)) {
     // An MCP tool that takes a file path (a filesystem server): its output cannot be redacted in every agent.
     for (const p of input.paths) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd), pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
