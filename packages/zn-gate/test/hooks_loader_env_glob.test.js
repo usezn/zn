@@ -28,3 +28,21 @@ t('a quoted glob is not expanded and keeps today\'s verdict; a glob in an unrela
   assert.equal(hookStopOrComputedIn("echo LD_DEBUG='he*p' > .env"), null);
   assert.equal(hookStopOrComputedIn('echo FOO=a*b > .env'), null);
 });
+
+t('POSIX quoting: an escaped quote, a closed quote or a comment never hides a later unquoted glob', (tt) => {
+  const dir = tempDir(tt, 'zn-ldglob3-');
+  fs.writeFileSync(path.join(dir, 'LD_DEBUG=help'), '');
+  for (const cmd of [
+    'echo \\"x ; echo LD_DEBUG=he*p > .env',
+    "echo 'it'\\''s' && echo LD_DEBUG=he?p >> .env",
+    "# it's a note\necho LD_DEBUG=he[l]p > .env",
+    'echo "a\\"b" ; echo LD_DEBUG=he*p > .env',
+    "echo $'a\\'b' ; echo LD_DEBUG=he*p > .env",
+    'echo "x ; echo LD_DEBUG=he*p > .env',
+    'cat <<EOF > .env\nLD_DEBUG=he*p\nEOF',
+  ]) {
+    assert.ok(hookStopOrComputedIn(cmd), cmd);
+  }
+  assert.equal(hookStopOrComputedIn("echo 'LD_DEBUG=he*p' > .env"), null);
+  assert.equal(hookStopOrComputedIn('echo "LD_DEBUG=he*p" > .env'), null);
+});

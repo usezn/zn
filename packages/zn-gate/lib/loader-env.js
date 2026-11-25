@@ -208,23 +208,46 @@ const NAME_PIECE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])(?:L|LD|LD_[A-Z_]*)
 const CODE_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]|[0-7]|u[0-9A-Fa-f]|U[0-9A-Fa-f])/;
 // Programs and quoting that turn such escapes into characters: printf, echo -e and $'..'.
 const ESCAPE_WRITER_RE = /(?<![A-Za-z0-9_-])printf(?![A-Za-z0-9_-])|(?<![A-Za-z0-9_-])echo[ \t]+-[A-Za-z]*e|\$'/;
-// For each position of `s`, whether it is inside a single or double quoted string (a backslash escapes in double quotes), in one
-// forward pass: the state is the quote the shell is in just before that character.
+// For each position of `s`, how the shell reads it, in one forward pass with POSIX quoting rules: 0 = live text, 1 = quoted or
+// backslash-escaped (never a glob), 2 = inside a comment. Outside quotes a backslash escapes the next character and `#` at the start of
+// a word begins a comment up to the line end; inside single quotes nothing is special; inside double quotes a backslash escapes only
+// $ ` " \ and a line break; $'..' is quoted and a backslash escapes inside it. `bad` is set when the text uses syntax this scan does
+// not model (an unterminated quote, a here-document), and callers fail closed.
 function quoteMap(s) {
   const inside = new Uint8Array(s.length + 1);
-  let q = '';
+  let q = ''; // '', "'", '"' or 'a' for $'..'
+  let bad = false;
   for (let i = 0; i < s.length; i++) {
-    inside[i] = q ? 1 : 0;
     const c = s.charAt(i);
-    if (q === '"' && c === '\\') { i++; inside[i] = 1; } else if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c;
+    if (q === "'") { inside[i] = 1; if (c === "'") q = ''; continue; }
+    if (q === 'a') {
+      inside[i] = 1;
+      if (c === '\\') { i++; if (i < s.length) inside[i] = 1; } else if (c === "'") q = '';
+      continue;
+    }
+    if (q === '"') {
+      inside[i] = 1;
+      if (c === '\\') { const n = s.charAt(i + 1); if (n && '$`"\\\n'.includes(n)) { i++; inside[i] = 1; } } else if (c === '"') q = '';
+      continue;
+    }
+    if (c === '\\') { inside[i] = 1; i++; if (i < s.length) inside[i] = 1; continue; }
+    if (c === "'" || c === '"') { inside[i] = 1; q = c; continue; }
+    if (c === '$' && s.charAt(i + 1) === "'") { inside[i] = 1; i++; inside[i] = 1; q = 'a'; continue; }
+    if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(s.charAt(i - 1)))) {
+      while (i < s.length && s.charAt(i) !== '\n') { inside[i] = 2; i++; }
+      i--; // the line break itself is live text again
+      continue;
+    }
+    if (c === '<' && s.charAt(i + 1) === '<' && s.charAt(i + 2) !== '<' && s.charAt(i - 1) !== '<') bad = true; // here-document
   }
-  inside[s.length] = q ? 1 : 0;
+  if (q) bad = true;
+  inside.bad = bad;
   return inside;
 }
 // Whether the shell word that starts at `from` holds a glob character (* ? [ {) outside quotes. `inside` is quoteMap(s).
 function unquotedGlobIn(s, from, inside) {
   for (let i = from; i < s.length; i++) {
-    if (inside[i]) continue;
+    if (inside[i]) continue; // quoted, escaped or inside a comment
     const c = s.charAt(i);
     if (/[\s;&|<>]/.test(c)) return false;
     if (/[*?\[{]/.test(c)) return true;
@@ -272,6 +295,7 @@ function hookStopOrComputedIn(text) {
     // Each glob character is judged by the quote state at its own position: a quoted prefix does not protect an unquoted glob after it
     // ("LD_DEBUG="he*p), and a glob inside quotes ('LD_DEBUG=he*p') is not expanded.
     if (!inside) inside = quoteMap(s);
+    if (inside.bad) return m[1]; // syntax the scan does not model: fail closed
     const globbed = unquotedGlobIn(s, valueStart(m), inside);
     if (glued || globbed || COMPUTED_VALUE_RE.test(value)) return m[1];
     literal++;
