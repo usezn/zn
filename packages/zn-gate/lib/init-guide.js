@@ -28,6 +28,10 @@ const { spawnSync } = require('child_process');
 
 const PKG_ROOT = path.join(__dirname, '..');
 const VERSION = require('../package.json').version;
+// The marketplace is added without a tag on purpose. On the default branch, plugins/zn-gate pins one published zn-gate release
+// (package.json, package-lock.json and scripts/zn-gate.lock.json, with the npm integrity and the digest of every file, which the
+// launcher checks on each call). A release tag would hold the pin of the PREVIOUS release, because the pin is committed after npm
+// publishes, so adding the marketplace at the tag would install an older zn-gate and `zn-gate check` would ask for the same command again.
 const MARKETPLACE_REF = 'usezn/zn';
 const isWin = process.platform === 'win32';
 

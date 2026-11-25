@@ -342,8 +342,9 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
 
-// How to move the Claude Code plugin to this release. The marketplace is added at a release tag, so `claude plugin update`
-// keeps the plugin that tag holds: the marketplace is removed and added again at the new tag.
+// How to move the Claude Code plugin to this release: remove the usezn marketplace, add it again and install the plugin. These steps
+// work however the marketplace was added before. The marketplace is added without a tag on purpose (see MARKETPLACE_REF in
+// init-guide.js): the default branch pins the plugin to the latest published release, while a tag holds the previous release's pin.
 const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn` and `claude plugin install zn-gate@usezn` in your own terminal';
 const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so ' + PLUGIN_UPDATE_STEPS;
 

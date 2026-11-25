@@ -66,10 +66,11 @@ finds lack a hook that your zn-gate has.
 
 Other cases:
 
-- **The zn-gate plugin for Claude Code** is added from the usezn marketplace, so
-  `/plugin` and `claude plugin update` do not bring a newer zn-gate by
-  themselves (the plugin pins one release). To move to a new release, run this
-  in your own terminal:
+- **The zn-gate plugin for Claude Code** is added from the usezn marketplace and
+  pins one zn-gate release. It has no auto-update (Claude Code leaves it off for
+  third-party marketplaces), so it stays on that release until you move it. To
+  move to a new release, run this in your own terminal; the steps work however
+  the marketplace was added before:
 
   ```bash
   claude plugin marketplace remove usezn

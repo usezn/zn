@@ -29,7 +29,7 @@ async function printed(m, extra = {}) {
 
 test('guide text: Claude Code gets the plugin commands to type', async (t) => {
   const { text } = await printed(machine(t, ['claude-code']));
-  assert.match(text, /\/plugin marketplace add usezn\/zn/);
+  assert.match(text, /\/plugin marketplace add usezn\/zn(?![#@\w./-])/);
   assert.match(text, /\/plugin install zn-gate@usezn/);
   assert.doesNotMatch(text, winCmdRe(/zn hooks install claude-code/));
 });

@@ -128,6 +128,8 @@ function loadLock() {
   return lock;
 }
 
+// The marketplace is added without a tag on purpose: the default branch pins the plugin to the latest published release,
+// while a release tag holds the pin of the previous one.
 function installHint(lock) {
   if (lock.bundled) return 'Reinstall the zn-gate plugin to restore its copy of zn-gate ' + lock.version + '.';
   return 'In Claude Code, the plugin installs it: make sure npm is on your PATH, then run ' +

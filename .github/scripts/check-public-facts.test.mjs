@@ -391,6 +391,12 @@ test('a marketplace add at a tag is refused while the plugin pin is not the rele
       assert.match(errs[0], new RegExp(`^${file.replace(/[/.]/g, '\\$&')}:\\d+: .*plugin pin \\(1[.]9[.]0\\) is not the release \\(2[.]0[.]0\\)`));
     }
   }
+  // The URL form is refused with a tag too (with and without .git), and its error names the pin and the release.
+  for (const cmd of ['claude plugin marketplace add https://github.com/usezn/zn#v2.0.0', 'claude plugin marketplace add https://github.com/usezn/zn.git#v1.9.0']) {
+    const errs = runLag({ ...untagged, 'README.md': untagged['README.md'] + cmd + '\n' });
+    assert.equal(errs.length, 1, cmd);
+    assert.match(errs[0], /adds the marketplace at a tag while the plugin pin \(1[.]9[.]0\) is not the release \(2[.]0[.]0\): use the untagged usezn[/]zn/, cmd);
+  }
   // Codex takes the tag with --ref: it is still checked against the plugin pin under the plugin folders.
   const codex = { ...untagged, 'plugins/README.md': 'codex plugin marketplace add usezn/zn --ref v1.9.0\n' };
   assert.deepEqual(runLag(codex), []);
@@ -412,6 +418,14 @@ test('once the plugin pin is the release, only that exact tag is accepted on a m
       assert.match(errs.join('\n'), new RegExp(`README[.]md:\\d+: .*(names the ref "${ref}"|pins )`), cmd);
     }
   }
+  // The error text for a moving ref and for the tag of another version, in both forms (short and URL, Claude Code and Codex).
+  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add usezn/zn#vnext\n' }).join('\n'), /names the ref "vnext", which is not the release tag v2[.]0[.]0: use the untagged usezn[/]zn or the exact tag/);
+  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add usezn/zn#v1.9.0\n' }).join('\n'), /names the ref "v1[.]9[.]0", which is not the release tag v2[.]0[.]0/);
+  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'codex plugin marketplace add usezn/zn --ref v1.9.0\n' }).join('\n'), /names the ref "v1[.]9[.]0", which is not the release tag v2[.]0[.]0/);
+  assert.match(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add https://github.com/usezn/zn#v1.9.0\n' }).join('\n'), /names the ref "v1[.]9[.]0"/);
+  assert.deepEqual(runSynced({ ...ok, 'README.md': ok['README.md'] + 'claude plugin marketplace add https://github.com/usezn/zn.git#v2.0.0\n' }), []);
+  // Under the plugin folders the tag is the plugin pin, which is the release here: another version is refused there too.
+  assert.match(runSynced({ ...ok, 'plugins/README.md': 'claude plugin marketplace add usezn/zn#v1.0.0\n' }).join('\n'), /plugins\/README[.]md:1: .*names the ref "v1[.]0[.]0", which is not the release tag v2[.]0[.]0/);
 });
 
 const LIB = {
