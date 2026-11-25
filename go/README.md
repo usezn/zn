@@ -106,7 +106,7 @@ if err == nil && res.WouldHaveBlocked() {
 
 ## Errors
 
-Two checks fail closed. `WithBaseURL` accepts only an https URL, so the API key is never sent in clear text; plain http is allowed only for `localhost`, `127.0.0.1` and `[::1]`. Any other URL makes `Analyze` return an error that wraps `zn.ErrInsecureBaseURL`, and nothing is sent. A 200 answer whose verdict is missing or is not `allow` or `block` is returned as an error that wraps `zn.ErrUnexpectedResponse`, never as a result.
+Two checks fail closed. `WithBaseURL` accepts only an https URL, so the API key is never sent in clear text; plain http is allowed only for `localhost`, `127.0.0.1` and `[::1]`. Any other URL makes `Analyze` return an error that wraps `zn.ErrInsecureBaseURL`, and nothing is sent. The client also refuses a redirect to plain http (except to those loopback hosts), so a redirect cannot downgrade the connection; the error wraps the same `zn.ErrInsecureBaseURL`. A 200 answer whose verdict is missing or is not `allow` or `block` is returned as an error that wraps `zn.ErrUnexpectedResponse`, never as a result.
 
 API answers come back as `*zn.APIError` with `Status`, `Code`, `Message` and `RetryAfter`. Branch on the status and code, not on the message text.
 

@@ -2,12 +2,15 @@ package zn
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -434,7 +437,7 @@ func TestKeyNeverInErrors(t *testing.T) {
 func TestOptions(t *testing.T) {
 	hc := &http.Client{}
 	c := NewClient("k", WithBaseURL("https://example.test/"), WithHTTPClient(hc), WithTimeout(3*time.Second), WithMaxRetries(5), WithMaxRetryWait(time.Second))
-	if c.baseURL != "https://example.test" || c.httpClient != hc || c.timeout != 3*time.Second || c.maxRetries != 5 || c.maxRetryWait != time.Second {
+	if c.baseURL != "https://example.test" || c.httpClient == hc || c.httpClient.Transport != hc.Transport || c.timeout != 3*time.Second || c.maxRetries != 5 || c.maxRetryWait != time.Second {
 		t.Errorf("client = %+v", c)
 	}
 	d := NewClient("k")
@@ -612,5 +615,151 @@ func TestUnknownVerdictFailsClosed(t *testing.T) {
 				t.Fatalf("res=%v err=%v", res, err)
 			}
 		})
+	}
+}
+
+// redirectRig maps the test host names plain.example.test and
+// other.example.test to local listeners, so a redirect can leave the
+// loopback addresses without any real network.
+type redirectRig struct {
+	tr       *http.Transport
+	plainHit atomic.Int32
+}
+
+func newRedirectRig(t *testing.T, other http.Handler) (*redirectRig, string, string) {
+	t.Helper()
+	rig := &redirectRig{}
+	plainSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rig.plainHit.Add(1)
+		writeJSON(w, 200, allowBody)
+	}))
+	t.Cleanup(plainSrv.Close)
+	otherSrv := httptest.NewTLSServer(other)
+	t.Cleanup(otherSrv.Close)
+	plainAddr := strings.TrimPrefix(plainSrv.URL, "http://")
+	otherAddr := strings.TrimPrefix(otherSrv.URL, "https://")
+	rig.tr = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, _ := net.SplitHostPort(addr)
+			d := &net.Dialer{}
+			switch host {
+			case "plain.example.test":
+				return d.DialContext(ctx, network, plainAddr)
+			case "other.example.test":
+				return d.DialContext(ctx, network, otherAddr)
+			}
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	t.Cleanup(rig.tr.CloseIdleConnections)
+	_, plainPort, _ := net.SplitHostPort(plainAddr)
+	_, otherPort, _ := net.SplitHostPort(otherAddr)
+	return rig, plainPort, otherPort
+}
+
+func TestRedirectToPlainHTTPIsRefused(t *testing.T) {
+	for _, code := range []int{302, 307, 308} {
+		rig, plainPort, _ := newRedirectRig(t, http.NotFoundHandler())
+		target := "http://plain.example.test:" + plainPort + "/v30/analyze"
+		first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target, code)
+		}))
+		c := NewClient("zn_live_test", WithBaseURL(first.URL), WithHTTPClient(&http.Client{Transport: rig.tr}), WithMaxRetries(2))
+		c.backoffBase = time.Millisecond
+		_, err := c.Analyze(context.Background(), "hello")
+		first.Close()
+		if !errors.Is(err, ErrInsecureBaseURL) {
+			t.Fatalf("%d: want ErrInsecureBaseURL, got %v", code, err)
+		}
+		if n := rig.plainHit.Load(); n != 0 {
+			t.Fatalf("%d: the plain-http server got %d requests", code, n)
+		}
+		if strings.Contains(err.Error(), "zn_live_test") {
+			t.Fatalf("%d: key in error", code)
+		}
+	}
+}
+
+func TestRedirectKeepsAuthorizationOnSameHostAndDropsItOnOtherHost(t *testing.T) {
+	var sameAuth, otherAuth atomic.Value
+	rig, _, otherPort := newRedirectRig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otherAuth.Store(r.Header.Get("Authorization"))
+		writeJSON(w, 200, allowBody)
+	}))
+	hc := &http.Client{Transport: rig.tr}
+
+	same := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v30/analyze" {
+			http.Redirect(w, r, "/moved", 307)
+			return
+		}
+		sameAuth.Store(r.Header.Get("Authorization"))
+		writeJSON(w, 200, allowBody)
+	}))
+	t.Cleanup(same.Close)
+	c := NewClient("zn_live_test", WithBaseURL(same.URL), WithHTTPClient(hc))
+	if _, err := c.Analyze(context.Background(), "hello"); err != nil {
+		t.Fatalf("same-host https redirect: %v", err)
+	}
+	if got, _ := sameAuth.Load().(string); got != "Bearer zn_live_test" {
+		t.Fatalf("same host Authorization = %q", got)
+	}
+
+	// https to https on another host is allowed, but net/http drops the key.
+	otherTarget := "https://other.example.test:" + otherPort + "/v30/analyze"
+	cross := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, otherTarget, 307)
+	}))
+	t.Cleanup(cross.Close)
+	c2 := NewClient("zn_live_test", WithBaseURL(cross.URL), WithHTTPClient(hc))
+	if _, err := c2.Analyze(context.Background(), "hello"); err != nil {
+		t.Fatalf("cross-host https redirect: %v", err)
+	}
+	if got, _ := otherAuth.Load().(string); got != "" {
+		t.Fatalf("other host received Authorization %q", got)
+	}
+}
+
+func TestRedirectPolicyDoesNotMutateUserClientAndKeepsItsCheck(t *testing.T) {
+	var userCalls atomic.Int32
+	user := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		userCalls.Add(1)
+		return nil
+	}}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v30/analyze" {
+			http.Redirect(w, r, "/moved", 307)
+			return
+		}
+		writeJSON(w, 200, allowBody)
+	}))
+	t.Cleanup(srv.Close)
+	user.Transport = srv.Client().Transport
+	before := reflect.ValueOf(user.CheckRedirect).Pointer()
+	c := NewClient("zn_live_test", WithBaseURL(srv.URL), WithHTTPClient(user))
+	if c.httpClient == user {
+		t.Fatal("the user client was not copied")
+	}
+	if reflect.ValueOf(user.CheckRedirect).Pointer() != before {
+		t.Fatal("the user client was changed")
+	}
+	if _, err := c.Analyze(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if userCalls.Load() != 1 {
+		t.Fatalf("user CheckRedirect calls = %d", userCalls.Load())
+	}
+}
+
+func TestRedirectLimitStillApplies(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/v30/analyze", 307)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient("zn_live_test", WithBaseURL(srv.URL), WithHTTPClient(&http.Client{Transport: srv.Client().Transport}), WithMaxRetries(0))
+	_, err := c.Analyze(context.Background(), "hello")
+	if err == nil || !strings.Contains(err.Error(), "10 redirects") {
+		t.Fatalf("got %v", err)
 	}
 }
