@@ -42,6 +42,7 @@
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { fileURLToPath } = require('url');
+const { MAX_NEST_DEPTH, MAX_NEST_NODES } = require('../nest-limits');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
@@ -83,8 +84,8 @@ function localFileUrl(v) {
 }
 
 /**
- * Every string argument whose key looks like a file or folder (content-like keys are skipped), three levels of
- * objects and arrays deep. A key called url counts only when its value is a file: URI. A file: URI that cannot
+ * Every string argument whose key looks like a file or folder (content-like keys are skipped), down to MAX_NEST_DEPTH (the limit of the text
+ * scan), through objects and arrays. Objects left unvisited because of the depth or node limit set `bad`: a path may be hidden there. A key called url counts only when its value is a file: URI. A file: URI that cannot
  * be turned into a path sets `bad`, so the call is refused instead of passed.
  */
 function pathsOf(args) {
@@ -101,15 +102,17 @@ function pathsOf(args) {
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
+  let nodes = 0;
   const walk = (obj, depth) => {
+    if (++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
       }
-      if (depth < 3) {
+      if (depth < MAX_NEST_DEPTH) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
-      }
+      } else if (isObj(v) || (Array.isArray(v) && v.some(isObj))) bad = true;
     }
   };
   walk(args, 0);
@@ -531,6 +534,7 @@ module.exports = {
   normalize,
   respond,
   selfCheck,
+  pathsOf,
   capabilities: { ask: 'all', rewriteInput: false, rewriteOutput: false },
   HOOK_NAME,
   hooksFile,
