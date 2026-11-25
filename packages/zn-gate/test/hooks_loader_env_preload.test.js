@@ -225,3 +225,28 @@ test('printf is found in any position of a simple command, not only as the first
   assert.equal(loaderEnv.preloadOrOpaqueIn('xargs printf > .env'), loaderEnv.OPAQUE_WRITE);
   assert.equal(loaderEnv.preloadOrOpaqueIn("env printf 'A=%s\\n' b >> .env"), null);
 });
+
+test('a printf format escape other than backslash, tab and quotes may emit a line break, and %b interprets escapes: both end a literal value', async (t) => {
+  const dir = project(t);
+  const bad = [
+    "printf 'A=%s\\x0a%s%s=x\\n' a LD_ PRELOAD > .env",
+    "printf 'A=%s\\012%s=%s\\n' a LD_PRELOAD x > .env",
+    "printf 'A=%s\\u000a%s%s\\n' a LD_ DEBUG=help > .env",
+    "printf 'A=%b\\n' 'x\\nLD_DEBUG=help' > .env",
+    "printf 'A=%s\\vLD_%s\\n' a DEBUG=help > .env",
+  ];
+  for (const command of bad) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), null, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), null, command);
+  }
+  const good = [
+    "printf 'TOKEN=%s\\n' abc >> .env",
+    "printf 'A=%s\\tB\\n' x >> .env",
+    "printf 'A=%s\\n' 'x\\\\y' >> .env",
+    "printf 'X=100%%\\n' >> .env",
+  ];
+  for (const command of good) {
+    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+    passes(await decide(gemini, gem('run_shell_command', { command }, dir)), command);
+  }
+});

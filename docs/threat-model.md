@@ -628,7 +628,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
     `DYLD_INSERT_LIBRARIES` and the others except `LD_DEBUG`) to a value, because the loader runs that library inside the
     shell of every hook before zn can refuse anything; an empty value is allowed. A shell command that writes such a file is
     also refused when a variable name or a whole line it writes comes from a variable, a command substitution or a pattern
-    (`printf "$X" > .env`, `echo "$LINE" >> .env`, `cp "$SRC" .env`) or a printf conversion that is not inside the value of a literal `NAME=` (`printf '%s%s\n' LD_ DEBUG=help > .env`), while an expansion in the value of a plainly named
+    (`printf "$X" > .env`, `echo "$LINE" >> .env`, `cp "$SRC" .env`) or a printf conversion that is not inside the value of a literal `NAME=`, or a backslash escape in the format, or %b (`printf '%s%s\n' LD_ DEBUG=help > .env`), while an expansion in the value of a plainly named
     variable (`echo "API_URL=$URL" >> .env`) stays allowed; such a value can itself hold a line break, which zn cannot see.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
