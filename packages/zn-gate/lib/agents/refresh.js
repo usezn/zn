@@ -90,6 +90,19 @@ function refreshLaunchers(opts = {}) {
       done.push(id);
     } catch (_) { /* one bad file never stops the others or the install */ }
   }
+  // The static launcher (static-launcher.js), when the hooks use it: replaced by this package's copy when that one differs.
+  try {
+    const sl = require('./static-launcher');
+    const file = path.join(dir, sl.NAME);
+    const st = fs.lstatSync(file);
+    const key = sl.platformKey(platform, opts.arch || process.arch);
+    const b = key ? sl.bundled(key, opts) : {};
+    if (st.isFile() && b.bytes && !b.bytes.equals(fs.readFileSync(file)) && sl.installStatic({ env, home: opts.home, platform, arch: opts.arch, nativeDir: opts.nativeDir }).file) done.push(sl.NAME);
+  } catch (e) {
+    // Only a file-system error (none installed, or it cannot be read) leaves things as they are; anything else is a bug and surfaces.
+    // The postinstall entry (main) catches it, so an install never fails because of it.
+    if (!(e && typeof e.code === 'string' && e.code !== 'MODULE_NOT_FOUND')) throw e;
+  }
   return done;
 }
 
