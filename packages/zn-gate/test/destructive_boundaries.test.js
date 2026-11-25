@@ -263,3 +263,13 @@ test('ordinary double-quoted substitutions and quoted data stay allowed', () => 
     assert.equal(checkCommand(c).verdict, 'allow', c);
   }
 });
+
+test('a ) inside a comment does not close a double-quoted substitution early', () => {
+  const quoted = 'echo "$(echo hi # note )\n' + RM_HOME + ')"';
+  assert.equal(checkCommand(quoted).verdict, 'block');
+  assert.equal(checkCommand(quoted).rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('bash -c "echo $(echo hi # note )\n' + RM_HOME + ')"').rule, 'destructive:rm_root_home');
+  // Control: the same shape with a harmless second line stays allowed, and a # inside a word is not a comment.
+  assert.equal(checkCommand('echo "$(echo hi # note )\nls)"').verdict, 'allow');
+  assert.equal(checkCommand('echo "$(echo a#b)"').verdict, 'allow');
+});

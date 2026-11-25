@@ -710,6 +710,12 @@ def _subst_end(text: str, start: int, state: dict[str, bool], lvl: int) -> int:
             i = e
         elif ch == '"':
             i = _dq_end(text, i, state, lvl)
+        elif ch == "#" and (i == start or text[i - 1] in " \t\r\n;&|()"):
+            # A comment (a # that starts a word) runs to the end of the line: a ) inside it does not close the substitution.
+            e = text.find("\n", i)
+            if e < 0:
+                return n
+            i = e
         elif ch == "$" and text[i + 1:i + 2] == "(":
             i = _subst_end(text, i + 2, state, lvl + 1)
         elif ch == "(":

@@ -307,6 +307,8 @@ function substEnd(text, from, state, lvl) {
     if (ch === '\\') { i++; continue; }
     if (ch === "'") { const e = text.indexOf("'", i + 1); if (e < 0) return text.length; i = e; continue; }
     if (ch === '"') { i = dqEnd(text, i, state, lvl); continue; }
+    // A comment (a # that starts a word) runs to the end of the line: a ) inside it does not close the substitution.
+    if (ch === '#' && (i === from || /[\s;&|()]/.test(text[i - 1]))) { const e = text.indexOf('\n', i); if (e < 0) return text.length; i = e; continue; }
     if (ch === '$' && text[i + 1] === '(') { i = substEnd(text, i + 2, state, lvl + 1); continue; }
     if (ch === '(') parens++;
     else if (ch === ')') { if (parens === 0) return i; parens--; }
@@ -651,7 +653,7 @@ function readsScriptFromStdin(kind, rest) {
   return true;
 }
 
-function checkSimple(words, depth, known) {
+function checkSimple(words, depth, known, rc = 0) {
   const un = unwrapDir(words);
   const args = un.args;
   if (un.overflow) return OVERFLOW;
@@ -668,14 +670,14 @@ function checkSimple(words, depth, known) {
     const tail = un.splitTail.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
     // The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
     const text = un.splits.map((x) => x.replace(/\\_/g, ' ').replace(/\\[tnvfr]/g, ' ')).join(' ');
-    const hit = analyze('env ' + text + ' ' + tail, depth + 1, known);
+    const hit = analyze('env ' + text + ' ' + tail, depth + 1, known, false, rc);
     if (hit) return hit;
   }
   if (!args.length) return null;
-  const hit = checkHead(args, depth, known);
+  const hit = checkHead(args, depth, known, rc);
   if (hit || !un.unsure) return hit;
   // From the first wrapper on, so a word skipped as an option's value is read as a possible command as well.
-  return checkLaterHeads(un.all, depth, known);
+  return checkLaterHeads(un.all, depth, known, rc);
 }
 
 /* Whether the rules below read a command with this program name as its head. */
@@ -686,19 +688,19 @@ function headIsRead(name) {
 
 /* A wrapper chain that may not end on the program (an option zn does not know may have taken the next word as its value):
    each later word that names a program these rules read is checked as the head too, so the option cannot hide the command. */
-function checkLaterHeads(args, depth, known) {
+function checkLaterHeads(args, depth, known, rc = 0) {
   let n = 0;
   for (let j = 1; j < args.length; j++) {
     if (!headIsRead(programName(args[j]))) continue;
     if (++n > LATER_HEADS_MAX) return OVERFLOW;
-    const hit = checkHead(args.slice(j), depth, known);
+    const hit = checkHead(args.slice(j), depth, known, rc);
     if (hit) return hit;
   }
   return null;
 }
 
 /* The rules for one simple command whose head is args[0]. */
-function checkHead(args, depth, known) {
+function checkHead(args, depth, known, rc = 0) {
   const head = programName(args[0]);
   const rest = args.slice(1);
 
@@ -721,7 +723,7 @@ function checkHead(args, depth, known) {
   // Past the nesting limit a shell string is refused, not skipped: its commands would not be checked.
   if (code !== null && depth >= MAX_DEPTH && code.trim() !== '' && (ENABLED === null || ENABLED.size > 0)) return OVERFLOW;
   if (code !== null && depth < MAX_DEPTH) {
-    const hit = analyze(code, depth + 1, known);
+    const hit = analyze(code, depth + 1, known, false, rc);
     if (hit) return hit;
   }
 
@@ -763,7 +765,7 @@ function checkHead(args, depth, known) {
       // -execdir and -okdir run it from the folder of each matched file, not from the folder find was started in.
       const child = rest.slice(i + 1, j);
       let hit = null;
-      if (j > i + 1) hit = /^-(?:execdir|okdir)$/.test(rest[i]) ? checkExecdir(child, depth, known, paths.length ? paths : ['.']) : checkChild(child, depth, known);
+      if (j > i + 1) hit = /^-(?:execdir|okdir)$/.test(rest[i]) ? checkExecdir(child, depth, known, paths.length ? paths : ['.'], rc) : checkChild(child, depth, known, rc);
       if (hit) return hit;
       i = j;
     }
@@ -785,8 +787,8 @@ function checkHead(args, depth, known) {
 }
 
 /* The command an -exec runs, read from the folder `cwd`: as a command, and as a one-command pipeline (its downloads). */
-function checkChild(words, depth, cwd) {
-  return checkSimple(words, depth, cwd) || checkPipeline([{ words }], cwd);
+function checkChild(words, depth, cwd, rc = 0) {
+  return checkSimple(words, depth, cwd, rc) || checkPipeline([{ words }], cwd, rc);
 }
 
 /* The folder a find starting path names: a folder chain, or null when it cannot be told (a variable, a substitution, a
@@ -803,23 +805,22 @@ function execRootFolder(word, known) {
 
 /* find -execdir runs its command from the folder of each matched file, which can be any folder below a starting path. The
    command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
-   a protected startup file or authorized_keys counts as protected (RC_NAME_ONLY). */
-function checkExecdir(words, depth, known, roots) {
+   a protected startup file or authorized_keys counts as protected (the rc mode, passed down as a parameter). */
+function checkExecdir(words, depth, known, roots, rc = 0) {
   let unsure = false;
   for (const r of roots) {
     const f = execRootFolder(r, known);
     // A folder that cannot be told, including one reached after the folder was lost (cd .. above the home folder): unsure.
     if (f === null || f === undefined || f === CWD_LOST) { unsure = true; continue; }
     if (f === CWD_OVERFLOW) return OVERFLOW;
-    const hit = checkChild(words, depth, f);
+    const hit = checkChild(words, depth, f, rc);
     if (hit) return hit;
   }
   // When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown or lost
   // folder), any relative target with a folder in it (etc/profile, ../etc/profile) is refused as well; a plain file name is not.
   if (known === CWD_LOST) unsure = true;
-  const saved = RC_NAME_ONLY;
-  RC_NAME_ONLY = unsure ? 2 : 1;
-  try { return checkChild(words, depth, unsure ? null : known); } finally { RC_NAME_ONLY = saved; }
+  // The mode is passed down with the call (never kept in module state), so overlapping checks cannot see each other's.
+  return checkChild(words, depth, unsure ? null : known, unsure ? 2 : 1);
 }
 
 function worldWritable(mode) {
@@ -864,11 +865,11 @@ function braceAlts(w) {
 
 // The startup-file and ssh key names a download must not be written to, in whatever folder (see checkExecdir).
 const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)|authorized_keys2?|config\.fish)$/;
-let RC_NAME_ONLY = 0; // 1: protected names count in any folder; 2: also any relative target that names a folder
+// rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
 
-function isRcTarget(w) {
+function isRcTarget(w, rc = 0) {
   const alts = braceAlts(w);
-  return alts === null || alts.some(isRcPath) || (RC_NAME_ONLY === 2 && alts.some((a) => !ANCHORED_RE.test(a) && /[\\/]/.test(a))) || (RC_NAME_ONLY > 0 && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
+  return alts === null || alts.some(isRcPath) || (rc === 2 && alts.some((a) => !ANCHORED_RE.test(a) && /[\\/]/.test(a))) || (rc > 0 && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
 }
 
 /* The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL). */
@@ -900,7 +901,7 @@ function pipeArgs(un) {
   return j > 0 ? a.slice(j) : a;
 }
 
-function checkPipeline(pipe, known = null) {
+function checkPipeline(pipe, known = null, rc = 0) {
   const heads = pipe.map((s) => {
     const un = unwrapDir(stripRedirects(s.words));
     const a = pipeArgs(un);
@@ -942,10 +943,10 @@ function checkPipeline(pipe, known = null) {
         else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
         else if (heads[j].head === 'dd' && w.startsWith('of=')) target = w.slice(3);
         // A relative file is read from the folder an earlier cd, pushd or env -C moved to.
-        if ((target !== null && isRcTarget(rcFromCwd(heads[j].dir, target))) && on('rc_download')) return 'rc_download';
+        if ((target !== null && isRcTarget(rcFromCwd(heads[j].dir, target), rc)) && on('rc_download')) return 'rc_download';
         // find -execdir runs the command at an unknown depth below its starting path, so a relative target that climbs with ..
         // can land anywhere above it (../etc/profile from /srv is /etc/profile): refused whatever the starting path.
-        if (target !== null && RC_NAME_ONLY > 0 && !ANCHORED_RE.test(target) && /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(target) && on('rc_download')) return 'rc_download';
+        if (target !== null && rc > 0 && !ANCHORED_RE.test(target) && /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(target) && on('rc_download')) return 'rc_download';
       }
     }
   }
@@ -967,7 +968,7 @@ const MAX_TICK_READS = 200;
 const MAX_PIPE_READINGS = 64;
 
 /* A pipeline whose commands each have several readings is checked once for every combination. */
-function checkPipelineReadings(pipe, known) {
+function checkPipelineReadings(pipe, known, rc = 0) {
   let total = 1;
   for (const r of pipe) {
     total *= r.length;
@@ -975,7 +976,7 @@ function checkPipelineReadings(pipe, known) {
   }
   const idx = pipe.map(() => 0);
   for (let n = 0; n < total; n++) {
-    const hit = checkPipeline(pipe.map((r, i) => r[idx[i]]), known);
+    const hit = checkPipeline(pipe.map((r, i) => r[idx[i]]), known, rc);
     if (hit) return hit;
     for (let i = idx.length - 1; i >= 0; i--) { if (++idx[i] < pipe[i].length) break; idx[i] = 0; }
   }
@@ -983,7 +984,7 @@ function checkPipelineReadings(pipe, known) {
 }
 
 /* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count. */
-function checkSegments(segs, depth, cwd0 = null) {
+function checkSegments(segs, depth, cwd0 = null, rc = 0) {
   let pipe = []; // the commands of the current pipeline: for each, its readings (one per value its variables may hold)
   let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
   // A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
@@ -998,7 +999,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     if (seg.sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
     const segs1 = readings.map((words) => (words === seg.words ? seg : { ...seg, words }));
     for (const s1 of segs1) {
-      const hit = checkSimple(s1.words, depth, known);
+      const hit = checkSimple(s1.words, depth, known, rc);
       if (hit) return hit;
     }
     seg = segs1[0];
@@ -1007,7 +1008,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     if (seg.raw && known !== cwd0 && depth < MAX_DEPTH) {
       if (++ticks > MAX_TICK_READS) return OVERFLOW;
       const inner = backtickCode(seg.raw);
-      const innerHit = inner ? analyze(inner, depth + 1, known) : null;
+      const innerHit = inner ? analyze(inner, depth + 1, known, false, rc) : null;
       if (innerHit) return innerHit;
     }
     // The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
@@ -1016,7 +1017,7 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (bodies === null || ticks + bodies.length > MAX_TICK_READS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
       ticks += bodies.length;
       for (const body of bodies) {
-        const bodyHit = body.trim() ? analyze(body, depth, known) : null;
+        const bodyHit = body.trim() ? analyze(body, depth, known, false, rc) : null;
         if (bodyHit) return bodyHit;
       }
     }
@@ -1033,7 +1034,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     }
     pipe.push(segs1);
     if (!isPipe(seg.sep)) {
-      const hit2 = checkPipelineReadings(pipe, known);
+      const hit2 = checkPipelineReadings(pipe, known, rc);
       if (hit2) return hit2;
       pipe = [];
     }
@@ -1041,10 +1042,10 @@ function checkSegments(segs, depth, cwd0 = null) {
     for (let i = 0; i < (seg.opens || 0) && groups.length < MAX_SEGMENTS; i++) groups.push(known);
     if (seg.sep === ')' && groups.length) known = groups.pop();
   }
-  return pipe.length ? checkPipelineReadings(pipe, known) : null;
+  return pipe.length ? checkPipelineReadings(pipe, known, rc) : null;
 }
 
-function analyze(cmd, depth = 0, known = null, requoted = false) {
+function analyze(cmd, depth = 0, known = null, requoted = false, rc = 0) {
   const text = String(cmd);
   if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
   // The same command with the quotes of its substitutions escaped (see requoteSubstitutions), read at the same depth.
@@ -1052,7 +1053,7 @@ function analyze(cmd, depth = 0, known = null, requoted = false) {
     const fixed = requoteSubstitutions(text);
     if (fixed === null) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
     if (fixed !== text) {
-      const fixedHit = analyze(fixed, depth, known, true);
+      const fixedHit = analyze(fixed, depth, known, true, rc);
       if (fixedHit) return fixedHit;
     }
   }
@@ -1071,12 +1072,12 @@ function analyze(cmd, depth = 0, known = null, requoted = false) {
   if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || SHELL_STDIN_DOWNLOAD_RE.test(text) || PS_PIPE_RE.test(psBare) || PS_CALL_RE.test(psBare)) && on('pipe_to_shell')) return 'pipe_to_shell';
   if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
   const segs = segmentsOf(text);
-  const hit = checkSegments(segs, depth, known);
+  const hit = checkSegments(segs, depth, known, rc);
   if (hit) return hit;
   // A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
   if (depth < MAX_DEPTH && text.includes('`')) {
     const inner = backtickCode(text);
-    const innerHit = inner ? analyze(inner, depth + 1, known) : null;
+    const innerHit = inner ? analyze(inner, depth + 1, known, false, rc) : null;
     if (innerHit) return innerHit;
   }
   // A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
@@ -1085,21 +1086,21 @@ function analyze(cmd, depth = 0, known = null, requoted = false) {
     const bodies = dqSubstBodies(text);
     if (bodies === null || bodies.length > MAX_TICK_READS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
     for (const body of bodies) {
-      const bodyHit = body.trim() ? analyze(body, depth, known) : null;
+      const bodyHit = body.trim() ? analyze(body, depth, known, false, rc) : null;
       if (bodyHit) return bodyHit;
     }
   }
   // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
   // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
   if (text.includes('\\')) {
-    const posixHit = checkSegments(segmentsOf(text, true), depth, known);
+    const posixHit = checkSegments(segmentsOf(text, true), depth, known, rc);
     if (posixHit) return posixHit;
   }
   // ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
   // this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
   // $'.bash\x72c', $'\x72m' -rf $'\x7e').
   if (text.includes("$'")) {
-    const ansiHit = checkSegments(segmentsOf(policyModule()._decodeAnsiC(text), true), depth, known);
+    const ansiHit = checkSegments(segmentsOf(policyModule()._decodeAnsiC(text), true), depth, known, rc);
     if (ansiHit === 'pipe_to_shell' || ansiHit === 'rc_download' || ansiHit === 'rm_root_home') return ansiHit;
   }
   // Fail closed: never allow a line whose tail was not read.

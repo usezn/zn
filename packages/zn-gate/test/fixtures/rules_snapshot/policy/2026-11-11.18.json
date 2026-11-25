@@ -1,6 +1,6 @@
 {
   "version_const": "POLICY_RULES_VERSION",
-  "version": "2026-11-25.1",
+  "version": "2026-11-11.18",
   "ids": [
     "INSTRUCTION_FILE_NAMES",
     "SHELL_SCAN_CAP",
@@ -20,7 +20,6 @@
     "egressParts",
     "egressUrlParts",
     "expandBraces",
-    "gitStart",
     "globClass",
     "globRegExp",
     "hasNetworkSignals",
@@ -34,13 +33,13 @@
     "writeDenial"
   ],
   "sha256": {
-    "lib/hooks/policy.js": "7cc63c3f5f14de76c386cff1310a4a7751ca35f295e4242b450fb67471d6b48e",
-    "lib/hooks/curl-files.js": "c1c87057eabf0f7cf1eccacf1822ec92e6242b328455b0756d269a168945a6c8",
+    "lib/hooks/policy.js": "04e6e252ee6d5e94e9690bd04384873bb5911fe1c117650f78a38af49201adc5",
+    "lib/hooks/curl-files.js": "f01644f902dee25b8006fa8a6f814d39177e30d667300411df41b460237c53d5",
     "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
     "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
     "lib/broker/dotenv.js": "e6ae0b84799952f72a342f697dc357b128b5d5e2a0b1a82d500515fdc6395ebf",
     "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
-    "lib/destructive.js": "25fb77074429664837c9f4f042e18eb1fa2071f60c6042904db4464453276be2",
-    "lib/shell-vars.js": "47e859639e910b2d1919a29eedac06b5da6c731426ee1aa87c05d2469b7c6492"
+    "lib/destructive.js": "fa77c17be4f60dc2cdb50a4c2a8ef31ebb6dcb17c06b706328deed8d90ac30ee",
+    "lib/shell-vars.js": "dda7b10b16db524bf0dfce7ee7dfeac960bf7b4c192fb12b1a5c0ec533db27a1"
   }
 }
