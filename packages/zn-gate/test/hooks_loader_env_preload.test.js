@@ -22,8 +22,8 @@ const { assertLinear } = require('./helpers/time_ratio');
 
 const PRELOAD = (name) => new RegExp('would set ' + name + ' for the agent\\. That makes the dynamic loader load a library');
 const ANY_PRELOAD = /would set [A-Z0-9_]+ for the agent\. That makes the dynamic loader load a library/;
-const OPAQUE = /zn cannot check what this command writes to it/;
-const OPAQUE_OR_NAMED = /zn cannot check what this command writes|would set [A-Z0-9_]+ for the agent/;
+const OPAQUE = /Edit \.env with the file editor tool; shell writes to \.env files are blocked\. zn cannot see what the shell actually writes\./;
+const OPAQUE_OR_NAMED = /shell writes to \.env files are blocked|would set [A-Z0-9_]+ for the agent/;
 const isEnv = (t) => /(^|[\\/])\.env$/.test(t);
 
 function project(t) {
@@ -88,7 +88,7 @@ test('Gemini CLI write_file and Codex CLI patches of a .env that set a preload v
   passes(await decide(codex, cdx('apply_patch', { command: patch('Add', '.env', ['DEBUG=1', 'LD_LIBRARY_PATH=/opt/lib']) }, dir)));
 });
 
-test('shell writes of a preload variable with a value to a .env are blocked, an empty one passes', async (t) => {
+test('shell writes of a preload variable to a .env are blocked, an empty value too', async (t) => {
   const dir = project(t);
   const bad = [
     ['echo LD_PRELOAD=/tmp/x.so >> .env', 'LD_PRELOAD'],
@@ -105,9 +105,11 @@ test('shell writes of a preload variable with a value to a .env are blocked, an 
   blocked(await decide(claude, cc('PowerShell', { command: "Add-Content .env 'LD_PRELOAD=/tmp/x.so'" }, dir)), PRELOAD('LD_PRELOAD'));
   // The name as a printf argument, or glued to another word: refused whatever the value.
   blocked(await decide(claude, cc('Bash', { command: "printf '%s\\n' 'LD_PRELOAD=/tmp/x.so' > .env" }, dir)), ANY_PRELOAD);
-  for (const command of ['echo LD_PRELOAD= >> .env', "echo 'LD_PRELOAD=' >> .env", 'echo LD_LIBRARY_PATH=/opt/lib >> .env', 'echo LD_PRELOAD=/tmp/x.so > notes.txt']) {
-    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+  // Policy changed (2026-11-25): an empty value used to pass as a literal write; every shell write to a .env is refused now.
+  for (const command of ['echo LD_PRELOAD= >> .env', "echo 'LD_PRELOAD=' >> .env", 'echo LD_LIBRARY_PATH=/opt/lib >> .env']) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), OPAQUE_OR_NAMED, command);
   }
+  passes(await decide(claude, cc('Bash', { command: 'echo LD_PRELOAD=/tmp/x.so > notes.txt' }, dir)));
 });
 
 test('shell writes to a .env whose text only the shell knows are blocked, also when only a value is expanded', async (t) => {
@@ -151,9 +153,9 @@ test('shell writes to a .env whose text only the shell knows are blocked, also w
     'cat template.txt > .env',
   ];
   for (const command of nowRefused) blocked(await decide(claude, cc('Bash', { command }, dir)), OPAQUE, command);
-  // Literal writes pass; a comment after the write is not written.
+  // Literal writes are refused too.
   for (const command of ['echo FOO=1 >> .env # $X', '[ -f .env ] || echo FOO=1 > .env', "echo 'API_URL=https://example.com' >> .env"]) {
-    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+    blocked(await decide(claude, cc('Bash', { command }, dir)), OPAQUE, command);
   }
   // A literal name that is a loader name keeps its own refusal even with an expanded value.
   blocked(await decide(claude, cc('Bash', { command: 'echo "LD_PRELOAD=$LIB" >> .env' }, dir)), PRELOAD('LD_PRELOAD'));
@@ -172,7 +174,7 @@ test('the shell write scan is linear in the length of the command', () => {
   const build = (n) => 'echo ' + '"A=$X" '.repeat(n) + '"$Y" > .env';
   assertLinear((cmd) => loaderEnv.shellDotenvWrite(cmd, isEnv), build, 20000, 'many expansions before the redirection');
   assert.equal(loaderEnv.shellDotenvWrite(build(20000), isEnv).verdict, loaderEnv.OPAQUE_WRITE);
-  const literal = (n) => 'echo ' + "'A_B_C=1' ".repeat(n) + '> .env';
+  const literal = (n) => 'echo ' + "'A_B_C=1' ".repeat(n) + '> notes.txt';
   assertLinear((cmd) => loaderEnv.shellDotenvWrite(cmd, isEnv), literal, 20000, 'many literal words');
   assert.equal(loaderEnv.shellDotenvWrite(literal(20000), isEnv).verdict, null);
   const blind = (n) => 'echo "$(x)"; ' + '>'.repeat(n) + ' .env';
@@ -207,10 +209,10 @@ test('a printf conversion outside a literal NAME= value is refused even with lit
     blocked(await decide(claude, cc('Bash', { command }, dir)), OPAQUE, command);
     blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), OPAQUE, command);
   }
-  // A printf of plain text, one argument, still passes.
+  // A printf of plain text, one argument, used to pass; it is refused now.
   for (const command of ["printf 'X=1' >> .env", 'printf TOKEN=abc > .env']) {
-    passes(await decide(claude, cc('Bash', { command }, dir)), command);
-    passes(await decide(gemini, gem('run_shell_command', { command }, dir)), command);
+    blocked(await decide(claude, cc('Bash', { command }, dir)), OPAQUE, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), OPAQUE, command);
   }
 });
 
@@ -247,7 +249,7 @@ test('printf is found in any position of a simple command, not only as the first
   assert.equal(loaderEnv.shellDotenvWrite("env printf '%s%s\\n' LD_ DEBUG=help > .env", isEnv).verdict, loaderEnv.OPAQUE_WRITE);
   assert.equal(loaderEnv.shellDotenvWrite('xargs printf > .env', isEnv).verdict, loaderEnv.OPAQUE_WRITE);
   assert.equal(loaderEnv.shellDotenvWrite("env printf 'A=1' >> .env", isEnv).verdict, loaderEnv.OPAQUE_WRITE);
-  assert.equal(loaderEnv.shellDotenvWrite("printf 'A=1' >> .env", isEnv).verdict, null);
+  assert.equal(loaderEnv.shellDotenvWrite("printf 'A=1' >> .env", isEnv).verdict, loaderEnv.OPAQUE_WRITE);
 });
 
 test('a printf format escape other than backslash, tab and quotes may emit a line break, and %b interprets escapes: both end a literal value', async (t) => {

@@ -296,67 +296,18 @@ function loaderNameMentionedIn(text) {
 // What shellDotenvWrite returns for a write whose text zn cannot see.
 const OPAQUE_WRITE = '<opaque>';
 
-// Redefinition of echo, printf or cat. A shell write to a dotenv file is allowed only as a literal echo, printf or cat, which assumes
-// those words run the shell builtin or the system tool. The SAME command can change that first: a function or alias, enable, hash,
-// builtin, source, eval, exec, a changed PATH, expand_aliases, BASH_ENV. Any of them anywhere in the command refuses the write.
-// Single-quoted text is literal and is not read, except in a command with a here-document (a body can hold quotes), which is read whole.
-// A function or alias defined by an EARLIER command of a persistent shell is not visible here.
-const REDEFINABLE = '<redefinable>';
-const REDEF_KEYWORD_RE = /(^|[^\w.-])(alias|unalias|enable|hash|source|eval|exec|declare|typeset|readonly|shopt)(?![\w-])/;
-// `builtin echo` and `builtin printf` are the two-word forms the writer check accepts; any other builtin is refused.
-const REDEF_BUILTIN_RE = /(^|[^\w.-])builtin(?![\w-])(?!\s+(echo|printf)(?![\w-]))/;
-const REDEF_SUBST_RE = /<<<|[<>]\(/;
-const REDEF_FUNCTION_RE = /(^|[^\w])function\s|[^\s;&|(){}]\s*\(\s*\)/;
-const REDEF_DOT_RE = /(^|[;&|({\n]|\b(then|do|else)\b)\s*\.\s/;
-const REDEF_SET_RE = /(^|[^\w])set\s+[-+]\w*o/;
-const REDEF_PATH_RE = /(^|[^\w])(PATH|BASH_ENV)\+?=|(^|[;&|({\n])\s*ENV\+?=|(^|[^\w])export\s+[^;&|\n]*(?<![\w])(PATH|BASH_ENV|ENV)(?![\w])/;
-
-function withoutSingleQuoted(s) {
-  let out = '';
-  let dq = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === '\\') { out += c + (i + 1 < s.length ? s[i + 1] : ''); i++; continue; }
-    if (dq) { if (c === '"') dq = false; out += c; continue; }
-    if (c === '"') { dq = true; out += c; continue; }
-    if (c === "'") {
-      const j = s.indexOf("'", i + 1);
-      if (j < 0) return null; // unterminated: not read as a literal
-      out += "''";
-      i = j;
-      continue;
-    }
-    out += c;
-  }
-  return out;
-}
-
-function canRedefineEcho(text) {
-  const s = String(text);
-  const t = /<</.test(s) ? s : withoutSingleQuoted(s);
-  if (t === null) return true;
-  return REDEF_KEYWORD_RE.test(t) || REDEF_BUILTIN_RE.test(t) || REDEF_SUBST_RE.test(t) || REDEF_FUNCTION_RE.test(t) || REDEF_DOT_RE.test(t) || REDEF_SET_RE.test(t) || REDEF_PATH_RE.test(t);
-}
-
 /*
- * Shell writes to a dotenv file. What a command writes is known only when it is literal text, so a write is allowed only in two forms:
- *  - `echo` or `printf` as the first word of its simple command (no VAR=value prefix, no env, command, sudo or other wrapper, no
- *    quotes or backslash in the word), with arguments that hold no %, no backslash, no $, no back quote, no line break, no unquoted
- *    * ? [ ] { } ~ ( ) #, and do not start with "-" (no echo or printf option); printf takes exactly one argument, its format, which is
- *    then plain text;
- *  - `cat` with a here-document whose delimiter is quoted (<<'EOF'), a body with none of % \ $ `, and the line of the command ending
- *    right after its redirections.
- * The text written is then checked like a file edit (hookStopAssignedIn, preloadAssignedIn). Every other command that writes a dotenv
- * file is refused, also a copy from another file (cp, cat x > .env, tee .env < x), whose content zn cannot see.
+ * Shell writes to a dotenv file. Every shell command that writes a watched dotenv file through a redirection is refused, whatever it
+ * writes: the shell can run a different echo, printf or cat than the command shows (an inherited function, an alias or function from
+ * an earlier command of a persistent shell, an untrusted PATH), so the text that reaches the file cannot be known from the command.
+ * The agent edits the file with the editor tool, which zn checks on the real text.
  *
- * The command is read in one pass with POSIX quoting. Anything that reading does not model the way every shell would (a back quote,
- * $( ${ $' $", a here-document, a process substitution, PowerShell's <# comment, a backslash before a quote, a comment that ends in a
- * backslash, an unclosed quote) ends it: from that simple command on, every > is taken as a redirection whatever the quotes, and one
- * that may write a dotenv file refuses the command.
+ * The command is read in one pass with POSIX quoting to find its redirections. Anything that reading does not model the way every
+ * shell would (a back quote, $( ${ $' $", a here-document, a process substitution, PowerShell's <# comment, a backslash before a
+ * quote, a comment that ends in a backslash, an unclosed quote) ends it: from that simple command on, every > is taken as a
+ * redirection whatever the quotes, and one that may write a dotenv file refuses the command.
  */
 
-// Characters an argument may hold outside quotes. Inside quotes anything goes but % \ $ and the back quote.
-const LITERAL_LIVE_RE = /^[A-Za-z0-9_=.:\/+,-]*$/;
 // Characters no argument may hold anywhere.
 const NOT_LITERAL_RE = /[%\\$`]/;
 // Unquoted characters of a redirection target that make it a pattern (or bad syntax).
@@ -441,7 +392,7 @@ function readSimpleCommand(s, from) {
           }
           if (dq) out.hazard = true;
           const raw = s.slice(k, e);
-          out.heredocs.push({ quoted: /['"\\]/.test(raw), delim: raw.replace(/['"\\]/g, ''), dash, plain: /^(['"])[A-Za-z0-9_]+\1$/.test(raw) });
+          out.heredocs.push({ quoted: /['"\\]/.test(raw), delim: raw.replace(/['"\\]/g, ''), dash });
           i = e - 1;
           continue;
         }
@@ -513,95 +464,26 @@ function blindDotenvTarget(s, from, isDotenv) {
 }
 
 /**
- * For a simple command that writes a dotenv file: OPAQUE_WRITE when it is not one of the two literal forms, else the loader name its
- * text sets (hookStopAssignedIn, preloadAssignedIn) or null. `next` gets where the scan goes on (after a here-document body).
- */
-function literalWriteVerdict(s, cmd, next) {
-  for (const r of cmd.redirs) {
-    if (r.op === '<' || !r.target || /[%$`]/.test(r.target.raw) || TARGET_PATTERN_RE.test(r.target.live)) return OPAQUE_WRITE;
-  }
-  const first = cmd.words[0];
-  if (!first) return OPAQUE_WRITE;
-  let texts;
-  if (cmd.heredocs.length) {
-    const h = cmd.heredocs[0];
-    if (cmd.heredocs.length !== 1 || first.raw !== 'cat' || cmd.words.length !== 1 || !h.plain || h.dash || s.charAt(cmd.end) !== '\n') return OPAQUE_WRITE;
-    // The body: the lines after this one, up to the line that is exactly the delimiter.
-    const bodyFrom = cmd.end + 1;
-    let at = bodyFrom;
-    let bodyEnd = -1;
-    while (at <= s.length) {
-      let eol = s.indexOf('\n', at);
-      if (eol < 0) eol = s.length;
-      if (s.slice(at, eol) === h.delim) { bodyEnd = at; next.at = eol + 1; break; }
-      at = eol + 1;
-    }
-    if (bodyEnd < 0) return OPAQUE_WRITE;
-    const body = s.slice(bodyFrom, bodyEnd);
-    if (NOT_LITERAL_RE.test(body)) return OPAQUE_WRITE;
-    texts = [body];
-  } else {
-    // The writer is an unqualified echo or printf; `builtin echo` and `command printf` (exactly two words) are the same literals.
-    let wi = 0;
-    if ((first.raw === 'builtin' || first.raw === 'command') && !first.special && cmd.words[1] && !cmd.words[1].special &&
-      (cmd.words[1].raw === 'echo' || cmd.words[1].raw === 'printf')) wi = 1;
-    const writer = cmd.words[wi];
-    if (writer.raw !== 'echo' && writer.raw !== 'printf') return OPAQUE_WRITE;
-    const args = cmd.words.slice(wi + 1);
-    for (const a of args) if (a.special || !LITERAL_LIVE_RE.test(a.live) || a.text.startsWith('-') || /[\r\n]/.test(a.text)) return OPAQUE_WRITE;
-    if (writer.raw === 'printf') {
-      if (args.length !== 1) return OPAQUE_WRITE;
-      texts = [args[0].text];
-    } else {
-      // POSIX echo joins its arguments with spaces; PowerShell's echo writes one per line.
-      const words = args.map((a) => a.text);
-      texts = [words.join(' ') + '\n', words.join('\n') + '\n'];
-    }
-  }
-  for (const t of texts) {
-    const name = hookStopAssignedIn(t) || preloadAssignedIn(t);
-    if (name) return name;
-  }
-  return null;
-}
-
-/**
  * Verdict on a shell command that writes a dotenv file through a redirection (> or >>). `isDotenv(text)` says whether a redirection
- * target names a dotenv file. Returns { verdict, targets }: verdict is null when every redirection that may write a dotenv file is one
- * of the literal forms above and sets no loader variable, else the loader name it sets, or the loader name the command mentions, or
- * OPAQUE_WRITE; targets holds the dotenv targets that were checked (the caller refuses a target it found that is not among them).
- * One forward pass.
+ * target names a dotenv file. Returns { verdict }: null when no redirection may write a dotenv file, else the loader name the command
+ * mentions (to choose the refusal message) or OPAQUE_WRITE. One forward pass.
  */
 function shellDotenvWrite(text, isDotenv) {
   const s = String(text);
-  const targets = new Set();
-  let redefinable;
-  const opaque = () => ({ verdict: loaderNameMentionedIn(s) || OPAQUE_WRITE, targets });
+  const refuse = () => ({ verdict: loaderNameMentionedIn(s) || OPAQUE_WRITE });
   let i = 0;
   while (i < s.length) {
     const cmd = readSimpleCommand(s, i);
-    const dotenv = cmd.redirs.filter((r) => r.op === '>' && (!r.target || /[%$`]/.test(r.target.raw) || TARGET_PATTERN_RE.test(r.target.live) ||
+    const dotenv = cmd.redirs.some((r) => r.op === '>' && (!r.target || /[%$`]/.test(r.target.raw) || TARGET_PATTERN_RE.test(r.target.live) ||
       targetTexts(r.target).some(isDotenv)));
-    if (cmd.hazard || (cmd.heredocs.length && !dotenv.length)) {
+    if (dotenv) return refuse();
+    if (cmd.hazard || cmd.heredocs.length) {
       // Past syntax the scan does not model: any redirection that may write a dotenv file refuses the command.
-      return blindDotenvTarget(s, i, isDotenv) ? opaque() : { verdict: null, targets };
-    }
-    if (dotenv.length) {
-      if (redefinable === undefined) redefinable = canRedefineEcho(s);
-      if (redefinable) return { verdict: loaderNameMentionedIn(s) || REDEFINABLE, targets };
-      const next = { at: cmd.end + 1 };
-      const verdict = literalWriteVerdict(s, cmd, next);
-      if (verdict === OPAQUE_WRITE) return opaque();
-      if (verdict) return { verdict, targets };
-      for (const r of dotenv) for (const t of targetTexts(r.target)) targets.add(t);
-      if (cmd.heredocs.length) {
-        // After a here-document the rest is read quote-blind.
-        return blindDotenvTarget(s, next.at, isDotenv) ? opaque() : { verdict: null, targets };
-      }
+      return blindDotenvTarget(s, i, isDotenv) ? refuse() : { verdict: null };
     }
     i = cmd.end + 1;
   }
-  return { verdict: null, targets };
+  return { verdict: null };
 }
 
-module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, REDEFINABLE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
