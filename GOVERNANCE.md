@@ -149,6 +149,10 @@ their advisory.
 7. The release branch is merged into `main` with a merge commit, never with
    squash, so the tagged commit stays in the history of `main`. Then `main` is
    merged back into `next`, also with a merge commit.
+8. After the pin is merged into `main`, a maintainer creates the tag
+   `plugin-vX.Y.Z` on the pin commit (a protected tag, like `vX.Y.Z`). The
+   install commands add the plugin marketplace at that tag, so it must point to
+   the commit whose plugin lock pins `X.Y.Z`.
 
 How to verify a release: [docs/verify-release.md](docs/verify-release.md).
 

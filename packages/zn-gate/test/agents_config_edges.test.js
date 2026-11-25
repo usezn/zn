@@ -293,8 +293,14 @@ test('claude-code: the managed policy is reported on install when present, and n
   assert.ok(present.warnings.some((w) => /turns off all hooks \(disableAllHooks\)/.test(w)));
 
   const h2 = fakeHome(t);
-  const absent = claude.install(opts(h2, { managedDir: path.join(h2, 'no-policy') }));
-  assert.deepEqual(absent.warnings, []);
+  // The launcher state is pinned: an empty native folder, so a copy without the launcher. On Linux the install says
+  // that one protection is missing (also on a processor with no prebuilt launcher), which is not about the policy; elsewhere there is none.
+  const noNative = path.join(h2, 'no-native');
+  fs.mkdirSync(noNative, { recursive: true });
+  const absent = claude.install(opts(h2, { managedDir: path.join(h2, 'no-policy'), nativeDir: noNative }));
+  const linux = process.platform === 'linux';
+  assert.deepEqual(absent.warnings.filter((w) => !/static hook launcher/.test(w)), []);
+  assert.equal(absent.warnings.filter((w) => /static hook launcher/.test(w)).length, linux ? 1 : 0, JSON.stringify(absent.warnings));
 });
 
 /* ------------------------------- managed-policy ------------------------------- */
