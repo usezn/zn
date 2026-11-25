@@ -370,6 +370,7 @@ function processParts(h) {
 function commandText(h) {
   const parts = processParts(h);
   if (!parts) return h && typeof h.command === 'string' ? h.command : '';
+  if (require('./static-launcher').isStaticLauncher(parts[0])) return require('./static-launcher').execText(parts);
   if (/(^|[\\/])zn-hook-[a-z-]+\.sh$/.test(parts[0])) return shQuote(parts[0]) + (parts.length > 1 ? ' ' + parts.slice(1).join(' ') : '');
   return parts.join(' ');
 }
@@ -393,7 +394,7 @@ function stripOurs(groups) {
  * call run when a hook cannot start, so a Node.js that has gone away must block (exit 2) instead. On Windows the
  * same three steps are an inline PowerShell script. A command given by the caller keeps the plain command.
  */
-function handlerFor(opts = {}) {
+function handlerFor(opts = {}, notes = []) {
   const base = { timeoutMs: ENTRY_TIMEOUT_MS, statusMessage: HOOK_STATUS };
   if (opts.command) return () => ({ type: 'command', command: opts.command, ...base });
   const platform = opts.platform || process.platform;
@@ -408,6 +409,10 @@ function handlerFor(opts = {}) {
     };
   }
   const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: LAUNCHER_DEADLINE_S });
+  // Linux: the static launcher first (see static-launcher.js), which starts the launcher script with no loader variable left.
+  const sl = require('./static-launcher');
+  const st = sl.useStatic(opts, notes, id);
+  if (st) return (event) => ({ type: 'process', command: st, args: sl.execParts(st, id, event, portablePath(file, platform), [event]).slice(1), ...base });
   return (event) => ({ type: 'process', command: portablePath(file, platform), args: [event], ...base });
 }
 
@@ -511,7 +516,9 @@ function install(opts = {}) {
   const { hooks, events } = hooksTree(data, file);
   const servers = mcpServers(data, file, false);
   const report = { settings: file, backup: null, warnings: [] };
-  const ours = hookGroups(handlerFor(opts));
+  const notes = [];
+  const ours = hookGroups(handlerFor(opts, notes));
+  report.warnings.push(...notes);
   const wasOff = hooks.enabled !== true;
   const previousEnabled = hooks.enabled;
   const userHooks = wasOff ? userHookNames(events) : [];

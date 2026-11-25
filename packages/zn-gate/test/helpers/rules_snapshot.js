@@ -66,7 +66,7 @@ const LAYERS = {
     },
   },
   audit: {
-    files: ['lib/audit/rules.js', 'lib/audit/patterns.js'],
+    files: ['lib/audit/rules.js', 'lib/audit/patterns.js', 'lib/loader-env.js'],
     versionFile: 'lib/audit/rules.js',
     versionConst: 'AUDIT_RULES_VERSION',
     ids: () => {
@@ -85,6 +85,7 @@ const LAYERS = {
       'lib/shell-quote.js',
       'lib/destructive.js',
       'lib/shell-vars.js',
+      'lib/loader-env.js',
     ],
     versionFile: 'lib/hooks/policy.js',
     versionConst: 'POLICY_RULES_VERSION',

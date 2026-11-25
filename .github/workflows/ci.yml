@@ -97,6 +97,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The static hook launcher (tools/hook-launcher), so its end-to-end tests run here instead of being skipped.
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-unknown-linux-musl
+      - name: Build the static hook launcher for the tests
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/hook-launcher"
+          cargo +1.99.0 test --locked --manifest-path tools/hook-launcher/Cargo.toml
+          cargo +1.99.0 build --locked --release --target x86_64-unknown-linux-musl --manifest-path tools/hook-launcher/Cargo.toml
+          echo "ZN_TEST_HOOK_LAUNCHER=$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/zn-hook-launcher" >> "$GITHUB_ENV"
       - uses: ./.github/actions/node-tests
         with:
           node-version: 22.x
