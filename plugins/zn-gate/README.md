@@ -184,14 +184,12 @@ leave it, since nothing reads it.
 
 The plugin is pinned to zn-gate 1.17.0 and has no auto-update. A new zn-gate
 release comes with a new plugin release that pins it, with new file digests.
-Upgrade on purpose, after reading the release notes. The marketplace is added
-at a release tag, so `claude plugin update zn-gate@usezn` does not bring a newer
-release. In Claude Code, move the tag and install the plugin again (use the tag
-of the release you want in place of `vX.Y.Z`):
+Upgrade on purpose, after reading the release notes. In Claude Code, remove the
+marketplace, add it again and install the plugin again:
 
 ```bash
 claude plugin marketplace remove usezn
-claude plugin marketplace add usezn/zn#vX.Y.Z
+claude plugin marketplace add usezn/zn
 claude plugin install zn-gate@usezn
 ```
 
@@ -205,15 +203,13 @@ npm audit signatures
 
 ## Install
 
-Claude Code, from a marketplace pinned to the release tag:
+Claude Code:
 
 ```bash
-claude plugin marketplace add usezn/zn#v1.17.0
+claude plugin marketplace add usezn/zn
 claude plugin install zn-gate@usezn
 ```
 
-To confirm that the tag exists and which commit it points to, before you add
-the marketplace: `git ls-remote https://github.com/usezn/zn refs/tags/v1.15.0`.
 The files of the release carry build provenance attestations; see
 [Verifying a release](https://github.com/usezn/zn/blob/v1.17.0/docs/verify-release.md).
 

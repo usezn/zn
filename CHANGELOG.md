@@ -15,9 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Go client for the optional zn Cloud API, `github.com/usezn/zn/go`. `zn.NewClient(key).Analyze(ctx, text)` checks a tool result, a web page or an email before a model reads it, with timeouts, retries that honour `Retry-After`, typed errors (`IsRateLimited`, `IsQuotaExceeded`, `IsUnauthorized`), a check of the 20,000 UTF-16 unit limit before sending, and `SplitForAnalyze` for callers that want to send long text in pieces. Standard library only. See [go/README.md](https://github.com/usezn/zn/blob/main/go/README.md).
 
 ### Changed
-- `zn-gate init` and `zn-gate check` now add the Claude Code plugin marketplace at the tag of the installed release (`claude plugin marketplace add usezn/zn#v<version>`), and the READMEs say the same, so `claude plugin update` no longer follows the default branch.
-- The Claude Code plugin does not update by itself when its marketplace is added at a release tag. The upgrade guide and the plugin README now say how to move to a new release (remove the marketplace, add it at the new tag, install the plugin), and `zn-gate check` and `zn-gate init` say so when the installed plugin is older than zn-gate.
-- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace (pinned to the release tag) and how to remove it.
+- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace and how to remove it.
 
 ### Fixed
 - `zn-gate evidence --export` of a large log (over about 512 MB) no longer writes an empty file and reports it as valid. The export

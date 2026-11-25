@@ -18,11 +18,11 @@ Node.js 20.19 or later. Nothing is downloaded or installed when the plugin is in
 In Claude Code, type these two commands, one after the other:
 
 ```text
-/plugin marketplace add usezn/zn#v1.17.0
+/plugin marketplace add usezn/zn
 /plugin install zn-gate@usezn
 ```
 
-In a terminal, the same steps are `claude plugin marketplace add usezn/zn#v1.17.0` and then `claude plugin install zn-gate@usezn`.
+In a terminal, the same steps are `claude plugin marketplace add usezn/zn` and then `claude plugin install zn-gate@usezn`.
 
 ## Remove
 
