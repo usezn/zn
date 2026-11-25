@@ -165,6 +165,13 @@ def test_nesting_past_the_depth_limit_is_refused():
     assert r.rule == "destructive:too_many_commands"
 
 
+def test_four_level_nested_sh_c_is_refused():
+    """Once in the allowed list: past the nesting limit it is refused now, and kept here as a block."""
+    r = check_command("sh -c 'sh -c \"sh -c \\\"sh -c rm\\\"\"'")
+    assert r.verdict == "block"
+    assert r.rule == "destructive:too_many_commands"
+
+
 def test_non_string_is_allowed():
     assert check_command(None).verdict == "allow"  # type: ignore[arg-type]
 
