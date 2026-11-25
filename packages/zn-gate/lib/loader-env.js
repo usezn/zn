@@ -208,6 +208,16 @@ const NAME_PIECE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])(?:L|LD|LD_[A-Z_]*)
 const CODE_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]|[0-7]|u[0-9A-Fa-f]|U[0-9A-Fa-f])/;
 // Programs and quoting that turn such escapes into characters: printf, echo -e and $'..'.
 const ESCAPE_WRITER_RE = /(?<![A-Za-z0-9_-])printf(?![A-Za-z0-9_-])|(?<![A-Za-z0-9_-])echo[ \t]+-[A-Za-z]*e|\$'/;
+// Whether position `idx` of `s` is inside a single or double quoted string (a backslash escapes in double quotes).
+function insideQuotes(s, idx) {
+  let q = '';
+  for (let i = 0; i < idx; i++) {
+    const c = s.charAt(i);
+    if (q === '"' && c === '\\') i++;
+    else if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c;
+  }
+  return q !== '';
+}
 const COMPUTED_NAME = 'a variable whose name the shell computes (it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS)';
 
 /**
@@ -244,7 +254,10 @@ function hookStopOrComputedIn(text) {
     let glued;
     if (m[2] !== undefined || m[3] !== undefined) glued = !wordEnds(end); // the closing quote of the value is already inside the match
     else glued = /["'\\)}]/.test(next) && !((next === '"' || next === "'") && before === next && atEnd(s.charAt(end + 1)));
-    if (glued || COMPUTED_VALUE_RE.test(value)) return m[1];
+    // An unquoted glob (he*p, he?p, he[l]p, he{l,x}p) expands to a file name in the project, so the value is not what is written.
+    // A quoted value, or one inside a quoted string (echo 'LD_DEBUG=he*p'), is not expanded.
+    const globbed = m[2] === undefined && m[3] === undefined && /[*?\[{]/.test(value) && !insideQuotes(s, m.index);
+    if (glued || globbed || COMPUTED_VALUE_RE.test(value)) return m[1];
     literal++;
   }
   // Every time one of the two names appears, in the text as written and once quotes are removed, it is a literal assignment checked above.

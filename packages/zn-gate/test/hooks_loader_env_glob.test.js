@@ -1,0 +1,22 @@
+'use strict';
+const t = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { hookStopOrComputedIn } = require('../lib/loader-env');
+const { tempDir } = require('./helpers/tmp');
+
+t('an unquoted glob in a loader assignment written by a shell command is computed, even with a file named LD_DEBUG=help in the project', (tt) => {
+  const dir = tempDir(tt, 'zn-ldglob-');
+  fs.writeFileSync(path.join(dir, 'LD_DEBUG=help'), '');
+  for (const cmd of ['echo LD_DEBUG=he*p > .env', 'echo LD_DEBUG=he?p >> .env', 'echo LD_DEBUG=he[l]p > .env', 'echo LD_DEBUG=he{l,x}p > .env', 'echo LD_TRACE_LOADED_OBJECTS=* > .env']) {
+    assert.ok(hookStopOrComputedIn(cmd), cmd);
+  }
+});
+
+t('a quoted glob is not expanded and keeps today\'s verdict; a glob in an unrelated variable passes', () => {
+  assert.equal(hookStopOrComputedIn("echo 'LD_DEBUG=he*p' > .env"), null);
+  assert.equal(hookStopOrComputedIn('echo "LD_DEBUG=he*p" > .env'), null);
+  assert.equal(hookStopOrComputedIn("echo LD_DEBUG='he*p' > .env"), null);
+  assert.equal(hookStopOrComputedIn('echo FOO=a*b > .env'), null);
+});
