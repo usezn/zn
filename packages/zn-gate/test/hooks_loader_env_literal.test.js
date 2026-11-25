@@ -290,3 +290,28 @@ test('redefinition rule leaves plain literal writes and single-quoted text alone
   // Double-quoted text is read (it can hold expansions), so a keyword inside it refuses.
   assert.equal(loaderEnv.shellDotenvWrite('echo "NOTE=eval later" >> .env', isEnv).verdict, loaderEnv.REDEFINABLE);
 });
+
+test('redefinition class shadowed writers: a function, alias, path or variable for echo, printf or cat refuses the write', async (t) => {
+  const here = (w) => w + " <<'EOF' > .env\nA=1\nEOF";
+  await refuseAll(t, [
+    'echo() { :; }; echo A=1 > .env',
+    "printf() { :; }; printf 'A=1' > .env",
+    'cat() { :; }; ' + here('cat'),
+    'function cat { :; }; ' + here('cat'),
+    'alias echo=printf; echo A=1 > .env',
+    "alias printf=echo; printf 'A=1' > .env",
+    'alias cat=tee; ' + here('cat'),
+    here('cat') + '\nalias cat=tee',
+    'unalias cat; ' + here('cat'),
+    here('/bin/cat'),
+    here('./cat'),
+    here('~/x/cat'),
+    'C=cat; ' + here('$C'),
+    'C=cat; ' + here('${C}'),
+    here('command cat'),
+    here('builtin cat'),
+    here('env cat'),
+  ], false);
+  const dir = project(t);
+  for (const d of await both(dir, here('cat'))) assert.notEqual(d.decision, 'deny', JSON.stringify(d));
+});
