@@ -570,8 +570,9 @@ Three features are off by default. Each one helps in a narrow case and has limit
   - On Linux, ZCode and Claude Code can start a hook program directly, with no shell (ZCode's `process` hook, Claude Code's
     exec form with `args`). For a user install on Linux (x64 and arm64), `zn hooks install zcode` and `zn hooks install claude-code`
     put a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`, first in the hook. No dynamic loader runs before it.
-    When one of these variables, or a preload variable (`LD_PRELOAD`,
-    `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`), is set, it does not start the hook and answers
+    When `LD_TRACE_LOADED_OBJECTS` is set (any value, also empty), or `LD_DEBUG` (any value, not only `help`), `LD_DEBUG_OUTPUT`
+    or a preload variable (`LD_PRELOAD`, `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`) is set to a value
+    that is not empty, it does not start the hook and answers
     the agent's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
     start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
@@ -604,8 +605,9 @@ Three features are off by default. Each one helps in a narrow case and has limit
     project settings that adds one (zn's configuration change check), provided the hook for that change still runs. Whoever
     can set the environment of the agent can also preload a library of their own (see the limit above), so this gives no new
     power; it only needs no file.
-  - The other loader settings that only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`,
-    `LD_VERBOSE`, `LD_WARN`) let the script run; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
+  - In the shell form (every hook that does not start with the static launcher), the other loader settings that only log or
+    print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`, `LD_VERBOSE`, `LD_WARN`) let the script run. The static
+    launcher refuses `LD_DEBUG` with any value and `LD_DEBUG_OUTPUT` like a preload variable, and removes the others; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
     FreeBSD's loader.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
