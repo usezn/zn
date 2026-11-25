@@ -11,6 +11,7 @@
 //   - a bundled dependency from package-lock.json is missing from the tarball,
 //     or is not listed with its exact version in THIRD_PARTY_NOTICES.md;
 //   - the tarball contains the test suite, env files, keys or certificates;
+//   - the tarball ships the static hook launcher but THIRD_PARTY_NOTICES.md has no Rust standard library or musl libc section;
 //   - with --hook-launcher (for a local check of a tarball built with the launcher; the release workflow checks the launcher
 //     in its tarball with shell tools, in build-release.yml, so that no new step runs code from the tagged commit): the static
 //     hook launcher binaries for Linux x64 and arm64 or their SHA-256 list (lib/native/hook-launcher.json) are missing, or a
@@ -85,6 +86,13 @@ if (needLauncher) {
     }
   } catch (e) {
     errors.push(`static hook launcher cannot be checked: ${e.message}`);
+  }
+}
+
+// A tarball that ships the static hook launcher carries the notices of what is linked into it: the Rust standard library and musl libc.
+if (has.has('lib/native/hook-launcher.json')) {
+  for (const heading of ['## Rust standard library', '## musl libc']) {
+    if (!notices.split(/\r?\n/).some((l) => l.startsWith(heading))) errors.push(`THIRD_PARTY_NOTICES.md has no "${heading}" section for the static hook launcher`);
   }
 }
 
