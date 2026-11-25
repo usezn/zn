@@ -375,7 +375,7 @@ right before starting it, and starts that path; it never looks the name up on
 - **Interpreter start-up variables are removed too.** Since 1.5.1, the
   variables that make an interpreter load code of the caller's choosing
   (`NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`,
-  `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`,
+  `PYTHONUSERBASE`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`,
   `BASH_ENV`, `ENV` and similar) are removed together with the loader
   variables whenever secret values are injected. An interpreter still runs
   any code it is given (a script path, `-e`, a file it reads), so approve

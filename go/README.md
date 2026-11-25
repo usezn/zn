@@ -48,7 +48,7 @@ func safeToRead(ctx context.Context, toolResult string) bool {
 
 | Field | Meaning |
 | - | - |
-| `Verdict` | `allow` or `block`. `res.Blocked()` is true for `block`; `res.Allowed()` is true only for `allow`. |
+| `Verdict` | `allow` or `block`. `res.Blocked()` is true for `block`; `res.Allowed()` is true only for `allow` when the whole input was checked: it is false for a partial, capped or truncated long input (see below). |
 | `Score`, `Confidence` | Model score for the input, 0 to 1. `Score` is `nil` when no model scored the text (the rules decided). |
 | `Threshold` | Score at or above which the model that decided blocks. It echoes the `Threshold` option when you set one, and is the detector default otherwise. |
 | `RequestMode`, `WouldBlock` | `RequestMode` is `monitor` or `enforce` whenever the call sets a mode. `WouldBlock` is set only in [monitor mode](#threshold-monitor-mode-and-no-store): the verdict is always `allow` and `WouldBlock` says what it would have been. `res.WouldHaveBlocked()` is true if it would have blocked. |
@@ -57,9 +57,9 @@ func safeToRead(ctx context.Context, toolResult string) bool {
 | `RouterLevel`, `Mode` | How far the call went (`rules`, `advanced` or `deep`) and the server-side detector mode. |
 | `EvidenceID` | The record in your dashboard evidence vault. |
 | `InputChars`, `BilledCalls` | Characters counted and calls billed. |
-| `LongInput` | Set when the text was scored in windows: `Windows`, `Scored`, `TopWindow`, `Capped`, `Partial`. |
+| `LongInput` | Set for a long input. `Mode` is `windows` when it was scored in windows, or `truncate` when windows did not run (`Reason` is then `fallback` or `not_scored`); with `windows` it also has `Windows`, `Scored`, `TopWindow`, `Capped` and `Partial`. `res.WholeInputChecked()` is true only for `windows` with neither `Capped` nor `Partial`. |
 
-`res.Partial()` is true when a long input ran out of time: the windows already scored decided the verdict and the rest were not checked. An `allow` with `Partial()` means only part of the text was checked, so treat it with care. Only the windows that were scored are billed.
+`res.Partial()` is true when a long input ran out of time: the windows already scored decided the verdict and the rest were not checked. An `allow` with `Partial()` means only part of the text was checked, so `Allowed()` is false for it and the text should not be passed on. The same holds when the input needed more windows than the limit (`LongInput.Capped`) or was not scored in windows (`LongInput.Mode` is `truncate`): `res.WholeInputChecked()` tells whether every part was scored. Only the windows that were scored are billed.
 
 The fields above are the ones `POST /v30/analyze` returns. The [API reference](https://usezn.com/docs/api/) describes the request and the main response fields.
 
