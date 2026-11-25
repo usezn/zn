@@ -144,7 +144,33 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	for _, o := range opts {
 		o(c)
 	}
+	c.httpClient = withRedirectPolicy(c.httpClient)
 	return c
+}
+
+// maxRedirects is the redirect limit of net/http's default policy.
+const maxRedirects = 10
+
+// withRedirectPolicy returns a copy of h that refuses a redirect to a URL
+// that checkBaseURL would refuse, so the API key cannot be sent in clear
+// text after an https answer redirects to plain http. A CheckRedirect that
+// the caller set still runs after this check. h itself is not changed.
+func withRedirectPolicy(h *http.Client) *http.Client {
+	cp := *h
+	user := h.CheckRedirect
+	cp.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkBaseURL(req.URL.String()); err != nil {
+			return fmt.Errorf("zn: refusing redirect: %w", err)
+		}
+		if user != nil {
+			return user(req, via)
+		}
+		if len(via) >= maxRedirects {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &cp
 }
 
 type analyzeRequest struct {
@@ -284,6 +310,10 @@ func (c *Client) do(ctx context.Context, body []byte, noStore bool) (*Result, ti
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		if errors.Is(err, ErrInsecureBaseURL) {
+			// A refused redirect is final: do not retry it.
+			return nil, -1, err
+		}
 		// The error text of net/http includes the URL, never the key.
 		return nil, -1, &networkError{err: err}
 	}
