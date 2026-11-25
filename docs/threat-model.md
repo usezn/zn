@@ -575,9 +575,10 @@ Three features are off by default. Each one helps in a narrow case and has limit
     that is not empty, it does not start the hook and answers
     the agent's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
-    start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it only when
-    the SHA-256 matches and a test run answers as expected. Otherwise the hook keeps the form it had before, and the install
-    prints a warning that this protection is missing on that machine.
+    start the hook, it denies. The npm package carries the launcher with its SHA-256. The install copies it only when the
+    SHA-256 matches, then gives it a test run, and switches the hook to it only when that run answers as expected. When the
+    run fails, the copied file stays (hooks written earlier may name it) but the hook keeps the form it had before, and the
+    install prints a warning that this protection is missing on that machine.
   - Claude Code on Linux was checked with a real Claude Code 2.1.331 (headless, x86_64, Ubuntu 24.04, November 2026): with the
     exec form the parent of the hook is Claude Code itself, with no shell in between; `LD_LIBRARY_PATH` in the settings is
     removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny
