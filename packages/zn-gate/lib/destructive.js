@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-20.7';
+const COMMAND_RULES_VERSION = '2026-11-25.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -808,13 +808,15 @@ function checkExecdir(words, depth, known, roots) {
   let unsure = false;
   for (const r of roots) {
     const f = execRootFolder(r, known);
-    if (f === null || f === undefined) { unsure = true; continue; }
+    // A folder that cannot be told, including one reached after the folder was lost (cd .. above the home folder): unsure.
+    if (f === null || f === undefined || f === CWD_LOST) { unsure = true; continue; }
     if (f === CWD_OVERFLOW) return OVERFLOW;
     const hit = checkChild(words, depth, f);
     if (hit) return hit;
   }
-  // When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown
-  // folder), any relative target with a folder in it (etc/profile) is refused as well; a plain file name is not.
+  // When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown or lost
+  // folder), any relative target with a folder in it (etc/profile, ../etc/profile) is refused as well; a plain file name is not.
+  if (known === CWD_LOST) unsure = true;
   const saved = RC_NAME_ONLY;
   RC_NAME_ONLY = unsure ? 2 : 1;
   try { return checkChild(words, depth, unsure ? null : known); } finally { RC_NAME_ONLY = saved; }
@@ -941,6 +943,9 @@ function checkPipeline(pipe, known = null) {
         else if (heads[j].head === 'dd' && w.startsWith('of=')) target = w.slice(3);
         // A relative file is read from the folder an earlier cd, pushd or env -C moved to.
         if ((target !== null && isRcTarget(rcFromCwd(heads[j].dir, target))) && on('rc_download')) return 'rc_download';
+        // find -execdir runs the command at an unknown depth below its starting path, so a relative target that climbs with ..
+        // can land anywhere above it (../etc/profile from /srv is /etc/profile): refused whatever the starting path.
+        if (target !== null && RC_NAME_ONLY > 0 && !ANCHORED_RE.test(target) && /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(target) && on('rc_download')) return 'rc_download';
       }
     }
   }

@@ -217,6 +217,18 @@ test('a download written by find -execdir to a bare startup or key file name is 
   assert.equal(checkCommand('find "$D" -execdir wget -O sub/dir/file ' + url + ' ;').rule, 'destructive:rc_download');
   assert.equal(checkCommand('find . -execdir curl ' + url + ' -o out.txt ;').verdict, 'allow');
   assert.equal(checkCommand('cd /home/alice/proj && find . -execdir curl ' + url + ' -o build/out.txt ;').verdict, 'allow');
+  // After the folder was lost (cd .. above the home folder) it cannot be told either: ../etc/profile and sub/file are refused.
+  assert.equal(checkCommand('cd ~/.. && find . -execdir curl ' + url + ' -o ../etc/profile ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd ~ && cd .. && find . -execdir curl ' + url + ' -o ../etc/profile ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd ~/.. && find . -execdir curl ' + url + ' -o sub/file ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd ~/.. && find /srv -execdir curl ' + url + ' -o ../etc/profile ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('cd ~/.. && find . -execdir curl ' + url + ' -o out.txt ;').verdict, 'allow');
+  // From any starting path, a relative target that climbs with .. can land above it: refused.
+  assert.equal(checkCommand('find /srv -execdir curl ' + url + ' -o ../etc/profile ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('find /home/alice/proj -execdir wget -O ../../x ' + url + ' ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('find /srv -execdir curl ' + url + ' -o sub/../../etc/profile ;').rule, 'destructive:rc_download');
+  assert.equal(checkCommand('find /srv -execdir curl ' + url + ' -o sub/file ;').verdict, 'allow');
+  assert.equal(checkCommand('find /srv -execdir curl ' + url + ' -o ..out.txt ;').verdict, 'allow');
   // -exec runs from the folder find was started in: its folder is the one of the line, a bare name is read from there.
   assert.equal(checkCommand('find ~ -exec curl -o ~/.bashrc ' + url + ' ;').rule, 'destructive:rc_download');
   assert.equal(checkCommand('cd ~ && find . -exec curl -o .bashrc ' + url + ' ;').rule, 'destructive:rc_download');

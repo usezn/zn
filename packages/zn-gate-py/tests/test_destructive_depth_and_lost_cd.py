@@ -128,6 +128,18 @@ def test_a_download_written_by_find_execdir_to_a_bare_startup_or_key_file_name_i
     assert check_command('find "$D" -execdir wget -O sub/dir/file ' + url + " ;").rule == rc
     assert check_command("find . -execdir curl " + url + " -o out.txt ;").verdict == "allow"
     assert check_command("cd /home/alice/proj && find . -execdir curl " + url + " -o build/out.txt ;").verdict == "allow"
+    # After the folder was lost (cd .. above the home folder) it cannot be told either: ../etc/profile and sub/file are refused.
+    assert check_command("cd ~/.. && find . -execdir curl " + url + " -o ../etc/profile ;").rule == rc
+    assert check_command("cd ~ && cd .. && find . -execdir curl " + url + " -o ../etc/profile ;").rule == rc
+    assert check_command("cd ~/.. && find . -execdir curl " + url + " -o sub/file ;").rule == rc
+    assert check_command("cd ~/.. && find /srv -execdir curl " + url + " -o ../etc/profile ;").rule == rc
+    assert check_command("cd ~/.. && find . -execdir curl " + url + " -o out.txt ;").verdict == "allow"
+    # From any starting path, a relative target that climbs with .. can land above it: refused.
+    assert check_command("find /srv -execdir curl " + url + " -o ../etc/profile ;").rule == rc
+    assert check_command("find /home/alice/proj -execdir wget -O ../../x " + url + " ;").rule == rc
+    assert check_command("find /srv -execdir curl " + url + " -o sub/../../etc/profile ;").rule == rc
+    assert check_command("find /srv -execdir curl " + url + " -o sub/file ;").verdict == "allow"
+    assert check_command("find /srv -execdir curl " + url + " -o ..out.txt ;").verdict == "allow"
     # -exec runs from the folder find was started in: its folder is the one of the line, a bare name is read from there.
     assert check_command("find ~ -exec curl -o ~/.bashrc " + url + " ;").rule == rc
     assert check_command("cd ~ && find . -exec curl -o .bashrc " + url + " ;").rule == rc

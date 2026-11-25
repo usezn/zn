@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-20.7"
+COMMAND_RULES_VERSION = "2026-11-25.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1529,7 +1529,8 @@ def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str], r
     unsure = False
     for r in roots:
         f = _exec_root_folder(r, known)
-        if f is None:
+        # A folder that cannot be told, including one reached after the folder was lost (cd .. above the home folder): unsure.
+        if f is None or f is _CWD_LOST:
             unsure = True
             continue
         if f is _CWD_OVERFLOW:
@@ -1537,8 +1538,10 @@ def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str], r
         hit = _check_child(words, depth, f, rc)
         if hit:
             return hit
-    # When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown
-    # folder), any relative target with a folder in it (etc/profile) is refused as well; a plain file name is not.
+    # When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown or lost
+    # folder), any relative target with a folder in it (etc/profile, ../etc/profile) is refused as well; a plain file name is not.
+    if known is _CWD_LOST:
+        unsure = True
     # The mode is passed down with the call (never kept in module state), so overlapping checks cannot see each other's.
     return _check_child(words, depth, None if unsure else known, 2 if unsure else 1)
 
@@ -1705,6 +1708,10 @@ def _check_pipeline(
                     if alts is None or any(_is_rc_path(t) for t in alts):
                         return "rc_download"
                     if rc == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
+                        return "rc_download"
+                    # find -execdir runs the command at an unknown depth below its starting path, so a relative target that
+                    # climbs with .. can land anywhere above it (../etc/profile from /srv is /etc/profile): refused.
+                    if rc and not _ANCHORED_RE.match(target) and re.search(r"(?:^|[\\/])\.\.(?:[\\/]|\Z)", target):
                         return "rc_download"
                     if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
                         return "rc_download"
