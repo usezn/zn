@@ -554,3 +554,58 @@ test('Claude Code: an unknown tool with a .env path deep in its arguments is ref
   passes(await decide(claude, inList(MAX_NEST_DEPTH - 1, other)));
   blocked(await decide(claude, inList(MAX_NEST_DEPTH, env)), null, 'list past the limit');
 });
+
+// An unknown tool, and the file tools with a nested path, of Gemini CLI and Antigravity: the path scan reads as deep as the text scan
+// (MAX_NEST_DEPTH), and arguments nested past it cannot be read, so the call is refused (fail closed).
+test('Gemini CLI and Antigravity: a .env path deep in the arguments is refused, past the depth limit too', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1');
+  const other = path.join(dir, 'notes.txt');
+  const antigravity = require('../lib/agents/antigravity');
+  const ag = (name, args) => ({ conversationId: 'c1', workspacePaths: [dir], toolCall: { name, args } });
+  const nest = (levels, leaf) => levels.reduceRight((acc, k) => ({ [k]: acc }), leaf);
+  const { MAX_NEST_DEPTH } = require('../lib/nest-limits');
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+  // These adapters refuse an unreadable call in their own answer (respond), not in the decision: look at both.
+  const answer = async (adapter, raw) => {
+    const res = await runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+    return res.decision.decision === 'deny' || Boolean(res.output && res.output.decision === 'deny');
+  };
+  const refused = async (adapter, raw, what) => assert.equal(await answer(adapter, raw), true, what);
+  const allowed = async (adapter, raw, what) => assert.equal(await answer(adapter, raw), false, what);
+  const shapes = {
+    gemini: (name, args) => gem(name, args, dir),
+    antigravity: (name, args) => ag(name, args),
+  };
+  const adapters = { gemini, antigravity };
+  const tools = { gemini: ['files_helper', 'write_file', 'replace'], antigravity: ['files_helper', 'write_file', 'replace_file_content'] };
+  for (const id of ['gemini', 'antigravity']) {
+    const adapter = adapters[id];
+    for (const tool of tools[id]) {
+      const w = id + ' ' + tool;
+      const call = (levels, target) => shapes[id](tool, nest(names.slice(0, levels), { path: target, content: 'LD_DEBUG=help' }));
+      for (const levels of [1, 3, 4, 5, MAX_NEST_DEPTH]) {
+        await refused(adapter, call(levels, env), w + ' env at ' + levels);
+        await allowed(adapter, call(levels, other), w + ' other at ' + levels);
+      }
+      // Past the limit the path cannot be read: refused, for any target.
+      for (const levels of [MAX_NEST_DEPTH + 1, MAX_NEST_DEPTH + 2]) {
+        await refused(adapter, call(levels, env), w + ' env at ' + levels);
+        await refused(adapter, call(levels, other), w + ' other at ' + levels);
+      }
+      // The same through a list of objects.
+      const inList = (levels, target) => shapes[id](tool, nest(names.slice(0, levels), { items: [{ path: target, content: 'LD_DEBUG=help' }] }));
+      await refused(adapter, inList(MAX_NEST_DEPTH - 1, env), w + ' list');
+      await allowed(adapter, inList(MAX_NEST_DEPTH - 1, other), w + ' list other');
+      await refused(adapter, inList(MAX_NEST_DEPTH, env), w + ' list past the limit');
+    }
+  }
+  // The scan itself: the depth limit and the node limit set `bad`.
+  for (const a of [gemini, antigravity]) {
+    assert.equal(a.pathsOf(nest(names.slice(0, MAX_NEST_DEPTH), { path: other })).bad, false);
+    assert.equal(a.pathsOf(nest(names.slice(0, MAX_NEST_DEPTH + 1), { path: other })).bad, true);
+    assert.equal(a.pathsOf({ items: [nest(names.slice(0, MAX_NEST_DEPTH), { x: 1 })] }).bad, true);
+    assert.equal(a.pathsOf({ items: Array.from({ length: 600 }, () => ({ k: 1 })) }).bad, true);
+  }
+});
