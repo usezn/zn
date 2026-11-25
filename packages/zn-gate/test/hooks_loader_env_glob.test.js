@@ -14,6 +14,14 @@ t('an unquoted glob in a loader assignment written by a shell command is compute
   }
 });
 
+t('a glob left unquoted after a quoted prefix of the name or value is still computed', (tt) => {
+  const dir = tempDir(tt, 'zn-ldglob2-');
+  fs.writeFileSync(path.join(dir, 'LD_DEBUG=help'), '');
+  for (const cmd of ['echo "LD_DEBUG="he*p > .env', "echo 'LD_DEBUG=h'e?p >> .env", 'echo "LD_"DEBUG=he[l]p > .env']) {
+    assert.ok(hookStopOrComputedIn(cmd), cmd);
+  }
+});
+
 t('a quoted glob is not expanded and keeps today\'s verdict; a glob in an unrelated variable passes', () => {
   assert.equal(hookStopOrComputedIn("echo 'LD_DEBUG=he*p' > .env"), null);
   assert.equal(hookStopOrComputedIn('echo "LD_DEBUG=he*p" > .env'), null);

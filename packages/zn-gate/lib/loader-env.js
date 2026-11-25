@@ -218,6 +218,16 @@ function insideQuotes(s, idx) {
   }
   return q !== '';
 }
+// Whether the shell word that starts at `from` holds a glob character (* ? [ {) outside quotes.
+function unquotedGlobIn(s, from) {
+  for (let i = from; i < s.length; i++) {
+    if (insideQuotes(s, i)) continue;
+    const c = s.charAt(i);
+    if (/[\s;&|<>]/.test(c)) return false;
+    if (/[*?\[{]/.test(c)) return true;
+  }
+  return false;
+}
 const COMPUTED_NAME = 'a variable whose name the shell computes (it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS)';
 
 /**
@@ -255,8 +265,9 @@ function hookStopOrComputedIn(text) {
     if (m[2] !== undefined || m[3] !== undefined) glued = !wordEnds(end); // the closing quote of the value is already inside the match
     else glued = /["'\\)}]/.test(next) && !((next === '"' || next === "'") && before === next && atEnd(s.charAt(end + 1)));
     // An unquoted glob (he*p, he?p, he[l]p, he{l,x}p) expands to a file name in the project, so the value is not what is written.
-    // A quoted value, or one inside a quoted string (echo 'LD_DEBUG=he*p'), is not expanded.
-    const globbed = m[2] === undefined && m[3] === undefined && /[*?\[{]/.test(value) && !insideQuotes(s, m.index);
+    // Each glob character is judged by the quote state at its own position: a quoted prefix does not protect an unquoted glob after it
+    // ("LD_DEBUG="he*p), and a glob inside quotes ('LD_DEBUG=he*p') is not expanded.
+    const globbed = unquotedGlobIn(s, valueStart(m));
     if (glued || globbed || COMPUTED_VALUE_RE.test(value)) return m[1];
     literal++;
   }
