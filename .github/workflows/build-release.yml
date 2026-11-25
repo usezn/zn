@@ -94,10 +94,12 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # In a reusable workflow GITHUB_WORKFLOW_REF names the calling workflow.
+          # In a reusable workflow GITHUB_REPOSITORY and GITHUB_WORKFLOW_REF name the caller. The repository and the workflow are
+          # written out here, not taken from the caller: another repository's release.yml must not reach this build.
+          [ "$GITHUB_REPOSITORY" = usezn/zn ] || { echo "::error::this workflow builds usezn/zn only, not $GITHUB_REPOSITORY"; exit 1; }
           case "$GITHUB_WORKFLOW_REF" in
-            "$GITHUB_REPOSITORY/.github/workflows/release.yml@"*) ;;
-            *) echo "::error::this workflow is only called by release.yml, not $GITHUB_WORKFLOW_REF"; exit 1 ;;
+            "usezn/zn/.github/workflows/release.yml@"*) ;;
+            *) echo "::error::this workflow is only called by usezn/zn release.yml, not $GITHUB_WORKFLOW_REF"; exit 1 ;;
           esac
           if [ "$EVENT" = push ]; then
             # A tag push builds the pushed tag and nothing else.
@@ -120,7 +122,7 @@ jobs:
           echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum --strict -c -
           chmod +x "$RUNNER_TEMP/gitsign"
           "$RUNNER_TEMP/gitsign" verify-tag "$TAG" \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
+            --certificate-identity "https://github.com/usezn/zn/.github/workflows/tag-release.yml@refs/heads/main" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
   # The static hook launcher (tools/hook-launcher) for Linux x64 and arm64 ships inside the npm package with its SHA-256
