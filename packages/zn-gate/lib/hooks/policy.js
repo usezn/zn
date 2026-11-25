@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
-const { hookStopAssignedIn, hookStopOrComputedIn } = require('../loader-env');
+const { hookStopAssignedIn, hookStopOrComputedIn, preloadAssignedIn, preloadOrOpaqueIn, OPAQUE_WRITE } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.7';
+const POLICY_RULES_VERSION = '2026-11-25.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -984,7 +984,8 @@ function agentConfigDenial(p, c) {
 
 /**
  * A write that would set a variable which stops every hook before it runs (LD_TRACE_LOADED_OBJECTS, LD_DEBUG with help: see
- * isHookStopVar in loader-env.js, the same test `zn audit` uses for ZNA008) in a file the agent loads into its environment. Gemini CLI
+ * isHookStopVar in loader-env.js, the same test `zn audit` uses for ZNA008), or a preload library variable to a value (LD_PRELOAD,
+ * LD_AUDIT, DYLD_INSERT_LIBRARIES ...: preloadAssignedIn), in a file the agent loads into its environment. Gemini CLI
  * loads a project .env and .gemini/.env; the agents' own settings files are refused whole (AGENT_CONFIG_RES), so the .env files are the
  * ones that need this check. `texts` is what the call would write (a file body, a replacement, a patch); returns a deny message or null.
  */
@@ -997,8 +998,12 @@ function loaderEnvWriteDenial(p, texts, opts = {}) {
       'An agent may not make this change. Ask the user to make it, or rewrite the whole file.';
   }
   for (const t of texts || []) {
-    const name = typeof t === 'string' ? hookStopAssignedIn(t) : null;
+    if (typeof t !== 'string') continue;
+    const name = hookStopAssignedIn(t);
     if (name) return loaderEnvDenial(name, p);
+    // LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES ... with a value: a library of the project's choosing loaded into every program.
+    const preload = preloadAssignedIn(t);
+    if (preload) return loaderPreloadDenial(preload, p);
   }
   return null;
 }
@@ -1006,6 +1011,17 @@ function loaderEnvWriteDenial(p, texts, opts = {}) {
 function loaderEnvDenial(name, p) {
   return 'zn: ' + path.basename(String(p)) + ' would set ' + name + ' for the agent. On Linux that makes the dynamic loader end every program the agent starts ' +
     'before it runs, the shell of every zn hook included, so zn could no longer check any action. An agent may not make this change. Ask the user to make it.';
+}
+
+function loaderPreloadDenial(name, p) {
+  return 'zn: ' + path.basename(String(p)) + ' would set ' + name + ' for the agent. That makes the dynamic loader load a library of the project\'s choosing ' +
+    'into every program the agent starts, the shell of every zn hook included, before zn can check anything. An agent may not make this change. Ask the user to make it.';
+}
+
+function opaqueEnvWriteDenial(p) {
+  return 'zn: ' + path.basename(String(p)) + ' is a file the agent loads into its environment, and this command writes a variable name or a whole line ' +
+    'that only the shell knows once it runs (a variable, a command substitution or a pattern), so zn cannot check which variables it sets. ' +
+    'An agent may not make this change. Write each name as plain text (NAME=$VALUE is fine), or ask the user to make it.';
 }
 
 /** Writes are only blocked for zn's own state and the agents' hook and plugin configuration. */
@@ -2978,6 +2994,10 @@ function bashDenialOf(cmd, opts = {}) {
       // A loader value the shell computes (a variable, $(..), printf formats) is refused too: the text does not show what gets written.
       const stop = hookStopOrComputedIn(cmd);
       if (stop) return loaderEnvDenial(stop, text);
+      // A preload library set to a value, or a name or line only the shell knows (printf "$X", echo "$LINE"): refused as well. The
+      // opaque-write rule applies only where the .env is surely written: a redirection to it, or a program that writes the files it is given.
+      const preload = preloadOrOpaqueIn(cmd, { opaque: !!w.redirectTarget || INSTRUCTION_WRITERS.has(programName(w.head)) });
+      if (preload) return preload === OPAQUE_WRITE ? opaqueEnvWriteDenial(text) : loaderPreloadDenial(preload, text);
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.

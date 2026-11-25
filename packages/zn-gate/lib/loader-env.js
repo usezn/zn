@@ -233,28 +233,29 @@ const CODE_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]|[0-7]|u[0-9A-Fa-f]|U[0-9A-Fa-f])/;
 // Programs and quoting that turn such escapes into characters: printf, echo -e and $'..'.
 const ESCAPE_WRITER_RE = /(?<![A-Za-z0-9_-])printf(?![A-Za-z0-9_-])|(?<![A-Za-z0-9_-])echo[ \t]+-[A-Za-z]*e|\$'/;
 // For each position of `s`, how the shell reads it, in one forward pass with POSIX quoting rules: 0 = live text, 1 = quoted or
-// backslash-escaped (never a glob), 2 = inside a comment. Outside quotes a backslash escapes the next character and `#` at the start of
-// a word begins a comment up to the line end; inside single quotes nothing is special; inside double quotes a backslash escapes only
-// $ ` " \ and a line break; $'..' is quoted and a backslash escapes inside it. `bad` is set when the text uses syntax this scan does
-// not model (an unterminated quote, a here-document), and callers fail closed.
+// backslash-escaped (never a glob), 2 = inside a comment. Among the quoted positions, 3 marks the ones the shell also never expands
+// ($ and ` there are plain characters): inside single quotes or $'..', and the character after an escaping backslash. Outside quotes a
+// backslash escapes the next character and `#` at the start of a word begins a comment up to the line end; inside single quotes nothing
+// is special; inside double quotes a backslash escapes only $ ` " \ and a line break; $'..' is quoted and a backslash escapes inside it.
+// `bad` is set when the text uses syntax this scan does not model (an unterminated quote, a here-document), and callers fail closed.
 function quoteMap(s) {
   const inside = new Uint8Array(s.length + 1);
   let q = ''; // '', "'", '"' or 'a' for $'..'
   let bad = false;
   for (let i = 0; i < s.length; i++) {
     const c = s.charAt(i);
-    if (q === "'") { inside[i] = 1; if (c === "'") q = ''; continue; }
+    if (q === "'") { inside[i] = c === "'" ? 1 : 3; if (c === "'") q = ''; continue; }
     if (q === 'a') {
-      inside[i] = 1;
-      if (c === '\\') { i++; if (i < s.length) inside[i] = 1; } else if (c === "'") q = '';
+      inside[i] = c === "'" ? 1 : 3;
+      if (c === '\\') { i++; if (i < s.length) inside[i] = 3; } else if (c === "'") q = '';
       continue;
     }
     if (q === '"') {
       inside[i] = 1;
-      if (c === '\\') { const n = s.charAt(i + 1); if (n && '$`"\\\n'.includes(n)) { i++; inside[i] = 1; } } else if (c === '"') q = '';
+      if (c === '\\') { const n = s.charAt(i + 1); if (n && '$`"\\\n'.includes(n)) { i++; inside[i] = 3; } } else if (c === '"') q = '';
       continue;
     }
-    if (c === '\\') { inside[i] = 1; i++; if (i < s.length) inside[i] = 1; continue; }
+    if (c === '\\') { inside[i] = 1; i++; if (i < s.length) inside[i] = 3; continue; }
     if (c === "'" || c === '"') { inside[i] = 1; q = c; continue; }
     if (c === '$' && s.charAt(i + 1) === "'") { inside[i] = 1; i++; inside[i] = 1; q = 'a'; continue; }
     if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(s.charAt(i - 1)))) {
@@ -337,4 +338,194 @@ function hookStopOrComputedIn(text) {
   return null;
 }
 
-module.exports = { isHookStopVar, hookStopAssignedIn, hookStopOrComputedIn, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+// The loader variables a .env file the agent loads may not set to a value: every LOADER_PRELOAD name but LD_DEBUG, which only logs
+// unless it names help (hookStopAssignedIn judges that). A preload or audit library runs inside the shell of a hook launcher before the
+// script's first line, so the launcher's own refusal comes too late. An empty value (LD_PRELOAD=) loads nothing and stays allowed.
+const PRELOAD_WRITE_NAMES = LOADER_PRELOAD.filter((n) => n !== 'LD_DEBUG');
+const PRELOAD_NAME_SRC = '(' + PRELOAD_WRITE_NAMES.join('|') + ')';
+// NAME=value, NAME: value, export NAME=value, 'NAME'=value, $env:NAME='value', also right after a \n, \r or \t escape.
+const PRELOAD_ASSIGNMENT_RE = new RegExp(String.raw`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))` + PRELOAD_NAME_SRC +
+  String.raw`(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))`, 'g');
+const PRELOAD_NAME_RE = new RegExp(String.raw`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))` + PRELOAD_NAME_SRC + String.raw`(?![A-Za-z0-9_])`, 'g');
+
+/**
+ * Whether the value of a file assignment that starts at `from` is empty: only blanks and quote characters up to the end of its line or,
+ * for a quoted value, up to the end of the line where the quote closes (a line break inside the quotes counts as content). A quote that
+ * nothing closes is not empty.
+ */
+function emptyFileValue(s, from) {
+  let i = from;
+  while (s.charAt(i) === ' ' || s.charAt(i) === '\t') i++;
+  const q = s.charAt(i);
+  let eolFrom = i;
+  if (q === '"' || q === "'" || q === '`') {
+    const close = quoteClose(s, i + 1, q);
+    if (close < 0) return false;
+    eolFrom = close + 1;
+  }
+  let end = eolFrom;
+  while (end < s.length && s.charAt(end) !== '\n' && s.charAt(end) !== '\r') end++;
+  for (let k = from; k < end; k++) if (!' \t"\'`'.includes(s.charAt(k))) return false;
+  return true;
+}
+
+/** The name of the first preload variable (PRELOAD_WRITE_NAMES) that `text`, as a file body, assigns a non-empty value, or null. */
+function preloadAssignedIn(text) {
+  const s = String(text);
+  if (!s.includes('LD_')) return null; // every name holds LD_ (DYLD_ too)
+  PRELOAD_ASSIGNMENT_RE.lastIndex = 0;
+  let m;
+  while ((m = PRELOAD_ASSIGNMENT_RE.exec(s))) {
+    if (!emptyFileValue(s, m.index + m[0].length)) return m[1];
+  }
+  return null;
+}
+
+// What may follow a preload name in a shell write (quotes and backslashes removed) for the write to set it empty: = or ": ", blanks, at
+// most one redirection with its target, then the end of the command or line. echo LD_PRELOAD= x writes "LD_PRELOAD= x": not empty.
+const EMPTY_SHELL_VALUE_RE = /[ \t]*(?:=|:(?=[ \t]))[ \t]*(?:(?:[0-9]*>>?|>\|)[ \t]*[^\s;&|<>]+[ \t]*)?(?=$|[\n;&|])/y;
+
+/**
+ * For a shell command that writes a dotenv file: the first preload name it mentions other than as an empty assignment, in the text as
+ * written or once quotes and backslashes are removed (LD_PRE"LOAD"=x), or null. A mention that is not an assignment (printf '%s=%s'
+ * LD_PRELOAD x, a name glued to other text) is refused too, because what the command then writes is not plain to see.
+ */
+function preloadNamedIn(s) {
+  const flat = s.replace(/\\[nrt]/g, '\n').replace(/["'\\]/g, '');
+  if (!flat.includes('LD_') && !s.includes('LD_')) return null;
+  const count = (t) => { PRELOAD_NAME_RE.lastIndex = 0; return (t.match(PRELOAD_NAME_RE) || []).length; };
+  PRELOAD_NAME_RE.lastIndex = 0;
+  let m;
+  while ((m = PRELOAD_NAME_RE.exec(flat))) {
+    EMPTY_SHELL_VALUE_RE.lastIndex = m.index + m[0].length;
+    if (!EMPTY_SHELL_VALUE_RE.test(flat)) return m[1];
+  }
+  if (count(s) > count(flat)) { PRELOAD_NAME_RE.lastIndex = 0; return PRELOAD_NAME_RE.exec(s)[1]; }
+  return null;
+}
+
+// The first character after $ that makes an expansion: a name, ${..}, $(..), $((..)) or a special parameter.
+const EXPANDS_AFTER_DOLLAR = /[A-Za-z_{(0-9@*#?!$-]/;
+// A character right before which a variable name cannot start: it would be part of a longer word, or glued to an expansion or a pattern.
+const NAME_GLUE = /[A-Za-z0-9_$%{}`)\]?*\\]/;
+// A shell expansion outside single quotes, for the line by line reading below.
+const LINE_EXPANSION_RE = /\$[A-Za-z_{(0-9@*#?!$-]|`/;
+// A line that starts with a literal assignment: what follows it to the end of the line is the value.
+const LINE_ASSIGNMENT_RE = /^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*["']?[ \t]*(?:=|:(?=[ \t]))/;
+
+/**
+ * The opaque-write rule, for text the quote scan cannot model (a here-document, an unterminated quote), read line by line: a line that
+ * holds an expansion is opaque unless it starts with a literal NAME= (or NAME: ) and the expansion is in what follows.
+ */
+function opaqueByLines(s) {
+  for (const line of s.split(/\r\n|\n|\r/)) {
+    const m = LINE_ASSIGNMENT_RE.exec(line);
+    if (!m && LINE_EXPANSION_RE.test(line)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a shell command that writes a dotenv file writes OPAQUE text: a variable name, or a whole line, that only the shell knows once
+ * it runs. That is the case when an expansion ($NAME, ${..}, $(..), `..`, outside single quotes) or an unquoted pattern (* ?, [x], {a,b})
+ * sits anywhere but
+ * - in the value of a literal assignment: after NAME= or NAME: , where NAME is a plain name ([A-Za-z_][A-Za-z0-9_]*) not glued to an
+ *   expansion or pattern, up to the end of that shell word, a line break or a \n or \r escape (echo "API_URL=$URL", sed -i "s|^A=.*|A=$V|" .env);
+ * - in an argument of printf whose format (the word right after printf) has every conversion in such a value (printf 'TOKEN=%s\n' "$T");
+ * - in the file a redirection names (>> "$DIR/.env"), or in a comment.
+ * Everything else fails closed: printf "$X", echo "$LINE", printf '%s=%s\n' "$K" "$V", echo * > .env, and also expansions in other parts
+ * of the command (cd "$D" && ...). One forward pass over the quote map.
+ */
+function opaqueWriteIn(s) {
+  if (!/[$`*?[{]/.test(s)) return false;
+  const inside = quoteMap(s);
+  if (inside.bad) return opaqueByLines(s);
+  const n = s.length;
+  let inValue = false;
+  let valueFrom = -1;
+  let nameUntil = 0; // end of the last name scanned: each run of name characters is scanned once
+  let inWord = false;
+  let target = false;
+  let pendingTarget = false;
+  let wordIdx = -1;
+  let headStart = 0;
+  let isPrintf = false;
+  let fmtOk = true;
+  const reset = () => { wordIdx = -1; isPrintf = false; fmtOk = true; pendingTarget = false; };
+  const endWord = (i) => {
+    if (!inWord) return;
+    inWord = false;
+    if (!target && wordIdx === 0) {
+      const head = s.slice(headStart, i).replace(/["'\\]/g, '');
+      isPrintf = head.slice(head.lastIndexOf('/') + 1) === 'printf';
+    }
+  };
+  for (let i = 0; i < n; i++) {
+    const c = s.charAt(i);
+    const at = inside[i];
+    if (valueFrom >= 0 && i >= valueFrom) { inValue = true; valueFrom = -1; }
+    if (at === 2) continue; // a comment
+    const live = at === 0;
+    if (inValue && (c === '\n' || c === '\r' || (c === '\\' && /[nr]/.test(s.charAt(i + 1))) || (live && /[\s;&|<>()]/.test(c)))) inValue = false;
+    if (live && /[\s;&|<>()]/.test(c)) {
+      endWord(i);
+      if (c === '>' || (c === '<' && s.charAt(i + 1) !== '<' && s.charAt(i - 1) !== '<')) {
+        pendingTarget = true;
+        while (inside[i + 1] === 0 && /[>&|]/.test(s.charAt(i + 1))) i++;
+      } else if (c !== '<' && (c === '\n' || !/\s/.test(c))) {
+        reset(); // ; & | ( ) and a line break end the simple command
+      }
+      continue;
+    }
+    if (!inWord) {
+      inWord = true;
+      target = pendingTarget;
+      pendingTarget = false;
+      if (!target) {
+        wordIdx++;
+        if (wordIdx === 0) headStart = i;
+        else if (wordIdx === 1 && isPrintf && c === '-') fmtOk = false; // an option, not the format
+      }
+    }
+    if (target) continue; // the file a redirection names is not written text
+    const allowed = inValue || (isPrintf && wordIdx >= 2 && fmtOk);
+    if (c === '%' && isPrintf && wordIdx === 1) {
+      if (s.charAt(i + 1) === '%') i++;
+      else if (!inValue) fmtOk = false;
+      continue;
+    }
+    if (at !== 3 && ((c === '$' && EXPANDS_AFTER_DOLLAR.test(s.charAt(i + 1))) || c === '`')) {
+      if (!allowed) return true;
+      if (/[{?*@#!$0-9-]/.test(s.charAt(i + 1))) i++; // ${, $? and $* are not patterns
+      continue;
+    }
+    if (live && (c === '*' || c === '?' || ((c === '[' || c === '{') && !/^[\s[{]?$/.test(s.charAt(i + 1))))) {
+      if (!allowed) return true;
+      continue;
+    }
+    if (i >= nameUntil && /[A-Za-z_]/.test(c) &&
+        (i === 0 || !NAME_GLUE.test(s.charAt(i - 1)) || (s.charAt(i - 2) === '\\' && /[nrt]/.test(s.charAt(i - 1))))) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_]/.test(s.charAt(j))) j++;
+      nameUntil = j;
+      if (s.charAt(j) === '"' || s.charAt(j) === "'") j++;
+      while (s.charAt(j) === ' ' || s.charAt(j) === '\t') j++;
+      if (s.charAt(j) === '=' || (s.charAt(j) === ':' && /[ \t]/.test(s.charAt(j + 1)))) valueFrom = j + 1;
+    }
+  }
+  return false;
+}
+
+// What preloadOrOpaqueIn returns for an opaque write.
+const OPAQUE_WRITE = '<opaque>';
+
+/**
+ * For a shell command that writes a dotenv file: a preload name it sets to a value (preloadNamedIn), OPAQUE_WRITE when the names it writes
+ * are not plain to see (opaqueWriteIn, unless opts.opaque is false), or null. Run after hookStopOrComputedIn.
+ */
+function preloadOrOpaqueIn(text, opts = {}) {
+  const s = String(text);
+  return preloadNamedIn(s) || (opts.opaque !== false && opaqueWriteIn(s) ? OPAQUE_WRITE : null);
+}
+
+module.exports = { isHookStopVar, hookStopAssignedIn, hookStopOrComputedIn, preloadAssignedIn, preloadOrOpaqueIn, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
