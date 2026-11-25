@@ -31,7 +31,7 @@ const LOADER_PREFIXES: &[&str] = &["LD_", "DYLD_"];
 const LOADER_NAMES: &[&str] = &[
     "GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH", "HOSTALIASES", "RES_OPTIONS", "OPENSSL_CONF",
     "NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE", "NODE_V8_COVERAGE",
-    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT", "PERL5OPT", "PERL5LIB", "PERLLIB",
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT", "PYTHONUSERBASE", "PERL5OPT", "PERL5LIB", "PERLLIB",
     "RUBYOPT", "RUBYLIB", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "BASH_ENV", "ENV",
 ];
 
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn loader_variables_in_any_case() {
-        for n in ["LD_PRELOAD", "ld_preload", "LD_TRACE_LOADED_OBJECTS", "LD_DEBUG", "LD_SHOW_AUXV", "LD_ANYTHING", "Ld_x", "DYLD_INSERT_LIBRARIES", "dyld_x", "NODE_OPTIONS", "node_options", "GLIBC_TUNABLES", "BASH_ENV", "ENV", "OPENSSL_CONF"] {
+        for n in ["LD_PRELOAD", "ld_preload", "LD_TRACE_LOADED_OBJECTS", "LD_DEBUG", "LD_SHOW_AUXV", "LD_ANYTHING", "Ld_x", "DYLD_INSERT_LIBRARIES", "dyld_x", "NODE_OPTIONS", "node_options", "GLIBC_TUNABLES", "BASH_ENV", "ENV", "OPENSSL_CONF", "PYTHONUSERBASE", "pythonuserbase"] {
             assert!(is_loader_var(n.as_bytes()), "{n}");
         }
         for n in ["PATH", "HOME", "LD", "LDX_FOO", "ENVIRONMENT", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "SSL_CERT_FILE", "ZN_HOOK_ACK", "XLD_PRELOAD"] {
