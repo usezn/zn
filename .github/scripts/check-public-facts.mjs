@@ -240,9 +240,9 @@ export function check(facts, files, read, options = {}) {
 
   // The plugin pin moves only after npm publishes a release, so a release tag never holds the pin of its own release:
   // a Claude Code marketplace added at a tag (usezn/zn#vX.Y.Z) installs an older zn-gate inside the plugin. While
-  // pluginVersion is not the release version, a `#` ref is refused and the untagged form (which follows the default
-  // branch and its latest pin) is the only one allowed. Once the pin equals the release, a ref (that one, or Codex's
-  // --ref) is accepted only when it is exactly the release tag (a placeholder such as v<version> or vX.Y.Z, a template
+  // pluginVersion is not the release version, every tag ref is refused (the `#` ref of Claude Code and the `--ref` of
+  // Codex) and the untagged form (which follows the default branch, and so the latest pin) is the only one allowed.
+  // Once the pin equals the release, a ref (that one, or Codex's --ref) is accepted only when it is exactly the release tag (a placeholder such as v<version> or vX.Y.Z, a template
   // in the docs, names no ref and is accepted).
   const pluginPrefixes = (facts.pluginVersion && facts.pluginVersion.pins) || [];
   const pinLags = Boolean(facts.pluginVersion) && facts.pluginVersion.value !== version;
@@ -253,7 +253,7 @@ export function check(facts, files, read, options = {}) {
     for (const m of s.matchAll(MARKETPLACE_ADD)) {
       if (!m[1]) continue;
       const line = s.slice(0, m.index).split('\n').length;
-      if (pinLags && m[1].startsWith('#')) {
+      if (pinLags) {
         errors.push(`${f}:${line}: "${m[0].trim()}" adds the marketplace at a tag while the plugin pin (${facts.pluginVersion.value}) is not the release (${version}): use the untagged usezn/zn`);
         continue;
       }

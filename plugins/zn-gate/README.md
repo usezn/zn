@@ -210,6 +210,14 @@ claude plugin marketplace add usezn/zn
 claude plugin install zn-gate@usezn
 ```
 
+The marketplace follows the default branch of the repository, which takes
+releases, the plugin pin that follows each release, and documentation fixes
+(feature work lands on another branch first). To confirm what you installed, run
+`claude plugin list`: it shows the installed `zn-gate` version, which must be
+the release you expect. The plugin pins exactly one zn-gate release, and its
+launcher checks that package against the npm integrity hash and the digest of
+every file in `scripts/zn-gate.lock.json` before it runs anything.
+
 The files of the release carry build provenance attestations; see
 [Verifying a release](https://github.com/usezn/zn/blob/v1.17.0/docs/verify-release.md).
 

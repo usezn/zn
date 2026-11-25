@@ -704,12 +704,13 @@ test('guide: a stub npm that sleeps past the limit gets its own timeout text, an
 // A command that adds the marketplace at the tag of the installed release would install an older zn-gate inside the
 // plugin, and `zn-gate check` would then prescribe the same command again. While the pin differs from the package
 // version, no user-facing text may carry a tagged marketplace ref; a merge that brings one back fails here.
-test('no user-facing command adds the plugin marketplace at a tag while the plugin pin is not the package version', () => {
+test('no user-facing command adds the plugin marketplace at a stale tag, or at any tag while the plugin pin lags the package version', () => {
   const root = path.join(__dirname, '..', '..', '..');
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', 'scripts', 'zn-gate.lock.json'), 'utf8'));
   const pins = new Set([lock.version, JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', '.claude-plugin', 'plugin.json'), 'utf8')).version]);
-  if (pins.size === 1 && pins.has(pkgVersion)) return; // the pin is the release: a tag would hold the matching plugin
+  // The pin is the release: a tag would hold the matching plugin, so the exact current release tag is allowed (and no other).
+  const synced = pins.size === 1 && pins.has(pkgVersion);
   const walk = (dir, out) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
@@ -727,11 +728,16 @@ test('no user-facing command adds the plugin marketplace at a tag while the plug
     path.join(root, 'plugins', 'zn-gate', 'README.md'),
     path.join(root, 'plugins', 'claude-dir', 'README.md'),
   ];
+  // A tagged ref: `usezn/zn#<ref>` (Claude Code) or `usezn/zn --ref <ref>` (Codex). Placeholders (vX.Y.Z, v<version>) name no ref.
+  const tagged = /usezn\/zn(?:#|\s+--ref\s+)(\S+)/g;
+  const ok = (ref) => synced && (ref.replace(/[`'")\],;.]+$/, '') === 'v' + pkgVersion || /^v(?:<[a-z-]+>|X\.Y\.Z)/.test(ref));
   const bad = [];
   for (const f of files) {
     fs.readFileSync(f, 'utf8').split('\n').forEach((l, i) => {
-      if (/marketplace add[^\n]*usezn\/zn#/.test(l) || /MARKETPLACE_REF\s*=\s*'usezn\/zn#/.test(l)) bad.push(path.relative(root, f) + ':' + (i + 1));
+      if (/MARKETPLACE_REF\s*=\s*'usezn\/zn#/.test(l)) bad.push(path.relative(root, f) + ':' + (i + 1));
+      if (!/marketplace add/.test(l)) return;
+      for (const m of l.matchAll(tagged)) if (!ok(m[1])) bad.push(path.relative(root, f) + ':' + (i + 1));
     });
   }
-  assert.deepEqual(bad, [], 'tagged plugin marketplace ref while the plugin pin is ' + [...pins].join('/') + ' and the package is ' + pkgVersion);
+  assert.deepEqual(bad, [], 'a plugin marketplace ref that is not untagged' + (synced ? ' or the current release tag v' + pkgVersion : '') + ' (plugin pin ' + [...pins].join('/') + ', package ' + pkgVersion + ')');
 });
