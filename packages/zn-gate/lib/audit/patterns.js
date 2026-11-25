@@ -6,6 +6,7 @@
  */
 
 const path = require('path');
+const { isHookStopVar } = require('../loader-env');
 
 const MAX_LINE = 4000;
 
@@ -333,7 +334,7 @@ function classifyEnv(key, value) {
   // glibc's dynamic loader ends every dynamically linked program before its first line when LD_TRACE_LOADED_OBJECTS is set (to any
   // value, even empty or a placeholder: it prints the library list instead) or when LD_DEBUG names "help" (it prints the debug options).
   // The shell that runs a hook is such a program, so every hook the agent starts exits 0 having checked nothing.
-  if (String(key) === 'LD_TRACE_LOADED_OBJECTS' || (String(key) === 'LD_DEBUG' && /(?:^|[\s,:])help(?:$|[\s,:])/.test(String(value)))) return { kind: 'hookstop' };
+  if (isHookStopVar(key, value)) return { kind: 'hookstop' };
   if (isPlaceholder(value)) return null;
   const k = String(key);
   const v = String(value);
