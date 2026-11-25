@@ -2847,7 +2847,9 @@ def text_input(value: Any, what: str) -> Any:
         return str.__str__(value)
     if _type_is(type(value), _BYTES_TYPES):
         return bytes(value).decode("utf-8", errors="replace")
-    raise TypeError(f"{what} takes text (str or bytes), not {type(value).__name__}")
+    # The class name is read with the built-in descriptor of type, never by attribute lookup: a metaclass of the value
+    # could run code of its own to answer __name__.
+    raise TypeError(f"{what} takes text (str or bytes), not {_TYPE_QUALNAME.__get__(type(value))}")
 
 
 # Marks an argument that was not passed, so evaluate(None) keeps its old answer.

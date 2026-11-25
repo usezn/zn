@@ -433,3 +433,25 @@ def test_generator_without_return_value_is_unchanged():
         yield "b"
 
     assert "".join(gen()) == "ab"
+
+
+def test_the_type_error_names_the_class_without_running_a_metaclass_hook():
+    """The error message reads the class name with the built-in descriptor of type: a metaclass hook never runs."""
+    import pytest
+    from zn_gate.rules import evaluate
+
+    ran = []
+
+    class Meta(type):
+        def __getattribute__(cls, name):
+            ran.append(name)
+            return type.__getattribute__(cls, name)
+
+    class Odd(metaclass=Meta):
+        pass
+
+    ran.clear()
+    with pytest.raises(TypeError) as err:
+        evaluate(Odd())  # type: ignore[arg-type]
+    assert "Odd" in str(err.value)
+    assert "__name__" not in ran and "__qualname__" not in ran, ran
