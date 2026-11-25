@@ -519,8 +519,38 @@ test('GitHub Copilot CLI: an unknown file tool with the .env path deep in its ar
       if (dotenv) blocked(await decide(copilot, same), levels === 1 ? STOP : null, 'same level ' + levels);
       else passes(await decide(copilot, same));
       const d = await decide(copilot, below);
-      if (dotenv && levels < MAX_NEST_DEPTH) blocked(d, null, 'below ' + levels);
-      else if (!dotenv) passes(d);
+      if (dotenv) {
+        // At the limit the text is unreadable: the adapter refuses it in its own answer (respond), not in the decision.
+        const out = (await runner.handle(copilot, below, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open' })).output;
+        if (d.decision === 'deny') blocked(d, null, 'below ' + levels);
+        else assert.equal(out && out.permissionDecision, 'deny', 'below ' + levels);
+      } else passes(d);
     }
   }
+});
+
+// An unknown tool of Claude Code: the path scan reads as deep as the text scan (MAX_NEST_DEPTH). A .env path in the arguments is
+// found at every level within the limit, and arguments nested past it cannot be read, so the call is refused (fail closed).
+test('Claude Code: an unknown tool with a .env path deep in its arguments is refused, past the depth limit too', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1');
+  const other = path.join(dir, 'notes.txt');
+  const nest = (levels, leaf) => levels.reduceRight((acc, k) => ({ [k]: acc }), leaf);
+  const { MAX_NEST_DEPTH } = require('../lib/nest-limits');
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+  const call = (levels, target) => cc('files_helper', nest(names.slice(0, levels), { path: target, content: 'LD_DEBUG=help' }), dir);
+  for (const levels of [1, 3, 4, 5, MAX_NEST_DEPTH]) {
+    blocked(await decide(claude, call(levels, env)), null, 'env at ' + levels);
+    passes(await decide(claude, call(levels, other)));
+  }
+  // Past the limit the path cannot be read: refused, for any target.
+  for (const levels of [MAX_NEST_DEPTH + 1, MAX_NEST_DEPTH + 2]) {
+    blocked(await decide(claude, call(levels, env)), null, 'env at ' + levels);
+  }
+  // The same through a list of objects.
+  const inList = (levels, target) => cc('files_helper', nest(names.slice(0, levels), { items: [{ path: target, content: 'LD_DEBUG=help' }] }), dir);
+  blocked(await decide(claude, inList(MAX_NEST_DEPTH - 1, env)), null, 'list');
+  passes(await decide(claude, inList(MAX_NEST_DEPTH - 1, other)));
+  blocked(await decide(claude, inList(MAX_NEST_DEPTH, env)), null, 'list past the limit');
 });

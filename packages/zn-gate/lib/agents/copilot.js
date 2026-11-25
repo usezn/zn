@@ -423,7 +423,11 @@ function localFileUrl(v) {
   return u;
 }
 
-/** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
+/**
+ * Every string argument whose key looks like a file or folder (content-like keys skipped), down to MAX_NEST_DEPTH (the limit of the
+ * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
+ * call is refused, never dropped.
+ */
 function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
@@ -441,10 +445,10 @@ function pathsOf(args, opts = {}) {
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
-  const maxDepth = loose ? MAX_NEST_DEPTH : 3;
+  const maxDepth = MAX_NEST_DEPTH;
   let nodes = 0;
   const walk = (obj, depth) => {
-    if (loose && ++nodes > MAX_NEST_NODES) return;
+    if (loose && ++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
@@ -455,7 +459,7 @@ function pathsOf(args, opts = {}) {
       if (depth < maxDepth) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
-      }
+      } else if (isObj(v) || (Array.isArray(v) && v.some(isObj))) bad = true;
     }
   };
   walk(args, 0);
