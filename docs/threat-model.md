@@ -623,11 +623,11 @@ Three features are off by default. Each one helps in a narrow case and has limit
     defined by an earlier command of a persistent shell, or an untrusted `PATH` can replace `echo`, `printf` or `cat` after the
     check. Any other program whose command text names such a file (an interpreter with `-c` or `-e`, `awk`, `sed 'w file'`,
     `curl -o`, `iwr -OutFile`, an unknown tool) is refused too, unless it is a read-only or metadata-only command (`cat`, `head`,
-    `tail`, `grep`, `wc`, `ls`, `stat`, `diff`, `test -f`, `[ -f ]`, `touch`, `git status`). Use the editor tool (Write, Edit, a
+    `tail`, `grep`, `wc`, `ls`, `stat`, `diff`, `test -f`, `[ -f ]`, `touch`, `git status`, and `git add`, `git commit` and `git rm --cached`, which only change the index or the history; `git checkout`, `git restore`, `git reset` and `git stash` write stored content into the file and are refused). Use the editor tool (Write, Edit, a
     patch) instead; zn checks what it writes on the real text. Reads of the file are not affected.
     Every write to such a file through the editor tool, a patch, an unknown tool or an MCP server (all agents) is judged on the
     file it would leave: zn applies the edit or patch to the file on disk, reads white space and line breaks around `=` or `:` and
-    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file.
+    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file. A tool zn does not know is read under any key and at any depth, and a call whose arguments zn cannot walk to the end is refused. A call that names such a file without giving the file it leaves (a copy, move, rename, link or a tool zn does not know) is refused unless its exact name is a known read-only file tool (the filesystem MCP server's `read_file`, `list_directory` and the like). For an MCP server the name is all zn knows, so a server that gives a writing tool such a name is not caught.
     `help` counts wherever it stands in
     the value as a separate word, also after a slash, a bracket or a backslash (`LD_DEBUG=libs/,help`), so no value is read
     shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`, `.codex/`, `.gemini/settings.json`)

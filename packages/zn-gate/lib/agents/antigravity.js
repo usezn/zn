@@ -314,6 +314,9 @@ function normalize(raw) {
       // A tool zn does not know that carries a command and also names files: the files keep their read and write checks (a .env
       // write among them is judged on what the call writes); an address zn cannot read refuses the call.
       const named = pathsOf(args);
+      const loose = require('./copilot').pathsOf(args, { loose: true });
+      named.paths = [...new Set([...named.paths, ...loose.paths])];
+      named.bad = named.bad || loose.bad;
       e.input.alsoPaths = named.paths;
       if (named.bad && !e.unreadable) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     }
@@ -331,9 +334,13 @@ function normalize(raw) {
   }
   // Any other tool that names a file (a viewer, a reader, a future tool) gets the read and write checks on
   // every path in it. list_dir and find_by_name show names only, and tools with no path get no opinion.
-  if (!READ_TOOLS.has(toolName) && (paths.length || bad)) {
-    const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+  // A tool zn does not know: a path under any key counts too (src, dst, from, to, nested objects), and arguments zn cannot walk to
+  // the end are refused.
+  const loose = READ_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const all = [...new Set([...paths, ...loose.paths])];
+  if (!READ_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
+    const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };
+    if (bad || loose.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
   }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };

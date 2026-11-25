@@ -170,9 +170,12 @@ function normalize(raw) {
     return e;
   }
   // Any other tool that names a file (a future tool, an extension) gets the read and write checks on every path.
-  if (!NAMES_ONLY_TOOLS.has(toolName) && (paths.length || bad)) {
-    const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+  // A path under any key counts too (src, dst, from, to, nested objects), and arguments zn cannot walk to the end are refused.
+  const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const all = [...new Set([...paths, ...loose.paths])];
+  if (!NAMES_ONLY_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
+    const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };
+    if (bad || loose.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
   }
   return { ...ev, tool: toolName.toLowerCase(), input: { texts: [] } };
