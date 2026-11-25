@@ -32,6 +32,10 @@ const VERSION = require('../package.json').version;
 // (package.json, package-lock.json and scripts/zn-gate.lock.json, with the npm integrity and the digest of every file, which the
 // launcher checks on each call). A release tag would hold the pin of the PREVIOUS release, because the pin is committed after npm
 // publishes, so adding the marketplace at the tag would install an older zn-gate and `zn-gate check` would ask for the same command again.
+// Trust: the default branch is `main`, which takes only releases, the plugin pin committed after each one, and documentation fixes
+// (feature work lands on another branch first). What the pin protects is the zn-gate package the hooks run: npm installs it with the
+// sha512 integrity in package-lock.json and the launcher refuses to run it unless every file matches the SHA-256 in the lock. The
+// plugin's own hooks.json and launcher scripts are not covered by that lock (they do the checking), so they come from `main` at the add.
 const MARKETPLACE_REF = 'usezn/zn';
 const isWin = process.platform === 'win32';
 
