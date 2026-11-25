@@ -118,6 +118,24 @@ def _inherits_any(val: Any, bases: Tuple[type, ...]) -> bool:
 _PLAIN_CONTAINERS = (dict, list, tuple, set, frozenset)
 
 
+# The slots of a class are its member descriptors, not what its __slots__ attribute says: that attribute can be changed or
+# emptied after the class is made, and a hostile iterable there would run code during the check. A member descriptor is read
+# with the descriptor type's own __get__, so no override of the object answers instead.
+_MEMBER_GET = types.MemberDescriptorType.__get__
+
+
+def _slot_members(cls: type) -> List[Tuple[str, Any, type]]:
+    """(name, member descriptor, class) of every slot of `cls` and its bases, the name as stored (mangled names included)."""
+    out: List[Tuple[str, Any, type]] = []
+    seen: Set[str] = set()
+    for klass in _TYPE_MRO.__get__(cls):
+        for name, attr in dict.items(dict(_TYPE_DICT.__get__(klass))):
+            if type(name) is str and type(attr) is types.MemberDescriptorType and name not in seen:
+                seen.add(name)
+                out.append((name, attr, klass))
+    return out
+
+
 def _object_fields(data: Any) -> Optional[List[Any]]:
     """Attribute names and values of an object (its __dict__ and __slots__), or None if it has none."""
     found = False
@@ -131,22 +149,14 @@ def _object_fields(data: Any) -> Optional[List[Any]]:
         for k, v in attrs.items():
             children.append(k)
             children.append(v)
-    seen: Set[str] = set()
-    for klass in _TYPE_MRO.__get__(type(data)):
-        slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
-        if isinstance(slots, str):
-            slots = (slots,)
-        for name in slots:
-            if not isinstance(name, str) or name in ("__dict__", "__weakref__") or name in seen:
-                continue
-            seen.add(name)
-            try:
-                value = object.__getattribute__(data, name)
-            except AttributeError:
-                continue
-            found = True
-            children.append(name)
-            children.append(value)
+    for name, member, klass in _slot_members(type(data)):
+        try:
+            value = _MEMBER_GET(member, data, klass)
+        except AttributeError:
+            continue
+        found = True
+        children.append(name)
+        children.append(value)
     return children if found else None
 
 

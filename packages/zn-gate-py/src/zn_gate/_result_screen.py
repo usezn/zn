@@ -14,7 +14,7 @@ import sys
 import types
 from collections import namedtuple
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 # Limits of the deep-data form of sanitize_tool_result, the same as the walker of
 # the guard (guard._DEFAULT_MAX_DEPTH and guard.MAX_OBJECT_VALUES): ten levels of
@@ -126,7 +126,6 @@ def _type_is(kind: Any, table: Any) -> bool:
 _TYPE_DICT = type.__dict__["__dict__"]
 _TYPE_MODULE = type.__dict__["__module__"]
 _TYPE_QUALNAME = type.__dict__["__qualname__"]
-_TYPE_NAME = type.__dict__["__name__"]
 _TYPE_FLAGS = type.__dict__["__flags__"]
 _HEAPTYPE = 1 << 9
 # Heap types written in C that their module does not bind under their qualified name, trusted by identity only:
@@ -468,6 +467,24 @@ def custom_text_form(val: Any) -> bool:
         return True
 
 
+# The slots of a class are its member descriptors, not what its __slots__ attribute says: that attribute can be changed or
+# emptied after the class is made, and a hostile iterable there would run code during the check. A member descriptor is read
+# with the descriptor type's own __get__, so no override of the object answers instead.
+_MEMBER_GET = types.MemberDescriptorType.__get__
+
+
+def _slot_members(cls: type) -> List[Tuple[str, Any, type]]:
+    """(name, member descriptor, class) of every slot of `cls` and its bases, the name as stored (mangled names included)."""
+    out: List[Tuple[str, Any, type]] = []
+    seen: Set[str] = set()
+    for klass in _TYPE_MRO.__get__(cls):
+        for name, attr in dict.items(dict(_TYPE_DICT.__get__(klass))):
+            if type(name) is str and type(attr) is types.MemberDescriptorType and name not in seen:
+                seen.add(name)
+                out.append((name, attr, klass))
+    return out
+
+
 def _object_names(val: Any) -> List[str]:
     """The attribute names of an instance of a class (__dict__ and __slots__), [] for anything else."""
     if not _is_opaque_object(val):
@@ -484,19 +501,13 @@ def _object_names(val: Any) -> List[str]:
                     # A key of another type would be turned into text by its own code: refused, never coerced.
                     raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it")
                 names.append(k)
-        for klass in _TYPE_MRO.__get__(type(val)):
-            slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
-            for n in ((slots,) if isinstance(slots, str) else slots):
-                if n in ("__dict__", "__weakref__"):
+        for n, member, klass in _slot_members(type(val)):
+            if n not in names:
+                try:
+                    _MEMBER_GET(member, val, klass)
+                except AttributeError:
                     continue
-                if n.startswith("__") and not n.endswith("__"):
-                    n = "_" + _TYPE_NAME.__get__(klass).lstrip("_") + n
-                if n not in names:
-                    try:
-                        object.__getattribute__(val, n)
-                    except AttributeError:
-                        continue
-                    names.append(n)
+                names.append(n)
     except Exception:
         # Attributes that cannot be listed cannot be masked: refuse instead of passing the object through unread.
         raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
@@ -553,14 +564,11 @@ def _text_children(val: Any) -> List[Any]:
         attrs = None
     if type(attrs) is dict:
         children.extend(dict.values(attrs))
-    for klass in _TYPE_MRO.__get__(type(val)):
-        slots = _TYPE_DICT.__get__(klass).get("__slots__", ())
-        for name in ((slots,) if isinstance(slots, str) else slots):
-            if isinstance(name, str) and name not in ("__dict__", "__weakref__"):
-                try:
-                    children.append(object.__getattribute__(val, name))
-                except AttributeError:
-                    continue
+    for _name, member, klass in _slot_members(type(val)):
+        try:
+            children.append(_MEMBER_GET(member, val, klass))
+        except AttributeError:
+            continue
     if _trusted_class(type(val)) and not isinstance(val, (Iterator, str, bytes, bytearray, memoryview)):
         if isinstance(val, Mapping):
             items = itertools.islice(val.items(), _TEXT_GRAPH_MAX_VALUES + 1)
