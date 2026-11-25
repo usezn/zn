@@ -4,7 +4,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from zn_gate import check_command
+from zn_gate.destructive import check_command
 
 URL = "https://example.com/x"
 RC = "destructive:rc_download"
@@ -25,7 +25,7 @@ CASES = [
 def _run(command, expected, barrier):
     barrier.wait()
     res = check_command(command)
-    return command, expected, (None if res.allowed else res.rule)
+    return command, expected, (None if res.verdict == "allow" else res.rule)
 
 
 def test_overlapping_checks_do_not_share_the_execdir_mode():
@@ -51,4 +51,4 @@ def test_overlapping_checks_do_not_share_the_execdir_mode():
     # Nothing is left behind: a plain call afterwards gives the single-threaded answers.
     for command, expected in CASES:
         res = check_command(command)
-        assert (None if res.allowed else res.rule) == expected
+        assert (None if res.verdict == "allow" else res.rule) == expected

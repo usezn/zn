@@ -27,7 +27,7 @@ function inProject(files, fn) {
 }
 
 test('a bidirectional override character is blocked as evasion, with its rule and engine', () => {
-  const r = rules.evaluate('plain‮text');
+  const r = rules.evaluate('plain\u202Etext');
   assert.equal(r.verdict, 'block');
   assert.equal(r.rule, 'evasion:bidi_override');
   assert.equal(r.confidence, 0.99);
