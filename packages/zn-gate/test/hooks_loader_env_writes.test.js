@@ -452,3 +452,32 @@ test('an edit never reads a target that is not a regular file: a FIFO or /dev/ze
   fs.writeFileSync(env, 'FOO=1\n');
   passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'FOO=1', new_string: 'FOO=2' }, dir)));
 });
+
+// dotenv reads a quoted value with (?:\\Q|[^Q])*: a backslash before the quote character keeps the value open, in double quotes, single
+// quotes and backticks, so these values still carry "help" for the loader. An unterminated quote is unresolved and refused.
+test('an escaped quote does not end an LD_DEBUG value in a .env write (dotenv rules)', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  const bad = [String.raw`LD_DEBUG="all\",help"`, String.raw`LD_DEBUG='all\',help'`, 'LD_DEBUG=`all\\`,help`', String.raw`export LD_DEBUG="a\\\",help"`,
+    'LD_DEBUG="all,help', "LD_DEBUG='all", 'LD_DEBUG="all'];
+  for (const line of bad) {
+    assert.notEqual(loaderEnv.hookStopAssignedIn(line + '\n'), null, line);
+    blocked(await decide(claude, cc('Write', { file_path: env, content: 'FOO=1\n' + line + '\n' }, dir)), STOP, line);
+    blocked(await decide(gemini, gem('write_file', { file_path: env, content: line + '\n' }, dir)), STOP, line);
+    blocked(await decide(codex, cdx('apply_patch', { command: patch('Add', '.env', [line]) }, dir)), STOP, line);
+  }
+  // A value-only edit that leaves the escaped form behind.
+  fs.writeFileSync(env, String.raw`LD_DEBUG="all\"X"` + '\n');
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'X', new_string: ',help' }, dir)), STOP);
+  blocked(await decide(gemini, gem('replace', { file_path: env, old_string: 'X', new_string: ',help', instruction: 'x' }, dir)), STOP);
+  // A benign value with an escaped quote and no help still passes.
+  const ok = [String.raw`LD_DEBUG="a\"b"`, String.raw`LD_DEBUG='a\'b'`, 'LD_DEBUG="all"'];
+  for (const line of ok) {
+    assert.equal(loaderEnv.hookStopAssignedIn(line + '\n'), null, line);
+    passes(await decide(claude, cc('Write', { file_path: env, content: line + '\n' }, dir)));
+    passes(await decide(gemini, gem('write_file', { file_path: env, content: line + '\n' }, dir)));
+    passes(await decide(codex, cdx('apply_patch', { command: patch('Add', '.env', [line]) }, dir)));
+  }
+  fs.writeFileSync(env, String.raw`LD_DEBUG="a\"X"` + '\n');
+  passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'X', new_string: 'b' }, dir)));
+});
