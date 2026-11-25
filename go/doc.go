@@ -11,7 +11,7 @@
 //		// Decide whether to fail closed or open; see the README.
 //	}
 //	if !res.Allowed() {
-//		// Block, or an unknown or missing verdict: do not pass the text to the model.
+//		// Block, an unknown or missing verdict, or a partial check: do not pass the text to the model.
 //	}
 //
 // The API is documented at https://usezn.com/docs/api/.
