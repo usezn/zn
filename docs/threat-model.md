@@ -573,7 +573,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
     It denies when the environment of the agent has `LD_TRACE_LOADED_OBJECTS` set to any value (the empty string and `0` included), or any of `LD_PRELOAD`, `LD_AUDIT`, `LD_PROFILE`, `LD_LIBMAP`, `LD_32_PRELOAD`, `LD_TRACE_LOADED_OBJECTS_FMT1`, `LD_TRACE_LOADED_OBJECTS_FMT2`, `LD_TRACE_LOADED_OBJECTS_ALL`, `LD_DEBUG` (any value, not only `help`), `LD_DEBUG_OUTPUT`, `LD_PRELOAD_FDS`, `LD_LIBMAP_DISABLE`, `LD_LOADFLTR`, `DYLD_INSERT_LIBRARIES`, `DYLD_IMAGE_SUFFIX`, `DYLD_SHARED_CACHE_DIR` or `DYLD_SHARED_REGION` set to a value that is not empty, in exactly that upper case (the loader reads no other case). It does not start the hook then and answers
     the agent's own deny with its blocking exit code (exit 2 with the reason). Any other loader variable does not make it deny:
     `LD_LIBRARY_PATH`, `LD_SHOW_AUXV` and every other `LD_*` or `DYLD_*` name, those names in another case, the names above with an
-    empty value, and the other names of `lib/loader-env.js`. It removes all of them (every `LD_*` and
+    empty value (except `LD_TRACE_LOADED_OBJECTS`, which denies when empty too), and the other names of `lib/loader-env.js`. It removes all of them (every `LD_*` and
     `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) from the environment and replaces itself with the hook. When it cannot
     start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it into the zn hooks folder
     when the SHA-256 matches, then runs it once as a test. The hook entry is switched to the launcher only when that test run answers as
@@ -609,8 +609,10 @@ Three features are off by default. Each one helps in a narrow case and has limit
   - Where the launcher is not used (the shell launcher of the other agents, project installs, macOS), the other loader settings that
     only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`, `LD_VERBOSE`, `LD_WARN`) let the script run;
     the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with FreeBSD's loader. For Claude Code and ZCode user
-    installs on Linux the launcher denies `LD_DEBUG` with any non-empty value and `LD_DEBUG_OUTPUT` with a non-empty value
-    (they are in the list above), which is stricter than the shell launcher.
+    installs on Linux the static launcher also denies `LD_DEBUG` with any non-empty value and `LD_DEBUG_OUTPUT` with a non-empty
+    value (they are in the list above). The shell launcher refuses the same names. The difference is that the static launcher runs
+    before any dynamic loader, so its refusal always happens, while the loader can stop the shell launcher before its first line
+    (for `LD_TRACE_LOADED_OBJECTS` and `LD_DEBUG=help`).
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
