@@ -144,19 +144,27 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	for _, o := range opts {
 		o(c)
 	}
-	c.httpClient = withRedirectPolicy(c.httpClient)
+	c.httpClient = withRedirectPolicy(c.httpClient, c.baseURL)
 	return c
 }
 
 // maxRedirects is the redirect limit of net/http's default policy.
 const maxRedirects = 10
 
-// withRedirectPolicy returns a copy of h that refuses a redirect to a URL
-// that checkBaseURL would refuse, so the API key cannot be sent in clear
-// text after an https answer redirects to plain http. A CheckRedirect that
-// the caller set still runs after this check. h itself is not changed.
-func withRedirectPolicy(h *http.Client) *http.Client {
+// withRedirectPolicy returns a copy of h that refuses any request, the first
+// one and every redirect, whose URL checkBaseURL would refuse, so the API
+// key cannot be sent in clear text. The scheme rule is enforced in a
+// RoundTripper that wraps the transport of h, because a CheckRedirect that
+// the caller set runs after ours and may rewrite req.URL. A CheckRedirect
+// that the caller set still runs after the redirect check. h and its
+// transport are not changed.
+func withRedirectPolicy(h *http.Client, baseURL string) *http.Client {
 	cp := *h
+	base := h.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cp.Transport = &guardTransport{base: base, host: baseHost(baseURL)}
 	user := h.CheckRedirect
 	cp.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if err := checkBaseURL(req.URL.String()); err != nil {
@@ -171,6 +179,46 @@ func withRedirectPolicy(h *http.Client) *http.Client {
 		return nil
 	}
 	return &cp
+}
+
+// baseHost returns the lower-case host (with port) of the base URL, or an
+// empty string if it cannot be parsed.
+func baseHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
+// guardTransport checks every request the client sends. It refuses a URL
+// that checkBaseURL refuses, without sending, and removes the Authorization
+// header from a request to any host other than the base URL's host.
+type guardTransport struct {
+	base http.RoundTripper
+	host string
+}
+
+func (g *guardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL == nil {
+		closeBody(req)
+		return nil, fmt.Errorf("zn: refusing request: %w", ErrInsecureBaseURL)
+	}
+	if err := checkBaseURL(req.URL.String()); err != nil {
+		closeBody(req)
+		return nil, fmt.Errorf("zn: refusing request: %w", err)
+	}
+	if req.Header.Get("Authorization") != "" && (g.host == "" || strings.ToLower(req.URL.Host) != g.host) {
+		req = req.Clone(req.Context())
+		req.Header.Del("Authorization")
+	}
+	return g.base.RoundTrip(req)
+}
+
+func closeBody(req *http.Request) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
 }
 
 type analyzeRequest struct {
