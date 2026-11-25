@@ -98,7 +98,7 @@ export function pinnedFiles(all, exclude) {
   return all.filter((f) => /\.(md|json)$/.test(f) && !exclude.some((p) => f === p || f.startsWith(p)));
 }
 
-/** Public surfaces where a plugin marketplace is added: a ref on a `marketplace add usezn/zn` there is refused unless the plugin pin is the release. */
+/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name the plugin tag plugin-v<pluginVersion>. */
 export function marketplaceFiles(all) {
   return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
 }
@@ -238,28 +238,28 @@ export function check(facts, files, read, options = {}) {
     }
   }
 
-  // The plugin pin moves only after npm publishes a release, so a release tag never holds the pin of its own release:
-  // a Claude Code marketplace added at a tag (usezn/zn#vX.Y.Z) installs an older zn-gate inside the plugin. While
-  // pluginVersion is not the release version, every tag ref is refused (the `#` ref of Claude Code and the `--ref` of
-  // Codex) and the untagged form (which follows the default branch, and so the latest pin) is the only one allowed.
-  // Once the pin equals the release, a ref (that one, or Codex's --ref) is accepted only when it is exactly the release tag (a placeholder such as v<version> or vX.Y.Z, a template
-  // in the docs, names no ref and is accepted).
-  const pluginPrefixes = (facts.pluginVersion && facts.pluginVersion.pins) || [];
-  const pinLags = Boolean(facts.pluginVersion) && facts.pluginVersion.value !== version;
+  // Every command that adds the plugin marketplace names the plugin tag plugin-v<pluginVersion>: Claude Code takes it
+  // with `#` (usezn/zn#plugin-vX.Y.Z) and Codex with `--ref` (usezn/zn --ref plugin-vX.Y.Z). The pin is committed after
+  // npm publishes a release, so the release tag vX.Y.Z holds the pin of the previous release, and an untagged add or a
+  // moving ref follows a branch that can change after the docs are read. The plugin tag is created on the pin commit once
+  // it is merged into main and never moves. Refused: the untagged form, a release tag, a moving ref, another version, a
+  // placeholder, and the other agent's form.
+  const pluginTag = 'plugin-v' + (facts.pluginVersion ? facts.pluginVersion.value : docs);
   for (const f of marketplaceFiles(files)) {
-    const want = facts.pluginVersion && pluginPrefixes.some((p) => f.startsWith(p)) ? facts.pluginVersion.value : docs;
     const s = text(f);
     if (s === null) continue;
     for (const m of s.matchAll(MARKETPLACE_ADD)) {
-      if (!m[1]) continue;
       const line = s.slice(0, m.index).split('\n').length;
-      if (pinLags) {
-        errors.push(`${f}:${line}: "${m[0].trim()}" adds the marketplace at a tag while the plugin pin (${facts.pluginVersion.value}) is not the release (${version}): use the untagged usezn/zn`);
+      const codex = /\bcodex\s+plugins?\s+$/.test(s.slice(s.lastIndexOf('\n', m.index) + 1, m.index));
+      const fix = codex ? `use usezn/zn --ref ${pluginTag} (Codex)` : `use usezn/zn#${pluginTag} (Claude Code)`;
+      if (!m[1]) {
+        errors.push(`${f}:${line}: "${m[0].trim()}" names no plugin tag: ${fix}`);
         continue;
       }
+      const viaRef = !m[1].startsWith('#');
       const ref = m[1].replace(/^#|^\s+--ref\s+/, '').replace(/[`'")\],;].*$/s, '').replace(/[.*]+$/, '');
-      if (ref === `v${want}` || /^v(?:<[a-z-]+>|X\.Y\.Z)$/.test(ref)) continue;
-      errors.push(`${f}:${line}: "${m[0].trim()}" names the ref "${ref}", which is not the release tag v${want}: use the untagged usezn/zn or the exact tag`);
+      if (ref !== pluginTag) errors.push(`${f}:${line}: "${m[0].trim()}" names the ref "${ref}", which is not the plugin tag ${pluginTag}: ${fix}`);
+      else if (viaRef !== codex) errors.push(`${f}:${line}: "${m[0].trim()}" passes the tag with ${viaRef ? '--ref' : '#'}, but ${codex ? 'Codex takes --ref' : 'Claude Code takes #'}: ${fix}`);
     }
   }
 

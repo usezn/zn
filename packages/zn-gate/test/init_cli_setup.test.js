@@ -55,7 +55,7 @@ const AGENT_DIRS = {
   codex: ['.codex', winCmdRe(/zn hooks install codex/)],
   cursor: ['.cursor', winCmdRe(/zn hooks install cursor/)],
   opencode: [path.join('.config', 'opencode'), winCmdRe(/zn hooks install opencode/)],
-  'claude-code': ['.claude', /\/plugin marketplace add usezn\/zn(?![#@\w./-])/]
+  'claude-code': ['.claude', /\/plugin marketplace add usezn\/zn#plugin-v\d+\.\d+\.\d+/]
 };
 
 for (const [agent, [dir, steps]] of Object.entries(AGENT_DIRS)) {

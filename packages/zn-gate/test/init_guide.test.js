@@ -60,8 +60,8 @@ test('plan: one route per agent found; agents not found get no steps', async (t)
   const m = machine(t, ['claude-code', 'codex']);
   const { items, setup } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const by = Object.fromEntries(items.map((i) => [i.id, i]));
-  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn']);
-  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn']);
+  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn#plugin-v' + VERSION, 'claude plugin install zn-gate@usezn']);
+  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn#plugin-v' + VERSION]);
   assert.equal(by['claude-code'].steps[0].run[0], path.resolve('/opt/bin/claude'));
   assert.deepEqual(by.codex.steps.map(line), ['zn hooks install codex']);
   // An install that stays runs its own CLI with node, by absolute path.
@@ -78,7 +78,7 @@ test('plan: without a claude command, Claude Code gets the two /plugin commands 
   const cc = items.find((i) => i.id === 'claude-code');
   assert.equal(cc.steps.length, 1);
   assert.equal(cc.steps[0].run, null);
-  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
+  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn#plugin-v' + VERSION + ' and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
 });
 
 test('plan: from a temporary copy, one global install comes before the hooks, by absolute path', async (t) => {
@@ -700,21 +700,19 @@ test('guide: a stub npm that sleeps past the limit gets its own timeout text, an
   assert.doesNotMatch(out2.text(), /npm ls -g/);
 });
 
-// The plugin pin moves only after npm publishes a release, so a release tag never holds the pin of its own release.
-// A command that adds the marketplace at the tag of the installed release would install an older zn-gate inside the
-// plugin, and `zn-gate check` would then prescribe the same command again. While the pin differs from the package
-// version, no user-facing text may carry a tagged marketplace ref; a merge that brings one back fails here.
-test('no user-facing command adds the plugin marketplace at a stale tag, or at any tag while the plugin pin lags the package version', () => {
+// The marketplace is added at the plugin tag plugin-v<version> (see MARKETPLACE_REF in lib/init-guide.js): a release tag
+// holds the pin of the previous release and an untagged add follows a branch. The docs name the tag of the current
+// plugin pin; the code builds it from a version. A merge that brings back a release tag or the untagged form fails here.
+test('every user-facing command adds the plugin marketplace at the plugin tag, in the form of its agent', () => {
   const root = path.join(__dirname, '..', '..', '..');
-  const pkgVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
-  const lock = JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', 'scripts', 'zn-gate.lock.json'), 'utf8'));
-  const pins = new Set([lock.version, JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', '.claude-plugin', 'plugin.json'), 'utf8')).version]);
-  // The pin is the release: a tag would hold the matching plugin, so the exact current release tag is allowed (and no other).
-  const synced = pins.size === 1 && pins.has(pkgVersion);
+  const pin = JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', '.claude-plugin', 'plugin.json'), 'utf8')).version;
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', 'scripts', 'zn-gate.lock.json'), 'utf8')).version, pin);
+  const initGuide = fs.readFileSync(path.join(__dirname, '..', 'lib', 'init-guide.js'), 'utf8');
+  assert.ok(initGuide.includes("const MARKETPLACE_REF = 'usezn/zn#plugin-v' + VERSION;"), 'MARKETPLACE_REF is not the plugin tag of this release');
   const walk = (dir, out) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
-      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, out); } else if (/\.(js|md|json)$/.test(e.name)) out.push(p);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, out); } else if (/\.(js|md)$/.test(e.name)) out.push(p);
     }
     return out;
   };
@@ -728,16 +726,23 @@ test('no user-facing command adds the plugin marketplace at a stale tag, or at a
     path.join(root, 'plugins', 'zn-gate', 'README.md'),
     path.join(root, 'plugins', 'claude-dir', 'README.md'),
   ];
-  // A tagged ref: `usezn/zn#<ref>` (Claude Code) or `usezn/zn --ref <ref>` (Codex). Placeholders (vX.Y.Z, v<version>) name no ref.
-  const tagged = /usezn\/zn(?:#|\s+--ref\s+)(\S+)/g;
-  const ok = (ref) => synced && (ref.replace(/[`'")\],;.]+$/, '') === 'v' + pkgVersion || /^v(?:<[a-z-]+>|X\.Y\.Z)/.test(ref));
+  const add = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(#\S*|\s+--ref\s+\S*)?/g;
   const bad = [];
+  let seen = 0;
   for (const f of files) {
+    const code = f.endsWith('.js');
     fs.readFileSync(f, 'utf8').split('\n').forEach((l, i) => {
-      if (/MARKETPLACE_REF\s*=\s*'usezn\/zn#/.test(l)) bad.push(path.relative(root, f) + ':' + (i + 1));
-      if (!/marketplace add/.test(l)) return;
-      for (const m of l.matchAll(tagged)) if (!ok(m[1])) bad.push(path.relative(root, f) + ':' + (i + 1));
+      for (const m of l.matchAll(add)) {
+        seen++;
+        const codex = /\bcodex\s+plugins?\s+$/.test(l.slice(0, m.index));
+        const form = (m[1] || '').startsWith(codex ? ' ' : '#');
+        const ref = (m[1] || '').replace(/^#|^\s+--ref\s+/, '');
+        // Code builds the tag from a version: 'usezn/zn#plugin-v' + VERSION.
+        const tagged = code ? ref === "plugin-v'" : ref.replace(/[`'")\],;.]+$/, '') === 'plugin-v' + pin;
+        if (!form || !tagged) bad.push(path.relative(root, f) + ':' + (i + 1) + ': ' + m[0].trim());
+      }
     });
   }
-  assert.deepEqual(bad, [], 'a plugin marketplace ref that is not untagged' + (synced ? ' or the current release tag v' + pkgVersion : '') + ' (plugin pin ' + [...pins].join('/') + ', package ' + pkgVersion + ')');
+  assert.ok(seen >= 15, 'only ' + seen + ' marketplace commands found: this test would check nothing');
+  assert.deepEqual(bad, [], 'a plugin marketplace command without the plugin tag plugin-v' + pin + ' (Claude Code: usezn/zn#plugin-v' + pin + ', Codex: usezn/zn --ref plugin-v' + pin + ')');
 });
