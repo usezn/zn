@@ -46,7 +46,7 @@ function run(f, extra) {
 const dyldKills = (name) => (process.platform === 'darwin' && name.startsWith('DYLD_')) || /^LD_(TRACE_LOADED_OBJECTS|DEBUG)/.test(name) || (process.platform === 'win32' && name === 'LD_PRELOAD');
 
 for (const name of loaderEnv.LOADER_PRELOAD) {
-  test('sh launcher: ' + name + ' set in the environment blocks the call and the hook does not run', { skip: !posix }, (t) => {
+  test('sh launcher: ' + name + ' set in the environment blocks the call and the hook does not run', { skip: posix ? false : 'POSIX sh launcher; the Windows launcher is PowerShell, covered by the Windows tests' }, (t) => {
     const f = fixture(t);
     const r = run(f, { [name]: path.join(f.dir, 'missing-zn-test.so') });
     assert.equal(fs.existsSync(f.ran), false, 'the hook ran in a shell with a preload');
@@ -58,7 +58,7 @@ for (const name of loaderEnv.LOADER_PRELOAD) {
   });
 }
 
-test('sh launcher: an empty preload variable is not a refusal, and another LD_ variable is cleaned as before', { skip: !posix }, (t) => {
+test('sh launcher: an empty preload variable is not a refusal, and another LD_ variable is cleaned as before', { skip: posix ? false : 'POSIX sh launcher; the Windows launcher is PowerShell, covered by the Windows tests' }, (t) => {
   const f = fixture(t);
   for (const extra of [{}, { LD_PRELOAD: '' }, { LD_ZN_TEST_ANY: f.dir }]) {
     fs.rmSync(f.ran, { force: true });
@@ -69,7 +69,7 @@ test('sh launcher: an empty preload variable is not a refusal, and another LD_ v
   }
 });
 
-test('sh launcher: the refusal comes before any other program is started, and is the block of the agent', { skip: !posix }, (t) => {
+test('sh launcher: the refusal comes before any other program is started, and is the block of the agent', { skip: posix ? false : 'POSIX sh launcher; the Windows launcher is PowerShell, covered by the Windows tests' }, (t) => {
   const text = launcher.unixScript('claude-code', process.execPath, '/opt/zn/lib/hooks/runner.js', { runnerDigest: 'a'.repeat(64), manifest: '', deadlineS: 5 });
   const at = text.indexOf('ZN_LOADER=;');
   assert.ok(at > 0, 'the launcher reads the preload variables');
@@ -131,7 +131,7 @@ test('sh launcher: LD_LIBRARY_PATH naming a real library folder does not block, 
   assert.deepEqual(JSON.parse(fs.readFileSync(f.seenFile, 'utf8')), [], 'a library path reached the hook');
 });
 
-test('sh launcher: every library path variable lets the hook run and is gone for it', { skip: !posix }, (t) => {
+test('sh launcher: every library path variable lets the hook run and is gone for it', { skip: posix ? false : 'POSIX sh launcher; the Windows launcher is PowerShell, covered by the Windows tests' }, (t) => {
   const f = fixture(t);
   for (const name of loaderEnv.LOADER_LIBPATH) {
     fs.rmSync(f.ran, { force: true });
