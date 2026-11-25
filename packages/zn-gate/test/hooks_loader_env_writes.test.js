@@ -223,6 +223,51 @@ test('shell writes that join quoted and unquoted pieces of a loader value are bl
   }
 });
 
+test('shell writes to a .env that build the loader name or hide it from the text are blocked', async (t) => {
+  const dir = project(t);
+  const bad = [
+    // The name as a printf argument: the format writes NAME=value.
+    "printf '%s=%s\\n' LD_DEBUG help > .env",
+    "printf '%s=%s\\n' LD_TRACE_LOADED_OBJECTS 1 >> .env",
+    'printf "%s=help\\n" LD_DEBUG >> .env',
+    // The name split by quotes or a backslash.
+    `echo 'LD_'"DEBUG"=help >> .env`,
+    `echo "LD_""DEBUG=help" >> .env`,
+    "echo L''D_DEBUG=help >> .env",
+    'echo LD\\_DEBUG=help >> .env',
+    // A name the shell or printf computes, or a piece of the name glued to an expansion.
+    'K=LD_DEBUG; echo "$K=help" >> .env',
+    'echo "${K}=help" >> .env',
+    "printf '%s=%s\\n' \"$K\" \"$V\" >> .env",
+    'N=DEBUG; echo LD_$N=help >> .env',
+    'echo LD_${N}=help >> .env',
+    'echo L$(echo D)_DEBUG=help >> .env',
+    "printf '%s_DEBUG=help\\n' LD >> .env",
+    // Brace expansion, a glob, and characters written by their code.
+    'echo LD_{DEBUG,X}=help >> .env',
+    'echo {LD,X}_DEBUG=help >> .env',
+    'echo LD_DEBU?=help >> .env',
+    "printf '\\x4cD_DEBUG=help\\n' >> .env",
+    "printf '\\114D_DEBUG=help\\n' >> .env",
+    "echo -e '\\x4cD_DEBUG=help' >> .env",
+    "echo $'\\x4cD_DEBUG=help' >> .env",
+  ];
+  const STOP_OR_COMPUTED = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG|a variable whose name the shell computes \(it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS\)) for the agent/;
+  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP_OR_COMPUTED, command);
+  // Literal writes still pass, also with other variables, expansions in values and printf without loader names.
+  const good = [
+    'echo LD_DEBUG=libs >> .env',
+    "echo 'LD_DEBUG=all' >> .env",
+    "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env",
+    'echo "APP_DEBUG=$X" >> .env',
+    'echo API_URL=$HOME/api >> .env',
+    "printf 'PORT=%s\\n' 8080 >> .env",
+    'echo "FOO=1" > .env',
+    "printf '%s=%s\\n' LD_DEBUG help > notes.txt",
+  ];
+  for (const command of good) passes(await decide(claude, cc('Bash', { command }, dir)), command);
+});
+
 test('an edit that removes or neutralises LD_DEBUG=help is allowed: the text it searches for is not written', async (t) => {
   const dir = project(t);
   const env = path.join(dir, '.env');
