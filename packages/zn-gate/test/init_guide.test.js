@@ -60,8 +60,8 @@ test('plan: one route per agent found; agents not found get no steps', async (t)
   const m = machine(t, ['claude-code', 'codex']);
   const { items, setup } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const by = Object.fromEntries(items.map((i) => [i.id, i]));
-  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn#v' + VERSION, 'claude plugin install zn-gate@usezn']);
-  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn#v' + VERSION]);
+  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn']);
+  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn']);
   assert.equal(by['claude-code'].steps[0].run[0], path.resolve('/opt/bin/claude'));
   assert.deepEqual(by.codex.steps.map(line), ['zn hooks install codex']);
   // An install that stays runs its own CLI with node, by absolute path.
@@ -78,7 +78,7 @@ test('plan: without a claude command, Claude Code gets the two /plugin commands 
   const cc = items.find((i) => i.id === 'claude-code');
   assert.equal(cc.steps.length, 1);
   assert.equal(cc.steps[0].run, null);
-  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn#v' + VERSION + ' and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
+  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
 });
 
 test('plan: from a temporary copy, one global install comes before the hooks, by absolute path', async (t) => {
@@ -698,4 +698,40 @@ test('guide: a stub npm that sleeps past the limit gets its own timeout text, an
   assert.match(out2.text(), /npm could not reach the registry\./);
   assert.doesNotMatch(out2.text(), /did not finish: /);
   assert.doesNotMatch(out2.text(), /npm ls -g/);
+});
+
+// The plugin pin moves only after npm publishes a release, so a release tag never holds the pin of its own release.
+// A command that adds the marketplace at the tag of the installed release would install an older zn-gate inside the
+// plugin, and `zn-gate check` would then prescribe the same command again. While the pin differs from the package
+// version, no user-facing text may carry a tagged marketplace ref; a merge that brings one back fails here.
+test('no user-facing command adds the plugin marketplace at a tag while the plugin pin is not the package version', () => {
+  const root = path.join(__dirname, '..', '..', '..');
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', 'scripts', 'zn-gate.lock.json'), 'utf8'));
+  const pins = new Set([lock.version, JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'zn-gate', '.claude-plugin', 'plugin.json'), 'utf8')).version]);
+  if (pins.size === 1 && pins.has(pkgVersion)) return; // the pin is the release: a tag would hold the matching plugin
+  const walk = (dir, out) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, out); } else if (/\.(js|md|json)$/.test(e.name)) out.push(p);
+    }
+    return out;
+  };
+  const files = [
+    ...walk(path.join(__dirname, '..', 'lib'), []),
+    ...walk(path.join(root, 'plugins', 'zn-gate', 'scripts'), []),
+    ...walk(path.join(root, 'docs'), []),
+    path.join(root, 'README.md'),
+    path.join(__dirname, '..', 'README.md'),
+    path.join(root, 'plugins', 'README.md'),
+    path.join(root, 'plugins', 'zn-gate', 'README.md'),
+    path.join(root, 'plugins', 'claude-dir', 'README.md'),
+  ];
+  const bad = [];
+  for (const f of files) {
+    fs.readFileSync(f, 'utf8').split('\n').forEach((l, i) => {
+      if (/marketplace add[^\n]*usezn\/zn#/.test(l) || /MARKETPLACE_REF\s*=\s*'usezn\/zn#/.test(l)) bad.push(path.relative(root, f) + ':' + (i + 1));
+    });
+  }
+  assert.deepEqual(bad, [], 'tagged plugin marketplace ref while the plugin pin is ' + [...pins].join('/') + ' and the package is ' + pkgVersion);
 });
