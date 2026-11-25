@@ -296,6 +296,48 @@ function loaderNameMentionedIn(text) {
 // What shellDotenvWrite returns for a write whose text zn cannot see.
 const OPAQUE_WRITE = '<opaque>';
 
+// Redefinition of echo, printf or cat. A shell write to a dotenv file is allowed only as a literal echo, printf or cat, which assumes
+// those words run the shell builtin or the system tool. The SAME command can change that first: a function or alias, enable, hash,
+// builtin, source, eval, exec, a changed PATH, expand_aliases, BASH_ENV. Any of them anywhere in the command refuses the write.
+// Single-quoted text is literal and is not read, except in a command with a here-document (a body can hold quotes), which is read whole.
+// A function or alias defined by an EARLIER command of a persistent shell is not visible here.
+const REDEFINABLE = '<redefinable>';
+const REDEF_KEYWORD_RE = /(^|[^\w.-])(alias|unalias|enable|hash|source|eval|exec|declare|typeset|readonly|shopt)(?![\w-])/;
+// `builtin echo` and `builtin printf` are the two-word forms the writer check accepts; any other builtin is refused.
+const REDEF_BUILTIN_RE = /(^|[^\w.-])builtin(?![\w-])(?!\s+(echo|printf)(?![\w-]))/;
+const REDEF_SUBST_RE = /<<<|[<>]\(/;
+const REDEF_FUNCTION_RE = /(^|[^\w])function\s|[^\s;&|(){}]\s*\(\s*\)/;
+const REDEF_DOT_RE = /(^|[;&|({\n]|\b(then|do|else)\b)\s*\.\s/;
+const REDEF_SET_RE = /(^|[^\w])set\s+[-+]\w*o/;
+const REDEF_PATH_RE = /(^|[^\w])(PATH|BASH_ENV)\+?=|(^|[;&|({\n])\s*ENV\+?=|(^|[^\w])export\s+[^;&|\n]*(?<![\w])(PATH|BASH_ENV|ENV)(?![\w])/;
+
+function withoutSingleQuoted(s) {
+  let out = '';
+  let dq = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\') { out += c + (i + 1 < s.length ? s[i + 1] : ''); i++; continue; }
+    if (dq) { if (c === '"') dq = false; out += c; continue; }
+    if (c === '"') { dq = true; out += c; continue; }
+    if (c === "'") {
+      const j = s.indexOf("'", i + 1);
+      if (j < 0) return null; // unterminated: not read as a literal
+      out += "''";
+      i = j;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+function canRedefineEcho(text) {
+  const s = String(text);
+  const t = /<</.test(s) ? s : withoutSingleQuoted(s);
+  if (t === null) return true;
+  return REDEF_KEYWORD_RE.test(t) || REDEF_BUILTIN_RE.test(t) || REDEF_SUBST_RE.test(t) || REDEF_FUNCTION_RE.test(t) || REDEF_DOT_RE.test(t) || REDEF_SET_RE.test(t) || REDEF_PATH_RE.test(t);
+}
+
 /*
  * Shell writes to a dotenv file. What a command writes is known only when it is literal text, so a write is allowed only in two forms:
  *  - `echo` or `printf` as the first word of its simple command (no VAR=value prefix, no env, command, sudo or other wrapper, no
@@ -499,10 +541,15 @@ function literalWriteVerdict(s, cmd, next) {
     if (NOT_LITERAL_RE.test(body)) return OPAQUE_WRITE;
     texts = [body];
   } else {
-    if (first.raw !== 'echo' && first.raw !== 'printf') return OPAQUE_WRITE;
-    const args = cmd.words.slice(1);
+    // The writer is an unqualified echo or printf; `builtin echo` and `command printf` (exactly two words) are the same literals.
+    let wi = 0;
+    if ((first.raw === 'builtin' || first.raw === 'command') && !first.special && cmd.words[1] && !cmd.words[1].special &&
+      (cmd.words[1].raw === 'echo' || cmd.words[1].raw === 'printf')) wi = 1;
+    const writer = cmd.words[wi];
+    if (writer.raw !== 'echo' && writer.raw !== 'printf') return OPAQUE_WRITE;
+    const args = cmd.words.slice(wi + 1);
     for (const a of args) if (a.special || !LITERAL_LIVE_RE.test(a.live) || a.text.startsWith('-') || /[\r\n]/.test(a.text)) return OPAQUE_WRITE;
-    if (first.raw === 'printf') {
+    if (writer.raw === 'printf') {
       if (args.length !== 1) return OPAQUE_WRITE;
       texts = [args[0].text];
     } else {
@@ -528,6 +575,7 @@ function literalWriteVerdict(s, cmd, next) {
 function shellDotenvWrite(text, isDotenv) {
   const s = String(text);
   const targets = new Set();
+  let redefinable;
   const opaque = () => ({ verdict: loaderNameMentionedIn(s) || OPAQUE_WRITE, targets });
   let i = 0;
   while (i < s.length) {
@@ -539,6 +587,8 @@ function shellDotenvWrite(text, isDotenv) {
       return blindDotenvTarget(s, i, isDotenv) ? opaque() : { verdict: null, targets };
     }
     if (dotenv.length) {
+      if (redefinable === undefined) redefinable = canRedefineEcho(s);
+      if (redefinable) return { verdict: loaderNameMentionedIn(s) || REDEFINABLE, targets };
       const next = { at: cmd.end + 1 };
       const verdict = literalWriteVerdict(s, cmd, next);
       if (verdict === OPAQUE_WRITE) return opaque();
@@ -554,4 +604,4 @@ function shellDotenvWrite(text, isDotenv) {
   return { verdict: null, targets };
 }
 
-module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, REDEFINABLE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };

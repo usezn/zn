@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
-const { hookStopAssignedIn, preloadAssignedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES } = require('../loader-env');
+const { hookStopAssignedIn, preloadAssignedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, REDEFINABLE, PRELOAD_WRITE_NAMES } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.14';
+const POLICY_RULES_VERSION = '2026-11-25.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1018,16 +1018,18 @@ function loaderPreloadDenial(name, p) {
     'into every program the agent starts, the shell of every zn hook included, before zn can check anything. An agent may not make this change. Ask the user to make it.';
 }
 
-function opaqueEnvWriteDenial(p) {
+function opaqueEnvWriteDenial(p, redefinable) {
   const base = path.basename(String(p));
   return 'zn: ' + base + ' is a file the agent loads into its environment, and zn cannot check what this command writes to it. ' +
     'Use a literal assignment (echo NAME=value >> ' + base + ') or edit the file with the editor tool, which zn checks. A shell write to this file ' +
-    'must be a plain echo or printf with no %, backslash, $, command substitution, glob or prefix; a copy from another file is refused too.';
+    'must be a plain echo or printf with no %, backslash, $, command substitution, glob or prefix; a copy from another file is refused too.' +
+    (redefinable ? ' This command can redefine echo, printf or cat (a function, alias, source, eval or PATH change), so it is not read as a literal write.' : '');
 }
 
 /** The refusal for what a shell write to a dotenv file would do: a loader name it sets or mentions, or OPAQUE_WRITE. */
 function dotenvShellWriteDenial(verdict, p) {
   if (verdict === OPAQUE_WRITE) return opaqueEnvWriteDenial(p);
+  if (verdict === REDEFINABLE) return opaqueEnvWriteDenial(p, true);
   if (verdict === 'LD_DEBUG' || verdict === 'LD_TRACE_LOADED_OBJECTS') return loaderEnvDenial(verdict, p);
   return PRELOAD_WRITE_NAMES.includes(verdict) ? loaderPreloadDenial(verdict, p) : loaderEnvDenial(verdict, p);
 }
