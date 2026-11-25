@@ -519,12 +519,18 @@ test('GitHub Copilot CLI: an unknown file tool with the .env path deep in its ar
       if (dotenv) blocked(await decide(copilot, same), levels === 1 ? STOP : null, 'same level ' + levels);
       else passes(await decide(copilot, same));
       const d = await decide(copilot, below);
-      if (dotenv) {
-        // At the limit the text is unreadable: the adapter refuses it in its own answer (respond), not in the decision.
-        const out = (await runner.handle(copilot, below, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open' })).output;
-        if (d.decision === 'deny') blocked(d, null, 'below ' + levels);
-        else assert.equal(out && out.permissionDecision, 'deny', 'below ' + levels);
-      } else passes(d);
+      const out = (await runner.handle(copilot, below, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open' })).output;
+      const outDeny = Boolean(out && out.permissionDecision === 'deny');
+      // Where the refusal shows up: inside the limit the decision reads the nested text and denies it (a dotenv target only), and the
+      // adapter answer (respond) echoes it; at the limit the text is unreadable, so the decision allows and only the adapter answer
+      // (respond) refuses, for any target.
+      if (levels < MAX_NEST_DEPTH) {
+        if (dotenv) { blocked(d, null, 'below ' + levels); assert.equal(outDeny, true, 'below ' + levels + ' answer'); }
+        else { passes(d); assert.equal(outDeny, false, 'below ' + levels + ' other'); }
+      } else {
+        assert.equal(d.decision, 'allow', 'below ' + levels + ' decision');
+        assert.equal(outDeny, true, 'below ' + levels + ' answer');
+      }
     }
   }
 });
@@ -547,6 +553,7 @@ test('Claude Code: an unknown tool with a .env path deep in its arguments is ref
   // Past the limit the path cannot be read: refused, for any target.
   for (const levels of [MAX_NEST_DEPTH + 1, MAX_NEST_DEPTH + 2]) {
     blocked(await decide(claude, call(levels, env)), null, 'env at ' + levels);
+    blocked(await decide(claude, call(levels, other)), null, 'other at ' + levels);
   }
   // The same through a list of objects.
   const inList = (levels, target) => cc('files_helper', nest(names.slice(0, levels), { items: [{ path: target, content: 'LD_DEBUG=help' }] }), dir);
