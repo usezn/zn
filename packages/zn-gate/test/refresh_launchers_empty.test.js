@@ -66,7 +66,7 @@ test('refreshLaunchers: main stays quiet and does not throw in these cases', (t)
   assert.equal(out, '');
 });
 
-test('refreshLaunchers: a static launcher that differs from the package copy is replaced', { skip: !posix }, (t) => {
+test('refreshLaunchers: a static launcher that differs from the package copy is replaced', (t) => {
   const c = setup(t);
   fs.mkdirSync(c.hookDir, { recursive: true });
   const sl = require('../lib/agents/static-launcher');
@@ -82,13 +82,13 @@ test('refreshLaunchers: a static launcher that differs from the package copy is 
   assert.deepEqual(done, [sl.NAME]);
 });
 
-test('refreshLaunchers: no static launcher installed leaves things as they are, with no throw', { skip: !posix }, (t) => {
+test('refreshLaunchers: no static launcher installed leaves things as they are, with no throw', (t) => {
   const c = setup(t);
   fs.mkdirSync(c.hookDir, { recursive: true });
   assert.deepEqual(refresh.refreshLaunchers({ env: c.env, runnerPath: c.runner, platform: 'linux', arch: 'x64' }), []);
 });
 
-test('refreshLaunchers: an error that is not a file-system error is not swallowed', { skip: !posix }, (t) => {
+test('refreshLaunchers: an error that is not a file-system error is not swallowed', (t) => {
   const c = setup(t);
   fs.mkdirSync(c.hookDir, { recursive: true });
   const sl = require('../lib/agents/static-launcher');

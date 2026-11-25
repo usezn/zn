@@ -172,6 +172,14 @@ test('macOS and Windows get no static launcher and no warning about it', () => {
   assert.match(sl.installStatic({ platform: 'linux', arch: 'ia32' }).warning, /no prebuilt launcher is built for ia32 Linux/);
 });
 
+test('launcher.js exports the four text functions and each returns a non-empty string', () => {
+  for (const name of ['loaderText', 'loaderWarnText', 'crashText', 'crashWarnText']) {
+    assert.equal(typeof launcher[name], 'function', name);
+    const text = launcher[name]('zcode');
+    assert.ok(typeof text === 'string' && text.length > 0, name);
+  }
+});
+
 test('the launcher answers with the same texts as the sh launcher, and knows the same loader variables', () => {
   const src = fs.readFileSync(RUST, 'utf8');
   for (const text of [launcher.loaderText(), launcher.loaderWarnText(), launcher.crashText('zcode'), launcher.crashWarnText()]) {
