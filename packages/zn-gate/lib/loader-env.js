@@ -473,7 +473,8 @@ function opaqueWriteIn(s) {
     if (valueFrom >= 0 && i >= valueFrom) { inValue = true; valueFrom = -1; }
     if (at === 2) continue; // a comment
     const live = at === 0;
-    if (inValue && (c === '\n' || c === '\r' || (c === '\\' && /[nr]/.test(s.charAt(i + 1))) || (live && /[\s;&|<>()]/.test(c)))) inValue = false;
+    const fmtEsc = c === '\\' && pIdx >= 0 && wordIdx === pIdx + 1 && !/[\\t"']/.test(s.charAt(i + 1)); // any other escape in a printf format may emit a line break (\x0a, \012, \u000a, \v, \f ...)
+    if (inValue && (c === '\n' || c === '\r' || fmtEsc || (c === '\\' && /[nr]/.test(s.charAt(i + 1))) || (live && /[\s;&|<>()]/.test(c)))) inValue = false;
     if (live && /[\s;&|<>()]/.test(c)) {
       endWord(i);
       if (c === '>' || (c === '<' && s.charAt(i + 1) !== '<' && s.charAt(i - 1) !== '<')) {
@@ -498,6 +499,7 @@ function opaqueWriteIn(s) {
     const allowed = inValue || (pIdx >= 0 && wordIdx >= pIdx + 2 && fmtOk);
     if (c === '%' && pIdx >= 0 && (wordIdx === pIdx + 1 || (wordIdx > pIdx + 1 && !fmtOk))) {
       if (s.charAt(i + 1) === '%') i++;
+      else if (/^[-+ #0-9.*]{0,6}b/.test(s.slice(i + 1, i + 8))) return true; // %b interprets escapes in its argument: it can emit a line break anywhere
       else if (!inValue) return true; // a conversion outside a literal NAME= value can assemble a name from literal arguments
       continue;
     }
