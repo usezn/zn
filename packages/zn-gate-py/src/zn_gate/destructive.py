@@ -868,9 +868,9 @@ def _unwrap(args: List[str]) -> List[str]:
     return _unwrap_dir(args)[0]
 
 
-def _resolve_dots(t: str) -> str:
+def _resolve_dots(t: str, depth: int = 2) -> str:
     """Resolve "." and ".." lexically (no filesystem) for a path that starts at "/", a drive or a home word.
-    A ".." above "/" or a drive root stays there; a ".." out of the home folder reads it as /home/<user>, so it names /home and keeps climbing from there. Relative paths are left alone."""
+    A ".." above "/" or a drive root stays there; a ".." out of the home folder is read both ways, since the depth of the real home is not known here (/root is one level, /home/<user> two): depth 2 reads the first step as /home, depth 1 as "/", depth 0 leaves the text alone for a caller that reads both. Relative paths are left alone."""
     if not re.search(r"(?:^|/)\.\.?(?:/|\Z)", t):
         return t
     home = False
@@ -893,17 +893,24 @@ def _resolve_dots(t: str) -> str:
         elif out:
             out.pop()
         elif home:
+            if depth == 0:
+                return t
             home, anchor = False, "/"
-            out.append("home")
+            if depth == 2:
+                out.append("home")
     return anchor + "/".join(out)
 
 
 def _dangerous_path(word: str) -> str:
+    return _dangerous_path_at(word, 2) or _dangerous_path_at(word, 1)
+
+
+def _dangerous_path_at(word: str, depth: int) -> str:
     """'root', 'home' or 'system' for a path this policy protects, else ''."""
     t = re.sub(r"/{2,}", "/", str(word).replace("\\", "/"))
     if not t:
         return ""
-    t = _resolve_dots(t)
+    t = _resolve_dots(t, depth)
     for _ in range(4):
         s = re.sub(r"/(?:\*|\.\*|\.|\{\*,\.\*\})?\Z", "", t, count=1)
         if s == t and len(t) > 1 and t.endswith("*"):
@@ -1188,7 +1195,8 @@ def _from_cwd(cwd: Any, word: str) -> str:
         return "/"
     ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
     # The folder and the word joined are read lexically, so cd /opt && curl -o ../etc/profile names /etc/profile.
-    return _resolve_dots((_folder_text(cwd, ups + 4) + "/" + word).replace("\\", "/"))
+    # A ".." out of a home folder stays in the text: _dangerous_path and _is_rc_path read it at both home depths.
+    return _resolve_dots((_folder_text(cwd, ups + 4) + "/" + word).replace("\\", "/"), 0)
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
@@ -1339,7 +1347,10 @@ def _is_rc_path(w: str) -> bool:
     t = str(w).replace("\\", "/")
     t = re.sub(r"^~/", "/", t)
     t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
-    return bool(_RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)))
+    if _RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)):
+        return True
+    slashed = str(w).replace("\\", "/")
+    return any(u != slashed and _is_rc_path(u) for u in (_resolve_dots(slashed, 2), _resolve_dots(slashed, 1)))
 
 
 def _out_flag(w: str) -> bool:

