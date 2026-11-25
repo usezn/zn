@@ -129,27 +129,26 @@ function isHookStopVar(key, value) {
   return String(key) === 'LD_TRACE_LOADED_OBJECTS' || (String(key) === 'LD_DEBUG' && /(?:^|[\s,:])help(?:$|[\s,:])/.test(String(value)));
 }
 
-// NAME=value as it is written in a .env file, in a shell command (echo, printf, tee, sed, a heredoc, `$env:NAME='x'`) or in a patch, and
-// NAME: value (the dotenv package reads that form too, with a space after the colon). The captured value is quoted, or runs to the end of the line or to a shell separator,
-// a sed slash or a closing bracket; it is only where the checks below start. Whether a write stops the hooks is decided on everything the
-// value can run over (valueSpan), not on this capture. A bare NAME with no "=" sets nothing.
+
+// NAME=value as it is written in a .env file or a patch, and NAME: value (the dotenv package reads that form too, with a space after
+// the colon). The captured value is quoted, or runs to the end of the line or to a shell separator, a sed slash or a closing bracket; it
+// is only where the checks below start. Whether a write stops the hooks is decided on everything the value can run over (valueSpan), not
+// on this capture. A bare NAME with no "=" sets nothing.
 const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
 
 // glibc splits LD_DEBUG at spaces, commas and colons and acts on an option that reads exactly "help". A write is judged more widely:
-// "help" with no letter, digit or _ on either side, once quotes and backslashes are removed. A value that a file reader or the shell cuts
-// in another place than a regular expression would (x/,help, libs},help, help>>.env, "all" help) is then never taken as safe. This can
-// refuse a value glibc would ignore (/opt/help); it never allows one glibc acts on.
+// "help" with no letter, digit or _ on either side, once quotes and backslashes are removed. A value that a file reader cuts in another
+// place than a regular expression would (x/,help, libs},help, "all" help) is then never taken as safe. This can refuse a value glibc
+// would ignore (/opt/help); it never allows one glibc acts on.
 const HELP_WORD_RE = /(?:^|[^A-Za-z0-9_])help(?![A-Za-z0-9_])/;
 
 /**
- * The text a written value can run over, from just after the "=" of the assignment:
- * - in a file (.env, a patch, an edit): to the end of the line or, when the value opens with a quote, to the end of the line where that
- *   quote closes (the dotenv package reads a quoted value over several lines; an unclosed quote runs to the end of the text);
- * - in a shell command: to the end of the command. Quotes and line breaks inside one shell word are not tracked, so all the rest counts.
+ * The text a written value can run over, from just after the "=" of the assignment: to the end of the line or, when the value opens
+ * with a quote, to the end of the line where that quote closes (the dotenv package reads a quoted value over several lines; an unclosed
+ * quote runs to the end of the text).
  */
-function valueSpan(s, from, shell) {
+function valueSpan(s, from) {
   const rest = s.slice(from);
-  if (shell) return rest;
   const q = /^[ \t]*(["'`])/.exec(rest);
   let start = 0;
   if (q) {
@@ -186,14 +185,14 @@ function unterminatedQuote(s, from) {
 
 /**
  * Whether an assignment found in written text may stop the hooks: LD_TRACE_LOADED_OBJECTS to anything, or LD_DEBUG when "help" can be
- * one of its options (HELP_WORD_RE over the span; an escape such as \n counts as a break). In a file, an LD_DEBUG value that refers to
- * a variable ($X, ${X}) is refused too, because a loader that expands it would write a value the text does not show.
+ * one of its options (HELP_WORD_RE over the span; an escape such as \n counts as a break) or when the value refers to a variable ($X,
+ * ${X}), because a loader that expands it would write a value the text does not show.
  */
-function writtenValueStopsHooks(key, span, shell) {
+function writtenValueStopsHooks(key, span) {
   if (key === 'LD_TRACE_LOADED_OBJECTS') return true;
   if (key !== 'LD_DEBUG') return false;
   const plain = String(span).replace(/\\[nrt]/g, ' ').replace(/["'`\\]/g, '');
-  return HELP_WORD_RE.test(plain) || (!shell && /\$/.test(String(span)));
+  return HELP_WORD_RE.test(plain) || /\$/.test(String(span));
 }
 
 // Index of the first character after the "=" (or ":") of a match of HOOK_STOP_ASSIGNMENT_RE.
@@ -207,133 +206,8 @@ function hookStopAssignedIn(text) {
   let m;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
     const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
-    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), false), false) ||
+    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m))) ||
       (m[1] === 'LD_DEBUG' && unterminatedQuote(s, valueStart(m)))) return m[1];
-  }
-  return null;
-}
-
-// A value is proven safe only when it holds nothing the shell or printf would expand ($NAME, ${..}, $(..), `..`, $((..)), %s, a backslash,
-// an adjacent quote that glues pieces together): what such a value becomes is not known until it runs. An unquoted value runs to the end of the
-// line, so what follows it (a redirection, more words) is part of what is checked.
-const COMPUTED_VALUE_RE = /[$`\%]/;
-
-// The two names as whole words, also right after a \n, \r or \t escape inside a printf or echo -e string.
-const HOOK_STOP_NAME_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])/g;
-// A shell or printf expansion: $NAME, ${..}, $(..), `..`, or a printf conversion such as %s or %-10s.
-const EXPANSION_SRC = String.raw`(?:\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!$-]|` + '`[^`]*`' + String.raw`|%[-#0 +']*[0-9*]*(?:\.[0-9*]+)?[a-zA-Z])`;
-// A variable name the shell or printf computes: an expansion right before "=" (echo "$K=$V", printf '%s=%s').
-const COMPUTED_NAME_RE = new RegExp(EXPANSION_SRC + '[ \\t]*=');
-// A piece of one of the two names glued to an expansion: L$X, LD_${N}, %s_DEBUG, $(echo L)D_DEBUG.
-// Brace expansion and globs build names too: LD_{DEBUG,X}=help, {LD,X}_DEBUG=help, LD_DEBU?=help.
-const NAME_PIECE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])(?:L|LD|LD_[A-Z_]*)(?=[$` + '`' + String.raw`%{?*[])|(?:` + EXPANSION_SRC +
-  String.raw`|[},\]?*])(?:[A-Z_]*(?:UG|CTS))(?![A-Za-z0-9_])`);
-// A printf or echo -e escape that writes a character by its code (\x4c, \114, L, \cX): the text does not show the character.
-const CODE_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]|[0-7]|u[0-9A-Fa-f]|U[0-9A-Fa-f])/;
-// Programs and quoting that turn such escapes into characters: printf, echo -e and $'..'.
-const ESCAPE_WRITER_RE = /(?<![A-Za-z0-9_-])printf(?![A-Za-z0-9_-])|(?<![A-Za-z0-9_-])echo[ \t]+-[A-Za-z]*e|\$'/;
-// For each position of `s`, how the shell reads it, in one forward pass with POSIX quoting rules: 0 = live text, 1 = quoted or
-// backslash-escaped (never a glob), 2 = inside a comment. Among the quoted positions, 3 marks the ones the shell also never expands
-// ($ and ` there are plain characters): inside single quotes or $'..', and the character after an escaping backslash. Outside quotes a
-// backslash escapes the next character and `#` at the start of a word begins a comment up to the line end; inside single quotes nothing
-// is special; inside double quotes a backslash escapes only $ ` " \ and a line break; $'..' is quoted and a backslash escapes inside it.
-// `bad` is set when the text uses syntax this scan does not model (an unterminated quote, a here-document), and callers fail closed.
-function quoteMap(s) {
-  const inside = new Uint8Array(s.length + 1);
-  let q = ''; // '', "'", '"' or 'a' for $'..'
-  let bad = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charAt(i);
-    if (q === "'") { inside[i] = c === "'" ? 1 : 3; if (c === "'") q = ''; continue; }
-    if (q === 'a') {
-      inside[i] = c === "'" ? 1 : 3;
-      if (c === '\\') { i++; if (i < s.length) inside[i] = 3; } else if (c === "'") q = '';
-      continue;
-    }
-    if (q === '"') {
-      inside[i] = 1;
-      if (c === '\\') { const n = s.charAt(i + 1); if (n && '$`"\\\n'.includes(n)) { i++; inside[i] = 3; } } else if (c === '"') q = '';
-      continue;
-    }
-    if (c === '\\') { inside[i] = 1; i++; if (i < s.length) inside[i] = 3; continue; }
-    if (c === "'" || c === '"') { inside[i] = 1; q = c; continue; }
-    if (c === '$' && s.charAt(i + 1) === "'") { inside[i] = 1; i++; inside[i] = 1; q = 'a'; continue; }
-    if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(s.charAt(i - 1)))) {
-      while (i < s.length && s.charAt(i) !== '\n') { inside[i] = 2; i++; }
-      // Shells end a comment at the line break even after a backslash; we refuse this form anyway because it is ambiguous to
-      // readers and never needed to write a .env.
-      if (i < s.length && s.charAt(i - 1) === '\\') bad = true;
-      i--; // the line break itself is live text again
-      continue;
-    }
-    if (c === '<' && s.charAt(i + 1) === '<' && s.charAt(i + 2) !== '<' && s.charAt(i - 1) !== '<') bad = true; // here-document
-  }
-  if (q) bad = true;
-  inside.bad = bad;
-  return inside;
-}
-// Whether the shell word that starts at `from` holds a glob character (* ? [ {) outside quotes. `inside` is quoteMap(s).
-function unquotedGlobIn(s, from, inside) {
-  for (let i = from; i < s.length; i++) {
-    if (inside[i]) continue; // quoted, escaped or inside a comment
-    const c = s.charAt(i);
-    if (/[\s;&|<>]/.test(c)) return false;
-    if (/[*?\[{]/.test(c)) return true;
-  }
-  return false;
-}
-const COMPUTED_NAME = 'a variable whose name the shell computes (it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS)';
-
-/**
- * Like hookStopAssignedIn, for a shell command that writes a dotenv file: the command text is not what ends up in the file once the
- * shell has expanded it. Fails closed: also returns a name when a write cannot be shown to be plain literal text, namely when
- * - LD_DEBUG or LD_TRACE_LOADED_OBJECTS is assigned a value that is not plain literal text (a variable, a command substitution,
- *   arithmetic, quoting tricks, a printf format), because it could expand to help;
- * - one of the two names appears other than as such a literal assignment: as a printf argument (printf '%s=%s' LD_DEBUG help), or
- *   once quotes and backslashes are removed ('LD_'"DEBUG"=help, L\D_DEBUG=help);
- * - a name is computed by the shell or printf ("$K=$V", printf '%s=%s'), or a piece of one of the two names is glued to an expansion
- *   (LD_${N}=help, %s_DEBUG).
- */
-function hookStopOrComputedIn(text) {
-  const s = String(text);
-  // What the shell leaves once quotes and backslashes are gone (an escape such as \n is a line break in printf and echo -e).
-  const flat = s.replace(/\\[nrt]/g, '\n').replace(/["'\\]/g, '');
-  const count = (t) => { HOOK_STOP_NAME_RE.lastIndex = 0; return (t.match(HOOK_STOP_NAME_RE) || []).length; };
-  if (COMPUTED_NAME_RE.test(flat) || NAME_PIECE_RE.test(flat) || (CODE_ESCAPE_RE.test(s) && ESCAPE_WRITER_RE.test(s))) return COMPUTED_NAME;
-  if (!flat.includes('LD_')) return null;
-  HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
-  let m;
-  let literal = 0;
-  let inside = null; // quote state of every position, computed once and only when a loader assignment is found
-  while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
-    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
-    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), true), true)) return m[1];
-    const end = m.index + m[0].length;
-    const next = s.charAt(end);
-    const before = s.charAt(m.index - 1);
-    // Where the word ends: whitespace, a separator, a redirection or the end. A quote that closes the quote the assignment sits in
-    // ('LD_DEBUG=all') ends it too. Anything else touching the value (he"lp", "he"lp, 'he'"lp", a backslash or bracket) glues more text
-    // to it, so the value as written is not the value that results.
-    const atEnd = (c) => c === '' || /[\s;&|<>)]/.test(c);
-    const wordEnds = (i) => atEnd(s.charAt(i)) || ((s.charAt(i) === '"' || s.charAt(i) === "'") && before === s.charAt(i) && atEnd(s.charAt(i + 1)));
-    let glued;
-    if (m[2] !== undefined || m[3] !== undefined) glued = !wordEnds(end); // the closing quote of the value is already inside the match
-    else glued = /["'\\)}]/.test(next) && !((next === '"' || next === "'") && before === next && atEnd(s.charAt(end + 1)));
-    // An unquoted glob (he*p, he?p, he[l]p, he{l,x}p) expands to a file name in the project, so the value is not what is written.
-    // Each glob character is judged by the quote state at its own position: a quoted prefix does not protect an unquoted glob after it
-    // ("LD_DEBUG="he*p), and a glob inside quotes ('LD_DEBUG=he*p') is not expanded.
-    if (!inside) inside = quoteMap(s);
-    if (inside.bad) return m[1]; // syntax the scan does not model: fail closed
-    const globbed = unquotedGlobIn(s, valueStart(m), inside);
-    if (glued || globbed || COMPUTED_VALUE_RE.test(value)) return m[1];
-    literal++;
-  }
-  // Every time one of the two names appears, in the text as written and once quotes are removed, it is a literal assignment checked above.
-  const named = count(s);
-  if (named > literal || count(flat) > named) {
-    HOOK_STOP_NAME_RE.lastIndex = 0;
-    const hit = HOOK_STOP_NAME_RE.exec(flat) || HOOK_STOP_NAME_RE.exec(s);
-    return hit ? hit[1] : 'LD_DEBUG';
   }
   return null;
 }
@@ -404,140 +278,280 @@ function preloadNamedIn(s) {
   return null;
 }
 
-// The first character after $ that makes an expansion: a name, ${..}, $(..), $((..)) or a special parameter.
-const EXPANDS_AFTER_DOLLAR = /[A-Za-z_{(0-9@*#?!$-]/;
-// A character right before which a variable name cannot start: it would be part of a longer word, or glued to an expansion or a pattern.
-const NAME_GLUE = /[A-Za-z0-9_$%{}`)\]?*\\]/;
-// A shell expansion outside single quotes, for the line by line reading below.
-const LINE_EXPANSION_RE = /\$[A-Za-z_{(0-9@*#?!$-]|`/;
-// A line that starts with a literal assignment: what follows it to the end of the line is the value.
-const LINE_ASSIGNMENT_RE = /^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*["']?[ \t]*(?:=|:(?=[ \t]))/;
+// The two names as whole words, also right after a \n, \r or \t escape.
+const HOOK_STOP_NAME_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])/;
 
 /**
- * The opaque-write rule, for text the quote scan cannot model (a here-document, an unterminated quote), read line by line: a line that
- * holds an expansion is opaque unless it starts with a literal NAME= (or NAME: ) and the expansion is in what follows.
+ * For a command whose written text zn cannot see: the first loader name it mentions, LD_TRACE_LOADED_OBJECTS or LD_DEBUG anywhere
+ * (in the text as written or once quotes and backslashes are removed), or a preload name other than as an empty assignment
+ * (preloadNamedIn), or null. Only chooses which refusal to give: such a write is refused either way.
  */
-function opaqueByLines(s) {
-  for (const line of s.split(/\r\n|\n|\r/)) {
-    const m = LINE_ASSIGNMENT_RE.exec(line);
-    if (!m && LINE_EXPANSION_RE.test(line)) return true;
+function loaderNameMentionedIn(text) {
+  const s = String(text);
+  const flat = s.replace(/\\[nrt]/g, '\n').replace(/["'\\]/g, '');
+  const m = HOOK_STOP_NAME_RE.exec(s) || HOOK_STOP_NAME_RE.exec(flat);
+  return m ? m[1] : preloadNamedIn(s);
+}
+
+// What shellDotenvWrite returns for a write whose text zn cannot see.
+const OPAQUE_WRITE = '<opaque>';
+
+/*
+ * Shell writes to a dotenv file. What a command writes is known only when it is literal text, so a write is allowed only in two forms:
+ *  - `echo` or `printf` as the first word of its simple command (no VAR=value prefix, no env, command, sudo or other wrapper, no
+ *    quotes or backslash in the word), with arguments that hold no %, no backslash, no $, no back quote, no line break, no unquoted
+ *    * ? [ ] { } ~ ( ) #, and do not start with "-" (no echo or printf option); printf takes exactly one argument, its format, which is
+ *    then plain text;
+ *  - `cat` with a here-document whose delimiter is quoted (<<'EOF'), a body with none of % \ $ `, and the line of the command ending
+ *    right after its redirections.
+ * The text written is then checked like a file edit (hookStopAssignedIn, preloadAssignedIn). Every other command that writes a dotenv
+ * file is refused, also a copy from another file (cp, cat x > .env, tee .env < x), whose content zn cannot see.
+ *
+ * The command is read in one pass with POSIX quoting. Anything that reading does not model the way every shell would (a back quote,
+ * $( ${ $' $", a here-document, a process substitution, PowerShell's <# comment, a backslash before a quote, a comment that ends in a
+ * backslash, an unclosed quote) ends it: from that simple command on, every > is taken as a redirection whatever the quotes, and one
+ * that may write a dotenv file refuses the command.
+ */
+
+// Characters an argument may hold outside quotes. Inside quotes anything goes but % \ $ and the back quote.
+const LITERAL_LIVE_RE = /^[A-Za-z0-9_=.:\/+,-]*$/;
+// Characters no argument may hold anywhere.
+const NOT_LITERAL_RE = /[%\\$`]/;
+// Unquoted characters of a redirection target that make it a pattern (or bad syntax).
+const TARGET_PATTERN_RE = /[*?[\]{}()]/;
+
+/** Whether `s[i]` ends a simple command outside quotes: ; & | or a line break, but not the & or | of a redirection (>&2, &>, >|). */
+function endsCommand(s, i) {
+  const c = s.charAt(i);
+  if (c === ';' || c === '\n' || c === '\r') return true;
+  if (c === '&') return s.charAt(i - 1) !== '>' && s.charAt(i + 1) !== '>';
+  if (c === '|') return s.charAt(i - 1) !== '>';
+  return false;
+}
+
+/**
+ * One simple command of `s` from `from`, with POSIX quoting: its words (text with quotes removed; `live` = the characters outside
+ * quotes; `special` = holds % \ $ or a back quote anywhere), its redirections, its here-documents, where it ends, and `hazard` when it
+ * uses syntax the scan does not model (see above).
+ */
+function readSimpleCommand(s, from) {
+  const out = { end: s.length, words: [], redirs: [], heredocs: [], hazard: false };
+  let word = null;
+  let q = '';
+  let pending = null; // a redirection waiting for its target word
+  const open = (i) => { if (!word) word = { start: i, text: '', ps: '', live: '', special: false, raw: '' }; return word; };
+  const close = (i) => {
+    if (!word) return;
+    word.raw = s.slice(word.start, i);
+    if (pending) { pending.target = word; out.redirs.push(pending); pending = null; } else out.words.push(word);
+    word = null;
+  };
+  let i = from;
+  for (; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (q === "'") {
+      if (c === "'") q = ''; else { word.text += c; word.ps += c; if (NOT_LITERAL_RE.test(c)) word.special = true; }
+      continue;
+    }
+    if (q === '"') {
+      if (c === '"') { q = ''; continue; }
+      if (NOT_LITERAL_RE.test(c)) word.special = true;
+      if (c === '`' || (c === '$' && /[({'"]/.test(s.charAt(i + 1)))) out.hazard = true;
+      if (c === '\\') {
+        const n = s.charAt(i + 1);
+        if (n === '"' || n === "'") out.hazard = true;
+        if (n && '$`\\\n'.includes(n)) { word.text += n; word.ps += c + n; i++; continue; }
+      }
+      word.text += c; word.ps += c;
+      continue;
+    }
+    if (c === ' ' || c === '\t') { close(i); continue; }
+    if (endsCommand(s, i)) break;
+    if (c === '#' && !word) {
+      // A comment runs to the end of the line; shells disagree on a backslash right before that end.
+      while (i < s.length && s.charAt(i) !== '\n' && s.charAt(i) !== '\r') i++;
+      if (s.charAt(i - 1) === '\\') out.hazard = true;
+      i--;
+      continue;
+    }
+    if (c === '>' || (c === '&' && s.charAt(i + 1) === '>') || c === '<') {
+      // A word of digits right before the operator is its file descriptor (2>x); any other word ends here.
+      if (word && /^[0-9]+$/.test(s.slice(word.start, i))) word = null; else close(i);
+      if (pending) { out.redirs.push(pending); pending = null; } // an operator with no target
+      if (c === '<') {
+        const n = s.charAt(i + 1);
+        if (n === '(' || n === '#') { out.hazard = true; continue; }
+        if (n === '<') {
+          if (s.charAt(i + 2) === '<') { out.hazard = true; i += 2; continue; }
+          // A here-document: its delimiter is the next word; any quote or backslash in it makes the body literal text.
+          let k = i + 2;
+          const dash = s.charAt(k) === '-';
+          if (dash) k++;
+          while (s.charAt(k) === ' ' || s.charAt(k) === '\t') k++;
+          let e = k;
+          let dq = '';
+          while (e < s.length) {
+            const d = s.charAt(e);
+            if (dq) { if (d === dq) dq = ''; e++; continue; }
+            if (d === "'" || d === '"') { dq = d; e++; continue; }
+            if (/[\s;&|<>()]/.test(d)) break;
+            e++;
+          }
+          if (dq) out.hazard = true;
+          const raw = s.slice(k, e);
+          out.heredocs.push({ quoted: /['"\\]/.test(raw), delim: raw.replace(/['"\\]/g, ''), dash, plain: /^(['"])[A-Za-z0-9_]+\1$/.test(raw) });
+          i = e - 1;
+          continue;
+        }
+        pending = { op: '<', at: i, target: null };
+        continue;
+      }
+      let k = i;
+      if (c === '&') k++;
+      k++; // past the first >
+      if (s.charAt(k) === '(' && c === '>') { out.hazard = true; continue; }
+      if (s.charAt(k) === '>' || s.charAt(k) === '|') k++;
+      if (s.charAt(k) === '&') {
+        // >&2, 2>&1, >&-: a copy of a descriptor, no file.
+        let e = k + 1;
+        while (/[0-9]/.test(s.charAt(e))) e++;
+        if (s.charAt(e) === '-') e++;
+        if (e > k + 1) { i = e - 1; continue; }
+        k++;
+      }
+      pending = { op: '>', at: i, target: null };
+      i = k - 1;
+      continue;
+    }
+    if (c === '\\') {
+      const n = s.charAt(i + 1);
+      if (n === '"' || n === "'") out.hazard = true;
+      const w = open(i);
+      w.special = true;
+      if (n === '\n') { i++; continue; } // a line continuation
+      if (n) { w.text += n; w.ps += c + n; w.live += c; i++; }
+      continue;
+    }
+    const w = open(i);
+    if (c === "'" || c === '"') {
+      q = c;
+      continue;
+    }
+    if (c === '`' || (c === '$' && /[({'"]/.test(s.charAt(i + 1)))) out.hazard = true;
+    if (NOT_LITERAL_RE.test(c)) w.special = true;
+    w.text += c; w.ps += c; w.live += c;
+  }
+  if (q) out.hazard = true; // an unclosed quote
+  close(i);
+  if (pending) out.redirs.push(pending);
+  out.end = i;
+  return out;
+}
+
+/** The two readings of a redirection target: POSIX (a backslash escapes) and PowerShell or cmd.exe (a backslash is a separator). */
+const targetTexts = (w) => (w.text === w.ps ? [w.text] : [w.text, w.ps]);
+
+/**
+ * The quote-blind fallback: from `from` on, every > is a redirection, and the word after it (quotes and backslashes removed, and
+ * with backslashes kept) its target. Returns true when one may be a dotenv file. Linear: each character is read once.
+ */
+function blindDotenvTarget(s, from, isDotenv) {
+  for (let i = s.indexOf('>', from); i >= 0 && i < s.length; i = s.indexOf('>', i)) {
+    while (i < s.length && /[>|&\s]/.test(s.charAt(i))) i++;
+    let e = i;
+    while (e < s.length && !/[\s;&|<>()]/.test(s.charAt(e))) e++;
+    const raw = s.slice(i, e);
+    i = e;
+    if (!raw) continue;
+    if (/[$`*?[{%]/.test(raw)) return true;
+    const kept = raw.replace(/['"]/g, '');
+    if (isDotenv(kept) || isDotenv(kept.replace(/\\(.)/g, '$1'))) return true;
   }
   return false;
 }
 
 /**
- * Whether a shell command that writes a dotenv file writes OPAQUE text: a variable name, or a whole line, that only the shell knows once
- * it runs. That is the case when an expansion ($NAME, ${..}, $(..), `..`, outside single quotes) or an unquoted pattern (* ?, [x], {a,b})
- * sits anywhere but
- * - in the value of a literal assignment: after NAME= or NAME: , where NAME is a plain name ([A-Za-z_][A-Za-z0-9_]*) not glued to an
- *   expansion or pattern, up to the end of that shell word, a line break or a \n or \r escape (echo "API_URL=$URL", sed -i "s|^A=.*|A=$V|" .env);
- * - in an argument of printf whose format (the word right after printf) has every conversion in such a value (printf 'TOKEN=%s\n' "$T"); a printf conversion
- *   anywhere else is opaque even with literal arguments (printf '%s%s\n' LD_ DEBUG=help). Every word that is printf is analysed, in any position
- *   (env printf, X=1 printf, command printf, "printf", \printf, sudo printf, xargs printf); options after it (--, -v VAR) and a missing format
- *   make the write opaque;
- * - in the file a redirection names (>> "$DIR/.env"), or in a comment.
- * Everything else fails closed: printf "$X", echo "$LINE", printf '%s=%s\n' "$K" "$V", echo * > .env, and also expansions in other parts
- * of the command (cd "$D" && ...). One forward pass over the quote map.
+ * For a simple command that writes a dotenv file: OPAQUE_WRITE when it is not one of the two literal forms, else the loader name its
+ * text sets (hookStopAssignedIn, preloadAssignedIn) or null. `next` gets where the scan goes on (after a here-document body).
  */
-function opaqueWriteIn(s) {
-  if (!/[$`*?[{]/.test(s) && !s.replace(/["'\\]/g, '').includes('printf')) return false;
-  const inside = quoteMap(s);
-  if (inside.bad) return opaqueByLines(s);
-  const n = s.length;
-  let inValue = false;
-  let valueFrom = -1;
-  let nameUntil = 0; // end of the last name scanned: each run of name characters is scanned once
-  let inWord = false;
-  let target = false;
-  let pendingTarget = false;
-  let wordIdx = -1;
-  let wordStart = 0;
-  let pIdx = -1; // index of the last word of this simple command that is printf (in any position: env printf, X=1 printf, "printf", \\printf)
-  let fmtOk = true;
-  let dangling = false; // a printf word with no word after it: its format cannot be known
-  const reset = () => {
-    if (pIdx >= 0 && wordIdx === pIdx) dangling = true;
-    wordIdx = -1; pIdx = -1; fmtOk = true; pendingTarget = false;
-  };
-  const endWord = (i) => {
-    if (!inWord) return;
-    inWord = false;
-    if (!target) {
-      const word = s.slice(wordStart, i).replace(/["'\\]/g, '');
-      if (word.slice(word.lastIndexOf('/') + 1) === 'printf') { pIdx = wordIdx; fmtOk = true; }
-    }
-  };
-  for (let i = 0; i < n; i++) {
-    const c = s.charAt(i);
-    const at = inside[i];
-    if (valueFrom >= 0 && i >= valueFrom) { inValue = true; valueFrom = -1; }
-    if (at === 2) continue; // a comment
-    const live = at === 0;
-    const fmtEsc = c === '\\' && pIdx >= 0 && wordIdx === pIdx + 1 && !/[\\t"']/.test(s.charAt(i + 1)); // any other escape in a printf format may emit a line break (\x0a, \012, \u000a, \v, \f ...)
-    if (inValue && (c === '\n' || c === '\r' || fmtEsc || (c === '\\' && /[nr]/.test(s.charAt(i + 1))) || (live && /[\s;&|<>()]/.test(c)))) inValue = false;
-    if (live && /[\s;&|<>()]/.test(c)) {
-      endWord(i);
-      if (c === '>' || (c === '<' && s.charAt(i + 1) !== '<' && s.charAt(i - 1) !== '<')) {
-        pendingTarget = true;
-        while (inside[i + 1] === 0 && /[>&|]/.test(s.charAt(i + 1))) i++;
-      } else if (c !== '<' && (c === '\n' || !/\s/.test(c))) {
-        reset(); // ; & | ( ) and a line break end the simple command
-      }
-      continue;
-    }
-    if (!inWord) {
-      inWord = true;
-      target = pendingTarget;
-      pendingTarget = false;
-      if (!target) {
-        wordIdx++;
-        wordStart = i;
-        if (pIdx >= 0 && wordIdx === pIdx + 1 && c === '-') fmtOk = false; // an option (--, -v VAR), not the format
-      }
-    }
-    if (target) continue; // the file a redirection names is not written text
-    const allowed = inValue || (pIdx >= 0 && wordIdx >= pIdx + 2 && fmtOk);
-    if (c === '%' && pIdx >= 0 && (wordIdx === pIdx + 1 || (wordIdx > pIdx + 1 && !fmtOk))) {
-      if (s.charAt(i + 1) === '%') i++;
-      else if (/^[-+ #0-9.*]{0,6}b/.test(s.slice(i + 1, i + 8))) return true; // %b interprets escapes in its argument: it can emit a line break anywhere
-      else if (!inValue) return true; // a conversion outside a literal NAME= value can assemble a name from literal arguments
-      continue;
-    }
-    if (at !== 3 && ((c === '$' && EXPANDS_AFTER_DOLLAR.test(s.charAt(i + 1))) || c === '`')) {
-      if (!allowed) return true;
-      if (/[{?*@#!$0-9-]/.test(s.charAt(i + 1))) i++; // ${, $? and $* are not patterns
-      continue;
-    }
-    if (live && (c === '*' || c === '?' || ((c === '[' || c === '{') && !/^[\s[{]?$/.test(s.charAt(i + 1))))) {
-      if (!allowed) return true;
-      continue;
-    }
-    if (i >= nameUntil && /[A-Za-z_]/.test(c) &&
-        (i === 0 || !NAME_GLUE.test(s.charAt(i - 1)) || (s.charAt(i - 2) === '\\' && /[nrt]/.test(s.charAt(i - 1))))) {
-      let j = i + 1;
-      while (j < n && /[A-Za-z0-9_]/.test(s.charAt(j))) j++;
-      nameUntil = j;
-      if (s.charAt(j) === '"' || s.charAt(j) === "'") j++;
-      while (s.charAt(j) === ' ' || s.charAt(j) === '\t') j++;
-      if (s.charAt(j) === '=' || (s.charAt(j) === ':' && /[ \t]/.test(s.charAt(j + 1)))) valueFrom = j + 1;
-    }
-    if (dangling) return true;
+function literalWriteVerdict(s, cmd, next) {
+  for (const r of cmd.redirs) {
+    if (r.op === '<' || !r.target || /[%$`]/.test(r.target.raw) || TARGET_PATTERN_RE.test(r.target.live)) return OPAQUE_WRITE;
   }
-  endWord(n);
-  reset();
-  return dangling;
+  const first = cmd.words[0];
+  if (!first) return OPAQUE_WRITE;
+  let texts;
+  if (cmd.heredocs.length) {
+    const h = cmd.heredocs[0];
+    if (cmd.heredocs.length !== 1 || first.raw !== 'cat' || cmd.words.length !== 1 || !h.plain || h.dash || s.charAt(cmd.end) !== '\n') return OPAQUE_WRITE;
+    // The body: the lines after this one, up to the line that is exactly the delimiter.
+    const bodyFrom = cmd.end + 1;
+    let at = bodyFrom;
+    let bodyEnd = -1;
+    while (at <= s.length) {
+      let eol = s.indexOf('\n', at);
+      if (eol < 0) eol = s.length;
+      if (s.slice(at, eol) === h.delim) { bodyEnd = at; next.at = eol + 1; break; }
+      at = eol + 1;
+    }
+    if (bodyEnd < 0) return OPAQUE_WRITE;
+    const body = s.slice(bodyFrom, bodyEnd);
+    if (NOT_LITERAL_RE.test(body)) return OPAQUE_WRITE;
+    texts = [body];
+  } else {
+    if (first.raw !== 'echo' && first.raw !== 'printf') return OPAQUE_WRITE;
+    const args = cmd.words.slice(1);
+    for (const a of args) if (a.special || !LITERAL_LIVE_RE.test(a.live) || a.text.startsWith('-') || /[\r\n]/.test(a.text)) return OPAQUE_WRITE;
+    if (first.raw === 'printf') {
+      if (args.length !== 1) return OPAQUE_WRITE;
+      texts = [args[0].text];
+    } else {
+      // POSIX echo joins its arguments with spaces; PowerShell's echo writes one per line.
+      const words = args.map((a) => a.text);
+      texts = [words.join(' ') + '\n', words.join('\n') + '\n'];
+    }
+  }
+  for (const t of texts) {
+    const name = hookStopAssignedIn(t) || preloadAssignedIn(t);
+    if (name) return name;
+  }
+  return null;
 }
-
-// What preloadOrOpaqueIn returns for an opaque write.
-const OPAQUE_WRITE = '<opaque>';
 
 /**
- * For a shell command that writes a dotenv file: a preload name it sets to a value (preloadNamedIn), OPAQUE_WRITE when the names it writes
- * are not plain to see (opaqueWriteIn, unless opts.opaque is false), or null. Run after hookStopOrComputedIn.
+ * Verdict on a shell command that writes a dotenv file through a redirection (> or >>). `isDotenv(text)` says whether a redirection
+ * target names a dotenv file. Returns { verdict, targets }: verdict is null when every redirection that may write a dotenv file is one
+ * of the literal forms above and sets no loader variable, else the loader name it sets, or the loader name the command mentions, or
+ * OPAQUE_WRITE; targets holds the dotenv targets that were checked (the caller refuses a target it found that is not among them).
+ * One forward pass.
  */
-function preloadOrOpaqueIn(text, opts = {}) {
+function shellDotenvWrite(text, isDotenv) {
   const s = String(text);
-  return preloadNamedIn(s) || (opts.opaque !== false && opaqueWriteIn(s) ? OPAQUE_WRITE : null);
+  const targets = new Set();
+  const opaque = () => ({ verdict: loaderNameMentionedIn(s) || OPAQUE_WRITE, targets });
+  let i = 0;
+  while (i < s.length) {
+    const cmd = readSimpleCommand(s, i);
+    const dotenv = cmd.redirs.filter((r) => r.op === '>' && (!r.target || /[%$`]/.test(r.target.raw) || TARGET_PATTERN_RE.test(r.target.live) ||
+      targetTexts(r.target).some(isDotenv)));
+    if (cmd.hazard || (cmd.heredocs.length && !dotenv.length)) {
+      // Past syntax the scan does not model: any redirection that may write a dotenv file refuses the command.
+      return blindDotenvTarget(s, i, isDotenv) ? opaque() : { verdict: null, targets };
+    }
+    if (dotenv.length) {
+      const next = { at: cmd.end + 1 };
+      const verdict = literalWriteVerdict(s, cmd, next);
+      if (verdict === OPAQUE_WRITE) return opaque();
+      if (verdict) return { verdict, targets };
+      for (const r of dotenv) for (const t of targetTexts(r.target)) targets.add(t);
+      if (cmd.heredocs.length) {
+        // After a here-document the rest is read quote-blind.
+        return blindDotenvTarget(s, next.at, isDotenv) ? opaque() : { verdict: null, targets };
+      }
+    }
+    i = cmd.end + 1;
+  }
+  return { verdict: null, targets };
 }
 
-module.exports = { isHookStopVar, hookStopAssignedIn, hookStopOrComputedIn, preloadAssignedIn, preloadOrOpaqueIn, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { isHookStopVar, hookStopAssignedIn, preloadAssignedIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
