@@ -151,16 +151,42 @@ function hookStopAssignedIn(text) {
 // line, so what follows it (a redirection, more words) is part of what is checked.
 const COMPUTED_VALUE_RE = /[$`\%]/;
 
+// The two names as whole words, also right after a \n, \r or \t escape inside a printf or echo -e string.
+const HOOK_STOP_NAME_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])/g;
+// A shell or printf expansion: $NAME, ${..}, $(..), `..`, or a printf conversion such as %s or %-10s.
+const EXPANSION_SRC = String.raw`(?:\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!$-]|` + '`[^`]*`' + String.raw`|%[-#0 +']*[0-9*]*(?:\.[0-9*]+)?[a-zA-Z])`;
+// A variable name the shell or printf computes: an expansion right before "=" (echo "$K=$V", printf '%s=%s').
+const COMPUTED_NAME_RE = new RegExp(EXPANSION_SRC + '[ \\t]*=');
+// A piece of one of the two names glued to an expansion: L$X, LD_${N}, %s_DEBUG, $(echo L)D_DEBUG.
+// Brace expansion and globs build names too: LD_{DEBUG,X}=help, {LD,X}_DEBUG=help, LD_DEBU?=help.
+const NAME_PIECE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])(?:L|LD|LD_[A-Z_]*)(?=[$` + '`' + String.raw`%{?*[])|(?:` + EXPANSION_SRC +
+  String.raw`|[},\]?*])(?:[A-Z_]*(?:UG|CTS))(?![A-Za-z0-9_])`);
+// A printf or echo -e escape that writes a character by its code (\x4c, \114, L, \cX): the text does not show the character.
+const CODE_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]|[0-7]|u[0-9A-Fa-f]|U[0-9A-Fa-f])/;
+// Programs and quoting that turn such escapes into characters: printf, echo -e and $'..'.
+const ESCAPE_WRITER_RE = /(?<![A-Za-z0-9_-])printf(?![A-Za-z0-9_-])|(?<![A-Za-z0-9_-])echo[ \t]+-[A-Za-z]*e|\$'/;
+const COMPUTED_NAME = 'a variable whose name the shell computes (it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS)';
+
 /**
  * Like hookStopAssignedIn, for a shell command that writes a dotenv file: the command text is not what ends up in the file once the
- * shell has expanded it. Fails closed: also returns the name when LD_DEBUG or LD_TRACE_LOADED_OBJECTS is assigned a value that is not
- * plain literal text (a variable, a command substitution, arithmetic, quoting tricks, a printf format), because it could expand to help.
+ * shell has expanded it. Fails closed: also returns a name when a write cannot be shown to be plain literal text, namely when
+ * - LD_DEBUG or LD_TRACE_LOADED_OBJECTS is assigned a value that is not plain literal text (a variable, a command substitution,
+ *   arithmetic, quoting tricks, a printf format), because it could expand to help;
+ * - one of the two names appears other than as such a literal assignment: as a printf argument (printf '%s=%s' LD_DEBUG help), or
+ *   once quotes and backslashes are removed ('LD_'"DEBUG"=help, L\D_DEBUG=help);
+ * - a name is computed by the shell or printf ("$K=$V", printf '%s=%s'), or a piece of one of the two names is glued to an expansion
+ *   (LD_${N}=help, %s_DEBUG).
  */
 function hookStopOrComputedIn(text) {
   const s = String(text);
-  if (!s.includes('LD_')) return null;
+  // What the shell leaves once quotes and backslashes are gone (an escape such as \n is a line break in printf and echo -e).
+  const flat = s.replace(/\\[nrt]/g, '\n').replace(/["'\\]/g, '');
+  const count = (t) => { HOOK_STOP_NAME_RE.lastIndex = 0; return (t.match(HOOK_STOP_NAME_RE) || []).length; };
+  if (COMPUTED_NAME_RE.test(flat) || NAME_PIECE_RE.test(flat) || (CODE_ESCAPE_RE.test(s) && ESCAPE_WRITER_RE.test(s))) return COMPUTED_NAME;
+  if (!flat.includes('LD_')) return null;
   HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
   let m;
+  let literal = 0;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
     const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
     if (isHookStopVar(m[1], value)) return m[1];
@@ -176,6 +202,14 @@ function hookStopOrComputedIn(text) {
     if (m[2] !== undefined || m[3] !== undefined) glued = !wordEnds(end); // the closing quote of the value is already inside the match
     else glued = /["'\\)}]/.test(next) && !((next === '"' || next === "'") && before === next && atEnd(s.charAt(end + 1)));
     if (glued || COMPUTED_VALUE_RE.test(value)) return m[1];
+    literal++;
+  }
+  // Every time one of the two names appears, in the text as written and once quotes are removed, it is a literal assignment checked above.
+  const named = count(s);
+  if (named > literal || count(flat) > named) {
+    HOOK_STOP_NAME_RE.lastIndex = 0;
+    const hit = HOOK_STOP_NAME_RE.exec(flat) || HOOK_STOP_NAME_RE.exec(s);
+    return hit ? hit[1] : 'LD_DEBUG';
   }
   return null;
 }
