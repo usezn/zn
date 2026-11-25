@@ -11,7 +11,8 @@
 //   - a bundled dependency from package-lock.json is missing from the tarball,
 //     or is not listed with its exact version in THIRD_PARTY_NOTICES.md;
 //   - the tarball contains the test suite, env files, keys or certificates;
-//   - with --hook-launcher (the release build): the static hook launcher binaries for Linux x64 and arm64 or their
+//   - with --hook-launcher (for the release tarball, run by hand; the release build checks the launcher in its own
+//     step and does not pass this flag): the static hook launcher binaries for Linux x64 and arm64 or their
 //     SHA-256 list (lib/native/hook-launcher.json) are missing, or a binary does not match the list.
 'use strict';
 
