@@ -438,7 +438,7 @@ test('a marketplace add names the plugin tag plugin-v<pluginVersion>, in the for
     for (const [cmd, re] of [...BAD_CLAUDE, ...BAD_CODEX]) {
       const errs = mine(runP(with_(f, [cmd])), f);
       assert.equal(errs.length, 1, `${f}: ${cmd}\n${errs.join('\n')}`);
-      assert.match(errs[0], new RegExp(`^${f.replace(/[/.]/g, '\\$&')}:\\d+: `), `${f}: ${cmd}`);
+      assert.match(errs[0], new RegExp(`^${f.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}:\\d+: `), `${f}: ${cmd}`);
       assert.match(errs[0], re, `${f}: ${cmd}`);
     }
   }
