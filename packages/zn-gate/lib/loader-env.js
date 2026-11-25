@@ -153,12 +153,35 @@ function valueSpan(s, from, shell) {
   const q = /^[ \t]*(["'`])/.exec(rest);
   let start = 0;
   if (q) {
-    const close = rest.indexOf(q[1], q[0].length);
+    const close = quoteClose(rest, q[0].length, q[1]);
     if (close < 0) return rest;
     start = close + 1;
   }
   const eol = rest.slice(start).search(/[\n\r]/);
   return eol < 0 ? rest : rest.slice(0, start + eol);
+}
+
+/**
+ * Index of the quote that closes a quoted value in a .env file, searching from `from` (just after the opening quote), or -1. The npm dotenv
+ * package matches a quoted value as (?:\\Q|[^Q])* for all three quote characters, so a backslash before the quote character keeps the
+ * value open, in single quotes and backticks too, whatever precedes that backslash. Its regular expression can also backtrack and close
+ * at such a quote, so the value may be shorter than this scan says; the caller checks everything up to this index and to the end of its
+ * line, which covers both readings. One forward pass.
+ */
+function quoteClose(text, from, quote) {
+  for (let i = from; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (c === '\\' && text.charAt(i + 1) === quote) { i++; continue; }
+    if (c === quote) return i;
+  }
+  return -1;
+}
+
+/** Whether the value of a file assignment opens a quote that nothing closes: unresolved, so an LD_DEBUG write is refused. */
+function unterminatedQuote(s, from) {
+  const rest = s.slice(from);
+  const q = /^[ \t]*(["'`])/.exec(rest);
+  return !!q && quoteClose(rest, q[0].length, q[1]) < 0;
 }
 
 /**
@@ -184,7 +207,8 @@ function hookStopAssignedIn(text) {
   let m;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
     const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
-    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), false), false)) return m[1];
+    if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), false), false) ||
+      (m[1] === 'LD_DEBUG' && unterminatedQuote(s, valueStart(m)))) return m[1];
   }
   return null;
 }
