@@ -17,3 +17,7 @@
   write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
   under any key and at any depth for these files, and only an exact list of read-only file tools (such as the filesystem
   server's `read_file`) may name them without giving the file they leave.
+- A write to a project `.env` or `.gemini/.env` through a tool zn does not know is refused even when the call carries the
+  text: such a tool may append or insert it instead of writing the whole file. Only the agents' own whole-file write tools,
+  the filesystem server's `write_file` without an append or mode flag, and edits and patches zn applies to the file on disk
+  give zn the file a call leaves.

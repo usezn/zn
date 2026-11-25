@@ -33,6 +33,15 @@ const flat = (n, target, last) => {
   for (let i = 0; i < n; i++) o['k' + i] = i === n - 1 && last ? last : { x: 1 };
   return o;
 };
+// The same object with an edit in place of the body (the same number of objects): an edit zn applies to the file on disk. A body sent
+// to a tool zn does not know is refused for a .env, so the harmless case of a found dotenv path is an edit.
+const flatEdit = (n, target) => {
+  const o = flat(n, target);
+  delete o.content;
+  o.old_string = 'FOO=1';
+  o.new_string = 'FOO=2';
+  return o;
+};
 
 function project(t) {
   const dir = tempDir(t, 'zn-nest-');
@@ -86,8 +95,8 @@ test('decisions at the node limit: Gemini CLI, Antigravity and Copilot CLI read 
     assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES - 1, other))), false, id + ' other at the limit');
     assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES, other))), true, id + ' other one past the limit');
     assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES, env))), true, id + ' env one past the limit');
-    // A dotenv path inside the limit is found and judged: this one writes a harmless value, so it is allowed.
-    assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES - 1, env))), false, id + ' env at the limit');
+    // A dotenv path inside the limit is found and judged: this one is an edit with a harmless result, so it is allowed.
+    assert.equal(await refused(adapter, shape(flatEdit(MAX_NEST_NODES - 1, env))), false, id + ' env at the limit');
   }
 });
 
@@ -107,11 +116,14 @@ test('Claude Code unknown tool: a dotenv path at depth MAX_NEST_DEPTH is read, o
   const dir = project(t);
   const env = path.join(dir, '.env');
   const other = path.join(dir, 'notes.txt');
-  const call = (levels, target) => ({ session_id: 's', cwd: dir, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'files_helper', tool_input: nest(names.slice(0, levels), { path: target, content: 'x' }), tool_use_id: 't' });
+  const call = (levels, target, leaf) => ({ session_id: 's', cwd: dir, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'files_helper', tool_input: nest(names.slice(0, levels), leaf || { path: target, content: 'x' }), tool_use_id: 't' });
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH, other)), false, 'other at the limit');
   // The dotenv path is found at the limit, but the text next to it sits too deep for the text scan: refused as unreadable.
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH, env)), true, 'env at the limit: found, text unreadable');
-  assert.equal(await refused(claude, call(1, env)), false, 'env at depth 1: found and read, harmless value');
+  // At depth 1 the path and an edit next to it are read; the edit leaves a harmless file, so it is allowed.
+  assert.equal(await refused(claude, call(1, env, { path: env, old_string: 'FOO=1', new_string: 'FOO=2' })), false, 'env at depth 1: found and read, harmless edit');
+  // A body next to it is refused: zn does not know whether this tool writes it as the whole file.
+  assert.equal(await refused(claude, call(1, env)), true, 'env at depth 1: body sent to an unknown tool');
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH + 1, other)), true, 'other past the limit');
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH + 1, env)), true, 'env past the limit');
 });
