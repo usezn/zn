@@ -6,7 +6,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,9 @@ const GOOD_NOTICES = [
   '| left-pad | 1.3.0 | MIT | https://example.invalid/left-pad |',
   '',
 ].join('\n');
+
+// The notices a tarball with the static hook launcher needs on top (what is linked into the launcher).
+const LAUNCHER_NOTICES = GOOD_NOTICES + ['## Rust standard library (static hook launcher)', '', '## musl libc (static hook launcher)', ''].join('\n');
 
 // A package directory. `pkg` is merged over a valid package.json; `lock` replaces the
 // package-lock.json object; `notices` replaces THIRD_PARTY_NOTICES.md.
@@ -83,9 +87,51 @@ function packJson({ files = [...OWN, ...BUNDLED], unpackedSize = 12345, raw } = 
   return path;
 }
 
-function run(packPath, dir) {
-  return spawnSync(process.execPath, [SCRIPT, packPath, dir], { encoding: 'utf8' });
+function run(packPath, dir, ...flags) {
+  return spawnSync(process.execPath, [SCRIPT, packPath, dir, ...flags], { encoding: 'utf8' });
 }
+
+// The static hook launcher files of a release build, written into the package directory.
+const LAUNCHER = ['lib/native/hook-launcher.json', 'lib/native/linux-x64/zn-hook-launcher', 'lib/native/linux-arm64/zn-hook-launcher'];
+function withLauncher(dir, { wrongSha = false } = {}) {
+  const list = {};
+  for (const k of ['linux-x64', 'linux-arm64']) {
+    mkdirSync(join(dir, 'lib', 'native', k), { recursive: true });
+    const bytes = Buffer.from('launcher ' + k);
+    writeFileSync(join(dir, 'lib', 'native', k, 'zn-hook-launcher'), bytes);
+    list[k] = wrongSha && k === 'linux-arm64' ? 'a'.repeat(64) : createHash('sha256').update(bytes).digest('hex');
+  }
+  writeFileSync(join(dir, 'lib', 'native', 'hook-launcher.json'), JSON.stringify(list));
+  return dir;
+}
+
+test('--hook-launcher: a tarball with both launchers and a matching list passes', () => {
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir({ notices: LAUNCHER_NOTICES })), '--hook-launcher');
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test('--hook-launcher: a launcher missing from the tarball fails', () => {
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, LAUNCHER[0], LAUNCHER[1]] }), withLauncher(packageDir({ notices: LAUNCHER_NOTICES })), '--hook-launcher');
+  assert.equal(r.status, 1);
+  assert.ok(r.stderr.includes('static hook launcher file not in tarball: lib/native/linux-arm64/zn-hook-launcher'), r.stderr);
+});
+
+test('--hook-launcher: a launcher that does not match the list fails', () => {
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir({ notices: LAUNCHER_NOTICES }), { wrongSha: true }), '--hook-launcher');
+  assert.equal(r.status, 1);
+  assert.ok(r.stderr.includes('static hook launcher linux-arm64 does not match lib/native/hook-launcher.json'), r.stderr);
+});
+
+test('without --hook-launcher the launcher is not required (CI packs without it)', () => {
+  const r = run(packJson(), packageDir());
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test('an unknown flag fails with the usage', () => {
+  const r = run(packJson(), packageDir(), '--other');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /usage:/);
+});
 
 test('a complete tarball passes and the summary counts own and bundled files', () => {
   const r = run(packJson(), packageDir());
@@ -198,4 +244,14 @@ test('pack output that is not JSON fails closed', () => {
 test('a bin written as a string shorthand is read as one target', { todo: 'known bug: Object.values() on a string bin splits it into characters, so a valid package fails with "missing required file: ."' }, () => {
   const r = run(packJson(), packageDir({ pkg: { bin: './bin/cli.js' } }));
   assert.equal(r.status, 0, r.stderr);
+});
+
+test('a tarball with the static hook launcher needs the Rust standard library and musl libc notices', () => {
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir()), '--hook-launcher');
+  assert.notEqual(r.status, 0);
+  assert.ok(r.stderr.includes('no "## Rust standard library" section'), r.stderr);
+  assert.ok(r.stderr.includes('no "## musl libc" section'), r.stderr);
+  // Without the launcher in the tarball the notices are not needed.
+  const plain = run(packJson(), packageDir());
+  assert.equal(plain.status, 0, plain.stderr);
 });
