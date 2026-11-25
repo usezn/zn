@@ -39,7 +39,7 @@ Which editor pages describe a user install (all your projects), a project instal
 
 ## Experimental hooks
 
-Gemini CLI has an experimental hook adapter. It is listed apart from the seven supported agents above (Claude Code, Codex CLI, OpenCode, Cursor, GitHub Copilot, Google Antigravity and the ZCode desktop app) and is less tested. It blocks reads and writes of secret files by path and shell commands that handle secrets, and stops the agent from editing its own hook or settings files.
+Gemini CLI and Copilot CLI have experimental hook adapters. They are listed apart from the six supported agents (Claude Code, Codex CLI, OpenCode, Cursor, Google Antigravity and the ZCode desktop app) and are less tested. Copilot CLI uses the same hooks as Copilot in VS Code and the GitHub Copilot app; what it covers is in the agent table above and on [its page](vscode.md). The Gemini CLI adapter blocks reads and writes of secret files by path and shell commands that handle secrets, and stops the agent from editing its own hook or settings files.
 
 Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on June 18, 2026. Gemini CLI keeps working with zn-gate as an experimental adapter.
 
