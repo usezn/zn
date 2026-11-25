@@ -13,6 +13,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+// Started, not looked up: on Windows /bin/sh is /bin/sh.exe, which fs.existsSync does not find.
+const shellStarts = (sh) => { try { return spawnSync(sh, ['-c', 'exit 0'], { stdio: 'ignore' }).status === 0; } catch { return false; } };
 const { pathToFileURL } = require('url');
 
 const launcher = require('../lib/agents/launcher');
@@ -68,7 +70,7 @@ function hostileEnv(f, extra = {}) {
   };
 }
 
-test('sanity: the preloads in the hostile environment do run when Node.js is started with it directly', { skip: !posix }, (t) => {
+test('sanity: the preloads in the hostile environment do run when Node.js is started with it directly', (t) => {
   const f = fixture(t);
   const env = hostileEnv(f);
   for (const k of ['LD_PRELOAD', 'OPENSSL_CONF', 'NODE_EXTRA_CA_CERTS']) delete env[k];
@@ -80,7 +82,7 @@ test('sanity: the preloads in the hostile environment do run when Node.js is sta
 });
 
 for (const shell of ['/bin/sh', '/bin/bash']) {
-  test('sh launcher run by ' + shell + ': no loader variable reaches the hook, nothing preloads, CA and proxy settings stay', { skip: !posix || !fs.existsSync(shell) }, (t) => {
+  test('sh launcher run by ' + shell + ': no loader variable reaches the hook, nothing preloads, CA and proxy settings stay', { skip: !posix || !shellStarts(shell) ? shell + ' does not start on this system' : false }, (t) => {
     const f = fixture(t);
     const file = path.join(f.dir, 'zn-hook-claude-code.sh');
     fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, f.runner, { manifest: '' }), { mode: 0o755 });
@@ -146,7 +148,7 @@ test('the shared list: loader variables in any case, CA and proxy settings kept'
 });
 
 for (const scope of ['user', 'project']) {
-  test('OpenCode ' + scope + ' plugin: the hook is started without the loader variables', { skip: !posix }, async (t) => {
+  test('OpenCode ' + scope + ' plugin: the hook is started without the loader variables', async (t) => {
     const f = fixture(t);
     const file = path.join(f.dir, 'zn-gate-' + scope + '.mjs');
     let src = opencode.pluginSource({ scope, nodePath: process.execPath, runnerPath: f.runner });

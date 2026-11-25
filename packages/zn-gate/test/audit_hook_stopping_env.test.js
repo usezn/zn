@@ -54,3 +54,14 @@ test('Codex shell_environment_policy.set with LD_TRACE_LOADED_OBJECTS is critica
   const r = run(build(t, { '.codex/config.toml': '[shell_environment_policy.set]\nLD_TRACE_LOADED_OBJECTS = "1"\n' }));
   assert.equal(stops(r, '.codex/config.toml').length, 1, ids(r));
 });
+
+test('LD_TRACE_LOADED_OBJECTS in the env of one MCP server is a server-scoped finding, not a hook stop', (t) => {
+  const r = run(build(t, { '.mcp.json': JSON.stringify({ mcpServers: { demo: { command: 'node', args: ['server.js'], env: { LD_TRACE_LOADED_OBJECTS: '1' } } } }, null, 2) }));
+  assert.equal(r.findings.filter((f) => f.id === 'ZNA008' && f.severity === 'critical').length, 0, ids(r));
+  const f = r.findings.filter((f) => f.id === 'ZNA008' && f.file === '.mcp.json');
+  assert.equal(f.length, 1, ids(r));
+  assert.equal(f[0].severity, 'medium');
+  assert.match(f[0].detail, /MCP server "demo"/);
+  assert.match(f[0].detail, /fails to start/);
+  assert.doesNotMatch(f[0].detail, /hooks check nothing/);
+});

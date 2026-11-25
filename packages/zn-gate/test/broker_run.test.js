@@ -203,13 +203,13 @@ test('zn run drops dynamic loader variables when secret values are injected, and
   const stdout = sink();
   const stderr = sink();
   const loaderEnv = { ...nodeEnv, LD_PRELOAD: '/nonexistent/hook.so', DYLD_INSERT_LIBRARIES: '/nonexistent/hook.dylib', LD_ZN_KEPT_WITHOUT_VALUES: 'kept' };
-  const probe = 'console.log(["LD_PRELOAD","DYLD_INSERT_LIBRARIES","GCONV_PATH","NODE_PATH","PYTHONPATH","PERL5OPT","JAVA_TOOL_OPTIONS","BASH_ENV"].map((k) => process.env[k] === undefined ? "gone" : "present").join(" ") + "|" + (process.platform === "win32" ? process.env.NoDefaultCurrentDirectoryInExePath : "1"))';
-  const extra = { GCONV_PATH: '/nonexistent/gconv', NODE_PATH: '/nonexistent/mods', PYTHONPATH: '/x', PERL5OPT: '-Mx', JAVA_TOOL_OPTIONS: '-javaagent:x', BASH_ENV: '/x' };
+  const probe = 'console.log(["LD_PRELOAD","DYLD_INSERT_LIBRARIES","GCONV_PATH","NODE_PATH","PYTHONPATH","PYTHONUSERBASE","PERL5OPT","JAVA_TOOL_OPTIONS","BASH_ENV"].map((k) => process.env[k] === undefined ? "gone" : "present").join(" ") + "|" + (process.platform === "win32" ? process.env.NoDefaultCurrentDirectoryInExePath : "1"))';
+  const extra = { GCONV_PATH: '/nonexistent/gconv', NODE_PATH: '/nonexistent/mods', PYTHONPATH: '/x', PYTHONUSERBASE: '/x', PERL5OPT: '-Mx', JAVA_TOOL_OPTIONS: '-javaagent:x', BASH_ENV: '/x' };
   const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', probe], {
     vault, env: { ...loaderEnv, ...extra }, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} },
   });
   assert.equal(code, 0, stderr.text());
-  assert.equal(stdout.text().trim(), 'gone gone gone gone gone gone gone gone|1');
+  assert.equal(stdout.text().trim(), 'gone gone gone gone gone gone gone gone gone|1');
   assert.equal((stderr.text().match(/removed .*LD_PRELOAD/g) || []).length, 1, 'said once');
   assert.ok(!stderr.text().includes('/nonexistent/hook'), 'the values of the variables are not printed');
 });
