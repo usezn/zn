@@ -535,12 +535,15 @@ test('the history of a .env file is refused even when the file is gone from disk
   }
 });
 
-test('git steps that only clean up a tracked .env stay allowed', (t) => {
+test('git steps that only change the index or show names of a tracked .env stay allowed', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-gitclean-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const o = { cwd: dir, home: dir, env: {} };
-  for (const cmd of ['git restore --staged .env', 'git checkout -- .env', 'git restore .env', 'git stash push -- .env',
-    'git diff --stat -- .env', 'git log --oneline -- .env', 'git log --name-only -- .env', 'git show --stat HEAD -- .env']) {
+  // checkout, restore, reset and stash write stored content into the file in the worktree, which zn cannot see: refused.
+  for (const cmd of ['git restore --staged .env', 'git checkout -- .env', 'git restore .env', 'git stash push -- .env', 'git reset -- .env']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+  for (const cmd of ['git add .env', 'git rm --cached .env', 'git diff --stat -- .env', 'git log --oneline -- .env', 'git log --name-only -- .env', 'git show --stat HEAD -- .env']) {
     assert.equal(policy.bashDenial(cmd, o), null, cmd);
   }
   for (const cmd of ['git restore --source=HEAD~1 .env', 'git restore -s HEAD .env', 'git checkout HEAD -- .env', 'git checkout main .env',

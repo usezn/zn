@@ -34,7 +34,7 @@ function project(t) {
 async function denied(adapter, raw) {
   const res = await runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
   const out = res.output;
-  const outDeny = Boolean(out && (out.decision === 'deny' || out.permission === 'deny' ||
+  const outDeny = Boolean(out && (out.decision === 'deny' || out.permission === 'deny' || out.permissionDecision === 'deny' ||
     (out.hookSpecificOutput && out.hookSpecificOutput.permissionDecision === 'deny')));
   return { deny: (res.decision && res.decision.decision === 'deny') || outDeny, res };
 }
@@ -232,4 +232,63 @@ test('class 10: MCP copy/rename/unknown into .env is refused', async (t) => {
   assert.equal(policy.readOnlyToolName('mcp__fs__read_and_copy'), false);
   assert.equal(policy.readOnlyToolName('fs_moveFile'), false);
   assert.equal(policy.readOnlyToolName('do_thing'), false);
+});
+
+// Read-only allowlist: git steps that write stored content into the worktree (checkout, restore, reset, stash) are not read-only for
+// a command that names a watched dotenv file; add, commit and rm --cached only change the index or the history.
+test('read-only allowlist: git checkout, restore, reset and stash that name a .env are refused, index-only git steps pass', async (t) => {
+  const dir = project(t);
+  fs.writeFileSync(path.join(dir, '.env'), 'PORT=1\n');
+  const bash = (command) => cc(dir, 'Bash', { command });
+  for (const command of ['git checkout -- .env', 'git checkout HEAD -- .env.local', 'git restore .env', 'git restore --source=HEAD~1 .env',
+    'git reset --hard && cat .env', 'git reset -- .env', 'git stash pop && cat .env', 'git stash apply && cat .env', 'git stash push .env']) {
+    const r = await denied(claude, bash(command));
+    assert.equal(r.deny, true, command + ' ' + JSON.stringify(r.res.decision));
+  }
+  const r = await denied(claude, bash('git checkout -- .env'));
+  assert.match(JSON.stringify(r.res.decision), /file editor tool/);
+  for (const command of ['git add .env', 'git commit -m x .env', 'git rm --cached .env', 'git status .env']) {
+    await allowed(claude, bash(command), command);
+  }
+});
+
+// Class 10 refinement: a tool zn does not know (not an MCP tool) is read under any key and at any depth, so a .env named as src, dst,
+// from, to or deep inside the arguments is found; arguments zn cannot walk to the end are refused.
+test('class 10: unknown tools that name a .env under any key or too deep are refused', async (t) => {
+  const dir = project(t);
+  const deep = { a: { b: { c: { d: { e: { f: { g: { h: '.env' } } } } } } } };
+  const cases = [[{ src: 'a', dst: '.env' }, 'src/dst'], [{ from: '.env.local', to: 'b' }, 'from/to'],
+    [{ x: { y: { target: '.env' } } }, 'nested'], [deep, 'over-deep']];
+  for (const [args, what] of cases) {
+    await refused(claude, cc(dir, 'file_mover', args), 'claude ' + what);
+    await refused(antigravity, ag(dir, 'file_mover', args), 'antigravity ' + what);
+    await refused(gemini, gem(dir, 'file_mover', args), 'gemini ' + what);
+    await refused(copilot, cop(dir, 'file_mover', args), 'copilot ' + what);
+  }
+  // A command tool that also names a .env under such a key keeps the check.
+  await refused(claude, cc(dir, 'custom_runner', { command: 'true', dst: '.env' }), 'claude command tool dst');
+  await refused(antigravity, ag(dir, 'custom_runner', { command: 'true', dst: '.env' }), 'antigravity command tool dst');
+  // Files that are not watched pass.
+  await allowed(claude, cc(dir, 'file_mover', { src: 'a', dst: 'b.txt' }), 'claude other');
+  await allowed(antigravity, ag(dir, 'file_mover', { src: 'a', dst: 'b.txt' }), 'antigravity other');
+  await allowed(gemini, gem(dir, 'file_mover', { src: 'a', dst: 'b.txt' }), 'gemini other');
+});
+
+// Class 10 refinement: only an exact list of read-only file tools may name a .env without giving the file they leave. A name that
+// merely contains a read word is refused. The name is all zn knows of an MCP tool, so read_file itself stays allowed (a known limit).
+test('class 10: only exact read-only tool names may name a .env', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  await allowed(claude, cc(dir, 'mcp__fs__read_file', { path: env }), 'read_file');
+  await allowed(antigravity, ag(dir, 'mcp_fs_read_file', { path: env }), 'antigravity read_file');
+  for (const name of ['readFileAndSync', 'get_and_update', 'view_and_write', 'cat_file']) {
+    await refused(claude, cc(dir, 'mcp__fs__' + name, { path: env }), 'claude ' + name);
+    await refused(opencode, oc(dir, 'fs_' + name, { path: env }), 'opencode ' + name);
+    await refused(antigravity, ag(dir, 'mcp_fs_' + name, { path: env }), 'antigravity ' + name);
+    assert.equal(policy.readOnlyToolName('mcp__fs__' + name), false, name);
+  }
+  for (const name of ['read_file', 'mcp__fs__read_text_file', 'mcp_fs_list_directory', 'fs-get_file_info', 'view', 'readFile']) {
+    assert.equal(policy.readOnlyToolName(name), true, name);
+  }
+  for (const name of ['xread_file', 'read_file_and_copy', 'mcp__fs__overview', '']) assert.equal(policy.readOnlyToolName(name), false, name);
 });

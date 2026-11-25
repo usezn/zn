@@ -13,3 +13,7 @@
   applies the edit or patch to the file on disk, and refuses the write when it cannot work out the result.
 - Copies, moves, renames and links into a project `.env` or `.gemini/.env`, through an MCP server or a tool zn does not know,
   are refused: zn cannot see the file they would leave. Reads of these files are unchanged; use the editor tool to change them.
+- `git checkout`, `git restore`, `git reset` and `git stash` in a shell command that names a project `.env` are refused: they
+  write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
+  under any key and at any depth for these files, and only an exact list of read-only file tools (such as the filesystem
+  server's `read_file`) may name them without giving the file they leave.

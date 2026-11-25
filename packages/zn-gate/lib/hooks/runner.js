@@ -924,7 +924,7 @@ function argsObjectOf(ev) {
 }
 
 // A call that names a watched dotenv file but does not give the file it leaves (a copy, move, rename, link, upload, download or a
-// tool zn does not know): refused unless its name says it only reads. Edits go through the file editor tool.
+// tool zn does not know): refused unless it is a known read-only tool (policy.readOnlyToolName). Edits go through the file editor tool.
 function dotenvUnseenDenial(ev, paths, pathOpts) {
   for (const p of paths) {
     const deny = policy.dotenvUnseenWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), ev.toolName || ev.tool, pathOpts);

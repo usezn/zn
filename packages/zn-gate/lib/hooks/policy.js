@@ -1029,25 +1029,27 @@ function opaqueEnvWriteDenial(p) {
   return 'Edit ' + base + ' with the file editor tool; shell writes to .env files are blocked. zn cannot see what the shell actually writes.';
 }
 
-// Words in a tool name that say it only reads, and words that say it changes or moves files (a name with both counts as a change).
-const READ_ONLY_TOOL_WORDS = new Set(['read', 'get', 'list', 'view', 'search', 'find', 'stat', 'cat', 'show', 'head', 'tail', 'grep', 'glob',
-  'info', 'describe', 'tree', 'ls', 'open', 'query', 'inspect', 'diff', 'count', 'exists']);
-const CHANGE_TOOL_WORDS = new Set(['write', 'copy', 'cp', 'move', 'mv', 'rename', 'link', 'symlink', 'ln', 'upload', 'download', 'save', 'put',
-  'create', 'delete', 'remove', 'rm', 'edit', 'replace', 'append', 'set', 'patch', 'sync', 'exec', 'execute', 'run', 'truncate', 'restore',
-  'apply', 'insert', 'update', 'modify', 'change', 'extract', 'unzip', 'untar', 'clone', 'checkout', 'import', 'export', 'install',
-  'transfer', 'duplicate', 'overwrite', 'store', 'push', 'pull', 'mkdir', 'touch', 'chmod', 'chown', 'fetch', 'add', 'new', 'make', 'swap']);
+// The tools that only read files, by exact name: the read tools of the reference filesystem MCP server, and the read tools that
+// Copilot in VS Code sends under its own names through the Claude Code hook. For an MCP tool the name is all zn knows, so this is an
+// exact list, not a guarantee: a server that calls a writing tool read_file is not caught. Any other name is not read-only.
+const READ_ONLY_TOOL_NAMES = ['read_file', 'read_text_file', 'read_media_file', 'read_multiple_files', 'list_directory',
+  'list_directory_with_sizes', 'directory_tree', 'search_files', 'get_file_info', 'list_allowed_directories', 'view', 'readFile'];
+const TOOL_NAME_SEPARATORS = new Set(['_', '-', '.', ':', '/']);
 
-/** True when a tool's name says it only reads (read_file, list_directory, get_file_info), and says nothing about changing files. */
+/**
+ * True when a tool's name is one of READ_ONLY_TOOL_NAMES, alone or after the server prefix an agent adds (mcp__fs__read_file,
+ * mcp_fs_read_file, fs_read_file, fs-read_file). A name that only contains a read word (cat_file, readFileAndSync) is not read-only.
+ */
 function readOnlyToolName(name) {
-  const s = String(name || '').replace(/^mcp__.+?__/, '').replace(/^mcp:/i, '');
-  const words = s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  return words.some((w) => READ_ONLY_TOOL_WORDS.has(w)) && !words.some((w) => CHANGE_TOOL_WORDS.has(w));
+  const s = String(name || '');
+  return READ_ONLY_TOOL_NAMES.some((t) => s === t ||
+    (s.length > t.length && s.endsWith(t) && TOOL_NAME_SEPARATORS.has(s.charAt(s.length - t.length - 1))));
 }
 
 /**
  * A call that names a watched dotenv file without giving zn the file it would leave there: a copy, move, rename, link, upload or
  * download, or a tool zn does not know. `texts` is what writtenTextsOf found; its `complete` flag says the resulting file is known in
- * full (a whole body, an edit applied to the file, a patch section). Refused unless the tool's name says it only reads.
+ * full (a whole body, an edit applied to the file, a patch section). Refused unless the tool is a known read-only one (readOnlyToolName).
  */
 function dotenvUnseenWriteDenial(p, texts, toolName, opts = {}) {
   const c = classifyPath(p, opts);
@@ -1599,9 +1601,10 @@ const DOTENV_METADATA_CMDS = new Set(['touch', 'test', '[', '[[', 'rm', 'rmdir',
   // Commands that only print: they come up inside $( ) in a command that reads the file.
   'date', 'true', 'false', 'whoami', 'hostname', 'uname', 'id', 'basename', 'dirname', 'printf', 'seq', 'expr', 'realpath', 'readlink']);
 const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 'powershell', 'pwsh', 'cmd']);
-// git steps that read, or that only move content between the repository and the file (the content comes from stored objects).
+// git steps that read, or that only change the index or the history (add, commit). checkout, restore, reset and stash are not here:
+// they write stored content into the file in the worktree, which zn cannot see.
 const GIT_READ_SUBS = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'rev-parse',
-  'add', 'commit', 'reset', 'restore', 'checkout', 'stash']);
+  'add', 'commit']);
 // A folder named .env (a Python virtualenv) is not a dotenv file.
 function isExistingFolder(text, opts) {
   try { return fs.statSync(path.resolve((opts && opts.cwd) || process.cwd(), String(text))).isDirectory(); } catch (_) { return false; }
