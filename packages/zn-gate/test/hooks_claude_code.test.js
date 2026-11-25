@@ -371,6 +371,14 @@ test('ConfigChange: the first change after a clean start is judged, and an edit 
   assert.equal((await run(configChange('project_settings', file, dir), { home })).output.decision, 'block');
 });
 
+test('ConfigChange blocks project settings that now set LD_TRACE_LOADED_OBJECTS for the agent (it would stop every hook before it runs)', async (t) => {
+  const home = tempDir(t, 'zn-cc-');
+  const { dir, file } = projectWith(t, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }, null, 2));
+  await run(sessionStart(dir), { home });
+  fs.writeFileSync(file, JSON.stringify({ env: { LD_TRACE_LOADED_OBJECTS: '1' } }, null, 2));
+  assert.equal((await run(configChange('project_settings', file, dir), { home })).output.decision, 'block');
+});
+
 test('ConfigChange: a change blocked before the first prompt does not become the starting point', async (t) => {
   const home = tempDir(t, 'zn-cc-');
   const { dir, file } = projectWith(t, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }, null, 2));

@@ -29,6 +29,14 @@ var (
 	// outside MinThreshold to MaxThreshold or is not a number. Nothing is
 	// sent.
 	ErrInvalidThreshold = errors.New("zn: invalid threshold")
+	// ErrInsecureBaseURL is returned, wrapped, by Analyze when WithBaseURL
+	// was given a URL that is not https and not a loopback host. Nothing is
+	// sent, so the API key never travels in clear text.
+	ErrInsecureBaseURL = errors.New("zn: insecure base URL")
+	// ErrUnexpectedResponse is returned, wrapped, when the API answers 200
+	// but the verdict is missing or is not "allow" or "block". Treat it as
+	// a stop: the client never returns such an answer as a result.
+	ErrUnexpectedResponse = errors.New("zn: unexpected response")
 )
 
 // APIError is an error answer from the API.
