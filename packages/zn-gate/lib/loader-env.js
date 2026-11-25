@@ -129,9 +129,11 @@ function isHookStopVar(key, value) {
   return String(key) === 'LD_TRACE_LOADED_OBJECTS' || (String(key) === 'LD_DEBUG' && /(?:^|[\s,:])help(?:$|[\s,:])/.test(String(value)));
 }
 
-// NAME=value as it is written in a .env file, in a shell command (echo, printf, tee, sed, a heredoc, `$env:NAME='x'`) or in a patch: the
-// value is quoted, or runs to the end of the line or to a shell separator, a sed slash or a closing bracket. A bare NAME with no "=" sets nothing.
-const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*=[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|([^\n"';&|/\\)}]*))?/g;
+// NAME=value as it is written in a .env file, in a shell command (echo, printf, tee, sed, a heredoc, `$env:NAME='x'`) or in a patch, and
+// the `NAME: value` form the dotenv parser also reads: the value is in double, single or back quotes (dotenv strips all three), or runs
+// to the end of the line or to a shell separator, a sed slash or a closing bracket. A bare NAME with no "=" or ": " sets nothing.
+// Groups: 1 name, 2 "..", 3 '..', 4 `..`, 5 unquoted.
+const HOOK_STOP_ASSIGNMENT_RE = /(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(LD_TRACE_LOADED_OBJECTS|LD_DEBUG)(?![A-Za-z0-9_])["']?[ \t]*(?:=|:(?=[ \t]))[ \t]*(?:"([^"\n]*)"|'([^'\n]*)'|`([^`\n]*)`|([^\n"';&|/\\)}]*))?/g;
 
 // The rest of an unquoted word: up to whitespace, a quote or a shell separator. The value as glibc reads it runs on through a slash,
 // bracket or backslash (LD_DEBUG=x/,help names help), even where the match above stops for a sed slash or a closing bracket.
@@ -141,7 +143,8 @@ const WORD_REST_RE = /^[^\s"';&|<>]*/;
 function assignedValues(s, m) {
   if (m[2] !== undefined) return [m[2]];
   if (m[3] !== undefined) return [m[3]];
-  const value = m[4] || '';
+  if (m[4] !== undefined) return [m[4]];
+  const value = m[5] || '';
   return [value, value + WORD_REST_RE.exec(s.slice(m.index + m[0].length))[0]];
 }
 
@@ -199,8 +202,10 @@ function hookStopOrComputedIn(text) {
   let m;
   let literal = 0;
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
-    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
+    const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] : (m[5] || '');
     if (assignedValues(s, m).some((v) => isHookStopVar(m[1], v))) return m[1];
+    // In a shell command back quotes run a command: the value is computed.
+    if (m[4] !== undefined) return m[1];
     const end = m.index + m[0].length;
     const next = s.charAt(end);
     const before = s.charAt(m.index - 1);

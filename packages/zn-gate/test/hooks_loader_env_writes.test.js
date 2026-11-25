@@ -287,6 +287,25 @@ test('an unquoted value is read as glibc reads it: a slash, bracket or backslash
   for (const v of ['x/,libs', 'libs},all']) passes(await decide(claude, cc('Write', { file_path: env, content: 'LD_DEBUG=' + v + '\n' }, dir)));
 });
 
+test('the dotenv spellings NAME: value and back-quoted values are read like NAME=value', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  for (const line of ['LD_TRACE_LOADED_OBJECTS: 1', 'LD_DEBUG: help', 'LD_DEBUG:  libs,help', 'LD_DEBUG=`help`', 'LD_DEBUG: `help`', 'export LD_DEBUG: help']) {
+    assert.ok(loaderEnv.hookStopAssignedIn(line + '\n'), line);
+    blocked(await decide(claude, cc('Write', { file_path: env, content: 'FOO=1\n' + line + '\n' }, dir)), STOP, line);
+    blocked(await decide(gemini, gem('write_file', { file_path: path.join(dir, '.gemini', '.env'), content: line + '\n' }, dir)), STOP, line);
+  }
+  fs.writeFileSync(env, 'FOO=1\nLD_DEBUG: all\n');
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'all', new_string: 'help' }, dir)), STOP);
+  // No help, or no ": " (dotenv needs a space after the colon): allowed.
+  for (const line of ['LD_DEBUG: libs', 'LD_DEBUG=`all`', 'LD_DEBUG:help']) {
+    passes(await decide(claude, cc('Write', { file_path: env, content: line + '\n' }, dir)));
+  }
+  // In a shell command back quotes run a command: a back-quoted loader value is refused, whatever it holds.
+  blocked(await decide(claude, cc('Bash', { command: "echo 'LD_DEBUG=`all`' >> .env" }, dir)), STOP);
+  blocked(await decide(claude, cc('Bash', { command: "echo 'LD_DEBUG: help' >> .env" }, dir)), STOP);
+});
+
 test('GitHub Copilot CLI edits (old_str and new_str, arguments as a JSON text or an object) are judged on the file they leave', async (t) => {
   const dir = project(t);
   const env = path.join(dir, '.env');
