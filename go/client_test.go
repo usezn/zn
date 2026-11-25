@@ -877,3 +877,61 @@ func TestAuthorizationStrippedOnCrossHostEvenIfCheckRedirectAddsIt(t *testing.T)
 		t.Fatalf("other host received Authorization %q", got)
 	}
 }
+
+func TestAuthorizationStrippedOnCrossHostForNonCanonicalKeys(t *testing.T) {
+	for _, key := range []string{"authorization", "aUtHoRiZaTiOn", "AUTHORIZATION"} {
+		var otherHit atomic.Int32
+		var otherFields atomic.Int32
+		rig, _, otherPort := newRedirectRig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			otherHit.Add(1)
+			for k := range r.Header {
+				if strings.EqualFold(k, "Authorization") {
+					otherFields.Add(1)
+				}
+			}
+			writeJSON(w, 200, allowBody)
+		}))
+		otherTarget := "https://other.example.test:" + otherPort + "/v30/analyze"
+		cross := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, otherTarget, 307)
+		}))
+		t.Cleanup(cross.Close)
+		user := &http.Client{Transport: rig.tr, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Set the map key directly, with no canonicalization.
+			req.Header[key] = []string{"Bearer zn_live_test"}
+			return nil
+		}}
+		c := NewClient("zn_live_test", WithBaseURL(cross.URL), WithHTTPClient(user))
+		if _, err := c.Analyze(context.Background(), "hello"); err != nil {
+			t.Fatalf("%q: cross-host https redirect: %v", key, err)
+		}
+		if otherHit.Load() != 1 {
+			t.Fatalf("%q: other host hits = %d", key, otherHit.Load())
+		}
+		if n := otherFields.Load(); n != 0 {
+			t.Fatalf("%q: other host received %d authorization header field(s)", key, n)
+		}
+	}
+}
+
+func TestSameHostRedirectKeepsOwnAuthorizationWithUserCheckRedirect(t *testing.T) {
+	var gotAuth atomic.Value
+	rig, _, _ := newRedirectRig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	same := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v30/analyze" {
+			http.Redirect(w, r, "/moved", 307)
+			return
+		}
+		gotAuth.Store(r.Header.Get("Authorization"))
+		writeJSON(w, 200, allowBody)
+	}))
+	t.Cleanup(same.Close)
+	user := &http.Client{Transport: rig.tr, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
+	c := NewClient("zn_live_test", WithBaseURL(same.URL), WithHTTPClient(user))
+	if _, err := c.Analyze(context.Background(), "hello"); err != nil {
+		t.Fatalf("same-host https redirect: %v", err)
+	}
+	if got, _ := gotAuth.Load().(string); got != "Bearer zn_live_test" {
+		t.Fatalf("same host Authorization = %q", got)
+	}
+}

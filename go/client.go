@@ -208,11 +208,29 @@ func (g *guardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		closeBody(req)
 		return nil, fmt.Errorf("zn: refusing request: %w", err)
 	}
-	if req.Header.Get("Authorization") != "" && (g.host == "" || strings.ToLower(req.URL.Host) != g.host) {
+	if hasAuthorization(req.Header) && (g.host == "" || strings.ToLower(req.URL.Host) != g.host) {
 		req = req.Clone(req.Context())
-		req.Header.Del("Authorization")
+		// A caller can set a non-canonical map key such as "authorization"
+		// directly, and net/http writes it as a header field, so delete
+		// every key that matches case-insensitively.
+		for k := range req.Header {
+			if strings.EqualFold(k, "Authorization") {
+				delete(req.Header, k)
+			}
+		}
 	}
 	return g.base.RoundTrip(req)
+}
+
+// hasAuthorization reports whether h has a non-empty Authorization header
+// under any capitalization of the key.
+func hasAuthorization(h http.Header) bool {
+	for k, v := range h {
+		if strings.EqualFold(k, "Authorization") && len(v) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func closeBody(req *http.Request) {
