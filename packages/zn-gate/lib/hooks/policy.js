@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
-const { hookStopAssignedIn, hookStopOrComputedIn, preloadAssignedIn, preloadOrOpaqueIn, OPAQUE_WRITE } = require('../loader-env');
+const { hookStopAssignedIn, preloadAssignedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.11';
+const POLICY_RULES_VERSION = '2026-11-25.12';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1019,9 +1019,17 @@ function loaderPreloadDenial(name, p) {
 }
 
 function opaqueEnvWriteDenial(p) {
-  return 'zn: ' + path.basename(String(p)) + ' is a file the agent loads into its environment, and this command writes a variable name or a whole line ' +
-    'that only the shell knows once it runs (a variable, a command substitution or a pattern), so zn cannot check which variables it sets. ' +
-    'An agent may not make this change. Write each name as plain text (NAME=$VALUE is fine), or ask the user to make it.';
+  const base = path.basename(String(p));
+  return 'zn: ' + base + ' is a file the agent loads into its environment, and zn cannot check what this command writes to it. ' +
+    'Use a literal assignment (echo NAME=value >> ' + base + ') or edit the file with the editor tool, which zn checks. A shell write to this file ' +
+    'must be a plain echo or printf with no %, backslash, $, command substitution, glob or prefix; a copy from another file is refused too.';
+}
+
+/** The refusal for what a shell write to a dotenv file would do: a loader name it sets or mentions, or OPAQUE_WRITE. */
+function dotenvShellWriteDenial(verdict, p) {
+  if (verdict === OPAQUE_WRITE) return opaqueEnvWriteDenial(p);
+  if (verdict === 'LD_DEBUG' || verdict === 'LD_TRACE_LOADED_OBJECTS') return loaderEnvDenial(verdict, p);
+  return PRELOAD_WRITE_NAMES.includes(verdict) ? loaderPreloadDenial(verdict, p) : loaderEnvDenial(verdict, p);
 }
 
 /** Writes are only blocked for zn's own state and the agents' hook and plugin configuration. */
@@ -1267,6 +1275,62 @@ function intoDirectory(dest, sources, forced, opts) {
   return landed;
 }
 
+/** The files program `name` writes, given the words after it: the files of a downloader's output option, the destination of
+ *  cp, mv, ln and the like, the of= of dd, an in-place sed or perl's files, and every other argument of the other writers. */
+function programWriteTargets(name, rest, opts) {
+  if (Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, name)) return downloadTargets(name, rest);
+  const candidates = [];
+  if (!INSTRUCTION_WRITERS.has(name)) return candidates;
+  const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
+  if (name === 'dd') {
+    for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
+  } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
+    // These only read their files without an in-place flag.
+  } else if (INSTRUCTION_DEST_LAST.has(name)) {
+    // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
+    const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
+    const dir = psDest !== null ? null : targetDirectoryOf(rest);
+    if (psDest !== null) {
+      candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
+    } else if (dir !== null) {
+      // -t DIR: every other argument is a source, written into DIR.
+      const at = args.indexOf(dir);
+      const sources = args.filter((_, j) => j !== at);
+      candidates.push(...intoDirectory(dir, sources, true, opts));
+    } else if (args.length > 1) {
+      const dest = args[args.length - 1];
+      candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
+    }
+  } else {
+    candidates.push(...args);
+  }
+  return candidates;
+}
+
+/**
+ * Whether word `w` of a shell command is a file its program writes with content zn cannot see: a file that cp, mv, ln, rsync,
+ * install, dd of=, curl -o or wget -O writes, the files of an in-place sed or perl, and every file word of tee, truncate, patch,
+ * ex, ed, Set-Content, Add-Content, Out-File, New-Item and their aliases (also -Path:file). touch only changes times.
+ */
+function writtenByProgram(w, text, readings, opts) {
+  const reading = readings.find((r) => r.includes(w));
+  if (!reading) {
+    const name = programName(w.head);
+    return INSTRUCTION_WRITERS.has(name) && name !== 'touch';
+  }
+  const seg = reading.filter((x) => x.seq === w.seq);
+  const progs = seg.map((x) => x.text.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
+  const at = commandWordAt(seg, progs);
+  if (at < 0 || seg[at] === w) return false;
+  const name = progs[at];
+  if (name === 'touch') return false;
+  const rest = seg.slice(at + 1).map((x) => x.text);
+  // Writers that write every file they name: each dotenv word of theirs counts, whatever its form.
+  if (INSTRUCTION_WRITERS.has(name) && name !== 'dd' && name !== 'sed' && name !== 'perl' && !INSTRUCTION_DEST_LAST.has(name)) return true;
+  const targets = programWriteTargets(name, rest, opts);
+  return targets.includes(text) || targets.includes(w.text);
+}
+
 /** The first notice for a word of a shell command that writes an instruction file; null when none does. */
 function instructionWriteInWords(readings, opts) {
   const seen = new Set();
@@ -1281,35 +1345,7 @@ function instructionWriteInWords(readings, opts) {
       const at = commandWordAt(seg, progs);
       const candidates = [];
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
-      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
-        candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
-      } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
-        const name = progs[at];
-        const rest = seg.slice(at + 1).map((x) => x.text);
-        const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
-        if (name === 'dd') {
-          for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
-        } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
-          // These only read their files without an in-place flag.
-        } else if (INSTRUCTION_DEST_LAST.has(name)) {
-          // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
-          const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
-          const dir = psDest !== null ? null : targetDirectoryOf(rest);
-          if (psDest !== null) {
-            candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
-          } else if (dir !== null) {
-            // -t DIR: every other argument is a source, written into DIR.
-            const at = args.indexOf(dir);
-            const sources = args.filter((_, j) => j !== at);
-            candidates.push(...intoDirectory(dir, sources, true, opts));
-          } else if (args.length > 1) {
-            const dest = args[args.length - 1];
-            candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
-          }
-        } else {
-          candidates.push(...args);
-        }
-      }
+      if (at >= 0) candidates.push(...programWriteTargets(progs[at], seg.slice(at + 1).map((x) => x.text), opts));
       for (const text of candidates) {
         if (!text || seen.has(text)) continue;
         seen.add(text);
@@ -2916,6 +2952,7 @@ function bashDenialOf(cmd, opts = {}) {
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
   const listed = psListWords(words, opts, cmd);
+  let dotenvWrite; // the verdict of shellDotenvWrite on this command, computed once
   // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
   // or a joined path too long to judge: refused, not checked in part.
   if (listed.over) return TOO_SLOW_MESSAGE;
@@ -2989,15 +3026,31 @@ function bashDenialOf(cmd, opts = {}) {
       if (w.redirectTarget || writing) return agentConfigDenial(text, c);
       continue; // reading the settings is allowed
     }
-    if (c.kind === 'dotenv' && (w.redirectTarget || writing)) {
-      // echo NAME=1 >> .env, tee, sed -i, a heredoc, Set-Content: the command text carries what is written.
-      // A loader value the shell computes (a variable, $(..), printf formats) is refused too: the text does not show what gets written.
-      const stop = hookStopOrComputedIn(cmd);
-      if (stop) return loaderEnvDenial(stop, text);
-      // A preload library set to a value, or a name or line only the shell knows (printf "$X", echo "$LINE"): refused as well. The
-      // opaque-write rule applies only where the .env is surely written: a redirection to it, or a program that writes the files it is given.
-      const preload = preloadOrOpaqueIn(cmd, { opaque: !!w.redirectTarget || INSTRUCTION_WRITERS.has(programName(w.head)) });
-      if (preload) return preload === OPAQUE_WRITE ? opaqueEnvWriteDenial(text) : loaderPreloadDenial(preload, text);
+    // A redirection to a pattern that matches a .env file (echo x > .en?) writes that file when the pattern matches it.
+    const dotenvPattern = w.redirectTarget && c.kind === 'credential' && c.reason === 'a pattern that matches a .env file';
+    if ((c.kind === 'dotenv' || dotenvPattern) && (w.redirectTarget || writing)) {
+      // A shell write to a file the agent loads into its environment is allowed only as provable literal text: echo or printf with
+      // plain arguments, or a here-document with a quoted delimiter (shellDotenvWrite in loader-env.js), and its text may not set a
+      // loader variable. A program that writes the file from elsewhere (cp, tee, sed -i, dd of=, Set-Content ...) is refused: zn cannot
+      // see what it writes. Any other program that names the file is refused when the command names a loader variable.
+      let verdict;
+      if (w.redirectTarget) {
+        if (dotenvWrite === undefined) {
+          dotenvWrite = shellDotenvWrite(cmd, (t) => {
+            let k = classifyWord(t, opts);
+            const e = protectedElsewhere(t, opts);
+            if (e) k = e;
+            return !!k && k.kind === 'dotenv';
+          });
+        }
+        // A target this reading found that the literal check did not: the two readings disagree, so the write is refused.
+        verdict = dotenvWrite.verdict || (dotenvWrite.targets.has(text) ? null : (loaderNameMentionedIn(cmd) || OPAQUE_WRITE));
+      } else if (writtenByProgram(w, text, readings, opts)) {
+        verdict = loaderNameMentionedIn(cmd) || OPAQUE_WRITE;
+      } else {
+        verdict = loaderNameMentionedIn(cmd);
+      }
+      if (verdict) return dotenvShellWriteDenial(verdict, text);
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
