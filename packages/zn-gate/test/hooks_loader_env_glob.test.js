@@ -46,3 +46,20 @@ t('POSIX quoting: an escaped quote, a closed quote or a comment never hides a la
   assert.equal(hookStopOrComputedIn("echo 'LD_DEBUG=he*p' > .env"), null);
   assert.equal(hookStopOrComputedIn('echo "LD_DEBUG=he*p" > .env'), null);
 });
+
+t('a comment that ends in a backslash is refused as unsupported syntax when it precedes a loader write to .env', (tt) => {
+  const dir = tempDir(tt, 'zn-ldglob4-');
+  fs.writeFileSync(path.join(dir, 'LD_DEBUG=help'), '');
+  for (const cmd of [
+    '# note \\\necho LD_DEBUG=he*p > .env',
+    '# note \\\necho "a ; echo LD_DEBUG=he*p > .env ; echo \\"',
+    'true ; # note \\\necho LD_DEBUG=he?p >> .env',
+  ]) {
+    assert.ok(hookStopOrComputedIn(cmd), cmd);
+  }
+});
+
+t('a normal comment without a trailing backslash followed by a benign command still passes', () => {
+  assert.equal(hookStopOrComputedIn('# note about the build\necho FOO=bar > .env'), null);
+  assert.equal(hookStopOrComputedIn('# a back\\slash inside\necho FOO=bar > .env'), null);
+});

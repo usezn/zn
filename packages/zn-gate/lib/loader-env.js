@@ -235,6 +235,9 @@ function quoteMap(s) {
     if (c === '$' && s.charAt(i + 1) === "'") { inside[i] = 1; i++; inside[i] = 1; q = 'a'; continue; }
     if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(s.charAt(i - 1)))) {
       while (i < s.length && s.charAt(i) !== '\n') { inside[i] = 2; i++; }
+      // Shells end a comment at the line break even after a backslash; we refuse this form anyway because it is ambiguous to
+      // readers and never needed to write a .env.
+      if (i < s.length && s.charAt(i - 1) === '\\') bad = true;
       i--; // the line break itself is live text again
       continue;
     }
