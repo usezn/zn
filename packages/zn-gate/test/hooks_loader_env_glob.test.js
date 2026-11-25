@@ -26,13 +26,14 @@ t('a glob left unquoted after a quoted prefix of the name or value is refused', 
   }
 });
 
-t('a quoted glob is plain text: it passes unless the text sets a loader variable', () => {
-  assert.equal(verdict("echo 'LD_DEBUG=he*p' > .env"), null);
-  assert.equal(verdict('echo "LD_DEBUG=he*p" > .env'), null);
-  assert.equal(verdict("echo LD_DEBUG='he*p' > .env"), null);
-  assert.equal(verdict("echo 'FOO=a*b' > .env"), null);
-  // Policy changed (2026-11-25): an unquoted glob is refused whatever the name; FOO=a*b used to pass.
+t('a quoted glob in a write to a .env is refused too, and the same text written to another file passes', () => {
+  // Policy changed (2026-11-25): a quoted glob used to pass as plain text. Every shell write to a .env is refused now.
+  assert.ok(verdict("echo 'LD_DEBUG=he*p' > .env"));
+  assert.ok(verdict('echo "LD_DEBUG=he*p" > .env'));
+  assert.ok(verdict("echo LD_DEBUG='he*p' > .env"));
+  assert.equal(verdict("echo 'FOO=a*b' > .env"), OPAQUE_WRITE);
   assert.equal(verdict('echo FOO=a*b > .env'), OPAQUE_WRITE);
+  assert.equal(verdict("echo 'LD_DEBUG=he*p' > notes.txt"), null);
 });
 
 t('POSIX quoting: an escaped quote, a closed quote or a comment never hides a later write', () => {
@@ -51,7 +52,7 @@ t('POSIX quoting: an escaped quote, a closed quote or a comment never hides a la
   ]) {
     assert.ok(verdict(cmd), cmd);
   }
-  assert.equal(verdict("echo 'LD_DEBUG=he*p' > .env"), null);
+  assert.equal(verdict("echo 'LD_DEBUG=he*p' > notes.txt"), null);
 });
 
 t('a comment that ends in a backslash before a write to .env is refused as unsupported syntax', () => {
@@ -65,8 +66,10 @@ t('a comment that ends in a backslash before a write to .env is refused as unsup
   }
 });
 
-t('a normal comment without a trailing backslash followed by a literal write still passes', () => {
-  assert.equal(verdict('# note about the build\necho FOO=bar > .env'), null);
-  assert.equal(verdict('# a back\\slash inside\necho FOO=bar > .env'), null);
-  assert.equal(verdict('echo FOO=1 >> .env # $X'), null);
+t('a normal comment without a trailing backslash followed by a write to .env is refused; one before another file passes', () => {
+  // Policy changed (2026-11-25): these writes to .env used to pass as literal text.
+  assert.equal(verdict('# note about the build\necho FOO=bar > .env'), OPAQUE_WRITE);
+  assert.equal(verdict('# a back\\slash inside\necho FOO=bar > .env'), OPAQUE_WRITE);
+  assert.equal(verdict('echo FOO=1 >> .env # $X'), OPAQUE_WRITE);
+  assert.equal(verdict('# note about the build\necho FOO=bar > notes.txt'), null);
 });

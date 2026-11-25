@@ -22,6 +22,7 @@ const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 
 const STOP = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent/;
+const SHELL_WRITE = /shell writes to \.env files are blocked|would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent/;
 
 function project(t) {
   const dir = tempDir(t, 'zn-ldwrite-');
@@ -150,9 +151,6 @@ test('shell commands that write a .env with the variables are blocked', async (t
 test('shell commands that write a .env without those variables, or write elsewhere, pass', async (t) => {
   const dir = project(t);
   const fine = [
-    'echo DEBUG=1 >> .env',
-    'echo LD_DEBUG=all >> .env',
-    "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
     'echo LD_DEBUG=help > notes.txt',
     'LD_DEBUG=libs ls',
   ];
@@ -160,11 +158,12 @@ test('shell commands that write a .env without those variables, or write elsewhe
     passes(await decide(claude, cc('Bash', { command }, dir)));
     passes(await decide(gemini, gem('run_shell_command', { command }, dir)));
   }
-  // Policy changed (2026-11-25): only a literal echo or printf may write a .env from the shell. A printf format with a backslash
-  // escape and an in-place sed used to pass here; zn cannot check what they write, so they are refused now.
-  for (const command of ["printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env", "sed -i 's/^DEBUG=.*/DEBUG=0/' .env"]) {
-    blocked(await decide(claude, cc('Bash', { command }, dir)), /zn cannot check what this command writes/, command);
-    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), /zn cannot check what this command writes/, command);
+  // Policy changed (2026-11-25): no shell command may write a .env. These used to pass as literal echo or printf writes, or were
+  // refused only for an in-place sed or a printf format; zn cannot check what the shell writes, so they are all refused now.
+  for (const command of ['echo DEBUG=1 >> .env', 'echo LD_DEBUG=all >> .env', "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
+    "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env", "sed -i 's/^DEBUG=.*/DEBUG=0/' .env"]) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), SHELL_WRITE, command);
   }
 });
 
@@ -200,7 +199,7 @@ test('an edit of a .env that cannot be resolved against the file is refused', as
   passes(await decide(claude, cc('Edit', { file_path: path.join(dir, 'notes.txt'), old_string: 'nope', new_string: 'b' }, dir)));
 });
 
-test('shell commands that write a .env with a computed loader value are blocked, a plain literal passes', async (t) => {
+test('shell commands that write a .env with a computed loader value are blocked, a literal one too', async (t) => {
   const dir = project(t);
   const bad = [
     'V=help; echo LD_DEBUG=$V >> .env',
@@ -214,9 +213,11 @@ test('shell commands that write a .env with a computed loader value are blocked,
     'echo LD_TRACE_LOADED_OBJECTS=$X >> .env',
   ];
   for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
-  for (const command of ['echo LD_DEBUG=libs >> .env', "echo 'LD_DEBUG=all' >> .env", 'echo LD_DEBUG=$V > notes.txt', 'echo LD_DEBUG= >> .env']) {
-    passes(await decide(claude, cc('Bash', { command }, dir)));
+  // Policy changed (2026-11-25): a literal value used to pass; only a write to another file does now.
+  for (const command of ['echo LD_DEBUG=libs >> .env', "echo 'LD_DEBUG=all' >> .env", 'echo LD_DEBUG= >> .env']) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
   }
+  passes(await decide(claude, cc('Bash', { command: 'echo LD_DEBUG=$V > notes.txt' }, dir)));
 });
 
 test('shell writes that join quoted and unquoted pieces of a loader value are blocked', async (t) => {
@@ -230,10 +231,9 @@ test('shell writes that join quoted and unquoted pieces of a loader value are bl
     `echo LD_DEBUG="he"'lp' >> .env`,
   ];
   for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
-  // Policy changed (2026-11-25): a literal write is judged on the exact text it writes, so LD_DEBUG="a""b" (it writes LD_DEBUG=ab) now
-  // passes; it used to be refused because quoted pieces were glued.
+  // Policy changed (2026-11-25): a literal write used to be judged on the exact text it writes; every shell write to a .env is refused now.
   for (const command of ['echo LD_DEBUG="all" >> .env', "echo LD_DEBUG='all' >> .env", `echo 'LD_DEBUG="all"' >> .env`, `echo LD_DEBUG="a""b" >> .env`]) {
-    passes(await decide(claude, cc('Bash', { command }, dir)));
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
   }
 });
 
@@ -267,26 +267,22 @@ test('shell writes to a .env that build the loader name or hide it from the text
     "echo $'\\x4cD_DEBUG=help' >> .env",
   ];
   // The refusal names the loader variable when the command holds its name, and says the write cannot be checked otherwise.
-  const STOP_OR_COMPUTED = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent|zn cannot check what this command writes/;
-  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP_OR_COMPUTED, command);
-  // Literal writes still pass.
-  const good = [
+  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
+  // A write to another file passes.
+  passes(await decide(claude, cc('Bash', { command: "printf '%s=%s\\n' LD_DEBUG help > notes.txt" }, dir)));
+  // Policy changed (2026-11-25): these used to pass as literal writes, or because only a value was expanded or formatted. No shell
+  // write to a .env passes now.
+  const nowRefused = [
     'echo LD_DEBUG=libs >> .env',
     "echo 'LD_DEBUG=all' >> .env",
     "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
     'echo "FOO=1" > .env',
-    "printf '%s=%s\\n' LD_DEBUG help > notes.txt",
-  ];
-  for (const command of good) passes(await decide(claude, cc('Bash', { command }, dir)), command);
-  // Policy changed (2026-11-25): these used to pass because only a value was expanded or formatted. A shell write to a .env must now be
-  // literal text, so a $ expansion, a printf conversion or a backslash escape is refused whatever the name.
-  const nowRefused = [
     "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env",
     'echo "APP_DEBUG=$X" >> .env',
     'echo API_URL=$HOME/api >> .env',
     "printf 'PORT=%s\\n' 8080 >> .env",
   ];
-  for (const command of nowRefused) blocked(await decide(claude, cc('Bash', { command }, dir)), /zn cannot check what this command writes/, command);
+  for (const command of nowRefused) blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
 });
 
 test('an unquoted value is read as glibc reads it: a slash, bracket or backslash before ,help does not hide help', async (t) => {
@@ -399,8 +395,9 @@ test('a shell write of a loader value with a slash, bracket or backslash before 
     'echo "LD_DEBUG=all;,help" >> .env', "echo 'LD_DEBUG=all\n,help' >> .env", 'echo LD_DEBUG: help >> .env']) {
     blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
   }
+  // Policy changed (2026-11-25): these two used to pass; every shell write to a .env is refused now.
   for (const command of ['echo LD_DEBUG=libs/x >> .env', 'echo LD_DEBUG=all >> .env']) {
-    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
   }
   // Policy changed (2026-11-25): an in-place sed is not a literal echo or printf, so it is refused even with a harmless value.
   blocked(await decide(claude, cc('Bash', { command: "sed -i 's/LD_DEBUG=all/LD_DEBUG=libs/' .env" }, dir)), STOP);
@@ -408,7 +405,7 @@ test('a shell write of a loader value with a slash, bracket or backslash before 
 
 test('the printf form and quoted pieces of the loader name are refused for a .env', async (t) => {
   const dir = project(t);
-  const STOP_OR_COMPUTED = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent|zn cannot check what this command writes/;
+  const STOP_OR_COMPUTED = SHELL_WRITE;
   const bad = [
     "printf '%s=%s' LD_DEBUG help >> .env",
     'printf "%s=%s\\n" "LD_DEBUG" "help" >> .env',

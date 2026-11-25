@@ -617,18 +617,14 @@ Three features are off by default. Each one helps in a narrow case and has limit
     Write, Edit or patch (Claude Code, Gemini CLI, Codex CLI and the other agents zn guards) or a shell command that puts
     either variable into a project `.env` or `.gemini/.env`, in either dotenv spelling (`NAME=value` or `NAME: value`) and
     with the value bare or in double, single or back quotes.
-    A shell command may write such a file only as literal text: `echo` or `printf` as the first word of its
-    command (no `VAR=value` prefix and no `env`, `command`, `sudo` or other wrapper), with no `%`, backslash, `$`, back
-    quote, command substitution, line break, unquoted glob or brace, or option in its arguments, and `printf` with that one
-    argument only (`echo API_URL=https://example.com >> .env`, `printf 'A=1' >> .env`), or `cat` with a here-document whose
-    delimiter is quoted (`<<'EOF'`) and whose body holds none of `%`, backslash, `$` or back quote. zn checks that text like
-    a file edit. Every other shell write to such a file is refused, because zn cannot see what it writes: for example
-    `echo "API_URL=$URL" >> .env`, `printf 'A=%s\n' x >> .env`, `sed -i`, `tee`, `Set-Content`, and copies such as
-    `cp x .env` or `cat x > .env`. Use the editor tool (Write, Edit, a patch) instead; zn checks what it writes.
-  A literal write is also refused when the same command can change what `echo`, `printf` or `cat` run (a function or alias
-  definition, `eval`, `source` or `.`, `exec`, a here-string or a process substitution, a change of `PATH` or `BASH_ENV`, `enable`, `hash`,
-  `shopt`, `set -o`). A function or alias defined by an EARLIER command of a persistent shell session is not visible to the hook:
-  that limit is accepted, and the editor path does not have it.
+    Shell commands cannot write such a file: a shell write to a watched dotenv file (`.env`, `.env.*`, `.gemini/.env`) is refused
+    whatever it writes, including a redirection (`>`, `>>`, `>|`, `&>`, and the read-write `<>`, `1<>`, `{fd}<>`), `tee`, `sed -i`,
+    `cp`, `Set-Content` and the like. zn cannot know what the shell really runs: an inherited function, an alias or function
+    defined by an earlier command of a persistent shell, or an untrusted `PATH` can replace `echo`, `printf` or `cat` after the
+    check. Any other program whose command text names such a file (an interpreter with `-c` or `-e`, `awk`, `sed 'w file'`,
+    `curl -o`, `iwr -OutFile`, an unknown tool) is refused too, unless it is a read-only or metadata-only command (`cat`, `head`,
+    `tail`, `grep`, `wc`, `ls`, `stat`, `diff`, `test -f`, `[ -f ]`, `touch`, `git status`). Use the editor tool (Write, Edit, a
+    patch) instead; zn checks what it writes on the real text. Reads of the file are not affected.
     `help` counts wherever it stands in
     the value as a separate word, also after a slash, a bracket or a backslash (`LD_DEBUG=libs/,help`), so no value is read
     shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`, `.codex/`, `.gemini/settings.json`)

@@ -30,10 +30,10 @@ t('a near-cap command with an unquoted glob is refused, and fast', () => {
 t('the quote state still decides the verdict after a long literal prefix', () => {
   const pre = "echo 'X=1' > notes.txt; ".repeat(1000);
   assert.ok(verdict(pre + 'echo "LD_DEBUG="he*p > .env'));
-  assert.equal(verdict(pre + "echo 'LD_DEBUG=he*p' > .env"), null);
+  assert.equal(verdict(pre + "echo 'LD_DEBUG=he*p' > notes.txt"), null);
 });
 
 t('many simple commands and here-document lines are read in linear time', () => {
-  assertLinear((cmd) => verdict(cmd), (n) => 'echo A=1 > .env; '.repeat(n), 5000, 'many literal writes');
-  assertLinear((cmd) => verdict(cmd), (n) => "cat <<'EOF' > .env\n" + 'A=1\n'.repeat(n) + 'EOF\n', 20000, 'a long here-document');
+  assertLinear((cmd) => verdict(cmd), (n) => 'echo A=1 > notes.txt; '.repeat(n), 5000, 'many writes to another file');
+  assertLinear((cmd) => verdict(cmd), (n) => "cat <<'EOF' > a.txt\n" + 'A=1\n'.repeat(n) + 'EOF\n', 20000, 'a long here-document');
 });

@@ -440,13 +440,14 @@ test('a .env file reached after a cd, through a path built at run time or from i
     'python3 -c "print(open(\'app1/inner/.env\').read())"',
     'node -e "console.log(require(\'fs\').readFileSync(\'app1/inner/.env\', \'utf8\'))"',
     'bash -c "cat app1/inner/.env"',
+    // Policy changed (2026-11-25): a shell write to a .env is refused whatever it writes.
+    'cd app1/inner && echo EXAMPLE_FLAG=1 >> .env',
   ]) {
     assert.ok(policy.bashDenial(cmd, o), cmd);
   }
   for (const cmd of [
     'cd svc && cat .env',
     'cd app1 && npm test',
-    'cd app1/inner && echo EXAMPLE_FLAG=1 >> .env',
     'cd app1/inner && cat .env.example',
     'cd /nonexistent && ls',
     'python3 -c "print(1)"',

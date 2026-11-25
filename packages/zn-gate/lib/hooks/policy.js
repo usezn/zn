@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
-const { hookStopAssignedIn, preloadAssignedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, REDEFINABLE, PRELOAD_WRITE_NAMES } = require('../loader-env');
+const { hookStopAssignedIn, preloadAssignedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.15';
+const POLICY_RULES_VERSION = '2026-11-25.16';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1018,18 +1018,14 @@ function loaderPreloadDenial(name, p) {
     'into every program the agent starts, the shell of every zn hook included, before zn can check anything. An agent may not make this change. Ask the user to make it.';
 }
 
-function opaqueEnvWriteDenial(p, redefinable) {
+function opaqueEnvWriteDenial(p) {
   const base = path.basename(String(p));
-  return 'zn: ' + base + ' is a file the agent loads into its environment, and zn cannot check what this command writes to it. ' +
-    'Use a literal assignment (echo NAME=value >> ' + base + ') or edit the file with the editor tool, which zn checks. A shell write to this file ' +
-    'must be a plain echo or printf with no %, backslash, $, command substitution, glob or prefix; a copy from another file is refused too.' +
-    (redefinable ? ' This command can redefine echo, printf or cat (a function, alias, source, eval or PATH change), so it is not read as a literal write.' : '');
+  return 'Edit ' + base + ' with the file editor tool; shell writes to .env files are blocked. zn cannot see what the shell actually writes.';
 }
 
 /** The refusal for what a shell write to a dotenv file would do: a loader name it sets or mentions, or OPAQUE_WRITE. */
 function dotenvShellWriteDenial(verdict, p) {
   if (verdict === OPAQUE_WRITE) return opaqueEnvWriteDenial(p);
-  if (verdict === REDEFINABLE) return opaqueEnvWriteDenial(p, true);
   if (verdict === 'LD_DEBUG' || verdict === 'LD_TRACE_LOADED_OBJECTS') return loaderEnvDenial(verdict, p);
   return PRELOAD_WRITE_NAMES.includes(verdict) ? loaderPreloadDenial(verdict, p) : loaderEnvDenial(verdict, p);
 }
@@ -1454,6 +1450,8 @@ function scanFirstCommand(cmd, posix = false) {
 const REDIRECT_OP_WORD_RE = /^(?:[0-9]*|\*)(?:>\||>>?)$/;
 // The same operator glued to the end of a word (`x>` in `echo x> file`), read on the raw source so a quoted ">" is not one.
 const GLUED_END_RE = /(?<![\\<>&])(?:>\||>>?)$/;
+// The read-write operator `<>` at the end of a word (`1<>`, `{fd}<>`, `x<>`): the next word is the file it opens for writing.
+const RW_END_RE = /<>$/;
 // What can stand in front of a redirect operator without being a word of its own: a file descriptor, `*` (PowerShell:
 // all streams) or a bash `{name}` descriptor.
 const REDIRECT_FD_PREFIX_RE = /^(?:[0-9]*|\*|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
@@ -1510,10 +1508,18 @@ function allWords(cmd, posix = false) {
       const prefixRaw = glued ? raw.slice(0, glued.at) : '';
       // A descriptor in front (`2>x`, `{fd}>x`) belongs to the operator; any other prefix is an argument of its own.
       const gluedOp = glued !== null && !REDIRECT_FD_PREFIX_RE.test(prefixRaw);
-      const afterOp = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw);
-      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)(?:>\||>>?)./.test(w.text) || glued !== null;
+      // `<>` opens a file for reading AND writing (`1<> .env`, `{fd}<>.env`, `x<>.env`): it is a write redirection.
+      const rwAt = glued === null ? raw.indexOf('<>') : -1;
+      const afterOp = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw) || RW_END_RE.test(prevRaw);
+      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)(?:>\||>>?)./.test(w.text) || glued !== null || rwAt >= 0;
       let t = w.text;
       let targetRaw = raw;
+      if (rwAt >= 0) {
+        const before = raw.slice(0, rwAt);
+        if (before && !REDIRECT_FD_PREFIX_RE.test(before)) out.push({ text: dequoteFragment(before, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+        targetRaw = raw.slice(rwAt + 2);
+        t = dequoteFragment(targetRaw, posix);
+      }
       if (glued) {
         targetRaw = raw.slice(glued.at + glued.len);
         t = dequoteFragment(targetRaw, posix);
@@ -1547,6 +1553,33 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
+// What a command that names a watched dotenv file may be, apart from READ_ONLY_CMDS: metadata-only commands and read-only git
+// subcommands. Any other program that names the file (python3 -c, node -e, perl, awk, sed w, curl -o, iwr -OutFile, an unknown tool)
+// is refused: zn cannot see whether it writes the file. less is not here (it can run commands).
+// Deleting a file, changing folder and printing a name write no content into it. A shell that runs code (sh -c, bash -lc, powershell
+// -Command) is judged by that code, which is checked on its own (shellCodesOf); `join-path` words are the same words with a folder added.
+const DOTENV_METADATA_CMDS = new Set(['touch', 'test', '[', '[[', 'rm', 'rmdir', 'del', 'erase', 'remove-item', 'cd', 'pushd', 'popd', 'chdir',
+  'set-location', 'sl', 'write-output', 'write-host', 'join-path',
+  // Commands that only print: they come up inside $( ) in a command that reads the file.
+  'date', 'true', 'false', 'whoami', 'hostname', 'uname', 'id', 'basename', 'dirname', 'printf', 'seq', 'expr', 'realpath', 'readlink']);
+const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 'powershell', 'pwsh', 'cmd']);
+// git steps that read, or that only move content between the repository and the file (the content comes from stored objects).
+const GIT_READ_SUBS = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'rev-parse',
+  'add', 'commit', 'reset', 'restore', 'checkout', 'stash']);
+// A folder named .env (a Python virtualenv) is not a dotenv file.
+function isExistingFolder(text, opts) {
+  try { return fs.statSync(path.resolve((opts && opts.cwd) || process.cwd(), String(text))).isDirectory(); } catch (_) { return false; }
+}
+function dotenvReadOnlyWord(w, shellChecked) {
+  if (READ_ONLY_CMDS.has(w.head) || DOTENV_METADATA_CMDS.has(w.head)) return true;
+  if (shellChecked && SHELL_HEADS.has(w.head)) return true;
+  if (w.head !== 'git') return false;
+  const args = w.gitArgs || [];
+  if (args.some((x) => /^--output(=|$)/.test(x))) return false;
+  if (GIT_READ_SUBS.has(w.sub)) return true;
+  // git rm --cached .env only changes the index.
+  return w.sub === 'rm' && args.includes('--cached');
+}
 const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|\.zcode\/(?:cli\/)?config|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
@@ -2878,7 +2911,10 @@ function bashDenialOf(cmd, opts = {}) {
   // Inside $( ) or backticks the text is not split into simple commands, so
   // every word of it is checked on its own, as if it were a word of the command.
   // The same for the code an interpreter runs (python -c "open('.env')"), where a path sits inside quotes and brackets.
-  if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head)))) {
+  // A program that is not read-only (awk 'BEGIN{print 1 > ".env"}', sed -n 'w .env') can name a dotenv file inside its own program text: its
+  // words are split too.
+  if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
+      (/\.env/i.test(text) && words.some((w) => w.head !== '' && !dotenvReadOnlyWord(w, codes.size > 0)))) {
     const split = [];
     for (const t of text.split(/[\s'"`$(){};|&<>=,]+/)) if (t) split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
     words.push(...split);
@@ -2955,6 +2991,9 @@ function bashDenialOf(cmd, opts = {}) {
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
   const listed = psListWords(words, opts, cmd);
   let dotenvWrite; // the verdict of shellDotenvWrite on this command, computed once
+  // Whether every program of the command is a read-only or metadata-only one (see dotenvReadOnlyWord); the words with no program of
+  // their own (the text inside quotes or $( ) that is split into words) are judged by this.
+  const onlyReadOnly = words.every((x) => x.head === '' || dotenvReadOnlyWord(x, codes.size > 0));
   // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
   // or a joined path too long to judge: refused, not checked in part.
   if (listed.over) return TOO_SLOW_MESSAGE;
@@ -3030,11 +3069,12 @@ function bashDenialOf(cmd, opts = {}) {
     }
     // A redirection to a pattern that matches a .env file (echo x > .en?) writes that file when the pattern matches it.
     const dotenvPattern = w.redirectTarget && c.kind === 'credential' && c.reason === 'a pattern that matches a .env file';
+    let unprovenWrite = false;
     if ((c.kind === 'dotenv' || dotenvPattern) && (w.redirectTarget || writing)) {
-      // A shell write to a file the agent loads into its environment is allowed only as provable literal text: echo or printf with
-      // plain arguments, or a here-document with a quoted delimiter (shellDotenvWrite in loader-env.js), and its text may not set a
-      // loader variable. A program that writes the file from elsewhere (cp, tee, sed -i, dd of=, Set-Content ...) is refused: zn cannot
-      // see what it writes. Any other program that names the file is refused when the command names a loader variable.
+      // A shell write to a file the agent loads into its environment is refused whatever it writes (shellDotenvWrite in loader-env.js): the
+      // shell can run a different echo, printf or cat than the command shows, so zn cannot see the text. The agent uses the editor tool,
+      // which zn checks. A program that writes the file from elsewhere (cp, tee, sed -i, dd of=, Set-Content ...) is refused the same way.
+      // Any other program that names the file is refused unless it is a read-only or metadata-only one (dotenvReadOnlyWord).
       let verdict;
       if (w.redirectTarget) {
         if (dotenvWrite === undefined) {
@@ -3045,14 +3085,25 @@ function bashDenialOf(cmd, opts = {}) {
             return !!k && k.kind === 'dotenv';
           });
         }
-        // A target this reading found that the literal check did not: the two readings disagree, so the write is refused.
-        verdict = dotenvWrite.verdict || (dotenvWrite.targets.has(text) ? null : (loaderNameMentionedIn(cmd) || OPAQUE_WRITE));
+        // This reading found a redirection to the file that the scan did not: the two readings disagree, so the write is refused too.
+        verdict = dotenvWrite.verdict || loaderNameMentionedIn(cmd) || OPAQUE_WRITE;
       } else if (writtenByProgram(w, text, readings, opts)) {
         verdict = loaderNameMentionedIn(cmd) || OPAQUE_WRITE;
       } else {
+        // Any program that names the file is refused unless it is proven read-only or metadata-only.
+        const readOnly = w.head === '' ? onlyReadOnly : dotenvReadOnlyWord(w, codes.size > 0);
         verdict = loaderNameMentionedIn(cmd);
+        // Not proven read-only: refused, but a read of a secret file keeps its own (earlier) refusal below.
+        // A backslash path (.\.env) names the file only where a backslash is a separator: on Windows or in PowerShell.
+        const backslashElsewhere = text.indexOf(String.fromCharCode(92)) >= 0 && process.platform !== 'win32' && opts.powershell !== true;
+        unprovenWrite = !verdict && !readOnly && !backslashElsewhere && !isExistingFolder(text, opts);
       }
       if (verdict) return dotenvShellWriteDenial(verdict, text);
+    }
+    if (unprovenWrite && !w.redirectTarget) {
+      const read = c ? denialOf(c, text, opts) : null;
+      if (read) return read;
+      return dotenvShellWriteDenial(OPAQUE_WRITE, text);
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
