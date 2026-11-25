@@ -587,6 +587,10 @@ Three features are off by default. Each one helps in a narrow case and has limit
   a file edit. Every other shell write to such a file is refused, because zn cannot see what it writes: for example
   `echo "API_URL=$URL" >> .env`, `printf 'A=%s\n' x >> .env`, `sed -i`, `tee`, `Set-Content`, and copies such as
   `cp x .env` or `cat x > .env`. Use the editor tool (Write, Edit, a patch) instead; zn checks what it writes.
+  A literal write is also refused when the same command can change what `echo`, `printf` or `cat` run (a function or alias
+  definition, `eval`, `source` or `.`, `exec`, a here-string or a process substitution, a change of `PATH` or `BASH_ENV`, `enable`, `hash`,
+  `shopt`, `set -o`). A function or alias defined by an EARLIER command of a persistent shell session is not visible to the hook:
+  that limit is accepted, and the editor path does not have it.
   `help` counts wherever it stands in the value as a separate word, also after a slash, a bracket or
   a backslash (`LD_DEBUG=libs/,help`), so no value is read shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`,
   `.codex/`, `.gemini/settings.json`) were already refused to every write. This cannot cover a file that a program writes

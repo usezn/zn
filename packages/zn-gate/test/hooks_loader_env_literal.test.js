@@ -67,8 +67,6 @@ test('printf with a format, behind a wrapper or prefix, or quoted as a word is r
     "printf '%-8b' 'A=1' > .env",
     "env printf 'A=1' > .env",
     "X=1 printf 'A=1' > .env",
-    "command printf 'A=1' > .env",
-    "builtin printf 'A=1' > .env",
     "sudo printf 'A=1' > .env",
     "\"printf\" 'A=1' > .env",
     "\\printf 'A=1' > .env",
@@ -164,4 +162,131 @@ test('shellDotenvWrite reports the dotenv targets it checked', () => {
   assert.equal(ok.verdict, null);
   assert.deepEqual([...ok.targets].sort(), ['.env', 'sub/.env']);
   assert.equal(loaderEnv.shellDotenvWrite('echo A=1 > notes.txt', isEnv).targets.size, 0);
+});
+
+const REDEFINES = /This command can redefine echo, printf or cat/;
+const REFUSED = /zn cannot check what this command writes to it|would set (LD_DEBUG|LD_TRACE_LOADED_OBJECTS|LD_PRELOAD)/;
+
+// Each command must be refused on both adapters; `redefine` also checks the reason clause (skipped for commands that name a loader variable).
+async function refuseAll(t, commands, redefine) {
+  const dir = project(t);
+  for (const command of commands) {
+    for (const d of await both(dir, command)) {
+      assert.equal(d.decision, 'deny', command);
+      assert.match(d.message, REFUSED, command);
+      if (redefine && !/LD_PRELOAD/.test(command)) assert.match(d.message, REDEFINES, command);
+    }
+  }
+}
+
+test('redefinition class function: a function definition anywhere in the command refuses the dotenv write', async (t) => {
+  await refuseAll(t, [
+    "echo() { printf 'LD_PRELOAD=x\\n'; }; echo A=1 >> .env",
+    'echo() { :; }; echo A=1 >> .env',
+    'echo () { :; }; echo A=1 >> .env',
+    'function echo { :; }; echo A=1 > .env',
+    'printf() { :; }; printf A=1 >> .env',
+    'echo A=1 > .env; echo() { :; }',
+  ], true);
+});
+
+test('redefinition class alias: alias and unalias anywhere in the command refuse the dotenv write', async (t) => {
+  await refuseAll(t, ['alias echo=printf; echo A=1 >> .env', 'unalias echo; echo A=1 >> .env', "cat <<'EOF' > .env\nA=1\nEOF\nalias cat=true"], true);
+});
+
+test('redefinition class eval, source, dot and exec refuse the dotenv write', async (t) => {
+  await refuseAll(t, [
+    'eval true; echo A=1 > .env',
+    'source ./x.sh; echo A=1 >> .env',
+    '. ./x.sh && echo A=1 >> .env',
+    'echo A=1 >> .env; . ./x.sh',
+    'exec true; echo A=1 > .env',
+  ], true);
+});
+
+test('redefinition class builtin switches: enable, hash, declare, set -o, shopt, builtin of anything but echo or printf refuse the write', async (t) => {
+  await refuseAll(t, [
+    'enable -n echo; echo A=1 > .env',
+    'hash -p /tmp/x echo; echo A=1 > .env',
+    'declare -f echo; echo A=1 > .env',
+    'typeset -f echo; echo A=1 > .env',
+    'readonly -f echo; echo A=1 > .env',
+    'shopt -s expand_aliases; echo A=1 > .env',
+    'set -o posix; echo A=1 > .env',
+    'builtin true; echo A=1 > .env',
+    'builtin command echo A=1 >> .env',
+  ], true);
+});
+
+test('redefinition class lookup variables: PATH, BASH_ENV and ENV assignments refuse the write', async (t) => {
+  await refuseAll(t, [
+    'export PATH=/tmp/bin; echo A=1 >> .env',
+    'PATH=/tmp/bin; echo A=1 >> .env',
+    'PATH+=:/tmp/bin; echo A=1 >> .env',
+    'BASH_ENV=/tmp/x; echo A=1 > .env',
+    'ENV=/tmp/x; echo A=1 > .env',
+  ], true);
+});
+
+test('redefinition class here-string and process substitution: <<<, <( ) and >( ) anywhere refuse the write', async (t) => {
+  await refuseAll(t, [
+    'cat <<< x; echo A=1 >> .env',
+    'echo A=1 >> .env; cat <<< x',
+    'diff <(true) <(true); echo A=1 >> .env',
+    'echo A=1 >> .env; tee >(cat) < /dev/null',
+    'echo A=1 > >(cat >> .env)',
+  ], false);
+});
+
+test('redefinition class writer by path or variable: /bin/echo, ./echo, ~/x/echo, $E and ${E} refuse the write', async (t) => {
+  await refuseAll(t, [
+    '/bin/echo A=1 >> .env',
+    './echo A=1 >> .env',
+    '~/x/echo A=1 >> .env',
+    'E=echo; $E A=1 >> .env',
+    'E=echo; ${E} A=1 >> .env',
+    'E=printf; $E A=1 > .env',
+  ], false);
+});
+
+test('redefinition class writer behind a wrapper: only the exact two-word builtin and command forms pass', async (t) => {
+  await refuseAll(t, [
+    'env echo A=1 >> .env',
+    'command builtin echo A=1 >> .env',
+    'command -p echo A=1 >> .env',
+    'command command echo A=1 >> .env',
+    'builtin builtin echo A=1 >> .env',
+    "builtin printf '%s' A=1 >> .env",
+    'builtin echo -n A=1 >> .env',
+    'sudo echo A=1 >> .env',
+    'X=1 echo A=1 >> .env',
+  ], false);
+  const dir = project(t);
+  for (const command of ['builtin echo A=1 >> .env', "command printf 'A=1' >> .env", "builtin printf 'A=1' > .env", 'command echo A=1 >> .env']) {
+    for (const d of await both(dir, command)) assert.notEqual(d.decision, 'deny', command + ' ' + JSON.stringify(d));
+  }
+  const isEnv = (x) => /(^|[\\/])\.env$/.test(x);
+  assert.equal(loaderEnv.shellDotenvWrite('builtin echo LD_PRELOAD=x >> .env', isEnv).verdict, 'LD_PRELOAD');
+});
+
+test('redefinition rule leaves plain literal writes and single-quoted text alone', async (t) => {
+  const dir = project(t);
+  const fine = [
+    'echo A=1 >> .env',
+    'true && echo A=1 >> .env',
+    'echo ENV=prod >> .env',
+    "echo 'NOTE=alias and source' >> .env",
+    "echo 'NOTE=functions()' >> .env",
+    "echo 'NOTE=<(x)' >> .env",
+  ];
+  const isEnv = (x) => /(^|[\\/])\.env$/.test(x);
+  for (const command of fine) {
+    assert.equal(loaderEnv.shellDotenvWrite(command, isEnv).verdict, null, command);
+    for (const d of await both(dir, command)) assert.notEqual(d.decision, 'deny', command + ' ' + JSON.stringify(d));
+  }
+  assert.equal(loaderEnv.shellDotenvWrite('echo() { :; }; echo A=1 >> .env', isEnv).verdict, loaderEnv.REDEFINABLE);
+  assert.equal(loaderEnv.shellDotenvWrite('echo "a\'b"; echo A=1 >> .env', isEnv).verdict, null);
+  assert.ok(loaderEnv.shellDotenvWrite("echo 'x; echo A=1 >> .env", isEnv).verdict);
+  // Double-quoted text is read (it can hold expansions), so a keyword inside it refuses.
+  assert.equal(loaderEnv.shellDotenvWrite('echo "NOTE=eval later" >> .env', isEnv).verdict, loaderEnv.REDEFINABLE);
 });
