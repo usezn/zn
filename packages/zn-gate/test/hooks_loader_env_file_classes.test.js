@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const runner = require('../lib/hooks/runner');
+const policy = require('../lib/hooks/policy');
 const loaderEnv = require('../lib/loader-env');
 const claude = require('../lib/agents/claude-code');
 const gemini = require('../lib/agents/gemini');
@@ -174,4 +175,61 @@ test('class 9: MCP writes to a .env are judged in Claude Code, Codex CLI, Cursor
     await allowed(cursor, cur(dir, 'write_file', { path: p, content }), 'cursor benign ' + p);
     await allowed(opencode, oc(dir, 'fs_write_file', { path: p, content }), 'opencode benign ' + p);
   }
+});
+
+// Class 10: a copy, move, rename or link into a .env, or a tool zn does not know that names one, gives zn no file to judge: refused,
+// through MCP servers and unknown tools alike. Reads of a .env and copies between other files keep working.
+test('class 10: MCP copy/rename/unknown into .env is refused', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  const src = path.join(dir, 'notes.txt');
+  fs.writeFileSync(env, 'PORT=1\n');
+  fs.writeFileSync(src, 'LD_PRELOAD=/tmp/x.so\n');
+  const shapes = [
+    ['copy_file', { source: src, destination: env }],
+    ['move_file', { source: src, destination: env }],
+    ['rename', { from: src, to: env }],
+    ['create_symlink', { target: src, link: '.env' }],
+    ['do_thing', { src, dst: env }],
+    ['do_thing', { a: { b: src, c: '.env.local' } }],
+  ];
+  for (const [name, args] of shapes) {
+    const what = name + ' ' + JSON.stringify(args);
+    await refused(claude, cc(dir, 'mcp__fs__' + name, args), 'claude ' + what);
+    await refused(codex, cdx(dir, 'mcp__fs__' + name, args), 'codex ' + what);
+    await refused(cursor, cur(dir, name, args), 'cursor ' + what);
+    await refused(opencode, oc(dir, 'fs_' + name, args), 'opencode ' + what);
+    await refused(gemini, gem(dir, 'mcp_fs_' + name, args), 'gemini ' + what);
+    await refused(antigravity, ag(dir, 'mcp_fs_' + name, args), 'antigravity ' + what);
+    await refused(copilot, cop(dir, 'fs-' + name, args), 'copilot ' + what);
+  }
+  // The source of a copy or move may be the .env too: the call still names it without its content.
+  await refused(claude, cc(dir, 'mcp__fs__move_file', { source: env, destination: src }), 'move out of .env');
+  // Tools that are not MCP tools: an unknown tool that names files, and one that also carries a command.
+  await refused(claude, cc(dir, 'file_mover', { source: src, destination: env }), 'claude unknown file tool');
+  await refused(copilot, cop(dir, 'file_mover', { source: src, destination: env }), 'copilot unknown file tool');
+  await refused(claude, cc(dir, 'custom_runner', { command: 'cp', from: src, to: env }), 'claude unknown command tool');
+  await refused(copilot, cop(dir, 'custom_runner', { command: 'cp', path: env }), 'copilot unknown command tool');
+  // In limit: reads of a .env through MCP keep their current answer, and copies between files that are not watched pass.
+  for (const [name, args] of [['read_file', { path: env }], ['read_text_file', { path: env }], ['get_file_info', { path: env }],
+    ['read_multiple_files', { paths: [env, src] }], ['list_directory', { path: dir }]]) {
+    await allowed(claude, cc(dir, 'mcp__fs__' + name, args), 'claude read ' + name);
+    await allowed(opencode, oc(dir, 'fs_' + name, args), 'opencode read ' + name);
+  }
+  const other = path.join(dir, 'copy.txt');
+  await allowed(claude, cc(dir, 'mcp__fs__copy_file', { source: src, destination: other }), 'claude copy other');
+  await allowed(opencode, oc(dir, 'fs_move_file', { source: src, destination: other }), 'opencode move other');
+  await allowed(cursor, cur(dir, 'copy_file', { source: src, destination: other }), 'cursor copy other');
+  await allowed(codex, cdx(dir, 'mcp__fs__copy_file', { source: src, destination: other }), 'codex copy other');
+  await allowed(gemini, gem(dir, 'mcp_fs_copy_file', { source: src, destination: other }), 'gemini copy other');
+  await allowed(antigravity, ag(dir, 'mcp_fs_move_file', { source: src, destination: other }), 'antigravity move other');
+  await allowed(gemini, gem(dir, 'mcp_fs_read_file', { path: env }), 'gemini read');
+  await allowed(antigravity, ag(dir, 'mcp_fs_read_file', { path: env }), 'antigravity read');
+  // A whole body or an edit applied to the file is still judged on what it leaves.
+  await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2' }), 'write body');
+  await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'edit');
+  assert.equal(policy.readOnlyToolName('mcp__fs__read_file'), true);
+  assert.equal(policy.readOnlyToolName('mcp__fs__read_and_copy'), false);
+  assert.equal(policy.readOnlyToolName('fs_moveFile'), false);
+  assert.equal(policy.readOnlyToolName('do_thing'), false);
 });

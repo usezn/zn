@@ -13,6 +13,7 @@
     "bashDenial",
     "classifyPath",
     "classifyWord",
+    "dotenvUnseenWriteDenial",
     "egressDecodedCopies",
     "egressLabel",
     "egressMcpCovers",
@@ -27,6 +28,7 @@
     "instructionWriteNotice",
     "loaderEnvWriteDenial",
     "readDenial",
+    "readOnlyToolName",
     "scanFirstCommand",
     "scanPowerShell",
     "skipWrapper",
@@ -35,7 +37,7 @@
     "writeDenial"
   ],
   "sha256": {
-    "lib/hooks/policy.js": "3bda4799957449883bf6e14aebd9a2acdae642a6d8fae5760e09f8ee04f792c3",
+    "lib/hooks/policy.js": "b354eef75865d0c68f14e9f7ad348229a336239b60e13c58385f2718efa28971",
     "lib/hooks/curl-files.js": "c1c87057eabf0f7cf1eccacf1822ec92e6242b328455b0756d269a168945a6c8",
     "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
     "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",

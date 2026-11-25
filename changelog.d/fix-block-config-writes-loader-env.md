@@ -11,3 +11,5 @@
   what it writes.
 - Edits to a watched `.env` file are judged on the file they would leave, in every agent and through MCP servers too: zn
   applies the edit or patch to the file on disk, and refuses the write when it cannot work out the result.
+- Copies, moves, renames and links into a project `.env` or `.gemini/.env`, through an MCP server or a tool zn does not know,
+  are refused: zn cannot see the file they would leave. Reads of these files are unchanged; use the editor tool to change them.
