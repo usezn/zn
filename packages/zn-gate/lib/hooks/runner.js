@@ -420,6 +420,7 @@ const REINSTALL_USER = winCommandText('part of zn-gate is missing from this inst
 const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode' };
 function fixHint(agentId) {
   if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
+    // Untagged on purpose: the default branch pins the plugin to the latest published release (a tag would hold the previous one).
     return 'If it happens again, ask the user to reinstall the zn-gate plugin in their terminal: `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn`, `claude plugin install zn-gate@usezn`.';
   }
   const name = AGENT_NAMES[agentId];

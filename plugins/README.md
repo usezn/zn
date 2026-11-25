@@ -74,7 +74,7 @@ claude plugin install zn-gate@usezn
 ```
 
 Leave auto-update off for this marketplace (the default). The plugin pins one
-zn-gate release: to upgrade, run
+zn-gate release and stays on it until you move it: to upgrade, run
 `claude plugin marketplace remove usezn`, then
 `claude plugin marketplace add usezn/zn` again and
 `claude plugin install zn-gate@usezn`, which also installs the newly pinned

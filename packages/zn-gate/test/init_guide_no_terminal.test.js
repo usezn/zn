@@ -65,7 +65,7 @@ for (const id of Object.keys(AGENTS)) {
     assert.match(text, /Run them in your own terminal:/);
     assert.match(text, winCmdRe(/Then check that it works: `npx -y zn-gate check`/));
     if (id === 'claude-code') {
-      assert.match(text, /\/plugin marketplace add usezn\/zn/);
+      assert.match(text, /\/plugin marketplace add usezn\/zn(?![#@\w./-])/);
       assert.match(text, /\/plugin install zn-gate@usezn/);
     } else {
       assert.match(text, winCmdRe(new RegExp('^ {2}zn hooks install ' + id + '$', 'm')));

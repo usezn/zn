@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Claude Code plugin README now says how to install zn-gate from the usezn marketplace and how to remove it.
 
 ### Fixed
+- `zn-gate init`, `zn-gate check` and the plugin messages add the Claude Code plugin marketplace without a release tag again (`claude plugin marketplace add usezn/zn`), so the plugin you install pins the latest published zn-gate and matches the installed release. A tag holds the plugin pin of the previous release, which left the plugin one release behind.
 - `zn-gate evidence --export` of a large log (over about 512 MB) no longer writes an empty file and reports it as valid. The export
   now reads the log in parts, so every record is exported in bounded memory, and the dashboard export does the same. In the npm
   package, if the log cannot be read to the end the export says so and exits 1, and an export whose chain does not verify

@@ -338,7 +338,8 @@ test('check: a plugin older than this zn-gate says how to move it, a current one
   assert.ok(note, JSON.stringify(cc.notes));
   assert.match(note, /plugin is version 1\.9\.0/);
   assert.ok(note.includes('claude plugin marketplace remove usezn'));
-  assert.ok(note.includes('claude plugin marketplace add usezn/zn'));
+  assert.ok(note.includes('`claude plugin marketplace add usezn/zn` and `claude plugin install zn-gate@usezn`'), note);
+  assert.ok(!/marketplace add usezn\/zn[#@]/.test(note), note);
   assert.ok(note.includes('claude plugin install zn-gate@usezn'));
 
   const current = machine(t);
@@ -360,7 +361,8 @@ test('init: an installed plugin older than this zn-gate gets the steps to move i
   let out = '';
   await guide({ ...m, nodeVersion: '22.5.1', stdin: { isTTY: false }, write: (s) => { out += s; } });
   assert.match(out, /Claude Code: the zn-gate plugin is version 1\.9\.0 and this zn-gate is /);
-  assert.ok(out.includes('claude plugin marketplace add usezn/zn'));
+  assert.ok(out.includes('`claude plugin marketplace add usezn/zn` and `claude plugin install zn-gate@usezn`'), out);
+  assert.ok(!/marketplace add usezn\/zn[#@]/.test(out), out);
 });
 
 test('init: a plugin of the same version as this zn-gate adds no update line', async (t) => {
