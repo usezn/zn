@@ -263,11 +263,11 @@ Each rule layer has a version constant. A change to any file of a layer must com
 | --- | --- | --- | --- |
 | Detection rules | `RULES_VERSION` | `lib/rules.js`, `lib/mcp-secrets.js` | `packages/zn-gate-py/src/zn_gate/rules.py` |
 | Scrubber types | `SCRUB_RULES_VERSION` | `lib/scrub/patterns.js`, `lib/scrub/exact.js` | none |
-| `zn audit` | `AUDIT_RULES_VERSION` | `lib/audit/rules.js`, `lib/audit/patterns.js` | none |
-| Hook policy | `POLICY_RULES_VERSION` | `lib/hooks/policy.js`, `lib/broker/files.js`, `lib/broker/markers.js`, `lib/broker/dotenv.js`, `lib/shell-quote.js`, `lib/destructive.js` | none |
+| `zn audit` | `AUDIT_RULES_VERSION` | `lib/audit/rules.js`, `lib/audit/patterns.js`, `lib/loader-env.js` | none |
+| Hook policy | `POLICY_RULES_VERSION` | `lib/hooks/policy.js`, `lib/broker/files.js`, `lib/broker/markers.js`, `lib/broker/dotenv.js`, `lib/shell-quote.js`, `lib/destructive.js`, `lib/shell-vars.js`, `lib/loader-env.js` | none |
 | Destructive commands | `COMMAND_RULES_VERSION` | `lib/destructive.js` | `packages/zn-gate-py/src/zn_gate/destructive.py` |
 
-`lib/destructive.js` is in two rows, so a change there bumps both `POLICY_RULES_VERSION` and `COMMAND_RULES_VERSION`.
+`lib/destructive.js` is in two rows, so a change there bumps both `POLICY_RULES_VERSION` and `COMMAND_RULES_VERSION`; `lib/loader-env.js` is in two rows too, so a change there bumps both `AUDIT_RULES_VERSION` and `POLICY_RULES_VERSION`.
 
 ### Changing a rule
 

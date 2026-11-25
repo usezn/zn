@@ -14,6 +14,7 @@ const runner = require('../lib/hooks/runner');
 const claude = require('../lib/agents/claude-code');
 const gemini = require('../lib/agents/gemini');
 const codex = require('../lib/agents/codex');
+const copilot = require('../lib/agents/copilot');
 const loaderEnv = require('../lib/loader-env');
 const { classifyEnv } = require('../lib/audit/patterns');
 const { createFakeVault } = require('./helpers/fake_vault');
@@ -331,4 +332,96 @@ test('an edit that removes or neutralises LD_DEBUG=help is allowed: the text it 
   passes(await decide(claude, cc('MultiEdit', { file_path: env, edits: [{ old_string: 'LD_DEBUG=help\n', new_string: '' }, { old_string: 'FOO=1', new_string: 'FOO=2' }] }, dir)));
   // Still refused when the edit leaves the value in place.
   blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'FOO=1', new_string: 'FOO=2' }, dir)), STOP);
+});
+
+// Values that a regular expression might cut short: a slash, a bracket or a backslash before ",help". glibc reads the whole value,
+// splits it at the comma and acts on "help", so each one must be refused in every write path.
+const CUT_VALUES = ['x/,help', 'libs},help', 'libs),help', 'x\\,help', 'libs/x:help', 'all help'];
+
+test('a loader value with a slash, bracket or backslash before ,help is refused in Write, Edit and patches', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  for (const v of CUT_VALUES) {
+    blocked(await decide(claude, cc('Write', { file_path: env, content: 'PORT=1\nLD_DEBUG=' + v + '\n' }, dir)), STOP, v);
+    blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'PORT=1', new_string: 'LD_DEBUG=' + v }, dir)), STOP, v);
+    blocked(await decide(gemini, gem('write_file', { file_path: path.join(dir, '.gemini', '.env'), content: 'LD_DEBUG=' + v + '\n' }, dir)), STOP, v);
+    blocked(await decide(codex, cdx('apply_patch', { command: patch('Add', '.env', ['LD_DEBUG=' + v]) }, dir)), STOP, v);
+  }
+  // The edit changes only the value: the file it leaves holds LD_DEBUG=x/,help.
+  fs.writeFileSync(env, 'LD_DEBUG=all\n');
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'all', new_string: 'x/,help' }, dir)), STOP);
+  // Other forms the dotenv package reads: a quoted value over two lines, NAME: value, backticks, export, an escape and a reference to
+  // another variable.
+  const dotenvForms = ['LD_DEBUG="all\n help"\n', 'LD_DEBUG: help\n', 'LD_TRACE_LOADED_OBJECTS: 1\n', 'LD_DEBUG=`help`\n',
+    'LD_DEBUG=`libs,help`\n', 'export LD_DEBUG=x/,help\n', 'export LD_TRACE_LOADED_OBJECTS=1\n', 'LD_DEBUG="all\\n,help"\n', 'LD_DEBUG=${OPTS}\n',
+    "LD_DEBUG='libs\n,help'\n"];
+  for (const content of dotenvForms) {
+    blocked(await decide(claude, cc('Write', { file_path: env, content }, dir)), STOP, content);
+    blocked(await decide(gemini, gem('write_file', { file_path: path.join(dir, '.gemini', '.env'), content }, dir)), STOP, content);
+    blocked(await decide(codex, cdx('apply_patch', { command: patch('Add', '.env', content.replace(/\n$/, '').split('\n')) }, dir)), STOP, content);
+  }
+  fs.writeFileSync(env, 'PORT=1\n');
+  blocked(await decide(claude, cc('Edit', { file_path: env, old_string: 'PORT=1', new_string: 'LD_TRACE_LOADED_OBJECTS: 1' }, dir)), STOP);
+  blocked(await decide(gemini, gem('replace', { file_path: env, old_string: 'PORT=1', new_string: 'LD_DEBUG=`help`', instruction: 'x' }, dir)), STOP);
+  for (const content of ['LD_DEBUG: all\n', 'LD_DEBUG=`libs`\n']) passes(await decide(claude, cc('Write', { file_path: env, content }, dir)));
+  for (const content of ['LD_DEBUG=all\n', 'LD_DEBUG=xhelp\nHELP_URL=https://example.com/help\n', 'LD_DEBUG=libs/x,files\n', 'LD_DEBUG=libs\nBAR=help\n']) {
+    passes(await decide(claude, cc('Write', { file_path: env, content }, dir)));
+  }
+});
+
+test('a shell write of a loader value with a slash, bracket or backslash before ,help is refused', async (t) => {
+  const dir = project(t);
+  for (const v of CUT_VALUES) {
+    for (const command of ['echo LD_DEBUG=' + v + ' >> .env', "echo 'LD_DEBUG=" + v + "' >> .env", 'printf "LD_DEBUG=' + v + '\\n" >> .env',
+      'cat >> .env <<EOF\nLD_DEBUG=' + v + '\nEOF']) {
+      blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
+      blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), STOP, command);
+    }
+  }
+  // The shell ends the word in another place than the text shows: a redirection glued to the value, a quoted piece after a space or a slash,
+  // a quoted separator, a line break inside quotes.
+  for (const command of ['echo LD_DEBUG=help>>.env', 'echo LD_DEBUG="all" help >> .env', 'echo LD_DEBUG=x/,"help" >> .env',
+    'echo "LD_DEBUG=all;,help" >> .env', "echo 'LD_DEBUG=all\n,help' >> .env", 'echo LD_DEBUG: help >> .env']) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
+  }
+  for (const command of ['echo LD_DEBUG=libs/x >> .env', "sed -i 's/LD_DEBUG=all/LD_DEBUG=libs/' .env", 'echo LD_DEBUG=all >> .env']) {
+    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+  }
+});
+
+test('the printf form and quoted pieces of the loader name are refused for a .env', async (t) => {
+  const dir = project(t);
+  const STOP_OR_COMPUTED = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG|a variable whose name the shell computes \(it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS\)) for the agent/;
+  const bad = [
+    "printf '%s=%s' LD_DEBUG help >> .env",
+    'printf "%s=%s\\n" "LD_DEBUG" "help" >> .env',
+    'echo "LD_"DEBUG=help >> .env',
+    'echo LD_"DEB"UG=help >> .env',
+    "echo 'LD_DEB'UG=help >> .env",
+    'K=LD_DEBUG; echo $K=help >> .env',
+    'K=LD_DEBUG; printf "%s=help" "$K" >> .env',
+  ];
+  for (const command of bad) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), STOP_OR_COMPUTED, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), STOP_OR_COMPUTED, command);
+  }
+});
+
+test('GitHub Copilot CLI edits of a .env: unreadable edits are refused, other files and benign values pass', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1\nLD_DEBUG=all\n');
+  const cop = (toolName, args) => ({ sessionId: 's1', timestamp: 1792400000000, cwd: dir, toolName, toolArgs: typeof args === 'string' ? args : JSON.stringify(args) });
+  blocked(await decide(copilot, cop('edit', { path: env, old_str: 'all', new_str: 'help' })), STOP);
+  blocked(await decide(copilot, cop('edit', { path: env, old_string: '=all', new_string: '=help' })), STOP);
+  blocked(await decide(copilot, cop('edit', { path: env, old_str: 'all', new_str: 'x/,help' })), STOP);
+  // The same edit with the arguments as an object.
+  blocked(await decide(copilot, { sessionId: 's1', timestamp: 1792400000000, cwd: dir, toolName: 'edit', toolArgs: { path: env, old_str: 'all', new_str: 'help' } }), STOP);
+  // An edit whose text is not in the file cannot be judged: refused for a .env.
+  blocked(await decide(copilot, cop('edit', { path: env, old_str: 'MISSING', new_str: 'help' })));
+  passes(await decide(copilot, cop('edit', { path: env, old_str: 'all', new_str: 'libs' })));
+  passes(await decide(copilot, cop('edit', { path: env, old_str: 'FOO=1', new_str: 'FOO=2' })));
+  // Other files are not guarded.
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'LD_DEBUG=all\n');
+  passes(await decide(copilot, cop('edit', { path: path.join(dir, 'notes.txt'), old_str: 'all', new_str: 'help' })));
 });
