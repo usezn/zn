@@ -262,7 +262,8 @@ function fromCwd(cwd, word) {
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
   if (cwd === CWD_LOST) return '/';
   const ups = w.split(/[\\/]/).filter((s) => s === '..').length;
-  return folderText(cwd, ups + 4) + '/' + w;
+  // The folder and the word joined are read lexically, so cd /srv && curl -o ../etc/profile names /etc/profile.
+  return resolveDots((folderText(cwd, ups + 4) + '/' + w).replace(/\\/g, '/'));
 }
 
 /* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read

@@ -1186,7 +1186,8 @@ def _from_cwd(cwd: Any, word: str) -> str:
     if cwd is _CWD_LOST:
         return "/"
     ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
-    return _folder_text(cwd, ups + 4) + "/" + word
+    # The folder and the word joined are read lexically, so cd /srv && curl -o ../etc/profile names /etc/profile.
+    return _resolve_dots((_folder_text(cwd, ups + 4) + "/" + word).replace("\\", "/"))
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
