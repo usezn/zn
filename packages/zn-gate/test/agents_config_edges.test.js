@@ -294,8 +294,11 @@ test('claude-code: the managed policy is reported on install when present, and n
 
   const h2 = fakeHome(t);
   const absent = claude.install(opts(h2, { managedDir: path.join(h2, 'no-policy') }));
-  // A copy of zn-gate without the prebuilt static launcher (a source checkout) says so on Linux; that warning is not about the policy.
+  // No policy warning. The one other warning allowed is the static launcher's, and only on Linux: a copy of zn-gate without the
+  // prebuilt launcher (a source checkout) says so there.
+  const launcherWarnings = absent.warnings.filter((w) => /static hook launcher/.test(w));
   assert.deepEqual(absent.warnings.filter((w) => !/static hook launcher/.test(w)), []);
+  assert.ok(launcherWarnings.length <= (process.platform === 'linux' ? 1 : 0), JSON.stringify(absent.warnings));
 });
 
 /* ------------------------------- managed-policy ------------------------------- */

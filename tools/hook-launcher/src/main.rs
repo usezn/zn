@@ -1,5 +1,6 @@
 //! zn-hook-launcher: the first program of zn's hook on Linux, for the agents that start a hook program directly,
-//! with no shell (Claude Code `args`, GitHub Copilot CLI `exec`, ZCode `process`, Antigravity).
+//! with no shell: Claude Code (`args`) and ZCode (`process`). It also has the answers of GitHub Copilot CLI and
+//! Antigravity, but zn does not install it for them yet (both stay detection only, see lib/agents/static-launcher.js).
 //!
 //! Every dynamically linked program (sh, bash, node) goes through the dynamic loader before its first line, and the
 //! loader reads variables from the environment the agent passes on: LD_TRACE_LOADED_OBJECTS (any value) and LD_DEBUG

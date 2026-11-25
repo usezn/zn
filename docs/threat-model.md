@@ -562,7 +562,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
   runs in the shell only. Code that already runs in that shell can still change what the shell prints, or clear the variable
   before the check, so the block narrows the window and does not make a hostile agent environment safe. Whoever can set the
   environment of the agent can already run code as the user; this is accepted, not solved.
-- **Some loader variables stop the shell before the script runs (closed on Linux for three agents, accepted limit for the
+- **Some loader variables stop the shell before the script runs (closed on Linux for Claude Code and ZCode, accepted limit for the
   others).** With `LD_TRACE_LOADED_OBJECTS` (any value, also `0` or empty) or `LD_DEBUG` naming `help` set in the environment
   of the agent, the glibc dynamic loader prints its output and exits with status 0 before the first line of any dynamically
   linked program (sh, bash, Node.js). A hook started that way never runs, and most agents read exit 0 with plain text as "no
