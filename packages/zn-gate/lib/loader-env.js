@@ -208,20 +208,23 @@ const NAME_PIECE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])(?:L|LD|LD_[A-Z_]*)
 const CODE_ESCAPE_RE = /\\(?:x[0-9A-Fa-f]|[0-7]|u[0-9A-Fa-f]|U[0-9A-Fa-f])/;
 // Programs and quoting that turn such escapes into characters: printf, echo -e and $'..'.
 const ESCAPE_WRITER_RE = /(?<![A-Za-z0-9_-])printf(?![A-Za-z0-9_-])|(?<![A-Za-z0-9_-])echo[ \t]+-[A-Za-z]*e|\$'/;
-// Whether position `idx` of `s` is inside a single or double quoted string (a backslash escapes in double quotes).
-function insideQuotes(s, idx) {
+// For each position of `s`, whether it is inside a single or double quoted string (a backslash escapes in double quotes), in one
+// forward pass: the state is the quote the shell is in just before that character.
+function quoteMap(s) {
+  const inside = new Uint8Array(s.length + 1);
   let q = '';
-  for (let i = 0; i < idx; i++) {
+  for (let i = 0; i < s.length; i++) {
+    inside[i] = q ? 1 : 0;
     const c = s.charAt(i);
-    if (q === '"' && c === '\\') i++;
-    else if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c;
+    if (q === '"' && c === '\\') { i++; inside[i] = 1; } else if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c;
   }
-  return q !== '';
+  inside[s.length] = q ? 1 : 0;
+  return inside;
 }
-// Whether the shell word that starts at `from` holds a glob character (* ? [ {) outside quotes.
-function unquotedGlobIn(s, from) {
+// Whether the shell word that starts at `from` holds a glob character (* ? [ {) outside quotes. `inside` is quoteMap(s).
+function unquotedGlobIn(s, from, inside) {
   for (let i = from; i < s.length; i++) {
-    if (insideQuotes(s, i)) continue;
+    if (inside[i]) continue;
     const c = s.charAt(i);
     if (/[\s;&|<>]/.test(c)) return false;
     if (/[*?\[{]/.test(c)) return true;
@@ -250,6 +253,7 @@ function hookStopOrComputedIn(text) {
   HOOK_STOP_ASSIGNMENT_RE.lastIndex = 0;
   let m;
   let literal = 0;
+  let inside = null; // quote state of every position, computed once and only when a loader assignment is found
   while ((m = HOOK_STOP_ASSIGNMENT_RE.exec(s))) {
     const value = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : (m[4] || '');
     if (isHookStopVar(m[1], value) || writtenValueStopsHooks(m[1], valueSpan(s, valueStart(m), true), true)) return m[1];
@@ -267,7 +271,8 @@ function hookStopOrComputedIn(text) {
     // An unquoted glob (he*p, he?p, he[l]p, he{l,x}p) expands to a file name in the project, so the value is not what is written.
     // Each glob character is judged by the quote state at its own position: a quoted prefix does not protect an unquoted glob after it
     // ("LD_DEBUG="he*p), and a glob inside quotes ('LD_DEBUG=he*p') is not expanded.
-    const globbed = unquotedGlobIn(s, valueStart(m));
+    if (!inside) inside = quoteMap(s);
+    const globbed = unquotedGlobIn(s, valueStart(m), inside);
     if (glued || globbed || COMPUTED_VALUE_RE.test(value)) return m[1];
     literal++;
   }
