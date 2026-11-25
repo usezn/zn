@@ -117,7 +117,8 @@ test('Cursor: version 1, failClosed on reads and prompts only, same entries as t
   assert.deepEqual(closed, ['beforeReadFile', 'beforeSubmitPrompt']);
   for (const [event, list] of Object.entries(data.hooks)) {
     assert.equal(list.length, 1);
-    assert.equal(list[0].command, launcher.projectShCommand('cursor', event));
+    // The managed file is built for the target system (Linux and macOS share the sh form), not for the machine the test runs on.
+    assert.equal(list[0].command, launcher.projectShCommand('cursor', event, { platform: 'linux' }));
     assert.ok(cfg.isOurs(list[0].command, 'cursor'));
   }
   // The project installer writes the same entries; on Windows both are the PowerShell form of the guard.
