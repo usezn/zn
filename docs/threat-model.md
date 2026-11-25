@@ -598,6 +598,15 @@ Three features are off by default. Each one helps in a narrow case and has limit
   - macOS has no such launcher: dyld prints with its `DYLD_PRINT_*` variables and goes on, and no dyld variable is known to
     end a program before `main` (not tested). Windows has no `ld.so`. Linux on other processors (32-bit, RISC-V) gets no
     prebuilt launcher and keeps the earlier form, with the warning.
+  - What `zn audit` checks on every platform: a project that sets either variable for the agent (Claude Code `env`, a
+    committed `.env`, Codex `shell_environment_policy.set`) is reported as critical (in the `env` of an MCP server it only
+    stops that server from starting, and is reported as medium), and the same finding blocks a change to Claude Code's
+    project settings that adds one (zn's configuration change check), provided the hook for that change still runs. Whoever
+    can set the environment of the agent can also preload a library of their own (see the limit above), so this gives no new
+    power; it only needs no file.
+  - The other loader settings that only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`,
+    `LD_VERBOSE`, `LD_WARN`) let the script run; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
+    FreeBSD's loader.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
