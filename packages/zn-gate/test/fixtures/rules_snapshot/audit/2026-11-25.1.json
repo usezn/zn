@@ -54,6 +54,6 @@
   "sha256": {
     "lib/audit/rules.js": "a941203dc4e78192825701e61249833e9bc746ef9703121d52d6ad5ce0aaa2c4",
     "lib/audit/patterns.js": "cd47b631c63d1127a3ff8e8b04da20e59aa8ba39db2e07153f7983fb896d9f5a",
-    "lib/loader-env.js": "d03ef210ec063a073db45a2b75a1dac9973daa4987511531c19ac19dd7dca86e"
+    "lib/loader-env.js": "ceb5039eb13d01b8cc6363930d57b5a3b7805b2e00ace7c101f95084cb315c3e"
   }
 }
