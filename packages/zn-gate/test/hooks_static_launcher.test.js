@@ -233,14 +233,15 @@ test('GitHub Copilot keeps today\'s hook form on Linux (detection only), with no
   assert.throws(() => sl.execParts('/x/zn-hook-launcher', 'copilot', 'preToolUse', '/usr/bin/node'), /no static launcher for copilot/);
 });
 
-test('the exec-form entries are recognized as zn\'s and read back by check', () => {
-  const st = '/home/u/.zn/hooks/zn-hook-launcher';
+test('the exec-form entries are recognized as zn\'s and read back by check', (t) => {
+  const hooks = path.join(tempDir(t, 'zn-exec-form-'), '.zn', 'hooks');
+  const st = path.join(hooks, 'zn-hook-launcher');
   const cfg = require('../lib/agents/config-file');
   const zc = require('../lib/agents/zcode');
-  const zText = zc.commandText({ type: 'process', command: st, args: ['zcode', 'PreToolUse', '/home/u/.zn/hooks/zn-hook-zcode.sh', 'PreToolUse'] });
-  assert.equal(zText, "'" + st + "' zcode PreToolUse '/home/u/.zn/hooks/zn-hook-zcode.sh' PreToolUse");
+  const zText = zc.commandText({ type: 'process', command: st, args: ['zcode', 'PreToolUse', path.join(hooks, 'zn-hook-zcode.sh'), 'PreToolUse'] });
+  assert.equal(zText, "'" + st + "' zcode PreToolUse '" + path.join(hooks, 'zn-hook-zcode.sh') + "' PreToolUse");
   assert.ok(cfg.isOurs(zText, 'zcode'));
-  assert.ok(cfg.isOurs([st, 'antigravity', 'PreToolUse', '/home/u/.zn/hooks/zn-hook-antigravity.sh', 'PreToolUse'].join(' '), 'antigravity'));
+  assert.ok(cfg.isOurs([st, 'antigravity', 'PreToolUse', path.join(hooks, 'zn-hook-antigravity.sh'), 'PreToolUse'].join(' '), 'antigravity'));
 });
 
 test('the package update refresh replaces an installed launcher that differs from the package copy', { skip: e2eSkip }, (t) => {
