@@ -273,6 +273,34 @@ test('shell writes to a .env that build the loader name or hide it from the text
   for (const command of good) passes(await decide(claude, cc('Bash', { command }, dir)), command);
 });
 
+test('an unquoted value is read as glibc reads it: a slash, bracket or backslash before ,help does not hide help', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  for (const v of ['x/,help', 'libs},help', 'a)\\,help', 'x\\,help', 'libs/x:help']) {
+    assert.equal(loaderEnv.hookStopAssignedIn('LD_DEBUG=' + v + '\n'), 'LD_DEBUG', v);
+    blocked(await decide(claude, cc('Write', { file_path: env, content: 'FOO=1\nLD_DEBUG=' + v + '\n' }, dir)), STOP, v);
+    blocked(await decide(claude, cc('Bash', { command: 'echo LD_DEBUG=' + v + ' >> .env' }, dir)), STOP, v);
+  }
+  // A sed that writes the value still ends it at its slash: help there is the whole value.
+  blocked(await decide(claude, cc('Bash', { command: "sed -i 's/^X=.*/LD_DEBUG=help/' .env" }, dir)), STOP);
+  // Values without help stay allowed.
+  for (const v of ['x/,libs', 'libs},all']) passes(await decide(claude, cc('Write', { file_path: env, content: 'LD_DEBUG=' + v + '\n' }, dir)));
+});
+
+test('GitHub Copilot CLI edits (old_str and new_str, arguments as a JSON text or an object) are judged on the file they leave', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1\nLD_DEBUG=all\n');
+  const copilot = require('../lib/agents').getAdapter('copilot');
+  const pre = (toolArgs) => ({ sessionId: 's1', timestamp: 1792400000000, cwd: dir, toolName: 'edit', toolArgs });
+  // A value-only edit: old all, new help. The text written alone does not name LD_DEBUG.
+  blocked(await decide(copilot, pre(JSON.stringify({ path: env, old_str: 'all', new_str: 'help' }))), STOP);
+  blocked(await decide(copilot, pre({ path: env, old_str: 'all', new_str: 'help' })), STOP);
+  // The text searched for is not written: replacing LD_DEBUG=help elsewhere in the file is allowed.
+  fs.writeFileSync(env, 'FOO=1\nLD_DEBUG=help\n');
+  passes(await decide(copilot, pre(JSON.stringify({ path: env, old_str: 'LD_DEBUG=help', new_str: 'LD_DEBUG=all' }))));
+});
+
 test('an edit that removes or neutralises LD_DEBUG=help is allowed: the text it searches for is not written', async (t) => {
   const dir = project(t);
   const env = path.join(dir, '.env');

@@ -752,18 +752,20 @@ function searchFolderAsk(dirs, pathOpts) {
  * (Write content, Edit new_string, Gemini write_file content and replace new_string, a Codex patch, a filesystem MCP server's content),
  * plus the file as an Edit or replace would leave it. Used to refuse a write that would set a variable that stops the hooks.
  */
-const SEARCH_ONLY_KEYS = new Set(['old_string', 'oldString']);
+// The text an edit searches for, in each agent's spelling (GitHub Copilot CLI's edit tool uses old_str and new_str).
+const SEARCH_ONLY_KEYS = new Set(['old_string', 'oldString', 'old_str']);
 
 function writtenTextsOf(ev, p, cwd) {
   const out = [];
   const seen = new Set();
   const walk = (v, depth) => {
     if (typeof v === 'string') {
-      out.push(v);
-      // GitHub Copilot CLI sends its arguments as a JSON text.
+      // GitHub Copilot CLI sends its arguments as a JSON text: one that reads as JSON is judged on what it holds, like an object
+      // (so the text an edit searches for is left out there too); any other text as it is.
       if (depth < 3 && v.length < 4000000 && /^\s*[{[]/.test(v)) {
-        try { walk(JSON.parse(v), depth + 1); } catch (_) { /* plain text */ }
+        try { walk(JSON.parse(v), depth + 1); return; } catch (_) { /* plain text */ }
       }
+      out.push(v);
     } else if (v && typeof v === 'object' && depth < 6 && !seen.has(v)) {
       seen.add(v);
       // The text an edit searches for is not written: only what replaces it, and the file as it ends up, are judged.
@@ -780,14 +782,20 @@ function writtenTextsOf(ev, p, cwd) {
   // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it: every edit shape
   // (one old/new pair in snake or camel case, a MultiEdit `edits` array applied in order, replace-all flags). When the file cannot be
   // read, or an edit does not apply exactly once, `unresolved` is set and a guarded dotenv path is refused.
-  const args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs;
+  let args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs;
+  // GitHub Copilot CLI sends toolArgs as a JSON text: read it as the object it holds. Arguments that cannot be read as an object
+  // leave the edit unknown, and a guarded dotenv path is refused.
+  if (typeof args === 'string' && p) {
+    try { args = JSON.parse(args); } catch (_) { args = null; }
+    if (!args || typeof args !== 'object') { out.unresolved = true; args = null; }
+  }
   if (args && typeof args === 'object' && p) {
-    const pick = (o, a, b) => (typeof o[a] === 'string' ? o[a] : typeof o[b] === 'string' ? o[b] : null);
+    const pick = (o, ...keys) => { for (const k of keys) if (typeof o[k] === 'string') return o[k]; return null; };
     const edits = [];
     const add = (o) => {
       if (!o || typeof o !== 'object') return;
-      const oldS = pick(o, 'old_string', 'oldString');
-      const newS = pick(o, 'new_string', 'newString');
+      const oldS = pick(o, 'old_string', 'oldString', 'old_str');
+      const newS = pick(o, 'new_string', 'newString', 'new_str');
       if (oldS === null && newS === null) return;
       edits.push({ oldS, newS, all: o.replace_all === true || o.replaceAll === true || o.allow_multiple === true || o.allowMultiple === true });
     };
