@@ -86,9 +86,10 @@ test('class 6: an unknown command tool that also writes a .env is judged on what
   await refused(copilot, cop(dir, 'custom_runner', { command: 'cat', path: env, content: 'LD_PRELOAD=/tmp/x.so' }), 'copilot');
   await refused(claude, cc(dir, 'custom_runner', { command: 'cat', path: env, content: 'LD_PRELOAD=/tmp/x.so' }), 'claude');
   await refused(antigravity, ag(dir, 'custom_runner', { CommandLine: 'cat', path: env, content: 'LD_DEBUG=help' }), 'antigravity');
-  // In limit: the same tools with a benign body, or the loader text for a file that is not watched.
-  await allowed(copilot, cop(dir, 'custom_runner', { command: 'cat', path: env, content: 'PORT=1' }), 'copilot benign');
-  await allowed(claude, cc(dir, 'custom_runner', { command: 'cat', path: env, content: 'PORT=1' }), 'claude benign');
+  // A benign body sent to a tool zn does not know is refused too: zn cannot tell whether the tool writes it as the whole file.
+  await refused(copilot, cop(dir, 'custom_runner', { command: 'cat', path: env, content: 'PORT=1' }), 'copilot benign body');
+  await refused(claude, cc(dir, 'custom_runner', { command: 'cat', path: env, content: 'PORT=1' }), 'claude benign body');
+  // In limit: the loader text for a file that is not watched.
   await allowed(antigravity, ag(dir, 'custom_runner', { CommandLine: 'ls', path: path.join(dir, 'notes.txt'), content: 'LD_DEBUG=help' }), 'antigravity other file');
 });
 
@@ -291,4 +292,49 @@ test('class 10: only exact read-only tool names may name a .env', async (t) => {
     assert.equal(policy.readOnlyToolName(name), true, name);
   }
   for (const name of ['xread_file', 'read_file_and_copy', 'mcp__fs__overview', '']) assert.equal(policy.readOnlyToolName(name), false, name);
+});
+
+// Class 10 refinement: a body only gives zn the file a call leaves when the tool is a known whole-body write tool (by exact name, or
+// the filesystem server's write_file after an MCP prefix) with no append, insert or mode flag, or when zn applied an edit or a patch
+// to the file on disk. A tool zn does not know may append its text: LD_DEBUG=al plus l,help leaves LD_DEBUG=all,help.
+test('class 10: unknown append semantics are refused, only known whole-body writes and edits read from disk count as seen', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'PORT=1\nLD_DEBUG=al\n');
+  const body = { content: 'l,help' };
+  // Tools zn does not know, in each agent's spelling.
+  await refused(claude, cc(dir, 'append_file', { path: '.env', ...body }), 'claude append_file');
+  await refused(claude, cc(dir, 'mcp__x__append', { path: env, ...body }), 'claude mcp append');
+  await refused(codex, cdx(dir, 'mcp__x__append', { path: env, ...body }), 'codex mcp append');
+  await refused(cursor, cur(dir, 'append', { path: env, ...body }), 'cursor mcp append');
+  await refused(opencode, oc(dir, 'x_append', { path: env, ...body }), 'opencode append');
+  await refused(gemini, gem(dir, 'mcp_x_append', { path: env, ...body }), 'gemini mcp append');
+  await refused(gemini, gem(dir, 'append_file', { file_path: env, ...body }), 'gemini append_file');
+  await refused(antigravity, ag(dir, 'mcp_x_append', { path: env, ...body }), 'antigravity mcp append');
+  await refused(copilot, cop(dir, 'x-append', { path: env, ...body }), 'copilot append');
+  // A longer name that ends in write_file, or one that says append, is not the filesystem server's write_file.
+  await refused(claude, cc(dir, 'mcp__fs__copy_and_write_file', { path: env, content: 'PORT=2' }), 'lookalike name');
+  await refused(claude, cc(dir, 'mcp__fs__append_write_file', { path: env, content: 'PORT=2' }), 'append in name');
+  // A known whole-body tool asked to append, insert or open the file in another mode.
+  await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, ...body, append: true }), 'mcp write_file append');
+  await refused(gemini, gem(dir, 'write_file', { file_path: env, ...body, append: true }), 'gemini write_file append');
+  await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, ...body, mode: 'a' }), 'mode a');
+  await refused(opencode, oc(dir, 'fs_write_file', { path: env, ...body, flags: 'a+' }), 'flags a+');
+  await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, ...body, position: 20 }), 'position');
+  // An unknown tool that sends a body next to an edit: the edit alone does not give the file.
+  await refused(claude, cc(dir, 'files_helper', { file: env, ...body, edit: { old_string: 'PORT=1', new_string: 'PORT=2' } }), 'edit plus body');
+  // The known whole-body write tools are still judged on their body.
+  await refused(claude, cc(dir, 'Write', { file_path: env, content: 'PORT=1\nLD_PRELOAD=/tmp/x.so\n' }), 'Write preload');
+  await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'LD_DEBUG=all,help\n' }), 'mcp write_file loader');
+  // In limit: whole-body writes of a clean file, a plain overwrite mode, edits read from disk and reads pass.
+  await allowed(claude, cc(dir, 'Write', { file_path: env, content: 'PORT=2\n' }), 'Write clean');
+  await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2\n' }), 'mcp write_file clean');
+  await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2\n', mode: 'w' }), 'mode w');
+  await allowed(opencode, oc(dir, 'fs_write_file', { path: env, content: 'PORT=2\n' }), 'opencode write_file clean');
+  await allowed(cursor, cur(dir, 'write_file', { path: env, content: 'PORT=2\n' }), 'cursor write_file clean');
+  await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'mcp edit clean');
+  await allowed(claude, cc(dir, 'mcp__fs__read_file', { path: env }), 'mcp read');
+  await allowed(opencode, oc(dir, 'fs_read_text_file', { path: env }), 'opencode read');
+  // The file is unchanged by these checks.
+  assert.equal(fs.readFileSync(env, 'utf8'), 'PORT=1\nLD_DEBUG=al\n');
 });

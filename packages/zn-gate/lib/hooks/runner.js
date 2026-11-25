@@ -765,6 +765,49 @@ const SEARCH_ONLY_KEYS = new Set(EDIT_OLD_KEYS);
 const FULL_BODY_KEYS = ['content', 'contents', 'file_text', 'fileText', 'CodeContent', 'codeContent'];
 // A tool whose name says it edits or replaces part of a file: on a watched dotenv file it must be reconstructed, or it is refused.
 const EDIT_TOOL_NAME_RE = /edit|replace/i;
+// The tools that write a whole file body, by exact name, with the key that holds the body. Only a call to one of these (or an edit or
+// patch zn applied to the file on disk) gives zn the file it leaves: a tool zn does not know may append, insert or merge what it sends.
+const WHOLE_BODY_TOOLS = new Map([
+  ['Write', ['content']], // the Claude CLI agent, Cursor and Z Code
+  ['write', ['content']], // OpenCode
+  ['write_file', ['content', 'Content']], // Gemini CLI, Antigravity, and the reference filesystem MCP server (content)
+  ['write_to_file', ['CodeContent']], // Antigravity
+  ['create', ['file_text']], // GitHub Copilot CLI
+]);
+// The filesystem server's write_file after the prefix an agent adds to an MCP tool: mcp__fs__write_file (Claude CLI agent, Codex
+// CLI), mcp_fs_write_file (Gemini CLI, Antigravity), fs_write_file (OpenCode), fs-write_file (Copilot). The server name is one word,
+// so a longer tool name that ends in write_file (copy_and_write_file) is not this tool. As for read-only names, the name is all zn
+// knows of an MCP tool.
+const MCP_WHOLE_BODY_RE = /^(?:mcp__(?:(?!__)[A-Za-z0-9_-])+__|mcp_[A-Za-z0-9-]+_|[A-Za-z0-9]+[-_.:/])write_file$/;
+// A name or an argument that says the text is added to the file, not written as the whole file.
+const PARTIAL_WRITE_WORD_RE = /append|prepend|insert/i;
+const WRITE_MODE_KEY_RE = /^(?:mode|flags?|write_?mode|open_?mode)$/i;
+const WHOLE_WRITE_MODE_RE = /^(?:w|wb|w\+|write|overwrite|replace|create|truncate)$/i;
+const POSITION_KEY_RE = /^(?:position|offset|line|line_?number|start_?line|insert_?line|at)$/i;
+
+// The body keys of a known whole-body write tool, or null.
+function wholeBodyKeysOf(toolName) {
+  const s = String(toolName || '');
+  if (PARTIAL_WRITE_WORD_RE.test(s)) return null;
+  if (WHOLE_BODY_TOOLS.has(s)) return WHOLE_BODY_TOOLS.get(s);
+  return MCP_WHOLE_BODY_RE.test(s) ? WHOLE_BODY_TOOLS.get('write_file') : null;
+}
+
+// True when an argument object asks for an append, a prepend, an insert or a write at a position: an append flag that is set, a
+// write mode or open flags that are not a plain overwrite (a numeric mode is a permission; numeric flags may hold O_APPEND), or, for
+// a whole-body write tool, a position in the file.
+function partialWriteFlagIn(o, whole) {
+  for (const [k, v] of Object.entries(o)) {
+    if (PARTIAL_WRITE_WORD_RE.test(k) && v !== false && v !== null && v !== undefined && v !== 0 && v !== '' && v !== 'false') return true;
+    if (WRITE_MODE_KEY_RE.test(k) && v !== undefined && v !== null) {
+      if (typeof v === 'number' && /^mode$/i.test(k)) continue;
+      if (typeof v === 'string' && (WHOLE_WRITE_MODE_RE.test(v) || (/^mode$/i.test(k) && /^0?[0-7]{3,4}$/.test(v)))) continue;
+      return true;
+    }
+    if (whole && POSITION_KEY_RE.test(k) && v !== undefined && v !== null) return true;
+  }
+  return false;
+}
 // A patch in the format of Codex's apply_patch (also OpenCode, Z Code and the Copilot patch tools).
 const PATCH_FILE_RE = /^\*\*\* (Add File|Update File|Delete File): (.*)$/;
 const PATCH_MOVE_RE = /^\*\*\* Move to: (.*)$/;
@@ -846,7 +889,11 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
     if (!args || typeof args !== 'object') { out.unresolved = true; args = null; }
   }
   const edits = [];
-  let hasBody = false;
+  // A body key in any argument object; only the body of a known whole-body tool (wholeBodyKeysOf) makes the result known.
+  let anyBody = false;
+  const toolName = String(ev.toolName || '');
+  const wholeKeys = wholeBodyKeysOf(toolName);
+  const readOnly = policy.readOnlyToolName(toolName);
   if (args && typeof args === 'object') {
     const pick = (o, keys) => { for (const k of keys) if (o[k] !== undefined) return typeof o[k] === 'string' ? o[k] : false; return null; };
     const visited = new Set();
@@ -855,7 +902,9 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
       if (depth > MAX_NEST_DEPTH) { out.unresolved = true; return; }
       visited.add(v);
       if (!Array.isArray(v)) {
-        if (FULL_BODY_KEYS.some((k) => typeof v[k] === 'string')) hasBody = true;
+        if (FULL_BODY_KEYS.some((k) => typeof v[k] === 'string')) anyBody = true;
+        // An append, insert or partial write: what the file holds afterwards is not the text sent, so the result is unknown.
+        if (!readOnly && partialWriteFlagIn(v, wholeKeys)) out.unresolved = true;
         const oldS = pick(v, EDIT_OLD_KEYS);
         const newS = pick(v, EDIT_NEW_KEYS);
         if (oldS !== null || newS !== null) {
@@ -868,6 +917,11 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
     };
     collect(args, 0);
   }
+  // A whole body under the key of a known whole-body write tool, at the top of its arguments.
+  const hasBody = Boolean(wholeKeys && args && typeof args === 'object' && wholeKeys.some((k) => typeof args[k] === 'string'));
+  // A body that is not a known tool's whole body (an unknown tool that also sends text) may be added to what the edit or patch
+  // leaves: then the edit does not give the whole file.
+  const editsGiveFile = !anyBody || hasBody;
   if (edits.length) {
     try {
       let body = readRegularFile(path.resolve(base, String(p)));
@@ -878,19 +932,20 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
         if (at < 0 || (!e.all && body.indexOf(e.oldS, at + 1) >= 0)) { out.unresolved = true; break; }
         body = e.all ? body.split(e.oldS).join(e.newS) : body.slice(0, at) + e.newS + body.slice(at + e.oldS.length);
       }
-      if (!out.unresolved) { out.push(body); out.complete = true; }
+      if (!out.unresolved) { out.push(body); if (editsGiveFile) out.complete = true; }
     } catch (err) {
       // A file that does not exist yet: only what is written counts. Any other failure leaves the result unknown.
       if (!(err && err.code === 'ENOENT')) out.unresolved = true;
-      else out.complete = true;
+      else if (editsGiveFile) out.complete = true;
     }
   } else if (!patched && (ev.tool === 'edit' || ev.tool === 'multiedit' || EDIT_TOOL_NAME_RE.test(String(ev.toolName || ''))) &&
     !(args && typeof args === 'object' && FULL_BODY_KEYS.some((k) => typeof args[k] === 'string'))) {
     // An edit or replace tool whose change zn cannot read (no search and replacement text it knows, no whole body): unknown.
     out.unresolved = true;
   }
-  // The file this call leaves is known in full: a whole body, an edit applied to the file, or a patch section for it.
-  if (hasBody || patched) out.complete = true;
+  // The file this call leaves is known in full: the whole body of a known write tool, an edit applied to the file, or a patch section
+  // for it. A body sent to a tool zn does not know (an append or insert tool) is not: the call is refused (dotenvUnseenWriteDenial).
+  if (hasBody || (patched && editsGiveFile)) out.complete = true;
   return out;
 }
 
