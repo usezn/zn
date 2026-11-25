@@ -8,14 +8,16 @@ const CAP = 100 * 1024;
 
 // Many quoted expansions before a loader assignment that ends in an unquoted glob: the quote state of the text before the glob must
 // be tracked in one pass, or a command under the hook's size cap keeps the hook busy until it times out and the command runs unchecked.
-const build = (n) => 'echo ' + '"$X" '.repeat(n) + 'LD_DEBUG=he*p > .env';
+// The value is one long word of quoted segments glued together that ends in an unquoted glob.
+const build = (n) => 'echo LD_DEBUG=' + '"$X"'.repeat(n) + '*p > .env';
+const FIT = Math.floor((CAP - 40) / 4);
 
-t('an unquoted glob after many quoted expansions is refused in linear time', () => {
-  assertLinear((cmd) => hookStopOrComputedIn(cmd), build, Math.floor((CAP - 40) / 5), 'quoted expansions before a glob');
+t('an unquoted glob after many quoted segments is refused in linear time', () => {
+  assertLinear((cmd) => hookStopOrComputedIn(cmd), build, FIT, 'quoted segments before a glob');
 });
 
 t('a near-cap command with an unquoted glob is refused, and fast', () => {
-  const cmd = build(Math.floor((CAP - 40) / 5));
+  const cmd = build(FIT);
   assert.ok(cmd.length < CAP);
   const t0 = process.hrtime.bigint();
   const verdict = hookStopOrComputedIn(cmd);
