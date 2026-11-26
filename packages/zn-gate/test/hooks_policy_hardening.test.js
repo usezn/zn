@@ -621,10 +621,36 @@ test('a Python virtualenv named .env is a folder, not a secret file', (t) => {
   fs.mkdirSync(path.join(dir, '.env', 'bin'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.env', 'bin', 'activate'), '# fake activate\n');
   const o = { cwd: dir, home: dir, env: {} };
-  for (const cmd of ['ls .env', 'rm -rf .env', 'python3 -m venv .env', 'source .env/bin/activate']) {
+  // Reading, listing, removing the folder and using the environment still pass.
+  for (const cmd of ['ls .env', 'rm -rf .env', 'source .env/bin/activate', '.env/bin/python -V']) {
     assert.equal(policy.bashDenial(cmd, o), null, cmd);
   }
   assert.equal(policy.readDenial(path.join(dir, '.env'), o), null);
+  // A program that is not proven read-only and names .env is refused even while .env is a folder: it can remove the folder and write
+  // a .env file there (check, then act), so creating or recreating the environment under this name is refused too.
+  for (const cmd of ['python3 -m venv .env', 'python3 -c pass .env', 'unknowncmd .env']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+});
+
+test('an interpreter that replaces a .env folder with a .env file is refused, with a harmless marker value', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-envfolder-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, '.env'));
+  const o = { cwd: dir, home: dir, env: {} };
+  const commands = [
+    `python3 -c "import shutil; shutil.rmtree('.env'); open('.env','w').write('LD_'+'DEBUG'+'=help')"`,
+    `node -e "require('fs').rmSync('.env',{recursive:true});require('fs').writeFileSync('.env','LD_'+'DEBUG'+'=help')"`,
+    `perl -e 'system("rm -rf .env"); open(F,">.env"); print F "LD_"."DEBUG=help"'`,
+  ];
+  for (const cmd of commands) {
+    assert.ok(policy.bashDenial(cmd, o), 'folder: ' + cmd);
+    fs.rmSync(path.join(dir, '.env'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(dir, '.env'), 'FOO=1\n');
+    assert.ok(policy.bashDenial(cmd, o), 'file: ' + cmd);
+    fs.rmSync(path.join(dir, '.env'), { force: true });
+    fs.mkdirSync(path.join(dir, '.env'));
+  }
 });
 
 test('a read placed after thousands of chained commands is still found, and a long heredoc is fine', (t) => {

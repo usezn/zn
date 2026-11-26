@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.18';
+const POLICY_RULES_VERSION = '2026-11-25.19';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1590,10 +1590,6 @@ const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 
 // they write stored content into the file in the worktree, which zn cannot see.
 const GIT_READ_SUBS = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'rev-parse',
   'add', 'commit']);
-// A folder named .env (a Python virtualenv) is not a dotenv file.
-function isExistingFolder(text, opts) {
-  try { return fs.statSync(path.resolve((opts && opts.cwd) || process.cwd(), String(text))).isDirectory(); } catch (_) { return false; }
-}
 function dotenvReadOnlyWord(w, shellChecked) {
   if (READ_ONLY_CMDS.has(w.head) || DOTENV_METADATA_CMDS.has(w.head)) return true;
   if (shellChecked && SHELL_HEADS.has(w.head)) return true;
@@ -3120,7 +3116,9 @@ function bashDenialOf(cmd, opts = {}) {
         // Not proven read-only: refused, but a read of a secret file keeps its own (earlier) refusal below.
         // A backslash path (.\.env) names the file only where a backslash is a separator: on Windows or in PowerShell.
         const backslashElsewhere = text.indexOf(String.fromCharCode(92)) >= 0 && process.platform !== 'win32' && opts.powershell !== true;
-        unprovenWrite = !verdict && !readOnly && !backslashElsewhere && !isExistingFolder(text, opts);
+        // Whether .env is a folder when the command is checked does not matter: the program may remove the folder and write a file there
+        // (check, then act), so a program that is not proven read-only is refused for a name that is watched.
+        unprovenWrite = !verdict && !readOnly && !backslashElsewhere;
       }
       if (verdict) return dotenvShellWriteDenial(verdict, text);
     }

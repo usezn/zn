@@ -5,6 +5,13 @@
 
 process.env.ZN_STATS = 'off';
 
+// Time of the Claude Code walk of an unknown tool (pathsOf with nodeCap: false: depth bound only) measured on a Linux host with 8 cores,
+// whole hook process (`node lib/hooks/runner.js claude-code`), tool input made of many small objects, against the 15 s hook timeout
+// (a hook that times out lets the call run): 1 MB of event text 0.4 s, 4 MB 1.6 s, 8 MB 3.6 s, 32 MB (the stdin cap) 22.7 s. The time
+// grows faster than the size, and the stdin cap of 32M characters is above what a model can send as one tool input (a few hundred KB),
+// so the cap is not reachable through the agent; only an input of roughly 20 MB or more would pass the timeout. If a Claude Code
+// release ever allowed such inputs, give this walk the node cap of the other agents (MAX_NEST_NODES) or a size bound.
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
