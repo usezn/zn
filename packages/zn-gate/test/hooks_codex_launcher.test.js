@@ -176,7 +176,8 @@ test('codex install on Windows: a user install writes no sh launcher, each event
 test('codex windows command: a path that needs escaping keeps the plain command', () => {
   assert.equal(launcher.windowsScript('codex', 'PreToolUse', "C:/it's/node.exe", 'C:/x/runner.js'), null);
   const s = launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/zn-gate/lib/hooks/runner.js');
-  assert.match(s, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; \$za = .*?function zf\(\$x\) \{.*?return \$null \}; if \(\[System\.IO\.File\]::Exists\('C:\/node\/node\.exe'\)/);
+  // The answer text in $zr, the .NET profiler refusal, then the node and runner paths once, before the hook runs.
+  assert.match(s, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; \$za = .*?function zf\(\$x\) \{.*?return \$null \}; \$zr='zn: [^']*'; if \(\$env:COR_ENABLE_PROFILING -eq '1'\) \{ \$zt=9; \$zr='zn: blocked, COR_ENABLE_PROFILING [^']*' \}; \$zn='C:\/node\/node\.exe'; \$zj='C:\/z\/zn-gate\/lib\/hooks\/runner\.js'; if \(!\$zt -and \[System\.IO\.File\]::Exists\(\$zn\)/);
   assert.match(s, /exit 2 # zn hook codex$/);
   assert.match(launcher.windowsScript('codex', 'Stop', 'C:/node/node.exe', 'C:/r.js'), /systemMessage.*exit 0 # zn hook codex$/);
 });

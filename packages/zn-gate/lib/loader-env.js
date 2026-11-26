@@ -540,9 +540,17 @@ const WINDOWS_PROFILER_NAMES = [...WINDOWS_PROFILER_SWITCHES, 'COR_PROFILER', 'C
   'CORECLR_PROFILER', 'DOTNET_PROFILER',
   ...['CORECLR_PROFILER_PATH', 'DOTNET_PROFILER_PATH'].flatMap((p) => PROFILER_PATH_SUFFIXES.map((s) => p + s))];
 
+/**
+ * A PowerShell condition, true when a .NET profiler is on for this process (no cmdlet; names ignore case on Windows). The hooks run
+ * Windows PowerShell 5.1 (powershell.exe), which runs on .NET Framework: it reads COR_ENABLE_PROFILING, not the CORECLR_ form.
+ */
+function psProfilerOn() {
+  return "($env:COR_ENABLE_PROFILING -eq '1')";
+}
+
 /** Whether an environment variable turns on a .NET profiler (the runtime acts only on the value 1). Names ignore case, as on Windows. */
 function isProfilerOn(key, value) {
   return WINDOWS_PROFILER_SWITCHES.includes(String(key).toUpperCase()) && String(value).trim() === '1';
 }
 
-module.exports = { WINDOWS_PROFILER_SWITCHES, WINDOWS_PROFILER_NAMES, isProfilerOn, isHookStopVar, hookStopAssignedIn, hookStopOrComputedIn, preloadAssignedIn, preloadOrOpaqueIn, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { WINDOWS_PROFILER_SWITCHES, WINDOWS_PROFILER_NAMES, isProfilerOn, psProfilerOn, isHookStopVar, hookStopAssignedIn, hookStopOrComputedIn, preloadAssignedIn, preloadOrOpaqueIn, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
