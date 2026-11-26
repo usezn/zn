@@ -13,7 +13,7 @@ Set up zn-gate in VS Code with GitHub Copilot agent mode in two minutes: hooks t
    ```
 
    It writes one file, `~/.copilot/hooks/zn-gate.json` (for one project only, run `zn hooks install copilot --project` in the project folder: it writes `.github/hooks/zn-gate.json`). Restart VS Code.
-3. Check it: run `zn-gate check` in the same terminal. The line "Copilot CLI (experimental)" should say it blocked the `.env` file and allowed the ordinary file.
+3. Check it: run `zn-gate check` in the same terminal. The line "GitHub Copilot (CLI experimental, VS Code not tested)" should say it blocked the `.env` file and allowed the ordinary file.
 
 Optional, for the agent's own checks: add zn-gate as an MCP server. Open the Command Palette (**Ctrl+Shift+P**, or **Cmd+Shift+P** on a Mac), type **MCP: Open User Configuration**, press Enter and paste this in the `mcp.json` that opens:
 

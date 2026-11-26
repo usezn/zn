@@ -14,7 +14,7 @@ The table lists each agent zn-gate supports and what was checked for it in the l
 | OpenCode | not tested in this release | - | - |
 | Antigravity | not tested in this release | - | - |
 | ZCode desktop app | not tested in this release | - | - |
-| Copilot CLI (experimental) | not tested in this release | - | - |
+| GitHub Copilot (CLI experimental, VS Code not tested) | not tested in this release | - | - |
 | Gemini CLI (experimental) | not tested in this release | - | - |
 
 For Claude Code, Codex CLI and Cursor, the 1.15.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
@@ -334,7 +334,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 - **Ways Codex turns zn's hooks off.** `async`, a `[hooks.state]` entry with `enabled = false` for one of zn's hooks, `[features] hooks = false`, and `allow_managed_hooks_only = true` in your organization's requirements (when zn's hooks are not among the managed ones) each stop zn's hooks from protecting anything, and Codex says nothing. `zn-gate check` reports all four as not protected and says what to change. It reads `hooks.state` only in your own `config.toml`; a setting passed on the Codex command line with `-c` is not seen. The Python package has no `check` command.
 - **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), the enterprise `hooks.json` of Cursor (`/etc/cursor/hooks.json`, `/Library/Application Support/Cursor/hooks.json` or `C:\ProgramData\Cursor\hooks.json`), and your own settings. zn also recognises its own hooks in those same managed files (Cursor: the enterprise `hooks.json`; Codex: `[[hooks.<Event>]]` in `requirements.toml`), so `zn-gate check` and `zn-gate status` report an agent set up by your administrator as installed (managed) and name the file. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, the session-start reminder that zn adds for Codex does not appear either, so `zn-gate check` is where you see it. Cursor runs the hooks of every source, so its enterprise file cannot turn zn's hooks off; zn only warns when zn's hook there lacks `failClosed` on `beforeReadFile` or `beforeSubmitPrompt`, or when the file has hooks without zn's. Hooks set in Cursor's team dashboard are not seen.
 - **Copilot CLI (experimental; VS Code uses the same hooks)** (`zn hooks install copilot [--project]`;
-  `zn-gate check` and `zn-gate init` list it as "Copilot CLI (experimental)").
+  `zn-gate check` and `zn-gate init` list it as "GitHub Copilot (CLI experimental, VS Code not tested)").
   What the official documentation says, read 2026-10-30: VS Code's page on
   hooks (<https://code.visualstudio.com/docs/agent-customization/hooks>, in
   Preview there) says "VS Code, the GitHub Copilot app, and GitHub Copilot CLI
