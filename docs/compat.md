@@ -1,23 +1,23 @@
 # Agent compatibility
 
-Last reviewed: 2026-11-11
+Last reviewed: 2026-11-26
 
 ## Tested in the last release
 
-The table lists each agent zn-gate supports and what was checked for it in the latest release, 1.15.0 (published 2026-11-06): for example "Hook command only (no agent started)", or "not tested in this release". An agent version appears only when a run with the real agent is recorded. Gemini CLI is experimental.
+The table lists each agent zn-gate supports and what was checked for it in the latest release, 1.17.0 (published 2026-11-19): for example "Hook command only (no agent started)", or "not tested in this release". An agent version appears only when a run with the real agent is recorded. Gemini CLI is experimental.
 
 | Agent | Agent version tested | Tested on | zn-gate version |
 |---|---|---|---|
-| Claude Code | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
-| Codex CLI | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
-| Cursor | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
+| Claude Code | Hook command only (no agent started) | 2026-11-19 | 1.17.0 |
+| Codex CLI | Hook command only (no agent started) | 2026-11-19 | 1.17.0 |
+| Cursor | Hook command only (no agent started) | 2026-11-19 | 1.17.0 |
 | OpenCode | not tested in this release | - | - |
 | Antigravity | not tested in this release | - | - |
 | ZCode desktop app | not tested in this release | - | - |
 | GitHub Copilot (CLI experimental, VS Code not tested) | not tested in this release | - | - |
 | Gemini CLI (experimental) | not tested in this release | - | - |
 
-For Claude Code, Codex CLI and Cursor, the 1.15.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
+For Claude Code, Codex CLI and Cursor, the 1.17.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
 
 ## Limits at a glance
 
