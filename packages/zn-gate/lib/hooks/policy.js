@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.16';
+const POLICY_RULES_VERSION = '2026-11-26.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1029,6 +1029,14 @@ function opaqueEnvWriteDenial(p) {
   return 'Edit ' + base + ' with the file editor tool; shell writes to .env files are blocked. zn cannot see what the shell actually writes.';
 }
 
+/** A program that names a watched dotenv file and is not proven read-only: zn cannot tell whether it writes the file. */
+function unprovenEnvWriteDenial(p) {
+  const base = path.basename(String(p));
+  return 'zn cannot tell whether this command writes ' + base + ', so shell writes to .env files are blocked here. Edit ' + base +
+    ' with the file editor tool. To load it, use --env-file (node, bun, deno, docker, podman) or dotenv -e; source and . run the ' +
+    'file as shell code and are refused.';
+}
+
 /**
  * A call that names a watched dotenv file without giving zn the file it would leave there: a copy, move, rename, link, upload or
  * download, or a tool zn does not know. `texts` is what writtenTextsOf found; its `complete` flag says the resulting file is known in
@@ -1586,15 +1594,18 @@ const DOTENV_METADATA_CMDS = new Set(['touch', 'test', '[', '[[', 'rm', 'rmdir',
   // Commands that only print: they come up inside $( ) in a command that reads the file.
   'date', 'true', 'false', 'whoami', 'hostname', 'uname', 'id', 'basename', 'dirname', 'printf', 'seq', 'expr', 'realpath', 'readlink']);
 const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 'powershell', 'pwsh', 'cmd']);
+// Programs whose --env-file option only reads the file it names, and the dotenv runners whose -e / -f / --env-file option does.
+// Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
+const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
+const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
+// A word that is one plain name: no quote, expansion, bracket or separator that could hide more than a file name.
+const PLAIN_NAME_RE = /^[^\s'"`$(){};|&<>]+$/;
 // git steps that read, or that only change the index or the history (add, commit). checkout, restore, reset and stash are not here:
 // they write stored content into the file in the worktree, which zn cannot see.
 const GIT_READ_SUBS = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'rev-parse',
   'add', 'commit']);
-// A folder named .env (a Python virtualenv) is not a dotenv file.
-function isExistingFolder(text, opts) {
-  try { return fs.statSync(path.resolve((opts && opts.cwd) || process.cwd(), String(text))).isDirectory(); } catch (_) { return false; }
-}
 function dotenvReadOnlyWord(w, shellChecked) {
+  // source and . are not here: they run the file as shell code, which can write the file itself.
   if (READ_ONLY_CMDS.has(w.head) || DOTENV_METADATA_CMDS.has(w.head)) return true;
   if (shellChecked && SHELL_HEADS.has(w.head)) return true;
   if (w.head !== 'git') return false;
@@ -1604,6 +1615,38 @@ function dotenvReadOnlyWord(w, shellChecked) {
   // git rm --cached .env only changes the index.
   return w.sub === 'rm' && args.includes('--cached');
 }
+/**
+ * The words of a command that are the value of an env-file option: --env-file X or --env-file=X of node, bun, deno, docker or podman,
+ * and -e / -f / --env-file X (or =X) of dotenv, dotenv-cli or dotenvx, before a `--`. Only a plain name that classifies as a watched
+ * dotenv file counts. Returns a Map from the word to the name it reads.
+ */
+function envFileValueWords(words, opts) {
+  const out = new Map();
+  const isDotenvName = (t) => PLAIN_NAME_RE.test(t) && (() => { const c = classifyWord(t, opts); return !!c && c.kind === 'dotenv'; })();
+  let seq = null;
+  let runner = false;
+  let ended = false;
+  let envProg = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.head === '' || w.redirectTarget) continue;
+    const t = w.text;
+    // The words hold each reading of the command in turn; a reading starts again at the program word.
+    if (programName(t) === programName(w.head)) { runner = false; ended = false; }
+    if (t === '--') { ended = true; continue; }
+    if (ended) continue;
+    if (DOTENV_RUNNERS.has(programName(t))) { runner = true; continue; }
+    const next = words[i + 1];
+    const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
+    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
+    if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
+    const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
+    if (opt && nextValue()) { out.set(next, next.text); i++; }
+  }
+  return out;
+}
+
 const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|\.zcode\/(?:cli\/)?config|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
@@ -2937,10 +2980,33 @@ function bashDenialOf(cmd, opts = {}) {
   // The same for the code an interpreter runs (python -c "open('.env')"), where a path sits inside quotes and brackets.
   // A program that is not read-only (awk 'BEGIN{print 1 > ".env"}', sed -n 'w .env') can name a dotenv file inside its own program text: its
   // words are split too.
+  const envFileValues = envFileValueWords(words, opts);
+  opts.envFileValues = envFileValues;
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
-      (/\.env/i.test(text) && words.some((w) => w.head !== '' && !dotenvReadOnlyWord(w, codes.size > 0)))) {
+      (/\.env/i.test(text) && words.some((w) => w.head !== '' && !envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)))) {
     const split = [];
-    for (const t of text.split(/[\s'"`$(){};|&<>=,]+/)) if (t) split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
+    // A plain word already judged read-only on its own (cat .env, source .env, --env-file=.env) is not judged again here: one split
+    // token per such word is set aside. A name that also appears in program text (node -e "...'.env'...") is still split and judged.
+    const SPLIT_RE = /[\s'"`$(){};|&<>=,]+/;
+    // Only the first reading is counted (the others repeat the same words), and nothing is set aside when a name printed by one
+    // program can reach another (a pipe, $( ), xargs, find -exec, read, a loop): echo .env | xargs cp x {} writes .env.
+    const accounted = new Map();
+    const firstReading = Array.isArray(readings[0]) ? readings[0] : words;
+    const namesCanFlow = /[|`]|\$\(|[<>]\(|<<<|(?:^|[\s;&(])(?:xargs|parallel|read|while|for|until|select)(?=$|[\s;&)])|\s-exec(?:dir)?\b|\s-ok\b/.test(text);
+    // git checkout, restore, reset, stash and switch write stored content into the worktree without naming the file (git reset
+    // --hard && cat .env): nothing is set aside then either.
+    const gitWritesWorktree = words.some((w) => w.git && /^(?:checkout|restore|reset|stash|switch)$/.test(String(w.sub || '')));
+    for (const w of namesCanFlow || gitWritesWorktree ? [] : firstReading) {
+      if (w.head === '' || w.redirectTarget || !PLAIN_NAME_RE.test(w.text)) continue;
+      if (!envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)) continue;
+      for (const t of w.text.split(SPLIT_RE)) if (t) accounted.set(t, (accounted.get(t) || 0) + 1);
+    }
+    for (const t of text.split(SPLIT_RE)) {
+      if (!t) continue;
+      const n = accounted.get(t);
+      if (n) { accounted.set(t, n - 1); continue; }
+      split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
+    }
     words.push(...split);
     readings.push(split);
   }
@@ -3017,7 +3083,7 @@ function bashDenialOf(cmd, opts = {}) {
   let dotenvWrite; // the verdict of shellDotenvWrite on this command, computed once
   // Whether every program of the command is a read-only or metadata-only one (see dotenvReadOnlyWord); the words with no program of
   // their own (the text inside quotes or $( ) that is split into words) are judged by this.
-  const onlyReadOnly = words.every((x) => x.head === '' || dotenvReadOnlyWord(x, codes.size > 0));
+  const onlyReadOnly = words.every((x) => x.head === '' || (opts.envFileValues && opts.envFileValues.has(x)) || dotenvReadOnlyWord(x, codes.size > 0));
   // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
   // or a joined path too long to judge: refused, not checked in part.
   if (listed.over) return TOO_SLOW_MESSAGE;
@@ -3115,19 +3181,21 @@ function bashDenialOf(cmd, opts = {}) {
         verdict = loaderNameMentionedIn(cmd) || OPAQUE_WRITE;
       } else {
         // Any program that names the file is refused unless it is proven read-only or metadata-only.
-        const readOnly = w.head === '' ? onlyReadOnly : dotenvReadOnlyWord(w, codes.size > 0);
+        const readOnly = (opts.envFileValues && opts.envFileValues.has(w)) || (w.head === '' ? onlyReadOnly : dotenvReadOnlyWord(w, codes.size > 0));
         verdict = loaderNameMentionedIn(cmd);
         // Not proven read-only: refused, but a read of a secret file keeps its own (earlier) refusal below.
         // A backslash path (.\.env) names the file only where a backslash is a separator: on Windows or in PowerShell.
         const backslashElsewhere = text.indexOf(String.fromCharCode(92)) >= 0 && process.platform !== 'win32' && opts.powershell !== true;
-        unprovenWrite = !verdict && !readOnly && !backslashElsewhere && !isExistingFolder(text, opts);
+        // Whether .env is a folder when the command is checked does not matter: the program may remove the folder and write a file there
+        // (check, then act), so a program that is not proven read-only is refused for a name that is watched.
+        unprovenWrite = !verdict && !readOnly && !backslashElsewhere;
       }
       if (verdict) return dotenvShellWriteDenial(verdict, text);
     }
     if (unprovenWrite && !w.redirectTarget) {
       const read = c ? denialOf(c, text, opts) : null;
       if (read) return read;
-      return dotenvShellWriteDenial(OPAQUE_WRITE, text);
+      return unprovenEnvWriteDenial(text);
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.

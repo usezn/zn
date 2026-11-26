@@ -169,7 +169,13 @@ test('class 9: MCP writes to a .env are judged in Claude Code, Codex CLI, Cursor
   const nest = (n, leaf) => { let v = leaf; for (let i = 0; i < n; i++) v = { level: v }; return v; };
   await refused(claude, cc(dir, 'mcp__fs__write_file', nest(MAX_NEST_DEPTH + 2, { path: env, content: 'LD_PRELOAD=/tmp/x.so' })), 'deep');
   await refused(codex, cdx(dir, 'mcp__fs__write_file', nest(MAX_NEST_DEPTH + 2, { path: env, content: 'PORT=1' })), 'deep benign body');
-  await allowed(claude, cc(dir, 'mcp__fs__call', nest(MAX_NEST_DEPTH + 2, { note: 'hello' })), 'deep, no file');
+  // An MCP call whose arguments zn cannot read to the end is refused whatever they say: a .env name can be split across separate values
+  // that the tool joins, and a deep call that names no file cannot be told from one that does.
+  await refused(claude, cc(dir, 'mcp__fs__call', nest(MAX_NEST_DEPTH + 2, { note: 'hello' })), 'deep, no file');
+  await refused(claude, cc(dir, 'mcp__fs__call', nest(MAX_NEST_DEPTH + 2, { dir: '.', name: 'e', ext: 'nv' })), 'deep, name split across values');
+  await refused(codex, cdx(dir, 'mcp__fs__call', nest(MAX_NEST_DEPTH + 2, { dir: '.', name: 'e', ext: 'nv' })), 'codex deep, name split across values');
+  const shallow = nest(MAX_NEST_DEPTH - 3, { note: 'hello' });
+  await allowed(claude, cc(dir, 'mcp__fs__call', shallow), 'shallow, no file');
   // A benign body to a .env is refused too (no MCP tool is trusted by name); the loader text written to a file that is not watched passes.
   for (const content of ['PORT=1']) {
     await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, content }), 'claude benign body');

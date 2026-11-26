@@ -952,15 +952,43 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
 
 // The string values of a call's arguments that name a watched dotenv file, as deep as the path scan reads (a copy or move tool may
 // name it under any key: from, to, src, dst ...).
+// A string longer than DOTENV_NAME_SCAN_MAX is not classified; it counts as a dotenv name when it mentions env anywhere, so a call
+// cannot hide a .env name behind a long filler (./ repeated, aaaa/../) and pass. A file: URI is decoded first (%2Eenv is .env); one
+// that cannot be decoded counts the same way. FAIL_CLOSED_DOTENV_NAME stands for such a name in the refusal.
+const DOTENV_NAME_SCAN_MAX = 65536;
+const FAIL_CLOSED_DOTENV_NAME = '.env';
+function fileUriPath(v) {
+  const u = new URL(v);
+  if (u.hostname && u.hostname.toLowerCase() !== 'localhost') throw new Error('file: URL names a remote host');
+  u.hostname = '';
+  return require('url').fileURLToPath(u);
+}
 function dotenvNamesIn(args, pathOpts) {
   const out = [];
   const seen = new Set();
+  const envish = (v) => { let d = v; try { d = decodeURIComponent(v); } catch (_) { /* keep the raw text */ } return /env/i.test(d); };
+  // One name: a file: URI is decoded first (one that cannot be decoded counts when it mentions env), a name too long to classify
+  // counts when it mentions env, and blanks around it are dropped (many servers and Windows do).
+  const checkOne = (v) => {
+    let name = v;
+    if (/^file:/i.test(name.trim())) {
+      try { name = fileUriPath(name.trim()); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+    }
+    if (name.length > DOTENV_NAME_SCAN_MAX) { if (envish(name)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+    for (const n of name.trim() !== name ? [name, name.trim()] : [name]) {
+      const c = n ? policy.classifyPath(n, pathOpts) : null;
+      if (c && c.kind === 'dotenv') { out.push(n); break; }
+    }
+  };
   const walk = (v, depth) => {
     if (typeof v === 'string') {
-      if (v.length <= 4096 && !/[\r\n]/.test(v)) {
-        const c = policy.classifyPath(v, pathOpts);
-        if (c && c.kind === 'dotenv') out.push(v);
+      // Text with line breaks is content (a body, a message), but a tool may take one name per line: every nonempty line is checked
+      // as a name, under any key, the same way as a one-line value.
+      if (/[\r\n]/.test(v)) {
+        for (const line of v.split(/\r\n|\r|\n/)) if (line.trim()) checkOne(line);
+        return;
       }
+      checkOne(v);
     } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
       seen.add(v);
       for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
@@ -1186,13 +1214,9 @@ async function decidePre(ev, d, agentId, opts) {
     if (args && typeof args === 'object') {
       const named = require('../agents/copilot').pathsOf(args);
       if (named.bad) {
-        // Arguments nested deeper than zn reads: a dotenv path may be hidden there. Refused when the call's text could name one (any
-        // "env", also percent-encoded, or text zn cannot serialise); other deep calls keep the MCP checks below.
-        let txt = null;
-        try { txt = JSON.stringify(args); } catch (_) { txt = null; }
-        if (typeof txt !== 'string' || /env|%2e|%65|%45/i.test(txt)) {
-          return { decision: 'deny', message: 'zn: could not read a file address in this MCP call (nested too deeply), so zn cannot check it.' };
-        }
+        // Arguments zn cannot read to the end (nested deeper than it reads): a dotenv path, or the pieces of one that the tool joins
+        // (a folder, a name and an extension in separate values), may be hidden there. Refused whatever the text says.
+        return { decision: 'deny', message: 'zn: zn could not read every file name in the arguments of this MCP call (nested too deeply, too many values, or a file: address it cannot turn into a path), so it was blocked.' };
       }
       for (const p of named.paths) {
         const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
