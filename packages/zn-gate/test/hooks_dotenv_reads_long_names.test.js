@@ -199,3 +199,13 @@ test('a .env on any line of a multi-line value is refused, also a relative one a
     }
   }
 });
+
+// A name with blanks around it is the same file for many servers (and for Windows): it is checked trimmed.
+test('a .env name with spaces or a tab around it is refused in an MCP call', async (t) => {
+  const dir = project(t);
+  for (const name of ['.env ', ' .env', '.env\t', '  ./.env  ']) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__fs__write_file', { path: name, content: 'X=1' })), 'deny', 'claude ' + JSON.stringify(name));
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_fs_write_file', { path: name, content: 'X=1' })), 'deny', 'gemini ' + JSON.stringify(name));
+    assert.equal(await verdict(claude, cc(dir, 'mcp__x__batch_write', { names: 'notes.txt\n' + name })), 'deny', 'claude names ' + JSON.stringify(name));
+  }
+});

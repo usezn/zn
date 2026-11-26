@@ -985,8 +985,11 @@ function dotenvNamesIn(args, pathOpts) {
         try { name = fileUriPath(name); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
       }
       if (name.length > DOTENV_NAME_SCAN_MAX) { if (envish(name)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
-      const c = policy.classifyPath(name, pathOpts);
-      if (c && c.kind === 'dotenv') out.push(name);
+      // Blanks around a name (".env ", " .env", a tab) are dropped by many servers and by Windows: the trimmed name counts too.
+      for (const n of name.trim() !== name ? [name, name.trim()] : [name]) {
+        const c = n ? policy.classifyPath(n, pathOpts) : null;
+        if (c && c.kind === 'dotenv') { out.push(n); break; }
+      }
     } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
       seen.add(v);
       for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
