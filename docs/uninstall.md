@@ -108,7 +108,7 @@ Find your agent in this table and run the command in your own terminal. Add `--p
 | Codex CLI | `npx -y zn-gate hooks uninstall codex` | Yes, add `--project` | If you added the `secrets` MCP server to the Codex `config.toml` by hand, delete that entry. |
 | OpenCode | `npx -y zn-gate hooks uninstall opencode` | Yes, add `--project` | If you added the `secrets` MCP server to `opencode.json` by hand, delete that entry. |
 | Cursor | `npx -y zn-gate hooks uninstall cursor` | Yes, add `--project` | If you added the `secrets` MCP server to `~/.cursor/mcp.json` by hand, delete that entry. |
-| GitHub Copilot (VS Code, CLI) | `npx -y zn-gate hooks uninstall copilot` | Yes, add `--project` | If you added the MCP server by hand, delete its entry in the settings file you edited. See [the VS Code page](editors/vscode.md#uninstall). |
+| GitHub Copilot (CLI experimental, VS Code not tested) | `npx -y zn-gate hooks uninstall copilot` | Yes, add `--project` | If you added the MCP server by hand, delete its entry in the settings file you edited. See [the VS Code page](editors/vscode.md#uninstall). |
 | Google Antigravity | `npx -y zn-gate hooks uninstall antigravity` | Yes, add `--project` | None. |
 | ZCode desktop app | `npx -y zn-gate hooks uninstall zcode` | No. ZCode runs no project hooks, so zn never installs them there: leave out `--project`. | The hooks command also removes zn's `secrets` MCP server. If you use the ZCode plugin, turn it off in Settings, then Plugins. The steps to remove the plugin are not published yet. |
 | Gemini CLI (experimental) | `npx -y zn-gate hooks uninstall gemini` | Yes, add `--project` | None. |
