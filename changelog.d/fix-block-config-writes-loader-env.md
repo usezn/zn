@@ -9,17 +9,17 @@
   redirections (also `<>`), `tee`, `sed -i`, `cp`, `Set-Content`, and any program that names the file (an interpreter, `awk`,
   `curl -o`) unless it only reads or touches it. zn cannot know what the shell really runs. Use the editor tool instead; zn checks
   what it writes.
-- Edits to a watched `.env` file are judged on the file they would leave, in every agent and through MCP servers too: zn
-  applies the edit or patch to the file on disk, and refuses the write when it cannot work out the result.
-- Copies, moves, renames and links into a project `.env` or `.gemini/.env`, through an MCP server or a tool zn does not know,
-  are refused: zn cannot see the file they would leave. Reads of these files are unchanged; use the editor tool to change them.
+- Edits to a watched `.env` file by the agent's own file tools are judged on the file they would leave: zn applies the edit or
+  patch to the file on disk, and refuses the write when it cannot work out the result.
+- Any MCP tool call that names a project `.env` or `.gemini/.env` is refused, whatever the server or the tool is called and even
+  with a body (a custom server can call an append or a copy `write_file` or `read_file`): use the agent's own file tools, which
+  zn can check. Copies, moves, renames and links through a tool zn does not know are refused too, as zn cannot see the file
+  they would leave.
 - `git checkout`, `git restore`, `git reset` and `git stash` in a shell command that names a project `.env` are refused: they
   write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
   under any key down to 6 levels of nesting for these files; a call nested deeper is refused (Gemini CLI, Antigravity, ZCode and
-  Copilot CLI also refuse a call with more than 500 objects). An MCP tool that names one of these files without giving the file it
-  leaves is refused whatever its name, including `read_file` (a custom server can give a writing tool that name); use the
-  agent's own read tool to read them.
+  Copilot CLI also refuse a call with more than 500 objects).
 - A write to a project `.env` or `.gemini/.env` through a tool zn does not know is refused even when the call carries the
-  text: such a tool may append or insert it instead of writing the whole file. Only the agents' own whole-file write tools,
-  the filesystem server's `write_file` without an append or mode flag, and edits and patches zn applies to the file on disk
-  give zn the file a call leaves.
+  text: such a tool may append or insert it instead of writing the whole file. Only the agents' own whole-file write tools
+  and the edits and patches of their own editors, applied by zn to the file on disk, give zn the file a call leaves; no tool
+  name from an MCP server is trusted for that.

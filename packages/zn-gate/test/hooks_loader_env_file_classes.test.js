@@ -112,8 +112,9 @@ test('class 7: OpenCode, Antigravity, MCP and nested edits of a .env are judged 
   await allowed(opencode, oc(dir, 'edit', { filePath: env, oldString: 'PORT=1', newString: 'PORT=2' }), 'opencode benign');
   await allowed(antigravity, ag(dir, 'replace_file_content', { TargetFile: env, TargetContent: 'all', ReplacementContent: 'libs' }), 'antigravity benign');
   await allowed(antigravity, ag(dir, 'multi_replace_file_content', { TargetFile: env, ReplacementChunks: [{ TargetContent: 'PORT=1', ReplacementContent: 'PORT=2' }] }), 'antigravity multi benign');
-  await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'mcp benign');
-  await allowed(claude, cc(dir, 'files_helper', { file: env, edit: { old_string: 'PORT=1', new_string: 'PORT=4' } }), 'nested benign');
+  // An MCP tool or a tool zn does not know is never trusted to apply an edit as zn would: refused even with a harmless result.
+  await refused(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'mcp benign');
+  await refused(claude, cc(dir, 'files_helper', { file: env, edit: { old_string: 'PORT=1', new_string: 'PORT=4' } }), 'nested benign');
 });
 
 // Class 8: apply_patch hunks are applied to the file on disk, and a move into a .env reads its source.
@@ -169,8 +170,14 @@ test('class 9: MCP writes to a .env are judged in Claude Code, Codex CLI, Cursor
   await refused(claude, cc(dir, 'mcp__fs__write_file', nest(MAX_NEST_DEPTH + 2, { path: env, content: 'LD_PRELOAD=/tmp/x.so' })), 'deep');
   await refused(codex, cdx(dir, 'mcp__fs__write_file', nest(MAX_NEST_DEPTH + 2, { path: env, content: 'PORT=1' })), 'deep benign body');
   await allowed(claude, cc(dir, 'mcp__fs__call', nest(MAX_NEST_DEPTH + 2, { note: 'hello' })), 'deep, no file');
-  // In limit: a benign body, or the loader text written to a file that is not watched.
-  for (const [p, content] of [[env, 'PORT=1'], [path.join(dir, 'notes.txt'), 'LD_PRELOAD=/tmp/x.so']]) {
+  // A benign body to a .env is refused too (no MCP tool is trusted by name); the loader text written to a file that is not watched passes.
+  for (const content of ['PORT=1']) {
+    await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, content }), 'claude benign body');
+    await refused(codex, cdx(dir, 'mcp__fs__write_file', { path: env, content }), 'codex benign body');
+    await refused(cursor, cur(dir, 'write_file', { path: env, content }), 'cursor benign body');
+    await refused(opencode, oc(dir, 'fs_write_file', { path: env, content }), 'opencode benign body');
+  }
+  for (const [p, content] of [[path.join(dir, 'notes.txt'), 'LD_PRELOAD=/tmp/x.so']]) {
     await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: p, content }), 'claude benign ' + p);
     await allowed(codex, cdx(dir, 'mcp__fs__write_file', { path: p, content }), 'codex benign ' + p);
     await allowed(cursor, cur(dir, 'write_file', { path: p, content }), 'cursor benign ' + p);
@@ -224,9 +231,10 @@ test('class 10: MCP copy/rename/unknown into .env is refused', async (t) => {
   await allowed(codex, cdx(dir, 'mcp__fs__copy_file', { source: src, destination: other }), 'codex copy other');
   await allowed(gemini, gem(dir, 'mcp_fs_copy_file', { source: src, destination: other }), 'gemini copy other');
   await allowed(antigravity, ag(dir, 'mcp_fs_move_file', { source: src, destination: other }), 'antigravity move other');
-  // A whole body or an edit applied to the file is still judged on what it leaves.
-  await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2' }), 'write body');
-  await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'edit');
+  // An MCP write is never judged on its body or edit (see the write_file test below); the agent's own Write is.
+  await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2' }), 'write body');
+  await refused(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'edit');
+  await allowed(claude, cc(dir, 'Write', { file_path: env, content: 'PORT=2' }), 'own write body');
 });
 
 // Read-only allowlist: git steps that write stored content into the worktree (checkout, restore, reset, stash) are not read-only for
@@ -324,6 +332,37 @@ test('class 10: the built-in read tool of each agent still reads a .env', async 
   await allowed(opencode, oc(dir, 'read', { filePath: env }), 'opencode read');
 });
 
+// Class 10: an MCP tool named write_file that appends to a .env is refused. The name proves nothing: a custom server can call an
+// append operation write_file and send l,help to a file that ends in LD_DEBUG=al, leaving LD_DEBUG=all,help, with no append flag.
+// Any MCP call that names a watched .env is refused, whatever the tool is called and even with a harmless full body; only the
+// agent's own write and edit tools, where zn can work out the file they leave, may change it.
+test('class 10: an MCP tool named write_file that appends to a .env is refused', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'PORT=1\nLD_DEBUG=al\n');
+  const args = { path: env, content: 'l,help' };
+  await refused(claude, cc(dir, 'mcp__custom__write_file', args), 'claude custom write_file');
+  await refused(claude, cc(dir, 'mcp__filesystem__write_file', args), 'claude filesystem write_file');
+  await refused(claude, cc(dir, 'mcp__filesystem__write_file', { path: env, content: 'PORT=2\n' }), 'claude filesystem harmless full body');
+  await refused(codex, cdx(dir, 'mcp__custom__write_file', args), 'codex custom write_file');
+  await refused(gemini, gem(dir, 'mcp_custom_write_file', { file_path: env, content: 'l,help' }), 'gemini prefixed write_file');
+  await refused(antigravity, ag(dir, 'mcp_custom_write_file', { path: env, content: 'l,help' }), 'antigravity prefixed write_file');
+  await refused(opencode, oc(dir, 'custom_write_file', args), 'opencode prefixed write_file');
+  await refused(copilot, cop(dir, 'custom-write_file', args), 'copilot prefixed write_file');
+  // Bare names in the agents that carry MCP calls without a server prefix.
+  await refused(claude, cc(dir, 'write_file', args), 'claude bare write_file');
+  await refused(cursor, cur(dir, 'write_file', args), 'cursor bare write_file');
+  await refused(opencode, oc(dir, 'write_file', args), 'opencode bare write_file');
+  await refused(copilot, cop(dir, 'write_file', args), 'copilot bare write_file');
+  // The message of an MCP refusal says what to do instead.
+  const r = await denied(claude, cc(dir, 'mcp__custom__write_file', args));
+  assert.match(JSON.stringify(r.res.decision), /MCP tools may not touch \.env files/);
+  // The agent's own write tools replace the file: a clean body passes.
+  await allowed(claude, cc(dir, 'Write', { file_path: env, content: 'PORT=2\n' }), 'claude own Write clean');
+  await allowed(gemini, gem(dir, 'write_file', { file_path: env, content: 'PORT=2\n' }), 'gemini own write_file clean');
+  assert.equal(fs.readFileSync(env, 'utf8'), 'PORT=1\nLD_DEBUG=al\n');
+});
+
 // Class 10 refinement: a body only gives zn the file a call leaves when the tool is a known whole-body write tool (by exact name, or
 // the filesystem server's write_file after an MCP prefix) with no append, insert or mode flag, or when zn applied an edit or a patch
 // to the file on disk. A tool zn does not know may append its text: LD_DEBUG=al plus l,help leaves LD_DEBUG=all,help.
@@ -358,11 +397,12 @@ test('class 10: unknown append semantics are refused, only known whole-body writ
   await refused(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'LD_DEBUG=all,help\n' }), 'mcp write_file loader');
   // In limit: whole-body writes of a clean file, a plain overwrite mode, edits read from disk and reads pass.
   await allowed(claude, cc(dir, 'Write', { file_path: env, content: 'PORT=2\n' }), 'Write clean');
-  await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2\n' }), 'mcp write_file clean');
-  await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2\n', mode: 'w' }), 'mode w');
-  await allowed(opencode, oc(dir, 'fs_write_file', { path: env, content: 'PORT=2\n' }), 'opencode write_file clean');
-  await allowed(cursor, cur(dir, 'write_file', { path: env, content: 'PORT=2\n' }), 'cursor write_file clean');
-  await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'mcp edit clean');
+  await allowed(gemini, gem(dir, 'write_file', { file_path: env, content: 'PORT=2\n' }), 'gemini write_file clean');
+  await allowed(opencode, oc(dir, 'write', { filePath: env, content: 'PORT=2\n' }), 'opencode write clean');
+  await allowed(copilot, cop(dir, 'create', { path: env, file_text: 'PORT=2\n' }), 'copilot create clean');
+  await refused(gemini, gem(dir, 'write_file', { file_path: env, content: 'LD_DEBUG=all,help\n' }), 'gemini write_file loader');
+  await refused(opencode, oc(dir, 'write', { filePath: env, content: 'LD_DEBUG=all,help\n' }), 'opencode write loader');
+  await refused(copilot, cop(dir, 'create', { path: env, file_text: 'LD_DEBUG=all,help\n' }), 'copilot create loader');
   await allowed(claude, cc(dir, 'Read', { file_path: env }), 'claude read');
   // The file is unchanged by these checks.
   assert.equal(fs.readFileSync(env, 'utf8'), 'PORT=1\nLD_DEBUG=al\n');
