@@ -1491,6 +1491,20 @@ function loaderWarnings(env) {
 }
 
 /**
+ * Removes the test folder. On Windows a process that was just stopped (or a virus scanner) can still hold it for a
+ * moment: retry a few times, then leave it. It holds only the fake key, and the report says it was not deleted.
+ * Any other error is still thrown.
+ */
+function removeTestFolder(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (err) {
+    if (process.platform === 'win32' && err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'ENOTEMPTY')) return;
+    throw err;
+  }
+}
+
+/**
  * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
  * (each result then has checked: false, and "protected" means set up with no problem found).
@@ -1528,7 +1542,7 @@ async function check(opts = {}) {
       }
     }
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTestFolder(dir);
   }
   return { results, removed: !fs.existsSync(dir), warnings: [...nodeWarnings(opts, env), ...loaderWarnings(env)] };
 }
@@ -1654,4 +1668,4 @@ function toJson({ results, removed, warnings }, opts = {}) {
   };
 }
 
-module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, loaderWarnings, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { removeTestFolder, cliHooks, loaderWarnings, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
