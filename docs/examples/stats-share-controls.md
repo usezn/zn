@@ -1,6 +1,6 @@
 # Examples: stats share controls
 
-How to see, turn on and turn off the optional sharing of daily counts with `zn-gate stats share`. The outputs below come from zn-gate 1.17.0 run on a fresh, empty configuration, except the answer to a `yes` for `on`, which needs an interactive terminal and is quoted from the program's own text. For every option and exit code, see the [command line reference](../cli.md#stats-share). For the local counts themselves, see [stats and report](stats-and-report.md).
+How to see, turn on and turn off the optional sharing of daily counts with `zn-gate stats share`. The outputs below come from zn-gate 1.18.0 run on a fresh, empty configuration, except the answer to a `yes` for `on`, which needs an interactive terminal and is quoted from the program's own text. For every option and exit code, see the [command line reference](../cli.md#stats-share). For the local counts themselves, see [stats and report](stats-and-report.md).
 
 ## The default
 

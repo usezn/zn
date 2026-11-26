@@ -566,4 +566,4 @@ function isProfilerOn(key, value) {
   return WINDOWS_PROFILER_SWITCHES.includes(String(key).toUpperCase()) && String(value).trim() === '1';
 }
 
-module.exports = { WINDOWS_PROFILER_SWITCHES, WINDOWS_PROFILER_NAMES, isProfilerOn, psProfilerOn, isHookStopVar, hookStopAssignedIn, preloadAssignedIn, obscureLoaderKeyIn, preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };
+module.exports = { WINDOWS_PROFILER_SWITCHES, WINDOWS_PROFILER_NAMES, isProfilerOn, psProfilerOn, isHookStopVar, hookStopAssignedIn, preloadAssignedIn, obscureLoaderKeyIn,preloadNamedIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES, SH_UNSET_NAMES, LOADER_LIBPATH, LOADER_PRELOAD, LOADER_PREFIXES, LOADER_NAMES, WINDOWS_NAMES, LOADER_SOURCE, LOADER_VAR, isLoaderVar, loaderVarsIn, withoutLoaderVars, shScrubLines, psScrub };

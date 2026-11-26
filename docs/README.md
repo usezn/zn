@@ -62,6 +62,7 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Example: reading a scan finding](examples/reading-a-scan-finding.md) | What each field of a `zn-gate scan` finding means, with a fake finding | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [API quickstart](api-quickstart.md) | Send text to the analysis API from curl, Python or Node.js, with the key in an environment variable | Developers |
+| [Go client](go-client.md) | Call the analysis API from a Go backend: install, check a text, read the verdict, handle errors, the 20,000 unit limit and https-only base URLs | Developers |
 | [Example: cloud check settings](examples/cloud-check-settings.md) | Each cloud check setting with its effect, one fake command and what leaves the machine | Anyone who opts in |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |

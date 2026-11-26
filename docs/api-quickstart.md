@@ -186,4 +186,5 @@ The Python and Node.js examples above stop on 401, 402 and 429 with a message th
 ## Next steps
 
 - [API reference](api-reference.md): the Node.js and Python functions, their options and their return values.
+- [Go client](go-client.md): call the same API from a Go backend, with typed errors and a check of the input size.
 - [Example: using zn-gate from Node.js](examples/node-api.md): one short example per call of the Node.js package.

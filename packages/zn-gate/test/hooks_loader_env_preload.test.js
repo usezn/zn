@@ -136,9 +136,7 @@ test('shell writes to a .env whose text only the shell knows are blocked, also w
     blocked(await decide(claude, cc('Bash', { command }, dir)), OPAQUE, command);
   }
   // Policy changed (2026-11-25): these used to pass because the variable names were literal and only values were expanded, or because
-  // the text came from another file. A shell write to a .env must now be literal text: any $ (even in single quotes), a printf
-  // conversion, an in-place sed, a here-document with an unquoted delimiter, a $( ) anywhere before the write, a target with a variable,
-  // and a copy from another file are refused.
+  // the text came from another file. Every shell write to a .env is refused now, whatever it writes.
   const nowRefused = [
     'echo "API_URL=$URL" >> .env',
     "printf 'TOKEN=%s\\n' \"$T\" >> .env",

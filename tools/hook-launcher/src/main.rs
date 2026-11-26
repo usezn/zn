@@ -128,6 +128,8 @@ fn json_string(s: &str) -> String {
 
 /// The answer when the hook is not run: the agent's own block on an event that can block, a warning on the others.
 /// The same answers as the sh launcher (launcher.js unixScript) and, for Copilot, the project guard (projectAnswer).
+/// An event that is missing or not a plain name ("" from event_of) cannot be told apart from a blocking one, so it gets
+/// the block too: a warning with exit 0 would let a call go ahead.
 fn answer(agent: Agent, event: &str, why: Why) -> Answer {
     let (block_text, warn_text) = match why {
         Why::Loader => (LOADER_TEXT, LOADER_WARN_TEXT),
@@ -145,7 +147,7 @@ fn answer(agent: Agent, event: &str, why: Why) -> Answer {
         // Not one of the agents zn writes this program for: the most common block (exit 2 with the reason on stderr).
         return Answer { stdout: None, stderr: line(block_text.to_string()), code: 2 };
     }
-    if block_events.contains(&event) {
+    if event.is_empty() || block_events.contains(&event) {
         return match agent {
             // Antigravity reads a deny from stdout with exit 0.
             Agent::Antigravity => Answer { stdout: line(format!("{{\"decision\":\"deny\",\"reason\":{}}}", json_string(block_text))), stderr: None, code: 0 },
@@ -179,7 +181,7 @@ fn respond(agent: Agent, event: &str, why: Why) -> ! {
     std::process::exit(if ok { a.code } else { 2 });
 }
 
-/// The event as text when it is a plain name (letters only), else "" (an event that cannot block).
+/// The event as text when it is a plain name (letters only), else "" (missing or malformed: answered with the block).
 fn event_of(arg: Option<&OsString>) -> &str {
     match arg.and_then(|a| a.to_str()) {
         Some(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphabetic()) => s,
@@ -208,6 +210,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_or_malformed_event_gets_the_block_of_its_agent() {
+        for why in [Why::Crash, Why::Loader] {
+            for agent in [Agent::ClaudeCode, Agent::ZCode] {
+                let a = answer(agent, event_of(None), why);
+                assert_eq!(a.code, 2);
+                assert!(a.stdout.is_none());
+                let bad = OsString::from("Pre-Tool Use");
+                assert_eq!(answer(agent, event_of(Some(&bad)), why).code, 2);
+            }
+            let a = answer(Agent::Antigravity, "", why);
+            assert_eq!(a.code, 0);
+            assert!(a.stdout.unwrap().contains("\"decision\":\"deny\""));
+            assert_eq!(answer(Agent::Copilot, "", why).code, 2);
+        }
+        // A valid event that cannot block keeps the warning.
+        let a = answer(Agent::ClaudeCode, "PostToolUse", Why::Crash);
+        assert_eq!(a.code, 0);
+        assert!(a.stdout.unwrap().contains("systemMessage"));
+        assert_eq!(answer(Agent::Copilot, "postToolUse", Why::Crash).code, 0);
+    }
 
     fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
         pairs.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect()
