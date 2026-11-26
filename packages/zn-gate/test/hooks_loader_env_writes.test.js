@@ -22,6 +22,35 @@ const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 
 const STOP = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent/;
+// Every shell write to a watched .env is refused. A command that names a loader variable literally (even split by quotes, escapes or a
+// variable set earlier in the same command) gets the specific STOP refusal. A command that does not (no loader name at all, or a name
+// the shell builds with $N, ${N}, $(...), a glob, a brace or a \x or octal escape) gets the generic shell-write refusal: zn cannot say
+// which variable it would set, so these are asserted as the generic message, listed here by exact command.
+const SHELL_WRITE = {};
+const GENERIC_SHELL_WRITE = /shell writes to \.env files are blocked/;
+const GENERIC_SHELL_WRITES = new Set([
+  "N=DEBUG; echo LD_$N=help >> .env",
+  "echo \"${K}=help\" >> .env",
+  "echo \"APP_DEBUG=$X\" >> .env",
+  "echo \"FOO=1\" > .env",
+  "echo $'\\x4cD_DEBUG=help' >> .env",
+  "echo -e '\\x4cD_DEBUG=help' >> .env",
+  "echo API_URL=$HOME/api >> .env",
+  "echo DEBUG=1 >> .env",
+  "echo L$(echo D)_DEBUG=help >> .env",
+  "echo LD_${N}=help >> .env",
+  "echo LD_DEBU?=help >> .env",
+  "echo LD_{DEBUG,X}=help >> .env",
+  "echo {LD,X}_DEBUG=help >> .env",
+  "printf '%s=%s\\n' \"$K\" \"$V\" >> .env",
+  "printf '%s_DEBUG=help\\n' LD >> .env",
+  "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
+  "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env",
+  "printf 'PORT=%s\\n' 8080 >> .env",
+  "printf '\\114D_DEBUG=help\\n' >> .env",
+  "printf '\\x4cD_DEBUG=help\\n' >> .env",
+  "sed -i 's/^DEBUG=.*/DEBUG=0/' .env",
+]);
 
 function project(t) {
   const dir = tempDir(t, 'zn-ldwrite-');
@@ -39,7 +68,11 @@ const gem = (tool_name, tool_input, cwd) => ({ session_id: 's', cwd, hook_event_
 const cdx = (tool_name, tool_input, cwd) => ({ session_id: 's', cwd, hook_event_name: 'PreToolUse', tool_name, tool_input, turn_id: 'u', tool_use_id: 't' });
 const patch = (kind, file, lines) => '*** Begin Patch\n*** ' + kind + ' File: ' + file + '\n' + (kind === 'Update' ? '@@\n' : '') + lines.map((l) => '+' + l).join('\n') + '\n*** End Patch\n';
 
-const blocked = (d, re, what) => { assert.equal(d.decision, "deny", JSON.stringify(d) + " " + (what || "")); if (re) assert.match(d.message, re); };
+const blocked = (d, re, what) => {
+  assert.equal(d.decision, "deny", JSON.stringify(d) + " " + (what || ""));
+  if (re === SHELL_WRITE) assert.match(d.message, GENERIC_SHELL_WRITES.has(what) ? GENERIC_SHELL_WRITE : STOP, what);
+  else if (re) assert.match(d.message, re);
+};
 const passes = (d) => assert.notEqual(d.decision, 'deny', JSON.stringify(d));
 
 test('hookStopAssignedIn agrees with the audit on which settings stop the hooks', () => {
@@ -142,22 +175,27 @@ test('shell commands that write a .env with the variables are blocked', async (t
   for (const command of ["Set-Content .env 'LD_DEBUG=help'", "Set-Content -Path .env -Value 'LD_TRACE_LOADED_OBJECTS=1'", "sc .env 'LD_DEBUG=help'"]) {
     blocked(await decide(claude, cc('PowerShell', { command }, dir)), STOP, command);
   }
-  passes(await decide(claude, cc('PowerShell', { command: "Set-Content .env 'LD_DEBUG=all'" }, dir)));
+  // Policy changed (2026-11-25): Set-Content is not a literal echo or printf, so zn cannot check what it writes and refuses it, here
+  // with the loader name the command holds. It used to pass with a harmless value.
+  blocked(await decide(claude, cc('PowerShell', { command: "Set-Content .env 'LD_DEBUG=all'" }, dir)), STOP);
 });
 
 test('shell commands that write a .env without those variables, or write elsewhere, pass', async (t) => {
   const dir = project(t);
   const fine = [
-    'echo DEBUG=1 >> .env',
-    'echo LD_DEBUG=all >> .env',
-    "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env",
     'echo LD_DEBUG=help > notes.txt',
     'LD_DEBUG=libs ls',
-    "sed -i 's/^DEBUG=.*/DEBUG=0/' .env",
   ];
   for (const command of fine) {
     passes(await decide(claude, cc('Bash', { command }, dir)));
     passes(await decide(gemini, gem('run_shell_command', { command }, dir)));
+  }
+  // Policy changed (2026-11-25): no shell command may write a .env. These used to pass as literal echo or printf writes, or were
+  // refused only for an in-place sed or a printf format; zn cannot check what the shell writes, so they are all refused now.
+  for (const command of ['echo DEBUG=1 >> .env', 'echo LD_DEBUG=all >> .env', "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
+    "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env", "sed -i 's/^DEBUG=.*/DEBUG=0/' .env"]) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), SHELL_WRITE, command);
   }
 });
 
@@ -193,7 +231,7 @@ test('an edit of a .env that cannot be resolved against the file is refused', as
   passes(await decide(claude, cc('Edit', { file_path: path.join(dir, 'notes.txt'), old_string: 'nope', new_string: 'b' }, dir)));
 });
 
-test('shell commands that write a .env with a computed loader value are blocked, a plain literal passes', async (t) => {
+test('shell commands that write a .env with a computed loader value are blocked, a literal one too', async (t) => {
   const dir = project(t);
   const bad = [
     'V=help; echo LD_DEBUG=$V >> .env',
@@ -207,9 +245,11 @@ test('shell commands that write a .env with a computed loader value are blocked,
     'echo LD_TRACE_LOADED_OBJECTS=$X >> .env',
   ];
   for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
-  for (const command of ['echo LD_DEBUG=libs >> .env', "echo 'LD_DEBUG=all' >> .env", 'echo LD_DEBUG=$V > notes.txt', 'echo LD_DEBUG= >> .env']) {
-    passes(await decide(claude, cc('Bash', { command }, dir)));
+  // Policy changed (2026-11-25): a literal value used to pass; only a write to another file does now.
+  for (const command of ['echo LD_DEBUG=libs >> .env', "echo 'LD_DEBUG=all' >> .env", 'echo LD_DEBUG= >> .env']) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
   }
+  passes(await decide(claude, cc('Bash', { command: 'echo LD_DEBUG=$V > notes.txt' }, dir)));
 });
 
 test('shell writes that join quoted and unquoted pieces of a loader value are blocked', async (t) => {
@@ -221,11 +261,11 @@ test('shell writes that join quoted and unquoted pieces of a loader value are bl
     "echo LD_DEBUG=he'lp' >> .env",
     `echo LD_DEBUG='he'"lp" >> .env`,
     `echo LD_DEBUG="he"'lp' >> .env`,
-    `echo LD_DEBUG="a""b" >> .env`,
   ];
   for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
-  for (const command of ['echo LD_DEBUG="all" >> .env', "echo LD_DEBUG='all' >> .env", `echo 'LD_DEBUG="all"' >> .env`]) {
-    passes(await decide(claude, cc('Bash', { command }, dir)));
+  // Policy changed (2026-11-25): a literal write used to be judged on the exact text it writes; every shell write to a .env is refused now.
+  for (const command of ['echo LD_DEBUG="all" >> .env', "echo LD_DEBUG='all' >> .env", `echo 'LD_DEBUG="all"' >> .env`, `echo LD_DEBUG="a""b" >> .env`]) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
   }
 });
 
@@ -258,20 +298,23 @@ test('shell writes to a .env that build the loader name or hide it from the text
     "echo -e '\\x4cD_DEBUG=help' >> .env",
     "echo $'\\x4cD_DEBUG=help' >> .env",
   ];
-  const STOP_OR_COMPUTED = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG|a variable whose name the shell computes \(it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS\)) for the agent/;
-  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), STOP_OR_COMPUTED, command);
-  // Literal writes still pass, also with other variables, expansions in values and printf without loader names.
-  const good = [
+  // The refusal names the loader variable when the command holds its name, and says the write cannot be checked otherwise.
+  for (const command of bad) blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
+  // A write to another file passes.
+  passes(await decide(claude, cc('Bash', { command: "printf '%s=%s\\n' LD_DEBUG help > notes.txt" }, dir)));
+  // Policy changed (2026-11-25): these used to pass as literal writes, or because only a value was expanded or formatted. No shell
+  // write to a .env passes now.
+  const nowRefused = [
     'echo LD_DEBUG=libs >> .env',
     "echo 'LD_DEBUG=all' >> .env",
+    "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
+    'echo "FOO=1" > .env',
     "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env",
     'echo "APP_DEBUG=$X" >> .env',
     'echo API_URL=$HOME/api >> .env',
     "printf 'PORT=%s\\n' 8080 >> .env",
-    'echo "FOO=1" > .env',
-    "printf '%s=%s\\n' LD_DEBUG help > notes.txt",
   ];
-  for (const command of good) passes(await decide(claude, cc('Bash', { command }, dir)), command);
+  for (const command of nowRefused) blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
 });
 
 test('an unquoted value is read as glibc reads it: a slash, bracket or backslash before ,help does not hide help', async (t) => {
@@ -384,14 +427,16 @@ test('a shell write of a loader value with a slash, bracket or backslash before 
     'echo "LD_DEBUG=all;,help" >> .env', "echo 'LD_DEBUG=all\n,help' >> .env", 'echo LD_DEBUG: help >> .env']) {
     blocked(await decide(claude, cc('Bash', { command }, dir)), STOP, command);
   }
-  for (const command of ['echo LD_DEBUG=libs/x >> .env', "sed -i 's/LD_DEBUG=all/LD_DEBUG=libs/' .env", 'echo LD_DEBUG=all >> .env']) {
-    passes(await decide(claude, cc('Bash', { command }, dir)), command);
+  // Policy changed (2026-11-25): these two used to pass; every shell write to a .env is refused now.
+  for (const command of ['echo LD_DEBUG=libs/x >> .env', 'echo LD_DEBUG=all >> .env']) {
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
   }
+  // Policy changed (2026-11-25): an in-place sed is not a literal echo or printf, so it is refused even with a harmless value.
+  blocked(await decide(claude, cc('Bash', { command: "sed -i 's/LD_DEBUG=all/LD_DEBUG=libs/' .env" }, dir)), STOP);
 });
 
 test('the printf form and quoted pieces of the loader name are refused for a .env', async (t) => {
   const dir = project(t);
-  const STOP_OR_COMPUTED = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG|a variable whose name the shell computes \(it could be LD_DEBUG or LD_TRACE_LOADED_OBJECTS\)) for the agent/;
   const bad = [
     "printf '%s=%s' LD_DEBUG help >> .env",
     'printf "%s=%s\\n" "LD_DEBUG" "help" >> .env',
@@ -402,8 +447,8 @@ test('the printf form and quoted pieces of the loader name are refused for a .en
     'K=LD_DEBUG; printf "%s=help" "$K" >> .env',
   ];
   for (const command of bad) {
-    blocked(await decide(claude, cc('Bash', { command }, dir)), STOP_OR_COMPUTED, command);
-    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), STOP_OR_COMPUTED, command);
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), SHELL_WRITE, command);
   }
 });
 
@@ -480,4 +525,123 @@ test('an escaped quote does not end an LD_DEBUG value in a .env write (dotenv ru
   }
   fs.writeFileSync(env, String.raw`LD_DEBUG="a\"X"` + '\n');
   passes(await decide(claude, cc('Edit', { file_path: env, old_string: 'X', new_string: 'b' }, dir)));
+});
+
+test('GitHub Copilot CLI: an unknown file tool with the .env path deep in its arguments is refused when the text next to it cannot be read', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1');
+  const other = path.join(dir, 'notes.txt');
+  const cop = (args) => ({ sessionId: 's1', timestamp: 1792400000000, cwd: dir, toolName: 'files_helper', toolArgs: JSON.stringify(args) });
+  const nest = (levels, leaf) => levels.reduceRight((acc, k) => ({ [k]: acc }), leaf);
+  const { MAX_NEST_DEPTH } = require('../lib/nest-limits');
+  assert.equal(copilot.MAX_NEST_DEPTH, MAX_NEST_DEPTH);
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  for (const target of [env, other]) {
+    const dotenv = target === env;
+    for (let levels = 1; levels <= MAX_NEST_DEPTH; levels++) {
+      // The path and its content at the same level, from near the top to past the limit.
+      const same = cop(nest(names.slice(0, levels), { path: target, content: 'LD_DEBUG=help' }));
+      // The content one level below the path: the hooks read the arguments inside a wrapper, so past the limit the text is unknown and a dotenv target is refused.
+      const below = cop(nest(names.slice(0, levels), { path: target, extra: { content: 'LD_DEBUG=help' } }));
+      if (dotenv) blocked(await decide(copilot, same), levels === 1 ? STOP : null, 'same level ' + levels);
+      else passes(await decide(copilot, same));
+      const d = await decide(copilot, below);
+      const out = (await runner.handle(copilot, below, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open' })).output;
+      const outDeny = Boolean(out && out.permissionDecision === 'deny');
+      // Where the refusal shows up: inside the limit the decision reads the nested text and denies it (a dotenv target only), and the
+      // adapter answer (respond) echoes it; at the limit the text is unreadable, so the decision allows and only the adapter answer
+      // (respond) refuses, for any target.
+      if (levels < MAX_NEST_DEPTH) {
+        if (dotenv) { blocked(d, null, 'below ' + levels); assert.equal(outDeny, true, 'below ' + levels + ' answer'); }
+        else { passes(d); assert.equal(outDeny, false, 'below ' + levels + ' other'); }
+      } else {
+        // What the agent receives is the answer of the adapter: it must refuse (fail closed), whatever the decision says.
+        assert.equal(outDeny, true, 'below ' + levels + ' answer');
+        assert.match(String(out.permissionDecisionReason), /could not read/, 'below ' + levels + ' reason');
+      }
+    }
+  }
+});
+
+// An unknown tool of Claude Code: the path scan reads as deep as the text scan (MAX_NEST_DEPTH). A .env path in the arguments is
+// found at every level within the limit, and arguments nested past it cannot be read, so the call is refused (fail closed).
+test('Claude Code: an unknown tool with a .env path deep in its arguments is refused, past the depth limit too', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1');
+  const other = path.join(dir, 'notes.txt');
+  const nest = (levels, leaf) => levels.reduceRight((acc, k) => ({ [k]: acc }), leaf);
+  const { MAX_NEST_DEPTH } = require('../lib/nest-limits');
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+  const call = (levels, target) => cc('files_helper', nest(names.slice(0, levels), { path: target, content: 'LD_DEBUG=help' }), dir);
+  for (const levels of [1, 3, 4, 5, MAX_NEST_DEPTH]) {
+    blocked(await decide(claude, call(levels, env)), null, 'env at ' + levels);
+    passes(await decide(claude, call(levels, other)));
+  }
+  // Past the limit the path cannot be read: refused, for any target.
+  for (const levels of [MAX_NEST_DEPTH + 1, MAX_NEST_DEPTH + 2]) {
+    blocked(await decide(claude, call(levels, env)), null, 'env at ' + levels);
+    blocked(await decide(claude, call(levels, other)), null, 'other at ' + levels);
+  }
+  // The same through a list of objects.
+  const inList = (levels, target) => cc('files_helper', nest(names.slice(0, levels), { items: [{ path: target, content: 'LD_DEBUG=help' }] }), dir);
+  blocked(await decide(claude, inList(MAX_NEST_DEPTH - 1, env)), null, 'list');
+  passes(await decide(claude, inList(MAX_NEST_DEPTH - 1, other)));
+  blocked(await decide(claude, inList(MAX_NEST_DEPTH, env)), null, 'list past the limit');
+});
+
+// An unknown tool, and the file tools with a nested path, of Gemini CLI and Antigravity: the path scan reads as deep as the text scan
+// (MAX_NEST_DEPTH), and arguments nested past it cannot be read, so the call is refused (fail closed).
+test('Gemini CLI and Antigravity: a .env path deep in the arguments is refused, past the depth limit too', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'FOO=1');
+  const other = path.join(dir, 'notes.txt');
+  const antigravity = require('../lib/agents/antigravity');
+  const ag = (name, args) => ({ conversationId: 'c1', workspacePaths: [dir], toolCall: { name, args } });
+  const nest = (levels, leaf) => levels.reduceRight((acc, k) => ({ [k]: acc }), leaf);
+  const { MAX_NEST_DEPTH } = require('../lib/nest-limits');
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+  // These adapters refuse an unreadable call in their own answer (respond), not in the decision: look at both.
+  const answer = async (adapter, raw) => {
+    const res = await runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+    return res.decision.decision === 'deny' || Boolean(res.output && res.output.decision === 'deny');
+  };
+  const refused = async (adapter, raw, what) => assert.equal(await answer(adapter, raw), true, what);
+  const allowed = async (adapter, raw, what) => assert.equal(await answer(adapter, raw), false, what);
+  const shapes = {
+    gemini: (name, args) => gem(name, args, dir),
+    antigravity: (name, args) => ag(name, args),
+  };
+  const adapters = { gemini, antigravity };
+  const tools = { gemini: ['files_helper', 'write_file', 'replace'], antigravity: ['files_helper', 'write_file', 'replace_file_content'] };
+  for (const id of ['gemini', 'antigravity']) {
+    const adapter = adapters[id];
+    for (const tool of tools[id]) {
+      const w = id + ' ' + tool;
+      const call = (levels, target) => shapes[id](tool, nest(names.slice(0, levels), { path: target, content: 'LD_DEBUG=help' }));
+      for (const levels of [1, 3, 4, 5, MAX_NEST_DEPTH]) {
+        await refused(adapter, call(levels, env), w + ' env at ' + levels);
+        await allowed(adapter, call(levels, other), w + ' other at ' + levels);
+      }
+      // Past the limit the path cannot be read: refused, for any target.
+      for (const levels of [MAX_NEST_DEPTH + 1, MAX_NEST_DEPTH + 2]) {
+        await refused(adapter, call(levels, env), w + ' env at ' + levels);
+        await refused(adapter, call(levels, other), w + ' other at ' + levels);
+      }
+      // The same through a list of objects.
+      const inList = (levels, target) => shapes[id](tool, nest(names.slice(0, levels), { items: [{ path: target, content: 'LD_DEBUG=help' }] }));
+      await refused(adapter, inList(MAX_NEST_DEPTH - 1, env), w + ' list');
+      await allowed(adapter, inList(MAX_NEST_DEPTH - 1, other), w + ' list other');
+      await refused(adapter, inList(MAX_NEST_DEPTH, env), w + ' list past the limit');
+    }
+  }
+  // The scan itself: the depth limit and the node limit set `bad`.
+  for (const a of [gemini, antigravity]) {
+    assert.equal(a.pathsOf(nest(names.slice(0, MAX_NEST_DEPTH), { path: other })).bad, false);
+    assert.equal(a.pathsOf(nest(names.slice(0, MAX_NEST_DEPTH + 1), { path: other })).bad, true);
+    assert.equal(a.pathsOf({ items: [nest(names.slice(0, MAX_NEST_DEPTH), { x: 1 })] }).bad, true);
+    assert.equal(a.pathsOf({ items: Array.from({ length: 600 }, () => ({ k: 1 })) }).bad, true);
+  }
 });

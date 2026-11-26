@@ -440,13 +440,14 @@ test('a .env file reached after a cd, through a path built at run time or from i
     'python3 -c "print(open(\'app1/inner/.env\').read())"',
     'node -e "console.log(require(\'fs\').readFileSync(\'app1/inner/.env\', \'utf8\'))"',
     'bash -c "cat app1/inner/.env"',
+    // Policy changed (2026-11-25): a shell write to a .env is refused whatever it writes.
+    'cd app1/inner && echo EXAMPLE_FLAG=1 >> .env',
   ]) {
     assert.ok(policy.bashDenial(cmd, o), cmd);
   }
   for (const cmd of [
     'cd svc && cat .env',
     'cd app1 && npm test',
-    'cd app1/inner && echo EXAMPLE_FLAG=1 >> .env',
     'cd app1/inner && cat .env.example',
     'cd /nonexistent && ls',
     'python3 -c "print(1)"',
@@ -534,12 +535,15 @@ test('the history of a .env file is refused even when the file is gone from disk
   }
 });
 
-test('git steps that only clean up a tracked .env stay allowed', (t) => {
+test('git steps that only change the index or show names of a tracked .env stay allowed', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-gitclean-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const o = { cwd: dir, home: dir, env: {} };
-  for (const cmd of ['git restore --staged .env', 'git checkout -- .env', 'git restore .env', 'git stash push -- .env',
-    'git diff --stat -- .env', 'git log --oneline -- .env', 'git log --name-only -- .env', 'git show --stat HEAD -- .env']) {
+  // checkout, restore, reset and stash write stored content into the file in the worktree, which zn cannot see: refused.
+  for (const cmd of ['git restore --staged .env', 'git checkout -- .env', 'git restore .env', 'git stash push -- .env', 'git reset -- .env']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+  for (const cmd of ['git add .env', 'git rm --cached .env', 'git diff --stat -- .env', 'git log --oneline -- .env', 'git log --name-only -- .env', 'git show --stat HEAD -- .env']) {
     assert.equal(policy.bashDenial(cmd, o), null, cmd);
   }
   for (const cmd of ['git restore --source=HEAD~1 .env', 'git restore -s HEAD .env', 'git checkout HEAD -- .env', 'git checkout main .env',
@@ -617,10 +621,51 @@ test('a Python virtualenv named .env is a folder, not a secret file', (t) => {
   fs.mkdirSync(path.join(dir, '.env', 'bin'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.env', 'bin', 'activate'), '# fake activate\n');
   const o = { cwd: dir, home: dir, env: {} };
-  for (const cmd of ['ls .env', 'rm -rf .env', 'python3 -m venv .env', 'source .env/bin/activate']) {
+  // Reading, listing, removing the folder and using the environment still pass.
+  for (const cmd of ['ls .env', 'rm -rf .env', 'source .env/bin/activate', '.env/bin/python -V']) {
     assert.equal(policy.bashDenial(cmd, o), null, cmd);
   }
   assert.equal(policy.readDenial(path.join(dir, '.env'), o), null);
+  // A program that is not proven read-only and names .env is refused even while .env is a folder: it can remove the folder and write
+  // a .env file there (check, then act), so creating or recreating the environment under this name is refused too.
+  for (const cmd of ['python3 -m venv .env', 'python3 -c pass .env', 'unknowncmd .env']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+});
+
+// The word a shell passes to a program is judged, not the text typed: bash removes an unquoted backslash and the quotes, so
+// .e\nv, .\env and ".e"\nv are .env, while inside quotes the backslash stays (".e\nv" is a file called .e\nv, another file).
+// policy.js backslashElsewhere only applies to a word that still holds a backslash after that.
+test('a .env name written with an unquoted backslash or quotes is refused for a program that is not proven read-only', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-envbs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, '.env'), 'FOO=1\n');
+  const o = { cwd: dir, home: dir, env: {} };
+  for (const cmd of ['python3 w.py .e\\nv', 'unknowncmd .e\\nv', 'node x.js .\\env', 'unknowncmd ".e"\\nv', "unknowncmd .e''nv", 'unknowncmd .e"n"v', 'unknowncmd ./.e\\nv']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+  // Inside quotes the backslash is kept: these name other files, and the code lets them pass (a conservative reading would refuse them).
+  for (const cmd of ['unknowncmd ".e\\nv"', "unknowncmd '.e\\nv'"]) assert.equal(policy.bashDenial(cmd, o), null, cmd);
+});
+
+test('an interpreter that replaces a .env folder with a .env file is refused, with a harmless marker value', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-envfolder-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, '.env'));
+  const o = { cwd: dir, home: dir, env: {} };
+  const commands = [
+    `python3 -c "import shutil; shutil.rmtree('.env'); open('.env','w').write('LD_'+'DEBUG'+'=help')"`,
+    `node -e "require('fs').rmSync('.env',{recursive:true});require('fs').writeFileSync('.env','LD_'+'DEBUG'+'=help')"`,
+    `perl -e 'system("rm -rf .env"); open(F,">.env"); print F "LD_"."DEBUG=help"'`,
+  ];
+  for (const cmd of commands) {
+    assert.ok(policy.bashDenial(cmd, o), 'folder: ' + cmd);
+    fs.rmSync(path.join(dir, '.env'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(dir, '.env'), 'FOO=1\n');
+    assert.ok(policy.bashDenial(cmd, o), 'file: ' + cmd);
+    fs.rmSync(path.join(dir, '.env'), { force: true });
+    fs.mkdirSync(path.join(dir, '.env'));
+  }
 });
 
 test('a read placed after thousands of chained commands is still found, and a long heredoc is fine', (t) => {

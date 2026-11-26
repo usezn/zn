@@ -614,22 +614,28 @@ Three features are off by default. Each one helps in a narrow case and has limit
     before any dynamic loader, so its refusal always happens, while the loader can stop the shell launcher before its first line
     (for `LD_TRACE_LOADED_OBJECTS` and `LD_DEBUG=help`).
   - While the variable is not yet set, the hooks do work, so on every platform they also refuse the edit that would set it: a
-    Write, Edit or patch (Claude Code, Gemini CLI, Codex CLI and the other agents zn guards) or a shell command (`echo`,
-    `printf`, `tee`, `sed -i`, a heredoc, `Set-Content`) that puts either variable into a project `.env` or `.gemini/.env`,
-    in either dotenv spelling (`NAME=value` or `NAME: value`) and with the value bare or in double, single or back quotes.
-    A shell command that writes such a file is also refused when its text does not show what it writes: a name or value the
-    shell or printf computes, a name split by quotes, or characters written by their code. `help` counts wherever it stands in
+    Write, Edit or patch (Claude Code, Gemini CLI, Codex CLI and the other agents zn guards) or a shell command that puts
+    either variable into a project `.env` or `.gemini/.env`, in either dotenv spelling (`NAME=value` or `NAME: value`) and
+    with the value bare or in double, single or back quotes.
+    Shell commands cannot write such a file: a shell write to a watched dotenv file (`.env`, `.env.*`, `.gemini/.env`) is refused
+    whatever it writes, including a redirection (`>`, `>>`, `>|`, `&>`, and the read-write `<>`, `1<>`, `{fd}<>`), `tee`, `sed -i`,
+    `cp`, `Set-Content` and the like. zn cannot know what the shell really runs: an inherited function, an alias or function
+    defined by an earlier command of a persistent shell, or an untrusted `PATH` can replace `echo`, `printf` or `cat` after the
+    check. Any other program whose command text names such a file (an interpreter with `-c` or `-e`, `awk`, `sed 'w file'`,
+    `curl -o`, `iwr -OutFile`, an unknown tool) is refused too, unless it is one of these: a read-only command (`cat`, `head`, `tail`, `more`, `grep`, `egrep`, `fgrep`, `rg`, `ls`, `stat`, `wc`, `diff`, `file`, `bat`, `jq`, `type`, `gc`, `Get-Content`, `Select-String`, `findstr`, `dir`, `pwd`, `echo`); a metadata-only or print-only command (`touch`, `test`, `[`, `[[`, `rm`, `rmdir`, `del`, `erase`, `Remove-Item`, `cd`, `pushd`, `popd`, `chdir`, `Set-Location`, `sl`, `Write-Output`, `Write-Host`, `Join-Path`, `date`, `true`, `false`, `whoami`, `hostname`, `uname`, `id`, `basename`, `dirname`, `printf`, `seq`, `expr`, `realpath`, `readlink`); a shell (`sh`, `bash`, `zsh`, `dash`, `ksh`, `fish`, `ash`, `powershell`, `pwsh`, `cmd`) whose inner code is checked on its own; or a git step that reads or only changes the index or the history (`status`, `diff`, `log`, `show`, `ls-files`, `check-ignore`, `blame`, `rev-parse`, `add`, `commit`, `rm --cached`; not with `--output`). `git checkout`, `git restore`, `git reset` and `git stash` write stored content into the file and are refused, and so is every other program. Use the editor tool (Write, Edit, a
+    patch) instead; zn checks what it writes on the real text. Reads of the file are not affected. A word that starts with a backslash (`\.env`, as for a Windows root or a network share) is refused whatever the command is, read-only ones included, because zn cannot follow such a path; an unquoted backslash inside the word (`.e\nv`) is removed by the shell, so zn judges the word as `.env`.
+    Every write to such a file through the agent's own editor tool or a patch is judged on the
+    file it would leave: zn applies the edit or patch to the file on disk, reads white space and line breaks around `=` or `:` and
+    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file. A tool zn does not know is read under any key down to 6 levels of nesting by Claude Code, Gemini CLI, Antigravity, ZCode and GitHub Copilot CLI, and a call nested deeper is refused. OpenCode treats such a tool as an MCP call, and Codex CLI and Cursor never send one to the hook (their hook matchers pass only Bash, `apply_patch` and MCP calls, and for Cursor Grep, Write and Delete). The number of objects is capped at 500, and a larger call refused, only in the path scans of Claude Code, Gemini CLI, Antigravity, ZCode and Copilot CLI, so a wide call never runs unchecked. A call that names such a file without giving the file it leaves (a copy, move, rename, link or a tool zn does not know) is refused whatever the tool is called. Any MCP tool call that names such a file is refused outright, whatever its body (the body may be scanned first, only to choose which message is shown; it never lets the call through): a tool name proves nothing, because a custom MCP server can call an append `write_file` or a writing tool `read_file`, so no MCP tool counts as a whole-file write, an edit or a read-only tool. Change the file with the agent's own file tools and read it with the agent's own read tool. The result of a call is known only for the agent's own write and edit tools and patches (the full resulting file is rebuilt); an unknown tool that sends a body or an edit is refused too. The agents' own read tools (Claude Code `Read`, Gemini CLI and Antigravity `read_file`, Copilot `view`, OpenCode `read`) are plain reads and are not affected.
+    `help` counts wherever it stands in
     the value as a separate word, also after a slash, a bracket or a backslash (`LD_DEBUG=libs/,help`), so no value is read
     shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`, `.codex/`, `.gemini/settings.json`)
-    were already refused to every write. This cannot cover a file that is copied or generated by a program (`cp`, a script), a
+    were already refused to every write. This cannot cover a file that a program writes on its own (a script, a build tool), a
     change made by the user or by another tool, or a user-level file zn does not protect, such as a shell profile; those are
     what `zn audit` is for.
     The same writes are refused when they set a preload variable of that list (`LD_PRELOAD`, `LD_AUDIT`,
     `DYLD_INSERT_LIBRARIES` and the others except `LD_DEBUG`) to a value, because the loader runs that library inside the
-    shell of every hook before zn can refuse anything; an empty value is allowed. A shell command that writes such a file is
-    also refused when a variable name or a whole line it writes comes from a variable, a command substitution or a pattern
-    (`printf "$X" > .env`, `echo "$LINE" >> .env`, `cp "$SRC" .env`), while an expansion in the value of a plainly named
-    variable (`echo "API_URL=$URL" >> .env`) stays allowed; such a value can itself hold a line break, which zn cannot see.
+    shell of every hook before zn can refuse anything; an empty quoted value (`LD_PRELOAD=""` or `''`) is allowed wherever it stands in a file written with the editor tool, and a bare empty value (`LD_PRELOAD=`) only when nothing but blanks follows it to the end of the file: a bare `LD_PRELOAD=` followed by another line is refused, because a reader may take that line as the value. Every shell write to a watched `.env` is refused, an empty assignment included.
 - **A .NET profiler loads a DLL into the Windows hooks (accepted limit, Windows).** With `COR_ENABLE_PROFILING=1` and
   `COR_PROFILER` / `COR_PROFILER_PATH` in the environment of the agent, .NET Framework loads that DLL into `powershell.exe`,
   which runs every zn hook on Windows, before the first line of the hook script, so the DLL can answer for the hook (the
