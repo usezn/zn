@@ -28,7 +28,14 @@ const { spawnSync } = require('child_process');
 
 const PKG_ROOT = path.join(__dirname, '..');
 const VERSION = require('../package.json').version;
-const MARKETPLACE_REF = 'usezn/zn';
+// The marketplace is added at the plugin tag plugin-v<version>, not at the release tag v<version> and not untagged.
+// The plugin pin (plugins/zn-gate: package.json, package-lock.json and scripts/zn-gate.lock.json, with the npm integrity and
+// the digest of every file, which the launcher checks on each call) is committed after npm publishes a release, so the
+// release tag vX.Y.Z still holds the pin of the PREVIOUS release, and the default branch can move after this zn-gate was
+// published. Once the pin commit is merged into main, the protected tag plugin-vX.Y.Z is created on it and never moves:
+// the marketplace, the plugin's hooks.json and its launcher scripts all come from an immutable ref whose lock pins this
+// release. This zn-gate's version is the one the plugin pins once this release is pinned.
+const MARKETPLACE_REF = 'usezn/zn#plugin-v' + VERSION;
 const isWin = process.platform === 'win32';
 
 /* zn-gate runs from a temporary copy (npx, pnpm dlx, yarn dlx, bunx) rather than an install that stays. */
@@ -318,7 +325,7 @@ async function guide(opts = {}) {
     else w(`  >  ${i.name.padEnd(12)} ${i.state === 'not-protected' ? 'not protected: ' + i.problem : 'not set up yet'}\n`);
   }
   for (const i of items) if (i.note && i.steps.length) w(`${i.note}\n`);
-  // A plugin older than this zn-gate is not moved by init (the marketplace is pinned to a tag): say how to move it.
+  // A plugin older than this zn-gate is not moved by init (the marketplace is added at a plugin tag): say how to move it.
   for (const i of items) if (i.update) w(`  (${i.name}: ${i.update})\n`);
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');

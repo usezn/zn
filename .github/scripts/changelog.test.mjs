@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint, summaryMarkdown, docsFragmentWarning } from './changelog.mjs';
+import { parseFragment, buildSection, assemble, amend, releaseCheck, checkPullRequest, needsFragment, fragmentHint, summaryMarkdown, docsFragmentWarning } from './changelog.mjs';
 
 const CHANGELOG = `# Changelog
 
@@ -116,9 +116,9 @@ test('assemble moves the compare links to the new version', (t) => {
 
 test('shipped files: plugin skills and manifests count; repo tools, tests and fixtures do not', () => {
   for (const f of ['plugins/zn-gate/skills/zn-secrets/SKILL.md', '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json',
-    'packages/zn-gate/server.json', 'skill/SKILL.md', 'Cargo.lock']) assert.equal(needsFragment(f), true, f);
+    'packages/zn-gate/server.json', 'skill/SKILL.md', 'Cargo.lock', 'go/client.go', 'go/go.mod']) assert.equal(needsFragment(f), true, f);
   for (const f of ['plugins/tools/check-plugins.js', 'plugins/zn-gate/README.md', 'packages/zn-gate/lib/x.test.js',
-    'packages/zn-gate/test/fixtures/a.json', 'plugins/zn-gate/tests/a.js']) assert.equal(needsFragment(f), false, f);
+    'packages/zn-gate/test/fixtures/a.json', 'plugins/zn-gate/tests/a.js', 'go/README.md', 'go/client_test.go']) assert.equal(needsFragment(f), false, f);
 });
 
 test('a fragment with a byte order mark, a non-ASCII name, or in a subfolder', (t) => {
@@ -218,4 +218,35 @@ test('warn-docs prints a GitHub warning and exits 0 for a docs-only pull request
   const r = spawnSync(process.execPath, [script, 'warn-docs', '--base', 'next'], { cwd: dir, encoding: 'utf8', env });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /^::warning title=Changelog fragment::this pull request changes only documentation/m);
+});
+
+test('amend adds late fragments to an existing release section and deletes them; release-check sees leftovers', (t) => {
+  const { dir } = repo(t);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'README.md'), 'how to\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'feat-x.md'), '### Added\n- Feature X.\n');
+  assemble(dir, '1.1.0', '2026-02-01');
+  assert.deepEqual(releaseCheck(dir, '1.1.0'), []);
+  assert.match(releaseCheck(dir, '1.2.0').join(), /no "## \[1\.2\.0\] - <date>" section/);
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'late-fix.md'), '### Security\n- Late security fix.\n  Second line.\n### Added\n- Late feature.\n');
+  assert.match(releaseCheck(dir, '1.1.0').join(), /1 fragment\(s\) that are not in the 1\.1\.0 notes: changelog\.d\/late-fix\.md/);
+  assert.throws(() => assemble(dir, '1.1.0', '2026-02-01'), /already has a section/);
+  amend(dir, '1.1.0');
+  const out = fs.readFileSync(path.join(dir, 'CHANGELOG.md'), 'utf8');
+  assert.match(out, /## \[Unreleased\]\n\n## \[1\.1\.0\] - 2026-02-01\n\n### Added\n- Feature X\.\n- Late feature\.\n\n### Fixed\n- An old fix still under Unreleased\.\n\n### Security\n- Late security fix\.\n  Second line\.\n\n## \[1\.0\.0\] - 2026-01-01\n\n### Added\n- First release\.\n/);
+  assert.equal(fs.existsSync(path.join(dir, 'changelog.d', 'late-fix.md')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'changelog.d', 'README.md')), true);
+  assert.deepEqual(releaseCheck(dir, '1.1.0'), []);
+  assert.throws(() => amend(dir, '1.1.0'), /nothing to amend/);
+  assert.throws(() => amend(dir, '9.9.9'), /no section for 9\.9\.9/);
+});
+
+test('amend keeps a release introduction above the first heading', (t) => {
+  const { dir } = repo(t);
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), CHANGELOG.replace('## [1.0.0] - 2026-01-01\n\n', '## [1.0.0] - 2026-01-01\n\nThe first release.\n\n'));
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'late.md'), '### Fixed\n- Late fix.\n');
+  amend(dir, '1.0.0');
+  const out = fs.readFileSync(path.join(dir, 'CHANGELOG.md'), 'utf8');
+  assert.match(out, /## \[1\.0\.0\] - 2026-01-01\n\nThe first release\.\n\n### Added\n- First release\.\n\n### Fixed\n- Late fix\.\n$/);
 });

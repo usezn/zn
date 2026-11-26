@@ -1,7 +1,9 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions } from './check-public-facts.mjs';
+import { tmpdir } from 'node:os';
+import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease, checkStatusSamples, codeRuleVersions, previousRelease, publishedVersions } from './check-public-facts.mjs';
 
 const FACTS = {
   version: {
@@ -374,6 +376,83 @@ test('a short description is checked word for word on each surface', () => {
   assert.match(errors[0], /short description \(MCP Registry\) is Local layer\. Sends nothing/);
 });
 
+test('a marketplace add names the plugin tag plugin-v<pluginVersion>, in the form of its agent, on every surface', () => {
+  const pf = { ...FACTS, version: { ...FACTS.version, pinsExclude: [...FACTS.version.pinsExclude, 'plugins/'] }, pluginVersion: { value: '1.9.0', files: [], pins: ['plugins/'] } };
+  const runP = (files, facts = pf) => check(facts, Object.keys(files), (f) => files[f]);
+  const SURFACES = ['README.md', 'packages/zn-gate/README.md', 'plugins/README.md', 'plugins/zn-gate/README.md', 'docs/a.md'];
+  const with_ = (f, lines) => ({ ...GOOD, [f]: (GOOD[f] || '') + lines.join('\n') + '\n' });
+  const mine = (errs, f) => errs.filter((e) => e.startsWith(f + ':') && /^[^"]*"[^"]*marketplace add/.test(e));
+  // Accepted: the plugin tag of the pin (not of the release), with `#` for Claude Code (terminal, /plugin, URL forms) and
+  // `--ref` for Codex, in a code block or inline in prose.
+  const CLAUDE_OK = [
+    'claude plugin marketplace add usezn/zn#plugin-v1.9.0',
+    '/plugin marketplace add usezn/zn#plugin-v1.9.0',
+    '`claude plugin marketplace add usezn/zn#plugin-v1.9.0`, then `claude plugin install zn-gate@usezn`.',
+    'claude plugin marketplace add https://github.com/usezn/zn#plugin-v1.9.0',
+    'claude plugin marketplace add https://github.com/usezn/zn.git#plugin-v1.9.0',
+  ];
+  const CODEX_OK = [
+    'codex plugin marketplace add usezn/zn --ref plugin-v1.9.0',
+    '(`codex plugin marketplace add usezn/zn --ref plugin-v1.9.0`).',
+  ];
+  for (const f of SURFACES) assert.deepEqual(runP(with_(f, [...CLAUDE_OK, ...CODEX_OK])), [], f);
+  // The tag follows pluginVersion: once the pin is the release, plugin-v2.0.0 is accepted and plugin-v1.9.0 is not.
+  const synced = { ...pf, pluginVersion: { ...pf.pluginVersion, value: '2.0.0' } };
+  assert.deepEqual(runP(with_('README.md', ['claude plugin marketplace add usezn/zn#plugin-v2.0.0', 'codex plugin marketplace add usezn/zn --ref plugin-v2.0.0']), synced), []);
+  assert.match(mine(runP(with_('README.md', ['claude plugin marketplace add usezn/zn#plugin-v1.9.0']), synced), 'README.md').join('\n'), /names the ref "plugin-v1[.]9[.]0", which is not the plugin tag plugin-v2[.]0[.]0/);
+  // Refused on every surface, for Claude Code: the untagged form (short, /plugin and URL), the release tag (of the pin and
+  // of the release), another plugin tag, a longer or shorter number, a placeholder, a branch or a moving ref, a URL with
+  // another ref, and Codex's --ref.
+  const BAD_CLAUDE = [
+    ['claude plugin marketplace add usezn/zn', /"marketplace add usezn\/zn" names no plugin tag: use usezn\/zn#plugin-v1[.]9[.]0 \(Claude Code\)/],
+    ['/plugin marketplace add usezn/zn', /names no plugin tag: use usezn\/zn#plugin-v1[.]9[.]0/],
+    ['claude plugin marketplace add https://github.com/usezn/zn.git', /names no plugin tag/],
+    ['claude plugin marketplace add usezn/zn#v1.9.0', /names the ref "v1[.]9[.]0", which is not the plugin tag plugin-v1[.]9[.]0: use usezn\/zn#plugin-v1[.]9[.]0/],
+    ['claude plugin marketplace add usezn/zn#v2.0.0', /names the ref "v2[.]0[.]0", which is not the plugin tag/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.8.0', /names the ref "plugin-v1[.]8[.]0"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.9.0.1', /names the ref "plugin-v1[.]9[.]0[.]1"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.9', /names the ref "plugin-v1[.]9"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v1.9.0-rc.1', /names the ref "plugin-v1[.]9[.]0-rc[.]1"/],
+    ['claude plugin marketplace add usezn/zn#plugin-vX.Y.Z', /names the ref "plugin-vX[.]Y[.]Z"/],
+    ['claude plugin marketplace add usezn/zn#plugin-v<version>', /names the ref "plugin-v<version>"/],
+    ['claude plugin marketplace add usezn/zn#main', /names the ref "main"/],
+    ['claude plugin marketplace add usezn/zn#vnext', /names the ref "vnext"/],
+    ['claude plugin marketplace add https://github.com/usezn/zn#v1.9.0', /names the ref "v1[.]9[.]0"/],
+    ['claude plugin marketplace add https://github.com/usezn/zn.git#main', /names the ref "main"/],
+    ['claude plugin marketplace add usezn/zn --ref plugin-v1.9.0', /passes the tag with --ref, but Claude Code takes #: use usezn\/zn#plugin-v1[.]9[.]0/],
+  ];
+  // And for Codex: the untagged form, the release tag, another plugin tag, a placeholder, a branch, a URL with another
+  // ref, and Claude Code's `#`.
+  const BAD_CODEX = [
+    ['codex plugin marketplace add usezn/zn', /names no plugin tag: use usezn\/zn --ref plugin-v1[.]9[.]0 \(Codex\)/],
+    ['codex plugin marketplace add https://github.com/usezn/zn', /names no plugin tag: use usezn\/zn --ref plugin-v1[.]9[.]0/],
+    ['codex plugin marketplace add usezn/zn --ref v1.9.0', /names the ref "v1[.]9[.]0", which is not the plugin tag plugin-v1[.]9[.]0: use usezn\/zn --ref plugin-v1[.]9[.]0/],
+    ['codex plugin marketplace add usezn/zn --ref v2.0.0', /names the ref "v2[.]0[.]0"/],
+    ['codex plugin marketplace add usezn/zn --ref plugin-v1.8.0', /names the ref "plugin-v1[.]8[.]0"/],
+    ['codex plugin marketplace add usezn/zn --ref plugin-vX.Y.Z', /names the ref "plugin-vX[.]Y[.]Z"/],
+    ['codex plugin marketplace add usezn/zn --ref main', /names the ref "main"/],
+    ['codex plugin marketplace add https://github.com/usezn/zn --ref vnext', /names the ref "vnext"/],
+    ['codex plugin marketplace add usezn/zn#plugin-v1.9.0', /passes the tag with #, but Codex takes --ref: use usezn\/zn --ref plugin-v1[.]9[.]0/],
+  ];
+  for (const f of SURFACES) {
+    for (const [cmd, re] of [...BAD_CLAUDE, ...BAD_CODEX]) {
+      const errs = mine(runP(with_(f, [cmd])), f);
+      assert.equal(errs.length, 1, `${f}: ${cmd}\n${errs.join('\n')}`);
+      assert.match(errs[0], new RegExp(`^${f.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}:\\d+: `), `${f}: ${cmd}`);
+      assert.match(errs[0], re, `${f}: ${cmd}`);
+    }
+  }
+  // Each wrong command is reported on its own line, next to correct ones.
+  const mixed = runP(with_('docs/a.md', ['claude plugin marketplace add usezn/zn#plugin-v1.9.0', 'claude plugin marketplace add usezn/zn', 'codex plugin marketplace add usezn/zn --ref v1.9.0']));
+  assert.deepEqual(mine(mixed, 'docs/a.md').map((e) => e.split(':')[1]), ['2', '3']);
+  // Without pluginVersion the tag follows the docs version.
+  assert.deepEqual(run(with_('README.md', ['claude plugin marketplace add usezn/zn#plugin-v2.0.0'])), []);
+  assert.match(run(with_('README.md', ['claude plugin marketplace add usezn/zn'])).join('\n'), /names no plugin tag: use usezn\/zn#plugin-v2[.]0[.]0/);
+  // Another repository whose name starts with usezn/zn is not this one, and the changelog is not an install surface.
+  assert.deepEqual(runP(with_('README.md', ['claude plugin marketplace add usezn/zn-algo#v9.9.9', 'claude plugin marketplace add usezn/zn-algo'])), []);
+  assert.deepEqual(runP({ ...GOOD, 'CHANGELOG.md': 'claude plugin marketplace add usezn/zn#v2.0.0\nclaude plugin marketplace add usezn/zn\n' }), []);
+});
+
 const LIB = {
   'packages/zn-gate/lib/rules.js': "const RULES_VERSION = '2026-11-11.2';\n",
   'packages/zn-gate/lib/scrub/patterns.js': "const SCRUB_RULES_VERSION = '2026-11-11.1';\n",
@@ -454,16 +533,19 @@ test('a release tag where a version constant cannot be read is reported, not rep
 });
 
 // examplesVersion may stay on the last published release while the next one is being cut.
-const withPublished = (version, examples, lastPublished) => {
+const CHANGELOG = '## [1.17.0] - 2026-11-20\n\n## [1.16.0] - 2026-11-13\n\n## [1.15.0] - 2026-11-06\n';
+const withPublished = (version, examples, lastPublished, { changelog = CHANGELOG, ...extraOptions } = {}) => {
   const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples, lastPublished }, docsVersion: { value: '1.0.0' } };
   const tree = {
     'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
     'pkg/server.json': JSON.stringify({ packages: [{ version }] }),
     'py/pyproject.toml': `[project]\nversion = "${version}"\n`,
     'README.md': 'Works with Claude Code, Cursor.\n',
+    // lastPublished only counts when it is the release just before version: CHANGELOG has 1.16.0 before 1.17.0
+    'CHANGELOG.md': changelog,
   };
   const warnings = [];
-  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings });
+  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings, ...extraOptions });
   return { errs, warnings };
 };
 
@@ -476,5 +558,102 @@ test('final release: examples older than the last published version fail', () =>
     const { errs } = withPublished('1.17.0', ex, '1.16.0');
     assert.equal(errs.length, 1, ex);
     assert.match(errs[0], /is on an older release line than version 1\.17\.0/, ex);
+  }
+});
+
+test('lastPublished: previousRelease reads the release just before version, with LF or CRLF', () => {
+  assert.equal(previousRelease(() => CHANGELOG, '1.17.0'), '1.16.0');
+  assert.equal(previousRelease(() => CHANGELOG.replace(/\n/g, '\r\n'), '1.17.0'), '1.16.0');
+  assert.equal(previousRelease(() => CHANGELOG, '9.9.9'), null);
+  assert.equal(previousRelease(() => { throw new Error('missing'); }, '1.17.0'), null);
+});
+
+test('lastPublished: a tampered value (examples and lastPublished both on a stale release) fails', () => {
+  const { errs } = withPublished('1.17.0', '1.15.0', '1.15.0');
+  assert.equal(errs.length, 1, errs.join('\n'));
+  assert.match(errs[0], /examplesVersion 1\.15\.0 is on an older release line than version 1\.17\.0/);
+});
+
+const NPM = ['1.15.0', '1.16.0-rc.1', '1.16.0', '1.17.0-rc.1'];
+
+test('lastPublished: it must be the highest final release npm published before version', () => {
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: NPM }), { errs: [], warnings: [] });
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: [...NPM, '1.17.0'] }), { errs: [], warnings: [] }, 'the release itself is out, examples not moved yet');
+  assert.deepEqual(withPublished('1.17.0', '1.17.0', '1.17.0', { publishedVersions: [...NPM, '1.17.0'] }), { errs: [], warnings: [] });
+  // Lowered examplesVersion and lastPublished, with the CHANGELOG heading edited to match: the registry still serves 1.17.0.
+  const tampered = withPublished('1.17.0', '1.15.0', '1.15.0', { publishedVersions: [...NPM, '1.17.0'], changelog: CHANGELOG.replace('## [1.16.0]', '## [1.15.0]') });
+  assert.match(tampered.errs.join('\n'), /lastPublished 1\.15\.0 is not the release published on npm just before 1\.17\.0 \(1\.16\.0\)/);
+  assert.match(tampered.errs.join('\n'), /older release line/);
+  // lastPublished ahead of what npm has (not published yet) fails too.
+  assert.match(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: ['1.15.0'] }).errs.join('\n'), /not the release published on npm just before 1\.17\.0 \(1\.15\.0\)/);
+});
+
+test('lastPublished: an unreachable registry fails closed in CI and falls back to the changelog elsewhere', () => {
+  assert.match(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: null, requirePublished: true }).errs.join('\n'), /could not be checked against npm/);
+  assert.deepEqual(withPublished('1.17.0', '1.16.0', '1.16.0', { publishedVersions: null, requirePublished: false }), { errs: [], warnings: [] });
+  // Offline fallback still compares with the changelog.
+  assert.match(withPublished('1.17.0', '1.15.0', '1.15.0', { publishedVersions: null, requirePublished: false }).errs.join('\n'), /older release line/);
+});
+
+test('publishedVersions drops every inherited npm and Node TLS setting and requires TLS verification', () => {
+  // A synthetic environment is passed in, so the test never weakens TLS for the running process.
+  const baseEnv = {
+    PATH: '/usr/bin',
+    npm_config_strict_ssl: 'false',
+    NPM_CONFIG_STRICT_SSL: 'false',
+    npm_config_cafile: '/example/ca.pem',
+    npm_config_proxy: 'http://proxy.example.invalid:8080',
+    NODE_TLS_REJECT_UNAUTHORIZED: '0',
+    NODE_EXTRA_CA_CERTS: '/example/extra-ca.pem',
+    NODE_OPTIONS: '--require /example/hook.js',
+  };
+  let seen;
+  const out = publishedVersions((cmd, args, opts) => { seen = { args, opts }; return '["1.0.0"]'; }, baseEnv);
+  assert.deepEqual(out, ['1.0.0']);
+  assert.ok(seen.args.includes('--strict-ssl=true'));
+  assert.equal(seen.opts.env.npm_config_strict_ssl, 'true');
+  assert.equal(seen.opts.env.PATH, '/usr/bin');
+  for (const k of Object.keys(seen.opts.env)) {
+    assert.ok(!/^(NODE_TLS_REJECT_UNAUTHORIZED|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)$/i.test(k), k);
+    if (/^npm_config_/i.test(k)) assert.ok(['npm_config_strict_ssl', 'npm_config_userconfig', 'npm_config_globalconfig'].includes(k), k);
+  }
+  // The caller's object is left untouched.
+  assert.equal(baseEnv.NODE_TLS_REJECT_UNAUTHORIZED, '0');
+});
+
+test('publishedVersions: parses the npm list, a single version and fails closed on odd output', () => {
+  const calls = [];
+  const ok = publishedVersions((cmd, args) => { calls.push(args.join(' ')); return JSON.stringify(['1.16.0', '1.17.0-rc.1']); });
+  assert.deepEqual(ok, ['1.16.0', '1.17.0-rc.1']);
+  assert.match(calls[0], /view zn-gate versions --json/);
+  assert.deepEqual(publishedVersions(() => '"1.0.0"\n'), ['1.0.0']);
+  assert.equal(publishedVersions(() => 'npm error 404'), null);
+  assert.equal(publishedVersions(() => '[]'), null);
+  assert.equal(publishedVersions(() => '["1.0.0", 5]'), null);
+  assert.equal(publishedVersions(() => { throw new Error('offline'); }), null);
+});
+
+test('publishedVersions: asks the public registry from a neutral directory with a clean environment', () => {
+  const saved = { a: process.env.npm_config_registry, b: process.env.NPM_CONFIG_REGISTRY, c: process.env['npm_config_@usezn:registry'] };
+  process.env.npm_config_registry = 'https://fake.invalid/';
+  process.env.NPM_CONFIG_REGISTRY = 'https://fake.invalid/';
+  process.env['npm_config_@usezn:registry'] = 'https://fake.invalid/';
+  try {
+    let seen;
+    // A project .npmrc sits in the repository root; npm runs in the temp directory, so it is never read.
+    const out = publishedVersions((cmd, args, opts) => { seen = { args, opts }; return '["1.0.0"]'; });
+    assert.deepEqual(out, ['1.0.0']);
+    assert.ok(seen.args.includes('--registry=https://registry.npmjs.org/'));
+    assert.equal(seen.opts.cwd, tmpdir());
+    for (const k of Object.keys(seen.opts.env)) assert.ok(!/^npm_config_(registry|@.*:registry)$/i.test(k), k);
+    // npm refuses the same file as user and global config, so each one is its own empty file.
+    const { userconfig, globalconfig } = { userconfig: seen.opts.env.npm_config_userconfig, globalconfig: seen.opts.env.npm_config_globalconfig };
+    assert.notEqual(userconfig, globalconfig);
+    assert.equal(readFileSync(userconfig, 'utf8'), '');
+    assert.equal(readFileSync(globalconfig, 'utf8'), '');
+  } finally {
+    for (const [k, v] of [['npm_config_registry', saved.a], ['NPM_CONFIG_REGISTRY', saved.b], ['npm_config_@usezn:registry', saved.c]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
   }
 });

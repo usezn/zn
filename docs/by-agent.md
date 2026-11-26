@@ -1,6 +1,6 @@
 # Install, verify and uninstall by agent
 
-A short list of the steps for each of the eight agents zn-gate can install hooks for: seven supported, plus Gemini CLI, which is experimental. Run every command in your own terminal. For what each agent is and is not protected against, see [Editors and coding agents](editors/README.md); each editor has its own page with the full steps.
+A short list of the steps for each of the eight agents zn-gate can install hooks for: six supported, plus Gemini CLI and Copilot CLI, which are experimental. Run every command in your own terminal. For what each agent is and is not protected against, see [Editors and coding agents](editors/README.md); each editor has its own page with the full steps.
 
 Verifying is the same for every agent that has hooks: `npx -y zn-gate check` makes a temporary folder with a fake `.env` file, asks the hook to read it, and reports whether it was blocked. See [Check that it works](check.md). To remove everything at once, run `npx -y zn-gate uninstall`: see [Remove zn-gate](uninstall.md). To move from one agent to another, follow the [switching agents checklist](examples/switching-agents-checklist.md).
 
@@ -14,7 +14,7 @@ If the hooks of an agent do not seem to work, start with the page of that agent.
 | Codex CLI | [Troubleshooting](editors/codex.md#troubleshooting); [Codex asks you to trust the hooks again](editors/codex.md#codex-asks-you-to-trust-the-hooks-again) |
 | OpenCode | [Troubleshooting](editors/opencode.md#troubleshooting) |
 | Cursor | [Troubleshooting](editors/cursor.md#troubleshooting) |
-| GitHub Copilot (VS Code, CLI) | [Troubleshooting](editors/vscode.md#troubleshooting) |
+| GitHub Copilot (CLI experimental, VS Code not tested) | [Troubleshooting](editors/vscode.md#troubleshooting) |
 | Google Antigravity | [Troubleshooting](editors/antigravity.md#troubleshooting) |
 | ZCode desktop app | [Symptom index](troubleshooting.md#symptom-index) |
 | Gemini CLI | [Troubleshooting](editors/gemini.md#troubleshooting); [When a Gemini CLI setting switches the hook off](editors/gemini.md#when-a-gemini-cli-setting-switches-the-hook-off) |
@@ -27,11 +27,11 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 
 | Agent | Install | Verify | Uninstall |
 | - | - | - | - |
-| Claude Code | `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn` (or `zn hooks install claude-code`) | `npx -y zn-gate check` | `claude plugin uninstall zn-gate@usezn` (or `zn hooks uninstall claude-code`) |
+| Claude Code | `claude plugin marketplace add usezn/zn#plugin-v1.18.0`, then `claude plugin install zn-gate@usezn` (or `zn hooks install claude-code`) | `npx -y zn-gate check` | `claude plugin uninstall zn-gate@usezn` (or `zn hooks uninstall claude-code`) |
 | Codex CLI | [`zn hooks install codex`](editors/codex.md), then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
 | OpenCode | `zn hooks install opencode` | `npx -y zn-gate check` (checks zn's rules; the plugin runs inside OpenCode) | `zn hooks uninstall opencode` |
 | [Cursor](editors/cursor.md) | `zn hooks install cursor` | `npx -y zn-gate check` | `zn hooks uninstall cursor` |
-| [GitHub Copilot (VS Code, CLI)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
+| [GitHub Copilot (CLI experimental, VS Code not tested)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
 | [Google Antigravity](editors/antigravity.md) | `zn hooks install antigravity` | `npx -y zn-gate check` | `zn hooks uninstall antigravity` |
 | [ZCode desktop app](editors/zcode.md) | `zn hooks install zcode` | `npx -y zn-gate check` | `zn hooks uninstall zcode` |
 | Gemini CLI (experimental) | `zn hooks install gemini` | `npx -y zn-gate check` | `zn hooks uninstall gemini` |

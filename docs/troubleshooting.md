@@ -1231,7 +1231,7 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 - **A keychain was asked for that is not there.** You ran `zn unlock --backend libsecret`, or `ZN_KEYCHAIN_BACKEND` is set, but the `secret-tool` program is missing. A real run on a computer without it:
 
   ```text
-  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.17.0 unlock --backend passphrase`.
+  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.18.0 unlock --backend passphrase`.
   ```
 
   A second line then says that the passphrase is not the problem and points back to this page.
@@ -1246,7 +1246,7 @@ Nothing was changed.
    New vault passphrase (min 12 chars):
    Repeat passphrase:
    Created a new vault (passphrase) in ~/.zn/vault
-   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.17.0 lock` to lock now.
+   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.18.0 lock` to lock now.
    ```
 
    Later runs ask once, for `Vault passphrase:`. A wrong passphrase says `wrong passphrase, or vault file identity.age is corrupted`; see [section 5](#5-your-secret-vault-is-locked) if you forgot it.

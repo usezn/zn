@@ -25,7 +25,7 @@ zn-gate vault status
 ```
 
 ```text
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 15:25 (in 1 min) at the latest, zn-gate 1.17.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 15:25 (in 1 min) at the latest, zn-gate 1.18.0)
 Location: ~/.zn/vault
 ```
 
@@ -78,7 +78,7 @@ The vault asks for its passphrase, and then it is open for a new session. In the
 
 ```text
 Vault unlocked: locks after 30 min idle, or at 23:20 (in 8 h) at the latest. Run `zn-gate lock` to lock now.
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:20 (in 8 h) at the latest, zn-gate 1.17.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:20 (in 8 h) at the latest, zn-gate 1.18.0)
   DEMO_TOKEN                    proxy
 ```
 

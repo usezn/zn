@@ -10,6 +10,11 @@
 //   node .github/scripts/changelog.mjs preview                print the section the next release would get
 //   node .github/scripts/changelog.mjs assemble --version X.Y.Z --date YYYY-MM-DD
 //                                                             write that section into CHANGELOG.md, delete the fragments
+//   node .github/scripts/changelog.mjs amend --version X.Y.Z  merge fragments that landed after that section was written
+//                                                             into it (release not tagged yet), delete the fragments
+//   node .github/scripts/changelog.mjs release-check --version X.Y.Z
+//                                                             exit 1 when the section is missing or changelog.d still
+//                                                             has fragments: run it on the commit that gets the tag
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,8 +35,9 @@ const SHIPPED = [
   /^skill\//,
   /^action\.ya?ml$/,
   /^Cargo\.(?:toml|lock)$/,
+  /^go\//,
 ];
-const NEVER = [/(?:^|\/)README[^/]*\.md$/i, /(?:^|\/)tests?\//, /(?:^|\/)__tests__\//, /(?:^|\/)fixtures\//, /\.test\.[cm]?[jt]s$/];
+const NEVER = [/(?:^|\/)README[^/]*\.md$/i, /(?:^|\/)tests?\//, /(?:^|\/)__tests__\//, /(?:^|\/)fixtures\//, /\.test\.[cm]?[jt]s$/, /_test\.go$/];
 
 export function needsFragment(file) {
   return SHIPPED.some((re) => re.test(file)) && !NEVER.some((re) => re.test(file));
@@ -137,6 +143,51 @@ export function assemble(root, version, date) {
   fs.writeFileSync(file, out);
   for (const f of fragments) fs.unlinkSync(path.join(root, f.file));
   return { fragments: fragments.length };
+}
+
+/* Body bounds of an existing "## [X.Y.Z] - date" section. */
+function versionBounds(changelog, version) {
+  const start = changelog.indexOf(`\n## [${version}] - `);
+  if (start < 0) throw new Error(`CHANGELOG.md has no section for ${version}`);
+  const bodyStart = changelog.indexOf('\n', start + 1) + 1;
+  const next = changelog.indexOf('\n## [', bodyStart);
+  return { bodyStart, end: next < 0 ? changelog.length : next + 1 };
+}
+
+/* Fragments merged into the release branch after its section was assembled (assemble refuses an existing section):
+ * add their bullets to that section, section by section, after the bullets already there, and delete them. Text
+ * above the first "### " heading (a release introduction) is kept as it is. Only for a version not tagged yet. */
+export function amend(root, version) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version || '')) throw new Error('version must look like 1.2.3');
+  const file = path.join(root, 'CHANGELOG.md');
+  const changelog = fs.readFileSync(file, 'utf8');
+  const b = versionBounds(changelog, version);
+  const fragments = readFragments(root);
+  const bad = fragments.flatMap((f) => f.errors);
+  if (bad.length) throw new Error(bad.join('\n'));
+  if (!fragments.length) throw new Error('nothing to amend: changelog.d has no fragments');
+  const body = changelog.slice(b.bodyStart, b.end);
+  const h = body.search(/^### /m);
+  const intro = (h < 0 ? body : body.slice(0, h)).trim();
+  const section = buildSection(h < 0 ? '' : body.slice(h).trim(), fragments);
+  const rest = changelog.slice(b.end);
+  fs.writeFileSync(file, changelog.slice(0, b.bodyStart) + '\n' + (intro ? intro + '\n\n' : '') + section + (rest ? '\n' + rest : ''));
+  for (const f of fragments) fs.unlinkSync(path.join(root, f.file));
+  return { fragments: fragments.length };
+}
+
+/* What the tagged commit must hold: the version's section, and no fragment left over (it would land in the next release). */
+export function releaseCheck(root, version) {
+  const errors = [];
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version || '')) return ['version must look like 1.2.3'];
+  const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  if (!changelog.includes(`\n## [${version}] - `)) errors.push(`CHANGELOG.md has no "## [${version}] - <date>" section`);
+  const left = readFragments(root).map((f) => f.file);
+  if (left.length) {
+    errors.push(`changelog.d still has ${left.length} fragment(s) that are not in the ${version} notes: ${left.join(', ')}; ` +
+      `run: node .github/scripts/changelog.mjs amend --version ${version}`);
+  }
+  return errors;
 }
 
 function git(root, args) {
@@ -284,7 +335,18 @@ function main(argv) {
     console.log(`CHANGELOG.md: wrote ${opt('--version')} from ${r.fragments} fragment(s) and [Unreleased]; add the release introduction by hand`);
     return 0;
   }
-  console.error('usage: changelog.mjs check --base <ref> | summary --base <ref> | warn-docs --base <ref> | preview | assemble --version X.Y.Z --date YYYY-MM-DD');
+  if (cmd === 'amend') {
+    const r = amend(root, opt('--version'));
+    console.log(`CHANGELOG.md: added ${r.fragments} fragment(s) to ${opt('--version')}`);
+    return 0;
+  }
+  if (cmd === 'release-check') {
+    const errors = releaseCheck(root, opt('--version'));
+    if (errors.length) { console.error(errors.join('\n')); return 1; }
+    console.log(`CHANGELOG.md has ${opt('--version')} and changelog.d has no fragments left`);
+    return 0;
+  }
+  console.error('usage: changelog.mjs check --base <ref> | summary --base <ref> | warn-docs --base <ref> | preview | assemble --version X.Y.Z --date YYYY-MM-DD | amend --version X.Y.Z | release-check --version X.Y.Z');
   return 2;
 }
 

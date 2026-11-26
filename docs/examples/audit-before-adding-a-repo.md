@@ -67,7 +67,7 @@ If zn-gate is already installed, `zn-gate audit ./example-repo` is the same. Wit
 The report (example output, from `zn-gate` 1.15.0; the version in the first line is the one you run):
 
 ```text
-zn audit  example-repo  (zn-gate 1.17.0)
+zn audit  example-repo  (zn-gate 1.18.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -135,7 +135,7 @@ npx -y zn-gate audit ./example-repo --format json --output report.json
 With `--agents codex`, this repository has no Codex files, so the report says so and nothing is checked:
 
 ```text
-zn audit  example-repo  (zn-gate 1.17.0)
+zn audit  example-repo  (zn-gate 1.18.0)
 
 Nothing was checked: no agent instruction or config files were found.
 codex: not checked (no instruction or config files found where zn looks: AGENTS.md, .codex/)
