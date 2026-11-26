@@ -396,10 +396,11 @@ test('MCP: personal data in an object key of a call with a URL asks', async () =
   assert.equal((await mcp({ url: 'https://example.com/a', [JANE]: 'x' })).decision, 'ask');
 });
 
-test('MCP: personal data deeper than the walk, or after 2000 leaves, still asks', async () => {
+test('MCP: personal data after 2000 leaves still asks, and a call nested deeper than zn reads is refused', async () => {
   let deep = { note: 'contact ' + JANE };
   for (let i = 0; i < 9; i++) deep = { level: deep };
-  assert.equal((await mcp({ url: 'https://example.com/a', extra: deep })).decision, 'ask');
+  // Arguments zn cannot read to the end are refused before any question (the hooks cannot tell what a deep value names).
+  assert.equal((await mcp({ url: 'https://example.com/a', extra: deep })).decision, 'deny');
   const many = Array.from({ length: 2100 }, (_, i) => 'filler ' + i);
   assert.equal((await mcp({ url: 'https://example.com/a', items: many, last: 'contact ' + JANE })).decision, 'ask');
   assert.equal(policy.egressMcpCovers({ url: 'https://example.com/a', extra: deep }), false);
