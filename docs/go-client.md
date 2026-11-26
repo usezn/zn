@@ -18,31 +18,31 @@ Create an analysis-only API key on the [connect page](https://usezn.com/connect/
 
 ```go
 import (
-	"context"
-	"fmt"
-	"os"
-	"time"
+    "context"
+    "fmt"
+    "os"
+    "time"
 
-	zn "github.com/usezn/zn/go"
+    zn "github.com/usezn/zn/go"
 )
 
 var client = zn.NewClient(os.Getenv("ZN_API_KEY"))
 
 // safeToRead reports whether a tool result may go to the model.
 func safeToRead(ctx context.Context, toolResult string) bool {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
 
-	res, err := client.Analyze(ctx, toolResult)
-	if err != nil {
-		fmt.Println("zn could not answer, failing closed:", err)
-		return false
-	}
-	if !res.Allowed() {
-		fmt.Println("not allowed, failing closed:", res.Verdict, res.Rule, res.EvidenceID)
-		return false
-	}
-	return true
+    res, err := client.Analyze(ctx, toolResult)
+    if err != nil {
+        fmt.Println("zn could not answer, failing closed:", err)
+        return false
+    }
+    if !res.Allowed() {
+        fmt.Println("not allowed, failing closed:", res.Verdict, res.Rule, res.EvidenceID)
+        return false
+    }
+    return true
 }
 ```
 
@@ -73,13 +73,13 @@ Other helpers are `zn.IsAccountBanned`, `zn.IsInvalidThreshold` and `zn.IsInvali
 res, err := client.Analyze(ctx, text)
 switch {
 case err == nil:
-	// use res
+    // use res
 case zn.IsUnauthorized(err):
-	// check ZN_API_KEY
+    // check ZN_API_KEY
 case zn.IsQuotaExceeded(err):
-	// add credits or wait for the monthly reset
+    // add credits or wait for the monthly reset
 case zn.IsRateLimited(err):
-	// slow down
+    // slow down
 }
 ```
 
@@ -93,8 +93,8 @@ Decide in advance what your code does when zn cannot answer. For tools with a hi
 
 ```go
 for _, piece := range zn.SplitForAnalyze(longText, 0) {
-	res, err := client.Analyze(ctx, piece)
-	// handle err and check res.Allowed() for every piece
+    res, err := client.Analyze(ctx, piece)
+    // handle err and check res.Allowed() for every piece
 }
 ```
 
