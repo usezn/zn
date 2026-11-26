@@ -47,7 +47,9 @@ test('check does not read that command as zn\'s hook for another agent, or when 
   const e = hookEntries(tree, 'zcode').find((x) => /-EncodedCommand/.test(x.command));
   assert.equal(parseCommand(e.command, 'cursor'), null);
   const script = shellQuote.windowsCommandScript(e.command);
-  const other = launcher.windowsScriptCommand(script.replace('runner.js" zcode', 'runner.js" codex'));
+  // The agent named in the call of the hook (zr's arguments) and in the closing comment must agree.
+  assert.ok(script.includes(`'" zcode')`), script);
+  const other = launcher.windowsScriptCommand(script.replace(`'" zcode')`, `'" codex')`));
   assert.equal(parseCommand(other, 'zcode'), null);
 });
 

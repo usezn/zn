@@ -2,7 +2,7 @@
 
 Set up zn-gate in Gemini CLI in two minutes, then the technical details: the hook zn-gate installs, what Gemini CLI does and does not let zn-gate cover, and what a settings switch-off looks like.
 
-Support for Gemini CLI is experimental. It is listed apart from the seven supported agents (see [Editors and coding agents](README.md)) and is less tested. Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on June 18, 2026; Gemini CLI keeps working with zn-gate as an experimental adapter ([Google's announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)). Run every command in your own terminal.
+Support for Gemini CLI is experimental. It is listed apart from the six supported agents (see [Editors and coding agents](README.md)) and is less tested. Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on June 18, 2026; Gemini CLI keeps working with zn-gate as an experimental adapter ([Google's announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)). Run every command in your own terminal.
 
 ## Install (no coding needed)
 

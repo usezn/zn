@@ -133,7 +133,7 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
-    id: 'copilot', name: 'GitHub Copilot (VS Code, CLI)', event: 'preToolUse', tool: 'view',
+    id: 'copilot', name: 'GitHub Copilot (CLI experimental, VS Code not tested)', event: 'preToolUse', tool: 'view',
     fix: 'run `zn hooks install copilot` in your own terminal',
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
@@ -276,7 +276,15 @@ function parseCommand(command, agentId, platform = process.platform) {
     // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
     // the current script (no cmdlet: zf and [System.IO.File]::Exists) is read as the older Test-Path form below
     // The ack file of the current script (zk, zx, zd) is read as the plain exit of the older one.
-    const wsOld = ws.replace(/\$za = \$null;.*?(?=function zf\()/s, '')
+    // The current script holds the node and runner paths once ($zn, $zj), its answer text in $zr, and a .NET profiler check: put
+    // the paths back where the older form had them and drop the rest, then read it as before.
+    const zp = /\$zn='([^']+)'; \$zj='([^']+)'; /.exec(ws);
+    const wsNew = !zp ? ws : ws.replace(zp[0], '')
+      .replace(/\$zr='[^']*'; if \(\$env:COR_ENABLE_PROFILING -eq '1'\) \{ \$zt=9; \$zr='[^']*' \}; /, '')
+      .replace('if (!$zt -and [System.IO.File]::Exists($zn) -and [System.IO.File]::Exists($zj))', () => "if ([System.IO.File]::Exists('" + zp[1] + "') -and [System.IO.File]::Exists('" + zp[2] + "'))")
+      .replace(/& \$zn \$zj ([a-z-]+); /, (m0, a) => "& '" + zp[1] + "' '" + zp[2] + "' " + a + '; ')
+      .replace(/zr \('"' \+ \$zn \+ '"'\) \('"' \+ \$zj \+ '" ([a-z-]+)'\)/, (m0, a) => "zr '\"" + zp[1] + "\"' '\"" + zp[2] + "\" " + a + "'");
+    const wsOld = wsNew.replace(/\$za = \$null;.*?(?=function zf\()/s, '')
       .replace(/if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx (0|\$LASTEXITCODE) \}/g, 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $1 }')
       .replace(/if \(\(\$rc -eq 0 -and \(zk\)\) -or \$rc -eq 2\) \{ zx (0|\$rc) \}/g, 'if ($rc -eq 0 -or $rc -eq 2) { exit $1 }')
       .replace(/zd; /g, '')
@@ -1322,7 +1330,7 @@ async function checkAgent(spec, ctx) {
     // Copilot's harness also reads the Claude Code hooks of the project, and runs every hook it finds: zn would check each call twice.
     const claudeFile = claudeProjectHooksFile(ctx.cwd);
     if (claudeFile) {
-      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code and Copilot CLI) reads that file too whenever it holds zn hooks, with no setting needed, so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
+      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and GitHub Copilot reads that file too whenever it holds zn hooks, with no setting needed (Copilot CLI, which is experimental, and VS Code and the GitHub Copilot app, which use the same hooks), so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
     }
   }
   if (spec.id === 'antigravity' && installed && res.where === userFile) {

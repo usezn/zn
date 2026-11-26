@@ -1,6 +1,6 @@
 {
   "version_const": "AUDIT_RULES_VERSION",
-  "version": "2026-11-25.14",
+  "version": "2026-11-26.2",
   "ids": [
     "ZNA001",
     "ZNA002",
@@ -52,8 +52,8 @@
     "patterns.weakening"
   ],
   "sha256": {
-    "lib/audit/rules.js": "a59535d7fd86b256a459d88e197ed26cc3eca60246ef297efd3a0bc058a861df",
-    "lib/audit/patterns.js": "cd47b631c63d1127a3ff8e8b04da20e59aa8ba39db2e07153f7983fb896d9f5a",
-    "lib/loader-env.js": "d0323e1611b096f73f2a9b6ccd252522662ef5733bd3188036fcc8d889e6efcd"
+    "lib/audit/rules.js": "4ba660bebce5ebed04521cd462f377cd06e092409a4d47637e3bb1c095b03b35",
+    "lib/audit/patterns.js": "e71d7175a28593300422431ad61f4ca7b3b676b146d3d13d9358d6d1b264c9d1",
+    "lib/loader-env.js": "859ad5a5e5b85b4f62c443832343ba10784cbb64a9d59050b18c329a159301fc"
   }
 }

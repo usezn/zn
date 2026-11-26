@@ -636,6 +636,15 @@ Three features are off by default. Each one helps in a narrow case and has limit
     The same writes are refused when they set a preload variable of that list (`LD_PRELOAD`, `LD_AUDIT`,
     `DYLD_INSERT_LIBRARIES` and the others except `LD_DEBUG`) to a value, because the loader runs that library inside the
     shell of every hook before zn can refuse anything; an empty quoted value (`LD_PRELOAD=""` or `''`) is allowed wherever it stands in a file written with the editor tool, and a bare empty value (`LD_PRELOAD=`) only when nothing but blanks follows it to the end of the file: a bare `LD_PRELOAD=` followed by another line is refused, because a reader may take that line as the value. Every shell write to a watched `.env` is refused, an empty assignment included.
+- **A .NET profiler loads a DLL into the Windows hooks (accepted limit, Windows).** With `COR_ENABLE_PROFILING=1` and
+  `COR_PROFILER` / `COR_PROFILER_PATH` in the environment of the agent, .NET Framework loads that DLL into `powershell.exe`,
+  which runs every zn hook on Windows, before the first line of the hook script, so the DLL can answer for the hook (the
+  Windows twin of `LD_PRELOAD`). With `COR_ENABLE_PROFILING=1` set, the Windows hook scripts (the hook launcher and the
+  project guard) do not start the hook and answer with the agent's block, or its warning for an event it cannot block. Like
+  the refusal on Linux this narrows the path, it does not close it: the DLL is already loaded when the script checks, and
+  could change the answer. `zn audit` reports a project that turns it on for the agent (`CORECLR_ENABLE_PROFILING` and the
+  .NET 11 name `DOTNET_ENABLE_PROFILING` too) as critical. Whoever can set the environment of the agent can already run code
+  of their own in it, so this gives no new power; it only needs no file.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell

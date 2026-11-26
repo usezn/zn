@@ -9,6 +9,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { expandPs } = require('./helpers/ps_expand');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -168,7 +169,7 @@ test('cursor: install on Windows wraps the hook command in powershell.exe', (t) 
   for (const ev of ['beforeReadFile', 'beforeMCPExecution']) {
     const command = data.hooks[ev][0].command;
     assert.match(command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
-    const script = require('../lib/shell-quote').windowsCommandScript(command);
+    const script = expandPs(require('../lib/shell-quote').windowsCommandScript(command));
     assert.ok(script.includes("& '/usr/bin/node' '/x/lib/hooks/runner.js' cursor"), script);
   }
   cursor.uninstall({ home, platform: 'win32' });
