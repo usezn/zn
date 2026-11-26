@@ -15,7 +15,8 @@
   are refused: zn cannot see the file they would leave. Reads of these files are unchanged; use the editor tool to change them.
 - `git checkout`, `git restore`, `git reset` and `git stash` in a shell command that names a project `.env` are refused: they
   write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
-  under any key down to 6 levels of nesting for these files; a call nested deeper (or with more than 500 objects) is refused. An MCP tool that names one of these files without giving the file it
+  under any key down to 6 levels of nesting for these files; a call nested deeper is refused (Gemini CLI, Antigravity, ZCode and
+  Copilot CLI also refuse a call with more than 500 objects). An MCP tool that names one of these files without giving the file it
   leaves is refused whatever its name, including `read_file` (a custom server can give a writing tool that name); use the
   agent's own read tool to read them.
 - A write to a project `.env` or `.gemini/.env` through a tool zn does not know is refused even when the call carries the
