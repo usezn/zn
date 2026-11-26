@@ -1,7 +1,7 @@
 'use strict';
 // A .env file the agent loads (Gemini CLI reads the project .env and .gemini/.env) that sets LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES
 // or another preload variable to a value loads a library into the shell of every hook before the hook runs, so the hooks refuse that write.
-// Every shell write to such a file is refused too, whatever it writes (the loader name it mentions only picks the message). Fixtures are inert text: the paths name no real library.
+// A shell write to such a file that is not literal text is refused too. Fixtures are inert text: the paths name no real library.
 
 process.env.ZN_STATS = 'off';
 
@@ -235,7 +235,7 @@ test('printf is found in any position of a simple command, not only as the first
     blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), null, command);
   }
   // Policy changed (2026-11-25): printf behind a wrapper or a VAR=value prefix is refused even with a value-only conversion; these
-  // two used to pass. Every shell write to a watched .env is refused now, whatever the command.
+  // two used to pass. Only printf (or echo) as the first word of its simple command can write a .env.
   const nowRefused = [
     "env printf 'TOKEN=%s\\n' abc >> .env",
     "X=1 printf 'A=%s\\n' b >> .env",

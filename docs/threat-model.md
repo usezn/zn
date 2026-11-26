@@ -570,18 +570,18 @@ Three features are off by default. Each one helps in a narrow case and has limit
   - On Linux, ZCode and Claude Code can start a hook program directly, with no shell (ZCode's `process` hook, Claude Code's
     exec form with `args`). For a user install on Linux (x64 and arm64), `zn hooks install zcode` and `zn hooks install claude-code`
     put a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`, first in the hook. No dynamic loader runs before it.
-    It denies when the environment of the agent has `LD_TRACE_LOADED_OBJECTS` set to any value (the empty string and `0` included), or any of `LD_PRELOAD`, `LD_AUDIT`, `LD_PROFILE`, `LD_LIBMAP`, `LD_32_PRELOAD`, `LD_TRACE_LOADED_OBJECTS_FMT1`, `LD_TRACE_LOADED_OBJECTS_FMT2`, `LD_TRACE_LOADED_OBJECTS_ALL`, `LD_DEBUG` (any value, not only `help`), `LD_DEBUG_OUTPUT`, `LD_PRELOAD_FDS`, `LD_LIBMAP_DISABLE`, `LD_LOADFLTR`, `DYLD_INSERT_LIBRARIES`, `DYLD_IMAGE_SUFFIX`, `DYLD_SHARED_CACHE_DIR` or `DYLD_SHARED_REGION` set to a value that is not empty, in exactly that upper case (the loader reads no other case). It does not start the hook then and answers
-    the agent's own deny with its blocking exit code (exit 2 with the reason). Any other loader variable does not make it deny:
-    `LD_LIBRARY_PATH`, `LD_SHOW_AUXV` and every other `LD_*` or `DYLD_*` name, those names in another case, the names above with an
-    empty value (except `LD_TRACE_LOADED_OBJECTS`, which denies when empty too), and the other names of `lib/loader-env.js`. It removes all of them (every `LD_*` and
-    `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) from the environment and replaces itself with the hook. When it cannot
-    start the hook, it denies. The npm package carries the launcher with its SHA-256, and the install copies it into the zn hooks folder
-    when the SHA-256 matches, then runs it once as a test. The hook entry is switched to the launcher only when that test run answers as
-    expected. Otherwise the copied file stays unused, the hook keeps the form it had before, and the install
-    prints a warning that this protection is missing on that machine.
+    When `LD_TRACE_LOADED_OBJECTS` is set (any value, also empty), or `LD_DEBUG` (any value, not only `help`), `LD_DEBUG_OUTPUT`
+    or a preload variable (`LD_PRELOAD`, `LD_AUDIT` and the rest of the refused list in `lib/loader-env.js`) is set to a value
+    that is not empty, it does not start the hook and answers
+    the agent's own deny with its blocking exit code (exit 2 with the reason). Otherwise it removes every loader variable (every `LD_*` and
+    `DYLD_*` name in any case, and the other names of `lib/loader-env.js`) and replaces itself with the hook. When it cannot
+    start the hook, it denies. The npm package carries the launcher with its SHA-256. The install copies it only when the
+    SHA-256 matches, then gives it a test run, and switches the hook to it only when that run answers as expected. When the
+    run fails, the copied file stays (hooks written earlier may name it) but the hook keeps the form it had before, and the
+    install prints a warning that this protection is missing on that machine.
   - Claude Code on Linux was checked with a real Claude Code 2.1.331 (headless, x86_64, Ubuntu 24.04, November 2026): with the
     exec form the parent of the hook is Claude Code itself, with no shell in between; `LD_LIBRARY_PATH` in the settings is
-    removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny (so does any other value of `LD_DEBUG`)
+    removed by the launcher and the hook decides; `LD_TRACE_LOADED_OBJECTS=1` and `LD_DEBUG=help` in the settings make the launcher deny
     before any dynamically linked program starts, and the tool call is blocked, while the earlier shell form with
     `LD_TRACE_LOADED_OBJECTS=1` let the tool run with no hook decision. The arm64 launcher is built but was not run with a real agent.
   - Antigravity is detection only on every platform for now. The launcher program can already answer for it,
@@ -606,36 +606,32 @@ Three features are off by default. Each one helps in a narrow case and has limit
     project settings that adds one (zn's configuration change check), provided the hook for that change still runs. Whoever
     can set the environment of the agent can also preload a library of their own (see the limit above), so this gives no new
     power; it only needs no file.
-  - Where the launcher is not used (the shell launcher of the other agents, project installs, macOS), the other loader settings that
-    only log or print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`, `LD_VERBOSE`, `LD_WARN`) let the script run;
-    the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with FreeBSD's loader. For Claude Code and ZCode user
-    installs on Linux the static launcher also denies `LD_DEBUG` with any non-empty value and `LD_DEBUG_OUTPUT` with a non-empty
-    value (they are in the list above). The shell launcher refuses the same names. The difference is that the static launcher runs
-    before any dynamic loader, so its refusal always happens, while the loader can stop the shell launcher before its first line
-    (for `LD_TRACE_LOADED_OBJECTS` and `LD_DEBUG=help`).
-  - While the variable is not yet set, the hooks do work, so on every platform they also refuse the edit that would set it: a
-    Write, Edit or patch (Claude Code, Gemini CLI, Codex CLI and the other agents zn guards) or a shell command that puts
-    either variable into a project `.env` or `.gemini/.env`, in either dotenv spelling (`NAME=value` or `NAME: value`) and
-    with the value bare or in double, single or back quotes.
+  - Edits that would set them (every platform, every agent zn guards). While the variable is not yet set, the hooks do
+    work, so they also refuse the edit that would set it: a Write, Edit or patch (Claude Code, Gemini CLI, Codex CLI and the
+    other agents zn guards) or a shell command that puts either variable into a project `.env` or `.gemini/.env`, in either
+    dotenv spelling (`NAME=value` or `NAME: value`) and with the value bare or in double, single or back quotes.
     Shell commands cannot write such a file: a shell write to a watched dotenv file (`.env`, `.env.*`, `.gemini/.env`) is refused
     whatever it writes, including a redirection (`>`, `>>`, `>|`, `&>`, and the read-write `<>`, `1<>`, `{fd}<>`), `tee`, `sed -i`,
     `cp`, `Set-Content` and the like. zn cannot know what the shell really runs: an inherited function, an alias or function
     defined by an earlier command of a persistent shell, or an untrusted `PATH` can replace `echo`, `printf` or `cat` after the
     check. Any other program whose command text names such a file (an interpreter with `-c` or `-e`, `awk`, `sed 'w file'`,
     `curl -o`, `iwr -OutFile`, an unknown tool) is refused too, unless it is one of these: a read-only command (`cat`, `head`, `tail`, `more`, `grep`, `egrep`, `fgrep`, `rg`, `ls`, `stat`, `wc`, `diff`, `file`, `bat`, `jq`, `type`, `gc`, `Get-Content`, `Select-String`, `findstr`, `dir`, `pwd`, `echo`); a metadata-only or print-only command (`touch`, `test`, `[`, `[[`, `rm`, `rmdir`, `del`, `erase`, `Remove-Item`, `cd`, `pushd`, `popd`, `chdir`, `Set-Location`, `sl`, `Write-Output`, `Write-Host`, `Join-Path`, `date`, `true`, `false`, `whoami`, `hostname`, `uname`, `id`, `basename`, `dirname`, `printf`, `seq`, `expr`, `realpath`, `readlink`); a shell (`sh`, `bash`, `zsh`, `dash`, `ksh`, `fish`, `ash`, `powershell`, `pwsh`, `cmd`) whose inner code is checked on its own; or a git step that reads or only changes the index or the history (`status`, `diff`, `log`, `show`, `ls-files`, `check-ignore`, `blame`, `rev-parse`, `add`, `commit`, `rm --cached`; not with `--output`). `git checkout`, `git restore`, `git reset` and `git stash` write stored content into the file and are refused, and so is every other program. Use the editor tool (Write, Edit, a
-    patch) instead; zn checks what it writes on the real text. Reads of the file are not affected. A word that starts with a backslash (`\.env`, as for a Windows root or a network share) is refused whatever the command is, read-only ones included, because zn cannot follow such a path; an unquoted backslash inside the word (`.e\nv`) is removed by the shell, so zn judges the word as `.env`.
+    patch) instead; zn checks what it writes on the real text. Reads of the file are not affected.
     Every write to such a file through the agent's own editor tool or a patch is judged on the
     file it would leave: zn applies the edit or patch to the file on disk, reads white space and line breaks around `=` or `:` and
-    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file. A tool zn does not know is read under any key down to 6 levels of nesting by Claude Code, Gemini CLI, Antigravity, ZCode and GitHub Copilot CLI, and a call nested deeper is refused. OpenCode treats such a tool as an MCP call, and Codex CLI and Cursor never send one to the hook (their hook matchers pass only Bash, `apply_patch` and MCP calls, and for Cursor Grep, Write and Delete). The number of objects is capped at 500, and a larger call refused, only in the path scans of Claude Code, Gemini CLI, Antigravity, ZCode and Copilot CLI, so a wide call never runs unchecked. A call that names such a file without giving the file it leaves (a copy, move, rename, link or a tool zn does not know) is refused whatever the tool is called. Any MCP tool call that names such a file is refused outright, whatever its body (the body may be scanned first, only to choose which message is shown; it never lets the call through): a tool name proves nothing, because a custom MCP server can call an append `write_file` or a writing tool `read_file`, so no MCP tool counts as a whole-file write, an edit or a read-only tool. Change the file with the agent's own file tools and read it with the agent's own read tool. The result of a call is known only for the agent's own write and edit tools and patches (the full resulting file is rebuilt); an unknown tool that sends a body or an edit is refused too. The agents' own read tools (Claude Code `Read`, Gemini CLI and Antigravity `read_file`, Copilot `view`, OpenCode `read`) are plain reads and are not affected.
-    `help` counts wherever it stands in
-    the value as a separate word, also after a slash, a bracket or a backslash (`LD_DEBUG=libs/,help`), so no value is read
-    shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`, `.codex/`, `.gemini/settings.json`)
-    were already refused to every write. This cannot cover a file that a program writes on its own (a script, a build tool), a
-    change made by the user or by another tool, or a user-level file zn does not protect, such as a shell profile; those are
-    what `zn audit` is for.
-    The same writes are refused when they set a preload variable of that list (`LD_PRELOAD`, `LD_AUDIT`,
-    `DYLD_INSERT_LIBRARIES` and the others except `LD_DEBUG`) to a value, because the loader runs that library inside the
-    shell of every hook before zn can refuse anything; an empty quoted value (`LD_PRELOAD=""` or `''`) is allowed wherever it stands in a file written with the editor tool, and a bare empty value (`LD_PRELOAD=`) only when nothing but blanks follows it to the end of the file: a bare `LD_PRELOAD=` followed by another line is refused, because a reader may take that line as the value. Every shell write to a watched `.env` is refused, an empty assignment included.
+    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file. A tool zn does not know is read under any key down to 6 levels of nesting by Claude Code, Gemini CLI, Antigravity, ZCode and GitHub Copilot CLI, and a call nested deeper is refused. OpenCode treats such a tool as an MCP call, and Codex CLI and Cursor never send one to the hook (their hook matchers pass only Bash, `apply_patch` and MCP calls, and for Cursor Grep, Write and Delete). The number of objects is capped at 500, and a larger call refused, only in the path scans of Claude Code, Gemini CLI, Antigravity, ZCode and Copilot CLI, so a wide call never runs unchecked. A call that names such a file without giving the file it leaves (a copy, move, rename, link or a tool zn does not know) is refused whatever the tool is called. Any MCP tool call that names such a file is refused outright, with or without a body, and zn does not read an MCP body for it: a tool name proves nothing, because a custom MCP server can call an append `write_file` or a writing tool `read_file`, so no MCP tool counts as a whole-file write, an edit or a read-only tool. Change the file with the agent's own file tools and read it with the agent's own read tool. The result of a call is known only for the agent's own write and edit tools and patches (the full resulting file is rebuilt); an unknown tool that sends a body or an edit is refused too. The agents' own read tools (Claude Code `Read`, Gemini CLI and Antigravity `read_file`, Copilot `view`, OpenCode `read`) are plain reads and are not affected.
+    `help` counts wherever it stands in the value as a separate word, also after a slash, a bracket or
+    a backslash (`LD_DEBUG=libs/,help`), so no value is read shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`,
+    `.codex/`, `.gemini/settings.json`) were already refused to every write. This cannot cover a file that a program writes
+    on its own (a script, a build tool), a change made by the user or by another tool, or a user-level file zn does not
+    protect, such as a shell profile; those are what `zn audit` is for. The same writes are refused when they set a
+    preload variable of the refused list in `lib/loader-env.js` (`LD_PRELOAD`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES` and the others
+    except `LD_DEBUG`) to a value, because in the shell form the loader runs that library inside the shell of every hook before
+    zn can refuse anything; an empty quoted value (`LD_PRELOAD=""` or `''`) is allowed wherever it stands in a file written with the editor tool, and a bare empty value (`LD_PRELOAD=`) only when nothing but blanks follows it to the end of the file: a bare `LD_PRELOAD=` followed by another line is refused, because a reader may take that line as the value. Every shell write to a watched `.env` is refused, an empty assignment included.
+  - In the shell form (every hook that does not start with the static launcher), the other loader settings that only log or
+    print (`LD_DEBUG` without `help`, `LD_DEBUG_OUTPUT`, `LD_SHOW_AUXV`, `LD_VERBOSE`, `LD_WARN`) let the script run. The static
+    launcher refuses `LD_DEBUG` with any value and `LD_DEBUG_OUTPUT` like a preload variable, and removes the others; the `_FMT1`, `_FMT2` and `_ALL` forms of the trace variable act only with
+    FreeBSD's loader.
 - **A .NET profiler loads a DLL into the Windows hooks (accepted limit, Windows).** With `COR_ENABLE_PROFILING=1` and
   `COR_PROFILER` / `COR_PROFILER_PATH` in the environment of the agent, .NET Framework loads that DLL into `powershell.exe`,
   which runs every zn hook on Windows, before the first line of the hook script, so the DLL can answer for the hook (the

@@ -1,2 +1,0 @@
-### Security
-- The Go client no longer sends the API key over plain http: `WithBaseURL` accepts an https URL, or http only for `localhost`, `127.0.0.1` and `[::1]`, and `Analyze` returns an error wrapping `ErrInsecureBaseURL` for any other URL. A 200 answer whose verdict is missing or is not `allow` or `block` now returns an error wrapping `ErrUnexpectedResponse` instead of a result, so a check on `res.Blocked()` can no longer pass on a malformed answer.
