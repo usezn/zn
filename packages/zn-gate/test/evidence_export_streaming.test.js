@@ -162,7 +162,7 @@ test('the chain check of the export matches verify, including a cut-off last rec
     cutWithNewline: Buffer.concat([good.subarray(0, good.length - 30), Buffer.from('\n')]),
     garbageMid: Buffer.from(text.replace(/\n/, '\ngarbage\n')),
     badUtf8Mid: Buffer.concat([good.subarray(0, 50), Buffer.from([0xff]), good.subarray(50)]),
-    editedRecord: Buffer.from(text.replace('tool3', 'toolX')),
+    editedRecord: Buffer.from(text.slice(0, text.indexOf('tool3')) + 'toolX' + text.slice(text.indexOf('tool3') + 'tool3'.length)),
     notObject: Buffer.from(text + '[1]\n'),
     blankAndCrlf: Buffer.from('\n  \r\n' + text.replace(/\n/g, '\r\n') + '\n\t\n'),
     empty: Buffer.alloc(0),
