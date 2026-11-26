@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The Claude Code plugin README now says how to install zn-gate from the usezn marketplace (at the plugin tag) and how to remove it.
+- `zn-gate check` and `zn-gate init` list Copilot as "GitHub Copilot (CLI experimental, VS Code not tested)": the same hooks
+  serve Copilot CLI, which is experimental, and VS Code, where they are documented but were not run in the app. The agent
+  list, the editors page and the Gemini CLI page no longer count Copilot as a seventh supported agent: six agents are
+  supported, and Gemini CLI and Copilot CLI are experimental.
+- The package description and the READMEs now name six supported agents and list Gemini CLI and Copilot CLI as experimental, matching the website.
 
 ### Fixed
 - `zn-gate init`, `zn-gate check`, the plugin messages and the docs now add the plugin marketplace at a plugin tag: `claude plugin marketplace add usezn/zn#plugin-v<version>` for Claude Code and `codex plugin marketplace add usezn/zn --ref plugin-v<version>` for Codex. The tag is created on the commit that pins that zn-gate release and never moves, so the plugin you install pins the release you expect. The release tag (`usezn/zn#v<version>`) held the plugin pin of the previous release, which left the plugin one release behind.
@@ -31,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With the opt-in public IPv4 masking on, addresses in 192.0.x.x, 198.51.x.x and 203.0.x.x outside the reserved blocks (192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), and 192.0.0.9 and 192.0.0.10, are now masked as public addresses.
 - The scrubber no longer breaks JSON when an email address follows an escape sequence such as `é` or `\n`: the address is masked without leaving a stray backslash, so scrubbed JSON stays valid. Secrets that start right after a JSON escape (an AWS access key id after `\n` or `\t`, and card, SSN, phone, GitHub and Stripe candidates) are now masked too, instead of being skipped because the escape's letter touched them. An address written with JSON unicode escapes (`\u0061user@example.com`, which decodes to `auser@example.com`) is now masked whole, escape included, instead of leaving its first characters outside the mask, and the Node scrubber follows the same rules so its masked output no longer keeps a stray backslash before an escape. In the Node scrubber the 64-character limit of a local part counts the characters of the address once escapes are decoded, not the hex digits of its escapes: an address with escapes and a long raw part is no longer left unmasked, and a local part over 64 decoded characters is not taken for an address.
 - `zn start` now answers on its management port on a machine with one CPU (a 1-vCPU VM or container). The policy watcher read its events with a blocking call inside the async runtime, which held the only worker thread, so the management API accepted connections but never answered a request. The watcher now waits on an async channel.
+- The Go client's `Allowed()` is now false when only part of a long input was checked (a partial, capped or truncated result), so such an allow no longer passes as a full check. `WholeInputChecked()` reports it directly.
 
 ### Security
 - The gateway is built with `url` 2.5.9, which fixes a stack overflow in `Url::origin()` on nested `blob:` URLs (RUSTSEC-2026-0592).
@@ -79,6 +85,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `npm run` or direnv put that folder on the PATH, so the planted program could answer for the hook and allow a blocked
   call. The guard now blocks with its usual message instead. Run `zn hooks install <agent> --project` again to update an
   existing project hook.
+- The zn hooks now refuse a file write or shell command from the agent that would set `LD_TRACE_LOADED_OBJECTS`, or
+  `LD_DEBUG` with `help`, for the agent in a project `.env` or `.gemini/.env` (Write, Edit, patches and shell commands).
+  On Linux these variables stop every hook before it runs, so the edit is refused while the
+  hooks still work. `zn audit` and the hooks share one test for which settings count.
+- The same writes are also refused when they set `LD_PRELOAD`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES` or another preload
+  variable to a value.
+- Shell commands can no longer write a project `.env` or `.gemini/.env`: any shell write to these files is refused, including
+  redirections (also `<>`), `tee`, `sed -i`, `cp`, `Set-Content`, and any program that names the file (an interpreter, `awk`,
+  `curl -o`) unless it only reads or touches it. zn cannot know what the shell really runs. Use the editor tool instead; zn checks
+  what it writes.
+- Edits to a watched `.env` file by the agent's own file tools are judged on the file they would leave: zn applies the edit or
+  patch to the file on disk, and refuses the write when it cannot work out the result.
+- Any MCP tool call that names a project `.env` or `.gemini/.env` is refused, whatever the server or the tool is called and even
+  with a body (a custom server can call an append or a copy `write_file` or `read_file`): use the agent's own file tools, which
+  zn can check. Copies, moves, renames and links through a tool zn does not know are refused too, as zn cannot see the file
+  they would leave.
+- `git checkout`, `git restore`, `git reset` and `git stash` in a shell command that names a project `.env` are refused: they
+  write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
+  under any key down to 6 levels of nesting for these files in Claude Code, Gemini CLI, Antigravity, ZCode and Copilot CLI, and a
+  call nested deeper is refused (Gemini CLI, Antigravity, ZCode and Copilot CLI also refuse a call with more than 500 objects);
+  OpenCode treats such a tool as an MCP call, and Codex CLI and Cursor never send one to the hook.
+- A write to a project `.env` or `.gemini/.env` through a tool zn does not know is refused even when the call carries the
+  text: such a tool may append or insert it instead of writing the whole file. Only the agents' own whole-file write tools
+  and the edits and patches of their own editors, applied by zn to the file on disk, give zn the file a call leaves; no tool
+  name from an MCP server is trusted for that.
+- The Go client no longer sends the API key over plain http: `WithBaseURL` accepts an https URL, or http only for `localhost`, `127.0.0.1` and `[::1]`, and `Analyze` returns an error wrapping `ErrInsecureBaseURL` for any other URL. A 200 answer whose verdict is missing or is not `allow` or `block` now returns an error wrapping `ErrUnexpectedResponse` instead of a result, so a check on `res.Blocked()` can no longer pass on a malformed answer. The Go client also refuses a redirect to plain http (except to localhost, 127.0.0.1 and [::1]) and returns an error wrapping `ErrInsecureBaseURL` without sending the request, so the API key cannot travel in clear text after an https answer redirects. The check applies to a client you pass with `WithHTTPClient` too; your client is copied, not changed, and its own `CheckRedirect` still runs. The scheme rule is now enforced at the transport for every request the client sends, including after your own `CheckRedirect` rewrites a redirect, and the `Authorization` header is dropped for any host other than the base URL host. The `Authorization` header is also dropped on a cross-host request whatever its capitalization, so a `CheckRedirect` that sets a lower-case `authorization` key cannot send the API key to another host.
+- `zn audit` reports a project that sets `LD_TRACE_LOADED_OBJECTS`, or `LD_DEBUG=help`, for the agent as critical. On Linux
+  these variables make the system stop every program the agent starts before it runs, the shell of each zn hook included, so
+  the hooks cannot check or block anything. No hook can refuse them from inside; the threat model now says which agents
+  let such calls go ahead.
+- `zn run` and the hook launchers on Linux and macOS also drop `PYTHONUSERBASE`, which can point Python at a user site directory whose start-up files run before the approved program.
+- On Linux, a user install for Claude Code and ZCode now starts the hook through a small
+  statically linked launcher. `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG=help` in the agent's environment made the dynamic loader
+  exit before the hook ran, so the call went ahead unchecked. The launcher runs before any loader, denies the call in the
+  agent's own format when `LD_TRACE_LOADED_OBJECTS` is set, or `LD_DEBUG` (any value), `LD_DEBUG_OUTPUT` or a preload
+  variable is set to a value that is not empty, and removes every loader variable before it starts
+  the hook. Without a matching launcher for the machine, the install keeps the earlier hook and says so. Codex CLI, Gemini CLI
+  and GitHub Copilot CLI are detection only, and so is Antigravity until its launch form is run with the real agent (the Claude Code form was verified with a real Claude Code 2.1.331 on x86_64 Linux): `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Cursor (not verified) and project installs are not covered either
+  (see the threat model).
 
 ## [1.17.0] - 2026-11-19
 
