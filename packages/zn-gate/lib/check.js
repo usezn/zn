@@ -133,7 +133,7 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
-    id: 'copilot', name: 'GitHub Copilot (VS Code, CLI)', event: 'preToolUse', tool: 'view',
+    id: 'copilot', name: 'GitHub Copilot (CLI experimental, VS Code not tested)', event: 'preToolUse', tool: 'view',
     fix: 'run `zn hooks install copilot` in your own terminal',
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
@@ -1322,7 +1322,7 @@ async function checkAgent(spec, ctx) {
     // Copilot's harness also reads the Claude Code hooks of the project, and runs every hook it finds: zn would check each call twice.
     const claudeFile = claudeProjectHooksFile(ctx.cwd);
     if (claudeFile) {
-      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code and Copilot CLI) reads that file too whenever it holds zn hooks, with no setting needed, so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
+      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and GitHub Copilot reads that file too whenever it holds zn hooks, with no setting needed (Copilot CLI, which is experimental, and VS Code and the GitHub Copilot app, which use the same hooks), so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
     }
   }
   if (spec.id === 'antigravity' && installed && res.where === userFile) {
