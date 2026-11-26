@@ -41,6 +41,11 @@ const WRITES = [
   'docker run -v ./.env:/app/e:rw alpine sh -c "echo A=1 >> /app/e"',
   'podman run -v .env:/app/e alpine true',
   'docker run --mount type=bind,source=./.env,target=/app/e alpine true',
+  "sed -n 's/a/b/w.env' notes.txt",
+  "sed -n 's|a|b|gw./.env' notes.txt",
+  'docker run -v./.env:/app/e alpine true',
+  'podman run -v./.env:/app/e alpine true',
+  'docker run --volume=./.env:/app/e alpine true',
 ];
 
 const BENIGN = [
@@ -50,6 +55,8 @@ const BENIGN = [
   'docker run --mount type=bind,source=./data,target=/app/data alpine true',
   'cp notes.txt prod.env',
   'grep -e.env notes.txt',
+  "sed -n 's/a/b/w out.txt' notes.txt",
+  'docker run -v./data:/app/data alpine true',
 ];
 
 test('a .env name glued to an option, a sed w command or a container volume spec is refused', async (t) => {
