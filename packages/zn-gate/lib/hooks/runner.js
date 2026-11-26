@@ -952,15 +952,32 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
 
 // The string values of a call's arguments that name a watched dotenv file, as deep as the path scan reads (a copy or move tool may
 // name it under any key: from, to, src, dst ...).
+// A string longer than DOTENV_NAME_SCAN_MAX is not classified; it counts as a dotenv name when it mentions env anywhere, so a call
+// cannot hide a .env name behind a long filler (./ repeated, aaaa/../) and pass. A file: URI is decoded first (%2Eenv is .env); one
+// that cannot be decoded counts the same way. FAIL_CLOSED_DOTENV_NAME stands for such a name in the refusal.
+const DOTENV_NAME_SCAN_MAX = 65536;
+const FAIL_CLOSED_DOTENV_NAME = '.env';
+function fileUriPath(v) {
+  const u = new URL(v);
+  if (u.hostname && u.hostname.toLowerCase() !== 'localhost') throw new Error('file: URL names a remote host');
+  u.hostname = '';
+  return require('url').fileURLToPath(u);
+}
 function dotenvNamesIn(args, pathOpts) {
   const out = [];
   const seen = new Set();
+  const envish = (v) => { let d = v; try { d = decodeURIComponent(v); } catch (_) { /* keep the raw text */ } return /env/i.test(d); };
   const walk = (v, depth) => {
     if (typeof v === 'string') {
-      if (v.length <= 4096 && !/[\r\n]/.test(v)) {
-        const c = policy.classifyPath(v, pathOpts);
-        if (c && c.kind === 'dotenv') out.push(v);
+      // Text with line breaks is content (a body, a message), not a file name.
+      if (/[\r\n]/.test(v)) return;
+      let name = v;
+      if (/^file:/i.test(name)) {
+        try { name = fileUriPath(name); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
       }
+      if (name.length > DOTENV_NAME_SCAN_MAX) { if (envish(name)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+      const c = policy.classifyPath(name, pathOpts);
+      if (c && c.kind === 'dotenv') out.push(name);
     } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
       seen.add(v);
       for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);

@@ -442,7 +442,10 @@ function pathsOf(args, opts = {}) {
       return;
     }
     if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
+    // A name zn cannot read in full is never dropped: over MAX_PATH_LEN it refuses the call under any key, and a line break
+    // refuses it under a file key (in loose mode, text with line breaks under another key is content, not a name).
+    if (v.length > MAX_PATH_LEN) { bad = true; return; }
+    if (/[\r\n]/.test(v)) { if (keyOk(k)) bad = true; return; }
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);

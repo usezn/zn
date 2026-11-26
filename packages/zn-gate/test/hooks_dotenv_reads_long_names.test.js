@@ -1,0 +1,133 @@
+'use strict';
+// Two gaps closed in the .env guard: a file name zn cannot read in full (longer than the path limit, or a percent-encoded file: URI)
+// is refused instead of dropped, and the everyday commands that only read a project .env (source, ., --env-file of node and
+// docker, dotenv runners) pass while every write keeps its refusal. The fixtures use a scratch project and inert text.
+
+process.env.ZN_STATS = 'off';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+const runner = require('../lib/hooks/runner');
+const claude = require('../lib/agents/claude-code');
+const codex = require('../lib/agents/codex');
+const gemini = require('../lib/agents/gemini');
+const copilot = require('../lib/agents/copilot');
+const antigravity = require('../lib/agents/antigravity');
+const opencode = require('../lib/agents/opencode');
+const { createFakeVault } = require('./helpers/fake_vault');
+const fakeEngine = require('./helpers/fake_engine');
+const { tempDir } = require('./helpers/tmp');
+
+function project(t) {
+  const dir = tempDir(t, 'zn-envread-');
+  fs.mkdirSync(path.join(dir, '.gemini'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.env'), 'PORT=1\n');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'hi\n');
+  return dir;
+}
+
+// The answer the agent gets: the adapter's own output (a call the adapter could not read is refused there).
+async function verdict(adapter, raw) {
+  const res = await runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+  const out = JSON.stringify(res.output || {}) + ' ' + JSON.stringify(res.decision || {});
+  return /"deny"|"block"|"permissionDecision":"deny"|"permission":"deny"/.test(out) ? 'deny' : 'allow';
+}
+
+const cc = (dir, tool, input) => ({ session_id: 's', cwd: dir, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't' });
+const cdx = (dir, tool, input) => ({ session_id: 's', cwd: dir, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, turn_id: 'u', tool_use_id: 't' });
+const gem = (dir, tool, input) => ({ session_id: 's', cwd: dir, hook_event_name: 'BeforeTool', tool_name: tool, tool_input: input });
+const cop = (dir, tool, args) => ({ sessionId: 's1', timestamp: 1792400000000, cwd: dir, toolName: tool, toolArgs: JSON.stringify(args) });
+const ag = (dir, name, args) => ({ conversationId: 'c1', workspacePaths: [dir], toolCall: { name, args } });
+const oc = (dir, tool, args) => ({ hook: 'tool.execute.before', tool, args, cwd: dir, sessionID: 's' });
+
+const longEnv = (dir) => dir + '/' + './'.repeat(2100) + '.env'; // over the 4096-character path limit
+
+test('a .env name longer than the path limit is refused for an MCP write in every agent', async (t) => {
+  const dir = project(t);
+  const body = { path: longEnv(dir), content: 'LD_PRELOAD=/x.so\n' };
+  assert.equal(await verdict(claude, cc(dir, 'mcp__filesystem__write_file', body)), 'deny', 'claude write_file');
+  assert.equal(await verdict(claude, cc(dir, 'mcp__filesystem__edit_file', { path: longEnv(dir), edits: [] })), 'deny', 'claude edit_file');
+  assert.equal(await verdict(claude, cc(dir, 'mcp__fs__move_file', { source: 'notes.txt', destination: longEnv(dir) })), 'deny', 'claude move_file');
+  assert.equal(await verdict(codex, cdx(dir, 'mcp__filesystem__write_file', body)), 'deny', 'codex');
+  assert.equal(await verdict(gemini, gem(dir, 'mcp_filesystem_write_file', body)), 'deny', 'gemini mcp');
+  assert.equal(await verdict(copilot, cop(dir, 'filesystem-write_file', body)), 'deny', 'copilot');
+  assert.equal(await verdict(antigravity, ag(dir, 'mcp_filesystem_write_file', body)), 'deny', 'antigravity');
+  assert.equal(await verdict(opencode, oc(dir, 'filesystem_write_file', body)), 'deny', 'opencode');
+});
+
+test('a long name is refused for the own file tools of Gemini CLI (write and read), a short one is judged as before', async (t) => {
+  const dir = project(t);
+  assert.equal(await verdict(gemini, gem(dir, 'write_file', { file_path: longEnv(dir), content: 'LD_PRELOAD=/x.so\n' })), 'deny', 'write_file long');
+  const home = path.join(dir, 'home');
+  const longKey = home + '/' + 'a'.repeat(4100) + '/../.ssh/id_rsa';
+  assert.equal(await verdict(gemini, gem(dir, 'read_file', { file_path: longKey })), 'deny', 'read_file long');
+  assert.equal(await verdict(gemini, gem(dir, 'read_file', { file_path: path.join(dir, 'notes.txt') })), 'allow', 'read_file short');
+});
+
+test('a percent-encoded file: URI that names .env is refused under any key', async (t) => {
+  const dir = project(t);
+  for (const key of ['u', 'uri', 'target']) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__fs__write_file', { [key]: 'file://' + dir + '/%2Eenv', content: 'X=1' })), 'deny', key);
+  }
+});
+
+test('an MCP call with long text that does not name a file still passes', async (t) => {
+  const dir = project(t);
+  assert.equal(await verdict(claude, cc(dir, 'mcp__github__create_issue', { title: 'docs', body: 'x'.repeat(5000) })), 'allow');
+});
+
+const READS = [
+  'source .env && npm test',
+  'set -a; . ./.env; set +a; npm start',
+  'node --env-file=.env app.js',
+  'node --env-file .env app.js',
+  'docker run --env-file .env alpine true',
+  'docker compose --env-file .env.local up -d',
+  'npx dotenv -e .env -- node app.js',
+  'dotenvx run -f .env -- node app.js',
+];
+
+const WRITES = [
+  'echo .env | xargs -I{} cp notes.txt {}',
+  'ls .env | xargs -I{} cp notes.txt {}',
+  "node --env-file=.env -e \"require('fs').writeFileSync('.env','x')\"",
+  "npx dotenv -e .env -- python3 -c \"open('.env','w').write('x')\"",
+  "cat .env; python3 -c \"open('.env','w')\"",
+  'source .env > .env',
+  'node --env-file .env app.js > .env',
+  'docker run --env-file .env alpine sh -c "echo A=1 >> .env"',
+  'cp notes.txt $(echo .env)',
+  'for f in .env; do cp notes.txt $f; done',
+  'git reset --hard && cat .env',
+  'git stash pop && source .env',
+  'cat .env && cp notes.txt .env',
+  'node -e .env',
+  'python3 -m venv .env',
+];
+
+test('commands that only read a project .env pass (source, ., --env-file, dotenv runners)', async (t) => {
+  const dir = project(t);
+  for (const command of READS) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', 'claude: ' + command);
+    assert.equal(await verdict(gemini, gem(dir, 'run_shell_command', { command })), 'allow', 'gemini: ' + command);
+  }
+});
+
+test('a command that can still write .env is refused, also next to a read', async (t) => {
+  const dir = project(t);
+  for (const command of WRITES) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', 'claude: ' + command);
+    assert.equal(await verdict(gemini, gem(dir, 'run_shell_command', { command })), 'deny', 'gemini: ' + command);
+  }
+});
+
+test('the refusal for a program zn cannot prove read-only says so and names the reads that pass', async (t) => {
+  const dir = project(t);
+  const res = await runner.handle(claude, cc(dir, 'Bash', { command: 'node -e .env' }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', znRunPrefix: 'x --' });
+  const text = JSON.stringify(res.decision);
+  assert.match(text, /zn cannot tell whether this command writes \.env/);
+  assert.match(text, /source, or --env-file/);
+});

@@ -99,7 +99,8 @@ function pathsOf(args) {
       try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
       return;
     }
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
+    // A name zn cannot read in full (over MAX_PATH_LEN, or with a line break) is never dropped: the call is refused.
+    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) { bad = true; return; }
     out.push(v);
   };
   const keyOk = (k) => PATH_KEY_RE.test(k) && !NOT_PATH_KEY_RE.test(k);
