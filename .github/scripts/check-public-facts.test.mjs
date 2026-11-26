@@ -91,6 +91,13 @@ test('field values and missing files', () => {
   assert.match(run(noReadme).join('\n'), /README\.md: file not found/);
 });
 
+test('a field with maxLength fails when its value is longer', () => {
+  const facts = { ...FACTS, fields: [{ ...FACTS.fields[0], maxLength: 2 }] };
+  const read = (f) => GOOD[f];
+  assert.match(check(facts, Object.keys(GOOD), read).join('\n'), /license: 3 characters, over the 2/);
+  assert.deepEqual(check({ ...facts, fields: [{ ...facts.fields[0], maxLength: 3 }] }, Object.keys(GOOD), read), []);
+});
+
 test('getPath reads array indexes', () => {
   assert.equal(getPath({ a: [{ b: 1 }] }, 'a.0.b'), 1);
   assert.equal(getPath({}, 'a.0.b'), undefined);
