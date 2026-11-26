@@ -144,7 +144,99 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	for _, o := range opts {
 		o(c)
 	}
+	c.httpClient = withRedirectPolicy(c.httpClient, c.baseURL)
 	return c
+}
+
+// maxRedirects is the redirect limit of net/http's default policy.
+const maxRedirects = 10
+
+// withRedirectPolicy returns a copy of h that refuses any request, the first
+// one and every redirect, whose URL checkBaseURL would refuse, so the API
+// key cannot be sent in clear text. The scheme rule is enforced in a
+// RoundTripper that wraps the transport of h, because a CheckRedirect that
+// the caller set runs after ours and may rewrite req.URL. A CheckRedirect
+// that the caller set still runs after the redirect check. h and its
+// transport are not changed.
+func withRedirectPolicy(h *http.Client, baseURL string) *http.Client {
+	cp := *h
+	base := h.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cp.Transport = &guardTransport{base: base, host: baseHost(baseURL)}
+	user := h.CheckRedirect
+	cp.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkBaseURL(req.URL.String()); err != nil {
+			return fmt.Errorf("zn: refusing redirect: %w", err)
+		}
+		if user != nil {
+			return user(req, via)
+		}
+		if len(via) >= maxRedirects {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &cp
+}
+
+// baseHost returns the lower-case host (with port) of the base URL, or an
+// empty string if it cannot be parsed.
+func baseHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
+// guardTransport checks every request the client sends. It refuses a URL
+// that checkBaseURL refuses, without sending, and removes the Authorization
+// header from a request to any host other than the base URL's host.
+type guardTransport struct {
+	base http.RoundTripper
+	host string
+}
+
+func (g *guardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL == nil {
+		closeBody(req)
+		return nil, fmt.Errorf("zn: refusing request: %w", ErrInsecureBaseURL)
+	}
+	if err := checkBaseURL(req.URL.String()); err != nil {
+		closeBody(req)
+		return nil, fmt.Errorf("zn: refusing request: %w", err)
+	}
+	if hasAuthorization(req.Header) && (g.host == "" || strings.ToLower(req.URL.Host) != g.host) {
+		req = req.Clone(req.Context())
+		// A caller can set a non-canonical map key such as "authorization"
+		// directly, and net/http writes it as a header field, so delete
+		// every key that matches case-insensitively.
+		for k := range req.Header {
+			if strings.EqualFold(k, "Authorization") {
+				delete(req.Header, k)
+			}
+		}
+	}
+	return g.base.RoundTrip(req)
+}
+
+// hasAuthorization reports whether h has a non-empty Authorization header
+// under any capitalization of the key.
+func hasAuthorization(h http.Header) bool {
+	for k, v := range h {
+		if strings.EqualFold(k, "Authorization") && len(v) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func closeBody(req *http.Request) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
 }
 
 type analyzeRequest struct {
@@ -284,6 +376,10 @@ func (c *Client) do(ctx context.Context, body []byte, noStore bool) (*Result, ti
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		if errors.Is(err, ErrInsecureBaseURL) {
+			// A refused redirect is final: do not retry it.
+			return nil, -1, err
+		}
 		// The error text of net/http includes the URL, never the key.
 		return nil, -1, &networkError{err: err}
 	}
