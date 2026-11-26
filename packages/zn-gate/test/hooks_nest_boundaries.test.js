@@ -4,7 +4,7 @@
 //  - the path scan of Gemini CLI and Antigravity (pathsOf): depth and nodes, for every tool;
 //  - the path scan of GitHub Copilot CLI (pathsOf, loose = a tool it does not know): depth and nodes; and its command scan
 //    (commandScan): depth and nodes, counting a list as a node too;
-//  - the path scan of an unknown tool of Claude Code (the same pathsOf, not loose): depth only, it has no node cap and reads every node;
+//  - the path scan of an unknown tool of Claude Code (pathsOf with { loose: true, nodeCap: false }): depth only, it has no node cap and reads every node;
 //  - the text scan of the hooks runner (writtenTextsOf): depth only.
 // Fixtures are inert text.
 
