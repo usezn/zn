@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.3';
+const POLICY_RULES_VERSION = '2026-11-26.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1598,6 +1598,10 @@ const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 
 // Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
 const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
 const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
+// Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
+// npm exec). A dotenv runner counts only as the program word or right after one of these, never as an argument of another program.
+const PACKAGE_RUNNERS = new Set(['npx', 'bunx', 'pnpx']);
+const PACKAGE_RUNNER_PAIRS = new Set(['pnpm dlx', 'yarn dlx', 'npm exec', 'pnpm exec', 'bun x']);
 // A word that is one plain name: no quote, expansion, bracket or separator that could hide more than a file name.
 const PLAIN_NAME_RE = /^[^\s'"`$(){};|&<>]+$/;
 // git steps that read, or that only change the index or the history (add, commit). checkout, restore, reset and stash are not here:
@@ -1627,16 +1631,28 @@ function envFileValueWords(words, opts) {
   let runner = false;
   let ended = false;
   let envProg = false;
+  let prev1 = null; // the two words before this one in the same reading (to tell npx dotenv from node x.js dotenv)
+  let prev2 = null;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; prev1 = null; prev2 = null; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // The words hold each reading of the command in turn; a reading starts again at the program word.
-    if (programName(t) === programName(w.head)) { runner = false; ended = false; }
+    const programWord = programName(t) === programName(w.head);
+    if (programWord) { runner = false; ended = false; prev1 = null; prev2 = null; }
+    const before1 = prev1;
+    const before2 = prev2;
+    prev2 = prev1;
+    prev1 = programName(t);
     if (t === '--') { ended = true; continue; }
     if (ended) continue;
-    if (DOTENV_RUNNERS.has(programName(t))) { runner = true; continue; }
+    if (DOTENV_RUNNERS.has(programName(t))) {
+      // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
+      const launched = before1 !== null && (PACKAGE_RUNNERS.has(before1) || PACKAGE_RUNNER_PAIRS.has(before2 + ' ' + before1));
+      if (programWord || launched) runner = true;
+      continue;
+    }
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
     const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
