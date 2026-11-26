@@ -437,14 +437,29 @@ const ENDS_IN_DOTENV_RE = /(?:^|[\\/])\.env(?:\.[^\\/\s]*)?$/i;
  * (a server that trims whitespace opens that) and its trimmed lines. Under a file key (everyLine) every nonempty line counts, since a
  * tool may take one name per line (notes, then sub/.env); elsewhere only a line that starts like a path does, the rest is text.
  */
-function pathCandidatesOf(v, everyLine = true) {
-  if (!/[\r\n]/.test(v)) return [v];
+// Line breaks a tool may split names on: CR, LF, and the Unicode line and paragraph separators and NEL.
+const LINE_BREAK_RE = /[\r\n\u2028\u2029\u0085]/;
+const LINE_SPLIT_RE = /\r\n|[\r\n\u2028\u2029\u0085]/;
+// Separators a tool may split a list of names on within one line (pieces): tab, comma and space.
+const NAME_LIST_SPLIT_RE = /[\t, ]+/;
+/**
+ * With pieces (a file key): each piece of a line between tabs, commas or spaces counts as well, so "notes.txt,.env" is seen; the
+ * whole value and each whole line still count (a name may hold spaces).
+ */
+function pathCandidatesOf(v, everyLine = true, pieces = false) {
+  const multi = LINE_BREAK_RE.test(v);
+  if (!multi && !pieces) return [v];
   const out = [];
-  const whole = v.trim();
-  if (whole && !/[\r\n]/.test(whole)) out.push(whole);
-  for (const line of v.split(/\r\n|\r|\n/)) {
+  if (!multi) out.push(v);
+  else {
+    const whole = v.trim();
+    if (whole && !LINE_BREAK_RE.test(whole)) out.push(whole);
+  }
+  for (const line of multi ? v.split(LINE_SPLIT_RE) : [v]) {
     const t = line.trim();
-    if (t && (everyLine || STARTS_LIKE_PATH_RE.test(t))) out.push(t);
+    if (!t) continue;
+    if (multi && (everyLine || STARTS_LIKE_PATH_RE.test(t))) out.push(t);
+    if (pieces) for (const piece of t.split(NAME_LIST_SPLIT_RE)) if (piece && piece !== t) out.push(piece);
   }
   return out;
 }
@@ -457,7 +472,7 @@ function pathsOf(args, opts = {}) {
   // A name like $DIR.env or %DIR%.env (a variable before a dotenv name) counts too.
   // A multi-line value counts when one of its lines starts like a path or it names a dotenv file anywhere (one name per line).
   const pathLike = (v) => /^[~.]|[\\/]/.test(v) || /^[$%!].*\.env(?:\.[A-Za-z0-9_.-]+)?$/i.test(v) ||
-    (/[\r\n]/.test(v) && (/(?:^|[\r\n])[ \t]*[~.]/.test(v) || /\.env/i.test(v)));
+    (LINE_BREAK_RE.test(v) && (/(?:^|[\r\n\u2028\u2029\u0085])[ \t]*[~.]/.test(v) || /\.env/i.test(v)));
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
@@ -468,9 +483,9 @@ function pathsOf(args, opts = {}) {
     // A long value is classified like any other (classifyPath reads long input); a value with line breaks is checked by its trimmed
     // whole and each line that starts like a path. Under a key that is not a file key (loose mode) only a candidate that starts
     // like a path counts: prose with a slash somewhere is text, not a name.
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) {
-      const fileKey = keyOk(k);
-      for (const x of pathCandidatesOf(v, true)) {
+    const fileKey = keyOk(k);
+    if (v.length > MAX_PATH_LEN || LINE_BREAK_RE.test(v) || (fileKey && /[\t, ]/.test(v))) {
+      for (const x of pathCandidatesOf(v, true, fileKey)) {
         if (!(fileKey || STARTS_LIKE_PATH_RE.test(x) || ENDS_IN_DOTENV_RE.test(x) || /^file:/i.test(x))) continue;
         // A file: URI on a line is decoded like a one-line value; one that cannot be decoded sets bad.
         if (/^file:/i.test(x)) { try { out.push(fileURLToPath(localFileUrl(x))); } catch (_) { bad = true; } } else out.push(x);

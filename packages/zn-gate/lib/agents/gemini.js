@@ -106,7 +106,7 @@ function pathsOf(args) {
     }
     // A long value is classified like any other (classifyPath reads long input); a value with line breaks (code, a message) is
     // not one file name: its trimmed whole and each line that starts like a path are checked (pathCandidatesOf).
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v)) addName(x); return; }
+    if (v.length > MAX_PATH_LEN || /[\r\n\u2028\u2029\u0085\t, ]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v, true, true)) addName(x); return; }
     out.push(v);
   };
   const keyOk = (k) => PATH_KEY_RE.test(k) && !NOT_PATH_KEY_RE.test(k);
