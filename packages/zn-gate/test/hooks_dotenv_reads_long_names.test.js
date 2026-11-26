@@ -17,6 +17,7 @@ const gemini = require('../lib/agents/gemini');
 const copilot = require('../lib/agents/copilot');
 const antigravity = require('../lib/agents/antigravity');
 const opencode = require('../lib/agents/opencode');
+const zcode = require('../lib/agents/zcode');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
@@ -144,4 +145,40 @@ test('source and . of a .env are refused, also for a .env whose sourced lines re
       assert.equal(await verdict(gemini, gem(dir, 'run_shell_command', { command })), 'deny', 'gemini ' + JSON.stringify(body) + ' ' + command);
     }
   }
+});
+
+// Long or multi-line text is not an unreadable file name: a long value is classified like any other, and a multi-line value is checked
+// by its trimmed whole and each line that starts like a path. Ordinary prompts, plans, code and long URLs pass; a .env still does not.
+const zc = (dir, tool, input) => ({ session_id: 's', cwd: dir, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't' });
+const longText = ('Read docs/setup.md and src/app/main.ts, then update the README section about configuration. ').repeat(70);
+
+test('long prompts, plans and skill arguments that mention paths pass in ZCode', async (t) => {
+  const dir = project(t);
+  assert.ok(longText.length > 6000);
+  assert.equal(await verdict(zcode, zc(dir, 'Task', { description: 'x', prompt: longText, subagent_type: 'general-purpose' })), 'allow', 'Task');
+  assert.equal(await verdict(zcode, zc(dir, 'Agent', { description: 'x', prompt: longText })), 'allow', 'Agent');
+  assert.equal(await verdict(zcode, zc(dir, 'ExitPlanMode', { plan: '# Plan\n\n' + longText.replace(/\. /g, '.\n') })), 'allow', 'ExitPlanMode');
+  assert.equal(await verdict(zcode, zc(dir, 'Skill', { skill: 'x', args: longText })), 'allow', 'Skill');
+});
+
+test('multi-line code or text under a path-like key and a long https URI pass in MCP calls; a .env line does not', async (t) => {
+  const dir = project(t);
+  const longUri = 'https://example.com/search?q=' + 'a'.repeat(5000);
+  for (const [name, args] of [['source', { source: 'import os\nprint(1)' }], ['target', { target: 'line one\nline two' }], ['uri', { uri: longUri }]]) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__jupyter__insert_cell', args)), 'allow', 'claude ' + name);
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_jupyter_insert_cell', args)), 'allow', 'gemini ' + name);
+    assert.equal(await verdict(zcode, zc(dir, 'mcp__jupyter__insert_cell', args)), 'allow', 'zcode ' + name);
+  }
+  for (const target of ['.env\n', 'notes\n./.env\n', '\n  .env  \n']) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__fs__copy', { source: 'notes.txt', target })), 'deny', 'claude ' + JSON.stringify(target));
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_fs_copy', { source: 'notes.txt', target })), 'deny', 'gemini ' + JSON.stringify(target));
+  }
+});
+
+test('a long fact for Gemini save_memory and a long note to a tool zn does not know pass', async (t) => {
+  const dir = project(t);
+  assert.equal(await verdict(gemini, gem(dir, 'save_memory', { fact: longText })), 'allow', 'save_memory');
+  assert.equal(await verdict(gemini, gem(dir, 'custom_tool', { note: longText })), 'allow', 'gemini unknown');
+  assert.equal(await verdict(antigravity, ag(dir, 'custom_tool', { note: longText })), 'allow', 'antigravity unknown');
+  assert.equal(await verdict(copilot, cop(dir, 'custom_tool', { note: longText })), 'allow', 'copilot unknown');
 });

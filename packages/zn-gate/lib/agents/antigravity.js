@@ -98,8 +98,9 @@ function pathsOf(args) {
       return;
     }
     if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
-    // A name zn cannot read in full (over MAX_PATH_LEN, or with a line break) is never dropped: the call is refused.
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) { bad = true; return; }
+    // A long value is classified like any other (classifyPath reads long input); a value with line breaks (code, a message) is
+    // not one file name: its trimmed whole and each line that starts like a path are checked (pathCandidatesOf).
+    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v)) out.push(x); return; }
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);

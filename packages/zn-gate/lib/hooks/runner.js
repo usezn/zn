@@ -1205,7 +1205,7 @@ async function decidePre(ev, d, agentId, opts) {
       if (named.bad) {
         // Arguments zn cannot read to the end (nested deeper than it reads): a dotenv path, or the pieces of one that the tool joins
         // (a folder, a name and an extension in separate values), may be hidden there. Refused whatever the text says.
-        return { decision: 'deny', message: 'zn: the arguments of this MCP call are nested too deeply for zn to check, so it was blocked.' };
+        return { decision: 'deny', message: 'zn: zn could not read every file name in the arguments of this MCP call (nested too deeply, too many values, or a file: address it cannot turn into a path), so it was blocked.' };
       }
       for (const p of named.paths) {
         const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);

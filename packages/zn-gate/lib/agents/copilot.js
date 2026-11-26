@@ -428,6 +428,24 @@ function localFileUrl(v) {
  * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
  * call is refused, never dropped.
  */
+// A value that starts like a file name: ~ or . first, a drive letter, or a slash or backslash.
+const STARTS_LIKE_PATH_RE = /^(?:[~.]|[A-Za-z]:[\\/]|[\\/])/;
+/**
+ * The file names a long or multi-line string value can stand for: the value itself when it has no line break, else its trimmed whole
+ * (a server that trims whitespace opens that) and every trimmed line that starts like a path. The rest of a multi-line value is text.
+ */
+function pathCandidatesOf(v) {
+  if (!/[\r\n]/.test(v)) return [v];
+  const out = [];
+  const whole = v.trim();
+  if (whole && !/[\r\n]/.test(whole)) out.push(whole);
+  for (const line of v.split(/\r\n|\r|\n/)) {
+    const t = line.trim();
+    if (t && STARTS_LIKE_PATH_RE.test(t)) out.push(t);
+  }
+  return out;
+}
+
 function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
@@ -442,10 +460,13 @@ function pathsOf(args, opts = {}) {
       return;
     }
     if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
-    // A name zn cannot read in full is never dropped: over MAX_PATH_LEN it refuses the call under any key, and a line break
-    // refuses it under a file key (in loose mode, text with line breaks under another key is content, not a name).
-    if (v.length > MAX_PATH_LEN) { bad = true; return; }
-    if (/[\r\n]/.test(v)) { if (keyOk(k)) bad = true; return; }
+    // A long value is classified like any other (classifyPath reads long input); a value with line breaks is checked by its trimmed
+    // whole and each line that starts like a path. Under a key that is not a file key (loose mode) only a candidate that starts
+    // like a path counts: prose with a slash somewhere is text, not a name.
+    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) {
+      for (const x of pathCandidatesOf(v)) if (keyOk(k) || STARTS_LIKE_PATH_RE.test(x)) out.push(x);
+      return;
+    }
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
@@ -696,6 +717,7 @@ module.exports = {
   hooksFile,
   copilotHome,
   pathsOf,
+  pathCandidatesOf,
   firstString,
   COMMAND_KEYS,
   patchTextOf,

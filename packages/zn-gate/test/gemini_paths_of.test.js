@@ -57,16 +57,14 @@ test('pathsOf treats a nested file: URL with a localhost host as a local path', 
   assert.deepEqual(r, { paths: [local], bad: false });
 });
 
-test('pathsOf refuses the call for a nested file value with a line break (never dropped)', () => {
+test('pathsOf checks a multi-line file value by its trimmed whole and each line that starts like a path', () => {
   const r = pathsOf({ options: { file_path: '/work/example/a.txt\n/work/example/b.txt', dir_path: '/work/example/c\rd' } });
-  assert.deepEqual(r, { paths: [], bad: true });
-});
+  assert.deepEqual(r, { paths: ['/work/example/a.txt', '/work/example/b.txt', '/work/example/c'], bad: false });
+  assert.deepEqual(pathsOf({ file_path: '.env\n' }), { paths: ['.env', '.env'], bad: false });
+})
 
-test('pathsOf keeps a value at the length limit and refuses the call for one over it (never dropped)', () => {
+test('pathsOf keeps a value over the length limit for the normal checks instead of dropping it', () => {
   const atLimit = '/' + 'a'.repeat(4095);
   const tooLong = '/' + 'a'.repeat(4096);
-  assert.deepEqual(pathsOf({ options: { dir_path: atLimit } }), { paths: [atLimit], bad: false });
-  const r = pathsOf({ options: { file_path: tooLong, dir_path: atLimit } });
-  assert.deepEqual(r, { paths: [atLimit], bad: true });
-  assert.equal(pathsOf({ file_path: 'a\nb' }).bad, true, 'a line break in a file key');
-});
+  assert.deepEqual(pathsOf({ options: { file_path: tooLong, dir_path: atLimit } }), { paths: [tooLong, atLimit], bad: false });
+})
