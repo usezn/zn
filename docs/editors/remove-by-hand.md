@@ -36,6 +36,8 @@ zn-gate does not write to `~/.cursor/mcp.json` on its own. It prints the `secret
 
 If you wrapped servers with `init --wrap-mcp`, the files are `~/.gemini/antigravity/mcp_config.json`, `~/.gemini/config/mcp_config.json` and, for one project, `.agents/mcp_config.json`. Run `npx -y zn-gate init --revert`, or put each server's original command back by hand. The saved copy sits next to the file, named `<file>.bak.<number>`.
 
+<a id="github-copilot-vs-code-cli"></a>
+
 ### GitHub Copilot (CLI experimental, VS Code not tested)
 
 `zn hooks install copilot` writes:
