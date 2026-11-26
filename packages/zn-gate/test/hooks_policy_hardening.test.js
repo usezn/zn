@@ -440,13 +440,14 @@ test('a .env file reached after a cd, through a path built at run time or from i
     'python3 -c "print(open(\'app1/inner/.env\').read())"',
     'node -e "console.log(require(\'fs\').readFileSync(\'app1/inner/.env\', \'utf8\'))"',
     'bash -c "cat app1/inner/.env"',
+    // Policy changed (2026-11-25): a shell write to a .env is refused whatever it writes.
+    'cd app1/inner && echo EXAMPLE_FLAG=1 >> .env',
   ]) {
     assert.ok(policy.bashDenial(cmd, o), cmd);
   }
   for (const cmd of [
     'cd svc && cat .env',
     'cd app1 && npm test',
-    'cd app1/inner && echo EXAMPLE_FLAG=1 >> .env',
     'cd app1/inner && cat .env.example',
     'cd /nonexistent && ls',
     'python3 -c "print(1)"',
@@ -534,12 +535,15 @@ test('the history of a .env file is refused even when the file is gone from disk
   }
 });
 
-test('git steps that only clean up a tracked .env stay allowed', (t) => {
+test('git steps that only change the index or show names of a tracked .env stay allowed', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-gitclean-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const o = { cwd: dir, home: dir, env: {} };
-  for (const cmd of ['git restore --staged .env', 'git checkout -- .env', 'git restore .env', 'git stash push -- .env',
-    'git diff --stat -- .env', 'git log --oneline -- .env', 'git log --name-only -- .env', 'git show --stat HEAD -- .env']) {
+  // checkout, restore, reset and stash write stored content into the file in the worktree, which zn cannot see: refused.
+  for (const cmd of ['git restore --staged .env', 'git checkout -- .env', 'git restore .env', 'git stash push -- .env', 'git reset -- .env']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+  for (const cmd of ['git add .env', 'git rm --cached .env', 'git diff --stat -- .env', 'git log --oneline -- .env', 'git log --name-only -- .env', 'git show --stat HEAD -- .env']) {
     assert.equal(policy.bashDenial(cmd, o), null, cmd);
   }
   for (const cmd of ['git restore --source=HEAD~1 .env', 'git restore -s HEAD .env', 'git checkout HEAD -- .env', 'git checkout main .env',

@@ -364,7 +364,8 @@ function taskLinesUnsafe(v, workspace) {
 
 
 // Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
-const MAX_NEST_DEPTH = 6;
+// One depth limit for the text scan of the hooks runner and the path scan here (lib/nest-limits.js).
+const { MAX_NEST_DEPTH } = require('../nest-limits');
 const MAX_NEST_NODES = 500;
 
 /**
@@ -422,13 +423,20 @@ function localFileUrl(v) {
   return u;
 }
 
-/** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
+/**
+ * Every string argument whose key looks like a file or folder (content-like keys skipped), down to MAX_NEST_DEPTH (the limit of the
+ * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
+ * call is refused, never dropped.
+ */
 function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
   // loose (a tool zn does not know): a string that looks like a path counts under any key, deeper than the named keys.
+  // nodeCap: false reads every node (the depth still bounds the walk), for a caller that must not refuse a wide call.
   const loose = opts.loose === true;
-  const pathLike = (v) => /^[~.]|[\\/]/.test(v);
+  const nodeCap = opts.nodeCap !== false;
+  // A name like $DIR.env or %DIR%.env (a variable before a dotenv name) counts too.
+  const pathLike = (v) => /^[~.]|[\\/]/.test(v) || /^[$%!].*\.env(?:\.[A-Za-z0-9_.-]+)?$/i.test(v);
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
@@ -440,10 +448,10 @@ function pathsOf(args, opts = {}) {
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
-  const maxDepth = loose ? MAX_NEST_DEPTH : 3;
+  const maxDepth = MAX_NEST_DEPTH;
   let nodes = 0;
   const walk = (obj, depth) => {
-    if (loose && ++nodes > MAX_NEST_NODES) return;
+    if (loose && nodeCap && ++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
@@ -454,7 +462,7 @@ function pathsOf(args, opts = {}) {
       if (depth < maxDepth) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
-      }
+      } else if (isObj(v) || (Array.isArray(v) && v.some(isObj))) bad = true;
     }
   };
   walk(args, 0);
