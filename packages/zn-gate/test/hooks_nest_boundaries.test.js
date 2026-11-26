@@ -4,7 +4,7 @@
 //  - the path scan of Gemini CLI and Antigravity (pathsOf): depth and nodes, for every tool;
 //  - the path scan of GitHub Copilot CLI (pathsOf, loose = a tool it does not know): depth and nodes; and its command scan
 //    (commandScan): depth and nodes, counting a list as a node too;
-//  - the path scan of an unknown tool of Claude Code (pathsOf with { loose: true, nodeCap: false }): depth only, it has no node cap and reads every node;
+//  - the path scan of an unknown tool of Claude Code (pathsOf with { loose: true }): depth and nodes, like the other agents;
 //  - the text scan of the hooks runner (writtenTextsOf): depth only.
 // Fixtures are inert text.
 
@@ -100,16 +100,17 @@ test('decisions at the node limit: Gemini CLI, Antigravity and Copilot CLI read 
   }
 });
 
-test('Claude Code unknown tool: no node cap, every node is read, so a dotenv path in the last of many objects is still found', async (t) => {
+test('Claude Code unknown tool: MAX_NEST_NODES objects are read and one more is refused, so a wide call never runs unchecked', async (t) => {
   const dir = project(t);
   const other = path.join(dir, 'notes.txt');
   const env = path.join(dir, '.env');
   const call = (a) => ({ session_id: 's', cwd: dir, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'files_helper', tool_input: a, tool_use_id: 't' });
-  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES - 1, other))), false);
-  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES + 100, other))), false);
-  // The path sits in the last object, past MAX_NEST_NODES, and the content sets a hook-stopping variable.
+  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES - 1, other))), false, 'other at the limit');
+  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES, other))), true, 'other one object past the limit');
+  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES, env))), true, 'env one object past the limit');
+  // The path sits in the last object, past MAX_NEST_NODES, and the content sets a hook-stopping variable: refused as unreadable.
   const last = { path: env, content: 'LD_DEBUG=help' };
-  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES + 100, other, last))), true);
+  assert.equal(await refused(claude, call(flat(MAX_NEST_NODES + 100, other, last))), true, 'past the limit, path in the last object');
 });
 
 test('Claude Code unknown tool: a dotenv path at depth MAX_NEST_DEPTH is read, one level deeper is refused', async (t) => {
