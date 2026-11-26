@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { guide: realGuide } = require('../lib/init-guide');
 const { tempDir } = require('./helpers/tmp');
-const VERSION_RE = require('../package.json').version.replace(/\./g, '\\.');
+const VERSION_RE = require('../package.json').version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const { winCmd, winCmdRe } = require('./helpers/wincmd');
 
 const AGENTS = {
