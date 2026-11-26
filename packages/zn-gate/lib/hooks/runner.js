@@ -984,7 +984,8 @@ function argsObjectOf(ev) {
 // agents' own read tools are plain reads here and never come through this check. Edits go through the file editor tool.
 function dotenvUnseenDenial(ev, paths, pathOpts) {
   for (const p of paths) {
-    // An MCP call that names a watched dotenv file is refused outright, with or without a body: zn does not read an MCP body for it.
+    // An MCP call that names a watched dotenv file is refused outright, whatever its body (the body may have been scanned above, only to
+    // choose the message).
     if (ev.tool === 'mcp') {
       const c = policy.classifyPath(p, pathOpts);
       if (c && c.kind === 'dotenv') return 'Edit ' + path.basename(String(p)) + " with the agent's own file editor; MCP tools may not touch .env files.";

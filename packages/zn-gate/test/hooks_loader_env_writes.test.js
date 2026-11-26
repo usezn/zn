@@ -525,8 +525,9 @@ test('GitHub Copilot CLI: an unknown file tool with the .env path deep in its ar
         if (dotenv) { blocked(d, null, 'below ' + levels); assert.equal(outDeny, true, 'below ' + levels + ' answer'); }
         else { passes(d); assert.equal(outDeny, false, 'below ' + levels + ' other'); }
       } else {
-        assert.equal(d.decision, 'allow', 'below ' + levels + ' decision');
+        // What the agent receives is the answer of the adapter: it must refuse (fail closed), whatever the decision says.
         assert.equal(outDeny, true, 'below ' + levels + ' answer');
+        assert.match(String(out.permissionDecisionReason), /could not read/, 'below ' + levels + ' reason');
       }
     }
   }
