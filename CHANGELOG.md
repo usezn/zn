@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list, the editors page and the Gemini CLI page no longer count Copilot as a seventh supported agent: six agents are
   supported, and Gemini CLI and Copilot CLI are experimental.
 - The package description and the READMEs now name six supported agents and list Gemini CLI and Copilot CLI as experimental, matching the website.
+- These stay refused when they name a project `.env`: `source .env` and `. .env` (they run the file as shell code, which can
+  rewrite the file itself; use `--env-file` or `dotenv -e`), and `python3 -m venv .env` (give the virtual environment another
+  name).
 
 ### Fixed
 - `zn-gate init`, `zn-gate check`, the plugin messages and the docs now add the plugin marketplace at a plugin tag: `claude plugin marketplace add usezn/zn#plugin-v<version>` for Claude Code and `codex plugin marketplace add usezn/zn --ref plugin-v<version>` for Codex. The tag is created on the commit that pins that zn-gate release and never moves, so the plugin you install pins the release you expect. The release tag (`usezn/zn#v<version>`) held the plugin pin of the previous release, which left the plugin one release behind.
@@ -37,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The scrubber no longer breaks JSON when an email address follows an escape sequence such as `é` or `\n`: the address is masked without leaving a stray backslash, so scrubbed JSON stays valid. Secrets that start right after a JSON escape (an AWS access key id after `\n` or `\t`, and card, SSN, phone, GitHub and Stripe candidates) are now masked too, instead of being skipped because the escape's letter touched them. An address written with JSON unicode escapes (`\u0061user@example.com`, which decodes to `auser@example.com`) is now masked whole, escape included, instead of leaving its first characters outside the mask, and the Node scrubber follows the same rules so its masked output no longer keeps a stray backslash before an escape. In the Node scrubber the 64-character limit of a local part counts the characters of the address once escapes are decoded, not the hex digits of its escapes: an address with escapes and a long raw part is no longer left unmasked, and a local part over 64 decoded characters is not taken for an address.
 - `zn start` now answers on its management port on a machine with one CPU (a 1-vCPU VM or container). The policy watcher read its events with a blocking call inside the async runtime, which held the only worker thread, so the management API accepted connections but never answered a request. The watcher now waits on an async channel.
 - The Go client's `Allowed()` is now false when only part of a long input was checked (a partial, capped or truncated result), so such an allow no longer passes as a full check. `WholeInputChecked()` reports it directly.
+- Commands that load a project `.env` without running it pass again: the `--env-file` option of node, bun, deno, docker and
+  podman, and `-e` / `-f` of the dotenv, dotenv-cli and dotenvx runners. A command that zn cannot prove read-only is still
+  refused, and the message now says that zn cannot tell whether it writes the file and how to load it instead.
 
 ### Security
 - The gateway is built with `url` 2.5.9, which fixes a stack overflow in `Url::origin()` on nested `blob:` URLs (RUSTSEC-2026-0592).
@@ -124,6 +130,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the hook. Without a matching launcher for the machine, the install keeps the earlier hook and says so. Codex CLI, Gemini CLI
   and GitHub Copilot CLI are detection only, and so is Antigravity until its launch form is run with the real agent (the Claude Code form was verified with a real Claude Code 2.1.331 on x86_64 Linux): `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Cursor (not verified) and project installs are not covered either
   (see the threat model).
+- A shell command that names a project `.env` and is not a read-only or metadata-only command is now refused even while that
+  `.env` is a folder (for example a Python virtual environment). A program could remove the folder and write a `.env` file
+  there after the check. Listing, reading, removing the folder and running the environment (`source .env/bin/activate`) still
+  pass; creating or recreating the environment under that name (`python3 -m venv .env`) is refused, so use another name for it.
+- A file name longer than 4096 characters, or a percent-encoded `file:` address, that names a project `.env` is now refused in
+  an MCP call and in a tool zn does not know, in every agent, and in the file tools of Gemini CLI. Before, such a name was left
+  out of the check, so the call went ahead (for example a path padded with `./` before `.env`). A long name of another
+  protected file in a Gemini CLI file tool is refused the same way.
 
 ## [1.17.0] - 2026-11-19
 
