@@ -224,7 +224,7 @@ test('OpenCode: the project plugin fails closed by itself when `zn` cannot start
 test('Windows: each agent\'s project hook is a PowerShell script without cmdlets, with the same steps, and isOurs and check find it', (t) => {
   const parse = require('../lib/check')._internal.parseCommand;
   const cases = [
-    ['codex', 'PreToolUse', /Console\]::Error\.WriteLine\('zn: its hook cannot start because zn or Node\.js was not found/, / exit 2 \}/],
+    ['codex', 'PreToolUse', /Console\]::Error\.WriteLine\('zn: its hook cannot start because zn or Node\.js was not found/, / exit 2; # zn hook codex$/],
     ['codex', 'PermissionRequest', /"behavior":"deny"/, null],
     ['cursor', 'preToolUse', /"permission":"deny"/, null],
     ['gemini', 'BeforeTool', /"decision":"deny"/, null],
@@ -235,7 +235,11 @@ test('Windows: each agent\'s project hook is a PowerShell script without cmdlets
     const command = launcher.windowsScriptCommand(launcher.projectWindowsScript(agent, event));
     const script = windowsCommandScript(command);
     assert.ok(launcher.isProjectWindowsScript(script, agent), agent + ' ' + event);
-    assert.match(script, answer, agent + ' ' + event);
+    // The answer reads its text from $zr (first the missing text): put it back to read the answer.
+    const zr = /\$zr='([^']*)'; if \(\$env:COR_ENABLE_PROFILING -eq '1'\) \{ \$zt=9; \$zr='[^']*' \}; /.exec(script);
+    assert.ok(zr, agent + ' ' + event);
+    const shown = script.split("' + $zr + '").join(zr[1]).split('($zr)').join("('" + zr[1] + "')");
+    assert.match(shown, answer, agent + ' ' + event);
     if (ex) assert.match(script, ex);
     assert.match(script, /# zn hook [a-z-]+$/);
     assert.ok(!/\b(Test-Path|Get-Command|New-Object|Write-Output|Write-Host)\b/.test(script), 'no cmdlet');
