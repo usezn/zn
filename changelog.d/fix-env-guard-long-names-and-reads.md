@@ -5,7 +5,11 @@
   protected file in a Gemini CLI file tool is refused the same way.
 
 ### Fixed
-- Commands that only read a project `.env` pass again: `source .env`, `. ./.env`, and the `--env-file` option of node, bun,
-  deno, docker and podman, and of the dotenv, dotenv-cli and dotenvx runners. A command that zn cannot prove read-only is still
-  refused, and the message now says that zn cannot tell whether it writes the file. `python3 -m venv .env` stays refused: give
-  the virtual environment another name.
+- Commands that load a project `.env` without running it pass again: the `--env-file` option of node, bun, deno, docker and
+  podman, and `-e` / `-f` of the dotenv, dotenv-cli and dotenvx runners. A command that zn cannot prove read-only is still
+  refused, and the message now says that zn cannot tell whether it writes the file and how to load it instead.
+
+### Changed
+- These stay refused when they name a project `.env`: `source .env` and `. .env` (they run the file as shell code, which can
+  rewrite the file itself; use `--env-file` or `dotenv -e`), and `python3 -m venv .env` (give the virtual environment another
+  name).

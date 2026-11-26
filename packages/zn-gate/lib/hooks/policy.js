@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.2';
+const POLICY_RULES_VERSION = '2026-11-26.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1033,7 +1033,8 @@ function opaqueEnvWriteDenial(p) {
 function unprovenEnvWriteDenial(p) {
   const base = path.basename(String(p));
   return 'zn cannot tell whether this command writes ' + base + ', so shell writes to .env files are blocked here. Edit ' + base +
-    ' with the file editor tool. Reading it is fine: cat, grep, source, or --env-file for node, docker and dotenv.';
+    ' with the file editor tool. To load it, use --env-file (node, bun, deno, docker, podman) or dotenv -e; source and . run the ' +
+    'file as shell code and are refused.';
 }
 
 /**
@@ -1593,8 +1594,6 @@ const DOTENV_METADATA_CMDS = new Set(['touch', 'test', '[', '[[', 'rm', 'rmdir',
   // Commands that only print: they come up inside $( ) in a command that reads the file.
   'date', 'true', 'false', 'whoami', 'hostname', 'uname', 'id', 'basename', 'dirname', 'printf', 'seq', 'expr', 'realpath', 'readlink']);
 const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 'powershell', 'pwsh', 'cmd']);
-// source and . read the file into the shell that runs them; they never write it.
-const DOTENV_SOURCE_CMDS = new Set(['source', '.']);
 // Programs whose --env-file option only reads the file it names, and the dotenv runners whose -e / -f / --env-file option does.
 // Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
 const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
@@ -1606,7 +1605,8 @@ const PLAIN_NAME_RE = /^[^\s'"`$(){};|&<>]+$/;
 const GIT_READ_SUBS = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'rev-parse',
   'add', 'commit']);
 function dotenvReadOnlyWord(w, shellChecked) {
-  if (READ_ONLY_CMDS.has(w.head) || DOTENV_METADATA_CMDS.has(w.head) || DOTENV_SOURCE_CMDS.has(w.head)) return true;
+  // source and . are not here: they run the file as shell code, which can write the file itself.
+  if (READ_ONLY_CMDS.has(w.head) || DOTENV_METADATA_CMDS.has(w.head)) return true;
   if (shellChecked && SHELL_HEADS.has(w.head)) return true;
   if (w.head !== 'git') return false;
   const args = w.gitArgs || [];

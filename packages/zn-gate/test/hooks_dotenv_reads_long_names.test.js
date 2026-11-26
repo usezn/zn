@@ -80,8 +80,6 @@ test('an MCP call with long text that does not name a file still passes', async 
 });
 
 const READS = [
-  'source .env && npm test',
-  'set -a; . ./.env; set +a; npm start',
   'node --env-file=.env app.js',
   'node --env-file .env app.js',
   'docker run --env-file .env alpine true',
@@ -106,9 +104,11 @@ const WRITES = [
   'cat .env && cp notes.txt .env',
   'node -e .env',
   'python3 -m venv .env',
+  'source .env && npm test',
+  'set -a; . ./.env; set +a; npm start',
 ];
 
-test('commands that only read a project .env pass (source, ., --env-file, dotenv runners)', async (t) => {
+test('commands that only read a project .env pass (--env-file, dotenv runners)', async (t) => {
   const dir = project(t);
   for (const command of READS) {
     assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', 'claude: ' + command);
@@ -129,5 +129,19 @@ test('the refusal for a program zn cannot prove read-only says so and names the 
   const res = await runner.handle(claude, cc(dir, 'Bash', { command: 'node -e .env' }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', znRunPrefix: 'x --' });
   const text = JSON.stringify(res.decision);
   assert.match(text, /zn cannot tell whether this command writes \.env/);
-  assert.match(text, /source, or --env-file/);
+  assert.match(text, /use --env-file/);
+  assert.match(text, /source and \. run the file as shell code/);
+});
+
+// source and . run the file as shell code: a .env whose lines rewrite the file would change it after the check, so they are refused
+// whatever the file holds.
+test('source and . of a .env are refused, also for a .env whose sourced lines rewrite it', async (t) => {
+  for (const body of ['PORT=1\n', "printf 'LD_DEBUG=help\\n' > .env\n", 'PORT=1\necho LD_PRELOAD=/x.so >> .env\n']) {
+    const dir = project(t);
+    fs.writeFileSync(path.join(dir, '.env'), body);
+    for (const command of ['source .env', '. ./.env', 'source .env && npm test']) {
+      assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', JSON.stringify(body) + ' ' + command);
+      assert.equal(await verdict(gemini, gem(dir, 'run_shell_command', { command })), 'deny', 'gemini ' + JSON.stringify(body) + ' ' + command);
+    }
+  }
 });
