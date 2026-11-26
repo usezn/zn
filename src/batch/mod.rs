@@ -333,9 +333,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_pipeline_with_embedder() {
-        let dir = std::env::temp_dir().join("zn-phaseF-batch-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        let embedder = Embedder::with_cache(&dir, 300).expect("model must load");
+        let dir = tempfile::tempdir().unwrap();
+        let embedder = crate::test_support::embedder_or_fail(dir.path(), Some(300));
         let embedder = Arc::new(embedder);
 
         let config = BatchConfig {

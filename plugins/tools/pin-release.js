@@ -226,6 +226,34 @@ function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// The plugin tag plugin-v<version> (Claude Code `usezn/zn#plugin-vX.Y.Z`, Codex `--ref plugin-vX.Y.Z`, and the tag named in
+// prose) is created on the pin commit, so it moves with the pin; another version or a longer number does not.
+function PLUGIN_TAG(esc, version) {
+  return [new RegExp('(?<![\\w.-])plugin-v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'plugin-v' + version];
+}
+
+// Markdown files, relative to plugins/, where the marketplace is added: README.md, packages/*/README.md, plugins/**/README.md
+// and docs/ (the same surfaces as check-public-facts).
+function marketplaceDocs(root) {
+  const repo = path.join(root, '..');
+  const out = [];
+  const walk = (dir, keep) => {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules' && !e.name.startsWith('.')) walk(p, keep); } else if (keep(e.name)) out.push(p);
+    }
+  };
+  if (fs.existsSync(path.join(repo, 'README.md'))) out.push(path.join(repo, 'README.md'));
+  const pkgs = path.join(repo, 'packages');
+  if (fs.existsSync(pkgs)) {
+    for (const d of fs.readdirSync(pkgs)) if (fs.existsSync(path.join(pkgs, d, 'README.md'))) out.push(path.join(pkgs, d, 'README.md'));
+  }
+  walk(root, (n) => n === 'README.md');
+  walk(path.join(repo, 'docs'), (n) => n.endsWith('.md'));
+  return out.map((p) => path.relative(root, p).split(path.sep).join('/'));
+}
+
 function versionedTexts(previous, version) {
   if (previous && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(previous)) throw new Error('the current pin has an unexpected version: ' + previous);
   if (!previous || previous === version) return [];
@@ -256,7 +284,10 @@ function versionedTexts(previous, version) {
     [new RegExp('\\*\\*' + esc + '\\*\\*', 'g'), '**' + version + '**'],
     [new RegExp('version ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'version ' + version],
     [new RegExp('usezn/zn@v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn@v' + version],
+    [new RegExp('usezn/zn#v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn#v' + version],
+    [new RegExp('--ref v' + esc + '(?![0-9]|\\.[0-9])', 'g'), '--ref v' + version],
     [new RegExp('`v' + esc + '`', 'g'), '`v' + version + '`'],
+    PLUGIN_TAG(esc, version),
   ];
   const skills = path.join(root, 'zn-gate', 'skills');
   const docs = [...VERSIONED_DOCS];
@@ -267,6 +298,14 @@ function versionedTexts(previous, version) {
     if (!fs.existsSync(path.join(root, rel))) continue;
     let text = read(rel);
     for (const [re, to] of forms) text = text.replace(re, to);
+    out.set(rel, text);
+  }
+  // The install commands outside the plugin folder (README.md, the package READMEs and docs/) add the marketplace at the
+  // plugin tag too, so the tag of the old pin moves there as well; nothing else in those files follows the plugin pin.
+  const [tagRe, tagTo] = PLUGIN_TAG(esc, version);
+  for (const rel of marketplaceDocs(root)) {
+    if (docs.includes(rel)) continue;
+    const text = read(rel).replace(tagRe, tagTo);
     out.set(rel, text);
   }
   return [...out].filter(([rel, text]) => text !== fs.readFileSync(path.join(root, rel), 'utf8'))

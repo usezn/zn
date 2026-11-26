@@ -104,7 +104,7 @@ function pluginNodeProblem(st) {
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
-    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn`',
+    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn#plugin-v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.claude', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
   },
@@ -133,7 +133,7 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
-    id: 'copilot', name: 'GitHub Copilot (VS Code, CLI)', event: 'preToolUse', tool: 'view',
+    id: 'copilot', name: 'GitHub Copilot (CLI experimental, VS Code not tested)', event: 'preToolUse', tool: 'view',
     fix: 'run `zn hooks install copilot` in your own terminal',
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
@@ -194,7 +194,8 @@ function hookEntries(tree, agentId, opts = {}) {
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           // Codex on Windows runs commandWindows (command_windows in TOML), not command.
           const win = agentId === 'codex' && process.platform === 'win32' && h ? (typeof h.commandWindows === 'string' ? h.commandWindows : h.command_windows) : null;
-          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? h.command : '';
+          // Claude Code's exec form (command + args) is read as one command line.
+          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? (Array.isArray(h.args) ? require('./agents/static-launcher').execText([h.command, ...h.args.map(String)]) : h.command) : '';
           if (text) out.push({ event, matcher: g.matcher, command: text, onFailure: h.onFailure, async: h.async, ...extra });
         }
       }
@@ -235,10 +236,17 @@ function antigravityOtherHooks(files) {
 }
 
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
-function parseCommand(command, agentId) {
+function parseCommand(command, agentId, platform = process.platform) {
   const { _internal: audit } = require('./audit');
   const launcher = require('./agents/launcher');
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
+  // The static launcher in front of the hook (agents/static-launcher.js): '<dir>/zn-hook-launcher' <agent> <Event> <hook command>.
+  // The rest is read as the hook command it starts; the launcher path is kept so that check can see that it is there.
+  const sm = new RegExp("^('?)(" + audit.SAFE_ABS + "/zn-hook-launcher)\\1 " + agentId + ' ([A-Za-z]+) (.+)$').exec(c);
+  if (sm) {
+    const inner = parseCommand(sm[4], agentId, platform);
+    return inner ? { ...inner, staticLauncher: sm[2], ...(inner.raw !== undefined ? { raw: c } : {}) } : null;
+  }
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
   // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
   // Antigravity runs the command split on spaces with no shell, so zn writes the path unquoted there (an older
@@ -283,7 +291,7 @@ function parseCommand(command, agentId) {
   }
   // The project hook (shared file): `zn` on the PATH inside zn's own guard (launcher.projectShCommand / projectWindowsScript).
   // Only the exact guard this version writes counts as guarded; a guard-looking command that differs is reported as modified.
-  if (launcher.isProjectGuardExact(c, agentId) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
+  if (launcher.isProjectGuardExact(c, agentId, platform) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
   if (launcher.isProjectGuard(c, agentId) || (ws && launcher.isProjectWindowsScript(ws, agentId))) return { onPath: true, guarded: true, modified: true };
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
@@ -342,9 +350,10 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
 
-// How to move the Claude Code plugin to this release. The marketplace follows the default branch, but `claude plugin update`
-// does not move an installed plugin to a newer release: the marketplace is removed and added again, then the plugin is installed.
-const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn` and `claude plugin install zn-gate@usezn` in your own terminal';
+// How to move the Claude Code plugin to this release: remove the usezn marketplace, add it again at the plugin tag of this
+// release and install the plugin. These steps work however the marketplace was added before. Why a plugin tag and not the
+// release tag: see MARKETPLACE_REF in init-guide.js.
+const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn#plugin-v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
 const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so ' + PLUGIN_UPDATE_STEPS;
 
 /* Whether version `a` is older than `b` (numbers before any "-" are compared, so 1.15.0-rc.1 and 1.15.0 count as the same
@@ -392,7 +401,7 @@ function pluginVersionNote(root, own = require('../package.json').version) {
   const both = 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
   if (/-/.test(own)) return both;
   if (require('./init-guide')._internal.cmp(v, own) < 0) {
-    return both + ', so Claude Code\'s tool calls are protected by the rules of zn-gate ' + v + '. To match them, ' + PLUGIN_UPDATE_STEPS + ' and start a new Claude Code session';
+    return both + ', so Claude Code\'s tool calls are protected by the rules of zn-gate ' + v + '. To match them, ' + PLUGIN_UPDATE_STEPS.replace('usezn/zn#plugin-v' + VERSION, 'usezn/zn#plugin-v' + own) + ' and start a new Claude Code session';
   }
   return both + ', so this check runs older rules than the plugin. To match them, run `npm install -g zn-gate@latest` (or `npx -y zn-gate@latest check`) in your own terminal';
 }
@@ -865,6 +874,11 @@ function cliHooks(spec, ctx, userFile, given) {
       return out;
     }
   }
+  if (cmd && cmd.staticLauncher && !(() => { try { const st = fs.statSync(cmd.staticLauncher); return st.isFile() && (st.mode & 0o111) !== 0; } catch (err) { return false; } })()) {
+    out.problem = 'its hook cannot start: its launcher program (' + cmd.staticLauncher + ') is missing';
+    out.fix = REINSTALL(spec.id);
+    return out;
+  }
   if (cmd.launcher || cmd.winScript) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
@@ -903,7 +917,8 @@ function cliHooks(spec, ctx, userFile, given) {
       const exe = require('./exe');
       const run = cmd.winScript ? { file: exe.systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: exe.findProgram(cmd.raw.split(' ')[0], ctx.env || process.env), args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
-          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] }
+            : cmd.staticLauncher ? { file: cmd.staticLauncher, args: [spec.id, cmd.event, cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       // The system PowerShell, and sh (Git Bash) from the absolute PATH entries only; without one the live test is skipped.
       if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
       else out.notes.push('the program that runs the hook was not found, so the hook was not run here; zn\'s rules were checked directly');
@@ -1307,7 +1322,7 @@ async function checkAgent(spec, ctx) {
     // Copilot's harness also reads the Claude Code hooks of the project, and runs every hook it finds: zn would check each call twice.
     const claudeFile = claudeProjectHooksFile(ctx.cwd);
     if (claudeFile) {
-      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code and Copilot CLI) reads that file too whenever it holds zn hooks, with no setting needed, so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
+      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and GitHub Copilot reads that file too whenever it holds zn hooks, with no setting needed (Copilot CLI, which is experimental, and VS Code and the GitHub Copilot app, which use the same hooks), so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
     }
   }
   if (spec.id === 'antigravity' && installed && res.where === userFile) {
@@ -1450,6 +1465,24 @@ function nodeWarnings(opts, env) {
 }
 
 /**
+ * One warning when this environment holds a variable that makes Node.js or the dynamic loader load code of the caller's
+ * choosing (lib/loader-env.js). An agent started from here passes it on to everything it runs; zn's hooks remove it before
+ * they start Node.js, but a hook written by an older zn-gate does not.
+ */
+function loaderWarnings(env) {
+  try {
+    const names = require('./loader-env').loaderVarsIn(env);
+    if (!names.length) return [];
+    const list = names.length > 6 ? names.slice(0, 6).join(', ') + ' and ' + (names.length - 6) + ' more' : names.join(', ');
+    return [list + (names.length === 1 ? ' is' : ' are') + ' set in this environment. ' + (names.length === 1 ? 'It makes' : 'They make') +
+      ' Node.js or the system load code of someone else\'s choosing, and a coding agent started from here passes ' + (names.length === 1 ? 'it' : 'them') +
+      ' on to every program it runs. zn\'s hooks remove ' + (names.length === 1 ? 'it' : 'them') + ' before they start Node.js, but hooks written by an older zn-gate do not: ' +
+      'run `zn hooks install <agent>` again for each agent you use. If you did not set ' + (names.length === 1 ? 'it' : 'them') + ' yourself, find out where ' +
+      (names.length === 1 ? 'it comes' : 'they come') + ' from (a shell profile, a project\'s .envrc or .env loader).'];
+  } catch (_) { return []; }
+}
+
+/**
  * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
  * (each result then has checked: false, and "protected" means set up with no problem found).
@@ -1468,7 +1501,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true, warnings: nodeWarnings(opts, env) };
+    return { results, removed: true, warnings: [...nodeWarnings(opts, env), ...loaderWarnings(env)] };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
@@ -1489,7 +1522,7 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
+  return { results, removed: !fs.existsSync(dir), warnings: [...nodeWarnings(opts, env), ...loaderWarnings(env)] };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */
@@ -1613,4 +1646,4 @@ function toJson({ results, removed, warnings }, opts = {}) {
   };
 }
 
-module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, loaderWarnings, PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };

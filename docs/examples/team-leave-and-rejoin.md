@@ -12,7 +12,7 @@ zn team leave
 The vault must be unlocked. If it is not, the command stops and says what to run:
 
 ```text
-[zn] vault is locked; run `npx -y zn-gate@1.17.0 unlock`
+[zn] vault is locked; run `npx -y zn-gate@1.18.0 unlock`
 ```
 
 (It exits with code `1`; the version in the line is the one you have installed.) `zn team leave` is then confirmed on the vault's own channel (the terminal of `zn unlock --foreground`, or a system dialog), not in the terminal where you typed it. The dialog names the organization and warns that the organization's policy stops applying here and that the administrators will see this machine stop reporting. If you did not run the command yourself, choose Deny.

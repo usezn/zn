@@ -26,3 +26,6 @@ pub mod tenants;
 pub mod tui;
 pub mod user_errors;
 pub mod webhooks;
+
+#[cfg(test)]
+pub(crate) mod test_support;

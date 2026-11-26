@@ -42,6 +42,7 @@
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { fileURLToPath } = require('url');
+const { MAX_NEST_DEPTH, MAX_NEST_NODES } = require('../nest-limits');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
@@ -83,13 +84,18 @@ function localFileUrl(v) {
 }
 
 /**
- * Every string argument whose key looks like a file or folder (content-like keys are skipped), three levels of
- * objects and arrays deep. A key called url counts only when its value is a file: URI. A file: URI that cannot
+ * Every string argument whose key looks like a file or folder (content-like keys are skipped), down to MAX_NEST_DEPTH (the limit of the text
+ * scan), through objects and arrays. Objects left unvisited because of the depth or node limit set `bad`: a path may be hidden there. A key called url counts only when its value is a file: URI. A file: URI that cannot
  * be turned into a path sets `bad`, so the call is refused instead of passed.
  */
 function pathsOf(args) {
   const out = [];
   let bad = false;
+  // A candidate name taken from a long or multi-line value: a file: URI in it is decoded like a one-line value.
+  const addName = (x) => {
+    if (/^file:/i.test(x)) { try { out.push(fileURLToPath(localFileUrl(x))); } catch (_) { bad = true; } return; }
+    out.push(x);
+  };
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
@@ -97,19 +103,23 @@ function pathsOf(args) {
       return;
     }
     if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
+    // A long value is classified like any other (classifyPath reads long input); a value with line breaks (code, a message) is
+    // not one file name: its trimmed whole and each line that starts like a path are checked (pathCandidatesOf).
+    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v)) addName(x); return; }
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
+  let nodes = 0;
   const walk = (obj, depth) => {
+    if (++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
       }
-      if (depth < 3) {
+      if (depth < MAX_NEST_DEPTH) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
-      }
+      } else if (isObj(v) || (Array.isArray(v) && v.some(isObj))) bad = true;
     }
   };
   walk(args, 0);
@@ -307,6 +317,16 @@ function normalize(raw) {
     const dirs = scan.dirs;
     const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [], ...(dirs.length ? { scanDirs: dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
     if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
+    if (!SHELL_TOOLS.has(toolName)) {
+      // A tool zn does not know that carries a command and also names files: the files keep their read and write checks (a .env
+      // write among them is judged on what the call writes); an address zn cannot read refuses the call.
+      const named = pathsOf(args);
+      const loose = require('./copilot').pathsOf(args, { loose: true });
+      named.paths = [...new Set([...named.paths, ...loose.paths])];
+      named.bad = named.bad || loose.bad;
+      e.input.alsoPaths = named.paths;
+      if (named.bad && !e.unreadable) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    }
     return e;
   }
   const { paths, bad } = pathsOf(args);
@@ -321,9 +341,13 @@ function normalize(raw) {
   }
   // Any other tool that names a file (a viewer, a reader, a future tool) gets the read and write checks on
   // every path in it. list_dir and find_by_name show names only, and tools with no path get no opinion.
-  if (!READ_TOOLS.has(toolName) && (paths.length || bad)) {
-    const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+  // A tool zn does not know: a path under any key counts too (src, dst, from, to, nested objects), and arguments zn cannot walk to
+  // the end are refused.
+  const loose = READ_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const all = [...new Set([...paths, ...loose.paths])];
+  if (!READ_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
+    const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };
+    if (bad || loose.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
   }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };
@@ -433,7 +457,7 @@ function selfCheck(command, opts = {}) {
  * no text from zn (or not at all). A project install writes `sh -c` (PowerShell on Windows) around `zn hook
  * antigravity` with the same deny answer when zn or node is missing. A command given by the caller stays as it is.
  */
-function commandFor(opts = {}) {
+function commandFor(opts = {}, notes = []) {
   const platform = opts.platform || process.platform;
   if (opts.command) return cfg.hookCommand(id, opts);
   // A project install is shared through the repository, so it names `zn` on the PATH instead of this machine's
@@ -452,14 +476,21 @@ function commandFor(opts = {}) {
   // No path without spaces: nothing that Antigravity can start can be written, so refuse instead of writing a hook that never runs.
   const file = launcher.launcherFile(id, opts);
   if (!launcher.plainPathOk(file)) throw new Error(launcher.spaceMessage(file));
-  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true }), 'PreToolUse', platform, { plain: true });
+  const script = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
+  // Linux: the static launcher first (see static-launcher.js), in the same folder, so its path needs no quotes either.
+  const sl = require('./static-launcher');
+  const st = sl.useStatic(opts, notes, id);
+  if (st && launcher.plainPathOk(st)) return sl.execParts(st, id, 'PreToolUse', script, ['PreToolUse']).join(' ');
+  return launcher.launcherCommand(script, 'PreToolUse', platform, { plain: true });
 }
 
 function install(opts = {}) {
   const file = hooksFile(opts);
-  const command = commandFor(opts); // may refuse (a launcher path Antigravity cannot start): before anything is written
+  const notes = [];
+  const command = commandFor(opts, notes); // may refuse (a launcher path Antigravity cannot start): before anything is written
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  report.warnings.push(...notes);
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   stripOurs(data);
   // Antigravity splits the hook command on spaces and ignores quotes, so on
@@ -524,6 +555,7 @@ module.exports = {
   normalize,
   respond,
   selfCheck,
+  pathsOf,
   capabilities: { ask: 'all', rewriteInput: false, rewriteOutput: false },
   HOOK_NAME,
   hooksFile,

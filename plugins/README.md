@@ -44,7 +44,9 @@ possible:
   integrity), with matching SHA-256 digests and nothing else, then runs
   zn-gate from the checked bytes in memory. Any mismatch or error fails closed.
 - **No self-update.** The plugin never updates itself or zn-gate. Install new
-  releases on purpose; auto-update for third-party marketplaces is off by default in Claude Code.
+  releases on purpose; marketplaces are added at a plugin tag that never
+  moves, and auto-update for third-party marketplaces is off by default in
+  Claude Code.
 - **Least privilege.** The hooks and the MCP servers run zn-gate locally with
   your user's rights and send nothing over the network except the HTTP
   requests you allow per secret.
@@ -69,14 +71,15 @@ plugin; for the other agents, first install zn-gate as shown above. Then:
 ### Claude Code
 
 ```bash
-claude plugin marketplace add usezn/zn
+claude plugin marketplace add usezn/zn#plugin-v1.17.0
 claude plugin install zn-gate@usezn
 ```
 
-Leave auto-update off for this marketplace (the default). The plugin pins one
-zn-gate release: to upgrade, run
+Leave auto-update off for this marketplace (the default). It is added at the
+plugin tag `plugin-v1.17.0`, which is created on the commit that pins zn-gate 1.17.0
+and never moves, so `claude plugin update` keeps that release: to upgrade, run
 `claude plugin marketplace remove usezn`, then
-`claude plugin marketplace add usezn/zn` again and
+`claude plugin marketplace add usezn/zn#plugin-v1.17.0` (the newest plugin tag) and
 `claude plugin install zn-gate@usezn`, which also installs the newly pinned
 zn-gate. If you installed hooks before with
 `zn hooks install claude-code`, remove them: `zn hooks uninstall claude-code`.
@@ -84,7 +87,7 @@ zn-gate. If you installed hooks before with
 ### Codex
 
 ```bash
-codex plugin marketplace add usezn/zn
+codex plugin marketplace add usezn/zn --ref plugin-v1.17.0
 ```
 
 Install `zn-gate` from the `usezn` marketplace with `/plugins`. That adds the
@@ -121,7 +124,7 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 Plugins with lifecycle hooks are not eligible for OpenAI's public plugin
 directory ([plugin packaging guide](https://developers.openai.com/codex/plugins/build)),
 so zn-gate's Codex plugin is distributed through the repository marketplace
-(`codex plugin marketplace add usezn/zn`).
+(`codex plugin marketplace add usezn/zn --ref plugin-v1.17.0`).
 
 ### Cursor
 
@@ -179,3 +182,7 @@ npm's own integrity check of the tarball, not on the plugin's file digests.
    runs the same check on release tags and on `main`.
 5. Tag the release. Release tags must be protected by a repository ruleset
    that blocks updates and deletion of `v*` tags; never move or reuse a tag.
+6. After the pin commit is merged into `main`, create the tag `plugin-vX.Y.Z`
+   on that pin commit. The install commands add the marketplace at this tag,
+   so it must hold the lock of `X.Y.Z`. Plugin tags are protected like release
+   tags: the ruleset also blocks updates and deletion of `plugin-v*` tags.

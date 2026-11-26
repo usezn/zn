@@ -37,7 +37,7 @@ if [ "${SCOPE:-}" = "core" ]; then
       "${OWN:-.github/workflows/none}"|.github/scripts/ci-scope.sh|.github/actions/*) needed=true; echo "needs the checks: $f"; break ;;
       packages/*/*.md|plugins/*.md) needed=true; echo "needs the checks: $f"; break ;;
       examples/*|.github/*|docs/*|*.md|LICENSE|NOTICE|assets/*) ;;
-      src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;
+      src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs|go/*) ;;
       *) needed=true; echo "needs the checks: $f"; break ;;
     esac
   done <<< "$files"
@@ -45,7 +45,7 @@ if [ "${SCOPE:-}" = "core" ]; then
 fi
 while IFS= read -r f; do
   case "$f" in
-    packages/*|plugins/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;
+    packages/*|plugins/*|go/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;
     # Documentation files a test reads. Keep in step with the tests: test-ci-scope.sh fails when a
     # test mentions a docs file that is not listed here.
     docs/api-reference.md|docs/audit.md|docs/by-agent.md|docs/check.md|docs/cli.md|docs/commands-cheatsheet.md|docs/compat.md|docs/team.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;

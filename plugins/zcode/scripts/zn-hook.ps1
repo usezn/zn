@@ -131,6 +131,10 @@ function New-Info([string]$file, [string]$arguments, [bool]$electron) {
   $i.UseShellExecute = $false
   $i.RedirectStandardInput = $true
   if ($electron) { $i.EnvironmentVariables['ELECTRON_RUN_AS_NODE'] = '1' }
+  # Variables that make Node.js load code of the caller's choosing (NODE_OPTIONS=--require or --import, NODE_PATH, an OpenSSL
+  # engine named by OPENSSL_CONF) are removed from what the Node.js gets: a project can set the environment of the agent.
+  # Names ignore case on Windows. NODE_EXTRA_CA_CERTS and the proxy settings stay.
+  foreach ($n in @('NODE_OPTIONS', 'NODE_PATH', 'OPENSSL_CONF')) { [void]$i.EnvironmentVariables.Remove($n) }
   return $i
 }
 

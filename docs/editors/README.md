@@ -10,7 +10,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 | [Codex CLI](codex.md) | `zn hooks install codex`, then trust it in `/hooks` | Yes | Yes (replaces the result) | Yes | Yes | Yes, end to end |
 | OpenCode | `zn hooks install opencode` | Yes | Yes | Yes | Yes | Yes, end to end |
 | [Cursor](cursor.md) | `zn hooks install cursor` | Yes | **No** (Cursor does not allow it) | Yes | Yes | Formats checked; no end-to-end run |
-| [GitHub Copilot (VS Code, CLI)](vscode.md) | `zn hooks install copilot` | Yes | Yes (read-type and shell tools) | Only servers you wrap | No | Documented for VS Code, not tested in the app; run end to end with Copilot CLI 1.0.98 |
+| [GitHub Copilot (CLI experimental, VS Code not tested)](vscode.md) | `zn hooks install copilot` | Yes | Yes (read-type and shell tools) | Only servers you wrap | No | Documented for VS Code, not tested in the app; run end to end with Copilot CLI 1.0.98 |
 | [Google Antigravity](antigravity.md) | `zn hooks install antigravity` | Yes | **No** (Antigravity hooks cannot rewrite output) | Only servers you wrap | No | Formats checked; hand-tested on Windows; no automated end-to-end run |
 | [ZCode desktop app](zcode.md) | `zn hooks install zcode` | Yes | **No** (ZCode hooks cannot rewrite tool output; zn adds a notice) | Only servers you wrap | Yes (blocked, not cleaned) | Tested end to end on the official ZCode desktop app 3.16.3 on Linux x64 (October 2026). The same checks passed on Windows x64 (Windows Server 2022, same app version), for an administrator and for a standard user, through the agent the app ships; the Windows app window itself was not driven. macOS was not tested. |
 | [Windsurf (Devin Desktop)](windsurf.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
@@ -39,7 +39,7 @@ Which editor pages describe a user install (all your projects), a project instal
 
 ## Experimental hooks
 
-Gemini CLI has an experimental hook adapter. It is listed apart from the seven supported agents above (Claude Code, Codex CLI, OpenCode, Cursor, GitHub Copilot, Google Antigravity and the ZCode desktop app) and is less tested. It blocks reads and writes of secret files by path and shell commands that handle secrets, and stops the agent from editing its own hook or settings files.
+Gemini CLI and Copilot CLI have experimental hook adapters. They are not among the six supported agents (Claude Code, Codex CLI, OpenCode, Cursor, Google Antigravity and the ZCode desktop app) and are less tested. Copilot CLI has a row in the agent table above, marked experimental, because it uses the same hooks as Copilot in VS Code and the GitHub Copilot app; what it covers is there and on [its page](vscode.md). The Gemini CLI adapter blocks reads and writes of secret files by path and shell commands that handle secrets, and stops the agent from editing its own hook or settings files.
 
 Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on June 18, 2026. Gemini CLI keeps working with zn-gate as an experimental adapter.
 

@@ -184,12 +184,14 @@ leave it, since nothing reads it.
 
 The plugin is pinned to zn-gate 1.17.0 and has no auto-update. A new zn-gate
 release comes with a new plugin release that pins it, with new file digests.
-Upgrade on purpose, after reading the release notes. In Claude Code, remove the
-marketplace, add it again and install the plugin again:
+Upgrade on purpose, after reading the release notes. The marketplace is added
+at a plugin tag that never moves, so `claude plugin update zn-gate@usezn` does
+not bring a newer release. In Claude Code, add the marketplace again at the
+newest plugin tag and install the plugin again:
 
 ```bash
 claude plugin marketplace remove usezn
-claude plugin marketplace add usezn/zn
+claude plugin marketplace add usezn/zn#plugin-v1.17.0
 claude plugin install zn-gate@usezn
 ```
 
@@ -203,12 +205,23 @@ npm audit signatures
 
 ## Install
 
-Claude Code:
+Claude Code, from the marketplace at the plugin tag:
 
 ```bash
-claude plugin marketplace add usezn/zn
+claude plugin marketplace add usezn/zn#plugin-v1.17.0
 claude plugin install zn-gate@usezn
 ```
+
+The tag `plugin-v1.17.0` is created on the commit that pins zn-gate 1.17.0, after
+that commit is merged into the default branch, and it never moves: the
+marketplace, the plugin's hook and launcher scripts and its lock all come from
+that one commit. To confirm that the tag exists and which commit it points to,
+before you add the marketplace:
+`git ls-remote https://github.com/usezn/zn refs/tags/plugin-v1.17.0`. After the install,
+`claude plugin list` shows the installed `zn-gate` version. The plugin pins
+exactly one zn-gate release: npm installs it with the integrity hash in the
+plugin's `package-lock.json`, and the launcher compares every file with the
+SHA-256 digests in `scripts/zn-gate.lock.json` before it runs anything.
 
 The files of the release carry build provenance attestations; see
 [Verifying a release](https://github.com/usezn/zn/blob/v1.17.0/docs/verify-release.md).
