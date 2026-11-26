@@ -82,9 +82,11 @@ test('OpenCode maps a tool name it does not know to an MCP call, and such a call
   assert.equal(await refused(opencode, oc(dir, 'custom_helper', { path: path.join(dir, 'notes.txt') })), false, 'unknown tool, other file');
 });
 
-// A backslash before a name in a shell word: outside quotes bash drops it (\.env is .env). On Linux and macOS zn refuses every command
-// that names a watched .env this way, the read-only ones and touch included (cat \.env, touch \.env), as a path it cannot check; the plain
-// name still passes for those commands. So every write, copy or program below is refused.
+// A backslash before a name in a shell word: outside quotes bash drops it (\.env is .env). policy.js backslashElsewhere only exempts such
+// a word from the not-proven-read-only rule; the word is refused earlier by dotenvElsewhereOf, which refuses a word that STARTS with a
+// backslash or with // (a Windows root or a network share: zn cannot follow it) for every command, the read-only ones and touch included
+// (cat \.env, touch \.env); the plain name still passes for those commands. A backslash inside the word (.e\nv) is not covered by it.
+// So every write, copy or program below is refused.
 test('shell commands that name a watched .env through a backslash escape are refused', async (t) => {
   const dir = project(t);
   const sh = (command) => refused(claude, cc(dir, 'Bash', { command }));

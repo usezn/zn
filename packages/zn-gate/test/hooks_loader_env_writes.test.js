@@ -22,7 +22,35 @@ const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 
 const STOP = /would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent/;
-const SHELL_WRITE = /shell writes to \.env files are blocked|would set (LD_TRACE_LOADED_OBJECTS|LD_DEBUG) for the agent/;
+// Every shell write to a watched .env is refused. A command that names a loader variable literally (even split by quotes, escapes or a
+// variable set earlier in the same command) gets the specific STOP refusal. A command that does not (no loader name at all, or a name
+// the shell builds with $N, ${N}, $(...), a glob, a brace or a \x or octal escape) gets the generic shell-write refusal: zn cannot say
+// which variable it would set, so these are asserted as the generic message, listed here by exact command.
+const SHELL_WRITE = {};
+const GENERIC_SHELL_WRITE = /shell writes to \.env files are blocked/;
+const GENERIC_SHELL_WRITES = new Set([
+  "N=DEBUG; echo LD_$N=help >> .env",
+  "echo \"${K}=help\" >> .env",
+  "echo \"APP_DEBUG=$X\" >> .env",
+  "echo \"FOO=1\" > .env",
+  "echo $'\\x4cD_DEBUG=help' >> .env",
+  "echo -e '\\x4cD_DEBUG=help' >> .env",
+  "echo API_URL=$HOME/api >> .env",
+  "echo DEBUG=1 >> .env",
+  "echo L$(echo D)_DEBUG=help >> .env",
+  "echo LD_${N}=help >> .env",
+  "echo LD_DEBU?=help >> .env",
+  "echo LD_{DEBUG,X}=help >> .env",
+  "echo {LD,X}_DEBUG=help >> .env",
+  "printf '%s=%s\\n' \"$K\" \"$V\" >> .env",
+  "printf '%s_DEBUG=help\\n' LD >> .env",
+  "printf 'LD_LIBRARY_PATH=/opt/lib' >> .env",
+  "printf 'LD_LIBRARY_PATH=/opt/lib\\n' >> .env",
+  "printf 'PORT=%s\\n' 8080 >> .env",
+  "printf '\\114D_DEBUG=help\\n' >> .env",
+  "printf '\\x4cD_DEBUG=help\\n' >> .env",
+  "sed -i 's/^DEBUG=.*/DEBUG=0/' .env",
+]);
 
 function project(t) {
   const dir = tempDir(t, 'zn-ldwrite-');
@@ -40,7 +68,11 @@ const gem = (tool_name, tool_input, cwd) => ({ session_id: 's', cwd, hook_event_
 const cdx = (tool_name, tool_input, cwd) => ({ session_id: 's', cwd, hook_event_name: 'PreToolUse', tool_name, tool_input, turn_id: 'u', tool_use_id: 't' });
 const patch = (kind, file, lines) => '*** Begin Patch\n*** ' + kind + ' File: ' + file + '\n' + (kind === 'Update' ? '@@\n' : '') + lines.map((l) => '+' + l).join('\n') + '\n*** End Patch\n';
 
-const blocked = (d, re, what) => { assert.equal(d.decision, "deny", JSON.stringify(d) + " " + (what || "")); if (re) assert.match(d.message, re); };
+const blocked = (d, re, what) => {
+  assert.equal(d.decision, "deny", JSON.stringify(d) + " " + (what || ""));
+  if (re === SHELL_WRITE) assert.match(d.message, GENERIC_SHELL_WRITES.has(what) ? GENERIC_SHELL_WRITE : STOP, what);
+  else if (re) assert.match(d.message, re);
+};
 const passes = (d) => assert.notEqual(d.decision, 'deny', JSON.stringify(d));
 
 test('hookStopAssignedIn agrees with the audit on which settings stop the hooks', () => {
@@ -405,7 +437,6 @@ test('a shell write of a loader value with a slash, bracket or backslash before 
 
 test('the printf form and quoted pieces of the loader name are refused for a .env', async (t) => {
   const dir = project(t);
-  const STOP_OR_COMPUTED = SHELL_WRITE;
   const bad = [
     "printf '%s=%s' LD_DEBUG help >> .env",
     'printf "%s=%s\\n" "LD_DEBUG" "help" >> .env',
@@ -416,8 +447,8 @@ test('the printf form and quoted pieces of the loader name are refused for a .en
     'K=LD_DEBUG; printf "%s=help" "$K" >> .env',
   ];
   for (const command of bad) {
-    blocked(await decide(claude, cc('Bash', { command }, dir)), STOP_OR_COMPUTED, command);
-    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), STOP_OR_COMPUTED, command);
+    blocked(await decide(claude, cc('Bash', { command }, dir)), SHELL_WRITE, command);
+    blocked(await decide(gemini, gem('run_shell_command', { command }, dir)), SHELL_WRITE, command);
   }
 });
 
