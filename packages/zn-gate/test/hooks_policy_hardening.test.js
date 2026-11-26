@@ -633,6 +633,21 @@ test('a Python virtualenv named .env is a folder, not a secret file', (t) => {
   }
 });
 
+// The word a shell passes to a program is judged, not the text typed: bash removes an unquoted backslash and the quotes, so
+// .e\nv, .\env and ".e"\nv are .env, while inside quotes the backslash stays (".e\nv" is a file called .e\nv, another file).
+// policy.js backslashElsewhere only applies to a word that still holds a backslash after that.
+test('a .env name written with an unquoted backslash or quotes is refused for a program that is not proven read-only', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-envbs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, '.env'), 'FOO=1\n');
+  const o = { cwd: dir, home: dir, env: {} };
+  for (const cmd of ['python3 w.py .e\\nv', 'unknowncmd .e\\nv', 'node x.js .\\env', 'unknowncmd ".e"\\nv', "unknowncmd .e''nv", 'unknowncmd .e"n"v', 'unknowncmd ./.e\\nv']) {
+    assert.ok(policy.bashDenial(cmd, o), cmd);
+  }
+  // Inside quotes the backslash is kept: these name other files, and the code lets them pass (a conservative reading would refuse them).
+  for (const cmd of ['unknowncmd ".e\\nv"', "unknowncmd '.e\\nv'"]) assert.equal(policy.bashDenial(cmd, o), null, cmd);
+});
+
 test('an interpreter that replaces a .env folder with a .env file is refused, with a harmless marker value', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-envfolder-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
