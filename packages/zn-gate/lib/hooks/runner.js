@@ -893,7 +893,6 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
   let anyBody = false;
   const toolName = String(ev.toolName || '');
   const wholeKeys = wholeBodyKeysOf(toolName);
-  const readOnly = policy.readOnlyToolName(toolName);
   if (args && typeof args === 'object') {
     const pick = (o, keys) => { for (const k of keys) if (o[k] !== undefined) return typeof o[k] === 'string' ? o[k] : false; return null; };
     const visited = new Set();
@@ -904,7 +903,7 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
       if (!Array.isArray(v)) {
         if (FULL_BODY_KEYS.some((k) => typeof v[k] === 'string')) anyBody = true;
         // An append, insert or partial write: what the file holds afterwards is not the text sent, so the result is unknown.
-        if (!readOnly && partialWriteFlagIn(v, wholeKeys)) out.unresolved = true;
+        if (partialWriteFlagIn(v, wholeKeys)) out.unresolved = true;
         const oldS = pick(v, EDIT_OLD_KEYS);
         const newS = pick(v, EDIT_NEW_KEYS);
         if (oldS !== null || newS !== null) {
@@ -979,10 +978,11 @@ function argsObjectOf(ev) {
 }
 
 // A call that names a watched dotenv file but does not give the file it leaves (a copy, move, rename, link, upload, download or a
-// tool zn does not know): refused unless it is a known read-only tool (policy.readOnlyToolName). Edits go through the file editor tool.
+// tool zn does not know): refused whatever the tool is called, MCP tools included (a server can name a writing tool read_file). The
+// agents' own read tools are plain reads here and never come through this check. Edits go through the file editor tool.
 function dotenvUnseenDenial(ev, paths, pathOpts) {
   for (const p of paths) {
-    const deny = policy.dotenvUnseenWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), ev.toolName || ev.tool, pathOpts);
+    const deny = policy.dotenvUnseenWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
     if (deny) return deny;
   }
   return null;

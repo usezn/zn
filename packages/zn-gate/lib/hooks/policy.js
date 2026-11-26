@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-25.15';
+const POLICY_RULES_VERSION = '2026-11-25.16';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1029,33 +1029,18 @@ function opaqueEnvWriteDenial(p) {
   return 'Edit ' + base + ' with the file editor tool; shell writes to .env files are blocked. zn cannot see what the shell actually writes.';
 }
 
-// The tools that only read files, by exact name: the read tools of the reference filesystem MCP server, and the read tools that
-// Copilot in VS Code sends under its own names through the Claude Code hook. For an MCP tool the name is all zn knows, so this is an
-// exact list, not a guarantee: a server that calls a writing tool read_file is not caught. Any other name is not read-only.
-const READ_ONLY_TOOL_NAMES = ['read_file', 'read_text_file', 'read_media_file', 'read_multiple_files', 'list_directory',
-  'list_directory_with_sizes', 'directory_tree', 'search_files', 'get_file_info', 'list_allowed_directories', 'view', 'readFile'];
-const TOOL_NAME_SEPARATORS = new Set(['_', '-', '.', ':', '/']);
-
-/**
- * True when a tool's name is one of READ_ONLY_TOOL_NAMES, alone or after the server prefix an agent adds (mcp__fs__read_file,
- * mcp_fs_read_file, fs_read_file, fs-read_file). A name that only contains a read word (cat_file, readFileAndSync) is not read-only.
- */
-function readOnlyToolName(name) {
-  const s = String(name || '');
-  return READ_ONLY_TOOL_NAMES.some((t) => s === t ||
-    (s.length > t.length && s.endsWith(t) && TOOL_NAME_SEPARATORS.has(s.charAt(s.length - t.length - 1))));
-}
-
 /**
  * A call that names a watched dotenv file without giving zn the file it would leave there: a copy, move, rename, link, upload or
  * download, or a tool zn does not know. `texts` is what writtenTextsOf found; its `complete` flag says the resulting file is known in
- * full (a whole body, an edit applied to the file, a patch section). Refused unless the tool is a known read-only one (readOnlyToolName).
+ * full (a whole body, an edit applied to the file, a patch section). Refused whatever the tool is called: there is no read-only
+ * exemption by name. An MCP server (or any tool whose name zn cannot tie to the agent's own tool list) may call a writing tool
+ * read_file, so a name proves nothing. The agents' own read tools never reach this check: their adapters turn them into a plain
+ * read, which only gets the read checks.
  */
-function dotenvUnseenWriteDenial(p, texts, toolName, opts = {}) {
+function dotenvUnseenWriteDenial(p, texts, opts = {}) {
   const c = classifyPath(p, opts);
   if (!c || c.kind !== 'dotenv') return null;
   if (texts && texts.complete && !texts.unresolved) return null;
-  if (readOnlyToolName(toolName)) return null;
   const base = path.basename(String(p));
   return 'Edit ' + base + ' with the file editor tool; copies, moves, renames and tools zn does not know are blocked for .env files. ' +
     'zn cannot see what this call would leave in the file.';
@@ -4517,7 +4502,6 @@ module.exports = {
   writeDenial,
   loaderEnvWriteDenial,
   dotenvUnseenWriteDenial,
-  readOnlyToolName,
   adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,
