@@ -104,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `git checkout`, `git restore`, `git reset` and `git stash` in a shell command that names a project `.env` are refused: they
   write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
   under any key down to 6 levels of nesting for these files in Claude Code, Gemini CLI, Antigravity, ZCode and Copilot CLI, and a
-  call nested deeper is refused (Gemini CLI, Antigravity, ZCode and Copilot CLI also refuse a call with more than 500 objects);
+  call nested deeper, or with more than 500 objects, is refused (all of these agents except OpenCode);
   OpenCode treats such a tool as an MCP call, and Codex CLI and Cursor never send one to the hook.
 - A write to a project `.env` or `.gemini/.env` through a tool zn does not know is refused even when the call carries the
   text: such a tool may append or insert it instead of writing the whole file. Only the agents' own whole-file write tools
