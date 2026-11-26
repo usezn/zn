@@ -211,9 +211,9 @@ test('class 10: MCP copy/rename/unknown into .env is refused', async (t) => {
   await refused(copilot, cop(dir, 'file_mover', { source: src, destination: env }), 'copilot unknown file tool');
   await refused(claude, cc(dir, 'custom_runner', { command: 'cp', from: src, to: env }), 'claude unknown command tool');
   await refused(copilot, cop(dir, 'custom_runner', { command: 'cp', path: env }), 'copilot unknown command tool');
-  // In limit: reads of a .env through MCP keep their current answer, and copies between files that are not watched pass.
-  for (const [name, args] of [['read_file', { path: env }], ['read_text_file', { path: env }], ['get_file_info', { path: env }],
-    ['read_multiple_files', { paths: [env, src] }], ['list_directory', { path: dir }]]) {
+  // In limit: a list of a folder and copies between files that are not watched pass. A call that names the .env is refused whatever
+  // the tool is called (see the read_file test below).
+  for (const [name, args] of [['list_directory', { path: dir }], ['read_file', { path: src }]]) {
     await allowed(claude, cc(dir, 'mcp__fs__' + name, args), 'claude read ' + name);
     await allowed(opencode, oc(dir, 'fs_' + name, args), 'opencode read ' + name);
   }
@@ -224,15 +224,9 @@ test('class 10: MCP copy/rename/unknown into .env is refused', async (t) => {
   await allowed(codex, cdx(dir, 'mcp__fs__copy_file', { source: src, destination: other }), 'codex copy other');
   await allowed(gemini, gem(dir, 'mcp_fs_copy_file', { source: src, destination: other }), 'gemini copy other');
   await allowed(antigravity, ag(dir, 'mcp_fs_move_file', { source: src, destination: other }), 'antigravity move other');
-  await allowed(gemini, gem(dir, 'mcp_fs_read_file', { path: env }), 'gemini read');
-  await allowed(antigravity, ag(dir, 'mcp_fs_read_file', { path: env }), 'antigravity read');
   // A whole body or an edit applied to the file is still judged on what it leaves.
   await allowed(claude, cc(dir, 'mcp__fs__write_file', { path: env, content: 'PORT=2' }), 'write body');
   await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'edit');
-  assert.equal(policy.readOnlyToolName('mcp__fs__read_file'), true);
-  assert.equal(policy.readOnlyToolName('mcp__fs__read_and_copy'), false);
-  assert.equal(policy.readOnlyToolName('fs_moveFile'), false);
-  assert.equal(policy.readOnlyToolName('do_thing'), false);
 });
 
 // Read-only allowlist: git steps that write stored content into the worktree (checkout, restore, reset, stash) are not read-only for
@@ -275,23 +269,59 @@ test('class 10: unknown tools that name a .env under any key or too deep are ref
   await allowed(gemini, gem(dir, 'file_mover', { src: 'a', dst: 'b.txt' }), 'gemini other');
 });
 
-// Class 10 refinement: only an exact list of read-only file tools may name a .env without giving the file they leave. A name that
-// merely contains a read word is refused. The name is all zn knows of an MCP tool, so read_file itself stays allowed (a known limit).
-test('class 10: only exact read-only tool names may name a .env', async (t) => {
+// Class 10: an MCP tool named read_file that names a .env is refused. The name of an MCP tool proves nothing: a custom server can call
+// a writing tool read_file, and with no complete resulting text zn cannot see what it leaves. There is no read-only exemption by name
+// for MCP tools, whatever the prefix or lack of one an agent gives them.
+test('class 10: an MCP tool named read_file that names a .env is refused', async (t) => {
   const dir = project(t);
   const env = path.join(dir, '.env');
-  await allowed(claude, cc(dir, 'mcp__fs__read_file', { path: env }), 'read_file');
-  await allowed(antigravity, ag(dir, 'mcp_fs_read_file', { path: env }), 'antigravity read_file');
-  for (const name of ['readFileAndSync', 'get_and_update', 'view_and_write', 'cat_file']) {
-    await refused(claude, cc(dir, 'mcp__fs__' + name, { path: env }), 'claude ' + name);
-    await refused(opencode, oc(dir, 'fs_' + name, { path: env }), 'opencode ' + name);
-    await refused(antigravity, ag(dir, 'mcp_fs_' + name, { path: env }), 'antigravity ' + name);
-    assert.equal(policy.readOnlyToolName('mcp__fs__' + name), false, name);
+  fs.writeFileSync(env, 'PORT=1\n');
+  const src = path.join(dir, 'src.txt');
+  const readNames = ['read_file', 'read_text_file', 'read_media_file', 'read_multiple_files', 'list_directory', 'get_file_info', 'search_files'];
+  // The filesystem server's own read tools and a custom server's writer that is called read_file, under every prefix style.
+  const shapes = [{ path: env }, { path: env, content: 'LD_DEBUG=al\n', append: true }, { path: env, text: 'x' },
+    { source: src, destination: env }, { path: env, edits: [{ oldText: 'PORT=1', newText: 'LD_DEBUG=help' }] }];
+  for (const name of readNames) {
+    for (const args of shapes) {
+      const what = name + ' ' + JSON.stringify(args);
+      await refused(claude, cc(dir, 'mcp__fs__' + name, args), 'claude ' + what);
+      await refused(claude, cc(dir, 'mcp__custom_writer__' + name, args), 'claude custom ' + what);
+      await refused(codex, cdx(dir, 'mcp__fs__' + name, args), 'codex ' + what);
+      await refused(cursor, cur(dir, name, args), 'cursor ' + what);
+      await refused(opencode, oc(dir, 'fs_' + name, args), 'opencode ' + what);
+      await refused(gemini, gem(dir, 'mcp_fs_' + name, args), 'gemini ' + what);
+      await refused(antigravity, ag(dir, 'mcp_fs_' + name, args), 'antigravity ' + what);
+      await refused(copilot, cop(dir, 'fs-' + name, args), 'copilot ' + what);
+    }
   }
-  for (const name of ['read_file', 'mcp__fs__read_text_file', 'mcp_fs_list_directory', 'fs-get_file_info', 'view', 'readFile']) {
-    assert.equal(policy.readOnlyToolName(name), true, name);
+  // Bare names: the adapters that can carry an MCP call without a server prefix do not trust a read-looking name either. Codex CLI
+  // only sends Bash, apply_patch and mcp__ names to the hook (its matcher), and Gemini CLI and Antigravity prefix every MCP tool, so a
+  // bare read_file there is the agent's own tool.
+  for (const name of readNames) {
+    const args = { path: env, content: 'LD_DEBUG=al\n', append: true };
+    await refused(claude, cc(dir, name, args), 'claude bare ' + name);
+    await refused(cursor, cur(dir, name, args), 'cursor bare ' + name);
+    await refused(opencode, oc(dir, name, args), 'opencode bare ' + name);
+    await refused(copilot, cop(dir, name, args), 'copilot bare ' + name);
   }
-  for (const name of ['xread_file', 'read_file_and_copy', 'mcp__fs__overview', '']) assert.equal(policy.readOnlyToolName(name), false, name);
+  // A call that does not name a watched file is not affected.
+  await allowed(claude, cc(dir, 'mcp__custom_writer__read_file', { path: src }), 'claude other file');
+  await allowed(opencode, oc(dir, 'fs_read_file', { path: src }), 'opencode other file');
+  assert.equal(policy.readOnlyToolName, undefined);
+});
+
+// The agents' own read tools are not MCP calls: they are plain reads, which a .env may still get (a read is judged by the read
+// checks, not by the unseen-write check).
+test('class 10: the built-in read tool of each agent still reads a .env', async (t) => {
+  const dir = project(t);
+  const env = path.join(dir, '.env');
+  fs.writeFileSync(env, 'PORT=1\n');
+  await allowed(claude, cc(dir, 'Read', { file_path: env }), 'claude Read');
+  await allowed(gemini, gem(dir, 'read_file', { file_path: env }), 'gemini read_file');
+  await allowed(antigravity, ag(dir, 'view_file', { AbsolutePath: env }), 'antigravity view_file');
+  await allowed(antigravity, ag(dir, 'read_file', { path: env }), 'antigravity read_file');
+  await allowed(copilot, cop(dir, 'view', { path: env }), 'copilot view');
+  await allowed(opencode, oc(dir, 'read', { filePath: env }), 'opencode read');
 });
 
 // Class 10 refinement: a body only gives zn the file a call leaves when the tool is a known whole-body write tool (by exact name, or
@@ -333,8 +363,7 @@ test('class 10: unknown append semantics are refused, only known whole-body writ
   await allowed(opencode, oc(dir, 'fs_write_file', { path: env, content: 'PORT=2\n' }), 'opencode write_file clean');
   await allowed(cursor, cur(dir, 'write_file', { path: env, content: 'PORT=2\n' }), 'cursor write_file clean');
   await allowed(claude, cc(dir, 'mcp__fs__edit_file', { path: env, edits: [{ oldText: 'PORT=1', newText: 'PORT=3' }] }), 'mcp edit clean');
-  await allowed(claude, cc(dir, 'mcp__fs__read_file', { path: env }), 'mcp read');
-  await allowed(opencode, oc(dir, 'fs_read_text_file', { path: env }), 'opencode read');
+  await allowed(claude, cc(dir, 'Read', { file_path: env }), 'claude read');
   // The file is unchanged by these checks.
   assert.equal(fs.readFileSync(env, 'utf8'), 'PORT=1\nLD_DEBUG=al\n');
 });

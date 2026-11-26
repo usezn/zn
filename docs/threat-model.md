@@ -627,7 +627,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
     patch) instead; zn checks what it writes on the real text. Reads of the file are not affected.
     Every write to such a file through the editor tool, a patch, an unknown tool or an MCP server (all agents) is judged on the
     file it would leave: zn applies the edit or patch to the file on disk, reads white space and line breaks around `=` or `:` and
-    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file. A tool zn does not know is read under any key and at any depth, and a call whose arguments zn cannot walk to the end is refused. A call that names such a file without giving the file it leaves (a copy, move, rename, link or a tool zn does not know) is refused unless its exact name is a known read-only file tool (the filesystem MCP server's `read_file`, `list_directory` and the like). For an MCP server the name is all zn knows, so a server that gives a writing tool such a name is not caught.
+    names split by quotes or a backslash as the assignment they are, and refuses the write when it cannot work out the resulting file. A tool zn does not know is read under any key down to 6 levels of nesting (and at most 500 objects), and a call whose arguments are nested deeper or are larger than that is refused. A call that names such a file without giving the file it leaves (a copy, move, rename, link or a tool zn does not know) is refused whatever the tool is called. There is no read-only exemption by name for MCP tools: a tool name proves nothing, because a custom MCP server can call a writing tool `read_file`, so an MCP call that names such a file without a complete resulting text is refused (reads of a `.env` go through the agent's own read tool). The agents' own read tools (Claude Code `Read`, Gemini CLI and Antigravity `read_file`, Copilot `view`, OpenCode `read`) are plain reads and are not affected.
     `help` counts wherever it stands in
     the value as a separate word, also after a slash, a bracket or a backslash (`LD_DEBUG=libs/,help`), so no value is read
     shorter than glibc reads it. The agents' own settings files (`.claude/settings*.json`, `.codex/`, `.gemini/settings.json`)
@@ -636,7 +636,7 @@ Three features are off by default. Each one helps in a narrow case and has limit
     what `zn audit` is for.
     The same writes are refused when they set a preload variable of that list (`LD_PRELOAD`, `LD_AUDIT`,
     `DYLD_INSERT_LIBRARIES` and the others except `LD_DEBUG`) to a value, because the loader runs that library inside the
-    shell of every hook before zn can refuse anything; an empty value is allowed.
+    shell of every hook before zn can refuse anything; an empty value is allowed only as the last assignment of the file, written with the editor tool: an empty assignment followed by any other line is refused, and every shell write of such an assignment is refused.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
