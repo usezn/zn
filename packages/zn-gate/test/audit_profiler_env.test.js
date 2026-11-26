@@ -94,3 +94,11 @@ test('in the env of one MCP server a .NET profiler loads code into that server (
   assert.equal(f[0].severity, 'high');
   assert.match(f[0].detail, /MCP server "demo"/);
 });
+
+test('the profiler finding does not claim that the hooks refuse it', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'lib', 'audit', 'index.js'), 'utf8');
+  const line = src.split('\n').find((l) => l.includes("turns on a .NET profiler for every process"));
+  assert.ok(line, 'profiler finding text not found');
+  assert.doesNotMatch(line, /hooks refuse/);
+  assert.match(line, /cannot refuse it/);
+});
