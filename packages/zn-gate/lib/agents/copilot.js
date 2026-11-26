@@ -432,9 +432,7 @@ function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
   // loose (a tool zn does not know): a string that looks like a path counts under any key, deeper than the named keys.
-  // nodeCap: false reads every node (the depth still bounds the walk), for a caller that must not refuse a wide call.
   const loose = opts.loose === true;
-  const nodeCap = opts.nodeCap !== false;
   // A name like $DIR.env or %DIR%.env (a variable before a dotenv name) counts too.
   const pathLike = (v) => /^[~.]|[\\/]/.test(v) || /^[$%!].*\.env(?:\.[A-Za-z0-9_.-]+)?$/i.test(v);
   const add = (k, v) => {
@@ -451,7 +449,7 @@ function pathsOf(args, opts = {}) {
   const maxDepth = MAX_NEST_DEPTH;
   let nodes = 0;
   const walk = (obj, depth) => {
-    if (loose && nodeCap && ++nodes > MAX_NEST_NODES) { bad = true; return; }
+    if (loose && ++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
