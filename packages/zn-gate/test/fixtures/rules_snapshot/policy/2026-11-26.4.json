@@ -1,6 +1,6 @@
 {
   "version_const": "POLICY_RULES_VERSION",
-  "version": "2026-11-25.9",
+  "version": "2026-11-26.4",
   "ids": [
     "INSTRUCTION_FILE_NAMES",
     "SHELL_SCAN_CAP",
@@ -13,6 +13,7 @@
     "bashDenial",
     "classifyPath",
     "classifyWord",
+    "dotenvUnseenWriteDenial",
     "egressDecodedCopies",
     "egressLabel",
     "egressMcpCovers",
@@ -35,14 +36,14 @@
     "writeDenial"
   ],
   "sha256": {
-    "lib/hooks/policy.js": "09f2f210e776e58364fd486b07cd33b2c1ef7bffef8b226bf04bec6d18385a30",
+    "lib/hooks/policy.js": "6ae3dc280a0a00ab1010b53afb850da23525e827f2ed3ed8662edf85fcb23476",
     "lib/hooks/curl-files.js": "c1c87057eabf0f7cf1eccacf1822ec92e6242b328455b0756d269a168945a6c8",
     "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
     "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
     "lib/broker/dotenv.js": "e6ae0b84799952f72a342f697dc357b128b5d5e2a0b1a82d500515fdc6395ebf",
     "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
-    "lib/destructive.js": "91f7b0093783dd23f772365e13ef42ead10790942075d8e2930dcfa6a9ad8540",
+    "lib/destructive.js": "58b5eef590357a6c4b1bb49bb4391a451f32b386e5e241818d09bc2cdb10e18d",
     "lib/shell-vars.js": "47e859639e910b2d1919a29eedac06b5da6c731426ee1aa87c05d2469b7c6492",
-    "lib/loader-env.js": "a0ba939ec390fcedc3c32174a186d3e05ce6aa4df71455d5b201f86d58ec3282"
+    "lib/loader-env.js": "859ad5a5e5b85b4f62c443832343ba10784cbb64a9d59050b18c329a159301fc"
   }
 }
