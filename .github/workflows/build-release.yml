@@ -121,6 +121,9 @@ jobs:
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitsign" "$url"
           echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum --strict -c -
           chmod +x "$RUNNER_TEMP/gitsign"
+          # The sparse checkout above sets extensions.worktreeConfig, which gitsign cannot read ("does not support
+          # extension: worktreeconfig"). This job only reads the tag, so drop the setting before the signature check.
+          git config --local --unset-all extensions.worktreeConfig || true
           "$RUNNER_TEMP/gitsign" verify-tag "$TAG" \
             --certificate-identity "https://github.com/usezn/zn/.github/workflows/tag-release.yml@refs/heads/main" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
