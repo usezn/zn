@@ -45,6 +45,9 @@ const GOOD_NOTICES = [
   '',
 ].join('\n');
 
+// The notices a tarball with the static hook launcher needs on top (what is linked into the launcher).
+const LAUNCHER_NOTICES = GOOD_NOTICES + ['## Rust standard library (static hook launcher)', '', '## musl libc (static hook launcher)', ''].join('\n');
+
 // A package directory. `pkg` is merged over a valid package.json; `lock` replaces the
 // package-lock.json object; `notices` replaces THIRD_PARTY_NOTICES.md.
 function packageDir({ pkg = {}, lock, notices = GOOD_NOTICES } = {}) {
@@ -103,18 +106,18 @@ function withLauncher(dir, { wrongSha = false } = {}) {
 }
 
 test('--hook-launcher: a tarball with both launchers and a matching list passes', () => {
-  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir()), '--hook-launcher');
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir({ notices: LAUNCHER_NOTICES })), '--hook-launcher');
   assert.equal(r.status, 0, r.stderr);
 });
 
 test('--hook-launcher: a launcher missing from the tarball fails', () => {
-  const r = run(packJson({ files: [...OWN, ...BUNDLED, LAUNCHER[0], LAUNCHER[1]] }), withLauncher(packageDir()), '--hook-launcher');
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, LAUNCHER[0], LAUNCHER[1]] }), withLauncher(packageDir({ notices: LAUNCHER_NOTICES })), '--hook-launcher');
   assert.equal(r.status, 1);
   assert.ok(r.stderr.includes('static hook launcher file not in tarball: lib/native/linux-arm64/zn-hook-launcher'), r.stderr);
 });
 
 test('--hook-launcher: a launcher that does not match the list fails', () => {
-  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir(), { wrongSha: true }), '--hook-launcher');
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir({ notices: LAUNCHER_NOTICES }), { wrongSha: true }), '--hook-launcher');
   assert.equal(r.status, 1);
   assert.ok(r.stderr.includes('static hook launcher linux-arm64 does not match lib/native/hook-launcher.json'), r.stderr);
 });
@@ -241,4 +244,14 @@ test('pack output that is not JSON fails closed', () => {
 test('a bin written as a string shorthand is read as one target', { todo: 'known bug: Object.values() on a string bin splits it into characters, so a valid package fails with "missing required file: ."' }, () => {
   const r = run(packJson(), packageDir({ pkg: { bin: './bin/cli.js' } }));
   assert.equal(r.status, 0, r.stderr);
+});
+
+test('a tarball with the static hook launcher needs the Rust standard library and musl libc notices', () => {
+  const r = run(packJson({ files: [...OWN, ...BUNDLED, ...LAUNCHER] }), withLauncher(packageDir()), '--hook-launcher');
+  assert.notEqual(r.status, 0);
+  assert.ok(r.stderr.includes('no "## Rust standard library" section'), r.stderr);
+  assert.ok(r.stderr.includes('no "## musl libc" section'), r.stderr);
+  // Without the launcher in the tarball the notices are not needed.
+  const plain = run(packJson(), packageDir());
+  assert.equal(plain.status, 0, plain.stderr);
 });

@@ -1,2 +1,0 @@
-### Security
-- The Go client also refuses a redirect to plain http (except to localhost, 127.0.0.1 and [::1]) and returns an error wrapping `ErrInsecureBaseURL` without sending the request, so the API key cannot travel in clear text after an https answer redirects. The check applies to a client you pass with `WithHTTPClient` too; your client is copied, not changed, and its own `CheckRedirect` still runs.

@@ -9,7 +9,7 @@ import sys
 import types
 from typing import TYPE_CHECKING, Any, Dict, List
 
-__version__ = "1.17.0"
+__version__ = "1.18.0"
 
 from .rules import Assessment, RULES_VERSION, evaluate, normalize_input, redact_secrets, sanitize_tool_result, SanitizedToolResult
 

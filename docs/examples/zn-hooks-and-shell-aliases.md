@@ -66,7 +66,7 @@ zn-gate version
 ```
 
 ```text
-zn-gate 1.17.0 (rules engine: 2026-11-08.11; scrub rules: 2026-10-31.1; audit rules: 2026-11-06.4)
+zn-gate 1.18.0 (rules engine: 2026-11-08.11; scrub rules: 2026-10-31.1; audit rules: 2026-11-06.4)
 ```
 
 `command zn` and `\zn` skip aliases and functions for that one call. `zn-gate` is the same program under its other name, so an alias on `zn` does not touch it. To remove the alias or the function for the rest of the session, run `unalias zn` or `unset -f zn`; to remove it for good, delete the line from your shell startup file.
