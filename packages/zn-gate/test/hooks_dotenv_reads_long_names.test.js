@@ -226,3 +226,18 @@ test('a percent-encoded file: URI naming .env on a line of a multi-line value is
     }
   }
 });
+
+// A dotenv runner makes its -e / -f value a read only as the program word or right after a launcher; as an argument of another
+// program (node -e "..." dotenv -e .env) it is a plain word, so the .env there is judged like any other.
+test('dotenv counts as a runner only as the program or right after a launcher', async (t) => {
+  const dir = project(t);
+  for (const command of ['dotenv -e .env -- node app.js', 'npx dotenv -e .env -- node app.js', 'bunx dotenv -e .env -- node app.js',
+    'pnpm dlx dotenv -e .env -- node app.js', 'yarn dlx dotenv -e .env -- node app.js', 'npm exec dotenv -e .env -- node app.js',
+    'dotenvx run -f .env -- node app.js']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', command);
+  }
+  for (const command of ["node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" dotenv -e .env",
+    'python3 w.py dotenv -e .env', 'cp notes.txt dotenv -e .env', 'echo dotenv -e .env | sh']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
+  }
+});
