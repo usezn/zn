@@ -15,12 +15,12 @@ function tmpdir(t) {
   return d;
 }
 
-test('check lists Copilot CLI and Gemini CLI as experimental', async (t) => {
+test('check names VS Code with Copilot and marks Copilot CLI and Gemini CLI as experimental', async (t) => {
   const home = tmpdir(t);
   const cwd = tmpdir(t);
   const { results } = await check({ home, env: { HOME: home, PATH: '' }, cwd, live: false });
   const byId = Object.fromEntries(results.map((r) => [r.id, r.name]));
-  assert.strictEqual(byId.copilot, 'Copilot CLI (experimental)');
+  assert.strictEqual(byId.copilot, 'GitHub Copilot (CLI experimental, VS Code not tested)');
   assert.strictEqual(byId.gemini, 'Gemini CLI (experimental)');
   for (const r of results) assert.notStrictEqual(r.name, 'GitHub Copilot (VS Code, CLI)');
 });
