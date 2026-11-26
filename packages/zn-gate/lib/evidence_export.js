@@ -1,6 +1,6 @@
 'use strict';
 
-// Streams the evidence log into a jsonl or csv export while it checks the hash chain, so a log of
+// Streams the evidence log into a jsonl, csv or Timesketch export while it checks the hash chain, so a log of
 // any size is exported in bounded memory. The log is read in chunks up to the size it had when the
 // export started (records appended meanwhile wait for the next export). The chain check gives the
 // same result, with the same messages, as verifyEvidenceLedger, and any read error stops the export
@@ -30,6 +30,71 @@ const CSV_HEADER_LINE = CSV_HEADERS.join(',');
 function csvRow(obj) {
   return CSV_HEADERS.map((h) => {
     const val = obj[h] !== undefined && obj[h] !== null ? String(obj[h]) : '';
+    return `"${val.replace(/"/g, '""')}"`;
+  }).join(',');
+}
+
+// Timesketch exports ('timesketch' = JSON Lines, 'timesketch-csv'). Timesketch needs message,
+// datetime and timestamp_desc on every event (CSV also takes timestamp in microseconds); every
+// other key becomes a searchable attribute. The message is built only from the verdict, tool,
+// agent and rule id, and payload_preview (text the agent wrote) is never exported here.
+const TIMESKETCH_FORMATS = new Set(['timesketch', 'timesketch-csv']);
+const TIMESKETCH_DESC = 'zn-gate hook decision';
+const TIMESKETCH_DATA_TYPE = 'zn:gate:decision';
+const TIMESKETCH_RECORD_FIELDS = [
+  ['zn_id', 'id'],
+  ['zn_agent', 'agent_environment'],
+  ['zn_phase', 'phase'],
+  ['zn_tool', 'tool_name'],
+  ['zn_verdict', 'verdict'],
+  ['zn_rule', 'rule'],
+  ['zn_reason', 'reason'],
+  ['zn_confidence', 'confidence'],
+  ['zn_engine', 'engine'],
+  ['zn_latency_us', 'latency_us'],
+  ['zn_payload_sha256', 'payload_sha256'],
+  ['zn_record_hash', 'record_hash'],
+  ['zn_prev_hash', 'prev_hash'],
+];
+const TIMESKETCH_CSV_HEADERS = [
+  'message', 'datetime', 'timestamp', 'timestamp_desc', 'data_type',
+  ...TIMESKETCH_RECORD_FIELDS.map(([k]) => k),
+  'zn_chain_index', 'zn_chain_verified',
+];
+const TIMESKETCH_CSV_HEADER_LINE = TIMESKETCH_CSV_HEADERS.join(',');
+const UTC_ISO_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
+
+/** A UTC ISO 8601 time (the form the hook writes) as integer microseconds since the epoch, else ''. */
+function timesketchMicros(ts) {
+  const m = typeof ts === 'string' ? UTC_ISO_RE.exec(ts) : null;
+  if (!m) return '';
+  const secs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000;
+  if (!Number.isFinite(secs)) return '';
+  const frac = m[7] ? Number(m[7].padEnd(6, '0')) : 0;
+  return (BigInt(secs) * 1000000n + BigInt(frac)).toString();
+}
+
+const plainText = (v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+
+function timesketchEvent(rec, index, verified) {
+  const rule = plainText(rec.rule);
+  const ev = {
+    message: `${plainText(rec.verdict)} ${plainText(rec.tool_name)} by ${plainText(rec.agent_environment)}` + (rule ? ` (rule ${rule})` : ''),
+    datetime: plainText(rec.timestamp),
+    timestamp_desc: TIMESKETCH_DESC,
+    data_type: TIMESKETCH_DATA_TYPE,
+  };
+  for (const [key, field] of TIMESKETCH_RECORD_FIELDS) ev[key] = rec[field] === undefined ? null : rec[field];
+  ev.zn_chain_index = index;
+  ev.zn_chain_verified = verified;
+  return ev;
+}
+
+function timesketchLine(format, rec, index, verified) {
+  const ev = timesketchEvent(rec, index, verified);
+  if (format === 'timesketch') return JSON.stringify(ev);
+  return TIMESKETCH_CSV_HEADERS.map((h) => {
+    const val = h === 'timestamp' ? timesketchMicros(rec.timestamp) : plainText(ev[h]);
     return `"${val.replace(/"/g, '""')}"`;
   }).join(',');
 }
@@ -91,16 +156,19 @@ function createExporter(deps) {
       }
       expectedPrevHash = record_hash;
     }
+    // True while every line checked so far verified.
+    const ok = () => failure === null;
     function result(total) {
       if (!failure) return { valid: true, total, verified: total, broken_index: null, error: null };
       if (failure.truncated !== undefined) return truncatedTailResult(total, failure.truncated);
       return { valid: false, total, verified: failure.verified, broken_index: failure.broken_index, error: failure.error };
     }
-    return { check, result };
+    return { check, result, ok };
   }
 
   /**
-   * Yields the export text in pieces. format: 'jsonl', 'csv' or 'none' (check only). When the
+   * Yields the export text in pieces. format: 'jsonl', 'csv', 'timesketch', 'timesketch-csv' or
+   * 'none' (check only). Timesketch events carry the chain check per record. When the
    * generator finishes, state.result holds { format, valid, total, verified, broken_index, error,
    * tip_hash, truncated_tail?, bytes }. opts.size limits the read to that many bytes (a size found
    * by an earlier pass). Throws EvidenceLedgerError when the log cannot be read in full.
@@ -109,6 +177,7 @@ function createExporter(deps) {
     const chunkSize = Math.max(1, (testHooks && testHooks.exportChunkSize) || DEFAULT_CHUNK);
     if (!fs.existsSync(filePath)) {
       if (format === 'csv') yield CSV_HEADER_LINE + '\n';
+      if (format === 'timesketch-csv') yield TIMESKETCH_CSV_HEADER_LINE + '\n';
       state.result = { format, valid: true, total: 0, verified: 0, broken_index: null, error: null, tip_hash: genesisHash, bytes: 0 };
       return;
     }
@@ -137,9 +206,18 @@ function createExporter(deps) {
     let csvParts = [];
     let csvLen = 0;
     if (format === 'csv') { csvParts.push(CSV_HEADER_LINE + '\n'); csvLen = CSV_HEADER_LINE.length + 1; }
+    if (format === 'timesketch-csv') { csvParts.push(TIMESKETCH_CSV_HEADER_LINE + '\n'); csvLen = TIMESKETCH_CSV_HEADER_LINE.length + 1; }
+    const timesketch = TIMESKETCH_FORMATS.has(format);
 
     const flushHeld = (isLast) => {
       checker.check(held.text, held.rec, held.parseError, held.bad, isLast);
+      // A Timesketch event is written once its line is checked, so it says whether it verified.
+      const rec = held.rec;
+      if (timesketch && !held.parseError && rec !== null && typeof rec === 'object' && !Array.isArray(rec)) {
+        const line = timesketchLine(format, rec, held.index, checker.ok());
+        csvParts.push(line + '\n');
+        csvLen += line.length + 1;
+      }
       held = null;
     };
     const takeLine = (bytes) => {
@@ -157,7 +235,7 @@ function createExporter(deps) {
       let parseError = null;
       try { rec = JSON.parse(lineText); } catch (e) { parseError = e; }
       if (held) flushHeld(false);
-      held = { text: lineText, rec, parseError, bad };
+      held = { text: lineText, rec, parseError, bad, index: total };
       total++;
       tipText = lineText;
       if (format === 'csv' && !parseError) {
@@ -217,7 +295,7 @@ function createExporter(deps) {
       // The export always ends with a newline (an empty log gives one newline, as before).
       const tail = size > 0 && lastByte === 0x0a ? rest : rest + '\n';
       if (tail) yield tail;
-    } else if (format === 'csv' && csvParts.length) {
+    } else if ((format === 'csv' || timesketch) && csvParts.length) {
       yield csvParts.join('');
     }
 
@@ -270,4 +348,6 @@ function createExporter(deps) {
   return { exportChunks, exportToString, writeExport, CSV_HEADER_LINE };
 }
 
-module.exports = { createExporter };
+const EXPORT_FORMATS = ['jsonl', 'csv', 'timesketch', 'timesketch-csv'];
+
+module.exports = { createExporter, EXPORT_FORMATS, timesketchMicros, TIMESKETCH_CSV_HEADERS };

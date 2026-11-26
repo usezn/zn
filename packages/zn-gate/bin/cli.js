@@ -372,7 +372,7 @@ EVIDENCE OPTIONS:
   --verify            Verify the SHA-256 hash chain across all records
   --ui                Launch local zero-dependency audit dashboard in browser
   --export            Export audit records to JSONL or CSV
-  --format <jsonl|csv> Export format (default: jsonl)
+  --format <jsonl|csv|timesketch|timesketch-csv> Export format (default: jsonl)
   --output <file>     Write exported audit records to target file
   --port <number>     Set HTTP port for dashboard (default: 3100)
   --tail <number>     Display the last N security records (default: 20)
@@ -1389,9 +1389,9 @@ ${ruleLine(process.env, 60)}\n`);
   if (command === 'evidence' || command === 'logs' || command === 'export') {
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
-      if (format !== 'jsonl' && format !== 'csv') {
+      if (!require('../lib/evidence_export').EXPORT_FORMATS.includes(format)) {
         const shown = String(options.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
-        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl and csv.\n`);
+        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl, csv, timesketch and timesketch-csv.\n`);
         process.exitCode = 2;
         return;
       }

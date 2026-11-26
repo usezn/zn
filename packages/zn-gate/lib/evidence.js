@@ -794,11 +794,12 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
  * true) if the output cannot be written. The stream is left open.
  *
  * @param {string} filePath
- * @param {('jsonl'|'csv')} format
+ * @param {('jsonl'|'csv'|'timesketch'|'timesketch-csv')} format
  * @param {import('stream').Writable} out
  */
 async function writeEvidenceExport(filePath, format, out) {
-  const normFormat = (format || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl';
+  const asked = (format || 'jsonl').toLowerCase();
+  const normFormat = require('./evidence_export').EXPORT_FORMATS.includes(asked) ? asked : 'jsonl';
   return exporter.writeExport(filePath, normFormat, out);
 }
 
