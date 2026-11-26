@@ -980,8 +980,11 @@ function dotenvNamesIn(args, pathOpts) {
       if (c && c.kind === 'dotenv') { out.push(n); break; }
     }
   };
-  const walk = (v, depth) => {
+  const freeText = require('../agents/copilot').freeTextDotenvWord;
+  const walk = (v, depth, key) => {
     if (typeof v === 'string') {
+      // A free-text key holding only a bare .env name (a search for ".env") is a word, not a file.
+      if (freeText(key, v)) return;
       // Text with line breaks is content (a body, a message), but a tool may take one name per line: every nonempty line is checked
       // as a name, under any key, the same way as a one-line value.
       if (/[\r\n]/.test(v)) {
@@ -991,7 +994,8 @@ function dotenvNamesIn(args, pathOpts) {
       checkOne(v);
     } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
       seen.add(v);
-      for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
+      if (Array.isArray(v)) for (const x of v) walk(x, depth + 1, key);
+      else for (const [k, x] of Object.entries(v)) walk(x, depth + 1, k);
     }
   };
   walk(args, 0);

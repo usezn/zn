@@ -226,3 +226,18 @@ test('a percent-encoded file: URI naming .env on a line of a multi-line value is
     }
   }
 });
+
+// A search, title or message that is only the word ".env" is text, not a file: it passes. A path (./.env, sub/.env) under the same
+// keys, and a bare .env under a file key or any other key, is still refused.
+test('a free-text value that is only the word .env passes; a path to .env under the same key does not', async (t) => {
+  const dir = project(t);
+  for (const [key, value] of [['query', '.env'], ['q', '.env.local'], ['title', ' .env '], ['search', '.env']]) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__search__find', { [key]: value })), 'allow', 'claude ' + key);
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_search_find', { [key]: value })), 'allow', 'gemini ' + key);
+    assert.equal(await verdict(copilot, cop(dir, 'search-find', { [key]: value })), 'allow', 'copilot ' + key);
+  }
+  for (const [key, value] of [['query', './.env'], ['query', 'sub/.env'], ['path', '.env'], ['target', '.env'], ['x', '.env']]) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__fs__write', { [key]: value, content: 'X=1' })), 'deny', 'claude ' + key + ' ' + value);
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_fs_write', { [key]: value, content: 'X=1' })), 'deny', 'gemini ' + key + ' ' + value);
+  }
+});

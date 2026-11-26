@@ -428,6 +428,14 @@ function localFileUrl(v) {
  * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
  * call is refused, never dropped.
  */
+// Keys that hold free text (a search, a title, a message): a value there that is only a bare dotenv name (".env", ".env.local", no
+// folder, no ./ in front) is a word of the text, not a file the call opens. With a folder or ./ it still counts as a file name.
+const FREE_TEXT_KEY_RE = /^(?:q|query|queries|search|search_?term|text|title|body|message|messages|description|prompt|question|comment|summary|subject|note|notes)$/i;
+const BARE_DOTENV_RE = /^\s*\.env(?:\.[A-Za-z0-9_-]+)*\s*$/i;
+/** Whether a value under this key is free text that merely names .env (a search for ".env"), not a file the call uses. */
+function freeTextDotenvWord(k, v) {
+  return typeof k === 'string' && FREE_TEXT_KEY_RE.test(k) && typeof v === 'string' && BARE_DOTENV_RE.test(v);
+}
 // A value that starts like a file name: ~ or . first, a drive letter, or a slash or backslash.
 const STARTS_LIKE_PATH_RE = /^(?:[~.]|[A-Za-z]:[\\/]|[\\/])/;
 // A value that ends in a dotenv name (sub/.env, .env.local): counted under any key, so a tool that takes one name per line is seen.
@@ -488,7 +496,7 @@ function pathsOf(args, opts = {}) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
       } else if (loose) {
-        if (typeof v === 'string' && pathLike(v)) add(k, v);
+        if (typeof v === 'string' && pathLike(v) && !freeTextDotenvWord(k, v)) add(k, v);
         else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === 'string' && pathLike(x)) add(k, x); });
       }
       if (depth < maxDepth) {
@@ -728,6 +736,7 @@ module.exports = {
   copilotHome,
   pathsOf,
   pathCandidatesOf,
+  freeTextDotenvWord,
   firstString,
   COMMAND_KEYS,
   patchTextOf,
