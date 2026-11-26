@@ -984,8 +984,8 @@ function dotenvNamesIn(args, pathOpts) {
     if (typeof v === 'string') {
       // Text with line breaks is content (a body, a message), but a tool may take one name per line: every nonempty line is checked
       // as a name, under any key, the same way as a one-line value.
-      if (/[\r\n]/.test(v)) {
-        for (const line of v.split(/\r\n|\r|\n/)) if (line.trim()) checkOne(line);
+      if (/[\r\n\u2028\u2029\u0085]/.test(v)) {
+        for (const line of v.split(/\r\n|[\r\n\u2028\u2029\u0085]/)) if (line.trim()) checkOne(line);
         return;
       }
       checkOne(v);

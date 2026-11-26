@@ -226,3 +226,18 @@ test('a percent-encoded file: URI naming .env on a line of a multi-line value is
     }
   }
 });
+
+// A tool may take a list of names on one line: under a file key each piece between tabs, commas or spaces is checked, and the
+// Unicode line separators split lines like CR and LF. Free text under other keys is not split.
+test('a .env in a list of names under a file key, or after a Unicode line separator, is refused', async (t) => {
+  const dir = project(t);
+  for (const value of ['notes.txt\t.env', 'notes.txt,.env', 'notes.txt .env', 'notes.txt\u2028.env', 'notes.txt\u2029sub/.env', 'a.txt, ./.env.local']) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__custom__write_names', { path: value })), 'deny', 'claude ' + JSON.stringify(value));
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_custom_write_names', { path: value })), 'deny', 'gemini ' + JSON.stringify(value));
+    assert.equal(await verdict(antigravity, ag(dir, 'mcp_custom_write_names', { path: value })), 'deny', 'antigravity ' + JSON.stringify(value));
+    assert.equal(await verdict(copilot, cop(dir, 'custom-write_names', { path: value })), 'deny', 'copilot ' + JSON.stringify(value));
+  }
+  for (const [key, value] of [['path', 'My Documents/report.txt'], ['query', 'how to load .env in node'], ['title', 'fix .env, then test']]) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__custom__tool', { [key]: value })), 'allow', 'claude ' + key);
+  }
+});
