@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.2';
+const POLICY_RULES_VERSION = '2026-11-26.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3017,7 +3017,7 @@ function bashDenialOf(cmd, opts = {}) {
   // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
   // or a joined path too long to judge: refused, not checked in part.
   if (listed.over) return TOO_SLOW_MESSAGE;
-  for (const w of withEqualsReadings(listed)) {
+  for (const w of withGluedDotenvReadings(withEqualsReadings(listed), opts)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (w.atFile) {
@@ -3146,6 +3146,44 @@ const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
  * `-X:a=.env` is a PowerShell colon value ("a=.env") and also a --name=value word (".env"): the colon reading would hide the
  * second one, so the text after the first '=' is judged as a word of its own as well.
  */
+// A sed substitution with the w flag and its file glued on: s<d>pattern<d>replacement<d>flags w file (any delimiter, escapes allowed).
+const SED_SUBST_WRITE_RE = /^s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiIeEmM0-9]*w(.+)$/;
+// Programs whose volume or mount option names a host file inside a longer spec (-v ./.env:/app/e:rw, --mount source=./.env,target=/x).
+const CONTAINER_HEADS = new Set(['docker', 'podman', 'nerdctl', 'docker-compose', 'podman-compose']);
+/**
+ * Extra readings of words that hold a watched dotenv name glued to something else, so the name gets the same checks as when it
+ * stands alone: an option with its value attached (sort -o.env, -o./sub/.env), a sed write command with its file attached (w.env,
+ * W./.env), and the parts of a container volume or mount spec (./.env:/app/e:rw, source=./.env,target=/x). A reading is added only
+ * when the glued part classifies as a watched dotenv file.
+ */
+function withGluedDotenvReadings(words, opts) {
+  let extra = null;
+  const isDotenv = (t) => { const c = t ? classifyWord(t, opts) : null; return !!c && c.kind === 'dotenv'; };
+  const add = (w, t) => { (extra || (extra = [])).push({ ...w, text: t }); };
+  for (const w of words) {
+    if (w.git || typeof w.text !== 'string' || w.text.length > 4096) continue;
+    const t = w.text;
+    const prog = programName(w.head);
+    // -o.env, -O./sub/.env, --x./.env: an option of one or two dashes with a name glued to it (no = sign; that reading exists already).
+    const opt = /^-{1,2}[A-Za-z][A-Za-z0-9]*?([.~\/\\].*)$/.exec(t);
+    if (opt && t.indexOf('=') < 0 && isDotenv(opt[1])) add(w, opt[1]);
+    // sed's w and W commands write the file named right after them, and so does the w flag of a substitution (s/a/b/w.env, s|a|b|gw.env).
+    if (prog === 'sed' || prog === 'gsed' || w.head === '') {
+      if (/^[wW]./.test(t) && isDotenv(t.slice(1))) add(w, t.slice(1));
+      const sub = SED_SUBST_WRITE_RE.exec(t);
+      if (sub && isDotenv(sub[2])) add(w, sub[2]);
+    }
+    // A container volume or mount spec: each part between : , and = is checked, after an attached short option (-v./.env:/app/e).
+    if (CONTAINER_HEADS.has(prog) && /[:,=]/.test(t)) {
+      const spec = /^-[A-Za-z]([^-].*)$/.exec(t);
+      for (const src of spec ? [t, spec[1]] : [t]) {
+        for (const part of src.split(/[:,=]/)) if (part !== t && isDotenv(part)) add(w, part);
+      }
+    }
+  }
+  return extra ? words.concat(extra) : words;
+}
+
 function withEqualsReadings(words) {
   let extra = null;
   for (const w of words) {
