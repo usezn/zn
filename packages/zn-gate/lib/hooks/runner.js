@@ -770,27 +770,25 @@ const EDIT_TOOL_NAME_RE = /edit|replace/i;
 const WHOLE_BODY_TOOLS = new Map([
   ['Write', ['content']], // the Claude CLI agent, Cursor and Z Code
   ['write', ['content']], // OpenCode
-  ['write_file', ['content', 'Content']], // Gemini CLI, Antigravity, and the reference filesystem MCP server (content)
+  ['write_file', ['content', 'Content']], // Gemini CLI and Antigravity
   ['write_to_file', ['CodeContent']], // Antigravity
   ['create', ['file_text']], // GitHub Copilot CLI
 ]);
-// The filesystem server's write_file after the prefix an agent adds to an MCP tool: mcp__fs__write_file (Claude CLI agent, Codex
-// CLI), mcp_fs_write_file (Gemini CLI, Antigravity), fs_write_file (OpenCode), fs-write_file (Copilot). The server name is one word,
-// so a longer tool name that ends in write_file (copy_and_write_file) is not this tool. As for read-only names, the name is all zn
-// knows of an MCP tool.
-const MCP_WHOLE_BODY_RE = /^(?:mcp__(?:(?!__)[A-Za-z0-9_-])+__|mcp_[A-Za-z0-9-]+_|[A-Za-z0-9]+[-_.:/])write_file$/;
 // A name or an argument that says the text is added to the file, not written as the whole file.
 const PARTIAL_WRITE_WORD_RE = /append|prepend|insert/i;
 const WRITE_MODE_KEY_RE = /^(?:mode|flags?|write_?mode|open_?mode)$/i;
 const WHOLE_WRITE_MODE_RE = /^(?:w|wb|w\+|write|overwrite|replace|create|truncate)$/i;
 const POSITION_KEY_RE = /^(?:position|offset|line|line_?number|start_?line|insert_?line|at)$/i;
 
+// The events the adapters build for an agent's own file tools (never for an MCP tool or a tool zn does not know).
+const OWN_WRITE_KINDS = new Set(['write', 'edit', 'multiedit', 'notebookedit']);
+
 // The body keys of a known whole-body write tool, or null.
 function wholeBodyKeysOf(toolName) {
   const s = String(toolName || '');
   if (PARTIAL_WRITE_WORD_RE.test(s)) return null;
   if (WHOLE_BODY_TOOLS.has(s)) return WHOLE_BODY_TOOLS.get(s);
-  return MCP_WHOLE_BODY_RE.test(s) ? WHOLE_BODY_TOOLS.get('write_file') : null;
+  return null;
 }
 
 // True when an argument object asks for an append, a prepend, an insert or a write at a position: an append flag that is set, a
@@ -945,6 +943,10 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
   // The file this call leaves is known in full: the whole body of a known write tool, an edit applied to the file, or a patch section
   // for it. A body sent to a tool zn does not know (an append or insert tool) is not: the call is refused (dotenvUnseenWriteDenial).
   if (hasBody || (patched && editsGiveFile)) out.complete = true;
+  // Only the agent's own write and edit tools (the adapters turn them into these events) give the file a call leaves. An MCP tool, or
+  // a tool zn does not know, can give any meaning to a name or to a body (a server's write_file may append, its edit tool may insert),
+  // so its result is never known, whatever the name.
+  if (!OWN_WRITE_KINDS.has(ev.tool)) out.complete = false;
   return out;
 }
 
@@ -982,6 +984,11 @@ function argsObjectOf(ev) {
 // agents' own read tools are plain reads here and never come through this check. Edits go through the file editor tool.
 function dotenvUnseenDenial(ev, paths, pathOpts) {
   for (const p of paths) {
+    // An MCP call that names a watched dotenv file is refused outright, with or without a body: zn does not read an MCP body for it.
+    if (ev.tool === 'mcp') {
+      const c = policy.classifyPath(p, pathOpts);
+      if (c && c.kind === 'dotenv') return 'Edit ' + path.basename(String(p)) + " with the agent's own file editor; MCP tools may not touch .env files.";
+    }
     const deny = policy.dotenvUnseenWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
     if (deny) return deny;
   }

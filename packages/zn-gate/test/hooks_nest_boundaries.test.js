@@ -95,8 +95,8 @@ test('decisions at the node limit: Gemini CLI, Antigravity and Copilot CLI read 
     assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES - 1, other))), false, id + ' other at the limit');
     assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES, other))), true, id + ' other one past the limit');
     assert.equal(await refused(adapter, shape(flat(MAX_NEST_NODES, env))), true, id + ' env one past the limit');
-    // A dotenv path inside the limit is found and judged: this one is an edit with a harmless result, so it is allowed.
-    assert.equal(await refused(adapter, shape(flatEdit(MAX_NEST_NODES - 1, env))), false, id + ' env at the limit');
+    // A dotenv path inside the limit is found; the tool is not one of the agent's own, so even a harmless edit is refused.
+    assert.equal(await refused(adapter, shape(flatEdit(MAX_NEST_NODES - 1, env))), true, id + ' env at the limit');
   }
 });
 
@@ -120,8 +120,8 @@ test('Claude Code unknown tool: a dotenv path at depth MAX_NEST_DEPTH is read, o
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH, other)), false, 'other at the limit');
   // The dotenv path is found at the limit, but the text next to it sits too deep for the text scan: refused as unreadable.
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH, env)), true, 'env at the limit: found, text unreadable');
-  // At depth 1 the path and an edit next to it are read; the edit leaves a harmless file, so it is allowed.
-  assert.equal(await refused(claude, call(1, env, { path: env, old_string: 'FOO=1', new_string: 'FOO=2' })), false, 'env at depth 1: found and read, harmless edit');
+  // At depth 1 the path and an edit next to it are read, but the tool is not one of the agent's own: refused even for a harmless edit.
+  assert.equal(await refused(claude, call(1, env, { path: env, old_string: 'FOO=1', new_string: 'FOO=2' })), true, 'env at depth 1: unknown tool edit');
   // A body next to it is refused: zn does not know whether this tool writes it as the whole file.
   assert.equal(await refused(claude, call(1, env)), true, 'env at depth 1: body sent to an unknown tool');
   assert.equal(await refused(claude, call(MAX_NEST_DEPTH + 1, other)), true, 'other past the limit');
