@@ -209,3 +209,20 @@ test('a .env name with spaces or a tab around it is refused in an MCP call', asy
     assert.equal(await verdict(claude, cc(dir, 'mcp__x__batch_write', { names: 'notes.txt\n' + name })), 'deny', 'claude names ' + JSON.stringify(name));
   }
 });
+
+// A tool may take one URI per line: a percent-encoded file: URI on any line is decoded and checked like a one-line value.
+test('a percent-encoded file: URI naming .env on a line of a multi-line value is refused in every agent', async (t) => {
+  const dir = project(t);
+  for (const value of ['notes\nfile://' + dir + '/%2Eenv', 'file://' + dir + '/notes.txt\r\n  file://' + dir + '/%2eenv  \r\n']) {
+    for (const key of ['uri', 'path', 'note']) {
+      const args = { [key]: value };
+      assert.equal(await verdict(claude, cc(dir, 'mcp__custom__open_uris', args)), 'deny', 'claude ' + key);
+      assert.equal(await verdict(codex, cdx(dir, 'mcp__custom__open_uris', args)), 'deny', 'codex ' + key);
+      assert.equal(await verdict(gemini, gem(dir, 'mcp_custom_open_uris', args)), 'deny', 'gemini ' + key);
+      assert.equal(await verdict(antigravity, ag(dir, 'mcp_custom_open_uris', args)), 'deny', 'antigravity ' + key);
+      assert.equal(await verdict(copilot, cop(dir, 'custom-open_uris', args)), 'deny', 'copilot ' + key);
+      assert.equal(await verdict(opencode, oc(dir, 'custom_open_uris', args)), 'deny', 'opencode ' + key);
+      assert.equal(await verdict(zcode, zc(dir, 'mcp__custom__open_uris', args)), 'deny', 'zcode ' + key);
+    }
+  }
+});

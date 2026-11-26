@@ -470,7 +470,11 @@ function pathsOf(args, opts = {}) {
     // like a path counts: prose with a slash somewhere is text, not a name.
     if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) {
       const fileKey = keyOk(k);
-      for (const x of pathCandidatesOf(v, true)) if (fileKey || STARTS_LIKE_PATH_RE.test(x) || ENDS_IN_DOTENV_RE.test(x)) out.push(x);
+      for (const x of pathCandidatesOf(v, true)) {
+        if (!(fileKey || STARTS_LIKE_PATH_RE.test(x) || ENDS_IN_DOTENV_RE.test(x) || /^file:/i.test(x))) continue;
+        // A file: URI on a line is decoded like a one-line value; one that cannot be decoded sets bad.
+        if (/^file:/i.test(x)) { try { out.push(fileURLToPath(localFileUrl(x))); } catch (_) { bad = true; } } else out.push(x);
+      }
       return;
     }
     out.push(v);

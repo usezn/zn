@@ -967,29 +967,28 @@ function dotenvNamesIn(args, pathOpts) {
   const out = [];
   const seen = new Set();
   const envish = (v) => { let d = v; try { d = decodeURIComponent(v); } catch (_) { /* keep the raw text */ } return /env/i.test(d); };
+  // One name: a file: URI is decoded first (one that cannot be decoded counts when it mentions env), a name too long to classify
+  // counts when it mentions env, and blanks around it are dropped (many servers and Windows do).
+  const checkOne = (v) => {
+    let name = v;
+    if (/^file:/i.test(name.trim())) {
+      try { name = fileUriPath(name.trim()); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+    }
+    if (name.length > DOTENV_NAME_SCAN_MAX) { if (envish(name)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+    for (const n of name.trim() !== name ? [name, name.trim()] : [name]) {
+      const c = n ? policy.classifyPath(n, pathOpts) : null;
+      if (c && c.kind === 'dotenv') { out.push(n); break; }
+    }
+  };
   const walk = (v, depth) => {
     if (typeof v === 'string') {
-      // Text with line breaks is content (a body, a message), but a tool may take one name per line: every trimmed line that is a
-      // watched dotenv name counts, under any key.
+      // Text with line breaks is content (a body, a message), but a tool may take one name per line: every nonempty line is checked
+      // as a name, under any key, the same way as a one-line value.
       if (/[\r\n]/.test(v)) {
-        for (const line of v.split(/\r\n|\r|\n/)) {
-          const t = line.trim();
-          if (!t || t.length > DOTENV_NAME_SCAN_MAX) continue;
-          const c = policy.classifyPath(t, pathOpts);
-          if (c && c.kind === 'dotenv') out.push(t);
-        }
+        for (const line of v.split(/\r\n|\r|\n/)) if (line.trim()) checkOne(line);
         return;
       }
-      let name = v;
-      if (/^file:/i.test(name)) {
-        try { name = fileUriPath(name); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
-      }
-      if (name.length > DOTENV_NAME_SCAN_MAX) { if (envish(name)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
-      // Blanks around a name (".env ", " .env", a tab) are dropped by many servers and by Windows: the trimmed name counts too.
-      for (const n of name.trim() !== name ? [name, name.trim()] : [name]) {
-        const c = n ? policy.classifyPath(n, pathOpts) : null;
-        if (c && c.kind === 'dotenv') { out.push(n); break; }
-      }
+      checkOne(v);
     } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
       seen.add(v);
       for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
