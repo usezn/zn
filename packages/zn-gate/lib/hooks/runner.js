@@ -1187,13 +1187,9 @@ async function decidePre(ev, d, agentId, opts) {
     if (args && typeof args === 'object') {
       const named = require('../agents/copilot').pathsOf(args);
       if (named.bad) {
-        // Arguments nested deeper than zn reads: a dotenv path may be hidden there. Refused when the call's text could name one (any
-        // "env", also percent-encoded, or text zn cannot serialise); other deep calls keep the MCP checks below.
-        let txt = null;
-        try { txt = JSON.stringify(args); } catch (_) { txt = null; }
-        if (typeof txt !== 'string' || /env|%2e|%65|%45/i.test(txt)) {
-          return { decision: 'deny', message: 'zn: could not read a file address in this MCP call (nested too deeply), so zn cannot check it.' };
-        }
+        // Arguments zn cannot read to the end (nested deeper than it reads): a dotenv path, or the pieces of one that the tool joins
+        // (a folder, a name and an extension in separate values), may be hidden there. Refused whatever the text says.
+        return { decision: 'deny', message: 'zn: the arguments of this MCP call are nested too deeply for zn to check, so it was blocked.' };
       }
       for (const p of named.paths) {
         const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);

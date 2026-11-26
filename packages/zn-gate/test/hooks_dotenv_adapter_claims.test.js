@@ -89,7 +89,7 @@ test('OpenCode maps a tool name it does not know to an MCP call, and such a call
 // A backslash before a name in a shell word: outside quotes bash drops it (\.env is .env). policy.js backslashElsewhere only exempts such
 // a word from the not-proven-read-only rule; the word is refused earlier by dotenvElsewhereOf, which refuses a word that STARTS with a
 // backslash or with // (a Windows root or a network share: zn cannot follow it) for every command, the read-only ones and touch included
-// (cat \.env, touch \.env); the plain name still passes for those commands. A backslash inside the word (.e\nv) is not covered by it.
+// (cat \.env, touch \.env); the plain name still passes for those commands. An unquoted backslash inside the word (.e\nv) is removed by the shell, so that word is .env and is handled as the plain name.
 // So every write, copy or program below is refused.
 test('shell commands that name a watched .env through a backslash escape are refused', async (t) => {
   const dir = project(t);
