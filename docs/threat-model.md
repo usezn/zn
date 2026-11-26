@@ -630,6 +630,12 @@ Three features are off by default. Each one helps in a narrow case and has limit
     also refused when a variable name or a whole line it writes comes from a variable, a command substitution or a pattern
     (`printf "$X" > .env`, `echo "$LINE" >> .env`, `cp "$SRC" .env`), while an expansion in the value of a plainly named
     variable (`echo "API_URL=$URL" >> .env`) stays allowed; such a value can itself hold a line break, which zn cannot see.
+- **A .NET profiler loads a DLL into the Windows hooks (accepted limit, Windows).** With `COR_ENABLE_PROFILING=1` and
+  `COR_PROFILER` / `COR_PROFILER_PATH` in the environment of the agent, .NET Framework loads that DLL into `powershell.exe`,
+  which runs every zn hook on Windows, before the first line of the hook script, so the DLL can answer for the hook (the
+  Windows twin of `LD_PRELOAD`). The hook scripts do not refuse it yet. `zn audit` reports a project that turns it on for
+  the agent (`CORECLR_ENABLE_PROFILING` and the .NET 11 name `DOTNET_ENABLE_PROFILING` too) as critical. Whoever can set the environment of the agent can already run code
+  of their own in it, so this gives no new power; it only needs no file.
 - **Library search paths are removed, not refused.** `LD_LIBRARY_PATH`, the `DYLD_*_PATH` variables and the other
   library path variables of `lib/loader-env.js` do not block the hook, because many setups need them (GPU drivers, vendor
   tools). The launcher removes them for the hook it starts. A library placed in such a folder can still be loaded by the shell
