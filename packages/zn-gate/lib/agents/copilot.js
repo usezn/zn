@@ -430,18 +430,21 @@ function localFileUrl(v) {
  */
 // A value that starts like a file name: ~ or . first, a drive letter, or a slash or backslash.
 const STARTS_LIKE_PATH_RE = /^(?:[~.]|[A-Za-z]:[\\/]|[\\/])/;
+// A value that ends in a dotenv name (sub/.env, .env.local): counted under any key, so a tool that takes one name per line is seen.
+const ENDS_IN_DOTENV_RE = /(?:^|[\\/])\.env(?:\.[^\\/\s]*)?$/i;
 /**
  * The file names a long or multi-line string value can stand for: the value itself when it has no line break, else its trimmed whole
- * (a server that trims whitespace opens that) and every trimmed line that starts like a path. The rest of a multi-line value is text.
+ * (a server that trims whitespace opens that) and its trimmed lines. Under a file key (everyLine) every nonempty line counts, since a
+ * tool may take one name per line (notes, then sub/.env); elsewhere only a line that starts like a path does, the rest is text.
  */
-function pathCandidatesOf(v) {
+function pathCandidatesOf(v, everyLine = true) {
   if (!/[\r\n]/.test(v)) return [v];
   const out = [];
   const whole = v.trim();
   if (whole && !/[\r\n]/.test(whole)) out.push(whole);
   for (const line of v.split(/\r\n|\r|\n/)) {
     const t = line.trim();
-    if (t && STARTS_LIKE_PATH_RE.test(t)) out.push(t);
+    if (t && (everyLine || STARTS_LIKE_PATH_RE.test(t))) out.push(t);
   }
   return out;
 }
@@ -452,7 +455,9 @@ function pathsOf(args, opts = {}) {
   // loose (a tool zn does not know): a string that looks like a path counts under any key, deeper than the named keys.
   const loose = opts.loose === true;
   // A name like $DIR.env or %DIR%.env (a variable before a dotenv name) counts too.
-  const pathLike = (v) => /^[~.]|[\\/]/.test(v) || /^[$%!].*\.env(?:\.[A-Za-z0-9_.-]+)?$/i.test(v);
+  // A multi-line value counts when one of its lines starts like a path or it names a dotenv file anywhere (one name per line).
+  const pathLike = (v) => /^[~.]|[\\/]/.test(v) || /^[$%!].*\.env(?:\.[A-Za-z0-9_.-]+)?$/i.test(v) ||
+    (/[\r\n]/.test(v) && (/(?:^|[\r\n])[ \t]*[~.]/.test(v) || /\.env/i.test(v)));
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
@@ -464,7 +469,8 @@ function pathsOf(args, opts = {}) {
     // whole and each line that starts like a path. Under a key that is not a file key (loose mode) only a candidate that starts
     // like a path counts: prose with a slash somewhere is text, not a name.
     if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) {
-      for (const x of pathCandidatesOf(v)) if (keyOk(k) || STARTS_LIKE_PATH_RE.test(x)) out.push(x);
+      const fileKey = keyOk(k);
+      for (const x of pathCandidatesOf(v, true)) if (fileKey || STARTS_LIKE_PATH_RE.test(x) || ENDS_IN_DOTENV_RE.test(x)) out.push(x);
       return;
     }
     out.push(v);

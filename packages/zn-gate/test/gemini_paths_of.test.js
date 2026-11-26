@@ -57,9 +57,9 @@ test('pathsOf treats a nested file: URL with a localhost host as a local path', 
   assert.deepEqual(r, { paths: [local], bad: false });
 });
 
-test('pathsOf checks a multi-line file value by its trimmed whole and each line that starts like a path', () => {
+test('pathsOf checks a multi-line file value by its trimmed whole and each of its lines', () => {
   const r = pathsOf({ options: { file_path: '/work/example/a.txt\n/work/example/b.txt', dir_path: '/work/example/c\rd' } });
-  assert.deepEqual(r, { paths: ['/work/example/a.txt', '/work/example/b.txt', '/work/example/c'], bad: false });
+  assert.deepEqual(r, { paths: ['/work/example/a.txt', '/work/example/b.txt', '/work/example/c', 'd'], bad: false });
   assert.deepEqual(pathsOf({ file_path: '.env\n' }), { paths: ['.env', '.env'], bad: false });
 })
 

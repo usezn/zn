@@ -150,7 +150,7 @@ test('source and . of a .env are refused, also for a .env whose sourced lines re
 // Long or multi-line text is not an unreadable file name: a long value is classified like any other, and a multi-line value is checked
 // by its trimmed whole and each line that starts like a path. Ordinary prompts, plans, code and long URLs pass; a .env still does not.
 const zc = (dir, tool, input) => ({ session_id: 's', cwd: dir, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't' });
-const longText = ('Read docs/setup.md and src/app/main.ts, then update the README section about configuration. ').repeat(70);
+const longText = ('Read guide/setup.txt and src/app/main.ts, then update the README section about configuration. ').repeat(70);
 
 test('long prompts, plans and skill arguments that mention paths pass in ZCode', async (t) => {
   const dir = project(t);
@@ -181,4 +181,21 @@ test('a long fact for Gemini save_memory and a long note to a tool zn does not k
   assert.equal(await verdict(gemini, gem(dir, 'custom_tool', { note: longText })), 'allow', 'gemini unknown');
   assert.equal(await verdict(antigravity, ag(dir, 'custom_tool', { note: longText })), 'allow', 'antigravity unknown');
   assert.equal(await verdict(copilot, cop(dir, 'custom_tool', { note: longText })), 'allow', 'copilot unknown');
+});
+
+// A tool may take one file name per line: under a file key every line counts, and a watched dotenv line anywhere refuses the call.
+test('a .env on any line of a multi-line value is refused, also a relative one after another name', async (t) => {
+  const dir = project(t);
+  for (const value of ['notes\nsub/.env', 'notes.txt\r\nsub/.env\r\n', 'a\nb\n.env.local']) {
+    for (const key of ['path', 'paths', 'target', 'note']) {
+      const args = { [key]: value };
+      assert.equal(await verdict(claude, cc(dir, 'mcp__custom__write_names', args)), 'deny', 'claude ' + key + ' ' + JSON.stringify(value));
+      assert.equal(await verdict(codex, cdx(dir, 'mcp__custom__write_names', args)), 'deny', 'codex ' + key);
+      assert.equal(await verdict(gemini, gem(dir, 'mcp_custom_write_names', args)), 'deny', 'gemini ' + key);
+      assert.equal(await verdict(antigravity, ag(dir, 'mcp_custom_write_names', args)), 'deny', 'antigravity ' + key);
+      assert.equal(await verdict(copilot, cop(dir, 'custom-write_names', args)), 'deny', 'copilot ' + key);
+      assert.equal(await verdict(opencode, oc(dir, 'custom_write_names', args)), 'deny', 'opencode ' + key);
+      assert.equal(await verdict(zcode, zc(dir, 'mcp__custom__write_names', args)), 'deny', 'zcode ' + key);
+    }
+  }
 });

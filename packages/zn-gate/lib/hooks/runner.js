@@ -969,8 +969,17 @@ function dotenvNamesIn(args, pathOpts) {
   const envish = (v) => { let d = v; try { d = decodeURIComponent(v); } catch (_) { /* keep the raw text */ } return /env/i.test(d); };
   const walk = (v, depth) => {
     if (typeof v === 'string') {
-      // Text with line breaks is content (a body, a message), not a file name.
-      if (/[\r\n]/.test(v)) return;
+      // Text with line breaks is content (a body, a message), but a tool may take one name per line: every trimmed line that is a
+      // watched dotenv name counts, under any key.
+      if (/[\r\n]/.test(v)) {
+        for (const line of v.split(/\r\n|\r|\n/)) {
+          const t = line.trim();
+          if (!t || t.length > DOTENV_NAME_SCAN_MAX) continue;
+          const c = policy.classifyPath(t, pathOpts);
+          if (c && c.kind === 'dotenv') out.push(t);
+        }
+        return;
+      }
       let name = v;
       if (/^file:/i.test(name)) {
         try { name = fileUriPath(name); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
