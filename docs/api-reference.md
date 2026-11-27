@@ -113,7 +113,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 ### `resolveEndpoint(options, flags)`
 
-- Returns the URL `analyze` posts to. Order: `options.apiUrl`, then `ZN_API_URL`, then the stage (`options.stage`, `ZN_STAGE`, default `'v30'`): `https://api.usezn.com/v30/analyze`, or `https://api.usezn.com/prod/analyze` for `'prod'`.
+- Returns the URL `analyze` posts to. Order: `options.apiUrl`, then `ZN_API_URL`, then the stage (`options.stage`, `ZN_STAGE`, default `'v30'`): `https://api.usezn.com/v30/analyze`, or `https://api.usezn.com/prod/analyze` for `'prod'`. A custom URL must be `https://` (plain `http://` only for `localhost`, `127.0.0.1` and `::1`); `analyze` refuses any other one before sending anything and uses the local rules.
 - `flags.stored` (default `false`): set it for a key saved by `zn-gate connect`. A custom URL is then ignored and only the stage decides, so a saved key is never sent to another host.
 
 ### Constants
