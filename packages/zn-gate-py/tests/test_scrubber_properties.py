@@ -17,6 +17,7 @@ monorepo checkout and a `node` binary; without them they are skipped.
 
 import json
 import random
+import re
 import shutil
 import string
 import subprocess
@@ -43,8 +44,9 @@ TOKEN_DASH = ALNUM + "_-"
 MARKER = "EXAMPLE"
 
 # Each provider: (rule id, prefix, layout). The marker follows the prefix. A layout
-# item is either a literal string or (length, alphabet, minimum bits of entropy
-# the rule's randomness gate asks for; 0 when the rule has none).
+# item is either a literal string or (length, alphabet, minimum bits of entropy, character
+# classes) as the rule's randomness gate asks for (0 bits when the rule has none; 2 classes
+# when the item has no fourth value).
 PROVIDERS = [
     ("secret:aws_access_key", "AKIA", [(9, UPPER_DIGITS, 0)]),
     ("secret:github_token", "ghp_", [(29, ALNUM, 0)]),
@@ -57,8 +59,8 @@ PROVIDERS = [
     ("secret:anthropic_key", "sk-ant-api03-", [(30, TOKEN_DASH, 0)]),
     ("secret:slack_token", "xoxb-0000000000-", [(8, ALNUM + "-", 0)]),
     ("secret:google_api_key", "AIza", [(28, TOKEN_DASH, 0)]),
-    ("secret:hf_token", "hf_", [(30, ALNUM, 3.0)]),
-    ("secret:npm_token", "npm_", [(29, ALNUM, 3.8)]),
+    ("secret:hf_token", "hf_", [(30, ALNUM, 3.8, 3)]),
+    ("secret:npm_token", "npm_", [(29, ALNUM, 3.8, 3)]),
     ("secret:gitlab_token", "glpat-", [(16, TOKEN_DASH, 3.3)]),
     ("secret:pypi_token", "pypi-AgE", [(50, TOKEN_DASH, 0)]),
 ]
@@ -67,25 +69,27 @@ PROVIDER_IDS = [f"{rule.split(':')[1]}-{prefix}" for rule, prefix, _ in PROVIDER
 
 # Benign words only, so the surrounding text cannot contain a credential.
 WORD = st.text(alphabet=string.ascii_lowercase, min_size=0, max_size=12)
+# A separator that the scrubber's WRAP_BREAK_RE can join: only spaces, tabs and one line break.
+WRAP_BREAK_SEP_RE = re.compile(r"[ \t]*\r?\n[ \t]*")
 
 
-def _body(alphabet: str, length: int, min_bits: float):
+def _body(alphabet: str, length: int, min_bits: float, classes: int = 2):
     """A random body, restricted to bodies a provider's randomness gate accepts."""
     strategy = st.text(alphabet=alphabet, min_size=length, max_size=length)
     if min_bits:
-        strategy = strategy.filter(lambda s: R._pv_random(s, 2, min_bits))
+        strategy = strategy.filter(lambda s: R._pv_random(s, classes, min_bits))
     return strategy
 
 
 def _build_key(prefix: str, layout, draw) -> str:
-    """Assemble a key; draw(alphabet, length, min_bits) returns one random part."""
+    """Assemble a key; draw(alphabet, length, min_bits, classes) returns one random part."""
     parts = [prefix, MARKER]
     for item in layout:
         if isinstance(item, str):
             parts.append(item)
         else:
-            length, alphabet, min_bits = item
-            parts.append(draw(alphabet, length, min_bits))
+            length, alphabet, min_bits, *rest = item
+            parts.append(draw(alphabet, length, min_bits, rest[0] if rest else 2))
     return "".join(parts)
 
 
@@ -123,7 +127,7 @@ def _assert_redacted(text: str, before: str, key: str, after: str) -> None:
 @given(provider=st.sampled_from(PROVIDERS), data=st.data(), pre=WORD, post=WORD, ctx=st.sampled_from(CONTEXTS))
 def test_fake_provider_key_is_redacted_and_context_kept(provider, data, pre, post, ctx):
     _rule, prefix, layout = provider
-    key = _build_key(prefix, layout, lambda alpha, n, bits: data.draw(_body(alpha, n, bits)))
+    key = _build_key(prefix, layout, lambda alpha, n, bits, classes: data.draw(_body(alpha, n, bits, classes)))
     text, before, after = _embed(key, pre, post, ctx)
     _assert_redacted(text, before, key, after)
 
@@ -137,41 +141,58 @@ def test_fake_provider_key_is_redacted_and_context_kept(provider, data, pre, pos
 )
 def test_several_fake_keys_in_one_text_are_all_redacted(picks, data, pre, post):
     keys = [
-        _build_key(prefix, layout, lambda alpha, n, bits: data.draw(_body(alpha, n, bits)))
+        _build_key(prefix, layout, lambda alpha, n, bits, classes: data.draw(_body(alpha, n, bits, classes)))
         for _rule, prefix, layout in picks
     ]
-    separators = [" ", "\n", ", ", " | "]
-    body = ""
+    separators = [" ", "\n", ", ", " | ", "\r\n", " \n"]
+    # Build the text and the expected group count in one pass, so the separator that is
+    # joined into the text is the one that is counted.
+    pieces = [f"{pre} "]
+    expected_groups = 1
     for i, key in enumerate(keys):
-        body += key + (separators[i % len(separators)] if i < len(keys) - 1 else "")
-    text = f"{pre} {body} {post}"
+        pieces.append(key)
+        if i < len(keys) - 1:
+            sep = separators[i % len(separators)]
+            pieces.append(sep)
+            # The scrubber's wrap-break shape (WRAP_BREAK_RE): a separator that is only
+            # line-break whitespace joins the two keys into one wrapped token, so they
+            # share one detection. Any other separator starts a new group.
+            if not WRAP_BREAK_SEP_RE.fullmatch(sep):
+                expected_groups += 1
+    pieces.append(f" {post}")
+    text = "".join(pieces)
     out, found = R.redact_secrets(text)
     for key in keys:
         assert key not in out, f"key survived: {out!r}"
         assert key[-12:] not in out, f"key tail survived: {out!r}"
     assert MARKER not in out, out
     assert out.startswith(f"{pre} ") and out.endswith(f" {post}"), out
-    # A bare line break between two keys is a wrapped token to the scrubber (a key broken over
-    # two lines must still be found), so such neighbours are one detection: count the groups.
-    groups = 1 + sum(1 for i in range(len(keys) - 1) if separators[i % len(separators)] != "\n")
-    assert len(found) >= groups, [d["rule"] for d in found]
+    assert len(found) >= expected_groups, [d["rule"] for d in found]
 
 
-def test_keys_on_adjacent_lines_are_redacted_as_one_wrapped_token():
-    # Regression: hypothesis found two fake keys separated by a bare line break (an OpenAI-style
-    # key, then a PyPI-style key). The scrubber reads that as one token wrapped over two lines
-    # and redacts both in one detection; the property used to ask for one detection per key.
+def test_keys_on_adjacent_lines_are_redacted():
+    # Regression: two fake keys separated by a bare line break (an OpenAI-style key, then a
+    # PyPI-style key) are both redacted, with no tail left. The scrubber reads the break as a
+    # wrapped token, so the two keys can share one detection.
     first = "sk-proj-" + MARKER + "0" * 28
     second = "pypi-AgE" + MARKER + "0" * 19 + "111122233445566778899BCDFGHNOQR"
     out, found = R.redact_secrets(f"{first}\n{second}")
     assert first not in out and second not in out and second[-12:] not in out, out
     assert "REDACTED" in out and MARKER not in out, out
-    assert len(found) == 1, found
+    assert len(found) >= 1, found
     # With a blank line or a space between them there is one detection per key.
     for sep in ("\n\n", " "):
         out, found = R.redact_secrets(f"{first}{sep}{second}")
         assert MARKER not in out, out
         assert len(found) == 2, found
+
+
+@pytest.mark.xfail(strict=True, reason="two different secrets on adjacent lines are reported as one detection; tracked as follow-up")
+def test_keys_on_adjacent_lines_report_one_detection_per_secret():
+    first = "sk-proj-" + MARKER + "0" * 28
+    second = "pypi-AgE" + MARKER + "0" * 19 + "111122233445566778899BCDFGHNOQR"
+    _out, found = R.redact_secrets(f"{first}\n{second}")
+    assert len(found) == 2, [d["rule"] for d in found]
 
 
 @SETTINGS
@@ -190,7 +211,7 @@ def _corpus() -> list:
     """Deterministic corpus: (text, fake key or None, provider index or None)."""
     rng = random.Random(20261018)
 
-    def draw(alphabet, length, _bits):
+    def draw(alphabet, length, _bits, _classes=2):
         return "".join(rng.choice(alphabet) for _ in range(length))
 
     items = []
