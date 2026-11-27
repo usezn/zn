@@ -33,7 +33,7 @@ The full table is in [What zn-gate protects in Cursor, and what it does not](#wh
    On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead. That workaround was verified on Windows Server 2022 (PowerShell 5.1, with the execution policy set to Restricted, which is the default on Windows 10 and 11).
 3. **Restart Cursor.**
 
-Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: hooks verified on Windows Server 2022 (PowerShell 5.1), where they block reads of `.env` files; the Cursor app itself not yet tested.
+Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: hooks verified on [Windows Server 2022 (PowerShell 5.1)](../compat.md#limits-at-a-glance), where they block reads of `.env` files; the Cursor app itself not yet tested.
 
 Once it works, Cursor's agent is blocked from reading `.env` files with real values and common credential files (file reads and most shell commands), a secret zn-gate recognizes in your chat message is blocked before it is sent, and secrets it recognizes are removed from MCP tool results.
 
@@ -69,7 +69,7 @@ These limits are stated on this page and in [compat.md](../compat.md):
 - `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
 - MCP arguments over 1 MB are denied, because zn cannot check them.
 - The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.
-- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end. On Windows, the hooks were verified on Windows Server 2022 (PowerShell 5.1) to block reads of `.env` files; the Cursor app itself has not been tested there.
+- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end. On Windows, the hooks were verified on [Windows Server 2022 (PowerShell 5.1)](../compat.md#limits-at-a-glance) to block reads of `.env` files; the Cursor app itself has not been tested there.
 
 ## Technical reference
 

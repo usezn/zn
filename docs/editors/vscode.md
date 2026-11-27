@@ -118,7 +118,7 @@ MCP server (optional): restart VS Code, then ask the agent to call `zn_status` (
 
 ## Uninstall
 
-Run each step in your own terminal, not through the agent: zn-gate refuses to uninstall when an AI agent or a script runs it. None of this changes your code. Go in this order, with the MCP servers first, then the hooks, and the program last.
+Run each step in your own terminal, not through the agent: zn-gate refuses `zn hooks uninstall` and `zn-gate uninstall` when an AI agent or a script runs them (they need an interactive terminal); the other steps are file edits or `npm`, which it does not guard. None of this changes your code. Go in this order, with the MCP servers first, then the hooks, and the program last.
 
 1. **Put back the MCP servers you wrapped.** If you put `-y zn-gate shield --` in front of another server's command (see [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers)), open the settings file you edited, take those words out of its `args` and put back its original command. `zn-gate init --revert` does not do this for you, because `init --wrap-mcp` does not edit VS Code's settings.
 2. **Remove the zn-gate MCP server**, if you added it. In the same file (`mcp.json`, opened with **MCP: Open User Configuration**, or `.mcp.json` / `.vscode/mcp.json` in a project), delete the `zn-gate` entry and keep your other servers. Save the file. zn-gate writes no MCP file of its own in VS Code, so no command removes this entry.
