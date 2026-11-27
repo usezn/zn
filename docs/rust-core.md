@@ -41,7 +41,7 @@ A policy upload is verified before anything is written. The gateway checks these
 - the ML-DSA-65 signature, when `ZN_PQ_PUBLIC_KEY` is set (this then makes it mandatory);
 - that the WASM compiles.
 
-It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy.
+It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy. While the gateway runs, only the `.wasm` file adds, replaces or removes a policy; adding, changing or removing a signature file checks the policy again, and one that no longer verifies stays as it was loaded and is logged.
 
 Only then does it write the file. It writes to a temporary file in the policy directory, which is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
 

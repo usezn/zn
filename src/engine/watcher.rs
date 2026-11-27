@@ -57,29 +57,70 @@ impl PolicyWatcher {
             info!("Policy watcher started. Monitoring for changes...");
 
             while let Some(event) = rx.recv().await {
-                if event.kind.is_modify() || event.kind.is_create() {
+                if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
+                    let removed = event.kind.is_remove();
                     for path in event.paths {
-                        if path.extension().is_some_and(|ext| ext == "wasm") {
-                            info!("Policy change detected: {:?}", path);
-                            // Give some time for the file to be fully written
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                            if let Err(e) = engine.register_policy_from_file(&path) {
-                                error!("Failed to reload policy {:?}: {}", path, e);
-                            } else {
-                                info!("Policy successfully reloaded: {:?}", path);
+                        match classify(&path) {
+                            PolicyFile::Policy if !removed => {
+                                reload(&engine, &path).await;
                             }
-                        }
-                    }
-                } else if event.kind.is_remove() {
-                    for path in event.paths {
-                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            engine.unregister_policy_unless_last(name);
+                            PolicyFile::Policy => {
+                                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                                    engine.unregister_policy_unless_last(name);
+                                }
+                            }
+                            // A signature file is not the policy: adding, changing or removing it
+                            // never unregisters anything. The policy is verified again against the
+                            // signature as it is now; a failure keeps the policy that is loaded
+                            // and is logged.
+                            PolicyFile::Signature(policy) => {
+                                if policy.is_file() {
+                                    reload(&engine, &policy).await;
+                                }
+                            }
+                            PolicyFile::Other => {}
                         }
                     }
                 }
             }
         });
+    }
+}
+
+/// What a path in the policy folder is.
+enum PolicyFile {
+    /// A `.wasm` policy.
+    Policy,
+    /// A `.wasm.sig` or `.wasm.pqs` signature, with the path of the policy it belongs to.
+    Signature(PathBuf),
+    Other,
+}
+
+fn classify(path: &std::path::Path) -> PolicyFile {
+    let ext = path.extension().and_then(|e| e.to_str());
+    match ext {
+        Some("wasm") => PolicyFile::Policy,
+        Some("sig") | Some("pqs") => {
+            let policy = path.with_extension("");
+            if policy.extension().is_some_and(|e| e == "wasm") {
+                PolicyFile::Signature(policy)
+            } else {
+                PolicyFile::Other
+            }
+        }
+        _ => PolicyFile::Other,
+    }
+}
+
+async fn reload(engine: &ZnEngine, path: &std::path::Path) {
+    info!("Policy change detected: {:?}", path);
+    // Give some time for the file to be fully written
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    if let Err(e) = engine.register_policy_from_file(path) {
+        error!("Failed to reload policy {:?}: {}", path, e);
+    } else {
+        info!("Policy successfully reloaded: {:?}", path);
     }
 }
 
@@ -247,6 +288,95 @@ mod tests {
         wait_until("removal of the last policy refused", || refusals() >= 1);
         assert!(engine._has_policy("epsilon"));
         assert_eq!(engine.policy_count(), 1);
+    }
+
+    fn signed_engine(sk: &ed25519_dalek::SigningKey) -> Arc<ZnEngine> {
+        Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![],
+                signing_public_key: Some(hex::encode(sk.verifying_key().to_bytes())),
+            })
+            .expect("engine init"),
+        )
+    }
+
+    fn write_signed(dir: &std::path::Path, sk: &ed25519_dalek::SigningKey, name: &str) {
+        use ed25519_dalek::Signer;
+        let sig = sk.sign(EMPTY_WASM);
+        let b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes());
+        std::fs::write(dir.join(format!("{name}.wasm.sig")), b64).unwrap();
+        std::fs::write(dir.join(format!("{name}.wasm")), EMPTY_WASM).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn deleting_a_file_that_only_shares_the_name_does_not_unregister_the_policy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let engine = test_engine();
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+
+        std::fs::write(dir.path().join("p.wasm"), EMPTY_WASM).unwrap();
+        wait_until("p registered", || engine._has_policy("p"));
+        std::fs::write(dir.path().join("p.sig"), b"x").unwrap();
+        std::fs::write(dir.path().join("p.txt"), b"x").unwrap();
+        std::fs::write(dir.path().join("p.wasm.sig"), b"x").unwrap();
+        std::fs::remove_file(dir.path().join("p.sig")).unwrap();
+        std::fs::remove_file(dir.path().join("p.txt")).unwrap();
+        std::fs::remove_file(dir.path().join("p.wasm.sig")).unwrap();
+        // Positive control: events are handled in order, so once it is seen the removals were handled.
+        std::fs::write(dir.path().join("control.wasm"), EMPTY_WASM).unwrap();
+        wait_until("control registered", || engine._has_policy("control"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            engine._has_policy("p"),
+            "removing a non-policy file must not unregister p"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn deleting_the_signature_keeps_the_signed_policy_loaded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let engine = signed_engine(&sk);
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+
+        write_signed(dir.path(), &sk, "p");
+        wait_until("p registered", || engine._has_policy("p"));
+        write_signed(dir.path(), &sk, "q");
+        wait_until("q registered", || engine._has_policy("q"));
+
+        // The signature goes away: p is checked again, fails, and stays as it was; it is not unregistered.
+        std::fs::remove_file(dir.path().join("p.wasm.sig")).unwrap();
+        // Positive control, handled after the removal.
+        write_signed(dir.path(), &sk, "control");
+        wait_until("control registered", || engine._has_policy("control"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(engine._has_policy("p"));
+        assert!(engine._has_policy("q"));
+        assert_eq!(engine.policy_count(), 3);
+    }
+
+    #[test]
+    fn classify_uses_the_full_extension() {
+        use std::path::Path;
+        assert!(matches!(
+            classify(Path::new("d/p.wasm")),
+            PolicyFile::Policy
+        ));
+        assert!(matches!(
+            classify(Path::new("d/p.wasm.sig")),
+            PolicyFile::Signature(p) if p == Path::new("d/p.wasm")
+        ));
+        assert!(matches!(
+            classify(Path::new("d/p.wasm.pqs")),
+            PolicyFile::Signature(_)
+        ));
+        assert!(matches!(classify(Path::new("d/p.sig")), PolicyFile::Other));
+        assert!(matches!(classify(Path::new("d/p.txt")), PolicyFile::Other));
+        assert!(matches!(classify(Path::new("d/p")), PolicyFile::Other));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
