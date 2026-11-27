@@ -1604,12 +1604,19 @@ const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
 // apart is treated as loading it: a dotenvx step that is not one of the known steps that load nothing, an option whose value may be
 // the step name, and a file option that comes after the wrapped command started.
 const DOTENV_DEFAULT_FILE = '.env';
-const DOTENV_CONVENTION_FILES = ['.env.local', '.env.development', '.env.production', '.env.test', '.env.development.local',
-  '.env.production.local', '.env.test.local'];
+// The environment name of a cascade comes from the command (-c staging) or from NODE_ENV, which zn cannot always know, so every
+// .env.<name> file of the folder is checked (apart from the example, sample and template ones); the same for --convention.
+const DOTENV_CASCADE = '.env.*';
+const DOTENV_TEMPLATE_RE = /\.(?:example|sample|template)$/i;
+function cascadeFilesIn(dir) {
+  try {
+    return fs.readdirSync(dir).filter((n) => /^\.env\..+/i.test(n) && !DOTENV_TEMPLATE_RE.test(n));
+  } catch (_) { return []; }
+}
 const DOTENVX_NO_LOAD_SUBS = new Set(['help', 'ls', 'keypair', 'ext', 'precommit', 'prebuild', 'genexample', 'gitignore', 'radar']);
 const DOTENVX_KNOWN_SUBS = new Set([...DOTENVX_NO_LOAD_SUBS, 'run', 'get', 'set', 'encrypt', 'decrypt', 'rotate']);
 // Runner options that take the next word as their value (so that word does not start the wrapped command).
-const DOTENV_VALUE_OPTIONS = new Set(['-e', '-f', '--env-file', '-v', '-p', '--convention', '--log-level', '-l', '-fk', '--env-keys-file']);
+const DOTENV_VALUE_OPTIONS = new Set(['-e', '-f', '--env-file', '-v', '-p', '--convention', '--log-level', '-l', '-fk', '--env-keys-file', '-c', '--cascade']);
 // Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
 // npm exec, pnpm exec, bun x). A dotenv runner counts only as the program word, or as the program a launcher runs when the launcher is
 // itself the program word; never as an argument of another program (node -e "..." npx dotenv -e .env is not launched).
@@ -1657,9 +1664,11 @@ function envFileValueWords(words, opts) {
   let infoOnly = false; // --help / --version
   const defaults = new Set();
   const noteDefaults = () => {
-    if (!runner || fileGiven || infoOnly || (dotenvx && DOTENVX_NO_LOAD_SUBS.has(dxSub))) return;
+    if (!runner || infoOnly || (dotenvx && DOTENVX_NO_LOAD_SUBS.has(dxSub))) return;
+    // A cascade or convention also reads the files of the environment, whatever file options are given.
+    if (cascade) defaults.add(DOTENV_CASCADE);
+    if (fileGiven) return;
     defaults.add(DOTENV_DEFAULT_FILE);
-    if (cascade) for (const f of DOTENV_CONVENTION_FILES) defaults.add(f);
   };
   let ended = false;
   let envProg = false;
@@ -3112,7 +3121,22 @@ function bashDenialOf(cmd, opts = {}) {
   // A dotenv runner with no file option loads a file it does not name: judged as a read of that file (a missing file, or one with no
   // plain secret, is allowed), also in the folder a cd in the command leads to.
   for (const f of defaultEnvFiles) {
+    if (f === DOTENV_CASCADE) {
+      const dirs = new Set([path.resolve(opts.cwd || process.cwd()), ...((opts.cdBases && opts.cdBases.dirs) || []).map((d) => path.resolve(d))]);
+      for (const dir of dirs) {
+        for (const name of cascadeFilesIn(dir)) {
+          if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+          const deny = readDenial(name, { ...opts, cwd: dir });
+          if (deny) return deny;
+        }
+      }
+      continue;
+    }
     const deny = readDenial(f, opts) || dotenvElsewhereDenial(f, opts);
+    if (deny) return deny;
+  }
+  if (defaultEnvFiles.has(DOTENV_CASCADE) && opts.cdBases && opts.cdBases.unknown) {
+    const deny = dotenvElsewhereDenial(DOTENV_DEFAULT_FILE, opts);
     if (deny) return deny;
   }
   markLinkWords(readings);

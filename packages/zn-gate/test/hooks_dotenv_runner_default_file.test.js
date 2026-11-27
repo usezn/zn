@@ -148,3 +148,33 @@ test('a cd before the runner judges the .env of the folder it leads to', async (
     'cd sub && dotenvx run -f other.txt -- printenv',
   ]) assert.equal(await verdict(dir, c), 'allow', c);
 });
+
+test('a cascade or convention reads the files of the real environment name', async (t) => {
+  const dir = project(t, 'PORT=1\n');
+  const only = (name, body) => { for (const n of fs.readdirSync(dir)) if (n !== '.env') fs.rmSync(path.join(dir, n)); fs.writeFileSync(path.join(dir, name), body); };
+  only('.env.staging', SECRET);
+  assert.equal(await verdict(dir, 'dotenv -c staging -- printenv'), 'deny');
+  assert.equal(await verdict(dir, 'dotenv --cascade staging -- printenv'), 'deny');
+  assert.equal(await verdict(dir, 'NODE_ENV=staging dotenvx run --convention flow -- printenv'), 'deny');
+  assert.equal(await verdict(dir, 'dotenvx run --convention nextjs -- printenv'), 'deny');
+  only('.env.staging.local', SECRET);
+  assert.equal(await verdict(dir, 'dotenv -c staging -- printenv'), 'deny');
+  only('.env.qa', SECRET);
+  assert.equal(await verdict(dir, 'dotenvx run --convention flow -- printenv'), 'deny');
+  assert.equal(await verdict(dir, 'dotenv -c staging -e other.txt -- printenv'), 'deny');
+  assert.equal(await verdict(dir, 'dotenv -c printenv -f x'), 'deny');
+  only('.env.staging', 'PORT=1\n');
+  assert.equal(await verdict(dir, 'dotenv -c staging -- printenv'), 'allow');
+  assert.equal(await verdict(dir, 'dotenvx run --convention flow -- printenv'), 'allow');
+  only('.env.example', SECRET);
+  assert.equal(await verdict(dir, 'dotenv -c staging -- printenv'), 'allow');
+  assert.equal(await verdict(dir, 'dotenv -- printenv'), 'allow');
+});
+
+test('a cascade follows a cd to the folder with the environment files', async (t) => {
+  const dir = project(t, null);
+  fs.mkdirSync(path.join(dir, 'sub'));
+  fs.writeFileSync(path.join(dir, 'sub', '.env.qa'), SECRET);
+  assert.equal(await verdict(dir, 'cd sub && dotenv -c qa -- printenv'), 'deny');
+  assert.equal(await verdict(dir, 'dotenv -c qa -- printenv'), 'allow');
+});
