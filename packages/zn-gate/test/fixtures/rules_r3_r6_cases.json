@@ -158,10 +158,29 @@
       "zip -r k.zip .gnupg",
       "cp -r ~/.gnupg/ /x",
       "tar cf k.tar C:\\Users\\x\\AppData\\Roaming\\gnupg",
-      "cat ~/.git-credentials; echo done"
+      "cat ~/.git-credentials; echo done",
+      "sort -o.env data.txt",
+      "sed w.env notes.txt",
+      "sed r.env notes.txt",
+      "sed -n 'w .env' notes.txt",
+      "sed s/a/b/w.env notes.txt",
+      "sed s\u00e9a\u00e9b\u00e9w.env notes.txt",
+      "grep -f.env notes.txt",
+      "diff -u.env notes.txt",
+      "sort -o./sub/.env data.txt",
+      "sort --output=.env data.txt",
+      "grep --file=.env notes.txt",
+      "diff --to-file=.env notes.txt",
+      "sort --output=sub/.env data.txt"
     ],
     "benign": [
       "cat .env.example",
+      "sort --output=out.txt data.txt",
+      "npm run build --env=production",
+      "git log --format=%H",
+      "sort --output=.env.example data.txt",
+      "node --env-file=.env app.js",
+      "docker run --env-file=.env example/app",
       "cat .env.example;",
       "cat .env.example && ls",
       "cat .env.example | head",
@@ -207,7 +226,12 @@
       "cat docs/gnupg-guide.md",
       "apt install gnupg",
       "cat ~/.gnupg-notes.md",
-      "ls ~/.gnupgrc.bak"
+      "ls ~/.gnupgrc.bak",
+      "cp notes.txt prod.env",
+      "grep -e.env notes.txt",
+      "sort -o out.txt data.txt",
+      "sed w.txt notes.txt",
+      "diff -u3 a.txt b.txt"
     ]
   },
   "hidden_tag": {

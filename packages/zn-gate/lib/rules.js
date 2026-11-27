@@ -394,6 +394,29 @@ function normalizePathWord(word) {
   return (abs ? '/' : '') + out.join('/');
 }
 
+// A name glued to an option or to a sed command, read as a word of its own (sort -o.env, grep -f.env, diff -u.env, sed w.env,
+// sed r.env, sed s/a/b/w.env). Same cases as the hook's withGluedDotenvReadings; -e is left out (it takes a pattern, not a file),
+// and so is a glued name that does not start like a path (-o2, prod.env).
+const PATH_GLUED_OPT_RE = /^-{1,2}(?!e[.~\/\\])[a-z][a-z0-9]*?([.~\/\\].*)$/;
+const PATH_GLUED_SED_RE = /^[wr]([.~\/\\].*)$/;
+// The value of a long option given with an equals sign (sort --output=.env, grep --file=.env, diff --to-file=.env). An option
+// whose name holds "env" (--env-file=.env of node, docker or uv) only loads the file into a program and stays allowed.
+const PATH_EQUALS_OPT_RE = /^--(?![a-z0-9-]*env)[a-z][a-z0-9-]*=(.+)$/;
+const PATH_GLUED_SED_SUBST_RE = /^s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiem0-9]*w(.+)$/;
+function gluedPathReadings(word) {
+  const out = [];
+  if (word.length > 4096) return out;
+  const opt = PATH_GLUED_OPT_RE.exec(word);
+  if (opt && word.indexOf('=') < 0) out.push(opt[1]);
+  const eq = PATH_EQUALS_OPT_RE.exec(word);
+  if (eq) out.push(eq[1]);
+  const sed = PATH_GLUED_SED_RE.exec(word);
+  if (sed) out.push(sed[1]);
+  const sub = PATH_GLUED_SED_SUBST_RE.exec(word);
+  if (sub) out.push(sub[2]);
+  return out;
+}
+
 // The path view of a text: its normalized words, one per line.
 function sensitivePathView(text) {
   const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
@@ -404,6 +427,7 @@ function sensitivePathView(text) {
     const word = raw.replace(PATH_LOCALE_QUOTE_RE, '"').replace(PATH_QUOTE_RE, '');
     words.push(normalizePathWord(word.replace(/\\/g, '/')));
     if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
+    for (const g of gluedPathReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
   }
   return words.join('\n');
 }

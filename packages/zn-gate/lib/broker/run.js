@@ -36,7 +36,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const markers = require('./markers');
-const { warnNotice, WARN_REASON } = require('../team/effective');
+const { teamStrictNote, warnNotice, WARN_REASON } = require('../team/effective');
 const exe = require('../exe');
 const { createMasker } = require('./mask');
 const { approvalStore } = require('./approvals');
@@ -261,7 +261,7 @@ async function prepare(parsed, opts) {
     if (!m) {
       await deny(name, null, 'secret ' + name + ' is not in the vault. Add it from your own terminal: zn secret set ' + name, 'ZN_NOT_FOUND');
     }
-    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.', 'ZN_POLICY_DENIED');
+    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.' + teamStrictNote(m), 'ZN_POLICY_DENIED');
     if (m.mode !== 'env') {
       await deny(name, m.mode, 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');

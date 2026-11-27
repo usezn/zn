@@ -211,4 +211,10 @@ function detectorsOf(st) {
   return Array.isArray(st.policy.detectors) ? st.policy.detectors : [];
 }
 
-module.exports = { effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches, warnNotice, WARN_REASON, INVALID_REASON };
+/* The note for an entry from effectiveList: only when strict mode came from the ended subscription. */
+function teamStrictNote(entry) {
+  const p = entry && entry.orgPolicy;
+  return p && p.state === 'expired' && p.subscription_inactive === true ? require('../messages').TEAM_STRICT_NO_SUBSCRIPTION : '';
+}
+
+module.exports = { teamStrictNote, effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches, warnNotice, WARN_REASON, INVALID_REASON };
