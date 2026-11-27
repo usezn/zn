@@ -1,10 +1,12 @@
 """Branches of integrations/langchain.py that the other LangChain tests do not reach.
 
-Ordinary fake inputs only. Skipped when langchain-core is not installed
-(pip install -e ".[test-frameworks]"); CI installs it and sets ZN_REQUIRE_FRAMEWORKS=1.
+Ordinary fake inputs only. Skipped when langchain-core is not installed. CI installs the
+hash-pinned .github/ci-framework-test-requirements.txt for the python-coverage job and sets
+ZN_REQUIRE_FRAMEWORKS=1, so there a missing framework fails the run instead of skipping.
 """
 import asyncio
 import importlib
+import logging
 import os
 import sys
 from types import SimpleNamespace
@@ -91,10 +93,15 @@ def test_other_inner_errors_propagate_when_checks_and_masking_are_off():
         guarded.invoke({"text": "hi"})
 
 
-def test_callback_ignore_mode_warns_and_keeps_output_when_a_secret_cannot_be_masked(monkeypatch):
+def test_callback_ignore_mode_logs_a_warning_and_keeps_output_when_a_secret_cannot_be_masked(monkeypatch, caplog):
     lc = _lc()
     unmaskable = Assessment(verdict="block", confidence=1.0, rule="secret:unmaskable", reason="test")
     monkeypatch.setattr(lc, "_mask_value", lambda content: (content, unmaskable))
     handler = ZnGuardCallbackHandler(on_block="ignore", mask_secrets=True)
     output = "some tool output"
-    assert handler.on_tool_end(output) is output
+    with caplog.at_level(logging.WARNING, logger="zn_gate"):
+        assert handler.on_tool_end(output) is output
+    # warn_ignored logs on the "zn_gate" logger: the target and the rule, never the text.
+    messages = [r.getMessage() for r in caplog.records if r.name == "zn_gate" and r.levelno == logging.WARNING]
+    assert any("langchain:tool_output" in m and "secret:unmaskable" in m and "on_block='ignore'" in m for m in messages)
+    assert not any(output in m for m in messages)
