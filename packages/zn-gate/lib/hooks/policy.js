@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.9';
+const POLICY_RULES_VERSION = '2026-11-27.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2835,7 +2835,12 @@ function keychainQuery(cmd, env) {
  * an agent memory or instruction file leaves the notice from instructionWriteNotice in `opts.instructionNotice.hit`.
  */
 function bashDenial(cmd, opts = {}) {
-  const deny = shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  let found = bashDenialOf(cmd, opts);
+  // A substitution zn cannot work out is judged last, so a command that is refused for another reason keeps that message.
+  if (!found && /\$\(|`/.test(String(cmd || ''))) {
+    found = suspectSubstitutionDenial(stripHeredocs(String(cmd), { until: Date.now() + CHECK_BUDGET_MS, disk: CHECK_BUDGET_DISK }));
+  }
+  const deny = shellPatchMessage(cmd, found, opts);
   const note = opts.instructionNotice;
   if (!deny && note && !note.hit) note.hit = instructionWriteInPatch(cmd, opts);
   return deny;
@@ -2967,6 +2972,7 @@ function bashDenialOf(cmd, opts = {}) {
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
     if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
+    if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(resolveSubstitutions(text));
     for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
     if (/[$`%!]/.test(text)) {
       // Every expansion read as any text: refused when a path segment could be a protected name.
@@ -3774,6 +3780,275 @@ function substitutionOutputs(text) {
     return toks[toks.length - 1].replace(/^["']|["']$/g, '');
   });
 }
+/*
+ * Command substitutions that print a name. `$(printf %s%s .e nv)`, `$(printf '\056env')`, `$(printf '\x2eenv')`, `$(echo .env)`,
+ * `$(basename ./x/.env)` and `$(dirname ...)` are worked out the way the shell does it and the output replaces the substitution in a
+ * reading of the command, so the name is judged like a name written out. Only a plain command is worked out: no pipe, no variable,
+ * no glob, no nested substitution. Anything else is left as it is (see markSuspectSubstitutions for those).
+ */
+const SUBST_WORK_MAX = 64;
+const SUBST_OUT_MAX = 4096;
+const SUBST_BODY_MAX = 2048;
+// The words of a plain command body, or null when it has anything the shell would expand or chain.
+function plainSubstitutionWords(body) {
+  if (body.length > SUBST_BODY_MAX) return null;
+  const words = [];
+  let cur = null;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "'") {
+      const j = body.indexOf("'", i + 1);
+      if (j < 0) return null;
+      cur = (cur || '') + body.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      let buf = '';
+      for (; j < body.length && body[j] !== '"'; j++) {
+        if (body[j] === '$' || body[j] === '`') return null;
+        if (body[j] === '\\' && j + 1 < body.length && '\\"$`'.includes(body[j + 1])) { buf += body[j + 1]; j++; continue; }
+        buf += body[j];
+      }
+      if (j >= body.length) return null;
+      cur = (cur || '') + buf;
+      i = j;
+    } else if (c === '\\') {
+      if (i + 1 >= body.length || body[i + 1] === '\n') return null;
+      cur = (cur || '') + body[i + 1];
+      i++;
+    } else if (c === ' ' || c === '\t') {
+      if (cur !== null) { words.push(cur); cur = null; }
+    } else if ('\n\r|&;<>()$`*?[]{}~#!'.includes(c)) {
+      return null;
+    } else {
+      cur = (cur || '') + c;
+    }
+  }
+  if (cur !== null) words.push(cur);
+  return words;
+}
+// Backslash escapes of printf formats, %b arguments and echo -e: \NNN and \0NNN (octal), \xHH, \uHHHH, \UHHHHHHHH and the one-letter ones.
+const ESCAPE_LETTERS = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', '"': '"', "'": "'", '?': '?' };
+function decodeShellEscapes(t) {
+  let out = '';
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c !== '\\') { out += c; continue; }
+    const n = t[i + 1];
+    if (n === undefined) { out += '\\'; break; }
+    if (n === 'c') return { text: out, stop: true };
+    if (Object.prototype.hasOwnProperty.call(ESCAPE_LETTERS, n)) { out += ESCAPE_LETTERS[n]; i++; continue; }
+    let m;
+    const rest = t.slice(i + 1, i + 12);
+    if ((m = /^0[0-7]{0,3}/.exec(rest)) || (m = /^[1-7][0-7]{0,2}/.exec(rest))) {
+      out += String.fromCharCode(parseInt(m[0], 8) & 0xff);
+      i += m[0].length;
+    } else if ((m = /^x([0-9A-Fa-f]{1,2})/.exec(rest))) {
+      out += String.fromCharCode(parseInt(m[1], 16));
+      i += m[0].length;
+    } else if ((m = /^u([0-9A-Fa-f]{1,4})/.exec(rest)) || (m = /^U([0-9A-Fa-f]{1,8})/.exec(rest))) {
+      const cp = parseInt(m[1], 16);
+      out += cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
+      i += m[0].length;
+    } else {
+      out += '\\' + n;
+      i++;
+    }
+  }
+  return { text: out, stop: false };
+}
+// printf FORMAT ARGS...: %s %b %d %i %o %u %x %X %c and %%, no width or flags; the format is used again while arguments are left.
+function printfSubstitutionOutput(args) {
+  if (args[0] === '--') args = args.slice(1);
+  if (!args.length || args[0][0] === '-') return null;
+  const fmt = args[0];
+  const rest = args.slice(1);
+  const pieces = [];
+  let lit = '';
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] === '\\') { lit += fmt.slice(i, i + 2); i++; continue; }
+    if (fmt[i] !== '%') { lit += fmt[i]; continue; }
+    const k = fmt[i + 1];
+    if (k === undefined || !/[%sbdiouxXc]/.test(k)) return null;
+    if (lit) { pieces.push({ lit }); lit = ''; }
+    pieces.push({ spec: k });
+    i++;
+  }
+  if (lit) pieces.push({ lit });
+  const takes = pieces.some((p) => p.spec && p.spec !== '%');
+  let out = '';
+  let ai = 0;
+  for (let round = 0; round < 64; round++) {
+    for (const p of pieces) {
+      if (p.lit !== undefined) {
+        const d = decodeShellEscapes(p.lit);
+        out += d.text;
+        if (d.stop) return out;
+        continue;
+      }
+      if (p.spec === '%') { out += '%'; continue; }
+      const arg = ai < rest.length ? rest[ai] : undefined;
+      ai++;
+      if (p.spec === 's') out += arg === undefined ? '' : arg;
+      else if (p.spec === 'b') {
+        const d = decodeShellEscapes(arg === undefined ? '' : arg);
+        out += d.text;
+        if (d.stop) return out;
+      } else if (p.spec === 'c') out += arg === undefined ? '' : arg.slice(0, 1);
+      else {
+        const num = arg === undefined ? '0' : arg;
+        if (!/^-?[0-9]{1,15}$/.test(num)) return null;
+        const v = parseInt(num, 10);
+        if (p.spec === 'd' || p.spec === 'i') out += String(v);
+        else if (v < 0) return null;
+        else out += p.spec === 'o' ? v.toString(8) : p.spec === 'u' ? String(v) : p.spec === 'X' ? v.toString(16).toUpperCase() : v.toString(16);
+      }
+      if (out.length > SUBST_OUT_MAX) return null;
+    }
+    if (!takes || ai >= rest.length) break;
+  }
+  return takes && ai < rest.length ? null : out;
+}
+// The text a plain printf, echo, basename or dirname substitution prints (without its trailing newlines), or null when it is not one of those.
+function substitutionPrints(body) {
+  const w = plainSubstitutionWords(body);
+  if (!w || !w.length) return null;
+  const [prog, ...args] = w;
+  let out = null;
+  if (prog === 'printf') out = printfSubstitutionOutput(args);
+  else if (prog === 'echo') {
+    let esc = false;
+    let i = 0;
+    while (i < args.length && /^-[neE]+$/.test(args[i])) {
+      if (args[i].includes('e')) esc = true;
+      if (args[i].includes('E')) esc = false;
+      i++;
+    }
+    out = args.slice(i).join(' ');
+    if (esc) out = decodeShellEscapes(out).text;
+  } else if (prog === 'basename' || prog === 'dirname') {
+    const a = args[0] === '--' ? args.slice(1) : args;
+    if (!a.length || a.length > (prog === 'basename' ? 2 : 1) || a.some((x) => x[0] === '-' && x !== '-')) return null;
+    const p = a[0].replace(/\/+$/, '');
+    if (prog === 'basename') {
+      out = p === '' ? (a[0] === '' ? '' : '/') : p.slice(p.lastIndexOf('/') + 1);
+      if (a[1] && out.length > a[1].length && out.endsWith(a[1])) out = out.slice(0, -a[1].length);
+    } else {
+      const cut = p.lastIndexOf('/');
+      out = cut < 0 ? (a[0] === '' ? '' : '.') : cut === 0 ? '/' : p.slice(0, cut).replace(/\/+$/, '') || '/';
+    }
+  }
+  if (out === null || out.length > SUBST_OUT_MAX) return null;
+  return out.replace(/\n+$/, '');
+}
+// Calls fn(body) for each $( ) and backtick substitution outside single quotes (at most SUBST_WORK_MAX); a string it returns replaces the
+// whole substitution, null keeps it. Nested substitutions stay inside their outer one.
+function replaceSubstitutions(text, fn) {
+  let out = '';
+  let last = 0;
+  let quote = '';
+  let n = 0;
+  for (let i = 0; i < text.length && n < SUBST_WORK_MAX; i++) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
+    if (ch === "'" && quote === '') { quote = "'"; continue; }
+    let body = null;
+    let end = i;
+    if (ch === '`') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== '`'; j++) if (text[j] === '\\') j++;
+      if (j >= text.length) continue;
+      body = text.slice(i + 1, j);
+      end = j;
+    } else if (ch === '$' && text[i + 1] === '(' && text[i + 2] !== '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth > 0; j++) {
+        if (text[j] === '(') depth++;
+        else if (text[j] === ')') depth--;
+      }
+      if (depth !== 0) continue;
+      body = text.slice(i + 2, j - 1);
+      end = j - 1;
+    }
+    if (body === null) continue;
+    n++;
+    const r = fn(body);
+    if (r !== null) { out += text.slice(last, i) + r; last = end + 1; }
+    i = end;
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+// The output as one word: left as it is when it only holds path characters, otherwise single-quoted.
+function substitutionWord(out) {
+  return /^[A-Za-z0-9_.\/~@%+=:,-]*$/.test(out) ? out : "'" + out.replace(/'/g, "'\\''") + "'";
+}
+function resolveSubstitutions(text) {
+  return replaceSubstitutions(text, (body) => {
+    const out = substitutionPrints(body);
+    return out === null ? null : substitutionWord(out);
+  });
+}
+// An output zn cannot work out: a filter or a listing in a file position. `$(echo .evn | tr v n)`, `$(ls -a | grep env)` and
+// `cat $(ls .env*)` print a name the hook cannot see. Refused only when the body names something close to a protected file (a prefix of
+// one, one with a letter changed, dropped or swapped, or one that holds it), so `$(git rev-parse --show-toplevel)`, `$(mktemp)`,
+// `$(pwd)`, `$(date)`, `$(ls -t | head -1)` and `$(git ls-files)` stay allowed.
+const SUSPECT_NAMES = ['.env', 'env', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_xmss', 'rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss', 'credentials', '.netrc', 'netrc', '.npmrc', 'npmrc', '.pypirc', 'pypirc', '.pgpass', 'pgpass', 'secrets.age'];
+const SUSPECT_MARK = '\u0003';
+// True when a and b differ by one inserted, dropped, changed or swapped letter.
+function nearName(a, b) {
+  if (a === b) return true;
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0;
+  while (i < la && i < lb && a[i] === b[i]) i++;
+  if (la === lb) {
+    if (a.slice(i + 1) === b.slice(i + 1)) return true;
+    return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+  }
+  return la > lb ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i);
+}
+function suspectSubstitutionBody(body) {
+  const lower = body.toLowerCase();
+  const joined = [];
+  for (const stage of lower.split(/[|;&\n]+/)) {
+    const toks = stage.split(/[\s<>()$`'"{}=,*?[\]\\]+/).filter(Boolean).slice(1, 65);
+    for (let t of toks) {
+      joined.push(t);
+      t = t.slice(t.lastIndexOf('/') + 1).replace(/^-+/, '');
+      if (t.length < 3 || WILD_SAFE_END_RE.test(t)) continue;
+      for (const n of SUSPECT_NAMES) {
+        if (n.startsWith(t) || (n.length >= 4 && (t.includes(n) || (t.length >= 4 && nearName(t, n))))) return true;
+      }
+    }
+  }
+  const all = joined.join('');
+  return SUSPECT_NAMES.some((n) => n.length >= 4 && all.includes(n));
+}
+function markSuspectSubstitutions(text) {
+  return replaceSubstitutions(text, (body) => (substitutionPrints(body) === null && suspectSubstitutionBody(body) ? SUSPECT_MARK : null));
+}
+const SUSPECT_MESSAGE = (word) => 'zn: ' + word + ' was not read because a command substitution builds the file name from text close to a .env file or a credential file, ' +
+  'and zn cannot tell what it prints. Write the file name out in full, or ask the user to run the command.';
+function suspectSubstitutionDenial(text) {
+  if (!/\$\(|`/.test(text)) return null;
+  const marked = markSuspectSubstitutions(text);
+  if (marked === text) return null;
+  for (const r of [allWords(marked, false), allWords(marked, true)]) {
+    if (r.truncated) return TOO_MANY_MESSAGE;
+    for (const x of r) {
+      if (typeof x.text !== 'string' || x.text.indexOf(SUSPECT_MARK) < 0) continue;
+      // echo and printf only print their words; a redirect target is a file whatever the command.
+      if (!x.redirectTarget && (x.head === 'echo' || x.head === 'printf' || (x.git && x.sub === 'commit'))) continue;
+      return SUSPECT_MESSAGE(x.text.replace(/\u0003/g, '$(...)'));
+    }
+  }
+  return null;
+}
+
 const WILD_MESSAGE = (word) => 'zn: ' + word + ' was not read because a variable, a command substitution or a cmd variable makes up part of the name, ' +
   'and what is left could spell a .env file or an SSH private key. Write the file name out in full, or ask the user to run the command.';
 function dropEmptyExpansions(text, env) {
