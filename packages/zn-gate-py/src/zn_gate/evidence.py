@@ -764,9 +764,14 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
     """
     Exports the evidence ledger into JSONL or CSV with cryptographic verification.
     Suitable for enterprise compliance audits (SOC 2, ISO 27001, EU AI Act Art. 12).
+    format 'timesketch' (JSON Lines) and 'timesketch-csv' give Timesketch events, see evidence_timesketch.
     """
     target_path = file_path if file_path else EVIDENCE_FILE
-    norm_format = "csv" if (format or "jsonl").lower() == "csv" else "jsonl"
+    asked = (format or "jsonl").lower()
+    if asked in ("timesketch", "timesketch-csv"):
+        from .evidence_timesketch import export_timesketch  # local import: that module imports this one
+        return export_timesketch(target_path, asked)
+    norm_format = "csv" if asked == "csv" else "jsonl"
 
     if not os.path.exists(target_path):
         empty_content = (

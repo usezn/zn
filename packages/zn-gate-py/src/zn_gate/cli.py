@@ -792,7 +792,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
             try:
-                Path(args.output).write_text(out_content, encoding="utf-8")
+                # newline="" keeps \n on Windows too, as the Node package writes it.
+                with open(args.output, "w", encoding="utf-8", newline="") as out_file:
+                    out_file.write(out_content)
             except OSError as err:
                 print(f"Error: the export was not saved. {_fs_error_text(err, args.output)}", file=sys.stderr)
                 return 1
@@ -1067,7 +1069,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
     ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
-    ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")
+    ev_parser.add_argument("--format", type=str.lower, choices=["jsonl", "csv", "timesketch", "timesketch-csv"], default="jsonl",
+                           help="Export format: jsonl (default), csv, timesketch (JSON Lines for Timesketch) or timesketch-csv")
     ev_parser.add_argument("--output", help="Write export output to file")
 
     # status command

@@ -187,3 +187,64 @@ def test_many_old_python_form_ledger_verifies_in_both(tmp_path):
     ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
     assert py_ev.verify_evidence_ledger(str(ledger))["valid"]
     assert _node_verify(tmp_path, ledger)["valid"]
+
+
+_EXPORT_DRIVER = """
+const ev = require(process.argv[2]);
+const { Writable } = require('stream');
+const [file, format] = process.argv.slice(3);
+const chunks = [];
+const out = new Writable({ write(c, _enc, cb) { chunks.push(Buffer.from(c)); cb(); } });
+ev.writeEvidenceExport(file, format, out).then(() => {
+  process.stdout.write(Buffer.concat(chunks));
+});
+"""
+
+# Floats (whole and fractional), booleans, nested objects, a missing field, a non-ASCII tool name
+# and a payload that becomes payload_preview.
+TS_EVENTS = [
+    _event({"tool_name": "herramienta-ñ 工具 \U0001f527", "verdict": "deny", "rule": "R1",
+            "reason": "why", "latency_us": 12.7, "confidence": 0.5}),
+    _event({"latency_us": 12.0, "confidence": 1, "rule": None}),
+    _event({"reason": {"a": 1, "b": [True, None, 2.5]}, "confidence": 1e-7}),
+    _event({"payload": {"k": "secret text the agent wrote"}, "rule": "", "reason": 'x"y\\z'}),
+    _event({"confidence": 0.000123, "latency_us": 5, "reason": False}),
+    dict(BASE),  # no reason, rule or confidence
+]
+
+
+def _node_export(tmp_path, ledger, fmt):
+    driver = tmp_path / "export_driver.js"
+    driver.write_text(_EXPORT_DRIVER, encoding="utf-8")
+    out = subprocess.run(
+        [NODE, str(driver), str(NODE_EVIDENCE), str(ledger), fmt],
+        check=True, capture_output=True, timeout=60,
+    )
+    return out.stdout
+
+
+def _py_export(ledger, fmt):
+    return py_ev.export_evidence_ledger(str(ledger), fmt)["content"].encode("utf-8")
+
+
+@pytest.mark.parametrize("fmt", ["timesketch", "timesketch-csv"])
+def test_timesketch_export_bytes_match_node_on_node_ledger(tmp_path, fmt):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    assert _node_export(tmp_path, ledger, fmt) == _py_export(ledger, fmt)
+
+
+@pytest.mark.parametrize("fmt", ["timesketch", "timesketch-csv"])
+def test_timesketch_export_bytes_match_node_on_python_ledger(tmp_path, fmt):
+    ledger = _py_write(tmp_path, TS_EVENTS)
+    assert _node_export(tmp_path, ledger, fmt) == _py_export(ledger, fmt)
+
+
+@pytest.mark.parametrize("fmt", ["timesketch", "timesketch-csv"])
+def test_timesketch_export_bytes_match_node_after_tamper(tmp_path, fmt):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    lines = ledger.read_text(encoding="utf-8").split("\n")
+    lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"deny"', 1)
+    ledger.write_text("\n".join(lines), encoding="utf-8")
+    node = _node_export(tmp_path, ledger, fmt)
+    assert node == _py_export(ledger, fmt)
+    assert b"false" in node

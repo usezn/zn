@@ -1,0 +1,300 @@
+"""
+Timesketch exports of the evidence ledger: 'timesketch' (JSON Lines) and 'timesketch-csv'.
+
+Timesketch needs message, datetime and timestamp_desc on every event (the CSV also takes timestamp
+in microseconds); every other key becomes a searchable attribute. The message is built only from
+the verdict, tool, agent and rule id, and payload_preview (text the agent wrote) is never exported.
+The output is byte-for-byte what the Node package (lib/evidence_export.js) writes for the same
+ledger: the value rendering below follows JavaScript's String() and JSON.stringify().
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
+from .evidence import (
+    GENESIS_HASH,
+    _RECORD_START,
+    EvidenceLedgerError,
+    _canonical_forms,
+    _corrupt_result,
+    _ends_with_newline,
+    _js_number,
+    _read_ledger,
+    _truncated_tail_result,
+)
+
+TIMESKETCH_FORMATS = ("timesketch", "timesketch-csv")
+TIMESKETCH_DESC = "zn-gate hook decision"
+TIMESKETCH_DATA_TYPE = "zn:gate:decision"
+TIMESKETCH_RECORD_FIELDS = (
+    ("zn_id", "id"),
+    ("zn_agent", "agent_environment"),
+    ("zn_phase", "phase"),
+    ("zn_tool", "tool_name"),
+    ("zn_verdict", "verdict"),
+    ("zn_rule", "rule"),
+    ("zn_reason", "reason"),
+    ("zn_confidence", "confidence"),
+    ("zn_engine", "engine"),
+    ("zn_latency_us", "latency_us"),
+    ("zn_payload_sha256", "payload_sha256"),
+    ("zn_record_hash", "record_hash"),
+    ("zn_prev_hash", "prev_hash"),
+)
+TIMESKETCH_CSV_HEADERS = (
+    ["message", "datetime", "timestamp", "timestamp_desc", "data_type"]
+    + [key for key, _ in TIMESKETCH_RECORD_FIELDS]
+    + ["zn_chain_index", "zn_chain_verified"]
+)
+TIMESKETCH_CSV_HEADER_LINE = ",".join(TIMESKETCH_CSV_HEADERS)
+
+_UTC_ISO_RE = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]{1,6}))?Z"
+)
+_MONTH_DAYS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+_MAX_SAFE_INTEGER = 2 ** 53
+_ARRAY_INDEX_RE = re.compile(r"(?:0|[1-9][0-9]*)")
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+_JSON_ESCAPES = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+# --------------------------------------------------------------------------- JavaScript values
+
+def _number_text(x: float) -> str:
+    """String(x) for a JavaScript number that came from a parsed JSON value."""
+    if math.isnan(x):
+        return "NaN"
+    if math.isinf(x):
+        return "Infinity" if x > 0 else "-Infinity"
+    if x == 0:
+        return "0"
+    return _js_number(x)
+
+
+def _json_string(s: str) -> str:
+    """JSON.stringify of a string: lone surrogates escaped, U+007F and non-ASCII left as they are."""
+    out = ['"']
+    for ch in s:
+        esc = _JSON_ESCAPES.get(ch)
+        if esc is not None:
+            out.append(esc)
+        elif ord(ch) < 0x20 or 0xD800 <= ord(ch) <= 0xDFFF:
+            out.append("\\u%04x" % ord(ch))
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _js_key_order(obj: Dict[str, Any]) -> List[str]:
+    """Own keys in the order JavaScript enumerates them: array-index keys ascending, then the rest."""
+    index_keys = [k for k in obj if _ARRAY_INDEX_RE.fullmatch(k) and int(k) < 2 ** 32 - 1]
+    index_keys.sort(key=int)
+    other = [k for k in obj if not (_ARRAY_INDEX_RE.fullmatch(k) and int(k) < 2 ** 32 - 1)]
+    return index_keys + other
+
+
+def _json_js(value: Any) -> str:
+    """JSON.stringify(value) for a value that came from json.loads with the JavaScript number rules."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return "null" if not math.isfinite(value) else _number_text(value)
+    if isinstance(value, str):
+        return _json_string(value)
+    if isinstance(value, list):
+        return "[" + ",".join(_json_js(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ",".join(_json_string(k) + ":" + _json_js(value[k]) for k in _js_key_order(value)) + "}"
+    raise TypeError(f"not a JSON value: {type(value).__name__}")
+
+
+def _scalar_text(value: Any) -> str:
+    """String(value) for a scalar; a lone surrogate becomes U+FFFD, as TextEncoder writes it."""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return _number_text(value)
+    return _LONE_SURROGATE_RE.sub("�", value)
+
+
+def _plain(value: Any) -> str:
+    """The Node package's plainText: '' for null or missing, JSON for objects, String() otherwise."""
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return _json_js(value)
+    return _scalar_text(value)
+
+
+def _parse_int(text: str) -> Any:
+    # JSON.parse gives every number a double: integers past 2^53 are rounded as a double is.
+    value = int(text)
+    return value if abs(value) <= _MAX_SAFE_INTEGER else float(text)
+
+
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON")
+
+
+def _parse_record(text: str) -> Tuple[Any, Optional[Exception]]:
+    try:
+        return json.loads(text, parse_int=_parse_int, parse_constant=_reject_constant), None
+    except (ValueError, RecursionError) as e:
+        return None, e
+
+
+# --------------------------------------------------------------------------- timestamps
+
+def _is_leap(year: int) -> bool:
+    return (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+
+
+def _days_from_civil(year: int, month: int, day: int) -> int:
+    """Days from 1970-01-01 to a proleptic Gregorian date (integer arithmetic, any 4-digit year)."""
+    yy = year - 1 if month <= 2 else year
+    era = yy // 400
+    yoe = yy - era * 400
+    doy = (153 * (month + (-3 if month > 2 else 9)) + 2) // 5 + day - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+
+def timesketch_micros(ts: Any) -> str:
+    """A UTC ISO 8601 time (the form the hook writes) as integer microseconds since the epoch, else ''.
+    The date must exist (no 30 February, no hour 24, no leap second); years 0000-0099 stay as written."""
+    m = _UTC_ISO_RE.fullmatch(ts) if isinstance(ts, str) else None
+    if m is None:
+        return ""
+    year, month, day, hour, minute, second = (int(m.group(i)) for i in range(1, 7))
+    if month < 1 or month > 12 or hour > 23 or minute > 59 or second > 59:
+        return ""
+    month_days = 29 if month == 2 and _is_leap(year) else _MONTH_DAYS[month - 1]
+    if day < 1 or day > month_days:
+        return ""
+    secs = _days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+    frac = int(m.group(7).ljust(6, "0")) if m.group(7) else 0
+    return str(secs * 1000000 + frac)
+
+
+# --------------------------------------------------------------------------- chain check and events
+
+def _check_line(i: int, rec: Any, parse_error: Optional[Exception], expected_prev: str,
+                total: int, is_cut_tail: bool, bad_reason: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The failure of line i, or None. Same checks, in the same order, as verify_evidence_ledger."""
+    if bad_reason is not None:
+        return _corrupt_result(total, i, bad_reason)
+    if parse_error is not None:
+        if is_cut_tail:
+            return _truncated_tail_result(total, i)
+        return {"valid": False, "total": total, "verified": i, "broken_index": i,
+                "error": f"Malformed JSON at line {i + 1}: {parse_error}"}
+    if not isinstance(rec, dict):
+        return _corrupt_result(total, i, f"Malformed record at line {i + 1}: not a JSON object.")
+    rec_prev = rec.get("prev_hash")
+    if rec_prev != expected_prev:
+        return {"valid": False, "total": total, "verified": i, "broken_index": i,
+                "error": f"Broken chain link at line {i + 1} (record {rec.get('id')}): "
+                         f"expected {expected_prev[:8]}... found {str(rec_prev)[:8]}..."}
+    recorded_hash = rec.get("record_hash")
+    base = {k: v for k, v in rec.items() if k != "record_hash"}
+    # Same as verify_evidence_ledger: a whole-number confidence is hashed as an integer.
+    conf = base.get("confidence")
+    if isinstance(conf, (int, float)) and float(conf).is_integer():
+        base["confidence"] = int(conf)
+    accepted = {
+        hashlib.sha256(f"{expected_prev}:{t}".encode("utf-8", errors="replace")).hexdigest()
+        for t in _canonical_forms(base)
+    }
+    if not isinstance(recorded_hash, str) or recorded_hash not in accepted:
+        return {"valid": False, "total": total, "verified": i, "broken_index": i,
+                "error": f"Tamper detected at line {i + 1} (record {rec.get('id')}): "
+                         "hash mismatch! Log contents were modified."}
+    return None
+
+
+def _event(rec: Dict[str, Any], index: int, verified: bool) -> Dict[str, Any]:
+    rule = _plain(rec.get("rule"))
+    ev: Dict[str, Any] = {
+        "message": f"{_plain(rec.get('verdict'))} {_plain(rec.get('tool_name'))} by "
+                   f"{_plain(rec.get('agent_environment'))}" + (f" (rule {rule})" if rule else ""),
+        "datetime": _plain(rec.get("timestamp")),
+        "timestamp_desc": TIMESKETCH_DESC,
+        "data_type": TIMESKETCH_DATA_TYPE,
+    }
+    for key, field in TIMESKETCH_RECORD_FIELDS:
+        ev[key] = rec.get(field)
+    ev["zn_chain_index"] = index
+    ev["zn_chain_verified"] = verified
+    return ev
+
+
+def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool) -> str:
+    ev = _event(rec, index, verified)
+    if fmt == "timesketch":
+        return _json_js(ev)
+    cells = []
+    for h in TIMESKETCH_CSV_HEADERS:
+        val = timesketch_micros(rec.get("timestamp")) if h == "timestamp" else _plain(ev.get(h))
+        cells.append('"' + val.replace('"', '""') + '"')
+    return ",".join(cells)
+
+
+def export_timesketch(file_path: str, fmt: str) -> Dict[str, Any]:
+    """The whole Timesketch export as one string, with the chain check result (same fields as
+    export_evidence_ledger). Lines that are not JSON objects give no event; a record after a
+    break is written with zn_chain_verified false."""
+    header = TIMESKETCH_CSV_HEADER_LINE + "\n" if fmt == "timesketch-csv" else ""
+    if not os.path.exists(file_path):
+        return {"content": header, "format": fmt, "valid": True, "error": None,
+                "tip_hash": GENESIS_HASH, "total": 0}
+    try:
+        lines, bad = _read_ledger(file_path)
+    except EvidenceLedgerError as e:
+        return {"content": header, "format": fmt, "valid": False, "error": str(e),
+                "tip_hash": GENESIS_HASH, "total": 0}
+
+    ends_with_newline = _ends_with_newline(file_path)
+    total = len(lines)
+    expected_prev = GENESIS_HASH
+    failure: Optional[Dict[str, Any]] = None
+    out: List[str] = [header] if header else []
+    for i, text in enumerate(lines):
+        rec, parse_error = _parse_record(text)
+        is_cut_tail = i == total - 1 and text.startswith(_RECORD_START) and not ends_with_newline
+        if failure is None:
+            failure = _check_line(i, rec, parse_error, expected_prev, total, is_cut_tail, bad.get(i))
+            if failure is None:
+                expected_prev = rec["record_hash"]
+        if parse_error is None and isinstance(rec, dict):
+            out.append(_event_line(fmt, rec, i, failure is None) + "\n")
+
+    tip_hash = GENESIS_HASH
+    if lines:
+        last, last_error = _parse_record(lines[-1])
+        if last_error is None and isinstance(last, dict) and last.get("record_hash"):
+            tip_hash = last["record_hash"]
+
+    if failure is None:
+        result = {"valid": True, "error": None}
+    else:
+        result = {"valid": False, "error": failure["error"]}
+        if failure.get("truncated_tail"):
+            result["truncated_tail"] = True
+    return {"content": "".join(out), "format": fmt, "tip_hash": tip_hash, "total": total, **result}
