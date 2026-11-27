@@ -75,6 +75,8 @@ If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant al
 
 ## AWS KMS data key
 
+`kms.kms_type` (or `ZN_KMS_TYPE`) accepts only `local` (the default) and `aws`; surrounding whitespace and capitalisation are ignored. Any other value, including an empty one, stops the gateway at start-up with a message that suggests the closest valid value, so a typo such as `aws_kms` can never fall back to the local vault. `aws` also needs `kms.key_id`; without it the gateway refuses to start.
+
 With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.
 
 The gateway never replaces the key by itself. It refuses to start, with a message that names the file, when:
