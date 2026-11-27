@@ -22,16 +22,16 @@ zn-gate report
 ```
 
 ```text
-zn-gate report: 2026-10-11 to 2026-10-17 (this computer only; nothing was sent)
+zn-gate report: 2026-11-21 to 2026-11-27 (this computer only; nothing was sent)
 
   Blocked actions   : 12  (claude-code 9, cursor 3)
   Secrets hidden    : 31  (AWS_KEY 14, DB_PASSWORD 8, GITHUB_TOKEN 6, OTHER 3)
-  New MCP servers   : 1  (npx @modelcontextprotocol/server-github)
-  Tools changed, waiting for your approval: 1  (run: zn-gate pins)
+  New MCP servers   : 0  (only servers wrapped by zn-gate are listed)
 
-  Busiest day: 2026-10-14 (9 blocked)
+  Busiest day: 2026-11-27 (12 blocked)
 
 This report was built from files on your computer. Nothing left it.
+Teams can see this for everyone in one place: usezn.com/team  (hide this line: zn-gate report --no-team-line)
 ```
 
 How to read it:
