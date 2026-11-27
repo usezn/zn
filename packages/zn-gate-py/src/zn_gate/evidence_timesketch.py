@@ -15,7 +15,10 @@ import json
 import math
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import shutil
+import tempfile
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .evidence import (
     GENESIS_HASH,
@@ -339,6 +342,31 @@ def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool, inclu
     return ",".join(cells)
 
 
+@contextmanager
+def ledger_snapshot(file_path: str) -> Iterator[str]:
+    """Yields the path of a private copy of the log (up to its size when it was opened), so that the
+    chain check and everything built from it read the same bytes even if the log changes meanwhile.
+    A log that does not exist, or cannot be copied, is yielded as it is: the check then reports it."""
+    tmp_dir = tempfile.mkdtemp(prefix="zn-export-")
+    try:
+        copy = os.path.join(tmp_dir, "evidence.jsonl")
+        try:
+            with open(file_path, "rb") as src, open(copy, "xb") as dst:
+                left = os.fstat(src.fileno()).st_size
+                while left > 0:
+                    data = src.read(min(256 * 1024, left))
+                    if not data:
+                        break
+                    dst.write(data)
+                    left -= len(data)
+        except OSError:
+            yield file_path
+            return
+        yield copy
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def inspect_ledger(file_path: str) -> Dict[str, Any]:
     """Checks the chain line by line, once, for the exports and the manifest. Returns valid, error,
     broken_index, truncated_tail, total (non-empty lines), tip_hash (the file's last record_hash),
@@ -409,7 +437,8 @@ def export_timesketch(file_path: str, fmt: str, include_preview: bool = False) -
     """The whole Timesketch export as one string, with the chain check result (same fields as
     export_evidence_ledger). Lines that are not JSON objects give no event; a record after a
     break is written with zn_chain_verified false."""
-    check = inspect_ledger(file_path)
+    with ledger_snapshot(file_path) as snapshot:
+        check = inspect_ledger(snapshot)
     out: List[str] = []
     if fmt == "timesketch-csv":
         out.append(",".join(timesketch_csv_headers(include_preview)) + "\n")
@@ -467,15 +496,17 @@ def _raw_jsonl(file_path: str, check: Dict[str, Any]) -> str:
 def export_plain(file_path: str, fmt: str) -> Dict[str, Any]:
     """The jsonl or csv export, byte for byte what the Node package writes for the same log, with
     the chain check result. csv gives one row for every line that is a JSON value other than null."""
-    check = inspect_ledger(file_path)
-    if fmt == "csv":
-        out = [",".join(PLAIN_CSV_HEADERS) + "\n"]
-        for rec, ok in check["parsed"]:
-            if ok and rec is not None:
-                out.append(_csv_row(rec) + "\n")
-        content = "".join(out)
-    else:
-        content = _raw_jsonl(file_path, check)
+    # One copy of the log: the chain check and the raw text read the same bytes.
+    with ledger_snapshot(file_path) as snapshot:
+        check = inspect_ledger(snapshot)
+        if fmt == "csv":
+            out = [",".join(PLAIN_CSV_HEADERS) + "\n"]
+            for rec, ok in check["parsed"]:
+                if ok and rec is not None:
+                    out.append(_csv_row(rec) + "\n")
+            content = "".join(out)
+        else:
+            content = _raw_jsonl(snapshot, check)
     result = {
         "content": content, "format": fmt, "valid": check["valid"], "error": check["error"],
         "tip_hash": check["tip_hash"], "total": check["total"], **_manifest_fields(check),

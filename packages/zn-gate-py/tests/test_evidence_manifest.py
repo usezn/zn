@@ -238,3 +238,24 @@ def test_manifest_describes_the_log_as_the_export_saw_it(tmp_path, monkeypatch, 
     assert manifest["records"] == 2
     assert manifest["chain_verified"] is True
     assert manifest["tip_record_hash"] == json.loads(before[-1])["record_hash"]
+
+
+def test_jsonl_export_reads_only_what_the_chain_check_covered(tmp_path, monkeypatch):
+    """A record appended between the chain check and the raw read is not in the export."""
+    home, log = _home(tmp_path, RECORDS)
+    original = log.read_text(encoding="utf-8")
+    real = ts.inspect_ledger
+
+    def check_then_append(path):
+        result = real(path)
+        with open(log, "a", encoding="utf-8") as f:
+            f.write('{"id":"late","timestamp":"2026-11-27T00:00:00.000Z"}' + chr(10))
+        return result
+
+    monkeypatch.setattr(ts, "inspect_ledger", check_then_append)
+    for fmt in ("jsonl", "csv", "timesketch"):
+        res = ev.export_evidence_ledger(str(log), format=fmt)
+        assert res["valid"] is True and res["total"] == 2
+        if fmt == "jsonl":
+            assert res["content"] == original
+        log.write_text(original, encoding="utf-8")

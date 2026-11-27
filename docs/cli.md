@@ -671,7 +671,7 @@ The folder holds:
 - `manifest.json`: the SHA-256 and size of each file above, the generator and the time of the pack (UTC). It is written last; without it the pack is incomplete.
 - `README.txt`: how to check the pack.
 
-If the log's chain does not verify, the pack is still written, `chain.json` says so, and the command exits `1`. If the log cannot be read to the end, it exits `1` and the folder is incomplete. The npm and PyPI packages write the same bytes for the same log.
+If the log's chain does not verify, the pack is still written, `chain.json` says so, and the command exits `1`. If the log cannot be read to the end, it exits `1` and the folder is incomplete. The npm and PyPI packages write the same bytes for the same log, with one exception: with `--format ocsf` each event carries `metadata.product.version`, the version of the package that wrote it, so those bytes match only when both packages are the same version (as with `generator` in the manifest).
 
 ### `why`
 
