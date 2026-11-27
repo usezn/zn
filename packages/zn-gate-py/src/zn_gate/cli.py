@@ -913,7 +913,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    has_key = bool(os.environ.get("ZN_API_KEY"))
+    raw_key = os.environ.get("ZN_API_KEY")
+    has_key = bool(raw_key)
+    from .client import usable_api_key
+    key_ok = usable_api_key(raw_key) is not None
     cloud = is_cloud_enabled()
     print(f"\n{_lead(SHIELD)}zn-gate Status (Python):")
     print(f"  Package Version : {__version__}")
@@ -923,6 +926,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"  Endpoint        : {resolve_endpoint() if cloud else 'None (nothing leaves this machine)'}")
     if not has_key:
         key_line = 'Not set'
+    elif not key_ok:
+        key_line = 'Set (unused: not a valid key, it needs 16 to 256 letters, digits, dots, underscores or dashes)'
     elif cloud:
         key_line = 'Set'
     elif os.environ.get('ZN_LOCAL_ONLY') == 'true':
