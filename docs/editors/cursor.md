@@ -9,12 +9,14 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
 1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
 2. **Install zn-gate and turn on its protection for Cursor.** Paste each line in the same terminal and press Enter after each one:
 
+   **On Windows PowerShell,** type `npm.cmd`, `zn.cmd` and `npx.cmd` instead of `npm`, `zn` and `npx` in every command on this page (PowerShell blocks the `.ps1` versions by default, with "running scripts is disabled on this system"). [More in Troubleshooting](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
    ```bash
    npm install -g zn-gate
    zn hooks install cursor
    ```
 
-   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead. That workaround was verified on Windows Server 2022 (PowerShell 5.1, with the execution policy set to Restricted, which is the default on Windows 10 and 11).
+   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). The `.cmd` forms were verified on Windows Server 2022 (PowerShell 5.1, with the execution policy set to Restricted, which is the default on Windows 10 and 11).
 3. **Restart Cursor.**
 
 Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: hooks verified on Windows Server 2022 (PowerShell 5.1), where they block reads of `.env` files; the Cursor app itself not yet tested.
