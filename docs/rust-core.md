@@ -197,6 +197,12 @@ A search runs on the request path, so it is tried once and gives up after one se
 
 `zn start` loads a sentence embedding model for its neural check. If the folder `~/.zn/models/all-MiniLM-L6-v2` does not hold it yet, the gateway downloads `sentence-transformers/all-MiniLM-L6-v2` (about 90 MB) from `https://huggingface.co` into that folder on the first start. `zn analyze` and `zn mcp` load the same model. The download is pinned to one commit of the model repository (`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, set in `src/ai/embedder.rs`). The files `config.json`, `tokenizer.json` and `model.safetensors` must match their SHA-256 hashes; a file that does not match is deleted and downloaded again. If the download fails, the gateway stops at start-up.
 
+### Result of `zn analyze` and the `analyze_prompt` tool
+
+Both print one JSON object: `{"verdict": "allow"|"block", "rule": <name or null>, "score": <0 to 1>}`, plus `fusion` when the fusion check blocked.
+
+When a check that is turned on in the configuration (`neural.enabled`, `fusion.enabled`) cannot run, for example because the model failed to load, `ZN_FAST_BOOT` replaced it with the stub, or inference failed, the object also carries `degraded` with the reason (for example `neural backend unavailable: model failed to load`). The key is absent when every configured check ran. Such a result is never a plain allow: unless a rule blocked the text, the verdict is `block` with rule `check_unavailable`. `zn analyze` prints that object and exits with an error, and the `analyze_prompt` tool returns it as an error result. With `neural.enabled` set to `false` in the configuration file, nothing changes and `degraded` never appears.
+
 To avoid the download:
 
 - `ZN_FAST_BOOT=1` (any value): the gateway does not load the model and runs with a stub. The neural check is off, and the gateway says so when it starts. With `neural.active_blocking` on (and `guardrails.alert_only` off) the gateway does not start, because the check that should block would be missing. For tests only.
