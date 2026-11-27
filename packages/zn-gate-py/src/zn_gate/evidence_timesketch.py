@@ -269,8 +269,8 @@ def _event(rec: Dict[str, Any], index: int, verified: bool, include_preview: boo
 EVENT_FORMATS = ("timesketch", "timesketch-csv", "ocsf")
 # OCSF schema version the ocsf format targets.
 OCSF_VERSION = "1.7.0"
-# Verdict -> (action_id, disposition_id, severity_id) of the OCSF Detection Finding. Other verdicts are Unknown (0).
-_OCSF_VERDICTS = {"allow": (1, 1, 1), "block": (2, 2, 3)}
+# Verdict -> (action_id, disposition_id, severity_id) of the OCSF Detection Finding. deny is read as block (the hooks write allow and block). Other verdicts are Unknown (0).
+_OCSF_VERDICTS = {"allow": (1, 1, 1), "block": (2, 2, 3), "deny": (2, 2, 3)}
 
 
 def ocsf_event(rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> Dict[str, Any]:
@@ -399,6 +399,12 @@ def inspect_ledger(file_path: str) -> Dict[str, Any]:
     }
 
 
+def _manifest_fields(check: Dict[str, Any]) -> Dict[str, Any]:
+    """What the manifest needs from the chain check that made the export, so it never reads the log again."""
+    return {"broken_index": check["broken_index"], "tip_record_hash": check["tip_record_hash"],
+            "first_timestamp": check["first_timestamp"], "last_timestamp": check["last_timestamp"]}
+
+
 def export_timesketch(file_path: str, fmt: str, include_preview: bool = False) -> Dict[str, Any]:
     """The whole Timesketch export as one string, with the chain check result (same fields as
     export_evidence_ledger). Lines that are not JSON objects give no event; a record after a
@@ -411,7 +417,7 @@ def export_timesketch(file_path: str, fmt: str, include_preview: bool = False) -
         out.append(_event_line(fmt, rec, i, verified, include_preview) + "\n")
     result = {
         "content": "".join(out), "format": fmt, "tip_hash": check["tip_hash"], "total": check["total"],
-        "valid": check["valid"], "error": check["error"],
+        "valid": check["valid"], "error": check["error"], **_manifest_fields(check),
     }
     if check["truncated_tail"]:
         result["truncated_tail"] = True
@@ -472,7 +478,7 @@ def export_plain(file_path: str, fmt: str) -> Dict[str, Any]:
         content = _raw_jsonl(file_path, check)
     result = {
         "content": content, "format": fmt, "valid": check["valid"], "error": check["error"],
-        "tip_hash": check["tip_hash"], "total": check["total"],
+        "tip_hash": check["tip_hash"], "total": check["total"], **_manifest_fields(check),
     }
     if check["read_error"]:
         result["read_error"] = True

@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
+import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -82,7 +84,7 @@ How to check the pack
 1. Compute the sha256 of each file and compare it with manifest.json.
    Linux or macOS:  sha256sum records.jsonl chain.json summary.json controls.md README.txt
    Windows:         Get-FileHash -Algorithm SHA256 records.jsonl
-2. Run "zn evidence --verify" on the original log. This checks the hash chain again. The check covers the whole log, not only the period in this folder.
+2. Run "zn-gate evidence --verify" on the original log. This checks the hash chain again. The check covers the whole log, not only the period in this folder.
 3. Open chain.json. "verified": true means the whole log checked out when the pack was made.
 
 Notes
@@ -170,6 +172,32 @@ def _write_new(path: str, data: bytes) -> Dict[str, Any]:
     return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
 
 
+def _snapshot_log(file_path: str, tmp_dir: str) -> Optional[str]:
+    """Copies the log, as seen on one open file and up to its size at that moment, to a private file in
+    tmp_dir. Returns the copy's path, or None when the log does not exist. Both passes read the copy."""
+    try:
+        src = open(file_path, "rb")
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    with src:
+        try:
+            size = os.fstat(src.fileno()).st_size
+            copy = os.path.join(tmp_dir, "evidence.jsonl")
+            with open(copy, "xb") as dst:
+                left = size
+                while left > 0:
+                    data = src.read(min(256 * 1024, left))
+                    if not data:
+                        raise PackReadError("Cannot read the evidence log: the log got shorter while it was read")
+                    dst.write(data)
+                    left -= len(data)
+        except OSError as e:
+            raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    return copy
+
+
 def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = None, until: Optional[str] = None,
                         fmt: str = "jsonl", include_preview: bool = False, generator: str = "",
                         now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -184,16 +212,23 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
     fmt_name = options["format"]
     has_range = since_day is not None or until_day is not None
 
-    check = inspect_ledger(file_path)
-    if check["read_error"]:
-        raise PackReadError(check["error"])
-    raw = b""
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "rb") as f:
-                raw = f.read()
-        except OSError as e:
-            raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    tmp_dir = tempfile.mkdtemp(prefix="zn-pack-")
+    try:
+        snapshot = _snapshot_log(file_path, tmp_dir)
+        if snapshot is None:
+            snapshot = file_path  # does not exist: an empty log
+        check = inspect_ledger(snapshot)
+        if check["read_error"]:
+            raise PackReadError(check["error"])
+        raw = b""
+        if os.path.exists(snapshot):
+            try:
+                with open(snapshot, "rb") as f:
+                    raw = f.read()
+            except OSError as e:
+                raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     os.makedirs(out_dir, exist_ok=True)
     chain_index = 0

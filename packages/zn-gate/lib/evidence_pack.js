@@ -4,8 +4,10 @@
 // the whole hash chain, a summary, a control map in plain English, a manifest with the hash of each
 // file, and a README. Nothing is uploaded; the folder is written to disk.
 //
-// The log is read twice: once to check the whole chain (streamed, as the export does), then once
-// more, up to the same size, to pick the records of the range. Records are written in log order.
+// The log is copied once to a private temporary file (up to the size seen when it was opened), and
+// both passes read that copy: one to check the whole chain (streamed, as the export does), one to
+// pick the records of the range. So chain.json always describes the bytes the records come from,
+// even if the log changes while the pack is made. Records are written in log order.
 // A record with no valid UTC time is counted as undated; it is left out when a date range is given
 // and kept otherwise. Without --include-preview the payload_preview field is removed from each
 // record (the other fields are written as JSON, in the same order). With it, the records are the
@@ -13,6 +15,7 @@
 // The Python package (zn_gate/evidence_pack.py) writes the same bytes.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { timesketchMicros, ocsfEvent } = require('./evidence_export');
@@ -108,7 +111,7 @@ How to check the pack
 1. Compute the sha256 of each file and compare it with manifest.json.
    Linux or macOS:  sha256sum records.jsonl chain.json summary.json controls.md README.txt
    Windows:         Get-FileHash -Algorithm SHA256 records.jsonl
-2. Run "zn evidence --verify" on the original log. This checks the hash chain again. The check covers the whole log, not only the period in this folder.
+2. Run "zn-gate evidence --verify" on the original log. This checks the hash chain again. The check covers the whole log, not only the period in this folder.
 3. Open chain.json. "verified": true means the whole log checked out when the pack was made.
 
 Notes
@@ -233,6 +236,56 @@ function forEachLine(filePath, size, EvidenceLedgerError, onLine) {
 }
 
 /**
+ * Copies the first `size` bytes of the log, as seen on one open file, to a private temporary file.
+ * Returns { path, cleanup }, or null when the log does not exist.
+ */
+function snapshotLog(filePath, EvidenceLedgerError) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw new EvidenceLedgerError(`Cannot read the evidence log: ${e.code || e.message}`);
+  }
+  let dir = null;
+  const cleanup = () => { if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } } };
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-pack-'));
+    const copy = path.join(dir, 'evidence.jsonl');
+    const out = fs.openSync(copy, 'wx', 0o600);
+    try {
+      let size;
+      try {
+        size = fs.fstatSync(fd).size;
+      } catch (e) {
+        throw new EvidenceLedgerError(`Cannot read the evidence log: ${e.code || e.message}`);
+      }
+      const buf = Buffer.alloc(Math.max(1, Math.min(READ_CHUNK, size)));
+      let pos = 0;
+      while (pos < size) {
+        let n;
+        try {
+          n = fs.readSync(fd, buf, 0, Math.min(buf.length, size - pos), pos);
+        } catch (e) {
+          throw new EvidenceLedgerError(`Cannot read the evidence log: ${e.code || e.message}`);
+        }
+        if (n === 0) throw new EvidenceLedgerError('Cannot read the evidence log: the log got shorter while it was read');
+        fs.writeSync(out, buf, 0, n);
+        pos += n;
+      }
+    } finally {
+      try { fs.closeSync(out); } catch { /* ignore */ }
+    }
+    return { path: copy, cleanup };
+  } catch (e) {
+    cleanup();
+    throw e;
+  } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
+/**
  * Writes the pack into outDir (which must be missing or empty; see packTargetProblem).
  * deps: { exporter, EvidenceLedgerError, trimBytes }. opts: { since, until, format, includePreview,
  * generator, now (Date, for tests) }. Resolves with { valid, total, records, undated, files }.
@@ -240,6 +293,15 @@ function forEachLine(filePath, size, EvidenceLedgerError, onLine) {
  * pack is still written, with chain.json saying so.
  */
 function writeEvidencePack(filePath, outDir, opts, deps) {
+  const snap = snapshotLog(filePath, deps.EvidenceLedgerError);
+  try {
+    return writePackFromSnapshot(snap ? snap.path : filePath, outDir, opts, deps);
+  } finally {
+    if (snap) snap.cleanup();
+  }
+}
+
+function writePackFromSnapshot(filePath, outDir, opts, deps) {
   const { exporter, EvidenceLedgerError, trimBytes } = deps;
   const req = validatePackOptions(opts);
   if (req.error) throw new Error(req.error);
@@ -247,7 +309,7 @@ function writeEvidencePack(filePath, outDir, opts, deps) {
   const includePreview = !!opts.includePreview;
   const hasRange = req.since !== null || req.until !== null;
 
-  // Pass 1: the chain check of the whole log, up to the size read here.
+  // Pass 1: the chain check of the whole snapshot.
   const check = {};
   for (const piece of exporter.exportChunks(filePath, 'none', check)) void piece;
   const res = check.result;

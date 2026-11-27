@@ -103,3 +103,11 @@ test('ocsf: a tampered log exits 1 and the manifest names the break', (t) => {
   assert.equal(m.chain_verified, false);
   assert.equal(m.chain_break_index, 1);
 });
+
+test('ocsf: a deny verdict is read as block', () => {
+  const { ocsfEvent } = require('../lib/evidence_export');
+  const ev = (verdict) => ocsfEvent({ verdict, timestamp: '2026-01-01T00:00:00Z' }, 0, true, false);
+  const d = ev('deny');
+  assert.deepEqual([d.action_id, d.disposition_id, d.severity_id], [2, 2, 3]);
+  assert.deepEqual([d.action_id, d.disposition_id, d.severity_id], [ev('block').action_id, ev('block').disposition_id, ev('block').severity_id]);
+});

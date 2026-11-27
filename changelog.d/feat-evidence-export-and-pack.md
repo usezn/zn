@@ -7,6 +7,7 @@
 ### Changed
 - The Python package now matches the npm package on three points: `evidence --export` exits with code 1 when the log's chain does not verify, its jsonl and csv exports write numbers and cells exactly as the npm package does, and an export printed to the screen uses plain line endings on Windows too.
 - `evidence --export --manifest` never overwrites: if `FILE.manifest.json` already exists, or is a link, the command refuses before it writes anything (exit 2).
+- `evidence pack` and `evidence --export --manifest` now describe the bytes they actually checked: the pack is built from one copy of the log taken at the start, so `chain.json` cannot say verified for records that were never checked even if the log changes meanwhile, and the Python manifest uses the export's own chain check instead of reading the log again. The OCSF export reads a `deny` verdict as blocked, like `block`.
 
 ### Security
 - The csv exports (`--format csv` and `timesketch-csv`) put a single quote in front of a cell that starts with `=`, `+`, `-` or `@` (or a tab or carriage return), so a spreadsheet program no longer runs a tool name or rule text as a formula. This also applies to the plain `csv` format that earlier versions wrote without the guard. Both packages.

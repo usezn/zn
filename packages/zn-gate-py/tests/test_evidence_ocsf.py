@@ -98,6 +98,13 @@ def test_record_without_valid_time_is_kept_with_time_zero(tmp_path):
     assert out["unmapped"]["zn_chain_verified"] is False
 
 
+def test_deny_is_read_as_block(tmp_path):
+    out = ts.ocsf_event({"verdict": "deny", "timestamp": "2026-01-01T00:00:00Z"}, 0, True)
+    block = ts.ocsf_event({"verdict": "block", "timestamp": "2026-01-01T00:00:00Z"}, 0, True)
+    assert (out["action_id"], out["disposition_id"], out["severity_id"]) == (2, 2, 3)
+    assert {k: out[k] for k in ("action_id", "disposition_id", "severity_id")} == {k: block[k] for k in ("action_id", "disposition_id", "severity_id")}
+
+
 def test_unknown_verdict_is_unknown(tmp_path):
     out = ts.ocsf_event({"verdict": "warn", "timestamp": "2026-01-01T00:00:00Z"}, 0, True)
     assert (out["action_id"], out["disposition_id"], out["severity_id"]) == (0, 0, 0)

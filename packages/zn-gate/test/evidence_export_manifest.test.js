@@ -34,7 +34,7 @@ function run(home, args) {
 
 const RECORDS = [
   { agent: 'agent-a', phase: 'tool-call', tool_name: 'shell', verdict: 'allow', engine: 'e', latency_us: 7, payload: 'first preview text' },
-  { agent: 'agent-a', phase: 'tool-call', tool_name: 'shell', verdict: 'deny', rule: 'zn_state', engine: 'e', latency_us: 7 },
+  { agent: 'agent-a', phase: 'tool-call', tool_name: 'shell', verdict: 'block', rule: 'zn_state', engine: 'e', latency_us: 7 },
 ];
 
 test('manifest: refused without --output, with one line and exit 2', (t) => {
@@ -78,7 +78,7 @@ test('manifest: keys in order, values match the export file', (t) => {
 test('manifest: a tampered log is named by its first break, and the export exits 1', (t) => {
   const { dir, home, log } = setup(t, [...RECORDS, { agent: 'a', phase: 'p', tool_name: 'third', verdict: 'allow', engine: 'e' }]);
   const lines = fs.readFileSync(log, 'utf8').split('\n');
-  lines[1] = lines[1].replace('"verdict":"deny"', '"verdict":"allow"');
+  lines[1] = lines[1].replace('"verdict":"block"', '"verdict":"allow"');
   fs.writeFileSync(log, lines.join('\n'));
   const out = path.join(dir, 'out.csv');
   const r = run(home, ['--format', 'csv', '--output', out, '--manifest']);
@@ -151,4 +151,25 @@ test('manifest: refuses a symlink (a dangling one too) and does not write throug
   r = run(home, ['--output', out, '--manifest']);
   assert.equal(r.status, 2);
   assert.equal(fs.existsSync(target), false);
+});
+
+test('manifest: describes the log as the export saw it, not as it is when the manifest is written', (t) => {
+  const { home, log, dir } = setup(t, RECORDS);
+  const before = fs.readFileSync(log, 'utf8').trim().split('\n');
+  // Preloaded into the CLI: appends a record to the log right before the export file is hashed.
+  const hook = path.join(dir, 'append-hook.js');
+  fs.writeFileSync(hook, `
+const lib = require(${JSON.stringify(path.resolve(__dirname, '..', 'lib', 'evidence_export'))});
+const real = lib.sha256File;
+lib.sha256File = (p) => { require('fs').appendFileSync(${JSON.stringify(log)}, '{"id":"late","timestamp":"2026-11-27T00:00:00.000Z"}\\n'); return real(p); };
+`);
+  const out = path.join(dir, 'out.jsonl');
+  const r = spawnSync(process.execPath, ['--require', hook, CLI, 'evidence', '--export', '--output', out, '--manifest'], {
+    env: { ...process.env, ZN_HOME: home }, encoding: 'utf8', timeout: 60000,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const manifest = JSON.parse(fs.readFileSync(`${out}.manifest.json`, 'utf8'));
+  assert.equal(manifest.records, 2);
+  assert.equal(manifest.chain_verified, true);
+  assert.equal(manifest.tip_record_hash, JSON.parse(before[before.length - 1]).record_hash);
 });

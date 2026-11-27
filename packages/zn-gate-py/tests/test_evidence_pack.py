@@ -60,10 +60,10 @@ def _rec(timestamp, **extra):
 
 SPECS = [
     _rec("2026-11-01T10:00:00.000Z"),
-    _rec("2026-11-02T00:00:00.000Z", verdict="deny", rule="R-SHELL-1", agent_environment="agent-b"),
-    _rec("2026-11-03T23:59:59.999Z", verdict="ask", rule="R-NET-2"),
+    _rec("2026-11-02T00:00:00.000Z", verdict="block", rule="R-SHELL-1", agent_environment="agent-b"),
+    _rec("2026-11-03T23:59:59.999Z", verdict="allow", rule="R-NET-2"),
     _rec("2026-11-04T00:00:00.000Z"),
-    _rec("not a time", verdict="deny", rule="R-UNDATED"),
+    _rec("not a time", verdict="block", rule="R-UNDATED"),
 ]
 
 
@@ -102,7 +102,7 @@ def test_range_is_inclusive_utc_days_and_undated_is_counted(ledger, run):
     assert summary["records"] == 2
     assert summary["undated"] == 1
     assert summary["undated_included"] is False
-    assert summary["verdicts"] == {"ask": 1, "deny": 1}
+    assert summary["verdicts"] == {"allow": 1, "block": 1}
     assert summary["rules"] == {"R-NET-2": 1, "R-SHELL-1": 1}
     assert summary["agents"] == {"agent-a": 1, "agent-b": 1}
     assert summary["first_timestamp"] == "2026-11-02T00:00:00.000Z"
@@ -229,7 +229,7 @@ ev.writeEvidencePack(out, {
 PARITY_SPECS = SPECS + [
     _rec("2026-11-02T12:00:00.500Z", confidence=0.00001, latency_us=12.7, rule=None, reason="café €"),
     _rec("2026-11-02T13:00:00Z", confidence=1e-7, payload_preview="\"quoted\" and \\ backslash"),
-    _rec("2026-11-03T08:00:00.000Z", verdict="deny", rule="R-ü-3", payload_preview="plain"),
+    _rec("2026-11-03T08:00:00.000Z", verdict="block", rule="R-ü-3", payload_preview="plain"),
     _rec("2026-02-29T08:00:00.000Z"),
     _rec("2026-11-03T09:00:00.000Z", tool_name="“quoted tool”"),
 ]
@@ -288,5 +288,34 @@ def test_controls_name_the_verdicts_the_log_holds(ledger, run):
     assert run(ledger.out)[0] == 0
     text = _read_pack(ledger.out)["controls.md"].decode("utf-8")
     assert 'The verdict is "allow" or "block".' in text
-    for stale in ('"deny"', '"ask"', "deny and ask"):
-        assert stale not in text
+
+
+def test_snapshot_a_log_changed_after_the_chain_check_does_not_change_the_pack(ledger, monkeypatch, tmp_path):
+    """The chain check and the record selection read the same bytes, even if the log changes between them."""
+    from zn_gate import evidence_pack as mod
+    original = Path(ledger.log).read_bytes()
+    real = mod.inspect_ledger
+    calls = []
+
+    def mutate_after(path):
+        result = real(path)
+        calls.append(path)
+        forged = list(ledger.lines)
+        forged[1] = forged[1].replace('"verdict":"block"', '"verdict":"allow"')
+        Path(ledger.log).write_text("\n".join(forged) + "\n" + json.dumps({"id": "late", "timestamp": "2026-11-02T01:00:00.000Z"}) + "\n",
+                                    encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(mod, "inspect_ledger", mutate_after)
+    res = write_evidence_pack(ledger.log, str(tmp_path / "snap"), generator="test", include_preview=True, now=FIXED_NOW)
+    assert len(calls) == 1 and calls[0] != ledger.log  # read from the private copy
+    assert Path(tmp_path / "snap", "records.jsonl").read_bytes() == original
+    chain = json.loads(Path(tmp_path / "snap", "chain.json").read_text(encoding="utf-8"))
+    assert chain["verified"] is True and chain["records"] == 5 and chain["range_records"] == 5
+    assert res["valid"] is True
+    assert not os.path.exists(os.path.dirname(calls[0]))  # the copy is removed
+
+
+def test_snapshot_missing_log_gives_an_empty_pack(tmp_path):
+    res = write_evidence_pack(str(tmp_path / "nope.jsonl"), str(tmp_path / "p"), generator="test", now=FIXED_NOW)
+    assert res["total"] == 0 and res["records"] == 0

@@ -39,7 +39,7 @@ function sampleLog(t) {
   const file = tmpLedger(t);
   const recs = [
     write(file, 1),
-    write(file, 2, { verdict: 'deny', rule: 'zn_state', reason: 'touches the zn state folder' }),
+    write(file, 2, { verdict: 'block', rule: 'zn_state', reason: 'touches the zn state folder' }),
     write(file, 3, { engine: 'cloud' }),
   ];
   return { file, recs };
@@ -68,7 +68,7 @@ test('timesketch: one JSON event per record with the three fields Timesketch req
     assert.equal(ev.zn_chain_verified, true);
   });
   assert.equal(events[0].message, `allow tool1 by ${recs[0].agent_environment}`);
-  assert.equal(events[1].message, `deny tool2 by ${recs[1].agent_environment} (rule zn_state)`);
+  assert.equal(events[1].message, `block tool2 by ${recs[1].agent_environment} (rule zn_state)`);
   assert.equal(events[1].zn_rule, 'zn_state');
   assert.equal(events[1].zn_reason, 'touches the zn state folder');
 });

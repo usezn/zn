@@ -10,6 +10,22 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
+// The pack reads the log through the exporter. This hook lets a test change the log right after the
+// chain check, the way a writer or an attacker could between the two passes.
+const exportModule = require('../lib/evidence_export');
+let afterChainCheck = null;
+const realCreateExporter = exportModule.createExporter;
+exportModule.createExporter = (...args) => {
+  const exporter = realCreateExporter(...args);
+  const realChunks = exporter.exportChunks;
+  exporter.exportChunks = function* (...a) {
+    yield* realChunks.apply(exporter, a);
+    if (a[1] === 'none' && afterChainCheck) { const f = afterChainCheck; afterChainCheck = null; f(); }
+  };
+  return exporter;
+};
+const evidence = require('../lib/evidence');
+
 const CLI = path.resolve(__dirname, '..', 'bin', 'cli.js');
 const PACK_FILES = ['records.jsonl', 'chain.json', 'summary.json', 'controls.md', 'README.txt'];
 const GENESIS = '0'.repeat(64);
@@ -72,10 +88,10 @@ function readPack(out) {
 
 const SPECS = [
   rec('2026-11-01T10:00:00.000Z', { verdict: 'allow', rule: null }),
-  rec('2026-11-02T00:00:00.000Z', { verdict: 'deny', rule: 'R-SHELL-1', agent_environment: 'agent-b' }),
-  rec('2026-11-03T23:59:59.999Z', { verdict: 'ask', rule: 'R-NET-2' }),
+  rec('2026-11-02T00:00:00.000Z', { verdict: 'block', rule: 'R-SHELL-1', agent_environment: 'agent-b' }),
+  rec('2026-11-03T23:59:59.999Z', { verdict: 'allow', rule: 'R-NET-2' }),
   rec('2026-11-04T00:00:00.000Z', { verdict: 'allow' }),
-  rec('not a time', { verdict: 'deny', rule: 'R-UNDATED' }),
+  rec('not a time', { verdict: 'block', rule: 'R-UNDATED' }),
 ];
 
 test('range: inclusive UTC days, undated records counted and left out of a range', (t) => {
@@ -90,7 +106,7 @@ test('range: inclusive UTC days, undated records counted and left out of a range
   assert.equal(summary.records, 2);
   assert.equal(summary.undated, 1);
   assert.equal(summary.undated_included, false);
-  assert.deepEqual(summary.verdicts, { ask: 1, deny: 1 });
+  assert.deepEqual(summary.verdicts, { allow: 1, block: 1 });
   assert.deepEqual(summary.rules, { 'R-NET-2': 1, 'R-SHELL-1': 1 });
   assert.deepEqual(summary.agents, { 'agent-a': 1, 'agent-b': 1 });
   assert.equal(summary.first_timestamp, '2026-11-02T00:00:00.000Z');
@@ -272,10 +288,36 @@ test('refused: an unknown format names jsonl and ocsf', (t) => {
   assert.match(res.stderr, /jsonl or ocsf/);
 });
 
-test('controls.md: names the verdicts the log holds (allow and block), not deny or ask', (t) => {
+test('controls.md: names the verdicts the log holds (allow and block)', (t) => {
   const s = setup(t, SPECS);
   assert.equal(run(s.home, ['pack', '--out', s.out]).status, 0);
   const text = fs.readFileSync(path.join(s.out, 'controls.md'), 'utf8');
   assert.ok(text.includes('The verdict is "allow" or "block".'));
-  assert.equal(/"deny"|"ask"|deny and ask/.test(text), false);
+});
+
+test('snapshot: a log changed after the chain check does not change the pack (same bytes verified and written)', (t) => {
+  const s = setup(t, SPECS);
+  const original = fs.readFileSync(s.log);
+  afterChainCheck = () => {
+    const forged = s.lines.slice();
+    forged[1] = forged[1].replace('"verdict":"block"', '"verdict":"allow"');
+    fs.writeFileSync(s.log, forged.join('\n') + '\n' + JSON.stringify({ id: 'late', timestamp: '2026-11-02T01:00:00.000Z' }) + '\n');
+  };
+  evidence.writeEvidencePack(s.out, { generator: 'test', includePreview: true, now: new Date('2026-11-27T10:00:00Z') }, s.log);
+  assert.equal(afterChainCheck, null, 'the hook ran');
+  const files = readPack(s.out);
+  assert.equal(files['records.jsonl'].toString('utf8'), original.toString('utf8'));
+  const chain = JSON.parse(files['chain.json']);
+  assert.equal(chain.verified, true);
+  assert.equal(chain.records, 5);
+  assert.equal(chain.range_records, 5);
+});
+
+test('snapshot: the temporary copy is removed and a missing log still gives an empty pack', (t) => {
+  const s = setup(t, SPECS);
+  const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('zn-pack-')).length;
+  evidence.writeEvidencePack(s.out, { generator: 'test' }, s.log);
+  evidence.writeEvidencePack(path.join(s.dir, 'empty'), { generator: 'test' }, path.join(s.dir, 'missing.jsonl'));
+  assert.equal(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('zn-pack-')).length, before);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'empty', 'chain.json'))).records, 0);
 });

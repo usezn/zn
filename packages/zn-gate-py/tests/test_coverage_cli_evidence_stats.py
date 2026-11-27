@@ -645,7 +645,8 @@ def test_stats_block_without_rule(tmp_path):
 def test_export_missing_ledger(tmp_path):
     n = str(tmp_path / "none")
     j = export_evidence_ledger(n)
-    assert j == {"content": "", "format": "jsonl", "valid": True, "tip_hash": GENESIS_HASH, "total": 0}
+    assert j == {"content": "", "format": "jsonl", "valid": True, "error": None, "tip_hash": GENESIS_HASH, "total": 0,
+                 "broken_index": None, "tip_record_hash": None, "first_timestamp": None, "last_timestamp": None}
     c = export_evidence_ledger(n, format="CSV")
     assert c["content"].startswith("timestamp,verdict,phase,tool_name") and c["format"] == "csv"
     assert export_evidence_ledger(n, format=None)["format"] == "jsonl"

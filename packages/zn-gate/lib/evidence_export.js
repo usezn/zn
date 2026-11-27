@@ -44,15 +44,15 @@ function csvRow(obj) {
 // datetime and timestamp_desc on every event (CSV also takes timestamp in microseconds); every
 // other key becomes a searchable attribute. The message is built only from the verdict, tool,
 // agent and rule id, and payload_preview (text the agent wrote) is never exported here.
-const TIMESKETCH_FORMATS = new Set(['timesketch', 'timesketch-csv']);
 // Formats that write one event per record (the chain check is carried per event).
 const EVENT_FORMATS = new Set(['timesketch', 'timesketch-csv', 'ocsf']);
 // OCSF schema version the ocsf format targets.
 const OCSF_VERSION = '1.7.0';
-// Verdict -> OCSF Detection Finding ids (action_id, disposition_id, severity_id). Other verdicts are Unknown.
+// Verdict -> OCSF Detection Finding ids (action_id, disposition_id, severity_id). deny is read as block (the hooks write allow and block). Other verdicts are Unknown.
 const OCSF_VERDICTS = {
   allow: { action_id: 1, disposition_id: 1, severity_id: 1 },
   block: { action_id: 2, disposition_id: 2, severity_id: 3 },
+  deny: { action_id: 2, disposition_id: 2, severity_id: 3 },
 };
 const TIMESKETCH_DESC = 'zn-gate hook decision';
 const TIMESKETCH_DATA_TYPE = 'zn:gate:decision';
@@ -76,7 +76,6 @@ const TIMESKETCH_CSV_HEADERS = [
   ...TIMESKETCH_RECORD_FIELDS.map(([k]) => k),
   'zn_chain_index', 'zn_chain_verified',
 ];
-const TIMESKETCH_CSV_HEADER_LINE = TIMESKETCH_CSV_HEADERS.join(',');
 // --include-preview adds zn_payload_preview just before zn_chain_index.
 const timesketchCsvHeaders = (includePreview) => (includePreview
   ? [...TIMESKETCH_CSV_HEADERS.slice(0, -2), 'zn_payload_preview', ...TIMESKETCH_CSV_HEADERS.slice(-2)]

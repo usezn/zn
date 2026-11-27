@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 from zn_gate import evidence as ev
 from zn_gate import evidence_timesketch as ts
@@ -40,7 +41,7 @@ def _run(home, *args):
 
 RECORDS = [
     {"verdict": "allow", "tool_name": "shell", "agent_environment": "agent-a", "payload": "first preview text"},
-    {"verdict": "deny", "tool_name": "shell", "agent_environment": "agent-a", "rule": "zn_state"},
+    {"verdict": "block", "tool_name": "shell", "agent_environment": "agent-a", "rule": "zn_state"},
 ]
 
 
@@ -69,7 +70,7 @@ def test_manifest_keys_order_and_values(tmp_path):
 def test_manifest_on_tampered_log_names_the_break(tmp_path):
     home, log = _home(tmp_path, RECORDS + [{"verdict": "allow", "tool_name": "third"}])
     lines = log.read_text(encoding="utf-8").split("\n")
-    lines[1] = lines[1].replace('"verdict":"deny"', '"verdict":"allow"', 1)
+    lines[1] = lines[1].replace('"verdict":"block"', '"verdict":"allow"', 1)
     log.write_text("\n".join(lines), encoding="utf-8")
     out = tmp_path / "out.csv"
     _run(home, "--format", "csv", "--output", str(out), "--manifest")
@@ -84,7 +85,7 @@ def test_export_exits_1_when_chain_fails_in_every_format(tmp_path, fmt):
     """Same as the npm package: a log whose chain does not verify exports, says so and exits 1."""
     home, log = _home(tmp_path, RECORDS)
     lines = log.read_text(encoding="utf-8").split("\n")
-    lines[1] = lines[1].replace('"verdict":"deny"', '"verdict":"allow"', 1)
+    lines[1] = lines[1].replace('"verdict":"block"', '"verdict":"allow"', 1)
     log.write_text("\n".join(lines), encoding="utf-8")
     proc = _run(home, "--format", fmt)
     assert proc.returncode == 1
@@ -210,3 +211,30 @@ def test_manifest_refuses_a_symlink_and_does_not_write_through_it(tmp_path):
     link.symlink_to(tmp_path / "not-there.txt")
     assert _run(home, "--output", str(out), "--manifest").returncode == 2
     assert not (tmp_path / "not-there.txt").exists()
+
+
+def test_manifest_describes_the_log_as_the_export_saw_it(tmp_path, monkeypatch, capsys):
+    """A record appended between the export and the manifest does not change the manifest's counts or tip."""
+    from zn_gate import cli
+    home, log = _home(tmp_path, RECORDS)
+    before = log.read_text(encoding="utf-8").splitlines()
+    out = tmp_path / "out.jsonl"
+    real_export = cli.export_evidence_ledger
+
+    def export_then_append(*a, **kw):
+        res = real_export(*a, **kw)
+        with open(log, "a", encoding="utf-8") as f:
+            f.write('{"id":"late","timestamp":"2026-11-27T00:00:00.000Z"}' + chr(10))
+        return res
+
+    monkeypatch.setattr(cli, "EVIDENCE_FILE", str(log))
+    monkeypatch.setattr(ev, "EVIDENCE_FILE", str(log))
+    monkeypatch.setattr(cli, "export_evidence_ledger", export_then_append)
+    args = SimpleNamespace(verify=False, export=True, pack_action=None, output=str(out), format="jsonl",
+                           include_preview=False, manifest=True)
+    assert cli.cmd_evidence(args) == 0
+    capsys.readouterr()
+    manifest = json.loads((tmp_path / "out.jsonl.manifest.json").read_text(encoding="utf-8"))
+    assert manifest["records"] == 2
+    assert manifest["chain_verified"] is True
+    assert manifest["tip_record_hash"] == json.loads(before[-1])["record_hash"]

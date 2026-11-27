@@ -24,7 +24,7 @@ from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
-from .evidence_timesketch import inspect_ledger, manifest_text, sha256_file
+from .evidence_timesketch import manifest_text, sha256_file
 from .evidence_pack import PackReadError, pack_target_problem, validate_pack_options, write_evidence_pack
 
 
@@ -755,12 +755,9 @@ def _fs_error_text(err: OSError, path: object) -> str:
     return f"{p} could not be written ({err.strerror or err}). Choose another path, then try again."
 
 
-def _write_manifest(output: str, fmt: str) -> int:
-    """Writes OUTPUT.manifest.json for the export just written. Returns an exit code (0 = written)."""
-    check = inspect_ledger(EVIDENCE_FILE)
-    if check["read_error"]:
-        print(f"zn-gate: the manifest was not written. {check['error']}", file=sys.stderr)
-        return 1
+def _write_manifest(output: str, fmt: str, check: Dict[str, Any]) -> int:
+    """Writes OUTPUT.manifest.json for the export just written. check is the result of the export's own
+    chain check, so the manifest describes the log as the export saw it. Returns an exit code (0 = written)."""
     try:
         text = manifest_text(fmt=fmt, source=os.path.basename(EVIDENCE_FILE), check=check,
                              export_sha256=sha256_file(output), generator=f"zn-gate {__version__}")
@@ -877,7 +874,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
                 return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
             if manifest:
-                manifest_code = _write_manifest(args.output, fmt)
+                manifest_code = _write_manifest(args.output, fmt, res)
                 if manifest_code:
                     return manifest_code
         else:

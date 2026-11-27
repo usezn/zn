@@ -137,11 +137,11 @@ def test_missing_ledger_gives_header_only_for_csv(tmp_path):
 
 
 def test_event_message_and_no_payload_preview(tmp_path):
-    p = _ledger(tmp_path, [{"verdict": "deny", "tool_name": "shell", "agent_environment": "agent-a",
+    p = _ledger(tmp_path, [{"verdict": "block", "tool_name": "shell", "agent_environment": "agent-a",
                             "rule": "zn_state", "payload": "secret words the agent wrote"}])
     res = ts.export_timesketch(str(p), "timesketch")
     event = json.loads(res["content"].splitlines()[0])
-    assert event["message"] == "deny shell by agent-a (rule zn_state)"
+    assert event["message"] == "block shell by agent-a (rule zn_state)"
     assert event["timestamp_desc"] == ts.TIMESKETCH_DESC
     assert event["zn_chain_verified"] is True and event["zn_chain_index"] == 0
     assert "secret words" not in res["content"]
@@ -152,7 +152,7 @@ def test_records_from_first_break_are_unverified(tmp_path):
     p = _ledger(tmp_path, [{"verdict": "allow", "tool_name": "a"}, {"verdict": "allow", "tool_name": "b"},
                            {"verdict": "allow", "tool_name": "c"}])
     lines = p.read_text(encoding="utf-8").splitlines()
-    lines[1] = lines[1].replace('"allow"', '"deny"', 1)
+    lines[1] = lines[1].replace('"allow"', '"block"', 1)
     p.write_text("\n".join(lines) + "\n", encoding="utf-8")
     res = ts.export_timesketch(str(p), "timesketch")
     flags = [json.loads(x)["zn_chain_verified"] for x in res["content"].splitlines()]
@@ -170,7 +170,7 @@ def test_cut_off_last_line_gives_no_event(tmp_path):
 
 
 def test_csv_export_row_count_matches_events(tmp_path):
-    p = _ledger(tmp_path, [{"verdict": "allow", "tool_name": "a"}, {"verdict": "deny", "tool_name": "b"}])
+    p = _ledger(tmp_path, [{"verdict": "allow", "tool_name": "a"}, {"verdict": "block", "tool_name": "b"}])
     res = ts.export_timesketch(str(p), "timesketch-csv")
     rows = res["content"].split("\n")
     assert rows[0] == ts.TIMESKETCH_CSV_HEADER_LINE
