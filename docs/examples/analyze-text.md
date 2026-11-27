@@ -6,7 +6,7 @@
 
 ## The JSON answer
 
-The answer always goes to standard output as JSON. These are the fields:
+When a text was checked, the answer goes to standard output as JSON. These are the fields:
 
 | Field | What it says |
 |---|---|
