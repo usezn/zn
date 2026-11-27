@@ -24,9 +24,14 @@
  * 2. zn-gate is written to vendor/zn-gate without TypeScript sources, type
  *    declarations and source maps, so the plugin stays well under the
  *    directory's file limit. The prebuilt static hook launchers
- *    (lib/native/<platform>/zn-hook-launcher) are left out too: only
- *    `zn-gate install` copies them, the plugin's hooks never start them,
- *    and they are over the directory's size limit for a non-image file. Every bundled file is the exact bytes from the
+ *    lib/native/linux-x64/zn-hook-launcher and
+ *    lib/native/linux-arm64/zn-hook-launcher are left out too: only
+ *    `zn-gate install` copies them, and the plugins' hooks start
+ *    scripts/zn-launch.js with Node (Claude Code through
+ *    scripts/zn-node.sh, ZCode through scripts/zn-hook.sh or
+ *    zn-hook.cmd), never these binaries. They would also fail the size
+ *    check of step 6 (418488 and 366056 bytes in 1.18.0, over the
+ *    256 KiB allowed for a file that is not an image). Every bundled file is the exact bytes from the
  *    tarball.
  * 3. ES modules are resolved by Node from disk, outside the launcher's
  *    verified loader (require() calls are resolved by the launcher, only to
