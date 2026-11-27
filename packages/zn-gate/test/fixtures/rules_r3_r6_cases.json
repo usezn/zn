@@ -223,7 +223,7 @@
       "cat ~/notes/$\"todo.txt\"",
       "gpg --list-keys",
       "echo gnupg",
-      "cat docs/gnupg-guide.md",
+      "cat notes/gnupg-guide.md",
       "apt install gnupg",
       "cat ~/.gnupg-notes.md",
       "ls ~/.gnupgrc.bak",
