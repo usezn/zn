@@ -468,6 +468,11 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 - **OpenCode**:
   - `tool.execute.before` and `tool.execute.after` let zn change arguments and
     output in place.
+  - The arguments of an MCP tool call are checked before the call runs, as for
+    Claude Code and Cursor: a placeholder or a secret value in them is blocked,
+    except for the `secrets` MCP server that zn itself installs. Personal data
+    goes through the same check as for Claude Code and Cursor (it follows the
+    egress setting; where zn would ask, OpenCode shows a block).
   - zn never restores detected values into arguments, because OpenCode keeps
     the arguments it ran with in the session, where the model can read them.
   - zn does not rely on `shell.env`, which the current bash tool does not apply.
