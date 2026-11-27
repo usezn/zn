@@ -227,11 +227,12 @@ test('real refusals from the vault code carry a specific next step', async (t) =
   }
 });
 
-test('MCP notice: a stored secret cannot go to this server; the next step is the web-request tool', async () => {
+test('MCP notice: a stored secret cannot go to this server; the next step is zn run in the user terminal', async () => {
   const ev = { event: 'pre_tool', tool: 'mcp', mcp: { server: 'github' }, input: { args: { text: AWS_PROMPT } }, cwd: process.cwd() };
   const d = await decidePre(ev, deps([awsSpan()]), 'claude-code', { home: process.cwd() });
   assert.equal(d.decision, 'deny');
-  assert.match(d.message, /^zn: this call would send a secret \(an AWS key\) to the MCP server github, so zn blocked it\. A stored secret cannot be passed to this server\. Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call\.$/);
+  assert.match(d.message, /^zn: this call would send a secret \(an AWS key\) to the MCP server github, so zn blocked it\. Next step: remove the secret from the call\. To let a program use a stored secret, the user runs `[^`]*run --secrets NAME -- <program>` in their own terminal\.$/);
+  assert.doesNotMatch(d.message, /secrets_http_request|placeholder/);
 });
 
 test('Monitor notices: WebSocket, placeholders and the allowed monitor', async () => {

@@ -228,7 +228,7 @@ test('cursor: a __ZN_ marker goes to no server but zn\'s own "secrets" server', 
   const command = fakeZnSecretsCommand(t);
   const other = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'postgres', tool_input: { password: '__ZN_DB_PASSWORD__' } }));
   assert.equal(other.output.permission, 'deny');
-  assert.match(other.output.user_message, /secrets_http_request/);
+  assert.match(other.output.user_message, /secret marker.*MCP server postgres/);
   const own = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { url: 'https://api.example.com', token: '__ZN_DB_PASSWORD__' } }));
   assert.equal(own.output, null);
   // Our server still gets the credential check: markers are its job, raw values are not.

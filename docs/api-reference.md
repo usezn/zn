@@ -146,6 +146,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Synchronous, local, never touches the network. Calling it is the opt-in: it always applies the check. The agent hooks apply two of the rules by default (a recursive delete of the home folder or the root, and a write to a disk device) and the rest only when you turn them on with `hooks.blockDestructiveCommands` or `ZN_BLOCK_DESTRUCTIVE=1` (see [Destructive commands](destructive-commands.md)).
 - Blocks only a few narrow shapes: recursive delete of the home folder or the root, a download piped to a shell, writes to a disk device, `chmod -R` or `chown -R` on the root or a system folder, a fork bomb, and a download written into a shell startup file. It reads the command text only: a path built at run time, or a script saved first and run later, is not seen.
 - Returns the shape of `evaluate`: `{ verdict, confidence, rule, reason, engine, rules_version }`, with `rule` such as `destructive:rm_root_home` or `destructive:pipe_to_shell` when blocked.
+- `command` must be a string. Anything else (`null`, `undefined`, a `Buffer`, a number, an array such as `['rm', '-rf', '/']`, an object, a boolean) is refused, not allowed: the verdict is `block` with `rule` `destructive:command_not_a_string`, because text that was never read cannot be called safe. It does not throw. Join an array into one string yourself before you call it. `check_command` in Python gives the same answer.
 
 ### `checkToolCall(toolName, args, options)`
 
@@ -261,6 +262,7 @@ except GuardBlockError as e:
 
 - Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Local, never touches the network. Calling it is the opt-in: it always applies the check. Same rules and same answers as `checkCommand` in Node.js; see [Destructive commands](destructive-commands.md) for what it blocks and what it does not see.
 - Returns an `Assessment` with `rule` such as `destructive:rm_root_home` when blocked.
+- `command` must be a `str`. Anything else (`None`, `bytes`, `bytearray`, a number, a list such as `["rm", "-rf", "/"]`, a dict, a bool) is refused, not allowed: the verdict is `block` with `rule` `destructive:command_not_a_string`, because text that was never read cannot be called safe. It does not raise. Decode bytes and join a list into one string yourself before you call it.
 
 ### `normalize_input(text: str) -> tuple[str, str]`
 

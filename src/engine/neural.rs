@@ -126,22 +126,60 @@ pub fn evaluate(
     neural_input: &str,
     cfg: &FusionConfig,
 ) -> (bool, Option<super::super::audit::FusionEvidence>) {
-    use super::super::audit::FusionEvidence;
+    let (blocked, evidence, _degraded) = evaluate_checked(rules_hit, neural_input, cfg);
+    (blocked, evidence)
+}
+
+/// Same decision as [`evaluate`], plus the reason the fusion check could not
+/// run. The reason is `Some` only when fusion is enabled in the configuration
+/// and the model is missing or scoring failed, so a caller that must not
+/// silently fall back to the rules can refuse or block. It is `None` when
+/// fusion is disabled or the check ran.
+pub fn evaluate_checked(
+    rules_hit: bool,
+    neural_input: &str,
+    cfg: &FusionConfig,
+) -> (
+    bool,
+    Option<super::super::audit::FusionEvidence>,
+    Option<String>,
+) {
     let Some(engine) = shared_engine(cfg) else {
-        return (rules_hit, None);
+        let degraded = cfg.enabled.then(|| "fusion model unavailable".to_string());
+        return (rules_hit, None, degraded);
     };
-    let score = match engine.score(neural_input) {
+    decide_with_score(rules_hit, engine.score(neural_input), cfg)
+}
+
+/// The decision of [`evaluate_checked`] once the engine has scored the input
+/// (or failed to). Split out so the scoring-error branch can be tested
+/// without a model.
+fn decide_with_score(
+    rules_hit: bool,
+    score: anyhow::Result<f32>,
+    cfg: &FusionConfig,
+) -> (
+    bool,
+    Option<super::super::audit::FusionEvidence>,
+    Option<String>,
+) {
+    use super::super::audit::FusionEvidence;
+    let score = match score {
         Ok(s) => s,
         Err(e) => {
-            // Inference hiccup: degrade this call to the rules gate, never
-            // fail open into a block.
+            // Inference hiccup: this call falls back to the rules gate and the
+            // caller is told, so it can refuse instead of reporting a plain allow.
             warn!("FUSION: scoring failed, degrading to rules gate: {e}");
-            return (rules_hit, None);
+            return (
+                rules_hit,
+                None,
+                Some("fusion inference error: scoring failed".to_string()),
+            );
         }
     };
     let blocked = fused_block(rules_hit, Some(score), cfg.tau);
     if !blocked {
-        return (false, None);
+        return (false, None, None);
     }
     let mut cameras = Vec::with_capacity(2);
     if rules_hit {
@@ -158,6 +196,7 @@ pub fn evaluate(
             tau: cfg.tau,
             model_id: cfg.model_id.clone(),
         }),
+        None,
     )
 }
 
@@ -228,6 +267,46 @@ mod tests {
         );
         let (blocked, ev) = evaluate(false, "rm -rf /", &cfg);
         assert!(!blocked && ev.is_none());
+    }
+
+    #[test]
+    fn neural_scoring_error_falls_back_to_rules_and_reports_why() {
+        let cfg = FusionConfig {
+            enabled: true,
+            ..FusionConfig::default()
+        };
+        for rules_hit in [false, true] {
+            let (blocked, ev, degraded) =
+                decide_with_score(rules_hit, Err(anyhow::anyhow!("boom")), &cfg);
+            assert_eq!(blocked, rules_hit, "falls back to the rules decision");
+            assert!(ev.is_none());
+            assert_eq!(
+                degraded.as_deref(),
+                Some("fusion inference error: scoring failed")
+            );
+        }
+        let (blocked, ev, degraded) = decide_with_score(false, Ok(0.99), &cfg);
+        assert!(blocked && ev.is_some() && degraded.is_none());
+    }
+
+    #[test]
+    fn neural_checked_reports_why_an_enabled_check_could_not_run() {
+        let enabled = FusionConfig {
+            enabled: true,
+            model_path: "/nonexistent/zn-fusion-model".into(),
+            ..FusionConfig::default()
+        };
+        let (blocked, ev, degraded) = evaluate_checked(false, "anything", &enabled);
+        assert!(!blocked && ev.is_none());
+        assert_eq!(degraded.as_deref(), Some("fusion model unavailable"));
+
+        // Disabled: nothing was asked for, so nothing is degraded.
+        let disabled = FusionConfig {
+            enabled: false,
+            ..enabled
+        };
+        let (blocked, ev, degraded) = evaluate_checked(true, "anything", &disabled);
+        assert!(blocked && ev.is_none() && degraded.is_none());
     }
 
     // ── Parity vs the exported py scores (skips without local model) ──

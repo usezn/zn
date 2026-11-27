@@ -188,3 +188,29 @@ test('opencode mcp: personal data in a third-party call follows the egress setti
   const off = await call(project, 'github_create_issue', args, { engine: pii, egressCheck: 'off' });
   assert.equal(off.decision.decision, 'allow');
 });
+
+test('opencode mcp: refusal texts are plain and name what was stopped', async (t) => {
+  const project = setup(t, { mcp: { github: THIRD } });
+  const internal = /placeholder|secrets_http_request/;
+  const server = await call(project, 'github_create_issue', { body: 'use ' + MARKER });
+  const serverText = JSON.stringify(server.output);
+  assert.equal(server.output.action, 'deny');
+  assert.match(serverText, /the MCP server github/);
+  assert.match(serverText, /secret marker/);
+  assert.match(serverText, /run --secrets NAME -- <program>/);
+  assert.doesNotMatch(serverText, internal);
+  const literal = await call(project, 'github_create_issue', { body: 'key ' + AWS });
+  assert.doesNotMatch(JSON.stringify(literal.output), internal);
+  for (const [name, label] of [['websearch', 'web search'], ['codesearch', 'code search']]) {
+    const r = await call(project, name, { query: 'use ' + MARKER });
+    const text = JSON.stringify(r.output);
+    assert.equal(r.output.action, 'deny', name);
+    assert.ok(text.includes('this ' + label + ' was stopped'), name);
+    assert.doesNotMatch(text, /MCP|server|placeholder|secrets_http_request/, name);
+    assert.match(text, /remove the marker from the query/, name);
+    const k = await call(project, name, { query: 'why does ' + AWS + ' fail' });
+    const kt = JSON.stringify(k.output);
+    assert.ok(kt.includes('this ' + label + ' would send a secret'), name);
+    assert.doesNotMatch(kt, /MCP|placeholder|secrets_http_request/, name);
+  }
+});

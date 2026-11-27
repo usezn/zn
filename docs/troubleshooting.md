@@ -685,11 +685,11 @@ In `"deny"` mode the message names the rule `(rule: egress-check)`, says that pe
 
 **What to do:** approve only if that server should get the data. Otherwise decline and ask the agent to send the request without it. Never write the value of a secret in the request. How to change the setting and list trusted hosts: [Network requests that carry personal data](egress-check.md).
 
-#### "zn: this call would send personal data (`<kinds>`) to `<server>`" / "zn: this call would send a secret (`<kinds>`) to `<server>`, so zn blocked it" / "zn: `<server>` never receives secret values"
+#### "zn: this call was stopped because it contains a secret marker" / "zn: this call would send a secret (`<kinds>`) to `<server>`, so zn blocked it" / "zn: this call would send personal data (`<kinds>`) to `<server>`" / "zn: this web search was stopped because its query contains a secret marker"
 
-**What happened:** an MCP call carries personal data (zn asks you), a literal secret, or a `__ZN_NAME__` marker (zn blocks). A stored secret is never passed to another MCP server.
+**What happened:** an MCP call carries a literal secret or a `__ZN_NAME__` marker (a stand-in for a secret stored in zn), and zn blocked it. A stored secret is never passed to another MCP server. The same applies to the query of a web search or code search in OpenCode: the message says "web search" or "code search", not an MCP server.
 
-**What to do:** for personal data, approve only if that server should receive it. For a secret, the agent should use the `secrets_http_request` tool for a web request, or remove the value or marker from the call.
+**What to do:** remove the secret or the marker from the call or the query. To let a program use a stored secret, run `zn run --secrets NAME -- <program>` in your own terminal; the program reads the secret from its environment. For a call that carries personal data (zn asks you), approve only if that server should receive it.
 
 #### "zn: `<agent>` asks for secret `<NAME>`. Add it with: zn secret set `<NAME>`"
 

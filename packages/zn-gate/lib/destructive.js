@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-25.4';
+const COMMAND_RULES_VERSION = '2026-11-27.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -44,6 +44,8 @@ const MAX_DEPTH = 3;
 const MAX_SEGMENTS = 50000;
 const OVERFLOW = 'too_many_commands';
 const OVERFLOW_REASON = 'it has more commands than can be checked, so it is refused rather than guessed at';
+const NOT_A_STRING = 'command_not_a_string';
+const NOT_A_STRING_REASON = 'it is not text, so it cannot be checked and is refused rather than guessed at';
 const MAX_CHARS = 200 * 1024;
 const QUOTE_SCAN_MAX = 20000;
 
@@ -1124,13 +1126,14 @@ function analyze(cmd, depth = 0, known = null, requoted = false, rc = 0) {
  * Returns the same shape as evaluate(): { verdict: 'allow' | 'block', confidence, rule, reason, engine, rules_version }.
  */
 function checkCommand(command) {
-  const hit = typeof command === 'string' ? analyze(command, 0) : null;
+  // A command that is not text (null, a Buffer, a number, an array...) was never read, so it is refused, not allowed.
+  const hit = typeof command === 'string' ? analyze(command, 0) : NOT_A_STRING;
   if (!hit) return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: COMMAND_RULES_VERSION };
   return {
     verdict: 'block',
     confidence: 0.95,
     rule: 'destructive:' + hit,
-    reason: 'Destructive command: ' + (REASONS[hit] || OVERFLOW_REASON),
+    reason: 'Destructive command: ' + (hit === NOT_A_STRING ? NOT_A_STRING_REASON : REASONS[hit] || OVERFLOW_REASON),
     engine: 'oss-local',
     rules_version: COMMAND_RULES_VERSION,
   };
