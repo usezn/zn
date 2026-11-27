@@ -17,7 +17,7 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
    On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead. That workaround was verified on Windows Server 2022 (PowerShell 5.1, with the execution policy set to Restricted, which is the default on Windows 10 and 11).
 3. **Restart Cursor.**
 
-Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: hooks verified on Windows Server 2022 (PowerShell 5.1), where they block reads of `.env` files; the Cursor app itself not yet tested.
+Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: on 27 November 2026, with zn-gate 1.18.0 and npm 11.20, the install steps (install, hook install, check, unlock, env shadow, uninstall) ran end to end on Windows Server 2022 (PowerShell 5.1) using the `.cmd` forms (`npm.cmd`, `zn.cmd`, `zn-gate.cmd`), and the hooks were run with test events and blocked reads of `.env` files. The Cursor app itself is not yet tested on Windows.
 
 Once it works, Cursor's agent is blocked from reading `.env` files with real values and common credential files (file reads and most shell commands), a secret zn-gate recognizes in your chat message is blocked before it is sent, and secrets it recognizes are removed from MCP tool results.
 
@@ -53,7 +53,7 @@ These limits are stated on this page and in [compat.md](../compat.md):
 - `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
 - MCP arguments over 1 MB are denied, because zn cannot check them.
 - The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.
-- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end, and the install steps are not verified on Windows.
+- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end. On Windows, the install steps ran end to end (see Status above); the Cursor app itself was not run there.
 
 ## Technical reference
 
