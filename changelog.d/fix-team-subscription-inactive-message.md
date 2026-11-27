@@ -1,0 +1,2 @@
+### Fixed
+- When your organization's Team subscription ended, `zn team status` and `zn team sync` now say so in plain words: the last policy keeps applying until it expires, then strict mode (restrictions stay, anything the organization had opened is withdrawn), and the person to ask is the organization owner or admin. Once strict mode applies, a call it blocks names the same cause. Nothing is loosened: a missing subscription never removes a restriction. The note clears with the next successful sync.

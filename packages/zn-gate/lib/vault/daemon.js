@@ -47,6 +47,7 @@ const exe = require('../exe');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
+const { teamStrictNote } = require('../team/effective');
 
 const PROTOCOL = 1;
 const DEFAULT_TTL_MS = 8 * 3600 * 1000;
@@ -519,9 +520,11 @@ function makeOps(state, ctl) {
     const agentId = typeof o.agent === 'string' && AGENT_IDS.includes(o.agent) ? o.agent : null;
     const trusted = purpose === 'http' && o.agentTrusted === true && agentId !== null;
     const [eff] = await team.effectiveList([localOf(inner, s)], agentId, trusted);
+    // Strict mode reached because the organization's Team subscription ended: say so and who to ask.
+    const strictNote = teamStrictNote(eff);
     if (eff && eff.deny) {
       if (eff.denyReason === 'policy:org_invalid') return refuse('policy:org_invalid', 'secret ' + inner + ' is blocked: ' + messages.TEAM_POLICY_UNVERIFIED);
-      return refuse('policy:org_deny', 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.');
+      return refuse('policy:org_deny', 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.' + strictNote);
     }
     const meta = eff || localOf(inner, s);
     if (purpose === 'run') {
@@ -548,7 +551,7 @@ function makeOps(state, ctl) {
       }
       const host = typeof o.host === 'string' ? o.host : '';
       if (!markers.hostAllowed(meta.allowHosts, host)) {
-        return refuse('policy:http:host', 'secret ' + inner + ' may not be sent to ' + (host || 'an unnamed host') + '. Next step: the user can allow the host with zn secret allow.');
+        return refuse('policy:http:host', 'secret ' + inner + ' may not be sent to ' + (host || 'an unnamed host') + '. Next step: the user can allow the host with zn secret allow.' + strictNote);
       }
       const allowIn = Array.isArray(meta.allowIn) ? meta.allowIn : ['header'];
       const where = Array.isArray(o.placements) && o.placements.every((p) => ALLOW_IN.includes(p)) ? o.placements : null;

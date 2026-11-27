@@ -122,6 +122,20 @@ test('sync with an inactive organization says so and does not blame a missing po
   assert.ok(!/inactive/.test(r.stdout));
 });
 
+test('sync with an inactive subscription (402 on the policy) keeps the cause and still says how many audit records stay here', async () => {
+  fake.teamSync = async () => ({ policy: { status: 'no_subscription' }, upload: { status: 'inactive', uploaded: 0, pending: 3 } });
+  let r = await run(['team', 'sync']);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /Team subscription is not active: the last policy applies until it expires, then strict mode\. Ask your organization owner or admin/);
+  assert.match(r.stderr, /\[zn\] Nothing is lost: 3 audit records stay on this machine and are sent when it is active again\.\n$/);
+  fake.teamSync = async () => ({ policy: { status: 'no_subscription' }, upload: { status: 'inactive', uploaded: 0, pending: 1 } });
+  r = await run(['team', 'sync']);
+  assert.match(r.stderr, /Nothing is lost: 1 audit record stays on this machine and is sent when it is active again\./);
+  fake.teamSync = async () => ({ policy: { status: 'no_subscription' }, upload: { status: 'nothing', uploaded: 0, pending: 0 } });
+  r = await run(['team', 'sync']);
+  assert.ok(!/Nothing is lost/.test(r.stderr), 'no upload verdict of inactive: no pending line');
+});
+
 test('`zn team login` and `zn team export` say they are not commands and point to the real ones', async () => {
   let r = await run(['team', 'login']);
   assert.strictEqual(r.code, 2);
