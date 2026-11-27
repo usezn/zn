@@ -33,7 +33,7 @@ A short list of what a pull request needs. Each step points to the section below
 1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
 2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
 3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
-4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
+4. If you changed the Python package, run its tests too: `python -m pip install -e ".[test-frameworks]"`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`. The `test-frameworks` extra installs LangChain and LlamaIndex, so their tests run instead of being skipped.
 5. If you changed a detection rule, change it in both packages, add a positive and a negative test case, and bump the version ([Adding New Rules](#adding-new-rules), [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
 6. If users will notice the change, add a fragment file in `changelog.d/` and leave `CHANGELOG.md` alone ([Changelog](#changelog)).
 7. Update the docs that the change touches, and keep any marked snippet runnable ([Runnable doc snippets](#runnable-doc-snippets)).
@@ -66,7 +66,8 @@ This runs the full unit test suite, shield proxy tests, auto-shielding init test
 #### Python (`packages/zn-gate-py`)
 ```bash
 cd packages/zn-gate-py
-python -m pip install -e .
+# The test-frameworks extra installs LangChain and LlamaIndex; without it their tests skip.
+python -m pip install -e ".[test-frameworks]"
 python -m pytest tests/ -v
 ```
 
