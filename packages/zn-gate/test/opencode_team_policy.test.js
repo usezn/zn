@@ -53,7 +53,7 @@ async function run(vault, raw) {
   return runner.handle(opencode, raw, { engine: fakeEngine, vault, failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
 }
 
-test('opencode and the team policy: a shell command with a marker is denied and the agent is sent to zn run', async (t) => {
+test('opencode: a shell command with a marker is denied whatever the policy says, and the agent is sent to zn run (where the policy applies)', async (t) => {
   const vault = teamVault();
   await vault.setSecret(DENIED_NAME, DENIED_VALUE, { mode: 'env' });
   const dir = project(t);
