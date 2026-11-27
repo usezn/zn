@@ -215,6 +215,31 @@ test('every step x option position x -f form reads a secret .env', async (t) => 
   }
 });
 
+test('a second runner word in the same command does not drop the first runner default .env load', async (t) => {
+  const nested = [
+    'dotenvx run -- dotenv -e other.txt -- printenv',
+    'dotenv -- dotenvx run -f other.txt -- printenv',
+    'sudo -E dotenvx run -- dotenv -e other.txt -- printenv',
+    'npx dotenvx run -- dotenv -e other.txt -- printenv',
+    'dotenvx run dotenv -e other.txt -- printenv',
+    'sudo -E dotenvx run dotenv -e other.txt -- printenv',
+    'sudo -E dotenv dotenvx run -f other.txt -- printenv',
+    'env X=1 dotenvx run dotenv -e other.txt -- printenv',
+    'xargs dotenvx run dotenv -e other.txt -- printenv',
+  ];
+  for (const content of [SECRET, ENCRYPTED]) {
+    const dir = project(t, content);
+    for (const c of nested) assert.equal(await verdict(dir, c), 'deny', c);
+  }
+  const allowed = [
+    'dotenvx run -f a.txt dotenv -e b.txt -- printenv',
+    'sudo -E dotenvx run -f a.txt dotenv -e b.txt -- printenv',
+    'sudo -E dotenv -e a.txt dotenvx run -f b.txt -- printenv',
+    'dotenvx run -f a.txt -- dotenv -e b.txt -- printenv',
+  ];
+  for (const dir of [project(t, null), project(t, SECRET)]) for (const c of allowed) assert.equal(await verdict(dir, c), 'allow', c);
+});
+
 test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
   const dir = project(t, null);
   fs.mkdirSync(path.join(dir, 'sub'));

@@ -1749,7 +1749,7 @@ function envFileValueWords(words, opts) {
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; variadic = false; infoOnly = false; }
+      if (programWord || wasLaunch === 'open') { if (runner) noteDefaults(); runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; variadic = false; infoOnly = false; }
       continue;
     }
     if (runner && !cmdStarted) {
