@@ -186,3 +186,24 @@ test('lists and reads that are not filters stay allowed in a file position', () 
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('a plain echo may decode escapes (zsh, dash): both readings are judged, and echo -E stays literal', () => {
+  const { opts } = project();
+  for (const c of [
+    "cat $(echo '\\056env')",
+    "cat $(echo '\\x2eenv')",
+    'cat $(echo "\\0056env")',
+    "echo x > $(echo '\\056env')",
+    "cat ~/.ssh/$(echo 'id_\\145d25519')",
+  ]) {
+    assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+  }
+  for (const c of [
+    "cat $(echo 'notes\\\\ntxt')",
+    "echo 'a\\tb'",
+    "cat $(echo -E '\\056env')",
+    "cat $(echo -E '\\x2eenv')",
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});

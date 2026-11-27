@@ -2983,7 +2983,7 @@ function bashDenialOf(cmd, opts = {}) {
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
     if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
-    if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(resolveSubstitutions(text));
+    if (/[$`]/.test(text) && /\$\(|`/.test(text)) { add(resolveSubstitutions(text)); add(resolveSubstitutions(text, true)); }
     for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
     if (/[$`%!]/.test(text)) {
       // Every expansion read as any text: refused when a path segment could be a protected name.
@@ -3921,14 +3921,15 @@ function printfSubstitutionOutput(args) {
   return takes && ai < rest.length ? null : out;
 }
 // The text a plain printf, echo, basename or dirname substitution prints (without its trailing newlines), or null when it is not one of those.
-function substitutionPrints(body) {
+function substitutionPrints(body, echoEscapes = false) {
   const w = plainSubstitutionWords(body);
   if (!w || !w.length) return null;
   const [prog, ...args] = w;
   let out = null;
   if (prog === 'printf') out = printfSubstitutionOutput(args);
   else if (prog === 'echo') {
-    let esc = false;
+    // zsh and dash decode backslash escapes in a plain echo (bash does not): with echoEscapes both readings are judged, and -E stays literal.
+    let esc = echoEscapes;
     let i = 0;
     while (i < args.length && /^-[neE]+$/.test(args[i])) {
       if (args[i].includes('e')) esc = true;
@@ -3996,9 +3997,9 @@ function replaceSubstitutions(text, fn) {
 function substitutionWord(out) {
   return /^[A-Za-z0-9_.\/~@%+=:,-]*$/.test(out) ? out : "'" + out.replace(/'/g, "'\\''") + "'";
 }
-function resolveSubstitutions(text) {
+function resolveSubstitutions(text, echoEscapes = false) {
   return replaceSubstitutions(text, (body) => {
-    const out = substitutionPrints(body);
+    const out = substitutionPrints(body, echoEscapes);
     return out === null ? null : substitutionWord(out);
   });
 }
