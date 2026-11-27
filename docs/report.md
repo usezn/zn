@@ -11,7 +11,7 @@ npx -y zn-gate report
 A short summary of the last 7 days on this computer:
 
 - **Blocked actions**: how many times zn-gate stopped something, and for which agent.
-- **Secrets hidden**: how many secret values were replaced before your agent saw them, and what kind they were (for example `AWS_KEY` or `GITHUB_TOKEN`).
+- **Secrets hidden**: how many secret values were replaced before your agent saw them, and what kind they were. The kind is the detector's own type name (for example `AWS_KEY`, `DB_PASSWORD` or `GITHUB_TOKEN`), not the name of your variable or secret: zn-gate stores only its built-in types and counts anything else as `OTHER`.
 - **New MCP servers**: servers that zn-gate started protecting during the period.
 - **Tools changed, waiting for your approval**: tools of a protected MCP server that changed since you last approved them. Review them with `zn-gate pins`.
 - **Busiest day**: the day with the most blocked actions.
@@ -84,7 +84,7 @@ The file is written by your shell, not by zn-gate, so it stays wherever you save
 
 ## Your data stays here
 
-The report only reads two things that zn-gate already keeps on your computer: the counts in `~/.zn/stats.json` and the list of protected MCP servers. It writes no files, opens no network connection and needs no account. It never prints prompts, file contents, folder names or the names of your secrets; a server is shown only by its name (the program and the package or script file), never by its arguments.
+The report only reads two things that zn-gate already keeps on your computer: the counts in `~/.zn/stats.json` and the list of protected MCP servers. It writes no files, opens no network connection and needs no account. It never prints prompts, file contents, folder names or the names of your secrets (the kinds in brackets are zn-gate's built-in detector types); a server is shown only by its name (the program and the package or script file), never by its arguments.
 
 Sharing counts with zn is a separate choice that is off unless you turn it on (`zn-gate stats share status`).
 
