@@ -115,6 +115,8 @@ npm install -g zn-gate
 zn hooks install codex           # or: cursor, opencode
 ```
 
+If npm prints an `install-scripts` warning about zn-gate's postinstall step, you can ignore it: that step only refreshes the hook files of an earlier install, so a first install has nothing to refresh. After `npm update -g zn-gate`, run `zn hooks install <agent>` again (`zn-gate check` lists any hook that needs it), or run `npm install -g --allow-scripts=zn-gate` to let the step run.
+
 If `npm install -g` fails with `EACCES` (common with Node.js from your Linux distribution, such as `dnf` or `apk`, and with Node.js from nodejs.org on macOS), do not use `sudo`. Give npm a folder in your home directory, then run the install again:
 
 ```bash
