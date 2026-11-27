@@ -1682,6 +1682,8 @@ function envFileValueWords(words, opts) {
   let cmdStarted = false; // the runner's own options are over: later words belong to the wrapped command
   let lastDash = false; // the previous word was an option (it may have taken this word as its value)
   let valueNext = false; // the previous word is an option known to take a value
+  // dotenvx -f / --env-file takes several values (-f a.txt .env loads both): every word after it up to the next option or -- is a file.
+  let variadic = false;
   let infoOnly = false; // --help / --version
   const defaults = new Set();
   const noteDefaults = () => {
@@ -1718,7 +1720,7 @@ function envFileValueWords(words, opts) {
       progWord = k >= 0 && k < own.length ? own[k] : null;
       loose = chain.unsure;
     }
-    if (w.seq !== seq) { noteDefaults(); seq = w.seq; runner = false; dotenvx = false; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; infoOnly = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { noteDefaults(); seq = w.seq; runner = false; dotenvx = false; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; variadic = false; infoOnly = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
@@ -1740,7 +1742,7 @@ function envFileValueWords(words, opts) {
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; infoOnly = false; }
+      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; variadic = false; infoOnly = false; }
       continue;
     }
     if (runner && !cmdStarted) {
@@ -1754,7 +1756,12 @@ function envFileValueWords(words, opts) {
         if (t === '--convention' || t === '-c' || t === '--cascade' || /^(?:--convention|-c|--cascade)=/.test(t)) cascade = true;
         if (dotenvx && dxSub === null) optionBeforeStep = true;
         valueNext = !t.includes('=') && DOTENV_VALUE_OPTIONS.has(t);
+        variadic = dotenvx && /^(?:-f|--env-file)(?:=|$)/.test(t);
         lastDash = true;
+      } else if (variadic && dxSub === 'run' && !dxAfterOption) {
+        // Another value of -f / --env-file: judged like the first one (a word that is not a watched file is ignored).
+        lastDash = false;
+        if (isDotenvName(t)) { out.set(w, t); continue; }
       } else if (wasValue) {
         lastDash = false;
       } else if (dotenvx && dxSub === null) {

@@ -127,6 +127,29 @@ test('a file option that belongs to the runner still stands in for the default .
   ]) assert.equal(await verdict(dir, c), 'allow', c);
 });
 
+test('dotenvx -f takes several values and dotenv -e may repeat: a later .env is still read', async (t) => {
+  const dir = project(t, SECRET);
+  for (const c of [
+    'dotenvx run -f other.txt .env -- printenv',
+    'dotenvx run -f other.txt -f .env -- printenv',
+    'dotenvx run --env-file other.txt .env -- printenv',
+    'dotenvx run --env-file=other.txt .env -- printenv',
+    'dotenvx run -f other.txt more.txt .env -- printenv',
+    'npx dotenvx run -f other.txt .env -- printenv',
+    'dotenv -e other.txt -e .env -- printenv',
+    'dotenv -e other.txt -e .env printenv',
+  ]) assert.equal(await verdict(dir, c), 'deny', c);
+  const enc = project(t, ENCRYPTED);
+  for (const c of ['dotenvx run -f other.txt .env -- printenv', 'dotenvx run -f other.txt -f .env -- printenv']) assert.equal(await verdict(enc, c), 'deny', c);
+  for (const c of [
+    'dotenvx run -f other.txt -- node app.js',
+    'dotenvx run -f other.txt more.txt -- node app.js',
+    'dotenv -e other.txt -e more.txt -- printenv',
+  ]) assert.equal(await verdict(dir, c), 'allow', c);
+  const plain = project(t, 'PORT=1\n');
+  assert.equal(await verdict(plain, 'dotenvx run -f other.txt .env -- printenv'), 'allow');
+});
+
 test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
   const dir = project(t, null);
   fs.mkdirSync(path.join(dir, 'sub'));
