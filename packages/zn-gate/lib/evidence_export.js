@@ -43,7 +43,7 @@ function csvRow(obj) {
 // Timesketch exports ('timesketch' = JSON Lines, 'timesketch-csv'). Timesketch needs message,
 // datetime and timestamp_desc on every event (CSV also takes timestamp in microseconds); every
 // other key becomes a searchable attribute. The message is built only from the verdict, tool,
-// agent and rule id, and payload_preview (text the agent wrote) is never exported here.
+// agent and rule id; payload_preview (text the agent wrote) is exported only with includePreview.
 // Formats that write one event per record (the chain check is carried per event).
 const EVENT_FORMATS = new Set(['timesketch', 'timesketch-csv', 'ocsf']);
 // OCSF schema version the ocsf format targets.

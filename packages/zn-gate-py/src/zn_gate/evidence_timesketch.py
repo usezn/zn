@@ -3,7 +3,7 @@ Timesketch exports of the evidence ledger: 'timesketch' (JSON Lines) and 'timesk
 
 Timesketch needs message, datetime and timestamp_desc on every event (the CSV also takes timestamp
 in microseconds); every other key becomes a searchable attribute. The message is built only from
-the verdict, tool, agent and rule id, and payload_preview (text the agent wrote) is never exported.
+the verdict, tool, agent and rule id; payload_preview (text the agent wrote) is exported only with include_preview.
 The output is byte-for-byte what the Node package (lib/evidence_export.js) writes for the same
 ledger: the value rendering below follows JavaScript's String() and JSON.stringify().
 """
