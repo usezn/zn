@@ -460,8 +460,8 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initialize Secret Vault (KMS)
     use zn::crypto::vault::{AwsKmsVault, LocalVault, SecretVault};
-    let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kms_type.as_str() {
-        "aws" => {
+    let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kind()? {
+        zn::config::KmsKind::Aws => {
             log::info("Initializing AWS KMS Vault...").ok();
             // The data key is kept across restarts through its encrypted copy,
             // saved next to the audit database.
@@ -473,7 +473,7 @@ async fn start_proxy(args: Args) -> Result<()> {
                 .await,
             ))
         }
-        _ => {
+        zn::config::KmsKind::Local => {
             // The audit key is a passphrase for the audit log. The local
             // vault reads it as a raw 32-byte hex key, and only when a key id
             // asks the vault for one. Without a key id, no key is passed in.
