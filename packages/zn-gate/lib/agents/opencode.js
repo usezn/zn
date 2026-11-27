@@ -93,35 +93,52 @@ function usesPowerShell(shell, platform) {
 // OpenCode names an MCP tool <server>_<tool>, both parts with every character outside [A-Za-z0-9_-] turned into "_".
 function mcpSafeName(s) { return String(s).replace(/[^A-Za-z0-9_-]/g, '_'); }
 
-/* The MCP servers OpenCode's configuration files define, by name: { servers: Map(name -> [entries]), ok }.
+/* Whether a file is inside the project: the working folder or, when there is one above, the git work tree (the folders
+ * OpenCode reads project files from), by the path as written and once links are resolved. */
+function insideProject(root, file) {
+  const start = path.resolve(root);
+  // Outside means the parent segment itself (".." or "../..."): a folder named "..secrets" is inside.
+  const within = (d, f) => { const rel = path.relative(d, f); return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)); };
+  const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+  let top = start;
+  for (let dir = start; ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) { top = dir; break; }
+    if (path.dirname(dir) === dir) break;
+  }
+  return within(real(top), real(file)) || within(top, path.resolve(file));
+}
+
+/* The MCP servers OpenCode's configuration files define, by name: { servers: Map(name -> [{ cfg, user }]), ok }.
+ * user is true only for an entry of the user-level configuration (the user's own config folder, OPENCODE_CONFIG_DIR
+ * and OPENCODE_CONFIG, when that file is not inside the project); the project files and OPENCODE_CONFIG_CONTENT are not.
  * ok is false when a file that exists cannot be read or parsed (or a config variable is not valid JSON): nothing is
  * then trusted as zn's own server. A missing file is normal. */
 function readMcpServers(root, env) {
   const { parseJsonc } = require('../audit/parse');
   const servers = new Map();
   let ok = true;
-  const take = (data) => {
+  const take = (data, user) => {
     const m = data && typeof data === 'object' && data.mcp && typeof data.mcp === 'object' && !Array.isArray(data.mcp) ? data.mcp : null;
     if (!m) return;
     for (const name of Object.keys(m)) {
       const key = mcpSafeName(name);
       if (!servers.has(key)) servers.set(key, []);
-      servers.get(key).push(m[name]);
+      servers.get(key).push({ cfg: m[name], user });
     }
   };
-  const readFile = (file) => {
+  const start = path.resolve(root);
+  const readFile = (file, user) => {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return; ok = false; return; }
-    try { take(parseJsonc(text)); } catch (_) { ok = false; }
+    try { take(parseJsonc(text), Boolean(user) && !insideProject(root, file)); } catch (_) { ok = false; }
   };
   const base = env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(os.homedir(), '.config');
   const dirs = [path.join(base, 'opencode')];
   if (env.OPENCODE_CONFIG_DIR) dirs.push(path.resolve(env.OPENCODE_CONFIG_DIR));
-  for (const d of dirs) { readFile(path.join(d, 'opencode.json')); readFile(path.join(d, 'opencode.jsonc')); }
-  if (env.OPENCODE_CONFIG) readFile(path.resolve(env.OPENCODE_CONFIG));
+  for (const d of dirs) { readFile(path.join(d, 'opencode.json'), true); readFile(path.join(d, 'opencode.jsonc'), true); }
+  if (env.OPENCODE_CONFIG) readFile(path.resolve(env.OPENCODE_CONFIG), true);
   // The project files OpenCode reads: from the working folder up to the git work tree root (the nearest folder with
   // .git), and no further. With no .git above, only the working folder.
-  const start = path.resolve(root);
   const dirsUp = [];
   let found = false;
   for (let dir = start; ;) {
@@ -135,18 +152,48 @@ function readMcpServers(root, env) {
     for (const f of ['opencode.json', 'opencode.jsonc', path.join('.opencode', 'opencode.json'), path.join('.opencode', 'opencode.jsonc')]) readFile(path.join(dir, f));
   }
   if (env.OPENCODE_CONFIG_CONTENT) {
-    try { take(parseJsonc(String(env.OPENCODE_CONFIG_CONTENT))); } catch (_) { ok = false; }
+    try { take(parseJsonc(String(env.OPENCODE_CONFIG_CONTENT)), false); } catch (_) { ok = false; }
   }
   return { servers, ok };
 }
 
-/* True when every entry of the server is zn's own secrets server (a local command, never a URL). */
-function entriesAreOurs(entries, root) {
+const OWN_CLI = path.resolve(__dirname, '..', '..', 'bin', 'cli.js');
+
+function realFile(p) {
+  try {
+    const r = fs.realpathSync.native(p);
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* Whether the command launches the bin/cli.js of the zn-gate package that runs this hook: the file the command names
+ * (or the `zn` / `zn-gate` found on the absolute PATH entries) is the same file once links are resolved. A copy of
+ * zn-gate elsewhere, or a path that only ends in /zn-gate/bin/cli.js, is not this package. */
+function launchesThisPackage(command, root, env) {
+  let words = command.map(String);
+  if (words.length >= 4 && words[words.length - 2] === '--agent') words = words.slice(0, -2);
+  const own = realFile(OWN_CLI);
+  if (!own) return false;
+  if (words.length === 3) return path.isAbsolute(words[1]) && !insideProject(root, words[1]) && realFile(words[1]) === own;
+  if (words.length === 2) {
+    const exe = require('../exe');
+    const found = exe.whichSync(words[0], exe.absolutePath(env.PATH, process.platform, { cwd: root, env }));
+    return Boolean(found) && realFile(found) === own;
+  }
+  return false;
+}
+
+/* True when every entry of the server is zn's own secrets server: defined in the user-level configuration (a project
+ * file or OPENCODE_CONFIG_CONTENT can only be someone else's, and one of them with the same name overrides it), a local
+ * command, never a URL, that launches this zn-gate package. */
+function entriesAreOurs(entries, root, env = process.env) {
   const { isOurMcp } = require('../audit')._internal;
-  return entries.length > 0 && entries.every((cfg) => {
-    if (!cfg || typeof cfg !== 'object' || cfg.url || (cfg.type !== undefined && cfg.type !== 'local')) return false;
+  return entries.length > 0 && entries.every(({ cfg, user }) => {
+    if (!user || !cfg || typeof cfg !== 'object' || cfg.url || (cfg.type !== undefined && cfg.type !== 'local')) return false;
     if (!Array.isArray(cfg.command) || !cfg.command.length || !cfg.command.every((w) => typeof w === 'string')) return false;
-    try { return Boolean(isOurMcp(cfg.command, { rec: { root } })); } catch (_) { return false; }
+    try { return Boolean(isOurMcp(cfg.command, { rec: { root } })) && launchesThisPackage(cfg.command, root, env); } catch (_) { return false; }
   });
 }
 
@@ -165,7 +212,7 @@ function mcpInfo(toolName, root, env = process.env) {
   if (best === null) return info;
   info.server = best;
   info.tool = toolName.slice(best.length + 1);
-  if (found.ok && isSecretsToolName(info.tool) && entriesAreOurs(found.servers.get(best), root)) info.ours = 'secrets';
+  if (found.ok && isSecretsToolName(info.tool) && entriesAreOurs(found.servers.get(best), root, env)) info.ours = 'secrets';
   return info;
 }
 
@@ -460,8 +507,8 @@ function install(opts = {}) {
       ? ['zn', 'secrets-mcp', '--agent', 'opencode']
       : [(opts.nodePath || process.execPath).replace(/\\/g, '/'), cli, 'secrets-mcp', '--agent', 'opencode'];
     report.warnings.push('optional: to let OpenCode use the secrets kept in zn\'s vault, add the "secrets" MCP server to ' +
-      (project ? 'opencode.json in this project' : 'opencode.json') + ' under "mcp": "secrets": ' + JSON.stringify({ type: 'local', command }) +
-      (project ? ' (everyone who uses the project needs zn on their PATH)' : ''));
+      (project ? 'your own opencode.json, ~/.config/opencode/opencode.json (zn does not trust a "secrets" server that a project defines)' : 'opencode.json') +
+      ' under "mcp": "secrets": ' + JSON.stringify({ type: 'local', command }));
   }
   return report;
 }

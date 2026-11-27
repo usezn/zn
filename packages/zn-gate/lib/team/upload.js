@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const messages = require('../messages');
 const { FIELDS, forEachLine } = require('../vault/audit');
 
 const LOCK_TTL_MS = 10 * 60 * 1000;
@@ -239,7 +240,7 @@ function isExpected(body) {
 function apiFailure(status) {
   if (status === 422) return { status: 'rejected', text: 'server rejected the batch (chain check failed)' };
   if (status === 401) return { status: 'revoked', text: 'installation was revoked (HTTP 401)' };
-  if (status === 402) return { status: 'inactive', text: 'organization has no active subscription (HTTP 402)' };
+  if (status === 402) return { status: 'inactive', text: messages.TEAM_UPLOAD_NO_SUBSCRIPTION };
   if (status === 0) return { status: 'offline', text: 'server unreachable' };
   if (status >= 500 && status <= 599) return { status: 'offline', text: `server unavailable (HTTP ${status})` };
   if (status === null) return { status: 'error', text: 'unexpected error while uploading' };
@@ -460,4 +461,4 @@ function pendingCount(opts) {
   return scanLog(o.auditFile, afterFor({ startAfterSeq: after }, head), head ? head.seq : 0, 0, o.chunk).pending;
 }
 
-module.exports = { uploadPending, pendingCount };
+module.exports = { uploadPending, pendingCount, apiFailure };
