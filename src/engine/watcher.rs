@@ -74,7 +74,7 @@ impl PolicyWatcher {
                 } else if event.kind.is_remove() {
                     for path in event.paths {
                         if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            engine.unregister_policy(name);
+                            engine.unregister_policy_unless_last(name);
                         }
                     }
                 }
@@ -209,6 +209,44 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         wait_until("gamma unregistered", || !engine._has_policy("gamma"));
         assert_eq!(engine.policy_count(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn deleting_the_last_wasm_file_keeps_it_when_enforcement_is_configured() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = dir.path().join("delta.wasm");
+        let last = dir.path().join("epsilon.wasm");
+        std::fs::write(&first, EMPTY_WASM).unwrap();
+        std::fs::write(&last, EMPTY_WASM).unwrap();
+        let engine = Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![sha256_hex(EMPTY_WASM)],
+                signing_public_key: None,
+            })
+            .expect("engine init"),
+        );
+        engine.load_all_policies(dir.path()).expect("load");
+        assert_eq!(engine.policy_count(), 2);
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+        let refusals = || {
+            engine
+                .kept_last_refusals
+                .load(std::sync::atomic::Ordering::SeqCst)
+        };
+
+        // Positive signal that remove events are handled: deleting one of two policies removes it.
+        std::fs::remove_file(&first).unwrap();
+        wait_until("delta unregistered", || !engine._has_policy("delta"));
+        assert_eq!(refusals(), 0);
+
+        // Deleting the last one is observed (the removal is refused) and the policy stays registered.
+        std::fs::remove_file(&last).unwrap();
+        wait_until("removal of the last policy refused", || refusals() >= 1);
+        assert!(engine._has_policy("epsilon"));
+        assert_eq!(engine.policy_count(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -23,9 +23,13 @@ pub mod scrubber;
 pub mod shield;
 pub mod sql_guard;
 pub mod tenants;
+pub mod tls;
 pub mod tui;
 pub mod user_errors;
 pub mod webhooks;
 
 #[cfg(test)]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+mod fail_open_audit_tests;

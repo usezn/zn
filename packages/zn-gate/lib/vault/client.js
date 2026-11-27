@@ -66,7 +66,7 @@ const CONFIRM_TIMEOUT_MS = 150000;
 // zn team join asks two questions in a row (the organization lookup, then the join), each with
 // up to 120 s to answer, so the join waits longer than the other confirmed operations.
 const JOIN_CONFIRM_TIMEOUT_MS = 300000;
-const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'confirmApproval', 'readBackup', 'teamJoin', 'teamLeave', 'confirmOrgOpening']); // teamLeave also asks the server (10 s at most)
+const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'confirmApproval', 'readBackup', 'teamJoin', 'teamLeave', 'teamStatusReport', 'confirmOrgOpening']); // teamLeave also asks the server (10 s at most)
 // Network calls to the zn cloud (policy download and audit upload).
 const NETWORK_OPS = new Set(['teamSync']);
 const NETWORK_TIMEOUT_MS = 120000;
@@ -315,6 +315,7 @@ class VaultClient {
   confirmApproval(kind, project, summary) { return this.call('confirmApproval', [kind, project, summary]); }
   teamJoin(args) { return this.call('teamJoin', [args || {}]); }
   teamLeave() { return this.call('teamLeave', []); }
+  teamStatusReport(args) { return this.call('teamStatusReport', [args || {}]); }
   teamInfo() { return this.call('teamInfo', []); }
   teamHookInfo(args) { return this.call('teamHookInfo', args ? [args] : []); }
   teamChangeShown(to) { return this.call('teamChangeShown', [to]); }

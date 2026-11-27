@@ -12,6 +12,7 @@
 | `zn-gate team join` | Connects this machine to your organization with the join token your admin gave you. |
 | `zn-gate team status` | Shows the organization, the policy version and the state of the audit upload. |
 | `zn-gate team sync` | Downloads the policy and uploads the vault audit log now. |
+| `zn-gate team status-report` | `accept` or `stop` the short status report (see [What is sent](#what-is-sent)). |
 | `zn-gate team leave` | Disconnects this machine from the organization. |
 | `zn-gate team managed-config` | For administrators. Prints the managed configuration files to deploy so that the zn hooks run for every developer. |
 
@@ -74,8 +75,9 @@ link into `zn team join`, zn says so and exits `2` without contacting anything.
 | Command | What it does |
 |---|---|
 | `zn team join -` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin; `-` reads it from one line of standard input, so it stays out of your shell history. You can also set `ZN_TEAM_JOIN_TOKEN` and run `zn team join`, or pass it as `zn team join <token>` (an argument wins over the variable; zn then warns that the token stays in your shell history and in the process list). Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded (offline, refused, or the organization has not published one yet), the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. If your admin has not published a policy yet, the command says so: this is expected, no restrictions apply for now, and zn checks again by itself (`zn team sync` checks now). Failures say in plain words what happened and the command to run next; the technical cause (HTTP status, internal code) shows only with `ZN_VERBOSE=1`. |
-| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). If the server has not yet been told that you left, a "Revocation pending" line with the last error and the next step. If more than 8 installations left while the server could not be reached, the oldest pending revocation is dropped to keep the list small; status then shows a "WARNING ... dropped" line (for 30 days) and the audit log gets a `team_revocation_dropped` record, so an admin can remove that installation from the dashboard. `--json` for scripts (`join_pending`, `last_sync`, `policy.change`, `revocation_pending`, `revocations_dropped`). `--rules` adds the rules in force (see [See the rules in force](#see-the-rules-in-force)). Never shows the install token. |
+| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). If the server has not yet been told that you left, a "Revocation pending" line with the last error and the next step. If more than 8 installations left while the server could not be reached, the oldest pending revocation is dropped to keep the list small; status then shows a "WARNING ... dropped" line (for 30 days) and the audit log gets a `team_revocation_dropped` record, so an admin can remove that installation from the dashboard. `--json` for scripts (`join_pending`, `last_sync`, `status_report`, `policy.change`, `revocation_pending`, `revocations_dropped`). `--rules` adds the rules in force (see [See the rules in force](#see-the-rules-in-force)). Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
+| `zn team status-report accept` or `stop` | The status report (see [What is sent](#what-is-sent)). A new join turns it on, because the join dialog lists it. A machine that joined before it existed sends no report until you run `accept` once; a dialog on the vault's own channel asks you. `stop` turns it off. `zn team status` shows whether it is on and the exact last report. |
 | `zn team leave` | Disconnects this machine and tells the server (see [Leaving](#leaving)). The organization's policy stops applying here at once. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local vault audit log as OpenTelemetry logs (works without zn Team; see below). |
@@ -407,6 +409,22 @@ detectors off without a word.
 - **At join:** the join token, a random installation id, this machine's
   audit key (it lets the server check that uploaded records were not
   altered), the zn-gate version, the OS family and, if given, the agent.
+- **Status report:** after each sync (the same 15-minute cycle), one small
+  request to `POST /v1/org/install/status` with the install token: the
+  zn-gate version, the OS family, the version of the policy this machine
+  holds and its state (`active`, `expired`, `refused` or `none`), and for
+  each agent zn has hooks for (`claude-code`, `codex`, `cursor`, `opencode`,
+  `antigravity`, `copilot`, `gemini`, `zcode`) whether its hooks are `ok`,
+  `stale` or `broken`. Never paths, host names, user names, environment
+  values, secret names, commands or prompts. It is what lets the dashboard
+  show a machine that runs an old zn-gate or has broken hooks. It is sent
+  only after you accepted it: the `zn team join` dialog lists it, and a
+  machine that joined before it existed sends nothing until you run
+  `zn team status-report accept` once. `zn team status` shows whether it is
+  on and the exact last report with its time. `zn team status-report stop`,
+  `zn team leave` or removal by an admin stop it. A server that does not
+  take it yet (HTTP 404 or 405) is asked again only after a day or with a
+  new zn-gate version. A failed report never fails a sync.
 - **Policy download:** the install token, the policy version already held
   and the policy features this zn-gate understands (header
   `X-ZN-Policy-Features: warn`).
@@ -466,6 +484,8 @@ If one of these files already exists on your machines, merge the printed entries
 The formats come from each vendor's documentation, read on 2026-10-19: [Claude Code managed settings](https://code.claude.com/docs/en/managed-settings) and [managed MCP](https://code.claude.com/docs/en/managed-mcp), [Cursor hooks](https://cursor.com/docs/hooks), and [Codex managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration). Run the command again after you update zn-gate, and check the vendor pages if an agent rejects a file.
 
 After a machine has the policy, `zn hooks install` for that agent warns if a managed policy leaves zn's hooks out.
+
+`zn-gate check` also reads these managed files (read-only), at the paths in the table above for the system it runs on. A machine that has zn only through the managed file shows as protected, and `check` names the file; zn in both the managed file and the developer's own configuration shows a note that the hooks run twice. A managed file that turns hooks off (`disableAllHooks` for Claude Code, `[features] hooks = false` for Codex) is reported as not protected, and the fix is for your administrator to change that file. For Cursor, a zn hook in the enterprise `hooks.json` without `failClosed` is a note. `check` does not see policy delivered through an MDM profile, the Windows registry or the vendor's cloud.
 
 ## Export the audit log to OpenTelemetry
 
