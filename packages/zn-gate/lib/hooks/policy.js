@@ -2914,9 +2914,11 @@ function shellAssignments(cmd, opts) {
   const out = {};
   const unknown = new Set();
   let n = 0;
+  let capped = false;
   for (const m of String(cmd).matchAll(ASSIGN_WORD_RE)) {
-    if (++n > 64) break;
     const name = m[1];
+    // Past the cap the names are not worked out: they are unknown, and the command is refused (see capped), never silently trusted.
+    if (++n > 64) { unknown.add(name); capped = true; continue; }
     // A name set twice may hold either value when it is used: zn does not know which.
     if (name in out || unknown.has(name)) { delete out[name]; unknown.add(name); continue; }
     let v = m[2];
@@ -2929,15 +2931,15 @@ function shellAssignments(cmd, opts) {
   }
   // printf -v NAME FORMAT ARGS sets NAME to what printf prints: worked out like a substitution, or unknown when it holds anything else.
   for (const m of String(cmd).matchAll(PRINTF_V_RE)) {
-    if (++n > 64) break;
     const name = m[2];
+    if (++n > 64) { unknown.add(name); capped = true; continue; }
     if (name in out || unknown.has(name)) { delete out[name]; unknown.add(name); continue; }
     const w = plainSubstitutionWords(m[3].trim());
     const printed = w && w.length ? printfSubstitutionOutput(w) : null;
     if (printed === null) { unknown.add(name); continue; }
     out[name] = printed;
   }
-  return { env: Object.keys(out).length ? out : null, unknown };
+  return { env: Object.keys(out).length ? out : null, unknown, capped };
 }
 const PRINTF_V_RE = /(^|[\s;&|(){}])printf\s+-v\s+([A-Za-z_][A-Za-z0-9_]{0,63})\s+([^;&|\n]*)/g;
 
@@ -2954,6 +2956,8 @@ function bashDenialOf(cmd, opts = {}) {
   }
   // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
   const assigned = shellAssignments(cmd, opts);
+  // More NAME=value words than zn works out: the later ones would go unread, so the command is refused.
+  if (assigned.capped) return TOO_MANY_MESSAGE;
   if (assigned.env || assigned.unknown.size) {
     const env = { ...(opts.env || process.env), ...(assigned.env || {}) };
     for (const name of assigned.unknown) delete env[name];
@@ -3005,6 +3009,8 @@ function bashDenialOf(cmd, opts = {}) {
     // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
+    // More substitutions than zn works out: the rest would be left unread, so the command is refused.
+    if (/[$`]/.test(text) && /\$\(|`/.test(text) && substitutionCapReached(text)) return TOO_MANY_MESSAGE;
     if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
     if (/[$`]/.test(text) && /\$\(|`/.test(text)) { add(resolveSubstitutions(text)); add(resolveSubstitutions(text, true)); }
     for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
@@ -3869,8 +3875,10 @@ function plainSubstitutionWords(body) {
   return words;
 }
 // Backslash escapes of printf formats, %b arguments and echo -e: \NNN and \0NNN (octal), \xHH, \uHHHH, \UHHHHHHHH and the one-letter ones.
+// A printf FORMAT (format = true) takes at most three octal digits after the backslash, so '\0056' is \005 and a 6; \0NNN (a 0 and up
+// to three digits) belongs to %b arguments and echo -e.
 const ESCAPE_LETTERS = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', '"': '"', "'": "'", '?': '?' };
-function decodeShellEscapes(t) {
+function decodeShellEscapes(t, format = false) {
   let out = '';
   for (let i = 0; i < t.length; i++) {
     const c = t[i];
@@ -3881,7 +3889,7 @@ function decodeShellEscapes(t) {
     if (Object.prototype.hasOwnProperty.call(ESCAPE_LETTERS, n)) { out += ESCAPE_LETTERS[n]; i++; continue; }
     let m;
     const rest = t.slice(i + 1, i + 12);
-    if ((m = /^0[0-7]{0,3}/.exec(rest)) || (m = /^[1-7][0-7]{0,2}/.exec(rest))) {
+    if ((m = (format ? /^[0-7]{1,3}/ : /^0[0-7]{0,3}/).exec(rest)) || (m = /^[1-7][0-7]{0,2}/.exec(rest))) {
       out += String.fromCharCode(parseInt(m[0], 8) & 0xff);
       i += m[0].length;
     } else if ((m = /^x([0-9A-Fa-f]{1,2})/.exec(rest))) {
@@ -3922,7 +3930,7 @@ function printfSubstitutionOutput(args) {
   for (let round = 0; round < 64; round++) {
     for (const p of pieces) {
       if (p.lit !== undefined) {
-        const d = decodeShellEscapes(p.lit);
+        const d = decodeShellEscapes(p.lit, true);
         out += d.text;
         if (d.stop) return out;
         continue;
@@ -3984,13 +3992,14 @@ function substitutionPrints(body, echoEscapes = false) {
   return out.replace(/\n+$/, '');
 }
 // Calls fn(body) for each $( ) and backtick substitution outside single quotes (at most SUBST_WORK_MAX); a string it returns replaces the
-// whole substitution, null keeps it. Nested substitutions stay inside their outer one.
-function replaceSubstitutions(text, fn) {
+// whole substitution, null keeps it. Nested substitutions stay inside their outer one. When one more substitution follows the last one
+// examined, state.capped is set (a caller that cannot leave it unread refuses the command).
+function replaceSubstitutions(text, fn, state) {
   let out = '';
   let last = 0;
   let quote = '';
   let n = 0;
-  for (let i = 0; i < text.length && n < SUBST_WORK_MAX; i++) {
+  for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (quote === "'") { if (ch === "'") quote = ''; continue; }
     if (ch === '\\') { i++; continue; }
@@ -4016,12 +4025,19 @@ function replaceSubstitutions(text, fn) {
       end = j - 1;
     }
     if (body === null) continue;
+    if (n >= SUBST_WORK_MAX) { if (state) state.capped = true; break; }
     n++;
     const r = fn(body);
     if (r !== null) { out += text.slice(last, i) + r; last = end + 1; }
     i = end;
   }
   return last === 0 ? text : out + text.slice(last);
+}
+// True when the text holds more substitutions than SUBST_WORK_MAX, so the ones after the cap were not examined.
+function substitutionCapReached(text) {
+  const state = { capped: false };
+  replaceSubstitutions(text, () => null, state);
+  return state.capped;
 }
 // The output as one word: left as it is when it only holds path characters, otherwise single-quoted.
 function substitutionWord(out) {

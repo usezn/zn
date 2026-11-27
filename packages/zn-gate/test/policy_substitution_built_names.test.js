@@ -125,13 +125,42 @@ test('unicode and octal escapes in printf build a protected name: refused', () =
   for (const c of [
     "cat $(printf '\\u002eenv')",
     "cat $(printf '\\U0000002eenv')",
-    "cat $(printf '\\0056env')",
     "cat $(printf '\\056%s' env)",
     "cat $(printf '%b' '\\0056env')",
     "cat $(printf '\\x2e\\u0065nv')",
   ]) {
     assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
   }
+});
+
+test('a printf format takes three octal digits, the way bash does; %b and echo -e take a leading 0 and three more', () => {
+  const { opts } = project();
+  // bash: printf '\0056env' prints \005 and 6env, which is not a protected name.
+  assert.equal(policy.bashDenial("cat $(printf '\\0056env')", opts), null);
+  assert.match(policy.bashDenial("cat $(printf '%b' '\\0056env')", opts) || '', DENIED);
+  assert.match(policy.bashDenial("cat $(echo -e '\\0056env')", opts) || '', DENIED);
+});
+
+test('more substitutions than zn works out are refused, not left unread', () => {
+  const { opts } = project();
+  const harmless = (n) => Array.from({ length: n }, () => 'echo $(pwd)').join('; ');
+  const TOO_MANY = /chains more commands than zn checks/;
+  assert.equal(policy.bashDenial(harmless(64), opts), null);
+  for (const tail of ['cat $(printf %s%s .e nv)', 'cat $(echo vne. | rev)']) {
+    assert.match(policy.bashDenial(harmless(64) + '; ' + tail, opts) || '', TOO_MANY, tail);
+    assert.match(policy.bashDenial(harmless(80) + '; ' + tail, opts) || '', TOO_MANY, tail);
+  }
+  assert.match(policy.bashDenial(harmless(65), opts) || '', TOO_MANY);
+});
+
+test('more assignments than zn works out, printf -v included, are refused, not left unread', () => {
+  const { opts } = project();
+  const TOO_MANY = /chains more commands than zn checks/;
+  const filler = (n) => Array.from({ length: n }, (_, i) => 'v' + i + '=x').join('; ');
+  assert.equal(policy.bashDenial(filler(64) + '; cat notes.md', opts), null);
+  assert.match(policy.bashDenial(filler(64) + "; printf -v f '%s%s' .e nv; cat $f", opts) || '', TOO_MANY);
+  assert.match(policy.bashDenial(filler(70) + "; printf -v f '%s%s' .e nv; cat $f", opts) || '', TOO_MANY);
+  assert.match(policy.bashDenial(filler(70) + '; cat notes.md', opts) || '', TOO_MANY);
 });
 
 test('a substitution that pipes text into a filter or runs inline code in a file position is refused', () => {
