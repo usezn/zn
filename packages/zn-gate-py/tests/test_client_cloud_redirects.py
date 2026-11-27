@@ -10,6 +10,7 @@ import os
 import threading
 import unittest
 import urllib.error
+import urllib.request
 from unittest import mock
 
 from zn_gate import client
@@ -129,6 +130,15 @@ class TestEndpointRefused(unittest.TestCase):
             with self.subTest(url=url):
                 self._refused(url)
 
+    def test_loopback_range_is_127_0_0_0_8(self):
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = b'{"verdict": "allow"}'
+        opener = mock.Mock(return_value=resp)
+        with mock.patch.object(client, "_open", opener):
+            client.analyze_cloud("hello there", KEY, "http://127.0.0.2/v30/analyze")
+        opener.assert_called_once()
+        self._refused("http://128.0.0.1/v30/analyze")
+
     def test_other_schemes(self):
         for url in ("file:///etc/passwd", "ftp://example.com/x", "data:text/plain,hi", "gopher://example.com/", "example.com/x"):
             with self.subTest(url=url):
@@ -176,19 +186,24 @@ class TestKeyShape(unittest.TestCase):
         resp.__enter__.return_value.read.return_value = b'{"verdict": "block"}'
         opener = mock.Mock(return_value=resp)
         with mock.patch.object(client, "_open", opener):
-            res = client.analyze_cloud("hello there", KEY, "https://api.usezn.com/v30/analyze")
+            res = client.analyze_cloud("hello there", KEY, "https://api.example.test/v30/analyze")
         req = opener.call_args[0][0]
-        self.assertEqual(req.full_url, "https://api.usezn.com/v30/analyze")
+        self.assertEqual(req.full_url, "https://api.example.test/v30/analyze")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(res["engine"], "cloud-v30")
 
     def test_opener_has_no_redirect_following(self):
-        client._OPENER = None
-        client._open  # noqa: B018 (opener is built lazily on first call)
-        opener = __import__("urllib.request").request.build_opener(client._BoundedHTTPSHandler, client._NoRedirectHandler)
-        handlers = [type(h) for h in opener.handlers]
-        self.assertIn(client._NoRedirectHandler, handlers)
-        self.assertNotIn(__import__("urllib.request").request.HTTPRedirectHandler, handlers)
+        # Build the shared opener through the real code path (client._open), without touching the network.
+        req = mock.Mock()
+        with mock.patch.object(client, "_OPENER", None):
+            with mock.patch.object(urllib.request.OpenerDirector, "open", return_value="ok") as fake_open:
+                self.assertEqual(client._open(req, timeout=1), "ok")
+            fake_open.assert_called_once()
+            opener = client._OPENER
+            self.assertIsNotNone(opener)
+            handlers = list(opener.handlers)
+            self.assertTrue(any(isinstance(h, client._NoRedirectHandler) for h in handlers))
+            self.assertFalse(any(type(h) is urllib.request.HTTPRedirectHandler for h in handlers))
 
 
 if __name__ == "__main__":
