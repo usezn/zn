@@ -41,7 +41,7 @@ A policy upload is verified before anything is written. The gateway checks these
 - the ML-DSA-65 signature, when `ZN_PQ_PUBLIC_KEY` is set (this then makes it mandatory);
 - that the WASM compiles.
 
-It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy.
+It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy. While the gateway runs, only the `.wasm` file adds, replaces or removes a policy (renaming it away removes it). Adding, changing or removing a signature file checks the policy again: when a signing key or allowed hashes are set and it no longer verifies, the policy is unloaded; the last loaded policy is never unloaded (nor deleted through the API) while they are set, it stays and an error is logged. Without them a failed check is only logged. `zn analyze` and `zn mcp` refuse to start when a signing key or allowed hashes are set and no policy loads, like `zn start`.
 
 Only then does it write the file. It writes to a temporary file in the policy directory, which is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
 

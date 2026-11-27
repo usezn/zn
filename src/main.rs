@@ -435,15 +435,9 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initial load of all policies from configured directory
     let policy_dir = &zn_config.engine.policy_dir;
-    let mut policy_load_error: Option<anyhow::Error> = None;
-    if let Err(e) = engine.load_all_policies(policy_dir) {
-        if engine.policy_enforcement_configured() {
-            // A signing key or allowed hashes were set: running without those policies would allow
-            // everything they were meant to check, so zn does not start.
-            return Err(anyhow!("zn did not start. {e}. Fix or remove the policy files, or remove engine.signing_public_key and engine.allowed_policy_hashes (ZN_SIGNING_PUBLIC_KEY, ZN_POLICY_HASHES) if you do not use signed policies."));
-        }
-        log::warning(zn::user_errors::policy_folder_problem(policy_dir, &e))?;
-        policy_load_error = Some(e);
+    let policy_load_error = load_policies_or_refuse(&engine, policy_dir)?;
+    if let Some(e) = &policy_load_error {
+        log::warning(zn::user_errors::policy_folder_problem(policy_dir, e))?;
     } else {
         log::success(format!(
             "Loaded {} initial security policies",
@@ -841,13 +835,28 @@ fn failed_closed(verdict: &serde_json::Value) -> bool {
         && verdict.get("degraded").is_some()
 }
 
+/// Load the policies from `policy_dir`. When policy enforcement is configured (a signing key or allowed
+/// hashes) and they do not load, this is an error: running without them would allow everything they were
+/// meant to check, so every command that loads policies refuses to start. Without enforcement a problem
+/// is returned for the caller to report, and `Ok(None)` means they loaded.
+fn load_policies_or_refuse(engine: &ZnEngine, policy_dir: &str) -> Result<Option<anyhow::Error>> {
+    match engine.load_all_policies(policy_dir) {
+        Ok(()) => Ok(None),
+        Err(e) if engine.policy_enforcement_configured() => Err(anyhow!("zn did not start. {e}. Fix or remove the policy files, or remove engine.signing_public_key and engine.allowed_policy_hashes (ZN_SIGNING_PUBLIC_KEY, ZN_POLICY_HASHES) if you do not use signed policies.")),
+        Err(e) => Ok(Some(e)),
+    }
+}
+
 async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // Load configuration (defaults + env vars)
     let (config, config_notices) = ZnConfig::load_with_notices(None)?;
     for notice in &config_notices {
         eprintln!("Warning: {notice}");
     }
+    build_pipeline_from(config).await
+}
 
+async fn build_pipeline_from(config: ZnConfig) -> Result<AnalyzerPipeline> {
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
         gas_limit: config.engine.gas_limit,
@@ -860,7 +869,9 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
 
     // Load policies from configured directory
     let policy_dir = &config.engine.policy_dir;
-    if let Err(e) = engine.load_all_policies(policy_dir) {
+    // Same refusal as `zn start`. This engine is dropped below and never evaluates, but a configuration
+    // that cannot load its policies is not run quietly in one command and refused in another.
+    if let Some(e) = load_policies_or_refuse(&engine, policy_dir)? {
         eprintln!(
             "Warning: Failed to load policies from {}: {}",
             policy_dir, e
@@ -2056,15 +2067,27 @@ async fn policies_delete_handler(
     // file to delete is the matching entry of a listing of the policy
     // directory, never a path built from the name. A missing file is not an
     // error, so deleting twice succeeds.
-    if let Err(e) = zn::engine::remove_policy_file(&state.config.engine.policy_dir, &payload.name) {
-        return axum::response::Json(serde_json::json!({
-            "status": "error",
-            "error": e.to_string()
-        }));
+    // The last policy cannot be deleted while enforcement is configured. The check, the file
+    // removal and the unregister run under one lock shared with the folder watcher, so two
+    // concurrent deletes cannot both pass the check.
+    match state
+        .engine
+        .delete_policy_guarded(&state.config.engine.policy_dir, &payload.name)
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return axum::response::Json(serde_json::json!({
+                "status": "error",
+                "error": format!("Policy '{}' is the last loaded policy and policy enforcement is configured (a signing key or allowed policy hashes): it was not deleted. Upload another policy first.", payload.name)
+            }));
+        }
+        Err(e) => {
+            return axum::response::Json(serde_json::json!({
+                "status": "error",
+                "error": e.to_string()
+            }));
+        }
     }
-
-    // Unregister from engine
-    state.engine.unregister_policy(&payload.name);
 
     axum::response::Json(serde_json::json!({
         "status": "ok",
@@ -2775,6 +2798,72 @@ mod audit_isolation_tests {
             "{msg}"
         );
         assert!(msg.contains("--port") && msg.contains("ZN_PORT"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn build_pipeline_refuses_without_policies_when_enforcement_is_configured() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = zn::config::ZnConfig::default();
+        config.engine.policy_dir = dir.path().to_string_lossy().into_owned();
+        config.engine.allowed_policy_hashes = vec!["00".repeat(32)];
+        let err = build_pipeline_from(config)
+            .await
+            .err()
+            .expect("must refuse without policies");
+        assert!(err.to_string().contains("zn did not start"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn deleting_the_last_policy_is_refused_and_keeps_the_file() {
+        let (mut state, dir) = test_state(None);
+        let policies = dir.path().join("policies");
+        std::fs::create_dir_all(&policies).unwrap();
+        let wasm: &[u8] = b"\0asm\x01\0\0\0";
+        for n in ["one", "two"] {
+            std::fs::write(policies.join(format!("{n}.wasm")), wasm).unwrap();
+        }
+        let mut cfg = (*state.config).clone();
+        cfg.engine.policy_dir = policies.to_string_lossy().into_owned();
+        state.config = Arc::new(cfg);
+        let hash = {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(wasm))
+        };
+        state.engine = Arc::new(
+            ZnEngine::new(zn::engine::ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![hash],
+                signing_public_key: None,
+            })
+            .expect("engine"),
+        );
+        state.engine.load_all_policies(&policies).expect("load");
+        assert_eq!(state.engine.policy_count(), 2);
+        let call = |name: &str| {
+            policies_delete_handler(
+                axum::extract::State(state.clone()),
+                axum::Extension(tenant("t", TenantRole::SuperAdmin)),
+                axum::Json(DeletePolicyRequest {
+                    name: name.to_string(),
+                }),
+            )
+        };
+
+        let ok = call("one").await.0;
+        assert_eq!(ok["status"], "ok", "{ok}");
+        assert!(!policies.join("one.wasm").exists());
+        assert!(!state.engine._has_policy("one"));
+
+        let refused = call("two").await.0;
+        assert_eq!(refused["status"], "error", "{refused}");
+        assert!(
+            refused["error"].as_str().unwrap().contains("last"),
+            "{refused}"
+        );
+        assert!(policies.join("two.wasm").exists(), "the file stays");
+        assert!(state.engine._has_policy("two"));
     }
 
     fn tenant(namespace: &str, role: TenantRole) -> TenantContext {
@@ -3635,6 +3724,41 @@ mod fail_closed_tests {
         assert!(a.get("error").is_some(), "{a}");
         let b = reply(&state, Some("tenant-b"), &frame("read_notes")).await;
         assert!(b.get("error").is_none(), "{b}");
+    }
+}
+
+#[cfg(test)]
+mod policy_load_refusal_tests {
+    use super::load_policies_or_refuse;
+    use zn::engine::{ZnEngine, ZnEngineConfig};
+
+    fn engine(hashes: Vec<String>) -> ZnEngine {
+        ZnEngine::new(ZnEngineConfig {
+            gas_limit: 1_000_000,
+            memory_limit: 16 * 1024 * 1024,
+            timeout_ms: 1000,
+            allowed_hashes: hashes,
+            signing_public_key: None,
+        })
+        .expect("engine")
+    }
+
+    #[test]
+    fn an_empty_policy_folder_is_refused_when_enforcement_is_configured() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let e = engine(vec!["00".repeat(32)]);
+        let err = load_policies_or_refuse(&e, dir.path().to_str().unwrap())
+            .expect_err("must refuse without policies");
+        assert!(err.to_string().contains("zn did not start"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_policy_folder_is_only_reported_without_enforcement() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let e = engine(vec![]);
+        let loaded = load_policies_or_refuse(&e, dir.path().to_str().unwrap())
+            .expect("no refusal without enforcement");
+        assert!(loaded.is_none(), "an empty folder is a valid setup");
     }
 }
 
