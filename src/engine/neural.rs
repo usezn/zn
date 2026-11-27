@@ -144,12 +144,27 @@ pub fn evaluate_checked(
     Option<super::super::audit::FusionEvidence>,
     Option<String>,
 ) {
-    use super::super::audit::FusionEvidence;
     let Some(engine) = shared_engine(cfg) else {
         let degraded = cfg.enabled.then(|| "fusion model unavailable".to_string());
         return (rules_hit, None, degraded);
     };
-    let score = match engine.score(neural_input) {
+    decide_with_score(rules_hit, engine.score(neural_input), cfg)
+}
+
+/// The decision of [`evaluate_checked`] once the engine has scored the input
+/// (or failed to). Split out so the scoring-error branch can be tested
+/// without a model.
+fn decide_with_score(
+    rules_hit: bool,
+    score: anyhow::Result<f32>,
+    cfg: &FusionConfig,
+) -> (
+    bool,
+    Option<super::super::audit::FusionEvidence>,
+    Option<String>,
+) {
+    use super::super::audit::FusionEvidence;
+    let score = match score {
         Ok(s) => s,
         Err(e) => {
             // Inference hiccup: this call falls back to the rules gate and the
@@ -252,6 +267,26 @@ mod tests {
         );
         let (blocked, ev) = evaluate(false, "rm -rf /", &cfg);
         assert!(!blocked && ev.is_none());
+    }
+
+    #[test]
+    fn neural_scoring_error_falls_back_to_rules_and_reports_why() {
+        let cfg = FusionConfig {
+            enabled: true,
+            ..FusionConfig::default()
+        };
+        for rules_hit in [false, true] {
+            let (blocked, ev, degraded) =
+                decide_with_score(rules_hit, Err(anyhow::anyhow!("boom")), &cfg);
+            assert_eq!(blocked, rules_hit, "falls back to the rules decision");
+            assert!(ev.is_none());
+            assert_eq!(
+                degraded.as_deref(),
+                Some("fusion inference error: scoring failed")
+            );
+        }
+        let (blocked, ev, degraded) = decide_with_score(false, Ok(0.99), &cfg);
+        assert!(blocked && ev.is_some() && degraded.is_none());
     }
 
     #[test]
