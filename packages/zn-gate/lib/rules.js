@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.8
+ * RULES_VERSION: 2026-11-27.9
  */
 
-const RULES_VERSION = '2026-11-27.8';
+const RULES_VERSION = '2026-11-27.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1713,6 +1713,25 @@ function redactCredentials(text) {
 // of what both find, so a secret split by a zero-width or tag character is
 // redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
+  return closeOpenEndedTails(redactSecretsPasses(text));
+}
+
+// A key with no fixed length (OpenAI sk-..., Anthropic sk-ant-..., PyPI pypi-...) that is wrapped across lines ends
+// wherever the line ends, so the rules cannot tell where it stopped: a last piece that is shorter than a joinable
+// line, or one that the key on the next line was hiding, stays behind the marker. A line that is nothing but a token
+// (token characters, then at most closing quotes or brackets and spaces) right after the marker of such a key is the
+// rest of that key and goes with it, whatever the token looks like: a plain word there is redacted too, which is the
+// price of leaving no part of a key readable. A line with more text after its first word is not touched.
+const OPEN_TAIL_RE = /(\[REDACTED_(?:OPENAI_KEY|ANTHROPIC_KEY|PYPI_TOKEN)\])[ \t]*\r?\n[ \t]*[A-Za-z0-9_\-+/=]{1,256}(?=[\x22'`;,)\]}>]*[ \t]*(?:\r?\n|(?![\s\S])))/g;
+
+function closeOpenEndedTails(result) {
+  const t = result.sanitized;
+  if (result.detections.length === 0 || typeof t !== 'string' || !t.includes('\n') || t.length > MAX_WRAP_VIEW_CHARS || !t.includes('[REDACTED_')) return result;
+  const out = t.replace(OPEN_TAIL_RE, '$1');
+  return out === t ? result : { sanitized: out, detections: result.detections };
+}
+
+function redactSecretsPasses(text) {
   let result = credentialPass(text);
   // A key that a later rule's redaction was hiding from an earlier one (two keys on adjacent lines are read as one
   // joined token until one of them is redacted) is found by one more pass over what is left. Only a text that still
@@ -1788,7 +1807,7 @@ function redactScanRules(text) {
 function redactScanSecrets(text) {
   const first = redactCredentials(text);
   const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
-  return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
+  return closeOpenEndedTails({ sanitized: second.sanitized, detections: first.detections.concat(second.detections) });
 }
 
 function redactWith(text, patterns) {

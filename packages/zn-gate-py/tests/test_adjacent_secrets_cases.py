@@ -40,6 +40,9 @@ def test_adjacent_and_wrapped_keys_one_detection_per_key_and_nothing_readable():
         rules = sorted(d['rule'] for d in found)
         left = _readable_fragment(out, c['keys'])
         lost = [k for k in c['keep'] if k not in out]
+        # 'out', when a case has it, is the exact redacted text (the cases of keys with no fixed length).
+        if 'out' in c and out != c['out']:
+            failures.append(f"{c['id']}: got {out!r} want {c['out']!r}")
         if left or lost or rules != c['rules']:
             failures.append(f"{c['id']}: rules {rules} want {c['rules']}" + (f', readable {left}' if left else '') + (f', lost {lost}' if lost else ''))
     assert failures == []

@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.8
+RULES_VERSION: 2026-11-27.9
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.8"
+RULES_VERSION = "2026-11-27.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2215,7 +2215,22 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     characters; the redacted spans are the union of both (see redactSecrets in
     rules.js).
     """
-    return _redact_credentials(text)
+    return _close_open_ended_tails(*_redact_credentials(text))
+
+
+# A key with no fixed length (OpenAI, Anthropic, PyPI) wrapped across lines: the line right after its marker that is
+# only a token (then at most closing quotes or brackets and spaces) is the rest of the key and is redacted with it,
+# whatever it looks like (see OPEN_TAIL_RE in rules.js).
+_OPEN_TAIL_RE = re.compile(
+    r'(\[REDACTED_(?:OPENAI_KEY|ANTHROPIC_KEY|PYPI_TOKEN)\])[ \t]*\r?\n[ \t]*[A-Za-z0-9_\-+/=]{1,256}'
+    r'(?=[\x22\'`;,)\]}>]*[ \t]*(?:\r?\n|\Z))')
+
+
+def _close_open_ended_tails(redacted: str, found: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
+    if (not found or not isinstance(redacted, str) or '\n' not in redacted or len(redacted) > MAX_WRAP_VIEW_CHARS
+            or '[REDACTED_' not in redacted):
+        return redacted, found
+    return _OPEN_TAIL_RE.sub(r'\1', redacted), found
 
 
 def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
@@ -2224,7 +2239,7 @@ def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     rules.js, with the provider formats in between as the Node.js scan does)."""
     redacted, first = _redact_credentials(text)
     redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS)
-    return redacted, first + second
+    return _close_open_ended_tails(redacted, first + second)
 
 
 def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) -> Tuple[str, List[Dict[str, Any]]]:

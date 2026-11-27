@@ -31,6 +31,8 @@ test('adjacent and wrapped keys: one detection per key with its own rule, no par
     const rules = r.detections.map((d) => d.rule).sort();
     const left = readableFragment(r.sanitized, c.keys);
     const lost = c.keep.filter((k) => !r.sanitized.includes(k));
+    // `out`, when a case has it, is the exact redacted text (the cases of keys with no fixed length).
+    if (c.out !== undefined && r.sanitized !== c.out) failures.push(`${c.id}: got ${JSON.stringify(r.sanitized)} want ${JSON.stringify(c.out)}`);
     if (left || lost.length || JSON.stringify(rules) !== JSON.stringify(c.rules)) {
       failures.push(`${c.id}: rules ${JSON.stringify(rules)} want ${JSON.stringify(c.rules)}${left ? ', readable ' + left : ''}${lost.length ? ', lost ' + lost : ''}`);
     }
