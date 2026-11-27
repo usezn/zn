@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.9';
+const POLICY_RULES_VERSION = '2026-11-27.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1635,6 +1635,9 @@ function envFileValueWords(words, opts) {
   const isDotenvName = (t) => PLAIN_NAME_RE.test(t) && (() => { const c = classifyWord(t, opts); return !!c && c.kind === 'dotenv'; })();
   let seq = null;
   let runner = false;
+  // dotenvx: its -f / --env-file value is a read only for the run and get subcommands; set, encrypt, decrypt and the rest rewrite the file.
+  let dotenvx = false;
+  let dxSub = null;
   let ended = false;
   let envProg = false;
   // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
@@ -1644,7 +1647,7 @@ function envFileValueWords(words, opts) {
   let seenProgram = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { seq = w.seq; runner = false; dotenvx = false; dxSub = null; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
@@ -1664,14 +1667,16 @@ function envFileValueWords(words, opts) {
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      if (programWord || wasLaunch === 'open') runner = true;
+      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; }
       continue;
     }
+    if (runner && dotenvx && dxSub === null && !t.startsWith('-')) dxSub = t;
+    const runnerReads = runner && (!dotenvx || dxSub === 'run' || dxSub === 'get');
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
-    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
+    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runnerReads ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
     if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
-    const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
+    const opt = (envProg && t === '--env-file') || (runnerReads && (t === '-e' || t === '-f' || t === '--env-file'));
     if (opt && nextValue()) { out.set(next, next.text); i++; }
   }
   return out;

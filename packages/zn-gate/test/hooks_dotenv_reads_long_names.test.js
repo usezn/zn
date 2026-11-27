@@ -271,3 +271,16 @@ test('dotenv counts as a runner only as the program or right after a launcher', 
     assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
   }
 });
+
+// dotenvx rewrites the file it names with set, encrypt, decrypt and its other subcommands; its -f value is a read only for run and get.
+test('a dotenvx subcommand other than run or get that names .env is refused', async (t) => {
+  const dir = project(t);
+  for (const command of ['dotenvx set X 1 --plain -f .env', 'dotenvx set X 1 -f .env', 'dotenvx encrypt -f .env', 'dotenvx decrypt -f .env',
+    'npx dotenvx set X 1 -f .env', 'dotenvx rotate -f .env', 'dotenvx keypair -f .env', 'dotenvx ext -f .env']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
+  }
+  for (const command of ['dotenvx run -f .env -- node app.js', 'npx dotenvx run -f .env -- node app.js', 'dotenvx get KEY -f .env',
+    'dotenv -e .env -- node app.js']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', command);
+  }
+});
