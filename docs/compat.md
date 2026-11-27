@@ -501,6 +501,18 @@ The organization policy sets one choice per rule: Not blocked, Warn or Block
 zn-gate tells the server on each policy download which policy features it
 understands, so `warn` rules are sent only to 1.8.0 and later.
 
+### Which agents the policy covers
+
+The organization policy is applied by the vault, so it holds for Claude Code,
+Codex and Cursor. For Cursor, zn cannot rewrite a shell command or put a value
+into a file: a shell command with a `__ZN_` marker is blocked with the
+instruction to use `zn run --`, an MCP call with a marker or a secret value is
+blocked, and a marker written into a file stays a marker. The `secrets` MCP
+server is added to Cursor by hand (`zn hooks install cursor` prints the line).
+Tested through the vault, the `secrets` server and Cursor's hook adapter; not
+run with the Cursor app itself. Details in
+[team.md](team.md#which-agents-the-policy-covers).
+
 ## Files a `--project` install writes
 
 A project install names `zn` on your PATH (`zn hook <agent>`), not the paths of

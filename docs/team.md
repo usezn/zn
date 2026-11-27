@@ -268,6 +268,32 @@ is never widened by a later one.
 Only `proxy` is applied from a rule's `mode`; other modes in a rule are
 ignored.
 
+### Which agents the policy covers
+
+The policy is applied by the vault, not by one agent, so it reaches every agent
+that uses a secret through `zn run` or the `secrets` MCP server: Claude Code,
+Codex and Cursor alike. What differs is what each agent lets zn do:
+
+- **Claude Code** is the only agent where zn can put a value back into a file
+  the agent writes. The policy is checked first, so a secret the organization
+  blocks is not put back.
+- **Cursor** cannot have a command or a file rewritten by zn. If a
+  shell command carries a `__ZN_NAME__` marker, zn blocks it and tells the agent
+  to run it again with `zn run --`, which applies the policy before any value is
+  used. An MCP call with a marker or a secret value in its arguments is blocked
+  too. A marker the agent writes into a file stays a marker: no value is put
+  back, so nothing the policy blocks can leak that way.
+- Cursor also needs the `secrets` MCP server added by hand. `zn hooks
+  install cursor` prints the line to add to `~/.cursor/mcp.json` (or
+  `.cursor/mcp.json` in a project) under `mcpServers`; for a project it is
+  `"secrets": { "command": "zn", "args": ["secrets-mcp", "--agent", "cursor"] }`.
+  Without it, Cursor has no way to use a stored secret, so the policy has
+  nothing to apply to. Because the entry names the agent, a rule written for
+  `cursor` can offer a new host for approval, as described above.
+
+This is covered by tests of the vault, the `secrets` server and Cursor's hook
+adapter. It has not been run with the Cursor app itself.
+
 ### The three choices: Not blocked, Warn, Block
 
 The dashboard sets one choice per rule. In the policy file the choice is a

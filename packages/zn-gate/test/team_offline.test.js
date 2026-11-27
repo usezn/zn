@@ -113,7 +113,7 @@ test.before(async () => {
   cloud = await startFakeTeamServer();
   cloud.publishPolicy({
     rules: [
-      { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },
+      { secret: 'PROD_*', agents: ['codex', 'cursor'], deny: true, reason: 'No production credentials in Codex' },
       { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', '127.0.0.1'] },
     ],
     detectors: [DETECTOR],
@@ -211,9 +211,11 @@ test('hook with a valid cached policy and no network: applies it and answers wit
   assert.ok(child.ms < HOOK_LIMIT_MS + 1500, 'a whole hook process (node start included) took ' + child.ms + ' ms');
   assert.ok(!child.stdout.includes(ACME), 'the token does not come back: ' + child.stdout);
   // The restriction applies too.
-  const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
-  assert.strictEqual(codex.isError, true);
-  assert.match(codex.text, /organization policy/);
+  for (const agent of ['codex', 'cursor']) {
+    const r = await request(agent, '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+    assert.strictEqual(r.isError, true, agent);
+    assert.match(r.text, /organization policy/);
+  }
 });
 
 test('policy expired and no network: strict mode, restrictions and detectors stay, openings are withdrawn', async () => {
@@ -232,10 +234,12 @@ test('policy expired and no network: strict mode, restrictions and detectors sta
     const sync = await run(['team', 'sync']);
     assert.strictEqual(sync.status, 1);
     assert.match(sync.stderr, /Could not reach the zn server/);
-    // Restrictions keep applying.
-    const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
-    assert.strictEqual(codex.isError, true);
-    assert.match(codex.text, /organization policy/);
+    // Restrictions keep applying, for Codex and for Cursor.
+    for (const agent of ['codex', 'cursor']) {
+      const r = await request(agent, '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+      assert.strictEqual(r.isError, true, agent);
+      assert.match(r.text, /organization policy/);
+    }
     // The detector keeps applying in the hook.
     const h = await hookInProcess();
     assert.ok(h.redacted, 'detectors stay in strict mode');
