@@ -33,21 +33,21 @@ Set up zn-gate in Zed in two minutes: add it as an MCP server, and what zn-gate 
    npx -y zn-gate check
    ```
 
-   `status` shows the version and whether the optional cloud check is on. In a clean setup its **Active Engine** line reads `Local rules only` and **Leaves machine** reads `Nothing` (see [Reading the Active Engine line](../check.md#reading-the-active-engine-line)). `check` prints one line for each agent, then a closing sentence. A good result looks like this:
+   `status` shows the version and whether the optional cloud check is on. In a clean setup its **Active Engine** line reads `Local rules only` and **Leaves machine** reads `Nothing` (see [Reading the Active Engine line](../check.md#reading-the-active-engine-line)). `check` prints one line for each supported agent (eight in all), then a closing sentence. An agent that is not installed on your machine is marked **not found on this machine**. The result looks like this for a machine with Claude Code set up and Codex CLI not yet set up (your lines will differ):
 
    ```text
    zn-gate check: does zn stop your coding agent from reading a secret?
 
-     OK Claude Code  blocked the .env file and allowed the ordinary file. Your agent would be told:
-        "zn: ..."
-     -  Codex CLI    zn is not set up for this agent. To protect it, run `zn hooks install codex` in your own terminal.
+     OK Claude Code  blocked the .env file and allowed the ordinary file. ...
+     -  Codex CLI    zn is not set up for this agent. To protect it, run ...
      -  Cursor       not found on this machine
-     ...
+     ...one line for each of the other supported agents...
 
    Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
+   Not set up yet: Codex CLI. To add it, run `npx -y zn-gate init` in your own terminal: ...
    ```
 
-   **OK** means zn protects that agent; **-** means zn is not set up for it or it is not on this machine; a line that says **NOT protected** needs the fix it names (see [Check that it works](../check.md)). Zed is not listed, because zn-gate does not install hooks for Zed yet: `check` does not test this setup. To confirm the server itself, see [Verify](#verify).
+   **OK** means zn protects that agent; **-** means zn is not set up for it or it is not on this machine (the line says which); a line that says **NOT protected** needs the fix it names (see [Check that it works](../check.md)). Zed is not listed, because zn-gate does not install hooks for Zed yet: `check` does not test this setup. To confirm the server itself, see [Verify](#verify).
 
 Status: these steps follow Zed's documentation; not yet verified by us in Zed.
 
