@@ -218,7 +218,7 @@ test('stop turns the report off, and it stays off for later syncs', async () => 
   assert.strictEqual(r.on, false);
   assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'allow', reason: 'team_status_report_off' });
   await m.o.teamSync({});
-  assert.strictEqual(statusRequests().length, 1);
+  assert.strictEqual(statusRequests().length, 2, 'the final report is sent before stopping');
   assert.strictEqual((await m.o.teamInfo()).status_report.on, false);
   await assert.rejects(m.o.teamStatusReport({ action: 'maybe' }), (e) => e.code === CODES.POLICY_DENIED);
 });

@@ -284,7 +284,11 @@ async function statusReportCmd(args) {
   const r = await withClient((c) => c.teamStatusReport({ action }));
   const label = r.org_name ? r.org_name + ' (' + r.org + ')' : r.org;
   if (action === 'stop') {
+    if (r.already) { out('Status report is already off for ' + label + '.'); return 0; }
+    const fr = r.final_report;
     out('Status report is off for ' + label + '. Nothing about this machine is sent besides the policy request and the audit upload.');
+    if (fr && fr.sent) out('One last report was sent first, so the organization has the state of this machine from now.');
+    else out('The organization was NOT told: the last report could not be sent' + (fr && fr.error ? ' (' + fr.error + ')' : '') + '. It will see this machine stop reporting.');
   } else if (r.already) {
     out('Status report is already on for ' + label + '. `zn team status` shows the last one sent.');
   } else {
