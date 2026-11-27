@@ -845,9 +845,15 @@ zn: <agent> sent an event zn does not know, so zn cannot check it and blocked it
 
 #### "zn: could not read a file address in this call" / "could not read the file this call uses" (Gemini CLI, Antigravity, Cursor, ZCode, Copilot CLI)
 
-**What happened:** the agent sent a call that zn could not tell which file or command it names, so it blocked it.
+**What happened:** the agent sent a call that zn could not tell which file it names, so it blocked it. The call's arguments are nested deeper than 6 levels, hold more than 500 values, or contain a `file:` address zn cannot turn into a path.
 
-**What to do:** ask the agent to name the file explicitly in the request, with a plain path. If it keeps happening, run `zn hooks install <agent>` again.
+**What to do:** ask the agent to send the call again with flatter arguments and the file named as a plain path. If it keeps happening on simple calls, run `zn hooks install <agent>` again.
+
+#### "zn: this MCP call was blocked because zn could not read every file name in its arguments" / "zn: this action is nested too deeply for zn to check"
+
+**What happened:** the arguments of the call are nested deeper than zn reads (6 levels), hold more than 500 values, or contain a `file:` address zn cannot turn into a path. A file name could hide in the part zn cannot read, so it blocked the call.
+
+**What to do:** ask the agent to send the same call again with flatter arguments and each file named as a plain path.
 
 #### "zn: the secret scrubber is not working (`<why>`)" (OpenCode)
 

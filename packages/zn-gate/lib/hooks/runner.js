@@ -1216,7 +1216,7 @@ async function decidePre(ev, d, agentId, opts) {
       if (named.bad) {
         // Arguments zn cannot read to the end (nested deeper than it reads): a dotenv path, or the pieces of one that the tool joins
         // (a folder, a name and an extension in separate values), may be hidden there. Refused whatever the text says.
-        return { decision: 'deny', message: 'zn: zn could not read every file name in the arguments of this MCP call (nested too deeply, too many values, or a file: address it cannot turn into a path), so it was blocked.' };
+        return { decision: 'deny', message: require('../messages').UNREADABLE_MCP_ARGUMENTS };
       }
       for (const p of named.paths) {
         const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
@@ -2234,8 +2234,7 @@ function failDecision(ev, err, mode, agentId) {
       'Ask the user to check the file names in the request.');
   }
   if (err.code === 'ZN_TOO_DEEP') {
-    return failClosed(ev, err, 'zn: this action is nested too deeply for zn to check, so it was blocked. ' +
-      'Ask the user to check the request.');
+    return failClosed(ev, err, require('../messages').TOO_DEEP_ACTION);
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
@@ -2342,7 +2341,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   try {
     ev = adapter.normalize(rawEvent);
     // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
-    if (ev && typeof ev.unreadable === 'string') ev.unreadable += ' ' + formatChangeStep(adapter.id);
+    if (ev && typeof ev.unreadable === 'string' && ev.unreadable !== require('../messages').UNREADABLE_FILE_ADDRESS) ev.unreadable += ' ' + formatChangeStep(adapter.id);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.

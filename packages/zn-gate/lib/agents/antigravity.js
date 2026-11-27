@@ -311,7 +311,7 @@ function normalize(raw) {
   if (mcp) {
     const mp = pathsOf(args);
     const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2] }, input: { args, paths: mp.paths, texts: [] } };
-    if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (mp.bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   const cmd = firstString(args, COMMAND_KEYS);
@@ -328,7 +328,7 @@ function normalize(raw) {
       named.paths = [...new Set([...named.paths, ...loose.paths])];
       named.bad = named.bad || loose.bad;
       e.input.alsoPaths = named.paths;
-      if (named.bad && !e.unreadable) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+      if (named.bad && !e.unreadable) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     }
     return e;
   }
@@ -338,7 +338,7 @@ function normalize(raw) {
   const kind = (READ_TOOLS.has(toolName) && !NAMES_ONLY_TOOLS.has(toolName)) ? 'read' : NAMES_ONLY_TOOLS.has(toolName) ? 'read_names' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
     const e = { ...ev, tool: kind === 'read_names' ? 'read' : kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
   }
@@ -350,7 +350,7 @@ function normalize(raw) {
   const all = [...new Set([...paths, ...loose.paths])];
   if (!READ_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };
-    if (bad || loose.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad || loose.bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };

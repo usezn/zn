@@ -152,7 +152,7 @@ function normalize(raw) {
     const tool = typeof mc.tool_name === 'string' && mc.tool_name ? mc.tool_name : mcp[2];
     const mp = pathsOf(args);
     const e = { ...ev, tool: 'mcp', mcp: { server, tool }, input: { args, paths: mp.paths, texts: [] } };
-    if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (mp.bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   if (SHELL_TOOLS.has(toolName)) {
@@ -169,13 +169,13 @@ function normalize(raw) {
   if (GREP_TOOLS.has(toolName)) {
     const dir = typeof args.dir_path === 'string' && args.dir_path ? args.dir_path : '';
     const e = { ...ev, tool: 'grep', input: { ...input, scanDir: dir ? path.resolve(base.cwd, dir) : base.cwd } };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   const kind = READ_TOOLS.has(toolName) || toolName === 'read_many_files' ? 'read' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
     const e = { ...ev, tool: kind, input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     else if (!paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
   }
@@ -185,7 +185,7 @@ function normalize(raw) {
   const all = [...new Set([...paths, ...loose.paths])];
   if (!NAMES_ONLY_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };
-    if (bad || loose.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad || loose.bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   return { ...ev, tool: toolName.toLowerCase(), input: { texts: [] } };
