@@ -134,6 +134,30 @@ test('timesketchMicros: strict UTC ISO 8601 to integer microseconds, anything el
   assert.equal(timesketchMicros(42), '');
 });
 
+test('timesketchMicros: dates that do not exist are empty, odd but real years keep their value', () => {
+  assert.equal(timesketchMicros('2026-02-30T00:00:00Z'), '');
+  assert.equal(timesketchMicros('2025-02-29T00:00:00Z'), '');
+  assert.equal(timesketchMicros('1900-02-29T00:00:00Z'), '');
+  assert.equal(timesketchMicros('2026-13-01T00:00:00Z'), '');
+  assert.equal(timesketchMicros('2026-00-10T00:00:00Z'), '');
+  assert.equal(timesketchMicros('2026-04-31T00:00:00Z'), '');
+  assert.equal(timesketchMicros('2026-01-00T00:00:00Z'), '');
+  assert.equal(timesketchMicros('2026-01-01T24:00:00Z'), '');
+  assert.equal(timesketchMicros('2026-01-01T00:60:00Z'), '');
+  assert.equal(timesketchMicros('2026-12-31T23:59:60Z'), '');
+  assert.equal(timesketchMicros('2024-02-29T12:00:00Z'), String(Date.UTC(2024, 1, 29, 12) * 1000));
+  assert.equal(timesketchMicros('2000-02-29T00:00:00Z'), String(Date.UTC(2000, 1, 29) * 1000));
+  assert.equal(timesketchMicros('1969-12-31T23:59:59.999999Z'), '-1');
+  // Date.UTC maps years 0-99 to 1900-1999; the export must not.
+  const y50 = new Date(0);
+  y50.setUTCFullYear(50, 0, 1);
+  assert.equal(timesketchMicros('0050-01-01T00:00:00Z'), String(y50.getTime() * 1000));
+  const y0 = new Date(0);
+  y0.setUTCFullYear(0, 2, 1);
+  assert.equal(timesketchMicros('0000-03-01T00:00:00Z'), String(y0.getTime() * 1000));
+  assert.equal(timesketchMicros('9999-12-31T23:59:59Z'), String(Date.UTC(9999, 11, 31, 23, 59, 59) * 1000));
+});
+
 test('timesketch: a missing log gives an empty export, and the CSV only its header', async (t) => {
   const file = tmpLedger(t);
   assert.equal((await exportText(file, 'timesketch')).text, '');

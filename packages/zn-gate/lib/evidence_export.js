@@ -64,14 +64,33 @@ const TIMESKETCH_CSV_HEADERS = [
 const TIMESKETCH_CSV_HEADER_LINE = TIMESKETCH_CSV_HEADERS.join(',');
 const UTC_ISO_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
 
-/** A UTC ISO 8601 time (the form the hook writes) as integer microseconds since the epoch, else ''. */
+const isLeapYear = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/** Days from 1970-01-01 to a proleptic Gregorian date (integer arithmetic, any 4-digit year). */
+function daysFromCivil(y, mo, d) {
+  const yy = mo <= 2 ? y - 1 : y;
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;
+  const doy = Math.floor((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+/**
+ * A UTC ISO 8601 time (the form the hook writes) as integer microseconds since the epoch, else ''.
+ * The date must exist (no 30 February, no hour 24, no leap second); years 0000-0099 stay as written.
+ */
 function timesketchMicros(ts) {
   const m = typeof ts === 'string' ? UTC_ISO_RE.exec(ts) : null;
   if (!m) return '';
-  const secs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000;
-  if (!Number.isFinite(secs)) return '';
-  const frac = m[7] ? Number(m[7].padEnd(6, '0')) : 0;
-  return (BigInt(secs) * 1000000n + BigInt(frac)).toString();
+  const [y, mo, d, h, mi, s] = [1, 2, 3, 4, 5, 6].map((i) => Number(m[i]));
+  if (mo < 1 || mo > 12 || h > 23 || mi > 59 || s > 59) return '';
+  const monthDays = mo === 2 && isLeapYear(y) ? 29 : MONTH_DAYS[mo - 1];
+  if (d < 1 || d > monthDays) return '';
+  const secs = BigInt(daysFromCivil(y, mo, d)) * 86400n + BigInt(h * 3600 + mi * 60 + s);
+  const frac = m[7] ? BigInt(m[7].padEnd(6, '0')) : 0n;
+  return (secs * 1000000n + frac).toString();
 }
 
 const plainText = (v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
