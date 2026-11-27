@@ -232,7 +232,7 @@ test('a percent-encoded file: URI naming .env on a line of a multi-line value is
 // still refused.
 test('a search query that is only the word .env passes; a path to .env, or .env under another key, does not', async (t) => {
   const dir = project(t);
-  for (const [key, value] of [['query', '.env'], ['q', '.env.local'], ['search_term', ' .env '], ['search', '.env']]) {
+  for (const [key, value] of [['query', '.env'], ['q', ' .env '], ['search_term', '.env'], ['search', '.env'], ['keywords', '.env']]) {
     assert.equal(await verdict(claude, cc(dir, 'mcp__search__find', { [key]: value })), 'allow', 'claude ' + key);
     assert.equal(await verdict(gemini, gem(dir, 'mcp_search_find', { [key]: value })), 'allow', 'gemini ' + key);
     assert.equal(await verdict(copilot, cop(dir, 'search-find', { [key]: value })), 'allow', 'copilot ' + key);
@@ -243,6 +243,16 @@ test('a search query that is only the word .env passes; a path to .env, or .env 
     assert.equal(await verdict(claude, cc(dir, 'mcp__' + name, { [key]: '.env', content: 'X=1' })), 'deny', 'claude ' + name);
     assert.equal(await verdict(gemini, gem(dir, 'mcp_' + name.replace('__', '_'), { [key]: '.env', content: 'X=1' })), 'deny', 'gemini ' + name);
     assert.equal(await verdict(copilot, cop(dir, name.replace('__', '-'), { [key]: '.env', content: 'X=1' })), 'deny', 'copilot ' + name);
+  }
+  // A tool whose name has any word outside the search vocabulary (read, get, fetch, open, file, fs, an unknown server) may open the
+  // file it is given: a query of .env is checked there. So is a longer name such as .env.local, even in a search tool.
+  for (const [name, args] of [['fs__read_file', { query: '.env' }], ['fs__get', { query: '.env' }], ['web__fetch', { query: '.env' }],
+    ['fs__search_file_contents', { query: '.env' }], ['fs__search', { query: '.env' }], ['files__open', { q: '.env' }],
+    ['search__find', { q: '.env.local' }], ['search__find', { searchterm: '.env' }]]) {
+    const label = name + ' ' + JSON.stringify(args);
+    assert.equal(await verdict(claude, cc(dir, 'mcp__' + name, args)), 'deny', 'claude ' + label);
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_' + name.replace('__', '_'), args)), 'deny', 'gemini ' + label);
+    assert.equal(await verdict(copilot, cop(dir, name.replace('__', '-'), args)), 'deny', 'copilot ' + label);
   }
   // Even in a search tool, only a single query string is exempt: title, message or body, and an array of queries, are checked.
   for (const args of [{ title: '.env' }, { message: '.env' }, { body: '.env' }, { query: ['.env'] }, { messages: ['.env'] }]) {

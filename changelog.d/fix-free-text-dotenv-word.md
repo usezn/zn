@@ -1,6 +1,6 @@
 ### Fixed
-- A search for ".env" through an MCP tool is no longer refused: when the search query (`q`, `query`, `search`, `search_query`,
-  `search_term`, `keywords`) is only the word `.env` and the tool's name says it only reads or searches (for example
-  `search_docs` or `find`), the call passes. A path to `.env` in the query (`./.env`, `sub/.env`), `.env` under any other key
-  (including `title`, `message` and `body`, which a tool that writes can use as a file name), a `.env` in a list of queries,
-  and calls to any other tool are still refused.
+- A search for the word ".env" through an MCP search tool is no longer refused: the call passes when the search query (`q`,
+  `query`, `search`, `search_query`, `search_term` or `keywords`) is exactly `.env` and every word of the tool's name is a search
+  word (for example `search_docs`, `web_search` or `find`). A tool with any other word in its name (such as `read_file`, `get`,
+  `fetch`, `open` or an unknown server name), a longer name such as `.env.local`, a path (`./.env`, `sub/.env`), `.env` under any
+  other key (including `title`, `message` and `body`) and a `.env` in a list of queries are still refused.

@@ -428,31 +428,29 @@ function localFileUrl(v) {
  * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
  * call is refused, never dropped.
  */
-// Keys that hold a search query: a value there that is only a bare dotenv name (".env", ".env.local", no folder, no ./ in front) is
-// the text searched for, not a file the call opens. With a folder or ./ it still counts as a file name. Keys such as title, subject,
-// message or body are not here: a tool that writes can take one of them as the name of what it creates.
-const FREE_TEXT_KEY_RE = /^(?:q|query|search|search_?query|search_?terms?|keywords?)$/i;
-const BARE_DOTENV_RE = /^\s*\.env(?:\.[A-Za-z0-9_-]+)*\s*$/i;
-// Words of an MCP tool name that mark it as one that only reads or searches, and words that mark it as one that may write or act.
-// The server picks the name, so this is a second condition only: the main limit is that the exemption covers query keys alone.
-// A tool counts as read-only only with a read word and no write word (search_docs yes; create_note, tool, sync_search no).
-const READ_TOOL_WORDS = new Set(['search', 'query', 'find', 'lookup', 'get', 'list', 'read', 'fetch', 'view', 'show', 'describe',
-  'ask', 'grep', 'browse', 'retrieve', 'count', 'explain', 'summarize']);
-const WRITE_TOOL_WORDS = new Set(['write', 'create', 'update', 'set', 'put', 'save', 'edit', 'delete', 'remove', 'rename', 'move',
-  'copy', 'upload', 'download', 'send', 'post', 'append', 'patch', 'insert', 'store', 'commit', 'push', 'add', 'run', 'exec',
-  'execute', 'apply', 'replace', 'modify', 'publish', 'mkdir', 'rm', 'mv', 'cp', 'touch', 'make', 'new', 'import', 'export',
-  'sync', 'deploy', 'install', 'generate', 'render', 'convert', 'output', 'dump', 'log', 'record', 'attach', 'share', 'open']);
-/** Whether an MCP tool name says the tool only reads or searches (see READ_TOOL_WORDS). */
-function readOnlyToolName(name) {
+// Keys that hold a search query: a value there that is only the word .env is the text searched for, not a file the call opens.
+// Only these exact keys; title, subject, message, body and the like are not here, since a tool that writes can take one of them as
+// the name of what it creates. A folder, ./ or a longer name (.env.local) still counts as a file name.
+const FREE_TEXT_KEY_RE = /^(?:q|query|search|search_query|search_term|keywords)$/i;
+const BARE_DOTENV_RE = /^\s*\.env\s*$/i;
+// The MCP server picks the tool name, so the name can only narrow the exemption, never widen it: every word of the name must come
+// from this closed vocabulary of search words, and one of them must be a search verb. Any other word (fs, file, read, get, fetch,
+// open, a server name not listed here) keeps the full check, so an unknown name fails closed.
+const SEARCH_VERBS = new Set(['search', 'query', 'find', 'grep', 'lookup']);
+const SEARCH_NAME_WORDS = new Set([...SEARCH_VERBS, 'mcp', 'web', 'internet', 'online', 'docs', 'doc', 'documentation', 'code',
+  'issues', 'issue', 'symbols', 'symbol', 'wiki', 'kb', 'knowledge', 'base', 'semantic', 'full', 'text', 'keyword', 'keywords',
+  'google', 'bing', 'brave', 'duckduckgo', 'tavily', 'exa', 'perplexity', 'github', 'gitlab', 'jira', 'confluence', 'notion', 'slack']);
+/** Whether every word of an MCP tool name is a search word and one is a search verb (see SEARCH_NAME_WORDS). */
+function searchOnlyToolName(name) {
   const words = String(name || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  return words.some((w) => READ_TOOL_WORDS.has(w)) && !words.some((w) => WRITE_TOOL_WORDS.has(w));
+  return words.some((w) => SEARCH_VERBS.has(w)) && words.every((w) => SEARCH_NAME_WORDS.has(w));
 }
 /**
- * Whether a value under this key is free text that merely names .env (a search for ".env"), not a file the call uses. Only for a
- * tool whose name says it reads or searches: any other tool may take a title or message as the name of the file it writes.
+ * Whether a value under this key is a search for the word .env, not a file the call uses: an exact query key, the exact word .env,
+ * and a tool whose whole name is made of search words.
  */
 function freeTextDotenvWord(k, v, toolName) {
-  return typeof k === 'string' && FREE_TEXT_KEY_RE.test(k) && typeof v === 'string' && BARE_DOTENV_RE.test(v) && readOnlyToolName(toolName);
+  return typeof k === 'string' && FREE_TEXT_KEY_RE.test(k) && typeof v === 'string' && BARE_DOTENV_RE.test(v) && searchOnlyToolName(toolName);
 }
 // A value that starts like a file name: ~ or . first, a drive letter, or a slash or backslash.
 const STARTS_LIKE_PATH_RE = /^(?:[~.]|[A-Za-z]:[\\/]|[\\/])/;
@@ -755,7 +753,7 @@ module.exports = {
   pathsOf,
   pathCandidatesOf,
   freeTextDotenvWord,
-  readOnlyToolName,
+  searchOnlyToolName,
   firstString,
   COMMAND_KEYS,
   patchTextOf,
