@@ -46,7 +46,6 @@ class DestructiveCommandShape(unittest.TestCase):
         self.assertEqual(bad.rule, "destructive:rm_root_home")
         self.assertTrue(bad.reason.startswith("Destructive command: "))
         self.assertEqual(bad.rules_version, COMMAND_RULES_VERSION)
-        self.assertTrue(check_command(None).allowed)  # type: ignore[arg-type]
 
     def test_exported(self):
         self.assertIn("check_command", zn_gate.__all__)

@@ -1,0 +1,2 @@
+### Security
+- `checkCommand` (Node.js) and `check_command` (Python) no longer allow a command that is not a string. A `null`, `None`, `Buffer`, `bytes`, number, array or list used to get an allow verdict with full confidence, even when it held `rm -rf /` as separate items. It is now blocked with the rule `destructive:command_not_a_string`. The agent hooks were not affected: they only pass text to the check. The API reference says that `command` must be a string.
