@@ -278,7 +278,7 @@ function normalize(raw) {
     if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
   }
   const named = pathsOf(args);
-  const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true, toolName });
   const paths = [...new Set([...named.paths, ...loose.paths])];
   const bad = named.bad || loose.bad;
   if (scanned && scanned.command !== undefined) {

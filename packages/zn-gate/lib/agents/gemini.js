@@ -178,7 +178,7 @@ function normalize(raw) {
   }
   // Any other tool that names a file (a future tool, an extension) gets the read and write checks on every path.
   // A path under any key counts too (src, dst, from, to, nested objects), and arguments zn cannot walk to the end are refused.
-  const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true, toolName });
   const all = [...new Set([...paths, ...loose.paths])];
   if (!NAMES_ONLY_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };

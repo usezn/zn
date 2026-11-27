@@ -432,9 +432,26 @@ function localFileUrl(v) {
 // folder, no ./ in front) is a word of the text, not a file the call opens. With a folder or ./ it still counts as a file name.
 const FREE_TEXT_KEY_RE = /^(?:q|query|queries|search|search_?term|text|title|body|message|messages|description|prompt|question|comment|summary|subject|note|notes)$/i;
 const BARE_DOTENV_RE = /^\s*\.env(?:\.[A-Za-z0-9_-]+)*\s*$/i;
-/** Whether a value under this key is free text that merely names .env (a search for ".env"), not a file the call uses. */
-function freeTextDotenvWord(k, v) {
-  return typeof k === 'string' && FREE_TEXT_KEY_RE.test(k) && typeof v === 'string' && BARE_DOTENV_RE.test(v);
+// Words of an MCP tool name that mark it as one that only reads or searches, and words that mark it as one that may write or act.
+// A tool counts as read-only only with a read word and no write word (search_docs yes; create_note, tool, sync_search no), so a tool
+// zn cannot place keeps the full check: it may use a title or a message as the name of the file it writes.
+const READ_TOOL_WORDS = new Set(['search', 'query', 'find', 'lookup', 'get', 'list', 'read', 'fetch', 'view', 'show', 'describe',
+  'ask', 'grep', 'browse', 'retrieve', 'count', 'explain', 'summarize']);
+const WRITE_TOOL_WORDS = new Set(['write', 'create', 'update', 'set', 'put', 'save', 'edit', 'delete', 'remove', 'rename', 'move',
+  'copy', 'upload', 'download', 'send', 'post', 'append', 'patch', 'insert', 'store', 'commit', 'push', 'add', 'run', 'exec',
+  'execute', 'apply', 'replace', 'modify', 'publish', 'mkdir', 'rm', 'mv', 'cp', 'touch', 'make', 'new', 'import', 'export',
+  'sync', 'deploy', 'install', 'generate', 'render', 'convert', 'output', 'dump', 'log', 'record', 'attach', 'share', 'open']);
+/** Whether an MCP tool name says the tool only reads or searches (see READ_TOOL_WORDS). */
+function readOnlyToolName(name) {
+  const words = String(name || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.some((w) => READ_TOOL_WORDS.has(w)) && !words.some((w) => WRITE_TOOL_WORDS.has(w));
+}
+/**
+ * Whether a value under this key is free text that merely names .env (a search for ".env"), not a file the call uses. Only for a
+ * tool whose name says it reads or searches: any other tool may take a title or message as the name of the file it writes.
+ */
+function freeTextDotenvWord(k, v, toolName) {
+  return typeof k === 'string' && FREE_TEXT_KEY_RE.test(k) && typeof v === 'string' && BARE_DOTENV_RE.test(v) && readOnlyToolName(toolName);
 }
 // A value that starts like a file name: ~ or . first, a drive letter, or a slash or backslash.
 const STARTS_LIKE_PATH_RE = /^(?:[~.]|[A-Za-z]:[\\/]|[\\/])/;
@@ -496,7 +513,7 @@ function pathsOf(args, opts = {}) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
       } else if (loose) {
-        if (typeof v === 'string' && pathLike(v) && !freeTextDotenvWord(k, v)) add(k, v);
+        if (typeof v === 'string' && pathLike(v) && !freeTextDotenvWord(k, v, opts.toolName)) add(k, v);
         else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === 'string' && pathLike(x)) add(k, x); });
       }
       if (depth < maxDepth) {
@@ -576,13 +593,13 @@ function normalize(raw) {
     if (cmd === undefined) e.unreadable = unreadable('command');
     if (!known) {
       // An unknown tool that carries a command and also names files: the files keep their read and write checks.
-      const named = pathsOf(args, { loose: true });
+      const named = pathsOf(args, { loose: true, toolName });
       e.input.alsoPaths = named.paths;
       if (named.bad && !e.unreadable) e.unreadable = unreadable('file address');
     }
     return e;
   }
-  const { paths, bad } = pathsOf(args, { loose: !known });
+  const { paths, bad } = pathsOf(args, { loose: !known, toolName });
   const input = { path: paths[0], paths, texts: [] };
   const kind = toolName === 'view' ? 'read' : toolName === 'grep' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
@@ -737,6 +754,7 @@ module.exports = {
   pathsOf,
   pathCandidatesOf,
   freeTextDotenvWord,
+  readOnlyToolName,
   firstString,
   COMMAND_KEYS,
   patchTextOf,

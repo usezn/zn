@@ -321,7 +321,7 @@ function normalize(raw) {
       // A tool zn does not know that carries a command and also names files: the files keep their read and write checks (a .env
       // write among them is judged on what the call writes); an address zn cannot read refuses the call.
       const named = pathsOf(args);
-      const loose = require('./copilot').pathsOf(args, { loose: true });
+      const loose = require('./copilot').pathsOf(args, { loose: true, toolName });
       named.paths = [...new Set([...named.paths, ...loose.paths])];
       named.bad = named.bad || loose.bad;
       e.input.alsoPaths = named.paths;
@@ -343,7 +343,7 @@ function normalize(raw) {
   // every path in it. list_dir and find_by_name show names only, and tools with no path get no opinion.
   // A tool zn does not know: a path under any key counts too (src, dst, from, to, nested objects), and arguments zn cannot walk to
   // the end are refused.
-  const loose = READ_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const loose = READ_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true, toolName });
   const all = [...new Set([...paths, ...loose.paths])];
   if (!READ_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };

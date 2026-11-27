@@ -161,12 +161,12 @@ function unknownToolEvent(base, toolName, ti) {
   if (cmd !== undefined) {
     // The files the call also names keep their read and write checks (a .env write among them is judged on what the call writes); an
     // address zn cannot read refuses the call.
-    const named = pathsOf(ti, { loose: true });
+    const named = pathsOf(ti, { loose: true, toolName });
     if (named.bad) return { ...base, tool: 'write', toolName, input: { paths: named.paths, unparsed: true, texts: [] } };
     return { ...base, tool: 'bash', toolName, input: { command: cmd, alsoPaths: named.paths, texts: [] } };
   }
   // A path under any key counts (src, dst, from, to, nested objects), in every node; arguments nested deeper than zn reads are refused.
-  const { paths, bad } = pathsOf(ti, { loose: true });
+  const { paths, bad } = pathsOf(ti, { loose: true, toolName });
   if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
   if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };
   return null;

@@ -963,7 +963,7 @@ function fileUriPath(v) {
   u.hostname = '';
   return require('url').fileURLToPath(u);
 }
-function dotenvNamesIn(args, pathOpts) {
+function dotenvNamesIn(args, pathOpts, toolName) {
   const out = [];
   const seen = new Set();
   const envish = (v) => { let d = v; try { d = decodeURIComponent(v); } catch (_) { /* keep the raw text */ } return /env/i.test(d); };
@@ -983,8 +983,8 @@ function dotenvNamesIn(args, pathOpts) {
   const freeText = require('../agents/copilot').freeTextDotenvWord;
   const walk = (v, depth, key) => {
     if (typeof v === 'string') {
-      // A free-text key holding only a bare .env name (a search for ".env") is a word, not a file.
-      if (freeText(key, v)) return;
+      // A free-text key holding only a bare .env name (a search for ".env") is a word, not a file, in a read or search tool only.
+      if (freeText(key, v, toolName)) return;
       // Text with line breaks is content (a body, a message), but a tool may take one name per line: every nonempty line is checked
       // as a name, under any key, the same way as a one-line value.
       if (/[\r\n]/.test(v)) {
@@ -1158,7 +1158,7 @@ async function decidePre(ev, d, agentId, opts) {
       const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
-    const unseen = dotenvUnseenDenial(ev, (Array.isArray(input.paths) ? input.paths : []).concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts);
+    const unseen = dotenvUnseenDenial(ev, (Array.isArray(input.paths) ? input.paths : []).concat(dotenvNamesIn(argsObjectOf(ev), pathOpts, ev.toolName)), pathOpts);
     if (unseen) return { decision: 'deny', message: unseen };
     return { decision: 'allow' };
   }
@@ -1205,7 +1205,7 @@ async function decidePre(ev, d, agentId, opts) {
       const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
-    const unseen = dotenvUnseenDenial(ev, input.paths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts);
+    const unseen = dotenvUnseenDenial(ev, input.paths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts, ev.toolName)), pathOpts);
     if (unseen) return { decision: 'deny', message: unseen };
   }
   const mcpArgs = input.args !== undefined ? input.args : (ev.raw && typeof ev.raw === 'object' ? ev.raw.args : undefined);
@@ -1227,7 +1227,7 @@ async function decidePre(ev, d, agentId, opts) {
         if (deny) return { decision: 'deny', message: deny };
       }
       // A copy, move, rename or unknown tool that names a watched dotenv file under any key leaves a file zn cannot see: refused.
-      const unseen = dotenvUnseenDenial(ev, named.paths.concat(dotenvNamesIn(args, pathOpts)), pathOpts);
+      const unseen = dotenvUnseenDenial(ev, named.paths.concat(dotenvNamesIn(args, pathOpts, ev.toolName)), pathOpts);
       if (unseen) return { decision: 'deny', message: unseen };
     }
   }
@@ -1251,7 +1251,7 @@ async function decidePre(ev, d, agentId, opts) {
         policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
-    const unseenAlso = Array.isArray(input.alsoPaths) ? dotenvUnseenDenial(ev, input.alsoPaths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts) : null;
+    const unseenAlso = Array.isArray(input.alsoPaths) ? dotenvUnseenDenial(ev, input.alsoPaths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts, ev.toolName)), pathOpts) : null;
     if (unseenAlso) return { decision: 'deny', message: unseenAlso };
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);

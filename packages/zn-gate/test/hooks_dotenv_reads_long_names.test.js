@@ -236,6 +236,13 @@ test('a free-text value that is only the word .env passes; a path to .env under 
     assert.equal(await verdict(gemini, gem(dir, 'mcp_search_find', { [key]: value })), 'allow', 'gemini ' + key);
     assert.equal(await verdict(copilot, cop(dir, 'search-find', { [key]: value })), 'allow', 'copilot ' + key);
   }
+  // A tool whose name does not say it only reads or searches may use a title or message as the file it writes: still refused.
+  for (const [name, key] of [['notes__create', 'title'], ['custom__tool', 'title'], ['mail__send', 'subject'], ['docs__search_and_update', 'query'],
+    ['fs__writeNote', 'message']]) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__' + name, { [key]: '.env', content: 'X=1' })), 'deny', 'claude ' + name);
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_' + name.replace('__', '_'), { [key]: '.env', content: 'X=1' })), 'deny', 'gemini ' + name);
+    assert.equal(await verdict(copilot, cop(dir, name.replace('__', '-'), { [key]: '.env', content: 'X=1' })), 'deny', 'copilot ' + name);
+  }
   for (const [key, value] of [['query', './.env'], ['query', 'sub/.env'], ['path', '.env'], ['target', '.env'], ['x', '.env']]) {
     assert.equal(await verdict(claude, cc(dir, 'mcp__fs__write', { [key]: value, content: 'X=1' })), 'deny', 'claude ' + key + ' ' + value);
     assert.equal(await verdict(gemini, gem(dir, 'mcp_fs_write', { [key]: value, content: 'X=1' })), 'deny', 'gemini ' + key + ' ' + value);
