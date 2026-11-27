@@ -272,6 +272,23 @@ test('dotenv counts as a runner only as the program or right after a launcher', 
   }
 });
 
+// The run exception covers only a .env that holds no secret value (PORT=1 above). When the file holds a secret or a dotenvx
+// encrypted value, every run is refused, so a child such as printenv or env cannot print it.
+test('dotenvx run with a child that prints the environment is refused when .env holds a secret or an encrypted value', async (t) => {
+  const bodies = [
+    'API_KEY=sk_test_fake_0000000000000000\n',
+    'DOTENV_PUBLIC_KEY="03fakefakefakefakefakefakefakefakefakefakefakefakefakefakefakefake"\nAPI_KEY="encrypted:BFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE=="\n',
+  ];
+  for (const body of bodies) {
+    const dir = project(t);
+    fs.writeFileSync(path.join(dir, '.env'), body);
+    for (const command of ['dotenvx run -f .env -- printenv', 'dotenvx run -f .env -- env', 'npx dotenvx run -f .env -- printenv API_KEY',
+      "dotenvx run -f .env -- node -e 'console.log(process.env)'", 'dotenvx run -f .env -- node app.js', 'dotenv -e .env -- printenv']) {
+      assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', body.slice(0, 20) + ' ' + command);
+    }
+  }
+});
+
 // dotenvx rewrites the file it names with set, encrypt, decrypt and its other subcommands, and get prints its decrypted values to the
 // agent; its -f value is a read only for run, which hands the values to the program it starts.
 test('a dotenvx subcommand other than run that names .env is refused', async (t) => {
