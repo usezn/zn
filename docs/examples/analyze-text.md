@@ -6,7 +6,7 @@
 
 ## The JSON answer
 
-The answer always goes to standard output as JSON. `--json` is accepted and changes nothing. These are the fields:
+The answer always goes to standard output as JSON. These are the fields:
 
 | Field | What it says |
 |---|---|

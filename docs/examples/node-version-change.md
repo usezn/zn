@@ -37,7 +37,7 @@ Do these with the Node.js you want to keep.
 
 ## If you need your agent right away
 
-Turn zn off for that agent until it is fixed:
+Turn zn off for that agent until it is fixed. Run this yourself in your own terminal: zn-gate refuses it when an AI agent or a script runs it.
 
 ```sh
 npx -y zn-gate hooks uninstall <agent>
