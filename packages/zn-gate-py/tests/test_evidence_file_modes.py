@@ -50,6 +50,16 @@ def test_new_ledger_folder_is_0700_even_with_an_open_umask(tmp_path, open_umask)
 
 
 @posix_only
+def test_new_ledger_folder_is_exactly_0700_inside_a_setgid_parent(tmp_path, open_umask):
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    os.chmod(parent, 0o2775)
+    folder = parent / "zn"
+    assert log_evidence(_event(), file_path=str(folder / "evidence.jsonl")) is not None
+    assert _mode(folder) == 0o700
+
+
+@posix_only
 def test_open_for_append_creates_a_missing_file_0600(tmp_path, open_umask):
     ledger = tmp_path / "evidence.jsonl"
     with evidence._open_for_append(str(ledger)):

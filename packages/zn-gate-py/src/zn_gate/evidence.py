@@ -36,6 +36,13 @@ def _ensure_dir(file_path: str) -> None:
     dirname = os.path.dirname(file_path)
     if dirname and not os.path.exists(dirname):
         os.makedirs(dirname, mode=0o700, exist_ok=True)
+        if os.name == "posix":
+            # The mode given to makedirs is cut by the umask and a folder inside a setgid parent inherits that bit:
+            # set the exact mode on the folder this call created.
+            try:
+                os.chmod(dirname, 0o700)
+            except OSError:
+                pass
 
 
 def _open_for_append(file_path: str) -> TextIO:

@@ -106,19 +106,22 @@ class InterpreterGapTests(unittest.TestCase):
     """Cases the classes above do not reach: name spellings, the node and perl code forms, and stdin options."""
 
     def test_name_spellings(self):
-        for prog in ("python2.7", "PYTHON3", "Python3"):
+        for prog in ("python2.7", "PYTHON3", "Python3", "python3.11.2", "python4", "pypy2", "pypy3.10"):
             self.assertEqual(_rule("%s -c \"%s\"" % (prog, PY_RM)), RM_BLOCK, prog)
-        for prog in ("python3.11.2", "python4", "pypy2"):
+        for prog in ("python3x", "python.exe.bak", "pypyx", "node-gyp"):
             self.assertEqual(check_command("%s -c \"%s\"" % (prog, PY_RM)).verdict, "allow", prog)
+        self.assertEqual(_rule("node22 -e \"%s\"" % NODE_RM), RM_BLOCK)
 
     def test_node_code_forms_not_covered_above(self):
         self.assertEqual(_rule("node -pe \"%s\"" % NODE_RM), RM_BLOCK)
         self.assertEqual(_rule("node -r ./x.js -e \"%s\"" % NODE_RM), RM_BLOCK)
         self.assertEqual(_rule("node --loader ./l.mjs -e \"%s\"" % NODE_RM), RM_BLOCK)
 
-    def test_node_only_the_first_code_argument_counts(self):
-        cmd = "node -e 'console.log(1)' -e \"%s\"" % NODE_RM
-        self.assertEqual(check_command(cmd).verdict, "allow")
+    def test_node_every_code_argument_counts(self):
+        # node keeps reading options after an -e code, so a later code argument runs too.
+        self.assertEqual(_rule("node -e 'console.log(1)' -e \"%s\"" % NODE_RM), RM_BLOCK)
+        self.assertEqual(_rule("node -p '1' --eval=\"%s\"" % NODE_RM), RM_BLOCK)
+        self.assertEqual(check_command("node -e 'console.log(1)' -e 'console.log(2)'").verdict, "allow")
 
     def test_code_after_double_dash_is_not_code(self):
         self.assertEqual(check_command("node -- -e \"%s\"" % NODE_RM).verdict, "allow")

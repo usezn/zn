@@ -792,10 +792,10 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 ## Worked examples
 
-One example for each command of the npm package, run on a made-up project. The project folder `/home/user/projects/example-app` is only an example: use the path of your own project. Run the examples from that folder:
+One example for each command of the npm package, run on a made-up project. The project folder `example-app` is only an example: use your own project folder. Run the examples from that folder:
 
 ```bash
-cd /home/user/projects/example-app
+cd example-app
 ```
 
 Under each example are the lines that `zn-gate --help` prints for that command, copied from the current help text. They tell you what to expect from the command; the exact output on your machine depends on what is set up there. The section of each command above lists all its options and exit codes.
@@ -889,7 +889,7 @@ zn-gate disconnect --no-revoke
 [`scan`](#scan): scan the project for injection traps and secrets, with JSON output.
 
 ```bash
-zn-gate scan /home/user/projects/example-app --format json
+zn-gate scan . --format json
 ```
 
 ```text
@@ -900,7 +900,7 @@ zn-gate scan /home/user/projects/example-app --format json
 [`audit`](#audit): review the agent configs of the project before you open it in an agent.
 
 ```bash
-zn-gate audit /home/user/projects/example-app --fail-on high
+zn-gate audit . --fail-on high
 ```
 
 ```text
@@ -913,7 +913,7 @@ zn-gate audit /home/user/projects/example-app --fail-on high
 [`reach`](#reach): show what the agents can reach from the project, as JSON.
 
 ```bash
-zn-gate reach /home/user/projects/example-app --json
+zn-gate reach . --json
 ```
 
 ```text
@@ -957,7 +957,7 @@ zn-gate secret list
 [`env`](#env): move the values of the project's `.env` file into the vault.
 
 ```bash
-zn-gate env shadow /home/user/projects/example-app/.env
+zn-gate env shadow .env
 ```
 
 ```text
@@ -1026,7 +1026,7 @@ zn-gate hooks install claude-code --project
 [`hook`](#hook): agents call this entry point themselves. To try it by hand, pass a saved event file on standard input.
 
 ```bash
-zn-gate hook claude-code < /home/user/projects/example-app/event.json
+zn-gate hook claude-code < event.json
 ```
 
 ```text

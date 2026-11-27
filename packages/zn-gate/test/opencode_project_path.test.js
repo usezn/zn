@@ -55,10 +55,7 @@ test('the project plugin never starts a zn or node from a relative or empty PATH
 });
 
 // An absolute PATH entry can point inside the project too (a bin/ the project ships, or the project folder itself).
-test('the project plugin never starts a zn or node from an absolute PATH entry inside the project', {
-  ...skip,
-  todo: 'known gap: absolute PATH entries inside the project folder are still kept',
-}, async (t) => {
+test('the project plugin never starts a zn or node from an absolute PATH entry inside the project', skip, async (t) => {
   const s = await setup(t);
   for (const PATH of [path.join(s.work, 'bin') + ':' + s.safe, s.work + ':' + s.safe, s.work + '/:' + s.safe]) await expectSafeZn(s, PATH);
 });
