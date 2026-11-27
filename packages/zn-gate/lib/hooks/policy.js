@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.9';
+const POLICY_RULES_VERSION = '2026-11-27.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1598,6 +1598,13 @@ const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 
 // Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
 const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
 const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
+// A dotenv runner given no file loads .env from the folder it runs in; with a convention (dotenvx) or a cascade (dotenv-cli) it also
+// loads the .env.<environment> and .env*.local files. dotenvx steps that load the default file (get prints its values; set, encrypt,
+// decrypt and rotate rewrite it) are judged like a read of that file, the same as when its name is typed.
+const DOTENV_DEFAULT_FILE = '.env';
+const DOTENV_CONVENTION_FILES = ['.env.local', '.env.development', '.env.production', '.env.test', '.env.development.local',
+  '.env.production.local', '.env.test.local'];
+const DOTENVX_DEFAULT_SUBS = new Set(['run', 'get', 'set', 'encrypt', 'decrypt', 'rotate']);
 // Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
 // npm exec, pnpm exec, bun x). A dotenv runner counts only as the program word, or as the program a launcher runs when the launcher is
 // itself the program word; never as an argument of another program (node -e "..." npx dotenv -e .env is not launched).
@@ -1635,6 +1642,16 @@ function envFileValueWords(words, opts) {
   const isDotenvName = (t) => PLAIN_NAME_RE.test(t) && (() => { const c = classifyWord(t, opts); return !!c && c.kind === 'dotenv'; })();
   let seq = null;
   let runner = false;
+  let dotenvx = false;
+  let dxSub = null;
+  let fileGiven = false;
+  let cascade = false;
+  const defaults = new Set();
+  const noteDefaults = () => {
+    if (!runner || fileGiven || (dotenvx && !DOTENVX_DEFAULT_SUBS.has(dxSub))) return;
+    defaults.add(DOTENV_DEFAULT_FILE);
+    if (cascade) for (const f of DOTENV_CONVENTION_FILES) defaults.add(f);
+  };
   let ended = false;
   let envProg = false;
   // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
@@ -1644,7 +1661,7 @@ function envFileValueWords(words, opts) {
   let seenProgram = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { noteDefaults(); seq = w.seq; runner = false; dotenvx = false; dxSub = null; fileGiven = false; cascade = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
@@ -1664,9 +1681,13 @@ function envFileValueWords(words, opts) {
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      if (programWord || wasLaunch === 'open') runner = true;
+      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; fileGiven = false; cascade = false; }
       continue;
     }
+    if (runner && dotenvx && dxSub === null && !t.startsWith('-')) dxSub = t;
+    // A file option (any value) means the runner does not load the default file; for dotenvx, -e sets a variable, not a file.
+    if (runner && (t === '-f' || t === '--env-file' || /^(?:-f|--env-file)=/.test(t) || (!dotenvx && (t === '-e' || t.startsWith('-e='))))) fileGiven = true;
+    if (runner && (t === '--convention' || t === '-c' || t === '--cascade' || /^(?:--convention|-c|--cascade)=/.test(t))) cascade = true;
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
     const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
@@ -1674,6 +1695,8 @@ function envFileValueWords(words, opts) {
     const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
     if (opt && nextValue()) { out.set(next, next.text); i++; }
   }
+  noteDefaults();
+  out.defaults = [...defaults];
   return out;
 }
 
@@ -3012,8 +3035,19 @@ function bashDenialOf(cmd, opts = {}) {
   // words are split too.
   // Each reading is read on its own: its simple commands restart the program word (allWords numbers them from 1 in every reading).
   const envFileValues = new Map();
-  for (const reading of readings) for (const [k, v] of envFileValueWords(reading, opts)) envFileValues.set(k, v);
+  const defaultEnvFiles = new Set();
+  for (const reading of readings) {
+    const found = envFileValueWords(reading, opts);
+    for (const [k, v] of found) envFileValues.set(k, v);
+    for (const f of found.defaults) defaultEnvFiles.add(f);
+  }
   opts.envFileValues = envFileValues;
+  // A dotenv runner with no file option loads a file it does not name: judged as a read of that file (a missing file, or one with no
+  // plain secret, is allowed).
+  for (const f of defaultEnvFiles) {
+    const deny = readDenial(f, opts);
+    if (deny) return deny;
+  }
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
       (/\.env/i.test(text) && words.some((w) => w.head !== '' && !envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)))) {
     const split = [];
