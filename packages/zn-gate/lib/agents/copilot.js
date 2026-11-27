@@ -475,17 +475,21 @@ function pathsOf(args, opts = {}) {
     (LINE_BREAK_RE.test(v) && (/(?:^|[\r\n\u2028\u2029\u0085])[ \t]*[~.]/.test(v) || /\.env/i.test(v)));
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
-    if (/^file:/i.test(v)) {
+    // A file: URI is decoded whole; one that also holds a list or line separator (file:///p/.env,notes.txt) is split as well, so a
+    // name in the list is checked on its own.
+    const uri = /^file:/i.test(v);
+    if (uri) {
       try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
-      return;
+      if (!/[\r\n\u2028\u2029\u0085\t, ]/.test(v)) return;
     }
-    if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
+    if (!uri && /url/i.test(k) && !PATH_KEY_RE.test(k)) return;
     // A long value is classified like any other (classifyPath reads long input); a value with line breaks is checked by its trimmed
     // whole and each line that starts like a path. Under a key that is not a file key (loose mode) only a candidate that starts
     // like a path counts: prose with a slash somewhere is text, not a name.
     const fileKey = keyOk(k);
-    if (v.length > MAX_PATH_LEN || LINE_BREAK_RE.test(v) || (fileKey && /[\t, ]/.test(v))) {
-      for (const x of pathCandidatesOf(v, true, fileKey)) {
+    if (uri || v.length > MAX_PATH_LEN || LINE_BREAK_RE.test(v) || (fileKey && /[\t, ]/.test(v))) {
+      for (const x of pathCandidatesOf(v, true, fileKey || uri)) {
+        if (uri && x === v) continue; // the whole URI is already decoded above
         if (!(fileKey || STARTS_LIKE_PATH_RE.test(x) || ENDS_IN_DOTENV_RE.test(x) || /^file:/i.test(x))) continue;
         // A file: URI on a line is decoded like a one-line value; one that cannot be decoded sets bad.
         if (/^file:/i.test(x)) { try { out.push(fileURLToPath(localFileUrl(x))); } catch (_) { bad = true; } } else out.push(x);
