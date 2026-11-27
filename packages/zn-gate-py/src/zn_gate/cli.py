@@ -24,6 +24,7 @@ from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence_timesketch import inspect_ledger, manifest_text, sha256_file
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -753,6 +754,23 @@ def _fs_error_text(err: OSError, path: object) -> str:
     return f"{p} could not be written ({err.strerror or err}). Choose another path, then try again."
 
 
+def _write_manifest(output: str, fmt: str) -> int:
+    """Writes OUTPUT.manifest.json for the export just written. Returns an exit code (0 = written)."""
+    check = inspect_ledger(EVIDENCE_FILE)
+    if check["read_error"]:
+        print(f"zn-gate: the manifest was not written. {check['error']}", file=sys.stderr)
+        return 1
+    try:
+        text = manifest_text(fmt=fmt, source=os.path.basename(EVIDENCE_FILE), check=check,
+                             export_sha256=sha256_file(output), generator=f"zn-gate {__version__}")
+        with open(output + ".manifest.json", "w", encoding="utf-8", newline="") as manifest_file:
+            manifest_file.write(text)
+    except OSError as err:
+        print(f"zn-gate: the manifest was not written. {_fs_error_text(err, output)}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _is_evidence_log(output: str, ledger: str) -> bool:
     """True when output is the evidence log itself, or a link or hard link to it. Checked before anything is opened."""
     if os.path.normcase(os.path.realpath(output)) == os.path.normcase(os.path.realpath(ledger)):
@@ -781,11 +799,22 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 
     if getattr(args, "export", False):
         fmt = getattr(args, "format", "jsonl")
+        include_preview = bool(getattr(args, "include_preview", False))
+        manifest = bool(getattr(args, "manifest", False))
+        if include_preview and fmt not in ("timesketch", "timesketch-csv"):
+            print("zn-gate: --include-preview works only with --format timesketch or timesketch-csv.", file=sys.stderr)
+            return 2
+        if manifest and not getattr(args, "output", None):
+            print("zn-gate: --manifest needs --output FILE.", file=sys.stderr)
+            return 2
         # Checked before the export is read or the output is written: writing it would replace the log.
         if getattr(args, "output", None) and _is_evidence_log(args.output, EVIDENCE_FILE):
             print("Error: the output file is the evidence log itself; choose another path.", file=sys.stderr)
             return 2
-        res = export_evidence_ledger(format=fmt)
+        if include_preview:
+            res = export_evidence_ledger(format=fmt, include_preview=True)
+        else:
+            res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
         if not res.get("valid"):
             print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
@@ -799,6 +828,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
                 print(f"Error: the export was not saved. {_fs_error_text(err, args.output)}", file=sys.stderr)
                 return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
+            if manifest:
+                manifest_code = _write_manifest(args.output, fmt)
+                if manifest_code:
+                    return manifest_code
         else:
             # The content already ends with a newline (or is empty when the
             # ledger has no records); print() would add a blank line, which
@@ -1072,6 +1105,10 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--format", type=str.lower, choices=["jsonl", "csv", "timesketch", "timesketch-csv"], default="jsonl",
                            help="Export format: jsonl (default), csv, timesketch (JSON Lines for Timesketch) or timesketch-csv")
     ev_parser.add_argument("--output", help="Write export output to file")
+    ev_parser.add_argument("--manifest", action="store_true",
+                           help="With --output: also write FILE.manifest.json (what was exported, and whether the chain verified)")
+    ev_parser.add_argument("--include-preview", action="store_true",
+                           help="With --format timesketch or timesketch-csv: add the payload preview as zn_payload_preview")
 
     # status command
     subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")

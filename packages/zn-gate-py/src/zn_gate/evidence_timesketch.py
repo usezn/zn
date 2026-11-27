@@ -229,7 +229,14 @@ def _check_line(i: int, rec: Any, parse_error: Optional[Exception], expected_pre
     return None
 
 
-def _event(rec: Dict[str, Any], index: int, verified: bool) -> Dict[str, Any]:
+def timesketch_csv_headers(include_preview: bool = False) -> List[str]:
+    """The CSV header. include_preview adds zn_payload_preview just before zn_chain_index."""
+    if not include_preview:
+        return list(TIMESKETCH_CSV_HEADERS)
+    return TIMESKETCH_CSV_HEADERS[:-2] + ["zn_payload_preview"] + TIMESKETCH_CSV_HEADERS[-2:]
+
+
+def _event(rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> Dict[str, Any]:
     rule = _plain(rec.get("rule"))
     ev: Dict[str, Any] = {
         "message": f"{_plain(rec.get('verdict'))} {_plain(rec.get('tool_name'))} by "
@@ -240,41 +247,49 @@ def _event(rec: Dict[str, Any], index: int, verified: bool) -> Dict[str, Any]:
     }
     for key, field in TIMESKETCH_RECORD_FIELDS:
         ev[key] = rec.get(field)
+    # The preview is added only when the record has one (an empty preview is not written).
+    preview = rec.get("payload_preview")
+    if include_preview and preview is not None and preview != "":
+        ev["zn_payload_preview"] = preview
     ev["zn_chain_index"] = index
     ev["zn_chain_verified"] = verified
     return ev
 
 
-def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool) -> str:
-    ev = _event(rec, index, verified)
+def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> str:
+    ev = _event(rec, index, verified, include_preview)
     if fmt == "timesketch":
         return _json_js(ev)
     cells = []
-    for h in TIMESKETCH_CSV_HEADERS:
+    for h in timesketch_csv_headers(include_preview):
         val = timesketch_micros(rec.get("timestamp")) if h == "timestamp" else _plain(ev.get(h))
         cells.append('"' + val.replace('"', '""') + '"')
     return ",".join(cells)
 
 
-def export_timesketch(file_path: str, fmt: str) -> Dict[str, Any]:
-    """The whole Timesketch export as one string, with the chain check result (same fields as
-    export_evidence_ledger). Lines that are not JSON objects give no event; a record after a
-    break is written with zn_chain_verified false."""
-    header = TIMESKETCH_CSV_HEADER_LINE + "\n" if fmt == "timesketch-csv" else ""
+def inspect_ledger(file_path: str) -> Dict[str, Any]:
+    """Checks the chain line by line, once, for the exports and the manifest. Returns valid, error,
+    broken_index, truncated_tail, total (non-empty lines), tip_hash (the file's last record_hash),
+    tip_record_hash (the last record that verified, or None), first_timestamp and last_timestamp
+    (of the first and last line that is a JSON object), read_error, and rows: (index, record,
+    verified) for every line that is a JSON object."""
+    empty = {"valid": True, "error": None, "broken_index": None, "truncated_tail": False, "total": 0,
+             "tip_hash": GENESIS_HASH, "tip_record_hash": None, "first_timestamp": None,
+             "last_timestamp": None, "read_error": False, "rows": []}
     if not os.path.exists(file_path):
-        return {"content": header, "format": fmt, "valid": True, "error": None,
-                "tip_hash": GENESIS_HASH, "total": 0}
+        return empty
     try:
         lines, bad = _read_ledger(file_path)
     except EvidenceLedgerError as e:
-        return {"content": header, "format": fmt, "valid": False, "error": str(e),
-                "tip_hash": GENESIS_HASH, "total": 0}
+        return {**empty, "valid": False, "error": str(e), "read_error": True}
 
     ends_with_newline = _ends_with_newline(file_path)
     total = len(lines)
     expected_prev = GENESIS_HASH
     failure: Optional[Dict[str, Any]] = None
-    out: List[str] = [header] if header else []
+    rows: List[Tuple[int, Dict[str, Any], bool]] = []
+    first_ts: Optional[str] = None
+    last_ts: Optional[str] = None
     for i, text in enumerate(lines):
         rec, parse_error = _parse_record(text)
         is_cut_tail = i == total - 1 and text.startswith(_RECORD_START) and not ends_with_newline
@@ -283,18 +298,73 @@ def export_timesketch(file_path: str, fmt: str) -> Dict[str, Any]:
             if failure is None:
                 expected_prev = rec["record_hash"]
         if parse_error is None and isinstance(rec, dict):
-            out.append(_event_line(fmt, rec, i, failure is None) + "\n")
+            rows.append((i, rec, failure is None))
+            ts = rec.get("timestamp") if isinstance(rec.get("timestamp"), str) else None
+            if len(rows) == 1:
+                first_ts = ts
+            last_ts = ts
 
     tip_hash = GENESIS_HASH
     if lines:
         last, last_error = _parse_record(lines[-1])
         if last_error is None and isinstance(last, dict) and last.get("record_hash"):
             tip_hash = last["record_hash"]
+    return {
+        "valid": failure is None,
+        "error": None if failure is None else failure["error"],
+        "broken_index": None if failure is None else failure["broken_index"],
+        "truncated_tail": bool(failure and failure.get("truncated_tail")),
+        "total": total,
+        "tip_hash": tip_hash,
+        "tip_record_hash": None if expected_prev == GENESIS_HASH else expected_prev,
+        "first_timestamp": first_ts,
+        "last_timestamp": last_ts,
+        "read_error": False,
+        "rows": rows,
+    }
 
-    if failure is None:
-        result = {"valid": True, "error": None}
-    else:
-        result = {"valid": False, "error": failure["error"]}
-        if failure.get("truncated_tail"):
-            result["truncated_tail"] = True
-    return {"content": "".join(out), "format": fmt, "tip_hash": tip_hash, "total": total, **result}
+
+def export_timesketch(file_path: str, fmt: str, include_preview: bool = False) -> Dict[str, Any]:
+    """The whole Timesketch export as one string, with the chain check result (same fields as
+    export_evidence_ledger). Lines that are not JSON objects give no event; a record after a
+    break is written with zn_chain_verified false."""
+    check = inspect_ledger(file_path)
+    out: List[str] = []
+    if fmt == "timesketch-csv":
+        out.append(",".join(timesketch_csv_headers(include_preview)) + "\n")
+    for i, rec, verified in check["rows"]:
+        out.append(_event_line(fmt, rec, i, verified, include_preview) + "\n")
+    result = {
+        "content": "".join(out), "format": fmt, "tip_hash": check["tip_hash"], "total": check["total"],
+        "valid": check["valid"], "error": check["error"],
+    }
+    if check["truncated_tail"]:
+        result["truncated_tail"] = True
+    return result
+
+
+def sha256_file(file_path: str) -> str:
+    """sha256 (hex) of a file, read in pieces."""
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def manifest_text(*, fmt: str, source: str, check: Dict[str, Any], export_sha256: str, generator: str) -> str:
+    """The manifest written next to an export (--manifest). Same bytes as the Node package for the
+    same log; generator is the only field that may differ when the versions differ."""
+    manifest = {
+        "format": fmt,
+        "source": source,
+        "records": check["total"],
+        "first_timestamp": check["first_timestamp"],
+        "last_timestamp": check["last_timestamp"],
+        "chain_verified": check["valid"] is True,
+        "chain_break_index": None if check["valid"] else check["broken_index"],
+        "tip_record_hash": check["tip_record_hash"],
+        "export_sha256": export_sha256,
+        "generator": generator,
+    }
+    return _json_js(manifest) + "\n"

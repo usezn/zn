@@ -630,7 +630,7 @@ Aliases: `mcp-shield`, `wrap`.
 ### `evidence`
 
 ```bash
-zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv|timesketch|timesketch-csv] [--output file]] [--tail 20]
+zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv|timesketch|timesketch-csv] [--output file [--manifest]] [--include-preview]] [--tail 20]
 ```
 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
@@ -639,6 +639,8 @@ Shows the local hash-chained log of what zn-gate decided. With no option it prin
 - `--ui`: open a local dashboard in your browser (default port 3100).
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. The log is read in parts, so a log of any size exports in full. Exit `1` if the log cannot be read to the end (the output is then incomplete) or its chain does not verify (the file is still written and says `Integrity: TAMPERED`). Exit `2` if `--output` is the evidence log itself, or a link or hard link to it: the command refuses before it opens anything, so the log is left as it is. Choose another path.
 - `--format timesketch` (JSON Lines) and `--format timesketch-csv`: one event per record that [Timesketch](https://timesketch.org/) can import as a timeline. Each event has the fields Timesketch needs (`message`, `datetime`, `timestamp_desc`; the CSV also has `timestamp` in microseconds), the record fields as `zn_*` attributes, and the chain check per record: `zn_record_hash`, `zn_prev_hash`, `zn_chain_index` and `zn_chain_verified`, which is `false` for every record from the first one that does not verify. The `message` is built only from the verdict, the tool, the agent and the rule id, and the payload preview is never included, so an analyst tool does not read text the agent wrote. The npm and PyPI packages write the same output for the same log.
+- `--include-preview`: only with `--format timesketch` or `timesketch-csv`. Adds the payload preview (the text the agent wrote) as `zn_payload_preview`, just before `zn_chain_index`, for the records that have one. Off by default, so the export does not contain agent text unless you ask for it. Any other format refuses the option (exit `2`).
+- `--manifest`: only with `--output FILE`. Writes `FILE.manifest.json` next to the export: the format, the log's file name (never a full path), how many records were exported, the first and last timestamp, whether the chain verified, the first record that did not (`chain_break_index`, `null` when it verified), the hash of the last record that verified, and the SHA-256 of the export file. Without `--output` the option refuses (exit `2`). A manifest is written even when the chain does not verify; the export then exits `1`, as above.
 
 Aliases: `logs`, `export`.
 

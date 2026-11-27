@@ -797,10 +797,10 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
  * @param {('jsonl'|'csv'|'timesketch'|'timesketch-csv')} format
  * @param {import('stream').Writable} out
  */
-async function writeEvidenceExport(filePath, format, out) {
+async function writeEvidenceExport(filePath, format, out, opts = {}) {
   const asked = (format || 'jsonl').toLowerCase();
   const normFormat = require('./evidence_export').EXPORT_FORMATS.includes(asked) ? asked : 'jsonl';
-  return exporter.writeExport(filePath, normFormat, out);
+  return exporter.writeExport(filePath, normFormat, out, { includePreview: !!opts.includePreview });
 }
 
 /**

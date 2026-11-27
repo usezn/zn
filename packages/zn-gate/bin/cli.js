@@ -374,6 +374,8 @@ EVIDENCE OPTIONS:
   --export            Export audit records to JSONL or CSV
   --format <jsonl|csv|timesketch|timesketch-csv> Export format (default: jsonl)
   --output <file>     Write exported audit records to target file
+  --manifest          With --output: also write <file>.manifest.json (what was exported, and whether the chain verified)
+  --include-preview   With --format timesketch or timesketch-csv: add the payload preview as zn_payload_preview
   --port <number>     Set HTTP port for dashboard (default: 3100)
   --tail <number>     Display the last N security records (default: 20)
 
@@ -1139,7 +1141,7 @@ function expandEqualsOptions(command, args) {
 const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
 const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
 const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
-const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
+const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', '--manifest', '--include-preview', ...EVIDENCE_VALUE_OPTIONS];
 
 function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
   for (let i = start; i < args.length; i++) {
@@ -1259,6 +1261,8 @@ async function main() {
     revert: args.includes('--revert'),
     verify: args.includes('--verify'),
     export: args.includes('--export'),
+    manifest: args.includes('--manifest'),
+    includePreview: args.includes('--include-preview'),
     format: 'jsonl',
     output: null,
     ui: args.includes('--ui'),
@@ -1395,6 +1399,17 @@ ${ruleLine(process.env, 60)}\n`);
         process.exitCode = 2;
         return;
       }
+      const isTimesketch = format === 'timesketch' || format === 'timesketch-csv';
+      if (options.includePreview && !isTimesketch) {
+        process.stderr.write('zn-gate: --include-preview works only with --format timesketch or timesketch-csv.\n');
+        process.exitCode = 2;
+        return;
+      }
+      if (options.manifest && !options.output) {
+        process.stderr.write('zn-gate: --manifest needs --output FILE.\n');
+        process.exitCode = 2;
+        return;
+      }
       // The log is streamed to the output while its chain is checked, so a log of any size exports
       // in bounded memory. The output file is opened first, so a path that cannot be written fails
       // before anything is read.
@@ -1415,7 +1430,7 @@ ${ruleLine(process.env, 60)}\n`);
       }
       let res;
       try {
-        res = await writeEvidenceExport(EVIDENCE_FILE, format, out);
+        res = await writeEvidenceExport(EVIDENCE_FILE, format, out, { includePreview: options.includePreview });
         if (out !== process.stdout) {
           await new Promise((resolve, reject) => {
             const fail = (e) => { if (e) e.writeError = true; reject(e); };
@@ -1437,6 +1452,20 @@ ${ruleLine(process.env, 60)}\n`);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
+      }
+      if (options.manifest) {
+        const exportLib = require('../lib/evidence_export');
+        try {
+          const exportSha256 = await exportLib.sha256File(options.output);
+          const text = exportLib.manifestText({
+            format, source: require('path').basename(EVIDENCE_FILE), res, exportSha256, generator: `zn-gate ${VERSION}`,
+          });
+          fs.writeFileSync(`${options.output}.manifest.json`, text);
+        } catch (err) {
+          process.stderr.write(`zn-gate: the manifest was not written. ${err.message}\n`);
+          process.exitCode = 1;
+          return;
+        }
       }
       // A log whose chain does not verify in full is not proof: exit 1, like --verify.
       if (!res.valid) process.exitCode = 1;

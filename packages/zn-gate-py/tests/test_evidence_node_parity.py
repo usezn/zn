@@ -1,6 +1,8 @@
 """The Node and Python packages write the same evidence record for the same event, and a ledger
 written by one verifies with the other."""
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -248,3 +250,64 @@ def test_timesketch_export_bytes_match_node_after_tamper(tmp_path, fmt):
     node = _node_export(tmp_path, ledger, fmt)
     assert node == _py_export(ledger, fmt)
     assert b"false" in node
+
+
+NODE_CLI = ROOT / "zn-gate" / "bin" / "cli.js"
+_GENERATOR = re.compile(rb'"generator":"zn-gate [^"]*"')
+
+
+def _cli_pair(tmp_path, ledger, fmt, extra):
+    """Runs the export through both command lines on the same log (ZN_HOME holds it) and returns
+    (node_result, python_result, node_output, python_output)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    shutil.copy(ledger, home / "evidence.jsonl")
+    node_dir, py_dir = tmp_path / "node", tmp_path / "py"
+    node_dir.mkdir()
+    py_dir.mkdir()
+    node_out, py_out = node_dir / "out.txt", py_dir / "out.txt"
+    env = {**os.environ, "ZN_HOME": str(home)}
+    node = subprocess.run(
+        [NODE, str(NODE_CLI), "evidence", "--export", "--format", fmt, "--output", str(node_out), *extra],
+        capture_output=True, env=env, timeout=120,
+    )
+    py_env = {**env, "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1"}
+    python = subprocess.run(
+        [sys.executable, "-m", "zn_gate", "evidence", "--export", "--format", fmt, "--output", str(py_out), *extra],
+        capture_output=True, env=py_env, timeout=120,
+    )
+    return node, python, node_out, py_out
+
+
+def _same_export_and_manifest(tmp_path, ledger, fmt, extra):
+    node, python, node_out, py_out = _cli_pair(tmp_path, ledger, fmt, extra)
+    assert python.returncode == 0, python.stderr
+    assert node_out.read_bytes() == py_out.read_bytes()
+    if "--manifest" in extra:
+        n_man = (node_out.parent / "out.txt.manifest.json").read_bytes()
+        p_man = (py_out.parent / "out.txt.manifest.json").read_bytes()
+        assert _GENERATOR.search(n_man) and _GENERATOR.search(p_man)
+        # generator is the only field allowed to differ, when the two versions differ
+        assert _GENERATOR.sub(b'"generator":"G"', n_man) == _GENERATOR.sub(b'"generator":"G"', p_man)
+
+
+@pytest.mark.parametrize("fmt, extra", [
+    ("timesketch", ["--include-preview"]),
+    ("timesketch-csv", ["--include-preview"]),
+    ("timesketch", ["--manifest"]),
+    ("timesketch-csv", ["--manifest", "--include-preview"]),
+    ("jsonl", ["--manifest"]),
+], ids=["ts-preview", "tscsv-preview", "ts-manifest", "tscsv-manifest-preview", "jsonl-manifest"])
+def test_cli_export_and_manifest_match_node(tmp_path, fmt, extra):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    _same_export_and_manifest(tmp_path, ledger, fmt, extra)
+
+
+def test_cli_manifest_matches_node_after_tamper(tmp_path):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    lines = ledger.read_text(encoding="utf-8").split("\n")
+    lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"deny"', 1)
+    ledger.write_text("\n".join(lines), encoding="utf-8")
+    _same_export_and_manifest(tmp_path, ledger, "timesketch-csv", ["--manifest", "--include-preview"])
+    man = (tmp_path / "py" / "out.txt.manifest.json").read_text(encoding="utf-8")
+    assert '"chain_verified":false,"chain_break_index":2' in man

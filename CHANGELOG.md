@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `zn-gate evidence --export --format timesketch` (JSON Lines) and `--format timesketch-csv` write the local decision log as events that Timesketch can import as a timeline. Each event carries the hash-chain check for its record (`zn_record_hash`, `zn_prev_hash`, `zn_chain_index`, `zn_chain_verified`), so a record after a break is never shown as verified. The event message uses only the verdict, tool, agent and rule id, and the payload preview is never exported. The npm and PyPI packages write the same bytes for the same log.
+- `zn-gate evidence --export --output FILE --manifest` also writes `FILE.manifest.json`, a short summary of the export (records, first and last time, whether the chain verified, and the file's SHA-256). `--include-preview` adds the payload preview to the Timesketch exports; it is off by default. Both packages.
 
 ## [1.18.0] - 2026-11-26
 

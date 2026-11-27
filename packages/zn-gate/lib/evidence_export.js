@@ -62,6 +62,10 @@ const TIMESKETCH_CSV_HEADERS = [
   'zn_chain_index', 'zn_chain_verified',
 ];
 const TIMESKETCH_CSV_HEADER_LINE = TIMESKETCH_CSV_HEADERS.join(',');
+// --include-preview adds zn_payload_preview just before zn_chain_index.
+const timesketchCsvHeaders = (includePreview) => (includePreview
+  ? [...TIMESKETCH_CSV_HEADERS.slice(0, -2), 'zn_payload_preview', ...TIMESKETCH_CSV_HEADERS.slice(-2)]
+  : TIMESKETCH_CSV_HEADERS);
 const UTC_ISO_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
 
 const isLeapYear = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -95,7 +99,7 @@ function timesketchMicros(ts) {
 
 const plainText = (v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 
-function timesketchEvent(rec, index, verified) {
+function timesketchEvent(rec, index, verified, includePreview = false) {
   const rule = plainText(rec.rule);
   const ev = {
     message: `${plainText(rec.verdict)} ${plainText(rec.tool_name)} by ${plainText(rec.agent_environment)}` + (rule ? ` (rule ${rule})` : ''),
@@ -104,15 +108,19 @@ function timesketchEvent(rec, index, verified) {
     data_type: TIMESKETCH_DATA_TYPE,
   };
   for (const [key, field] of TIMESKETCH_RECORD_FIELDS) ev[key] = rec[field] === undefined ? null : rec[field];
+  // The preview is added only when the record has one (an empty preview is not written).
+  if (includePreview && rec.payload_preview !== undefined && rec.payload_preview !== null && rec.payload_preview !== '') {
+    ev.zn_payload_preview = rec.payload_preview;
+  }
   ev.zn_chain_index = index;
   ev.zn_chain_verified = verified;
   return ev;
 }
 
-function timesketchLine(format, rec, index, verified) {
-  const ev = timesketchEvent(rec, index, verified);
+function timesketchLine(format, rec, index, verified, includePreview = false) {
+  const ev = timesketchEvent(rec, index, verified, includePreview);
   if (format === 'timesketch') return JSON.stringify(ev);
-  return TIMESKETCH_CSV_HEADERS.map((h) => {
+  return timesketchCsvHeaders(includePreview).map((h) => {
     const val = h === 'timestamp' ? timesketchMicros(rec.timestamp) : plainText(ev[h]);
     return `"${val.replace(/"/g, '""')}"`;
   }).join(',');
@@ -182,7 +190,9 @@ function createExporter(deps) {
       if (failure.truncated !== undefined) return truncatedTailResult(total, failure.truncated);
       return { valid: false, total, verified: failure.verified, broken_index: failure.broken_index, error: failure.error };
     }
-    return { check, result, ok };
+    // The record_hash of the last record that verified, or null when none did.
+    const tipRecordHash = () => (expectedPrevHash === genesisHash ? null : expectedPrevHash);
+    return { check, result, ok, tipRecordHash };
   }
 
   /**
@@ -194,10 +204,14 @@ function createExporter(deps) {
    */
   function* exportChunks(filePath, format, state, opts = {}) {
     const chunkSize = Math.max(1, (testHooks && testHooks.exportChunkSize) || DEFAULT_CHUNK);
+    const includePreview = !!opts.includePreview && TIMESKETCH_FORMATS.has(format);
     if (!fs.existsSync(filePath)) {
       if (format === 'csv') yield CSV_HEADER_LINE + '\n';
-      if (format === 'timesketch-csv') yield TIMESKETCH_CSV_HEADER_LINE + '\n';
-      state.result = { format, valid: true, total: 0, verified: 0, broken_index: null, error: null, tip_hash: genesisHash, bytes: 0 };
+      if (format === 'timesketch-csv') yield timesketchCsvHeaders(includePreview).join(',') + '\n';
+      state.result = {
+        format, valid: true, total: 0, verified: 0, broken_index: null, error: null, tip_hash: genesisHash, bytes: 0,
+        first_timestamp: null, last_timestamp: null, tip_record_hash: null,
+      };
       return;
     }
     let fd;
@@ -225,7 +239,15 @@ function createExporter(deps) {
     let csvParts = [];
     let csvLen = 0;
     if (format === 'csv') { csvParts.push(CSV_HEADER_LINE + '\n'); csvLen = CSV_HEADER_LINE.length + 1; }
-    if (format === 'timesketch-csv') { csvParts.push(TIMESKETCH_CSV_HEADER_LINE + '\n'); csvLen = TIMESKETCH_CSV_HEADER_LINE.length + 1; }
+    if (format === 'timesketch-csv') {
+      const headerLine = timesketchCsvHeaders(includePreview).join(',');
+      csvParts.push(headerLine + '\n');
+      csvLen = headerLine.length + 1;
+    }
+    // For the manifest: the timestamps of the first and last record that is a JSON object.
+    let firstTs = null;
+    let lastTs = null;
+    let sawRecord = false;
     const timesketch = TIMESKETCH_FORMATS.has(format);
 
     const flushHeld = (isLast) => {
@@ -233,7 +255,7 @@ function createExporter(deps) {
       // A Timesketch event is written once its line is checked, so it says whether it verified.
       const rec = held.rec;
       if (timesketch && !held.parseError && rec !== null && typeof rec === 'object' && !Array.isArray(rec)) {
-        const line = timesketchLine(format, rec, held.index, checker.ok());
+        const line = timesketchLine(format, rec, held.index, checker.ok(), includePreview);
         csvParts.push(line + '\n');
         csvLen += line.length + 1;
       }
@@ -255,6 +277,12 @@ function createExporter(deps) {
       try { rec = JSON.parse(lineText); } catch (e) { parseError = e; }
       if (held) flushHeld(false);
       held = { text: lineText, rec, parseError, bad, index: total };
+      if (!parseError && rec !== null && typeof rec === 'object' && !Array.isArray(rec)) {
+        const ts = typeof rec.timestamp === 'string' ? rec.timestamp : null;
+        if (!sawRecord) firstTs = ts;
+        sawRecord = true;
+        lastTs = ts;
+      }
       total++;
       tipText = lineText;
       if (format === 'csv' && !parseError) {
@@ -322,7 +350,10 @@ function createExporter(deps) {
     if (tipText !== null) {
       try { tipHash = JSON.parse(tipText).record_hash || genesisHash; } catch { /* not a record */ }
     }
-    state.result = { format, ...checker.result(total), tip_hash: tipHash, bytes: size };
+    state.result = {
+      format, ...checker.result(total), tip_hash: tipHash, bytes: size,
+      first_timestamp: firstTs, last_timestamp: lastTs, tip_record_hash: checker.tipRecordHash(),
+    };
   }
 
   /** Collects a whole export into one string (small logs, the library API). */
@@ -369,4 +400,36 @@ function createExporter(deps) {
 
 const EXPORT_FORMATS = ['jsonl', 'csv', 'timesketch', 'timesketch-csv'];
 
-module.exports = { createExporter, EXPORT_FORMATS, timesketchMicros, TIMESKETCH_CSV_HEADERS };
+/** sha256 (hex) of a file, read in pieces. */
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const hash = require('crypto').createHash('sha256');
+    const input = fs.createReadStream(file);
+    input.on('error', reject);
+    input.on('data', (d) => hash.update(d));
+    input.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+/**
+ * The manifest written next to an export (--manifest). res is the result of writeEvidenceExport.
+ * The key order is fixed: Python writes the same bytes, with generator as the only difference when
+ * the versions differ. Compact JSON and a trailing newline.
+ */
+function manifestText({ format, source, res, exportSha256, generator }) {
+  const manifest = {
+    format,
+    source,
+    records: res.total,
+    first_timestamp: res.first_timestamp ?? null,
+    last_timestamp: res.last_timestamp ?? null,
+    chain_verified: res.valid === true,
+    chain_break_index: res.valid ? null : (res.broken_index ?? null),
+    tip_record_hash: res.tip_record_hash ?? null,
+    export_sha256: exportSha256,
+    generator,
+  };
+  return JSON.stringify(manifest) + '\n';
+}
+
+module.exports = { createExporter, EXPORT_FORMATS, timesketchMicros, TIMESKETCH_CSV_HEADERS, sha256File, manifestText };
