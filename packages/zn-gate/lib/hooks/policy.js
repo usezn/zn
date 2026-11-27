@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.4';
+const POLICY_RULES_VERSION = '2026-11-27.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1813,6 +1813,14 @@ function markLinkWords(readings) {
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;   // NAME=value and NAME+=value
 
+/* What a person reads after a refused marker: what the marker is, and one command to run in their own terminal. The command
+ * comes from znCommand, so it names the version that is installed and never a fixed one. */
+const MARKER_EXPLAINED = ' A secret marker is a stand-in (like __ZN_NAME__) for a secret stored in zn.';
+function markerGuidance(webNote) {
+  return ' Next step: give the program the secret as an environment variable: ask the user to run `' + znCommand('run --secrets NAME -- <command>') +
+    '` in their own terminal, and have the program read it from there (for example psql reads PGPASSWORD). ' + webNote;
+}
+
 /**
  * Commands with named markers. A marker in a command's arguments is never
  * filled in (the value would show in the process list and in command-line
@@ -1827,8 +1835,7 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
   const scan = scanFirstCommand(s);
   const tail = s.slice(scan.end);
-  const guidance = ' Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` ' +
-    'and have the program read it from there (for example psql reads PGPASSWORD). For web requests, use the secrets_http_request tool of the zn "secrets" MCP server.';
+  const guidance = markerGuidance('For web requests, use the secrets_http_request tool of the zn "secrets" MCP server.');
   if (scan.unterminated) return { ok: false, reason: 'zn: this command has a quote that is not closed, so zn cannot read it. Close the quote and try again.' };
   if (markers.findNamedMarkers(tail).length > 0) {
     return { ok: false, reason: 'zn: this command uses a secret after its first command.' + guidance };
@@ -1856,7 +1863,7 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   if (/(^|[\\/])(zn|zn-gate)(\.js|\.cmd)?$/.test(first.text) && scan.words[k + 1] && scan.words[k + 1].text === 'run') {
     return { ok: true, command: s, wrapped: false };
   }
-  return { ok: false, reason: 'zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs.' + guidance };
+  return { ok: false, reason: 'zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs.' + MARKER_EXPLAINED + guidance };
 }
 
 /* ---------------------------- PowerShell ---------------------------- */
@@ -1932,8 +1939,7 @@ function wrapPowerShell(cmd, opts) {
   const s = String(cmd);
   const named = markers.findNamedMarkers(s);
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
-  const guidance = ' Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` ' +
-    'and have the program read it from there (for example psql reads PGPASSWORD). For web requests, use the secrets_http_request tool of the zn "secrets" MCP server instead.';
+  const guidance = markerGuidance('For web requests, use the secrets_http_request tool of the zn "secrets" MCP server instead.');
   const scan = scanPowerShell(s);
   if (!scan.simple || scan.words.length === 0) {
     return { ok: false, reason: 'zn: this PowerShell command uses a pipeline, a variable or a script block, so zn cannot safely put a secret into it.' + guidance };
@@ -1953,7 +1959,7 @@ function wrapPowerShell(cmd, opts) {
   if ((base === 'zn' || base === 'zn-gate') && scan.words[1] && scan.words[1].text === 'run') {
     return { ok: true, command: s, wrapped: false };
   }
-  return { ok: false, reason: 'zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs.' + guidance };
+  return { ok: false, reason: 'zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs.' + MARKER_EXPLAINED + guidance };
 }
 
 const NETWORK_RE = /(^|[\s;&|(`$'"])(curl|wget|nc|ncat|netcat|socat|telnet|ssh|scp|sftp|rsync|ftp|tftp|http|https|httpie|xh|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)(?=$|[\s;&|)'"])|\bgit\s+(push|fetch|pull|clone|remote|ls-remote)\b|\b(npm|pnpm|yarn)\s+publish\b|\b(docker|podman)\s+(push|login)\b|\bhttps?:\/\/|\/dev\/(tcp|udp)\//i;
