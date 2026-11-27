@@ -637,7 +637,7 @@ CMD_KNOWN_UNIT_RE = _rc(r'^%(?:userprofile|homepath|homedrive|home|cd)%$', re.IG
 # file and any file in a GnuPG folder, in any directory. ~/.npmrc and ~/.pypirc (registry tokens) are protected only in the
 # home folder: a project .npmrc is read like any file, as in the hook. Not copied: names the hook finds by content (.pem,
 # .key, .p8), by container extension (.p12, .pfx, ...) or by an environment variable.
-NAMED_SECRET_FILE_RE = _rc(r"""(?:^|[\s"'`(\[@,=\/\\])(?:\.(?:netrc|git-credentials|pgpass)|_netrc|\.docker[\/\\]config\.json|\.config[\/\\]gh[\/\\]hosts\.ya?ml|\.kube[\/\\]config|\.config[\/\\]gcloud[\/\\](?:credentials\.db|access_tokens\.db|application_default_credentials\.json)|\.azure[\/\\](?:accessTokens\.json|msal_token_cache\.json)|\.zcode[\/\\]v2[\/\\]provider_config\.json)(?![A-Za-z0-9_.-])|(?:^|[\s"'`(\[@,=\/\\])(?:\.gnupg|AppData[\/\\]Roaming[\/\\]gnupg)[\/\\][^\s"'`;&|()<>,\/\\]""", re.IGNORECASE)
+NAMED_SECRET_FILE_RE = _rc(r"""(?:^|[\s"'`(\[@,=\/\\])(?:\.(?:netrc|git-credentials|pgpass)|_netrc|\.docker[\/\\]config\.json|\.config[\/\\]gh[\/\\]hosts\.ya?ml|\.kube[\/\\]config|\.config[\/\\]gcloud[\/\\](?:credentials\.db|access_tokens\.db|application_default_credentials\.json)|\.azure[\/\\](?:accessTokens\.json|msal_token_cache\.json)|\.zcode[\/\\]v2[\/\\]provider_config\.json)(?![A-Za-z0-9_.-])|(?:^|[\s"'`(\[@,=\/\\])(?:\.gnupg|AppData[\/\\]Roaming[\/\\]gnupg)(?![A-Za-z0-9_.-])""", re.IGNORECASE)
 HOME_SECRET_FILE_RE = _rc(r"""(?:^|[\s"'`(\[@,=\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]\.(?:npmrc|pypirc)(?![A-Za-z0-9_.-])""", re.IGNORECASE)
 
 

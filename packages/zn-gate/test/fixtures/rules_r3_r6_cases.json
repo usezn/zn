@@ -153,6 +153,11 @@
       "type C:\\Users\\x\\.azure\\msal_token_cache.json",
       "cat ~/.zcode/v2/provider_config.json",
       "ls ~/.gnupg/private-keys-v1.d/abc.key",
+      "tar czf x.tgz ~/.gnupg",
+      "cp -r ~/.gnupg /x",
+      "zip -r k.zip .gnupg",
+      "cp -r ~/.gnupg/ /x",
+      "tar cf k.tar C:\\Users\\x\\AppData\\Roaming\\gnupg",
       "cat ~/.git-credentials; echo done"
     ],
     "benign": [
@@ -196,7 +201,13 @@
       "cat ~/.config/gcloud/configurations/config_default",
       "echo $\"hello\"",
       "cat $\"README.md\"",
-      "cat ~/notes/$\"todo.txt\""
+      "cat ~/notes/$\"todo.txt\"",
+      "gpg --list-keys",
+      "echo gnupg",
+      "cat docs/gnupg-guide.md",
+      "apt install gnupg",
+      "cat ~/.gnupg-notes.md",
+      "ls ~/.gnupgrc.bak"
     ]
   },
   "hidden_tag": {
