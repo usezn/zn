@@ -244,3 +244,30 @@ test('a .env in a list of names under a file key, or after a Unicode line separa
     assert.equal(await verdict(claude, cc(dir, 'mcp__custom__tool', { [key]: value })), 'allow', 'claude ' + key);
   }
 });
+
+// A dotenv runner makes its -e / -f value a read only as the program word or right after a launcher; as an argument of another
+// program (node -e "..." dotenv -e .env) it is a plain word, so the .env there is judged like any other.
+test('dotenv counts as a runner only as the program or right after a launcher', async (t) => {
+  const dir = project(t);
+  for (const command of ['dotenv -e .env -- node app.js', 'npx dotenv -e .env -- node app.js', 'bunx dotenv -e .env -- node app.js',
+    'pnpm dlx dotenv -e .env -- node app.js', 'yarn dlx dotenv -e .env -- node app.js', 'npm exec dotenv -e .env -- node app.js',
+    'pnpx dotenv -e .env -- node app.js', 'pnpm exec dotenv -e .env -- node app.js', 'bun x dotenv -e .env -- node app.js',
+    'npx -y dotenv -e .env -- node app.js', 'npx --yes dotenv -e .env -- node app.js',
+    'cd sub && npx dotenv -e ../.env -- node app.js; npx dotenv -e .env -- node app.js',
+    'dotenvx run -f .env -- node app.js']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', command);
+  }
+  for (const command of ["node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" dotenv -e .env",
+    'python3 w.py dotenv -e .env', 'cp notes.txt dotenv -e .env', 'echo dotenv -e .env | sh',
+    // A launcher that is itself an argument of another program does not launch anything.
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" npx dotenv -e .env",
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" pnpm dlx dotenv -e .env",
+    'python3 w.py bunx dotenv -e .env', 'cp notes.txt npm exec dotenv -e .env',
+    // Only value-less launcher flags may stand between the launcher and dotenv; any other word ends the launch.
+    'npx w.js dotenv -e .env', 'pnpm w.js dlx dotenv -e .env',
+    // A launcher word repeated as an argument does not start a new launch.
+    'npx w.js npx dotenv -e .env', 'bunx w.js bunx dotenv -e .env', 'npm exec w.js npm exec dotenv -e .env',
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" node npx dotenv -e .env"]) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
+  }
+});
