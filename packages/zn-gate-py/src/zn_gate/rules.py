@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-16.34
+RULES_VERSION: 2026-11-27.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-16.34"
+RULES_VERSION = "2026-11-27.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -609,7 +609,7 @@ def sensitive_path_view(text: str) -> str:
     for raw in PATH_WORD_SPLIT_RE.split(lowered):
         if not raw:
             continue
-        word = PATH_QUOTE_RE.sub('', raw)
+        word = PATH_QUOTE_RE.sub('', raw.replace('$"', '"'))
         words.append(_normalize_path_word(word.replace('\\', '/')))
         if '\\' in word:
             words.append(_normalize_path_word(word.replace('\\', '')))
@@ -630,6 +630,15 @@ CMD_SET_RE = _rc(r"""(?:^|[\s&|(])set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^&|"\r\n]*)
 CMD_NAMED_PERCENT_RE = _rc(r'%([A-Za-z_][A-Za-z0-9_]*)%')
 CMD_C_QUOTED_RE = _rc(r'(\/[ck]\s+)"([\s\S]*)"(\s*)$', re.IGNORECASE)
 CMD_KNOWN_UNIT_RE = _rc(r'^%(?:userprofile|homepath|homedrive|home|cd)%$', re.IGNORECASE)
+
+
+# Credential files of other tools, named as the hook names them (the same list): .netrc and _netrc, .git-credentials, .pgpass,
+# .docker/config.json, the GitHub CLI hosts file, .kube/config, the Google Cloud and Azure token files, the Zcode provider
+# file and any file in a GnuPG folder, in any directory. ~/.npmrc and ~/.pypirc (registry tokens) are protected only in the
+# home folder: a project .npmrc is read like any file, as in the hook. Not copied: names the hook finds by content (.pem,
+# .key, .p8), by container extension (.p12, .pfx, ...) or by an environment variable.
+NAMED_SECRET_FILE_RE = _rc(r"""(?:^|[\s"'`(\[@,=\/\\])(?:\.(?:netrc|git-credentials|pgpass)|_netrc|\.docker[\/\\]config\.json|\.config[\/\\]gh[\/\\]hosts\.ya?ml|\.kube[\/\\]config|\.config[\/\\]gcloud[\/\\](?:credentials\.db|access_tokens\.db|application_default_credentials\.json)|\.azure[\/\\](?:accessTokens\.json|msal_token_cache\.json)|\.zcode[\/\\]v2[\/\\]provider_config\.json)(?![A-Za-z0-9_.-])|(?:^|[\s"'`(\[@,=\/\\])(?:\.gnupg|AppData[\/\\]Roaming[\/\\]gnupg)[\/\\][^\s"'`;&|()<>,\/\\]""", re.IGNORECASE)
+HOME_SECRET_FILE_RE = _rc(r"""(?:^|[\s"'`(\[@,=\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]\.(?:npmrc|pypirc)(?![A-Za-z0-9_.-])""", re.IGNORECASE)
 
 
 def _drop_cmd_carets(text: str) -> str:
@@ -690,9 +699,15 @@ def _cmd_readings(text: str) -> List[str]:
 
 
 def _test_sensitive_path_as(text: str) -> bool:
-    return (SENSITIVE_PATH_TEXT_RE.search(text) is not None
+    if (SENSITIVE_PATH_TEXT_RE.search(text) is not None
             or SENSITIVE_PATH_RE.search(text) is not None
-            or SENSITIVE_PATH_RE.search(sensitive_path_view(text)) is not None)
+            or NAMED_SECRET_FILE_RE.search(text) is not None
+            or HOME_SECRET_FILE_RE.search(text) is not None):
+        return True
+    view = sensitive_path_view(text)
+    return (SENSITIVE_PATH_RE.search(view) is not None
+            or NAMED_SECRET_FILE_RE.search(view) is not None
+            or HOME_SECRET_FILE_RE.search(view) is not None)
 
 
 def _test_sensitive_path(text: str) -> bool:
