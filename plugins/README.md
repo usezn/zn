@@ -186,3 +186,14 @@ npm's own integrity check of the tarball, not on the plugin's file digests.
    on that pin commit. The install commands add the marketplace at this tag,
    so it must hold the lock of `X.Y.Z`. Plugin tags are protected like release
    tags: the ruleset also blocks updates and deletion of `plugin-v*` tags.
+
+The `builder` field of `scripts/zn-gate.lock.json` is the SHA-256 of
+`plugins/tools/build-plugin-repo.js` when the release was pinned. It is not
+a signer and nothing is verified against it: the release is checked against
+its npm integrity and its provenance attestation. It is there because the
+Plugin repository workflow and the plugin repository's Verify build from the
+commit that last changed the lock, so a fix to the builder reaches them only
+through a new pin. To ship such a fix for a version that is already pinned,
+run `pin-release.js X.Y.Z` again on `main`: only `builder` changes (same
+version, integrity and file hashes), and the `plugin-vX.Y.Z` tag stays where
+it is.
