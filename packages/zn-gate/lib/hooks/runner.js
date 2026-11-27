@@ -53,6 +53,7 @@ const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand, winCommandText } = require('../zn-command');
 const { unsafeKind } = require('../safe-text');
+const { MAX_NEST_DEPTH } = require('../nest-limits');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -753,8 +754,62 @@ function searchFolderAsk(dirs, pathOpts) {
  * (Write content, Edit new_string, Gemini write_file content and replace new_string, a Codex patch, a filesystem MCP server's content),
  * plus the file as an Edit or replace would leave it. Used to refuse a write that would set a variable that stops the hooks.
  */
-// The text an edit searches for, in each agent's spelling (GitHub Copilot CLI's edit tool uses old_str and new_str).
-const SEARCH_ONLY_KEYS = new Set(['old_string', 'oldString', 'old_str']);
+// The text an edit searches for, and the text that replaces it, in each agent's spelling: Claude Code and Gemini CLI old_string,
+// OpenCode oldString, GitHub Copilot CLI old_str, a filesystem MCP server's edit_file oldText, Antigravity's replace_file_content
+// TargetContent (and its ReplacementChunks), and the old_text and Target spellings of other tools.
+const EDIT_OLD_KEYS = ['old_string', 'oldString', 'old_str', 'oldText', 'old_text', 'TargetContent', 'targetContent', 'target_content', 'Target'];
+const EDIT_NEW_KEYS = ['new_string', 'newString', 'new_str', 'newText', 'new_text', 'ReplacementContent', 'replacementContent', 'replacement_content', 'Replacement'];
+const EDIT_ALL_KEYS = ['replace_all', 'replaceAll', 'allow_multiple', 'allowMultiple', 'AllowMultiple'];
+const SEARCH_ONLY_KEYS = new Set(EDIT_OLD_KEYS);
+// The keys under which a tool sends a whole file body: a call that has one is judged on that text.
+const FULL_BODY_KEYS = ['content', 'contents', 'file_text', 'fileText', 'CodeContent', 'codeContent'];
+// A tool whose name says it edits or replaces part of a file: on a watched dotenv file it must be reconstructed, or it is refused.
+const EDIT_TOOL_NAME_RE = /edit|replace/i;
+// The tools that write a whole file body, by exact name, with the key that holds the body. Only a call to one of these (or an edit or
+// patch zn applied to the file on disk) gives zn the file it leaves: a tool zn does not know may append, insert or merge what it sends.
+const WHOLE_BODY_TOOLS = new Map([
+  ['Write', ['content']], // the Claude CLI agent, Cursor and Z Code
+  ['write', ['content']], // OpenCode
+  ['write_file', ['content', 'Content']], // Gemini CLI and Antigravity
+  ['write_to_file', ['CodeContent']], // Antigravity
+  ['create', ['file_text']], // GitHub Copilot CLI
+]);
+// A name or an argument that says the text is added to the file, not written as the whole file.
+const PARTIAL_WRITE_WORD_RE = /append|prepend|insert/i;
+const WRITE_MODE_KEY_RE = /^(?:mode|flags?|write_?mode|open_?mode)$/i;
+const WHOLE_WRITE_MODE_RE = /^(?:w|wb|w\+|write|overwrite|replace|create|truncate)$/i;
+const POSITION_KEY_RE = /^(?:position|offset|line|line_?number|start_?line|insert_?line|at)$/i;
+
+// The events the adapters build for an agent's own file tools (never for an MCP tool or a tool zn does not know).
+const OWN_WRITE_KINDS = new Set(['write', 'edit', 'multiedit', 'notebookedit']);
+
+// The body keys of a known whole-body write tool, or null.
+function wholeBodyKeysOf(toolName) {
+  const s = String(toolName || '');
+  if (PARTIAL_WRITE_WORD_RE.test(s)) return null;
+  if (WHOLE_BODY_TOOLS.has(s)) return WHOLE_BODY_TOOLS.get(s);
+  return null;
+}
+
+// True when an argument object asks for an append, a prepend, an insert or a write at a position: an append flag that is set, a
+// write mode or open flags that are not a plain overwrite (a numeric mode is a permission; numeric flags may hold O_APPEND), or, for
+// a whole-body write tool, a position in the file.
+function partialWriteFlagIn(o, whole) {
+  for (const [k, v] of Object.entries(o)) {
+    if (PARTIAL_WRITE_WORD_RE.test(k) && v !== false && v !== null && v !== undefined && v !== 0 && v !== '' && v !== 'false') return true;
+    if (WRITE_MODE_KEY_RE.test(k) && v !== undefined && v !== null) {
+      if (typeof v === 'number' && /^mode$/i.test(k)) continue;
+      if (typeof v === 'string' && (WHOLE_WRITE_MODE_RE.test(v) || (/^mode$/i.test(k) && /^0?[0-7]{3,4}$/.test(v)))) continue;
+      return true;
+    }
+    if (whole && POSITION_KEY_RE.test(k) && v !== undefined && v !== null) return true;
+  }
+  return false;
+}
+// A patch in the format of Codex's apply_patch (also OpenCode, Z Code and the Copilot patch tools).
+const PATCH_FILE_RE = /^\*\*\* (Add File|Update File|Delete File): (.*)$/;
+const PATCH_MOVE_RE = /^\*\*\* Move to: (.*)$/;
+const PATCH_ANY_MARKER_RE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): /m;
 
 const READ_CAP = 4000000;
 
@@ -789,7 +844,10 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
         try { walk(JSON.parse(v), depth + 1); return; } catch (_) { /* plain text */ }
       }
       out.push(v);
-    } else if (v && typeof v === 'object' && depth < 6 && !seen.has(v)) {
+    } else if (v && typeof v === 'object' && !seen.has(v)) {
+      // Nested deeper than the path scan reads (the same limit): text may be skipped, so the result is unknown and a guarded
+      // dotenv path is refused.
+      if (depth > MAX_NEST_DEPTH) { out.unresolved = true; return; }
       seen.add(v);
       // The text an edit searches for is not written: only what replaces it, and the file as it ends up, are judged.
       for (const [k, x] of Array.isArray(v) ? v.map((y) => ['', y]) : Object.entries(v)) if (!SEARCH_ONLY_KEYS.has(k)) walk(x, depth + 1);
@@ -802,49 +860,275 @@ function writtenTextsOf(ev, p, cwd, pathOpts) {
   }
   walk(ev.raw, 0);
   walk(input.args, 0);
+  // The rest reads the file and the edit shapes, only for a path that is a guarded dotenv file: any other path is never opened (a
+  // FIFO or a device there would block the hook), and the judgement of a non-dotenv path does not use the result.
+  if (!p) return out;
+  const c = policy.classifyPath(String(p), pathOpts || { cwd });
+  if (!c || c.kind !== 'dotenv') return out;
+  const base = cwd || process.cwd();
+  // A patch (apply_patch and the tools that take its format) that adds, updates or moves into this file: judged on the file it leaves.
+  let patched = false;
+  for (const s of out.slice()) {
+    if (typeof s !== 'string' || !PATCH_ANY_MARKER_RE.test(s)) continue;
+    const r = patchResultFor(s, p, base);
+    if (r.unresolved) out.unresolved = true;
+    if (r.touched) patched = true;
+    for (const b of r.bodies) out.push(b);
+  }
   // An edit that changes only a value (old `all`, new `help`) is judged on the file as the edit would leave it: every edit shape
-  // (one old/new pair in snake or camel case, a MultiEdit `edits` array applied in order, replace-all flags). When the file cannot be
-  // read, or an edit does not apply exactly once, `unresolved` is set and a guarded dotenv path is refused.
-  let args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs;
-  // GitHub Copilot CLI sends toolArgs as a JSON text: read it as the object it holds. Arguments that cannot be read as an object
-  // leave the edit unknown, and a guarded dotenv path is refused.
-  if (typeof args === 'string' && p) {
+  // (one old/new pair in any spelling above, a MultiEdit `edits` array or Antigravity's ReplacementChunks applied in order, edit
+  // objects nested in the arguments, replace-all flags). When the file cannot be read, or an edit does not apply exactly once,
+  // `unresolved` is set and the write is refused.
+  let args = (ev.raw && (ev.raw.tool_input || ev.raw.toolArgs)) || ev.rawArgs || (ev.raw && ev.raw.args) || input.args;
+  // GitHub Copilot CLI (and Cursor for MCP calls) send the arguments as a JSON text: read it as the object it holds. Arguments that
+  // cannot be read as an object leave the edit unknown, and the write is refused.
+  if (typeof args === 'string') {
     try { args = JSON.parse(args); } catch (_) { args = null; }
     if (!args || typeof args !== 'object') { out.unresolved = true; args = null; }
   }
-  if (args && typeof args === 'object' && p) {
-    const pick = (o, ...keys) => { for (const k of keys) if (typeof o[k] === 'string') return o[k]; return null; };
-    const edits = [];
-    const add = (o) => {
-      if (!o || typeof o !== 'object') return;
-      const oldS = pick(o, 'old_string', 'oldString', 'old_str');
-      const newS = pick(o, 'new_string', 'newString', 'new_str');
-      if (oldS === null && newS === null) return;
-      edits.push({ oldS, newS, all: o.replace_all === true || o.replaceAll === true || o.allow_multiple === true || o.allowMultiple === true });
-    };
-    add(args);
-    if (Array.isArray(args.edits)) for (const e of args.edits) add(e);
-    // The file is read only for a path that is a guarded dotenv file: any other path is never opened (a FIFO or a device there
-    // would block the hook), and the judgement of a non-dotenv path does not use the result.
-    const guarded = edits.length && (() => { const c = policy.classifyPath(String(p), pathOpts || { cwd }); return !!(c && c.kind === 'dotenv'); })();
-    if (guarded) {
-      try {
-        let body = readRegularFile(path.resolve(cwd || process.cwd(), String(p)));
-        for (const e of edits) {
-          if (e.oldS === null || e.newS === null) { out.unresolved = true; break; }
-          if (!e.oldS) continue; // nothing to find: only what is written counts
-          const at = body.indexOf(e.oldS);
-          if (at < 0 || (!e.all && body.indexOf(e.oldS, at + 1) >= 0)) { out.unresolved = true; break; }
-          body = e.all ? body.split(e.oldS).join(e.newS) : body.slice(0, at) + e.newS + body.slice(at + e.oldS.length);
+  const edits = [];
+  // A body key in any argument object; only the body of a known whole-body tool (wholeBodyKeysOf) makes the result known.
+  let anyBody = false;
+  const toolName = String(ev.toolName || '');
+  const wholeKeys = wholeBodyKeysOf(toolName);
+  if (args && typeof args === 'object') {
+    const pick = (o, keys) => { for (const k of keys) if (o[k] !== undefined) return typeof o[k] === 'string' ? o[k] : false; return null; };
+    const visited = new Set();
+    const collect = (v, depth) => {
+      if (!v || typeof v !== 'object' || visited.has(v)) return;
+      if (depth > MAX_NEST_DEPTH) { out.unresolved = true; return; }
+      visited.add(v);
+      if (!Array.isArray(v)) {
+        if (FULL_BODY_KEYS.some((k) => typeof v[k] === 'string')) anyBody = true;
+        // An append, insert or partial write: what the file holds afterwards is not the text sent, so the result is unknown.
+        if (partialWriteFlagIn(v, wholeKeys)) out.unresolved = true;
+        const oldS = pick(v, EDIT_OLD_KEYS);
+        const newS = pick(v, EDIT_NEW_KEYS);
+        if (oldS !== null || newS !== null) {
+          // A search or replacement text that is not a string (a number, an object) cannot be applied: unknown.
+          if (oldS === false || newS === false) out.unresolved = true;
+          edits.push({ oldS: oldS || (oldS === '' ? '' : null), newS: newS || (newS === '' ? '' : null), all: EDIT_ALL_KEYS.some((k) => v[k] === true) });
         }
-        if (!out.unresolved) out.push(body);
-      } catch (err) {
-        // A file that does not exist yet: only what is written counts. Any other failure leaves the result unknown.
-        if (!(err && err.code === 'ENOENT')) out.unresolved = true;
       }
-    }
+      for (const x of Array.isArray(v) ? v : Object.values(v)) collect(x, depth + 1);
+    };
+    collect(args, 0);
   }
+  // A whole body under the key of a known whole-body write tool, at the top of its arguments.
+  const hasBody = Boolean(wholeKeys && args && typeof args === 'object' && wholeKeys.some((k) => typeof args[k] === 'string'));
+  // A body that is not a known tool's whole body (an unknown tool that also sends text) may be added to what the edit or patch
+  // leaves: then the edit does not give the whole file.
+  const editsGiveFile = !anyBody || hasBody;
+  if (edits.length) {
+    try {
+      let body = readRegularFile(path.resolve(base, String(p)));
+      for (const e of edits) {
+        if (e.oldS === null || e.newS === null) { out.unresolved = true; break; }
+        if (!e.oldS) continue; // nothing to find: only what is written counts
+        const at = body.indexOf(e.oldS);
+        if (at < 0 || (!e.all && body.indexOf(e.oldS, at + 1) >= 0)) { out.unresolved = true; break; }
+        body = e.all ? body.split(e.oldS).join(e.newS) : body.slice(0, at) + e.newS + body.slice(at + e.oldS.length);
+      }
+      if (!out.unresolved) { out.push(body); if (editsGiveFile) out.complete = true; }
+    } catch (err) {
+      // A file that does not exist yet: only what is written counts. Any other failure leaves the result unknown.
+      if (!(err && err.code === 'ENOENT')) out.unresolved = true;
+      else if (editsGiveFile) out.complete = true;
+    }
+  } else if (!patched && (ev.tool === 'edit' || ev.tool === 'multiedit' || EDIT_TOOL_NAME_RE.test(String(ev.toolName || ''))) &&
+    !(args && typeof args === 'object' && FULL_BODY_KEYS.some((k) => typeof args[k] === 'string'))) {
+    // An edit or replace tool whose change zn cannot read (no search and replacement text it knows, no whole body): unknown.
+    out.unresolved = true;
+  }
+  // The file this call leaves is known in full: the whole body of a known write tool, an edit applied to the file, or a patch section
+  // for it. A body sent to a tool zn does not know (an append or insert tool) is not: the call is refused (dotenvUnseenWriteDenial).
+  if (hasBody || (patched && editsGiveFile)) out.complete = true;
+  // Only the agent's own write and edit tools (the adapters turn them into these events) give the file a call leaves. An MCP tool, or
+  // a tool zn does not know, can give any meaning to a name or to a body (a server's write_file may append, its edit tool may insert),
+  // so its result is never known, whatever the name.
+  if (!OWN_WRITE_KINDS.has(ev.tool)) out.complete = false;
   return out;
+}
+
+// The string values of a call's arguments that name a watched dotenv file, as deep as the path scan reads (a copy or move tool may
+// name it under any key: from, to, src, dst ...).
+// A string longer than DOTENV_NAME_SCAN_MAX is not classified; it counts as a dotenv name when it mentions env anywhere, so a call
+// cannot hide a .env name behind a long filler (./ repeated, aaaa/../) and pass. A file: URI is decoded first (%2Eenv is .env); one
+// that cannot be decoded counts the same way. FAIL_CLOSED_DOTENV_NAME stands for such a name in the refusal.
+const DOTENV_NAME_SCAN_MAX = 65536;
+const FAIL_CLOSED_DOTENV_NAME = '.env';
+function fileUriPath(v) {
+  const u = new URL(v);
+  if (u.hostname && u.hostname.toLowerCase() !== 'localhost') throw new Error('file: URL names a remote host');
+  u.hostname = '';
+  return require('url').fileURLToPath(u);
+}
+function dotenvNamesIn(args, pathOpts) {
+  const out = [];
+  const seen = new Set();
+  const envish = (v) => { let d = v; try { d = decodeURIComponent(v); } catch (_) { /* keep the raw text */ } return /env/i.test(d); };
+  // One name: a file: URI is decoded first (one that cannot be decoded counts when it mentions env), a name too long to classify
+  // counts when it mentions env, and blanks around it are dropped (many servers and Windows do).
+  const checkOne = (v) => {
+    let name = v;
+    if (/^file:/i.test(name.trim())) {
+      try { name = fileUriPath(name.trim()); } catch (_) { if (envish(v)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+    }
+    if (name.length > DOTENV_NAME_SCAN_MAX) { if (envish(name)) out.push(FAIL_CLOSED_DOTENV_NAME); return; }
+    for (const n of name.trim() !== name ? [name, name.trim()] : [name]) {
+      const c = n ? policy.classifyPath(n, pathOpts) : null;
+      if (c && c.kind === 'dotenv') { out.push(n); break; }
+    }
+  };
+  const walk = (v, depth) => {
+    if (typeof v === 'string') {
+      // Text with line breaks is content (a body, a message), but a tool may take one name per line: every nonempty line is checked
+      // as a name, under any key, the same way as a one-line value.
+      if (/[\r\n\u2028\u2029\u0085]/.test(v)) {
+        for (const line of v.split(/\r\n|[\r\n\u2028\u2029\u0085]/)) if (line.trim()) checkOne(line);
+        return;
+      }
+      checkOne(v);
+    } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
+      seen.add(v);
+      for (const x of Array.isArray(v) ? v : Object.values(v)) walk(x, depth + 1);
+    }
+  };
+  walk(args, 0);
+  return out;
+}
+
+// The arguments of a call as an object, from the adapter or the agent's raw event (a JSON text is read as the object it holds).
+function argsObjectOf(ev) {
+  const input = ev.input || {};
+  const raw = ev.raw && typeof ev.raw === 'object' ? ev.raw : {};
+  let a = input.args !== undefined ? input.args : raw.args !== undefined ? raw.args : raw.toolArgs !== undefined ? raw.toolArgs : raw.tool_input;
+  if (typeof a === 'string') { try { a = JSON.parse(a); } catch (_) { a = undefined; } }
+  return a;
+}
+
+// A call that names a watched dotenv file but does not give the file it leaves (a copy, move, rename, link, upload, download or a
+// tool zn does not know): refused whatever the tool is called, MCP tools included (a server can name a writing tool read_file). The
+// agents' own read tools are plain reads here and never come through this check. Edits go through the file editor tool.
+function dotenvUnseenDenial(ev, paths, pathOpts) {
+  for (const p of paths) {
+    // An MCP call that names a watched dotenv file is refused outright, with or without a body: zn does not read an MCP body for it.
+    if (ev.tool === 'mcp') {
+      const c = policy.classifyPath(p, pathOpts);
+      if (c && c.kind === 'dotenv') return 'Edit ' + path.basename(String(p)) + " with the agent's own file editor; MCP tools may not touch .env files.";
+    }
+    const deny = policy.dotenvUnseenWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
+    if (deny) return deny;
+  }
+  return null;
+}
+
+/*
+ * The file a patch in the apply_patch format leaves at `p`, for each section that adds it (*** Add File), updates it (*** Update File)
+ * or moves another file into it (*** Update File: x then *** Move to: p). An update reads the file it starts from (`p`, or the source
+ * of the move; a missing `p` counts as empty, a missing source of a move is unknown) and applies each hunk: the lines it keeps and
+ * removes must appear exactly once in that file, in the order of the hunks; a hunk with only added lines goes at the end. Anything
+ * else (a line the format does not have, a hunk that is not found or found twice, a source that cannot be read, a file with carriage
+ * returns, two sections for the same file) leaves the result unknown, and the write is refused.
+ * Returns { bodies, touched, unresolved }.
+ */
+function patchResultFor(patch, p, base) {
+  const res = { bodies: [], touched: false, unresolved: false };
+  const target = path.resolve(base, String(p));
+  const names = (n) => [...new Set([n, n.trim()])].filter(Boolean);
+  const same = (n) => names(n).some((x) => path.resolve(base, x) === target);
+  const lines = String(patch).split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+  const isMarker = (l) => /^\*\*\* (?:Add File|Update File|Delete File|Move to|End Patch)\b/.test(l.trim());
+  let sections = 0;
+  let i = 0;
+  while (i < lines.length) {
+    const head = PATCH_FILE_RE.exec(lines[i].trim());
+    if (!head) {
+      // A Move to line that does not follow an Update File line, naming this file: the patch cannot be read the way the agent reads it.
+      const mv = PATCH_MOVE_RE.exec(lines[i].trim());
+      if (mv && same(mv[1])) { res.touched = true; res.unresolved = true; }
+      i++;
+      continue;
+    }
+    i++;
+    let moveTo = null;
+    if (head[1] === 'Update File' && i < lines.length) {
+      const mv = PATCH_MOVE_RE.exec(lines[i].trim());
+      if (mv) { moveTo = mv[1]; i++; }
+    }
+    const body = [];
+    while (i < lines.length && !isMarker(lines[i])) body.push(lines[i++]);
+    if (head[1] === 'Delete File') continue;
+    const dest = moveTo !== null ? moveTo : head[2];
+    if (!same(dest) && !same(head[2])) continue;
+    res.touched = true;
+    if (++sections > 1) { res.unresolved = true; continue; }
+    if (head[1] === 'Add File') {
+      // Every line of an added file starts with +; a blank line at the end of the section is not part of it.
+      while (body.length && body[body.length - 1] === '') body.pop();
+      if (body.some((l) => !l.startsWith('+'))) { res.unresolved = true; continue; }
+      res.bodies.push(body.map((l) => l.slice(1)).join('\n') + '\n');
+      continue;
+    }
+    let text;
+    try {
+      text = readRegularFile(path.resolve(base, head[2].trim()));
+    } catch (err) {
+      if (err && err.code === 'ENOENT' && moveTo === null) text = '';
+      else { res.unresolved = true; continue; }
+    }
+    const applied = applyHunks(text, body);
+    if (applied === null) res.unresolved = true; else res.bodies.push(applied);
+  }
+  return res;
+}
+
+/** The text `text` becomes once the hunk lines `body` are applied (see patchResultFor), or null when that is not certain. */
+function applyHunks(text, body) {
+  if (text.includes('\r')) return null;
+  const file = text.split('\n');
+  if (file.length && file[file.length - 1] === '') file.pop();
+  const hunks = [];
+  let cur = null;
+  for (const l of body) {
+    if (l.startsWith('@@')) { cur = { old: [], neu: [] }; hunks.push(cur); continue; }
+    if (l.trim() === '*** End of File') continue;
+    if (!cur) { cur = { old: [], neu: [] }; hunks.push(cur); }
+    const c = l.charAt(0);
+    if (l === '') { cur.old.push(''); cur.neu.push(''); } else if (c === ' ') { cur.old.push(l.slice(1)); cur.neu.push(l.slice(1)); } else if (c === '-') cur.old.push(l.slice(1));
+    else if (c === '+') cur.neu.push(l.slice(1));
+    else return null;
+  }
+  const edits = [];
+  let from = 0;
+  for (const h of hunks) {
+    if (!h.old.length && !h.neu.length) continue;
+    let at;
+    if (!h.old.length) {
+      at = file.length; // only added lines: they go at the end of the file
+    } else {
+      const found = [];
+      for (let k = 0; k + h.old.length <= file.length && found.length < 2; k++) {
+        let ok = true;
+        for (let j = 0; j < h.old.length; j++) if (file[k + j] !== h.old[j]) { ok = false; break; }
+        if (ok) found.push(k);
+      }
+      if (found.length !== 1) return null;
+      at = found[0];
+    }
+    if (at < from) return null;
+    edits.push({ at, len: h.old.length, neu: h.neu });
+    from = at + h.old.length;
+  }
+  const outLines = [];
+  let k = 0;
+  for (const e of edits) {
+    while (k < e.at) outLines.push(file[k++]);
+    outLines.push(...e.neu);
+    k += e.len;
+  }
+  while (k < file.length) outLines.push(file[k++]);
+  return outLines.join('\n') + '\n';
 }
 
 async function decidePre(ev, d, agentId, opts) {
@@ -870,6 +1154,8 @@ async function decidePre(ev, d, agentId, opts) {
       const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
+    const unseen = dotenvUnseenDenial(ev, (Array.isArray(input.paths) ? input.paths : []).concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts);
+    if (unseen) return { decision: 'deny', message: unseen };
     return { decision: 'allow' };
   }
   if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') {
@@ -915,6 +1201,31 @@ async function decidePre(ev, d, agentId, opts) {
       const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) || policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
+    const unseen = dotenvUnseenDenial(ev, input.paths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts);
+    if (unseen) return { decision: 'deny', message: unseen };
+  }
+  const mcpArgs = input.args !== undefined ? input.args : (ev.raw && typeof ev.raw === 'object' ? ev.raw.args : undefined);
+  if (tool === 'mcp' && !Array.isArray(input.paths) && mcpArgs !== undefined) {
+    // The agents whose adapter does not list the paths of an MCP call (Claude Code, Codex CLI, Cursor; OpenCode, whose arguments are in
+    // its raw event): a write through a filesystem server to a watched dotenv file is judged on the file it leaves, like the agent's own
+    // write tool. Only this check runs here; reads keep the MCP output checks of that agent.
+    let args = mcpArgs;
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch (_) { args = null; } }
+    if (args && typeof args === 'object') {
+      const named = require('../agents/copilot').pathsOf(args);
+      if (named.bad) {
+        // Arguments zn cannot read to the end (nested deeper than it reads): a dotenv path, or the pieces of one that the tool joins
+        // (a folder, a name and an extension in separate values), may be hidden there. Refused whatever the text says.
+        return { decision: 'deny', message: 'zn: zn could not read every file name in the arguments of this MCP call (nested too deeply, too many values, or a file: address it cannot turn into a path), so it was blocked.' };
+      }
+      for (const p of named.paths) {
+        const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
+        if (deny) return { decision: 'deny', message: deny };
+      }
+      // A copy, move, rename or unknown tool that names a watched dotenv file under any key leaves a file zn cannot see: refused.
+      const unseen = dotenvUnseenDenial(ev, named.paths.concat(dotenvNamesIn(args, pathOpts)), pathOpts);
+      if (unseen) return { decision: 'deny', message: unseen };
+    }
   }
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
     let res = await decideMcp(ev, d, agentId);
@@ -932,9 +1243,12 @@ async function decidePre(ev, d, agentId, opts) {
   if (SHELL_TOOLS.has(tool)) {
     // An unknown tool that carries a command and also names files: the files get the read and write checks too.
     for (const p of Array.isArray(input.alsoPaths) ? input.alsoPaths : []) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts) ||
+        policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
+    const unseenAlso = Array.isArray(input.alsoPaths) ? dotenvUnseenDenial(ev, input.alsoPaths.concat(dotenvNamesIn(argsObjectOf(ev), pathOpts)), pathOpts) : null;
+    if (unseenAlso) return { decision: 'deny', message: unseenAlso };
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);
     const instructionNotice = instructionMode === 'off' ? undefined : {};
@@ -2681,7 +2995,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES };
+module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES, applyHunks };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

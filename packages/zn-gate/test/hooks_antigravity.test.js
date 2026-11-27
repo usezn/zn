@@ -7,6 +7,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { expandPs } = require('./helpers/ps_expand');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const path = require('path');
@@ -230,7 +231,7 @@ test('install (user, Windows) writes a command with no quotes or spaces inside a
   const command = JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
   assert.match(command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   assert.ok(!/["']/.test(command));
-  const script = windowsCommandScript(command);
+  const script = expandPs(windowsCommandScript(command));
   assert.match(script, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; \$za = .*?function zf\(\$x\) \{.*?return \$null \}; if \(\[System\.IO\.File\]::Exists\('C:\/Program Files\/nodejs\/node\.exe'\) -and \[System\.IO\.File\]::Exists\('C:\/Users\/a b\/zn\/lib\/hooks\/runner\.js'\)\) \{ \$zt=1; & 'C:\/Program Files\/nodejs\/node\.exe' 'C:\/Users\/a b\/zn\/lib\/hooks\/runner\.js' antigravity; /);
   assert.match(script, /"decision":"deny".*zn\.cmd hooks install antigravity/);
   assert.ok(cfg.isOurs(command, 'antigravity'));

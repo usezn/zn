@@ -82,7 +82,7 @@ There is no command that prints a value. `secret get` refuses and points you to 
 
 ```text
 $ npx -y zn-gate secret get AWS_PROD
-zn secret: Not allowed: zn does not print secret values. To use one in a command, run: npx -y zn-gate@1.17.0 run --secrets NAME -- <command>
+zn secret: Not allowed: zn does not print secret values. To use one in a command, run: npx -y zn-gate@1.18.0 run --secrets NAME -- <command>
 ```
 
 That run exits with `77`, the code for a refusal on purpose.

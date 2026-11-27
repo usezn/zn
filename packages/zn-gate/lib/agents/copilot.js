@@ -364,7 +364,8 @@ function taskLinesUnsafe(v, workspace) {
 
 
 // Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
-const MAX_NEST_DEPTH = 6;
+// One depth limit for the text scan of the hooks runner and the path scan here (lib/nest-limits.js).
+const { MAX_NEST_DEPTH } = require('../nest-limits');
 const MAX_NEST_NODES = 500;
 
 /**
@@ -422,28 +423,86 @@ function localFileUrl(v) {
   return u;
 }
 
-/** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
+/**
+ * Every string argument whose key looks like a file or folder (content-like keys skipped), down to MAX_NEST_DEPTH (the limit of the
+ * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
+ * call is refused, never dropped.
+ */
+// A value that starts like a file name: ~ or . first, a drive letter, or a slash or backslash.
+const STARTS_LIKE_PATH_RE = /^(?:[~.]|[A-Za-z]:[\\/]|[\\/])/;
+// A value that ends in a dotenv name (sub/.env, .env.local): counted under any key, so a tool that takes one name per line is seen.
+const ENDS_IN_DOTENV_RE = /(?:^|[\\/])\.env(?:\.[^\\/\s]*)?$/i;
+/**
+ * The file names a long or multi-line string value can stand for: the value itself when it has no line break, else its trimmed whole
+ * (a server that trims whitespace opens that) and its trimmed lines. Under a file key (everyLine) every nonempty line counts, since a
+ * tool may take one name per line (notes, then sub/.env); elsewhere only a line that starts like a path does, the rest is text.
+ */
+// Line breaks a tool may split names on: CR, LF, and the Unicode line and paragraph separators and NEL.
+const LINE_BREAK_RE = /[\r\n\u2028\u2029\u0085]/;
+const LINE_SPLIT_RE = /\r\n|[\r\n\u2028\u2029\u0085]/;
+// Separators a tool may split a list of names on within one line (pieces): tab, comma and space.
+const NAME_LIST_SPLIT_RE = /[\t, ]+/;
+/**
+ * With pieces (a file key): each piece of a line between tabs, commas or spaces counts as well, so "notes.txt,.env" is seen; the
+ * whole value and each whole line still count (a name may hold spaces).
+ */
+function pathCandidatesOf(v, everyLine = true, pieces = false) {
+  const multi = LINE_BREAK_RE.test(v);
+  if (!multi && !pieces) return [v];
+  const out = [];
+  if (!multi) out.push(v);
+  else {
+    const whole = v.trim();
+    if (whole && !LINE_BREAK_RE.test(whole)) out.push(whole);
+  }
+  for (const line of multi ? v.split(LINE_SPLIT_RE) : [v]) {
+    const t = line.trim();
+    if (!t) continue;
+    if (multi && (everyLine || STARTS_LIKE_PATH_RE.test(t))) out.push(t);
+    if (pieces) for (const piece of t.split(NAME_LIST_SPLIT_RE)) if (piece && piece !== t) out.push(piece);
+  }
+  return out;
+}
+
 function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
   // loose (a tool zn does not know): a string that looks like a path counts under any key, deeper than the named keys.
   const loose = opts.loose === true;
-  const pathLike = (v) => /^[~.]|[\\/]/.test(v);
+  // A name like $DIR.env or %DIR%.env (a variable before a dotenv name) counts too.
+  // A multi-line value counts when one of its lines starts like a path or it names a dotenv file anywhere (one name per line).
+  const pathLike = (v) => /^[~.]|[\\/]/.test(v) || /^[$%!].*\.env(?:\.[A-Za-z0-9_.-]+)?$/i.test(v) ||
+    (LINE_BREAK_RE.test(v) && (/(?:^|[\r\n\u2028\u2029\u0085])[ \t]*[~.]/.test(v) || /\.env/i.test(v)));
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
-    if (/^file:/i.test(v)) {
+    // A file: URI is decoded whole; one that also holds a list or line separator (file:///p/.env,notes.txt) is split as well, so a
+    // name in the list is checked on its own.
+    const uri = /^file:/i.test(v);
+    if (uri) {
       try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
+      if (!/[\r\n\u2028\u2029\u0085\t, ]/.test(v)) return;
+    }
+    if (!uri && /url/i.test(k) && !PATH_KEY_RE.test(k)) return;
+    // A long value is classified like any other (classifyPath reads long input); a value with line breaks is checked by its trimmed
+    // whole and each line that starts like a path. Under a key that is not a file key (loose mode) only a candidate that starts
+    // like a path counts: prose with a slash somewhere is text, not a name.
+    const fileKey = keyOk(k);
+    if (uri || v.length > MAX_PATH_LEN || LINE_BREAK_RE.test(v) || (fileKey && /[\t, ]/.test(v))) {
+      for (const x of pathCandidatesOf(v, true, fileKey || uri)) {
+        if (uri && x === v) continue; // the whole URI is already decoded above
+        if (!(fileKey || STARTS_LIKE_PATH_RE.test(x) || ENDS_IN_DOTENV_RE.test(x) || /^file:/i.test(x))) continue;
+        // A file: URI on a line is decoded like a one-line value; one that cannot be decoded sets bad.
+        if (/^file:/i.test(x)) { try { out.push(fileURLToPath(localFileUrl(x))); } catch (_) { bad = true; } } else out.push(x);
+      }
       return;
     }
-    if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
-  const maxDepth = loose ? MAX_NEST_DEPTH : 3;
+  const maxDepth = MAX_NEST_DEPTH;
   let nodes = 0;
   const walk = (obj, depth) => {
-    if (loose && ++nodes > MAX_NEST_NODES) return;
+    if (loose && ++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
@@ -454,7 +513,7 @@ function pathsOf(args, opts = {}) {
       if (depth < maxDepth) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
-      }
+      } else if (isObj(v) || (Array.isArray(v) && v.some(isObj))) bad = true;
     }
   };
   walk(args, 0);
@@ -687,6 +746,7 @@ module.exports = {
   hooksFile,
   copilotHome,
   pathsOf,
+  pathCandidatesOf,
   firstString,
   COMMAND_KEYS,
   patchTextOf,

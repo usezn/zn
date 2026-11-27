@@ -131,7 +131,8 @@ test('PreToolUse Bash: reading secrets and managing the vault are denied', async
     assert.equal(res.output && res.output.hookSpecificOutput.permissionDecision, 'deny', cmd);
   }
   const append = await run(preBash('echo "REDIS_URL=redis://cache" >> .env', dir));
-  assert.equal(append.output, null, 'appending to .env is a write');
+  // Policy changed (2026-11-25): a shell command may not write a .env; the editor tool does.
+  assert.equal(append.output && append.output.hookSpecificOutput.permissionDecision, 'deny', 'a shell write to .env is refused');
   const list = await run(preBash('zn secret list', dir));
   assert.equal(list.output, null);
 });

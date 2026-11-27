@@ -1,6 +1,6 @@
 [package]
 name = "zn"
-version = "1.17.0"
+version = "1.18.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -45,7 +45,7 @@ tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
 wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
-rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
+rusqlite = { version = "0.42", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
 cliclack = "0.5"

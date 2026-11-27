@@ -494,6 +494,14 @@ The message ends with `(rule: secret-file:credential)` and says that agents may 
 
 **What to do:** ask your agent to name the files it needs, for example `ls src` or `cat README.md`, or to use a narrower wildcard such as `cat *.md`. If it has to run the wildcard, run the command yourself in your own terminal.
 
+#### "zn cannot tell whether this command writes `.env`, so shell writes to `.env` files are blocked"
+
+**What happened:** your agent ran a shell command that names a project `.env` (or `.gemini/.env`) and that zn cannot prove only reads or touches the file: a redirection such as `>` or `>>`, `tee`, `sed -i`, `cp`, `Set-Content`, or a program such as an interpreter, `awk` or `curl -o`. zn cannot see what a shell really writes, so it refuses the command. A redirection, `tee`, `sed -i`, `cp` and the like get the message `Edit .env with the file editor tool; shell writes to .env files are blocked`; another program that names the file gets `zn cannot tell whether this command writes .env`. `source .env`, `. .env` and `python3 -m venv .env` are refused too.
+
+**Is it safe?** Yes. The command did not run, so the file was not changed.
+
+**What to do:** ask your agent to change the file with its own file tools, which zn can check, or edit it yourself. To load the file, use `--env-file` (`node`, `bun`, `deno`, `docker`, `podman`) or `dotenv -e`, `dotenv-cli -e` or `dotenvx run -f`; these pass. For a virtual environment, give it another name such as `.venv`. More in the [FAQ](faq.md#19-my-agent-cannot-change-a-env-file-from-the-shell-how-do-i-edit-it).
+
 #### "zn: this command reads `<file>` through a path zn cannot check" / "builds the path of a .env file while it runs" / "changes to `<folder>` first"
 
 **What happened:** your agent ran a command that reaches a `.env` or key file in a way zn cannot follow: a path on a Windows drive root or a network share, a path assembled while the command runs, or a move into a folder zn cannot follow before the read.
@@ -1231,7 +1239,7 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 - **A keychain was asked for that is not there.** You ran `zn unlock --backend libsecret`, or `ZN_KEYCHAIN_BACKEND` is set, but the `secret-tool` program is missing. A real run on a computer without it:
 
   ```text
-  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.17.0 unlock --backend passphrase`.
+  [zn] zn needs the secret-tool program to use your Linux keyring, and it is not installed. Install the libsecret-tools package (for example: sudo apt install libsecret-tools), or create the vault with a passphrase instead: `npx -y zn-gate@1.18.0 unlock --backend passphrase`.
   ```
 
   A second line then says that the passphrase is not the problem and points back to this page.
@@ -1246,7 +1254,7 @@ Nothing was changed.
    New vault passphrase (min 12 chars):
    Repeat passphrase:
    Created a new vault (passphrase) in ~/.zn/vault
-   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.17.0 lock` to lock now.
+   Vault unlocked: locks after 30 min idle, or at 22:46 (in 8 h) at the latest. Run `npx -y zn-gate@1.18.0 lock` to lock now.
    ```
 
    Later runs ask once, for `Vault passphrase:`. A wrong passphrase says `wrong passphrase, or vault file identity.age is corrupted`; see [section 5](#5-your-secret-vault-is-locked) if you forgot it.

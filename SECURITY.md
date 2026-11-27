@@ -7,8 +7,8 @@ Upgrade to it to receive them.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 1.17.x   | :white_check_mark: |
-| < 1.17.0 | :x:                |
+| 1.18.x   | :white_check_mark: |
+| < 1.18.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
@@ -124,6 +124,7 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-q27p-hqf7-hfw3](https://github.com/usezn/zn/security/advisories/GHSA-q27p-hqf7-hfw3) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.17.0 on Linux: a loader environment variable set for the agent could stop every hook before it runs, so tool calls went unchecked (fixed in 1.18.0)*
 * [GHSA-q7p5-7x6r-fm4r](https://github.com/usezn/zn/security/advisories/GHSA-q7p5-7x6r-fm4r) — *zn-gate for Python 1.2.3 to 1.13.0: the LangChain callback handler did not stop blocked tool calls or hide secrets in tool output (fixed in 1.13.1)*
 * [GHSA-qwh8-5vj5-mvj8](https://github.com/usezn/zn/security/advisories/GHSA-qwh8-5vj5-mvj8) — *zn-gate for Node.js 1.2.3 to 1.12.0: shield, check_tool_result and optional cloud analysis did not redact some provider token formats (fixed in 1.13.0)*
 * [GHSA-rccq-h3xc-j9qj](https://github.com/usezn/zn/security/advisories/GHSA-rccq-h3xc-j9qj) — *zn-gate agent hooks for Node.js 1.5.0 to 1.11.0: a protected file reached indirectly, or a command too long or slow to check, could be read or run without being checked (fixed in 1.12.0)*

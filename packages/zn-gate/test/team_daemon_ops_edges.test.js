@@ -621,11 +621,13 @@ test('an expired policy held in the vault is shown as expired, restricts, and is
   assert.strictEqual(info.policy.version, 1);
 
   // Strict mode: the deny still applies; a host the policy would open is not offered.
-  const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], 'codex', true);
-  assert.strictEqual(list[0].deny, true);
-  assert.strictEqual(list[0].denyReason, 'policy:org_deny');
-  assert.deepStrictEqual(list[0].orgPolicy, { version: 1, state: 'expired' });
-  assert.strictEqual(list[1].deny, false);
+  for (const agent of ['codex', 'cursor']) {
+    const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], agent, true);
+    assert.strictEqual(list[0].deny, true, agent);
+    assert.strictEqual(list[0].denyReason, 'policy:org_deny');
+    assert.deepStrictEqual(list[0].orgPolicy, { version: 1, state: 'expired' });
+    assert.strictEqual(list[1].deny, false);
+  }
 
   // The stale etag is not sent for an expired policy: the server sends the whole new one.
   cloud.publishPolicy({ rules: [] });
@@ -646,14 +648,16 @@ test('a held policy that does not verify is reported as invalid and blocks every
   assert.strictEqual(info.policy.state, 'invalid');
   assert.strictEqual(info.policy.error, 'bad signature');
   // Strict mode: the tampered copy (its deny was removed) is not trusted; nothing is opened and all is blocked.
-  const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], 'codex', true);
-  for (const e of list) {
-    assert.strictEqual(e.deny, true);
-    assert.strictEqual(e.denyReason, 'policy:org_invalid');
-    assert.strictEqual(e.orgPending, undefined);
-    assert.strictEqual(e.orgPolicy.state, 'invalid');
+  for (const agent of ['codex', 'cursor']) {
+    const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], agent, true);
+    for (const e of list) {
+      assert.strictEqual(e.deny, true, agent);
+      assert.strictEqual(e.denyReason, 'policy:org_invalid');
+      assert.strictEqual(e.orgPending, undefined);
+      assert.strictEqual(e.orgPolicy.state, 'invalid');
+    }
+    assert.deepStrictEqual(list[0].allowHosts, ['db.example.com']);
   }
-  assert.deepStrictEqual(list[0].allowHosts, ['db.example.com']);
   // A valid policy from the server recovers the machine.
   cloud.publishPolicy({ rules: [{ secret: 'PROD_*', agents: ['*'], deny: true }], version: 2 });
   const s = await m.o.teamSync({ upload: false });

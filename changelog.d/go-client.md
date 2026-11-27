@@ -1,2 +1,0 @@
-### Added
-- A Go client for the optional zn Cloud API, `github.com/usezn/zn/go`. `zn.NewClient(key).Analyze(ctx, text)` checks a tool result, a web page or an email before a model reads it, with timeouts, retries that honour `Retry-After`, typed errors (`IsRateLimited`, `IsQuotaExceeded`, `IsUnauthorized`), a check of the 20,000 UTF-16 unit limit before sending, and `SplitForAnalyze` for callers that want to send long text in pieces. Standard library only. See [go/README.md](https://github.com/usezn/zn/blob/main/go/README.md).

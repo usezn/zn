@@ -10,6 +10,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { expandPs } = require('./helpers/ps_expand');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -175,7 +176,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   // Cursor on Windows now runs the fail-closed launcher as an encoded PowerShell command.
   const m = /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
   assert.ok(m, 'an encoded PowerShell launcher');
-  const script = Buffer.from(m[1], 'base64').toString('utf16le');
+  const script = expandPs(Buffer.from(m[1], 'base64').toString('utf16le'));
   assert.match(script, /'\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor/);
   assert.match(script, /"permission":"deny".*exit 0 # zn hook cursor/, 'blocks when Node.js or the runner is gone (deny JSON with exit 0, which Cursor reads)');
   cursor.uninstall(opts);

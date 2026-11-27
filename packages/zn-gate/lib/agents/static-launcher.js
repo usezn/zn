@@ -13,10 +13,10 @@
  *
  * Shipping: the npm package carries prebuilt binaries in lib/native/<platform>/zn-hook-launcher, built in the release workflow
  * from tools/hook-launcher, and lib/native/hook-launcher.json with the SHA-256 of each one. The installer copies the binary for
- * this machine into zn's hooks folder (next to the launcher scripts, so it outlives an update or removal of the package) when
- * its SHA-256 matches, then runs it once as a test. The hook entry is switched to the launcher only when the test run answers as
- * expected. Otherwise the copied file stays unused, the hook keeps today's form, and the install says plainly that this
- * protection is not there. macOS and Windows have no such launcher (see docs/threat-model.md).
+ * this machine into zn's hooks folder (next to the launcher scripts, so it outlives an update or removal of the package) only
+ * when its SHA-256 matches, then gives it a test run, and puts it in the hook only when that run answers as expected. A copy
+ * whose run fails stays in place (hooks written earlier may name it), the hook keeps today's form, and the install says plainly
+ * that this protection is not there. macOS and Windows have no such launcher (see docs/threat-model.md).
  */
 
 const fs = require('fs');

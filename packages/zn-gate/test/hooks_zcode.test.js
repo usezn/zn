@@ -8,6 +8,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { expandPs } = require('./helpers/ps_expand');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -447,7 +448,7 @@ test('install on Windows writes a powershell.exe process hook that exits 2 itsel
   const h = g.hooks[0];
   assert.equal(h.type, 'process');
   assert.deepEqual(h.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
-  const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
+  const script = expandPs(require('../lib/shell-quote').windowsCommandScript(zc.commandText(h)));
   assert.match(script, /\$rc = zr .*runner\.js" zcode'; if \(\(\$rc -eq 0 -and \(zk\)\) -or \$rc -eq 2\) \{ zx \$rc \}/);
   assert.match(script, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
   assert.ok(cfg.isOurs(zc.commandText(h), 'zcode'));
@@ -897,7 +898,7 @@ test('Windows launcher: ZCode only, the hook runs as a child with a deadline, a 
   const N = 'C:/Program Files/nodejs/node.exe';
   const R = 'C:/zn/zn-gate/lib/hooks/runner.js';
   const zcodeScript = (event) => launcher.windowsScript('zcode', event, N, R, { deadlineS: zc.LAUNCHER_DEADLINE_S });
-  const pre = zcodeScript('PreToolUse');
+  const pre = expandPs(zcodeScript('PreToolUse'));
   assert.match(pre, /function zr\(\$f, \$a\)/);
   assert.ok(pre.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
   assert.match(pre, /RedirectStandardInput = \$true/);
@@ -907,9 +908,9 @@ test('Windows launcher: ZCode only, the hook runs as a child with a deadline, a 
   assert.match(pre, /\$rc = -1/);
   // timeout (-1) and crashes fall through to the same block text as before: exit 2 with "hook failed" for the blocking events
   assert.match(pre, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
-  assert.match(zcodeScript('PermissionRequest'), /exit 2 # zn hook zcode$/);
-  assert.match(zcodeScript('UserPromptSubmit'), /exit 2 # zn hook zcode$/);
-  assert.match(zcodeScript('PostToolUse'), /systemMessage.*exit 0 # zn hook zcode$/);
+  assert.match(expandPs(zcodeScript('PermissionRequest')), /exit 2 # zn hook zcode$/);
+  assert.match(expandPs(zcodeScript('UserPromptSubmit')), /exit 2 # zn hook zcode$/);
+  assert.match(expandPs(zcodeScript('PostToolUse')), /systemMessage.*exit 0 # zn hook zcode$/);
   assert.doesNotMatch(zcodeScript('PostToolUse'), /exit 2 # zn hook/);
   assert.ok(cfg.isOurs(pre, 'zcode'));
   // install uses the 28 s constant
@@ -922,7 +923,7 @@ test('Windows launcher: install gives ZCode the deadline; other agents\' Windows
   const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
   assert.ok(script.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
   for (const id of ['codex', 'cursor', 'gemini', 'antigravity']) {
-    const s = launcher.windowsScript(id, 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js');
+    const s = expandPs(launcher.windowsScript(id, 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js'));
     assert.doesNotMatch(s, /function zr|taskkill|Stopwatch/, id);
     assert.match(s, /& 'C:\/node\/node\.exe' 'C:\/z\/runner\.js' /, id);
   }

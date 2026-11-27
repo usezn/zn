@@ -42,6 +42,7 @@
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { fileURLToPath } = require('url');
+const { MAX_NEST_DEPTH, MAX_NEST_NODES } = require('../nest-limits');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
@@ -83,33 +84,45 @@ function localFileUrl(v) {
 }
 
 /**
- * Every string argument whose key looks like a file or folder (content-like keys are skipped), three levels of
- * objects and arrays deep. A key called url counts only when its value is a file: URI. A file: URI that cannot
+ * Every string argument whose key looks like a file or folder (content-like keys are skipped), down to MAX_NEST_DEPTH (the limit of the text
+ * scan), through objects and arrays. Objects left unvisited because of the depth or node limit set `bad`: a path may be hidden there. A key called url counts only when its value is a file: URI. A file: URI that cannot
  * be turned into a path sets `bad`, so the call is refused instead of passed.
  */
 function pathsOf(args) {
   const out = [];
   let bad = false;
+  // A candidate name taken from a long or multi-line value: a file: URI in it is decoded like a one-line value.
+  const addName = (x) => {
+    if (/^file:/i.test(x)) { try { out.push(fileURLToPath(localFileUrl(x))); } catch (_) { bad = true; } return; }
+    out.push(x);
+  };
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
-    if (/^file:/i.test(v)) {
+    // A file: URI is decoded whole; one that also holds a list or line separator (file:///p/.env,notes.txt) is split as well, so a
+    // name in the list is checked on its own.
+    const uri = /^file:/i.test(v);
+    if (uri) {
       try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
-      return;
+      if (!/[\r\n\u2028\u2029\u0085\t, ]/.test(v)) return;
     }
-    if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
+    if (!uri && /url/i.test(k) && !PATH_KEY_RE.test(k)) return;
+    // A long value is classified like any other (classifyPath reads long input); a value with line breaks (code, a message) is
+    // not one file name: its trimmed whole and each line that starts like a path are checked (pathCandidatesOf).
+    if (uri || v.length > MAX_PATH_LEN || /[\r\n\u2028\u2029\u0085\t, ]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v, true, true)) if (!(uri && x === v)) addName(x); return; }
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
+  let nodes = 0;
   const walk = (obj, depth) => {
+    if (++nodes > MAX_NEST_NODES) { bad = true; return; }
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
       }
-      if (depth < 3) {
+      if (depth < MAX_NEST_DEPTH) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
-      }
+      } else if (isObj(v) || (Array.isArray(v) && v.some(isObj))) bad = true;
     }
   };
   walk(args, 0);
@@ -307,6 +320,16 @@ function normalize(raw) {
     const dirs = scan.dirs;
     const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [], ...(dirs.length ? { scanDirs: dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
     if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
+    if (!SHELL_TOOLS.has(toolName)) {
+      // A tool zn does not know that carries a command and also names files: the files keep their read and write checks (a .env
+      // write among them is judged on what the call writes); an address zn cannot read refuses the call.
+      const named = pathsOf(args);
+      const loose = require('./copilot').pathsOf(args, { loose: true });
+      named.paths = [...new Set([...named.paths, ...loose.paths])];
+      named.bad = named.bad || loose.bad;
+      e.input.alsoPaths = named.paths;
+      if (named.bad && !e.unreadable) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    }
     return e;
   }
   const { paths, bad } = pathsOf(args);
@@ -321,9 +344,13 @@ function normalize(raw) {
   }
   // Any other tool that names a file (a viewer, a reader, a future tool) gets the read and write checks on
   // every path in it. list_dir and find_by_name show names only, and tools with no path get no opinion.
-  if (!READ_TOOLS.has(toolName) && (paths.length || bad)) {
-    const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+  // A tool zn does not know: a path under any key counts too (src, dst, from, to, nested objects), and arguments zn cannot walk to
+  // the end are refused.
+  const loose = READ_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const all = [...new Set([...paths, ...loose.paths])];
+  if (!READ_TOOLS.has(toolName) && (all.length || bad || loose.bad)) {
+    const e = { ...ev, tool: 'fileaccess', input: { ...input, path: all[0], paths: all } };
+    if (bad || loose.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
   }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };
@@ -531,6 +558,7 @@ module.exports = {
   normalize,
   respond,
   selfCheck,
+  pathsOf,
   capabilities: { ask: 'all', rewriteInput: false, rewriteOutput: false },
   HOOK_NAME,
   hooksFile,
