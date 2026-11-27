@@ -54,6 +54,9 @@ const PLUGIN_MARK = '// zn-gate plugin for OpenCode';
 const BUILTIN = new Set(['bash', 'read', 'write', 'edit', 'grep', 'glob', 'webfetch', 'websearch', 'apply_patch', 'task', 'todowrite', 'todoread', 'todo', 'skill', 'question', 'plan', 'list', 'patch', 'multiedit', 'lsp']);
 
 const TOKENIZED_OUTPUT = new Set(['task', 'websearch', 'glob', 'list', 'skill', 'codesearch']);
+// Built-ins whose arguments leave the machine (the query goes to a search service): checked before they run like an MCP
+// call to an unknown server, so a secret or a marker in the query is refused. task, glob, list and skill stay local.
+const OUTBOUND_QUERY = new Set(['websearch', 'codesearch']);
 
 function textsOf(tool, args) {
   const texts = [];
@@ -203,11 +206,14 @@ function normalize(raw) {
   }
   if (raw.hook === 'tool.execute.before') {
     const ev = { ...base, event: 'pre_tool', tool, toolName: t, input };
-    // MCP tools are checked before they run, as for Claude Code and Cursor. The built-ins that only return text the
-    // model reads (TOKENIZED_OUTPUT) are not MCP calls and are left alone.
+    // MCP tools are checked before they run, as for Claude Code and Cursor. Of the built-ins whose output is tokenized
+    // (TOKENIZED_OUTPUT), those that send their query out (OUTBOUND_QUERY) are checked too, as a call to a server that is
+    // not zn's; the others (task, glob, list, skill) stay on the machine and are left alone.
     if (tool === 'mcp' && !TOKENIZED_OUTPUT.has(t)) {
       input.args = args;
       ev.mcp = mcpInfo(t, root);
+    } else if (tool === 'mcp' && OUTBOUND_QUERY.has(t)) {
+      input.args = args;
     }
     return ev;
   }
