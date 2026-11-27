@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.2
+RULES_VERSION: 2026-11-27.3
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.2"
+RULES_VERSION = "2026-11-27.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -742,8 +742,473 @@ def _test_sensitive_path_as(text: str) -> bool:
             or HOME_SECRET_FILE_RE.search(view) is not None)
 
 
+# Variables, defaults, globs, braces and substitutions in a protected name (`F=.env; cat ${F}`, `cat ~/.s*/id_ed25519`,
+# `cat .en{v,}`, `cat .e$(printf nv)`, `cat $'\x2eenv'`). A light version of what the hook resolves: the text is read once more
+# after simple assignments, defaults, echo/printf substitutions with literal arguments and $'..' escapes are replaced by their
+# values, and the words that are globs or braces are matched, name by name, against the protected names. These are extra
+# readings: they only add blocks, never remove one. Every loop is bounded by the caps below and no regular expression nests a
+# quantifier, so the work stays linear in the text; the glob matcher is written by hand for the same reason.
+SHELL_MARK = '\u0001'
+SHELL_PREFILTER_RE = _rc(r'[$`*?\[{]')
+SHELL_ANSI_C_RE = _rc(r"\$'((?:[^'\\\n]|\\.){0,512})'")
+SHELL_ESCAPE_RE = _rc(r'\\(?:x([0-9a-fA-F]{1,2})|([0-7]{1,3})|u([0-9a-fA-F]{1,4})|U([0-9a-fA-F]{1,8})|([\s\S]))')
+SHELL_SIMPLE_ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', 'a': '\x07', 'b': '\b', 'f': '\f', 'v': '\v', 'e': '\x1b', 'E': '\x1b'}
+SHELL_SUBST_RE = _rc(r'\$\([ \t]{0,8}(echo|printf)[ \t]{1,8}((?:[^()`$\n\\]|\\.){0,256})\)|`[ \t]{0,8}(echo|printf)[ \t]{1,8}((?:[^`$\n\\]|\\.){0,256})`')
+SHELL_ASSIGN_RE = _rc(r"""(?:^|[ \t\r\n\f\v;&|(])(?:(?:export|local|readonly|declare|typeset)[ \t]{1,8}(?:-[A-Za-z]{1,4}[ \t]{1,8})?)?([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"\n]{0,256}"|'[^'\n]{0,256}'|[^ \t\r\n\f\v;&|()<>"'`]{0,256})""")
+SHELL_VAR_RE = _rc(r'\$\{([A-Za-z_][A-Za-z0-9_]{0,63})(?::?([-=+])([^}\n]{0,256}))?\}|\$([A-Za-z_][A-Za-z0-9_]{0,63})(?![A-Za-z0-9_:])')
+SHELL_KEEP_VARS = frozenset(['home', 'userprofile', 'pwd', 'env'])
+SHELL_WORD_RE = _rc(r'[^ \t\r\n\f\v|&;<>()`]+')
+SHELL_NAME_FLAG_RE = _rc(r'^-(?:i?name|i?path|i?wholename)$')
+SHELL_BLANKS_RE = _rc(r'^[ \t]+\Z')
+SHELL_COMMAND_WORD_RE = _rc(r'^-{0,2}[a-z][a-z0-9._-]*$')
+SHELL_BARE_DOT_GLOB_RE = _rc(r'^\.(?:[*?]|\[[^\]/]{0,32}\])*$')
+SHELL_ECHO_FLAG_RE = _rc(r'^-[neE]+$')
+SHELL_HOME_PREFIX_RES = (_rc(r'^/home/[^/]+/'), _rc(r'^/root/'), _rc(r'^[a-z]:/users/[^/]+/'))
+MAX_SHELL_TEXT = 1 << 20
+MAX_SHELL_WORDS = 4096
+MAX_SHELL_WORD = 512
+MAX_SHELL_VARS = 64
+MAX_BRACE_WORDS = 64
+MAX_GLOB_SEGMENTS = 32
+
+
+def _decode_shell_escapes(s: str) -> str:
+    def repl(m: "re.Match[str]") -> str:
+        hx, octal, u4, u8, ch = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+        if hx is not None:
+            return chr(int(hx, 16))
+        if octal is not None:
+            return chr(int(octal, 8) & 255)
+        if u4 is not None:
+            return chr(int(u4, 16))
+        if u8 is not None:
+            n = int(u8, 16)
+            return chr(n) if n <= 0x10ffff else ''
+        return SHELL_SIMPLE_ESCAPES.get(ch, ch)
+    return SHELL_ESCAPE_RE.sub(repl, s)
+
+
+def _shell_words(s: str) -> List[str]:
+    """The words of a short argument list, with quotes and backslashes taken out."""
+    out: List[str] = []
+    cur: Optional[str] = None
+    q = ''
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if q == "'":
+            if c == "'":
+                q = ''
+            else:
+                cur = (cur or '') + c
+        elif q == '"':
+            if c == '"':
+                q = ''
+            elif c == '\\' and i + 1 < n and s[i + 1] in '"\\$`':
+                i += 1
+                cur = (cur or '') + s[i]
+            else:
+                cur = (cur or '') + c
+        elif c == "'" or c == '"':
+            q = c
+            if cur is None:
+                cur = ''
+        elif c == '\\' and i + 1 < n:
+            i += 1
+            cur = (cur or '') + s[i]
+        elif c == ' ' or c == '\t':
+            if cur is not None:
+                out.append(cur)
+                cur = None
+        else:
+            cur = (cur or '') + c
+        i += 1
+    if cur is not None:
+        out.append(cur)
+    return out
+
+
+def _printf_output(words: List[str]) -> Optional[str]:
+    """What printf prints for a format and its arguments (%s, %b and %% only); None when the format does something else."""
+    if not words:
+        return ''
+    fmt = _decode_shell_escapes(words[0])
+    args = words[1:]
+    specs = 0
+    i = 0
+    while i < len(fmt):
+        if fmt[i] == '%':
+            c = fmt[i + 1] if i + 1 < len(fmt) else ''
+            if c in ('s', 'b'):
+                specs += 1
+            elif c != '%':
+                return None
+            i += 1
+        i += 1
+    out = ''
+    ai = 0
+    for _ in range(16):
+        piece = ''
+        i = 0
+        while i < len(fmt):
+            if fmt[i] != '%':
+                piece += fmt[i]
+            else:
+                i += 1
+                c = fmt[i]
+                if c == '%':
+                    piece += '%'
+                else:
+                    a = args[ai] if ai < len(args) else ''
+                    ai += 1
+                    piece += _decode_shell_escapes(a) if c == 'b' else a
+            i += 1
+        out += piece
+        if specs == 0 or ai >= len(args):
+            break
+    return out
+
+
+def _echo_output(words: List[str]) -> str:
+    i = 0
+    interpret = False
+    while i < len(words) and SHELL_ECHO_FLAG_RE.search(words[i]) is not None:
+        if 'e' in words[i]:
+            interpret = True
+        i += 1
+    out = ' '.join(words[i:])
+    return _decode_shell_escapes(out) if interpret else out
+
+
+def _resolve_shell_substitutions(text: str) -> str:
+    def repl(m: "re.Match[str]") -> str:
+        cmd = m.group(1) or m.group(3)
+        args = m.group(2) if m.group(2) is not None else m.group(4)
+        words = _shell_words(args)
+        out = _echo_output(words) if cmd == 'echo' else _printf_output(words)
+        return m.group(0) if out is None else out
+    return SHELL_SUBST_RE.sub(repl, text)
+
+
+def _resolve_shell_variables(text: str) -> str:
+    cur = text
+    cap = len(text) * 4 + 4096
+    for _ in range(3):
+        variables: Dict[str, str] = {}
+        for m in SHELL_ASSIGN_RE.finditer(cur):
+            if len(variables) >= MAX_SHELL_VARS and m.group(1) not in variables:
+                continue
+            v = m.group(2)
+            if len(v) >= 2 and v[0] in ('"', "'") and v[-1] == v[0]:
+                v = v[1:-1]
+            variables[m.group(1)] = v
+
+        def repl(m: "re.Match[str]") -> str:
+            braced, op, dflt, bare = m.group(1), m.group(2), m.group(3), m.group(4)
+            name = braced if braced is not None else bare
+            if name.lower() in SHELL_KEEP_VARS:
+                return m.group(0)
+            known = variables.get(name)
+            if braced is None or op is None:
+                return known if known is not None else SHELL_MARK
+            if op == '+':
+                return '' if known == '' else dflt
+            return known if known else dflt
+        nxt = SHELL_VAR_RE.sub(repl, cur)
+        if nxt == cur:
+            break
+        # A variable that holds itself would grow every pass: the text is cut at four times its size.
+        cur = nxt[:cap]
+        if len(nxt) > cap:
+            break
+    return cur
+
+
+def _resolve_shell_text(text: str) -> str:
+    """The text with its ANSI-C quotes, echo/printf substitutions and simple variables replaced; an unknown variable becomes a mark."""
+    t = SHELL_ANSI_C_RE.sub(lambda m: _decode_shell_escapes(m.group(1)), text)
+    t = _resolve_shell_substitutions(t)
+    return _resolve_shell_variables(t)
+
+
+# The protected names as path segments (lower case); ~ stands for the home folder. A glob is compared with the last segments
+# of a name, so `.ssh/*`, `~/.s*/id_*` and `.e*` all reach their file.
+GLOB_PROTECTED_NAMES: List[List[str]] = [
+    ['.env'], ['.env.local'], ['.env.production'], ['.env.development'], ['.env.staging'], ['.env.test'], ['.env.prod'], ['.env.dev'],
+    ['.ssh', 'id_rsa'], ['.ssh', 'id_dsa'], ['.ssh', 'id_ecdsa'], ['.ssh', 'id_ecdsa_sk'], ['.ssh', 'id_ed25519'], ['.ssh', 'id_ed25519_sk'],
+    ['.ssh', 'id_xmss'], ['.ssh', 'authorized_keys'], ['.aws', 'credentials'],
+    ['.netrc'], ['.git-credentials'], ['.pgpass'], ['.docker', 'config.json'], ['.config', 'gh', 'hosts.yml'], ['.kube', 'config'],
+    ['.config', 'gcloud', 'credentials.db'], ['.config', 'gcloud', 'access_tokens.db'],
+    ['.config', 'gcloud', 'application_default_credentials.json'], ['.azure', 'accesstokens.json'], ['.azure', 'msal_token_cache.json'],
+    ['.gnupg', 'pubring.kbx'], ['.gnupg', 'trustdb.gpg'], ['.gnupg', 'private-keys-v1.d'],
+    ['~', '.npmrc'], ['~', '.pypirc'],
+]
+GLOB_ABSOLUTE_NAMES: List[List[str]] = [['etc', 'shadow'], ['etc', 'passwd']]
+
+# A glob token: ('l', ch) literal, ('s',) any run, ('q',) any one, ('c', ranges, neg) class.
+_GlobTok = Tuple[Any, ...]
+
+
+def _compile_glob_segment(seg: str) -> List[_GlobTok]:
+    """A glob pattern with its escapes (\\* is a plain star) as tokens."""
+    toks: List[_GlobTok] = []
+    i = 0
+    n = len(seg)
+    while i < n:
+        c = seg[i]
+        if c == '\\' and i + 1 < n:
+            i += 1
+            toks.append(('l', seg[i]))
+        elif c == '*':
+            if not toks or toks[-1][0] != 's':
+                toks.append(('s',))
+        elif c == '?':
+            toks.append(('q',))
+        elif c == '[':
+            k = i + 1
+            neg = k < n and seg[k] in '!^'
+            if neg:
+                k += 1
+            start = k
+            if k < n and seg[k] == ']':
+                k += 1
+            while k < n and seg[k] != ']':
+                k += 1
+            if k < n:
+                ranges: List[Tuple[str, str]] = []
+                j = start
+                while j < k:
+                    lo = seg[j]
+                    if lo == '\\' and j + 1 < k:
+                        j += 1
+                        lo = seg[j]
+                    if j + 2 < k and seg[j + 1] == '-':
+                        ranges.append((lo, seg[j + 2]))
+                        j += 2
+                    else:
+                        ranges.append((lo, lo))
+                    j += 1
+                toks.append(('c', ranges, neg))
+                i = k
+            else:
+                toks.append(('l', c))
+        else:
+            toks.append(('l', c))
+        i += 1
+    return toks
+
+
+def _glob_token_matches(tok: _GlobTok, ch: str) -> bool:
+    kind = tok[0]
+    if kind == 'q':
+        return True
+    if kind == 'c':
+        return any(lo <= ch <= hi for lo, hi in tok[1]) != tok[2]
+    return tok[1] == ch
+
+
+def _glob_segment_matches(toks: List[_GlobTok], s: str) -> bool:
+    """A star, a question mark or a class never matches a leading dot, and nothing but ~ matches the home mark."""
+    if s == '~':
+        return len(toks) == 1 and toks[0] == ('l', '~')
+    if s[:1] == '.' and (not toks or toks[0] != ('l', '.')):
+        return False
+    t = 0
+    p = 0
+    star_t = -1
+    star_s = 0
+    while p < len(s):
+        if t < len(toks) and toks[t][0] == 's':
+            star_t = t
+            t += 1
+            star_s = p
+            continue
+        if t < len(toks) and _glob_token_matches(toks[t], s[p]):
+            t += 1
+            p += 1
+            continue
+        if star_t >= 0:
+            t = star_t + 1
+            star_s += 1
+            p = star_s
+            continue
+        return False
+    while t < len(toks) and toks[t][0] == 's':
+        t += 1
+    return t == len(toks)
+
+
+def _glob_reaches_protected(absolute: bool, segs: List[str]) -> bool:
+    toks = [_compile_glob_segment(s) for s in segs]
+    n = len(segs)
+    for name in GLOB_PROTECTED_NAMES:
+        m = len(name)
+        if n < m:
+            continue
+        if all(_glob_segment_matches(toks[n - m + i], name[i]) for i in range(m)):
+            return True
+    if absolute:
+        for name in GLOB_ABSOLUTE_NAMES:
+            if n == len(name) and all(_glob_segment_matches(toks[i], name[i]) for i in range(n)):
+                return True
+    return False
+
+
+def _glob_word_pattern(word: str, quoted_globs: bool) -> Optional[str]:
+    """One word of the text as a glob: quoted characters and backslash-escaped ones are plain (marked with a backslash), except
+    in the pattern of find -name/-path, where the quotes only protect the pattern from the shell. A backslash before anything
+    else is a Windows separator. None when the word has no glob, brace or unknown variable."""
+    out: List[str] = []
+    flagged = False
+    q = ''
+    i = 0
+    n = len(word)
+    while i < n:
+        c = word[i]
+        if c == SHELL_MARK:
+            out.append('*')
+            flagged = True
+        elif q:
+            if c == q:
+                q = ''
+            elif quoted_globs:
+                out.append(c)
+                flagged = flagged or c in '*?[{'
+            else:
+                out.append('\\' + c if c in '*?[]{},\\' else c)
+        elif c == '"' or c == "'":
+            q = c
+        elif c == '\\':
+            nx = word[i + 1] if i + 1 < n else None
+            if nx is not None and nx in '*?[]{},\\"\' ':
+                out.append('\\' + nx)
+                i += 1
+            else:
+                out.append('/')
+        else:
+            if c in '*?[{':
+                flagged = True
+            out.append(c)
+        i += 1
+    return ''.join(out) if flagged else None
+
+
+def _brace_expand_once(s: str) -> Optional[List[str]]:
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] == '\\':
+            i += 2
+            continue
+        if s[i] != '{':
+            i += 1
+            continue
+        commas: List[int] = []
+        depth = 0
+        end = -1
+        j = i
+        while j < n:
+            c = s[j]
+            if c == '\\':
+                j += 2
+                continue
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+            elif c == ',' and depth == 1:
+                commas.append(j)
+            j += 1
+        if end < 0 or not commas:
+            i += 1
+            continue
+        alts: List[str] = []
+        start = i + 1
+        for k in commas:
+            alts.append(s[start:k])
+            start = k + 1
+        alts.append(s[start:end])
+        return [s[:i] + a + s[end + 1:] for a in alts]
+    return None
+
+
+def _brace_expand(s: str) -> List[str]:
+    """The words of a pattern after brace expansion ({a,b}, {v,}), at most MAX_BRACE_WORDS of them."""
+    results = [s]
+    for _ in range(6):
+        nxt: List[str] = []
+        changed = False
+        for r in results:
+            e = _brace_expand_once(r) if len(nxt) < MAX_BRACE_WORDS else None
+            if e is not None:
+                changed = True
+                nxt.extend(e)
+            else:
+                nxt.append(r)
+        results = nxt[:MAX_BRACE_WORDS]
+        if not changed:
+            break
+    return results
+
+
+def _shell_glob_hit(text: str) -> bool:
+    lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
+    prev = ''
+    prev_end = 0
+    count = 0
+    for m in SHELL_WORD_RE.finditer(lowered):
+        word = m.group(0)
+        count += 1
+        if count > MAX_SHELL_WORDS:
+            break
+        quoted_globs = SHELL_NAME_FLAG_RE.search(prev) is not None
+        after_command = (SHELL_COMMAND_WORD_RE.search(prev) is not None
+                         and SHELL_BLANKS_RE.search(lowered[prev_end:m.start()]) is not None)
+        prev = word
+        prev_end = m.end()
+        if len(word) > MAX_SHELL_WORD:
+            continue
+        # A bare dot with wildcards (.*, .?*) is a glob only as a word of its own that follows a command or an option or a file name
+        # (cat .*, tar czf a.tgz .*): in a regular expression, a comment or a grammar it follows a bracket, a mark or a backslash.
+        before = lowered[m.start() - 1] if m.start() > 0 else ''
+        after = lowered[m.end()] if m.end() < len(lowered) else ''
+        standalone = after_command and (before == '' or before in ' \t\r\n\f\v;&|') and (after == '' or after in ' \t\r\n\f\v;&|)')
+        for reading in [word] + _glued_path_readings(word):
+            pattern = _glob_word_pattern(reading, quoted_globs)
+            if pattern is None:
+                continue
+            for expanded in _brace_expand(pattern):
+                home = expanded
+                for prefix_re in SHELL_HOME_PREFIX_RES:
+                    home = prefix_re.sub('~/', home, count=1)
+                norm = _normalize_path_word(home)
+                segs = [x for x in norm.split('/') if x]
+                if not segs or len(segs) > MAX_GLOB_SEGMENTS:
+                    continue
+                if not standalone and SHELL_BARE_DOT_GLOB_RE.search(segs[-1]) is not None:
+                    continue
+                if _glob_reaches_protected(norm.startswith('/'), segs):
+                    return True
+    return False
+
+
+def _shell_reading_hit(text: str) -> bool:
+    """Extra readings of a text for the protected names: variables, defaults, substitutions, escapes, globs and braces."""
+    if len(text) > MAX_SHELL_TEXT or SHELL_PREFILTER_RE.search(text) is None:
+        return False
+    resolved = _resolve_shell_text(text)
+    if resolved != text and _test_sensitive_path_as(resolved):
+        return True
+    return _shell_glob_hit(resolved)
+
+
 def _test_sensitive_path(text: str) -> bool:
-    return _test_sensitive_path_as(text) or any(_test_sensitive_path_as(v) for v in _cmd_readings(text))
+    return (_test_sensitive_path_as(text) or any(_test_sensitive_path_as(v) for v in _cmd_readings(text))
+            or _shell_reading_hit(text))
 
 
 RULE_TESTERS['path:sensitive_file'] = _test_sensitive_path

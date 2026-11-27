@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.2
+ * RULES_VERSION: 2026-11-27.3
  */
 
-const RULES_VERSION = '2026-11-27.2';
+const RULES_VERSION = '2026-11-27.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -490,13 +490,348 @@ function cmdReadings(text) {
   return out;
 }
 
+// Variables, defaults, globs, braces and substitutions in a protected name (`F=.env; cat ${F}`, `cat ~/.s*/id_ed25519`,
+// `cat .en{v,}`, `cat .e$(printf nv)`, `cat $'\x2eenv'`). A light version of what the hook resolves: the text is read once more
+// after simple assignments, defaults, echo/printf substitutions with literal arguments and $'..' escapes are replaced by their
+// values, and the words that are globs or braces are matched, name by name, against the protected names. These are extra
+// readings: they only add blocks, never remove one. Every loop is bounded by the caps below and no regular expression nests a
+// quantifier, so the work stays linear in the text; the glob matcher is written by hand for the same reason.
+const SHELL_MARK = '\u0001';
+const SHELL_PREFILTER_RE = /[$`*?\[{]/;
+const SHELL_ANSI_C_RE = /\$'((?:[^'\\\n]|\\.){0,512})'/g;
+const SHELL_ESCAPE_RE = /\\(?:x([0-9a-fA-F]{1,2})|([0-7]{1,3})|u([0-9a-fA-F]{1,4})|U([0-9a-fA-F]{1,8})|([\s\S]))/g;
+const SHELL_SIMPLE_ESCAPES = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', f: '\f', v: '\v', e: '\x1b', E: '\x1b' };
+const SHELL_SUBST_RE = /\$\([ \t]{0,8}(echo|printf)[ \t]{1,8}((?:[^()`$\n\\]|\\.){0,256})\)|`[ \t]{0,8}(echo|printf)[ \t]{1,8}((?:[^`$\n\\]|\\.){0,256})`/g;
+const SHELL_ASSIGN_RE = /(?:^|[ \t\r\n\f\v;&|(])(?:(?:export|local|readonly|declare|typeset)[ \t]{1,8}(?:-[A-Za-z]{1,4}[ \t]{1,8})?)?([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"\n]{0,256}"|'[^'\n]{0,256}'|[^ \t\r\n\f\v;&|()<>"'`]{0,256})/g;
+const SHELL_VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]{0,63})(?::?([-=+])([^}\n]{0,256}))?\}|\$([A-Za-z_][A-Za-z0-9_]{0,63})(?![A-Za-z0-9_:])/g;
+const SHELL_KEEP_VARS = new Set(['home', 'userprofile', 'pwd', 'env']);
+const SHELL_WORD_RE = /[^ \t\r\n\f\v|&;<>()`]+/g;
+const SHELL_BLANKS_RE = /^[ \t]+$/;
+const SHELL_COMMAND_WORD_RE = /^-{0,2}[a-z][a-z0-9._-]*$/;
+const SHELL_BARE_DOT_GLOB_RE = /^\.(?:[*?]|\[[^\]\/]{0,32}\])*$/;
+const SHELL_NAME_FLAG_RE = /^-(?:i?name|i?path|i?wholename)$/;
+const MAX_SHELL_TEXT = 1 << 20;
+const MAX_SHELL_WORDS = 4096;
+const MAX_SHELL_WORD = 512;
+const MAX_SHELL_VARS = 64;
+const MAX_BRACE_WORDS = 64;
+const MAX_GLOB_SEGMENTS = 32;
+
+function decodeShellEscapes(s) {
+  return s.replace(SHELL_ESCAPE_RE, (all, hx, oct, u4, u8, ch) => {
+    if (hx !== undefined) return String.fromCharCode(parseInt(hx, 16));
+    if (oct !== undefined) return String.fromCharCode(parseInt(oct, 8) & 255);
+    if (u4 !== undefined) return String.fromCharCode(parseInt(u4, 16));
+    if (u8 !== undefined) { const n = parseInt(u8, 16); return n <= 0x10ffff ? String.fromCodePoint(n) : ''; }
+    return Object.prototype.hasOwnProperty.call(SHELL_SIMPLE_ESCAPES, ch) ? SHELL_SIMPLE_ESCAPES[ch] : ch;
+  });
+}
+
+// The words of a short argument list, with quotes and backslashes taken out.
+function shellWords(s) {
+  const out = [];
+  let cur = null;
+  let q = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q === "'") { if (c === "'") q = ''; else cur += c; continue; }
+    if (q === '"') {
+      if (c === '"') q = '';
+      else if (c === '\\' && i + 1 < s.length && '"\\$`'.includes(s[i + 1])) cur += s[++i];
+      else cur += c;
+      continue;
+    }
+    if (c === "'" || c === '"') { q = c; if (cur === null) cur = ''; continue; }
+    if (c === '\\' && i + 1 < s.length) { i++; cur = cur === null ? s[i] : cur + s[i]; continue; }
+    if (c === ' ' || c === '\t') { if (cur !== null) { out.push(cur); cur = null; } continue; }
+    cur = cur === null ? c : cur + c;
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
+// What printf prints for a format and its arguments (%s, %b and %% only); null when the format does something else.
+function printfOutput(words) {
+  if (!words.length) return '';
+  const fmt = decodeShellEscapes(words[0]);
+  const args = words.slice(1);
+  let specs = 0;
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== '%') continue;
+    const c = fmt[i + 1];
+    if (c === 's' || c === 'b') specs++;
+    else if (c !== '%') return null;
+    i++;
+  }
+  let out = '';
+  let ai = 0;
+  for (let round = 0; round < 16; round++) {
+    let piece = '';
+    for (let i = 0; i < fmt.length; i++) {
+      if (fmt[i] !== '%') { piece += fmt[i]; continue; }
+      const c = fmt[++i];
+      if (c === '%') piece += '%';
+      else { const a = ai < args.length ? args[ai] : ''; ai++; piece += c === 'b' ? decodeShellEscapes(a) : a; }
+    }
+    out += piece;
+    if (specs === 0 || ai >= args.length) break;
+  }
+  return out;
+}
+
+function echoOutput(words) {
+  let i = 0;
+  let interpret = false;
+  while (i < words.length && /^-[neE]+$/.test(words[i])) { if (words[i].includes('e')) interpret = true; i++; }
+  const out = words.slice(i).join(' ');
+  return interpret ? decodeShellEscapes(out) : out;
+}
+
+function resolveShellSubstitutions(text) {
+  return text.replace(SHELL_SUBST_RE, (all, c1, a1, c2, a2) => {
+    const cmd = c1 || c2;
+    const words = shellWords(a1 !== undefined ? a1 : a2);
+    const out = cmd === 'echo' ? echoOutput(words) : printfOutput(words);
+    return out === null ? all : out;
+  });
+}
+
+function resolveShellVariables(text) {
+  let cur = text;
+  const cap = text.length * 4 + 4096;
+  for (let pass = 0; pass < 3; pass++) {
+    const vars = new Map();
+    for (const m of cur.matchAll(SHELL_ASSIGN_RE)) {
+      if (vars.size >= MAX_SHELL_VARS && !vars.has(m[1])) continue;
+      let v = m[2];
+      if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) v = v.slice(1, -1);
+      vars.set(m[1], v);
+    }
+    const next = cur.replace(SHELL_VAR_RE, (all, braced, op, dflt, bare) => {
+      const name = braced !== undefined ? braced : bare;
+      if (SHELL_KEEP_VARS.has(name.toLowerCase())) return all;
+      const known = vars.get(name);
+      if (braced === undefined || op === undefined) return known !== undefined ? known : SHELL_MARK;
+      if (op === '+') return known === '' ? '' : dflt;
+      return known ? known : dflt;
+    });
+    if (next === cur) break;
+    // A variable that holds itself would grow every pass: the text is cut at four times its size.
+    cur = next.length > cap ? next.slice(0, cap) : next;
+    if (next.length > cap) break;
+  }
+  return cur;
+}
+
+// The text with its ANSI-C quotes, echo/printf substitutions and simple variables replaced; an unknown variable becomes a mark.
+function resolveShellText(text) {
+  let t = text.replace(SHELL_ANSI_C_RE, (all, body) => decodeShellEscapes(body));
+  t = resolveShellSubstitutions(t);
+  return resolveShellVariables(t);
+}
+
+// The protected names as path segments (lower case); ~ stands for the home folder. A glob is compared with the last segments
+// of a name, so `.ssh/*`, `~/.s*/id_*` and `.e*` all reach their file.
+const GLOB_PROTECTED_NAMES = [
+  ['.env'], ['.env.local'], ['.env.production'], ['.env.development'], ['.env.staging'], ['.env.test'], ['.env.prod'], ['.env.dev'],
+  ['.ssh', 'id_rsa'], ['.ssh', 'id_dsa'], ['.ssh', 'id_ecdsa'], ['.ssh', 'id_ecdsa_sk'], ['.ssh', 'id_ed25519'], ['.ssh', 'id_ed25519_sk'],
+  ['.ssh', 'id_xmss'], ['.ssh', 'authorized_keys'], ['.aws', 'credentials'],
+  ['.netrc'], ['.git-credentials'], ['.pgpass'], ['.docker', 'config.json'], ['.config', 'gh', 'hosts.yml'], ['.kube', 'config'],
+  ['.config', 'gcloud', 'credentials.db'], ['.config', 'gcloud', 'access_tokens.db'],
+  ['.config', 'gcloud', 'application_default_credentials.json'], ['.azure', 'accesstokens.json'], ['.azure', 'msal_token_cache.json'],
+  ['.gnupg', 'pubring.kbx'], ['.gnupg', 'trustdb.gpg'], ['.gnupg', 'private-keys-v1.d'],
+  ['~', '.npmrc'], ['~', '.pypirc'],
+];
+const GLOB_ABSOLUTE_NAMES = [['etc', 'shadow'], ['etc', 'passwd']];
+
+// A glob pattern with its escapes (\* is a plain star) as tokens: {l} literal, {s} any run, {q} any one, {c, neg} class.
+function compileGlobSegment(seg) {
+  const toks = [];
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '\\' && i + 1 < seg.length) { toks.push({ l: seg[++i] }); continue; }
+    if (c === '*') { if (!toks.length || !toks[toks.length - 1].s) toks.push({ s: 1 }); continue; }
+    if (c === '?') { toks.push({ q: 1 }); continue; }
+    if (c === '[') {
+      let k = i + 1;
+      const neg = seg[k] === '!' || seg[k] === '^';
+      if (neg) k++;
+      const from = k;
+      if (seg[k] === ']') k++;
+      while (k < seg.length && seg[k] !== ']') k++;
+      if (k < seg.length) {
+        const ranges = [];
+        for (let j = from; j < k; j++) {
+          let lo = seg[j];
+          if (lo === '\\' && j + 1 < k) lo = seg[++j];
+          if (seg[j + 1] === '-' && j + 2 < k) { ranges.push([lo, seg[j + 2]]); j += 2; } else ranges.push([lo, lo]);
+        }
+        toks.push({ c: ranges, neg });
+        i = k;
+        continue;
+      }
+    }
+    toks.push({ l: c });
+  }
+  return toks;
+}
+function globTokenMatches(tok, ch) {
+  if (tok.q) return true;
+  if (tok.c) return tok.c.some((r) => ch >= r[0] && ch <= r[1]) !== tok.neg;
+  return tok.l === ch;
+}
+// A star, a question mark or a class never matches a leading dot, and nothing but ~ matches the home mark.
+function globSegmentMatches(toks, str) {
+  if (str === '~') return toks.length === 1 && toks[0].l === '~';
+  if (str[0] === '.' && (!toks.length || toks[0].l !== '.')) return false;
+  let t = 0;
+  let s = 0;
+  let starT = -1;
+  let starS = 0;
+  while (s < str.length) {
+    if (t < toks.length && toks[t].s) { starT = t++; starS = s; continue; }
+    if (t < toks.length && globTokenMatches(toks[t], str[s])) { t++; s++; continue; }
+    if (starT >= 0) { t = starT + 1; s = ++starS; continue; }
+    return false;
+  }
+  while (t < toks.length && toks[t].s) t++;
+  return t === toks.length;
+}
+function globReachesProtected(abs, segs) {
+  const toks = segs.map(compileGlobSegment);
+  const n = segs.length;
+  for (const name of GLOB_PROTECTED_NAMES) {
+    const m = name.length;
+    if (n < m) continue;
+    let all = true;
+    for (let i = 0; i < m && all; i++) all = globSegmentMatches(toks[n - m + i], name[i]);
+    if (all) return true;
+  }
+  if (abs) {
+    for (const name of GLOB_ABSOLUTE_NAMES) {
+      if (n !== name.length) continue;
+      let all = true;
+      for (let i = 0; i < n && all; i++) all = globSegmentMatches(toks[i], name[i]);
+      if (all) return true;
+    }
+  }
+  return false;
+}
+
+// One word of the text as a glob: quoted characters and backslash-escaped ones are plain (marked with a backslash), except in
+// the pattern of find -name/-path, where the quotes only protect the pattern from the shell. A backslash before anything else
+// is a Windows separator. Returns null when the word has no glob, brace or unknown variable.
+function globWordPattern(word, quotedGlobs) {
+  let out = '';
+  let flagged = false;
+  let q = '';
+  for (let i = 0; i < word.length; i++) {
+    const c = word[i];
+    if (c === SHELL_MARK) { out += '*'; flagged = true; continue; }
+    if (q) {
+      if (c === q) { q = ''; continue; }
+      if (quotedGlobs) { out += c; flagged = flagged || '*?[{'.includes(c); } else out += '*?[]{},\\'.includes(c) ? '\\' + c : c;
+      continue;
+    }
+    if (c === '"' || c === "'") { q = c; continue; }
+    if (c === '\\') {
+      const nx = word[i + 1];
+      if (nx !== undefined && '*?[]{},\\"\' '.includes(nx)) { out += '\\' + nx; i++; } else out += '/';
+      continue;
+    }
+    if ('*?[{'.includes(c)) flagged = true;
+    out += c;
+  }
+  return flagged ? out : null;
+}
+
+// The words of a pattern after brace expansion ({a,b}, {v,}), at most MAX_BRACE_WORDS of them.
+function braceExpandOnce(s) {
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\') { i++; continue; }
+    if (s[i] !== '{') continue;
+    const commas = [];
+    let depth = 0;
+    let end = -1;
+    for (let j = i; j < s.length; j++) {
+      const c = s[j];
+      if (c === '\\') { j++; continue; }
+      if (c === '{') depth++;
+      else if (c === '}') { if (--depth === 0) { end = j; break; } } else if (c === ',' && depth === 1) commas.push(j);
+    }
+    if (end < 0 || !commas.length) continue;
+    const alts = [];
+    let from = i + 1;
+    for (const k of commas) { alts.push(s.slice(from, k)); from = k + 1; }
+    alts.push(s.slice(from, end));
+    return alts.map((a) => s.slice(0, i) + a + s.slice(end + 1));
+  }
+  return null;
+}
+function braceExpand(s) {
+  let results = [s];
+  for (let round = 0; round < 6; round++) {
+    const next = [];
+    let changed = false;
+    for (const r of results) {
+      const e = next.length < MAX_BRACE_WORDS ? braceExpandOnce(r) : null;
+      if (e) { changed = true; next.push(...e); } else next.push(r);
+    }
+    results = next.slice(0, MAX_BRACE_WORDS);
+    if (!changed) break;
+  }
+  return results;
+}
+
+function shellGlobHit(text) {
+  const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
+  let prev = '';
+  let prevEnd = 0;
+  let count = 0;
+  for (const m of lowered.matchAll(SHELL_WORD_RE)) {
+    const word = m[0];
+    if (++count > MAX_SHELL_WORDS) break;
+    const quotedGlobs = SHELL_NAME_FLAG_RE.test(prev);
+    const afterCommand = SHELL_COMMAND_WORD_RE.test(prev) && SHELL_BLANKS_RE.test(lowered.slice(prevEnd, m.index));
+    prev = word;
+    prevEnd = m.index + word.length;
+    if (word.length > MAX_SHELL_WORD) continue;
+    // A bare dot with wildcards (.*, .?*) is a glob only as a word of its own that follows a command or an option or a file name
+    // (cat .*, tar czf a.tgz .*): in a regular expression, a comment or a grammar it follows a bracket, a mark or a backslash.
+    const before = m.index > 0 ? lowered[m.index - 1] : '';
+    const after = lowered[m.index + word.length] || '';
+    const standalone = afterCommand && (before === '' || ' \t\r\n\f\v;&|'.includes(before)) && (after === '' || ' \t\r\n\f\v;&|)'.includes(after));
+    for (const reading of [word, ...gluedPathReadings(word)]) {
+      const pattern = globWordPattern(reading, quotedGlobs);
+      if (pattern === null) continue;
+      for (const expanded of braceExpand(pattern)) {
+        const home = expanded.replace(/^\/home\/[^\/]+\//, '~/').replace(/^\/root\//, '~/').replace(/^[a-z]:\/users\/[^\/]+\//, '~/');
+        const norm = normalizePathWord(home);
+        const segs = norm.split('/').filter(Boolean);
+        if (!segs.length || segs.length > MAX_GLOB_SEGMENTS) continue;
+        if (!standalone && SHELL_BARE_DOT_GLOB_RE.test(segs[segs.length - 1])) continue;
+        if (globReachesProtected(norm.startsWith('/'), segs)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Extra readings of a text for the protected names: variables, defaults, substitutions, escapes, globs and braces.
+function shellReadingHit(text) {
+  if (text.length > MAX_SHELL_TEXT || !SHELL_PREFILTER_RE.test(text)) return false;
+  const resolved = resolveShellText(text);
+  if (resolved !== text && testSensitivePathAs(resolved)) return true;
+  return shellGlobHit(resolved);
+}
+
 function testSensitivePathAs(text) {
   if (SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text) || NAMED_SECRET_FILE_RE.test(text) || HOME_SECRET_FILE_RE.test(text)) return true;
   const view = sensitivePathView(text);
   return SENSITIVE_PATH_RE.test(view) || NAMED_SECRET_FILE_RE.test(view) || HOME_SECRET_FILE_RE.test(view);
 }
 function testSensitivePath(text) {
-  return testSensitivePathAs(text) || cmdReadings(text).some(testSensitivePathAs);
+  return testSensitivePathAs(text) || cmdReadings(text).some(testSensitivePathAs) || shellReadingHit(text);
 }
 
 const SENSITIVE_PATH_RULES = [
