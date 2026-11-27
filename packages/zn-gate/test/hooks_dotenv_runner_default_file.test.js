@@ -158,8 +158,7 @@ test('dotenv-cli has no -f / --env-file: it still loads the default .env', async
     assert.equal(await verdict(dir, 'dotenv -e other.txt -- printenv'), 'allow');
     assert.equal(await verdict(dir, 'dotenvx run -f other.txt -- printenv'), 'allow');
   }
-  for (const dir of [project(t, 'PORT=1
-'), project(t, null)]) for (const c of forms) assert.equal(await verdict(dir, c), 'allow', c);
+  for (const dir of [project(t, 'PORT=1\n'), project(t, null)]) for (const c of forms) assert.equal(await verdict(dir, c), 'allow', c);
 });
 
 test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
