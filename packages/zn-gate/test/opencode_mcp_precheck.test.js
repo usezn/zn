@@ -308,6 +308,25 @@ test('opencode mcp: OPENCODE_CONFIG outside the project counts as user-level; in
   assert.equal(await denied(project), true);
 });
 
+test('opencode mcp: a project folder whose name starts with two dots is still inside the project', async (t) => {
+  const project = setup(t);
+  const dotted = path.join(project, '..secrets');
+  fs.mkdirSync(dotted);
+  fs.writeFileSync(path.join(dotted, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG = path.join(dotted, 'opencode.json');
+  assert.equal(await denied(project), true);
+  delete process.env.OPENCODE_CONFIG;
+  process.env.OPENCODE_CONFIG_DIR = dotted;
+  assert.equal(await denied(project), true);
+  delete process.env.OPENCODE_CONFIG_DIR;
+  // A folder outside the project whose name starts with two dots is still user-level.
+  const outside = path.join(tempDir(t, 'zn-occfg2-'), '..cfg');
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG = path.join(outside, 'opencode.json');
+  assert.equal(await denied(project), false);
+});
+
 test('opencode mcp: refusal texts are plain and name what was stopped', async (t) => {
   const project = setup(t, { mcp: { github: THIRD } });
   const internal = /placeholder|secrets_http_request/;

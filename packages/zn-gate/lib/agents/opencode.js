@@ -97,7 +97,8 @@ function mcpSafeName(s) { return String(s).replace(/[^A-Za-z0-9_-]/g, '_'); }
  * OpenCode reads project files from), by the path as written and once links are resolved. */
 function insideProject(root, file) {
   const start = path.resolve(root);
-  const within = (d, f) => { const rel = path.relative(d, f); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
+  // Outside means the parent segment itself (".." or "../..."): a folder named "..secrets" is inside.
+  const within = (d, f) => { const rel = path.relative(d, f); return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)); };
   const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
   let top = start;
   for (let dir = start; ; dir = path.dirname(dir)) {
