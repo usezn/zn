@@ -504,8 +504,9 @@ understands, so `warn` rules are sent only to 1.8.0 and later.
 ### Which agents the policy covers
 
 The organization policy is applied by the vault, so it holds for Claude Code,
-Codex, Cursor and OpenCode. For Cursor, zn cannot rewrite a shell command or put a value
-into a file: a shell command with a `__ZN_` marker is blocked with the
+Codex, Cursor and OpenCode, through `zn run` and the `secrets` MCP server. For
+Cursor, zn cannot rewrite a shell command or put a value into a file: a shell
+command with a `__ZN_` marker is blocked, whatever the policy says, with the
 instruction to use `zn run --`, an MCP call with a marker or a secret value is
 blocked, and a marker written into a file stays a marker. The `secrets` MCP
 server is added to Cursor by hand (`zn hooks install cursor` prints the line).
