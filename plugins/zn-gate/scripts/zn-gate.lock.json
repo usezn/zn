@@ -4,7 +4,7 @@
   "registry": "https://registry.npmjs.org",
   "integrity": "sha512-w7SYBCoueS1c/OzwMEvHU23gsgyx2oRVtLUqivjiiJEM0nVtL75vuhDRhAw5TD2/1A31TgkfwwBnRSG4ROc0oQ==",
   "attestations": true,
-  "builder": "07fe35bef3f44b174a2080323e206771645feee631ea5cf170ea3212ec1c7c29",
+  "builder": "64183c47683182d9ad48e2bcd364cb5882d02de0a3257193bb68a2e283585c4e",
   "files": {
     "DISCLOSURE": "f0b4d2e13ed5ee885925930f7981b2ae04cac9513460ad329d04380473cfad6d",
     "LICENSE": "a14f2e34934125e28ec5b4f2eb3de931f91115157345a0262454f290f0a74fa9",
