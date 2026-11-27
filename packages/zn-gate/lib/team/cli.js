@@ -264,7 +264,11 @@ async function syncCmd() {
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   // Exit 0 only with a valid policy applied and no failed upload.
   if (special === 'revoked') err('[zn] ' + messages.TEAM_REMOVED);
-  else if (special === 'nosub') err('[zn] sync incomplete: ' + o.problems.join('; '));
+  else if (special === 'nosub') {
+    err('[zn] sync incomplete: ' + o.problems.join('; '));
+    // The upload also found the organization inactive: say what happens to the audit records that wait here.
+    if (inactive) err('[zn] ' + messages.teamPendingKept(r.upload.pending));
+  }
   else if (special === 'inactive') err('[zn] ' + messages.teamSyncInactive(r.upload.pending));
   else if (special === 'offline') {
     err('[zn] ' + messages.teamSyncNoNetwork().split('\ndetails: ')[0]);

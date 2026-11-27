@@ -21,14 +21,11 @@ const daemon = require('../lib/vault/daemon');
 const { createClient } = require('../lib/vault/client');
 const { createSecretsServer } = require('../lib/broker/mcp');
 const policy = require('../lib/team/policy');
-const adapter = require('../lib/agents/claude-code');
 const fakeEngine = require('./helpers/fake_engine');
 const { startFakeTeamServer } = require('./helpers/fake_team_server');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const DAY = 86400000;
-const HOOK_LIMIT_MS = 1500;
-const ACME = 'ACME-' + 'K7Q2ZP4M9XW3LB8RT5VN6YC1';
 const DETECTOR = { id: 'acme', pattern: 'ACME-[A-Z0-9]{24}', type: 'ACME_TOKEN' };
 
 /* Async: the vault daemon runs in this process and must keep answering. */
@@ -76,25 +73,7 @@ async function request(agent, marker, url) {
   return { isError: Boolean(r.result.isError), text: r.result.content[0].text };
 }
 
-const read = (f) => fs.readFileSync(f, 'utf8');
-const audit = () => read(require('../lib/vault/store').paths().auditFile);
 const statusJson = async () => JSON.parse((await run(['team', 'status', '--json'])).stdout);
-
-function postEvent(text) {
-  return {
-    session_id: 's', cwd: HOME, permission_mode: 'default', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'env' },
-    tool_response: { stdout: text, stderr: '', interrupted: false, isImage: false }, tool_use_id: 'toolu_1',
-  };
-}
-/* The hook module keeps the compiled detectors for the life of the process: a fresh copy per case. */
-async function hookInProcess() {
-  delete require.cache[require.resolve('../lib/hooks/runner')];
-  const runner = require('../lib/hooks/runner');
-  const t0 = realNow();
-  const res = await runner.handle(adapter, postEvent('export INTERNAL=' + ACME + '\n'), { vault, failMode: 'open' });
-  const out = res.output && res.output.hookSpecificOutput;
-  return { ms: realNow() - t0, redacted: Boolean(out && out.updatedToolOutput && !out.updatedToolOutput.stdout.includes(ACME)) };
-}
 
 test.before(async () => {
   const created = await keychain.initIdentity({ passphrase: 'correct horse battery staple', workFactor: 10 });
