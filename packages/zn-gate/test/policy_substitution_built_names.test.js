@@ -119,3 +119,70 @@ test('ordinary substitutions stay allowed, also in a file position', () => {
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('unicode and octal escapes in printf build a protected name: refused', () => {
+  const { opts } = project();
+  for (const c of [
+    "cat $(printf '\\u002eenv')",
+    "cat $(printf '\\U0000002eenv')",
+    "cat $(printf '\\0056env')",
+    "cat $(printf '\\056%s' env)",
+    "cat $(printf '%b' '\\0056env')",
+    "cat $(printf '\\x2e\\u0065nv')",
+  ]) {
+    assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+  }
+});
+
+test('a substitution that pipes text into a filter or runs inline code in a file position is refused', () => {
+  const { opts } = project();
+  for (const c of [
+    'cat $(echo vne. | rev)',
+    'cat $(echo LmVudg== | base64 -d)',
+    "cat $(echo e n v | tr -d ' ' | sed 's/^/./')",
+    'cat $(rev <<< vne.)',
+    'cat $(echo 2e656e76 | xxd -r -p)',
+    'cat $(echo vne. | cut -c1-4 | rev)',
+    "cat $(python3 -c 'print(chr(46)+chr(101)+chr(110)+chr(118))')",
+    "cat $(perl -e 'print chr(46).q(env)')",
+    "cat $(node -e 'console.log(String.fromCharCode(46)+\"env\")')",
+    'echo x > $(echo vne. | rev)',
+  ]) {
+    assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+  }
+});
+
+test('printf -v builds a name in a variable that is read as a file', () => {
+  const { opts } = project();
+  for (const c of [
+    "printf -v f '%s%s' .e nv; cat $f",
+    "printf -v f '%s%s' .e nv; cat \"$f\"",
+    "printf -v f '\\056env' && cat ${f}",
+    'printf -v f %s .env; cat $f',
+    "printf -v k '%s_%s' id ed25519; cat ~/.ssh/$k",
+  ]) {
+    assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+  }
+  for (const c of [
+    "printf -v f '%s.%s' notes md; cat $f",
+    'printf -v when %s "$(date +%s)"; echo $when',
+    "printf -v n '%s' 5; head -n $n notes.md",
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
+
+test('lists and reads that are not filters stay allowed in a file position', () => {
+  const { opts } = project();
+  for (const c of [
+    'cat $(sed -n 1p list.txt)',
+    'cat $(ls -t | head -1)',
+    'cat $(ls | sort | tail -1)',
+    'cat $(git ls-files | head -1)',
+    'cat $(find . -name "*.md" | sort | head -1)',
+    'cat $(git diff --name-only | tail -1)',
+    'cat $(git rev-parse --show-toplevel)/README.md',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});

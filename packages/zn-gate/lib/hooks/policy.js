@@ -2904,8 +2904,19 @@ function shellAssignments(cmd, opts) {
     if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(v)) { unknown.add(name); continue; }
     out[name] = v;
   }
+  // printf -v NAME FORMAT ARGS sets NAME to what printf prints: worked out like a substitution, or unknown when it holds anything else.
+  for (const m of String(cmd).matchAll(PRINTF_V_RE)) {
+    if (++n > 64) break;
+    const name = m[2];
+    if (name in out || unknown.has(name)) { delete out[name]; unknown.add(name); continue; }
+    const w = plainSubstitutionWords(m[3].trim());
+    const printed = w && w.length ? printfSubstitutionOutput(w) : null;
+    if (printed === null) { unknown.add(name); continue; }
+    out[name] = printed;
+  }
   return { env: Object.keys(out).length ? out : null, unknown };
 }
+const PRINTF_V_RE = /(^|[\s;&|(){}])printf\s+-v\s+([A-Za-z_][A-Za-z0-9_]{0,63})\s+([^;&|\n]*)/g;
 
 function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
@@ -4028,8 +4039,30 @@ function suspectSubstitutionBody(body) {
   const all = joined.join('');
   return SUSPECT_NAMES.some((n) => n.length >= 4 && all.includes(n));
 }
+// A substitution that rewrites text with a filter (rev, base64 -d, tr, sed, cut, awk, xxd ...) after another command, or runs inline code
+// (python3 -c, perl -e, node -e, sh -c, eval), can print any name, whatever its words say. A listing or a plain read (ls -t | head -1,
+// git ls-files, find, cat list.txt, git rev-parse ...) is not one.
+const SUBST_FILTERS = new Set(['rev', 'base64', 'base32', 'basenc', 'tr', 'sed', 'cut', 'awk', 'gawk', 'mawk', 'xxd', 'od', 'hexdump', 'iconv', 'openssl',
+  'paste', 'fold', 'tac', 'fmt', 'nl', 'expand', 'unexpand', 'colrm', 'perl', 'python', 'python3', 'ruby', 'php', 'node', 'nodejs', 'lua']);
+const SUBST_INTERPRETERS = new Set(['perl', 'python', 'python3', 'ruby', 'php', 'node', 'nodejs', 'lua', 'sh', 'bash', 'zsh', 'dash', 'ksh']);
+const SUBST_WRAPPERS = new Set(['env', 'command', 'exec', 'nohup', 'time']);
+function filterSubstitutionBody(body) {
+  const stages = body.toLowerCase().split(/[|;&\n]+/);
+  for (let i = 0; i < stages.length && i < 64; i++) {
+    const toks = stages[i].trim().split(/\s+/).filter(Boolean);
+    let k = 0;
+    while (k < toks.length && (/^[a-z_][a-z0-9_]*=/.test(toks[k]) || SUBST_WRAPPERS.has(toks[k]))) k++;
+    if (k >= toks.length) continue;
+    const prog = toks[k].slice(toks[k].lastIndexOf('/') + 1);
+    if (prog === 'eval') return true;
+    const hereText = /<</.test(stages[i]);
+    if (SUBST_FILTERS.has(prog) && (i > 0 || hereText)) return true;
+    if (SUBST_INTERPRETERS.has(prog) && toks.slice(k + 1).some((x) => /^-[a-z]*[ce]$/.test(x))) return true;
+  }
+  return false;
+}
 function markSuspectSubstitutions(text) {
-  return replaceSubstitutions(text, (body) => (substitutionPrints(body) === null && suspectSubstitutionBody(body) ? SUSPECT_MARK : null));
+  return replaceSubstitutions(text, (body) => (substitutionPrints(body) === null && (filterSubstitutionBody(body) || suspectSubstitutionBody(body)) ? SUSPECT_MARK : null));
 }
 const SUSPECT_MESSAGE = (word) => 'zn: ' + word + ' was not read because a command substitution builds the file name from text close to a .env file or a credential file, ' +
   'and zn cannot tell what it prints. Write the file name out in full, or ask the user to run the command.';
