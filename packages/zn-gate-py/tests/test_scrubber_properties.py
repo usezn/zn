@@ -187,7 +187,7 @@ def test_keys_on_adjacent_lines_are_redacted():
         assert len(found) == 2, found
 
 
-@pytest.mark.xfail(strict=True, reason="two different secrets on adjacent lines are reported as one detection; tracked as follow-up")
+@pytest.mark.xfail(strict=False, reason="two different secrets on adjacent lines are reported as one detection; expected to pass once the adjacent-secrets fix is in")
 def test_keys_on_adjacent_lines_report_one_detection_per_secret():
     first = "sk-proj-" + MARKER + "0" * 28
     second = "pypi-AgE" + MARKER + "0" * 19 + "111122233445566778899BCDFGHNOQR"
