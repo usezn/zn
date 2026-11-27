@@ -10,9 +10,9 @@ You do this once, in the dashboard at usezn.com, signed in with the account that
 
 1. Create the organization and start the Team trial from the **Team** page.
 2. Invite people: **Team → Members → Invite**, with their email address and a role. The invitation link works once, for that address, for 7 days. It adds the person to the organization on the web; it is not what a machine joins with.
-3. Create a join token: **Team → Connected installations → New join token**. It starts with `znj_`, is valid for 7 days and works for as many machines as the organization has seats. Send it to each developer in a private message, together with the organization name.
+3. Create a join token: **Team → Members → Connected installations → New join token**. It starts with `znj_`, is valid for 7 days and works for as many machines as the organization has seats. Send it to each developer in a private message, together with the organization name.
 4. Publish a policy: **Team → Policies** (the format is below).
-5. Check that machines report in: **Connected installations** shows each machine's last seen time, policy version and audit records.
+5. Check that machines report in: **Team → Members → Connected installations** shows each machine's zn-gate version, when it was last seen and its audit records.
 
 Every dashboard step is described in [Administer your organization](https://usezn.com/docs/team/admin/).
 
@@ -85,7 +85,7 @@ zn team managed-config --agent claude-code --os macos
 
 ## Export the audit log
 
-For the whole organization, owners, admins and auditors export from the dashboard: **Team → Evidence**, as CSV, JSON or OpenTelemetry logs. Every export is recorded with its row count and SHA-256 ([Export the audit trail](https://usezn.com/docs/team/export/)). There is no `zn team` command for this.
+For the whole organization, owners, admins and auditors export from the dashboard: **Team → Evidence**, as CSV, JSON or OpenTelemetry logs. Every export is recorded in the activity log with its SHA-256; the download also states its row count and whether it was cut short ([Export the audit trail](https://usezn.com/docs/team/export/)). There is no `zn team` command for this.
 
 On one machine, the local vault audit log can be written as OpenTelemetry logs. This needs no account:
 
