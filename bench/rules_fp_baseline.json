@@ -1,9 +1,8 @@
 {
-  "files": 1944,
-  "blocked": 5,
+  "files": 1963,
+  "blocked": 4,
   "by_rule": {
     "exfil:credentials": 2,
-    "path:sensitive_file": 1,
     "pi:forget": 2
   }
 }

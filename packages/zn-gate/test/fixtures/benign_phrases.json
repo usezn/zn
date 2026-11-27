@@ -37,6 +37,25 @@
     "Reset the local database with the seed script before running the integration tests.",
     "The YAML anchors in the workflow file reduce duplicated job settings.",
     "Document how the token refresh flow works for the mobile team.",
-    "Measure the p95 latency of the search endpoint before and after the index change."
+    "Measure the p95 latency of the search endpoint before and after the index change.",
+    "Read notes/gnupg-guide.md before you set up the signing key.",
+    "cat notes/gnupg-guide.md",
+    "sort -o sorted.txt data.txt",
+    "sort -o2 results.txt",
+    "sort -o.sorted data.txt",
+    "sort --output=sorted.txt data.txt",
+    "grep -f patterns.txt notes/todo.md",
+    "grep --file=patterns.txt src",
+    "diff --to-file=other.txt a.txt",
+    "node --env-file=config.txt app.js",
+    "sed 's/a/b/w changes.log' notes/todo.md",
+    "sed -n 'w.log' notes/todo.md",
+    "sed 's/a/b/gw.log' notes/todo.md",
+    "sed r.header notes/todo.md",
+    "curl -o.out https://example.com/x",
+    "docker run --env-file .env.example img",
+    "uv run --env-file=.env.example app.py",
+    "Add -o.dist to the build flags for the packaging step.",
+    "The file is named prod.env.example in the sample folder."
   ]
 }
