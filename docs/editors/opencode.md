@@ -72,7 +72,7 @@ In our end-to-end run on Windows Server 2022 with OpenCode 1.19.3, with PowerShe
 
 Run `npx -y zn-gate check` in your own terminal. It makes a temporary folder with a fake `.env` file and an ordinary file, asks zn's hook to let the agent read each one, and reports whether the hook blocked the `.env` file and allowed the other. Nothing is sent over the network and no setting changes. See [Check that it works](../check.md).
 
-For OpenCode, this checks zn's rules — the hook runner the plugin drives. The plugin itself runs inside OpenCode, which `zn-gate check` does not start. We ran OpenCode end to end with the agent itself, with 0 secret values sent to the model provider; OpenCode 1.19.3 also ran end to end on Windows Server 2022. See [Agent compatibility](../compat.md).
+For OpenCode, this checks zn's rules — the hook runner the plugin drives. The plugin itself runs inside OpenCode, and `zn-gate check` does not open OpenCode or start a session. If OpenCode is installed, check only runs `opencode --version` to read its version, and prints that version in its report. We ran OpenCode end to end with the agent itself, with 0 secret values sent to the model provider; OpenCode 1.19.3 also ran end to end on Windows Server 2022. See [Agent compatibility](../compat.md).
 
 ## Uninstall
 
