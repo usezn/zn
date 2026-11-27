@@ -377,8 +377,8 @@ jobs:
         # Pin the action to a full commit SHA; the comment names the release.
         uses: usezn/zn@16706dd973e6f523f9a6e87df1942ae1cf4814ce # v1.18.0
         with:
-          version: '1.17.0'
-          package-sha256: '804d80e8086efdcccbb975129fd9281019a1ee9ec4b633ccb9afe279e7fe3a63'
+          version: '1.18.0'
+          package-sha256: 'f7c5cc14db99c7b54d8c151afda6ae500a8dc6b3bc6648ea1dd79c2af03412ef'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -412,7 +412,7 @@ jobs:
         # The zn-gate package version is set by version below.
         uses: usezn/zn@16706dd973e6f523f9a6e87df1942ae1cf4814ce # v1.18.0
         with:
-          version: '1.17.0'
+          version: '1.18.0'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
