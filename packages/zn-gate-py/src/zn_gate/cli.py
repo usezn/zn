@@ -802,7 +802,8 @@ def _run_evidence_pack(args: argparse.Namespace) -> int:
                                   fmt=options["format"], include_preview=bool(getattr(args, "include_preview", False)),
                                   generator=f"zn-gate {__version__}")
     except PackReadError as err:
-        print(f"zn-gate: the pack stopped. {err}. {out} is incomplete: do not use it.", file=sys.stderr)
+        # The log is read before anything is written, so the folder is not created.
+        print(f"zn-gate: the pack stopped. {err}. {out} was not written.", file=sys.stderr)
         return 1
     except OSError as err:
         print(f"zn-gate: the pack stopped. {_fs_error_text(err, out)}. {out} is incomplete: do not use it.", file=sys.stderr)
@@ -856,9 +857,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
         if res.get("read_error"):
-            # Same message as the npm package; nothing is written, so the output is never half a log.
-            incomplete = f" {args.output} is incomplete: do not use it." if getattr(args, "output", None) else ""
-            print(f"zn-gate: the export stopped. {res.get('error')}.{incomplete}", file=sys.stderr)
+            # Nothing is written (the npm package may leave a partial file, so it says "incomplete"; here the output is never half a log).
+            not_written = f" {args.output} was not written." if getattr(args, "output", None) else ""
+            print(f"zn-gate: the export stopped. {res.get('error')}.{not_written}", file=sys.stderr)
             return 1
         if not res.get("valid"):
             # Same two lines as the npm package.

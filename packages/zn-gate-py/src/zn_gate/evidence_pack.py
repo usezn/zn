@@ -67,13 +67,23 @@ Records that may help: records of tool calls that write or change files, setting
 Where to look: tool_name, verdict, rule, payload_sha256.
 """
 
-README_TEXT = """zn-gate evidence pack
+def readme_text(records_file: str) -> str:
+    """The README names the records file this pack actually writes (records.jsonl, or records.ocsf.jsonl for --format ocsf)."""
+    records_line = (
+        "the records in the period, one per line, in log order"
+        if records_file == "records.jsonl"
+        else "the records in the period as OCSF events, one per line, in log order"
+    )
+    return README_TEMPLATE.replace("{records_file}", records_file).replace("{records_line}", records_line)
+
+
+README_TEMPLATE = """zn-gate evidence pack
 =====================
 
 This folder holds the zn-gate records for one period, the result of checking the whole log, a summary, and a map of records that may help with a few audit criteria.
 
 Files
-- records.jsonl   the records in the period, one per line, in log order (with --format ocsf: records.ocsf.jsonl, the same records as OCSF events)
+- {records_file}   {records_line}
 - chain.json      the result of checking the hash chain of the whole log, and the first and last record of the period
 - summary.json    counts by verdict, agent and rule for the records in this folder
 - controls.md     which records may help as evidence for four criteria, and where to look
@@ -82,8 +92,8 @@ Files
 
 How to check the pack
 1. Compute the sha256 of each file and compare it with manifest.json.
-   Linux or macOS:  sha256sum records.jsonl chain.json summary.json controls.md README.txt
-   Windows:         Get-FileHash -Algorithm SHA256 records.jsonl
+   Linux or macOS:  sha256sum {records_file} chain.json summary.json controls.md README.txt
+   Windows:         Get-FileHash -Algorithm SHA256 {records_file}
 2. Run "zn-gate evidence --verify" on the original log. This checks the hash chain again. The check covers the whole log, not only the period in this folder.
 3. Open chain.json. "verified": true means the whole log checked out when the pack was made.
 
@@ -318,7 +328,7 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
     files["chain.json"] = _write_new(os.path.join(out_dir, "chain.json"), (_json_js(chain) + "\n").encode("utf-8"))
     files["summary.json"] = _write_new(os.path.join(out_dir, "summary.json"), (_json_js(summary) + "\n").encode("utf-8"))
     files["controls.md"] = _write_new(os.path.join(out_dir, "controls.md"), CONTROLS_TEXT.encode("utf-8"))
-    files["README.txt"] = _write_new(os.path.join(out_dir, "README.txt"), README_TEXT.encode("utf-8"))
+    files["README.txt"] = _write_new(os.path.join(out_dir, "README.txt"), readme_text(records_name).encode("utf-8"))
     current = now if now is not None else datetime.now(timezone.utc)
     manifest = {
         "generator": generator,

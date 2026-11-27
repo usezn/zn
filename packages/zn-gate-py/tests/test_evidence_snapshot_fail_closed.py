@@ -93,4 +93,6 @@ def test_cli_refuses_with_exit_1_and_writes_nothing(tmp_path, monkeypatch, capsy
     args = type("A", (), {"export": True, "format": "jsonl", "output": str(out), "manifest": True})()
     assert cli.cmd_evidence(args) == 1
     assert not out.exists() and not (tmp_path / "out.jsonl.manifest.json").exists()
-    assert "the export stopped" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "the export stopped. " in err and f"{out} was not written." in err
+    assert "incomplete" not in err

@@ -319,3 +319,32 @@ def test_snapshot_a_log_changed_after_the_chain_check_does_not_change_the_pack(l
 def test_snapshot_missing_log_gives_an_empty_pack(tmp_path):
     res = write_evidence_pack(str(tmp_path / "nope.jsonl"), str(tmp_path / "p"), generator="test", now=FIXED_NOW)
     assert res["total"] == 0 and res["records"] == 0
+
+
+def test_readme_names_the_records_file_the_pack_writes(ledger, run):
+    code, _ = run(ledger.out)
+    assert code == 0
+    code, _ = run(ledger.out + "-ocsf", format="ocsf")
+    assert code == 0
+    jsonl_readme = Path(ledger.out, "README.txt").read_text(encoding="utf-8")
+    ocsf_readme = Path(ledger.out + "-ocsf", "README.txt").read_text(encoding="utf-8")
+    assert "sha256sum records.jsonl chain.json" in jsonl_readme
+    assert "Get-FileHash -Algorithm SHA256 records.jsonl\n" in jsonl_readme
+    assert "records.ocsf.jsonl" not in jsonl_readme
+    assert "sha256sum records.ocsf.jsonl chain.json" in ocsf_readme
+    assert "Get-FileHash -Algorithm SHA256 records.ocsf.jsonl\n" in ocsf_readme
+    assert "records.jsonl" not in ocsf_readme
+
+
+def test_read_error_says_the_pack_was_not_written_and_writes_nothing(ledger, run, monkeypatch):
+    from zn_gate import evidence_pack as ep
+
+    def boom(file_path, tmp_dir):
+        raise ep.PackReadError("Cannot read the evidence log: EIO")
+
+    monkeypatch.setattr(ep, "_snapshot_log", boom)
+    code, cap = run(ledger.out)
+    assert code == 1
+    assert f"zn-gate: the pack stopped. Cannot read the evidence log: EIO. {ledger.out} was not written." in cap.err
+    assert "incomplete" not in cap.err
+    assert not os.path.exists(ledger.out)

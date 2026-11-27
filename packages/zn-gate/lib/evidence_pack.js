@@ -94,13 +94,14 @@ Records that may help: records of tool calls that write or change files, setting
 Where to look: tool_name, verdict, rule, payload_sha256.
 `;
 
-const README_TEXT = `zn-gate evidence pack
+// The README names the records file this pack actually writes (records.jsonl, or records.ocsf.jsonl for --format ocsf).
+const readmeText = (recordsFile) => `zn-gate evidence pack
 =====================
 
 This folder holds the zn-gate records for one period, the result of checking the whole log, a summary, and a map of records that may help with a few audit criteria.
 
 Files
-- records.jsonl   the records in the period, one per line, in log order (with --format ocsf: records.ocsf.jsonl, the same records as OCSF events)
+- ${recordsFile}   ${recordsFile === 'records.jsonl' ? 'the records in the period, one per line, in log order' : 'the records in the period as OCSF events, one per line, in log order'}
 - chain.json      the result of checking the hash chain of the whole log, and the first and last record of the period
 - summary.json    counts by verdict, agent and rule for the records in this folder
 - controls.md     which records may help as evidence for four criteria, and where to look
@@ -109,8 +110,8 @@ Files
 
 How to check the pack
 1. Compute the sha256 of each file and compare it with manifest.json.
-   Linux or macOS:  sha256sum records.jsonl chain.json summary.json controls.md README.txt
-   Windows:         Get-FileHash -Algorithm SHA256 records.jsonl
+   Linux or macOS:  sha256sum ${recordsFile} chain.json summary.json controls.md README.txt
+   Windows:         Get-FileHash -Algorithm SHA256 ${recordsFile}
 2. Run "zn-gate evidence --verify" on the original log. This checks the hash chain again. The check covers the whole log, not only the period in this folder.
 3. Open chain.json. "verified": true means the whole log checked out when the pack was made.
 
@@ -420,7 +421,7 @@ function writePackFromSnapshot(filePath, outDir, opts, deps) {
     'chain.json': write('chain.json', Buffer.from(JSON.stringify(chain) + '\n', 'utf8')),
     'summary.json': write('summary.json', Buffer.from(JSON.stringify(summary) + '\n', 'utf8')),
     'controls.md': write('controls.md', Buffer.from(CONTROLS_TEXT, 'utf8')),
-    'README.txt': write('README.txt', Buffer.from(README_TEXT, 'utf8')),
+    'README.txt': write('README.txt', Buffer.from(readmeText(format.recordsFile), 'utf8')),
   };
   const now = opts.now instanceof Date ? opts.now : new Date();
   const manifest = {

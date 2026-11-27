@@ -321,3 +321,19 @@ test('snapshot: the temporary copy is removed and a missing log still gives an e
   assert.equal(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('zn-pack-')).length, before);
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'empty', 'chain.json'))).records, 0);
 });
+
+test('README.txt names the records file the pack writes, for each format', (t) => {
+  const s = setup(t, SPECS);
+  const jsonlOut = path.join(s.dir, 'readme-jsonl');
+  const ocsfOut = path.join(s.dir, 'readme-ocsf');
+  assert.equal(run(s.home, ['pack', '--out', jsonlOut]).status, 0);
+  assert.equal(run(s.home, ['pack', '--out', ocsfOut, '--format', 'ocsf']).status, 0);
+  const jsonlReadme = fs.readFileSync(path.join(jsonlOut, 'README.txt'), 'utf8');
+  const ocsfReadme = fs.readFileSync(path.join(ocsfOut, 'README.txt'), 'utf8');
+  assert.match(jsonlReadme, /sha256sum records\.jsonl chain\.json/);
+  assert.match(jsonlReadme, /Get-FileHash -Algorithm SHA256 records\.jsonl\n/);
+  assert.equal(jsonlReadme.includes('records.ocsf.jsonl'), false);
+  assert.match(ocsfReadme, /sha256sum records\.ocsf\.jsonl chain\.json/);
+  assert.match(ocsfReadme, /Get-FileHash -Algorithm SHA256 records\.ocsf\.jsonl\n/);
+  assert.equal(/records\.jsonl/.test(ocsfReadme), false);
+});
