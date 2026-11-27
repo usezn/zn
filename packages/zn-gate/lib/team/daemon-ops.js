@@ -24,6 +24,7 @@ const changes = require('./changes');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
+const statusReport = require('./status-report');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
 const { INVISIBLE_ANY_RE } = require('../vault/confirm');
@@ -36,6 +37,9 @@ const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ALERT_EVERY_MS = 6 * 3600 * 1000; // a sync that keeps failing leaves one local alert every 6 hours
 const REVOCATION_GIVE_UP_MS = 30 * 24 * 3600 * 1000; // a revocation the server never confirms is dropped after 30 days
 const MAX_PENDING_REVOCATIONS = 8;
+const STATUS_UNSUPPORTED_RETRY_MS = 24 * 3600 * 1000; // a server without the status endpoint is asked again after a day (or with a new zn-gate version)
+// What the status report holds, in the words of the join dialog and of the one-time acceptance.
+const STATUS_REPORT_TEXT = 'zn-gate version, OS, the version and state of the organization policy (active, expired, refused or none), and which agents have zn hooks (ok, stale or broken). No paths, no names. Sent after each sync, every 15 minutes while the vault is unlocked.';
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
@@ -145,6 +149,58 @@ function makeTeamOps(ctx) {
       last_ok_at: typeof l.last_ok_at === 'string' ? l.last_ok_at : null,
       problems: Array.isArray(l.problems) ? l.problems.map((p) => printable(String(p), 200)).filter(Boolean) : [],
     };
+  }
+
+  /*
+   * The status report as `zn team status` shows it: whether it is on, and the exact body and time of the last attempt.
+   * It is on only when the person accepted it (the join dialog, or `zn team status-report accept` on a machine that
+   * joined before status reports existed); a record without the flag never sends.
+   */
+  function statusReportView(t) {
+    const sr = t.status_report && typeof t.status_report === 'object' ? t.status_report : null;
+    const on = Boolean(sr && sr.accepted === true);
+    const l = on && sr.last && typeof sr.last === 'object' ? sr.last : null;
+    const body = l && statusReport.isAllowedBody(l.body) ? l.body : null;
+    return {
+      on,
+      accepted_at: on ? printable(sr.accepted_at, 40) || null : null,
+      via: on && (sr.via === 'join' || sr.via === 'accept') ? sr.via : null,
+      last: l ? { at: printable(l.at, 40) || null, ok: l.ok === true, body, error: l.ok === true ? null : printable(l.error, 200) || null, last_ok_at: printable(l.last_ok_at, 40) || null } : null,
+      unsupported: Boolean(on && sr.unsupported && Number.isFinite(Date.parse(sr.unsupported.at))),
+    };
+  }
+
+  /*
+   * Send the status report once, after the policy step of a sync. Only for the membership that ran the sync and only
+   * with the acceptance flag; never throws and never changes what the sync reports. The last attempt (exact body,
+   * time, result) is kept in the vault for `zn team status`. A server without the endpoint (404/405) is asked
+   * again after a day or with a new zn-gate version, not at every sync.
+   */
+  async function sendStatusReport(snap, api) {
+    try {
+      const cur = await team();
+      if (!sameMembership(cur, snap)) return;
+      const sr = cur.status_report;
+      if (!sr || sr.accepted !== true) return;
+      const un = sr.unsupported;
+      if (un && un.version === VERSION && Date.now() - Date.parse(un.at) < STATUS_UNSUPPORTED_RETRY_MS) return;
+      const st = await policyState();
+      let hooks = null;
+      try { hooks = (ctx.listHooks || require('../hooks-list').listHooks)({}); } catch (err) { hooks = null; /* no hook information: the report goes without agents */ }
+      const body = statusReport.buildStatusBody({ version: VERSION, os: osName(), policyState: st.state, policyVersion: st.version, hooks });
+      if (!body || !statusReport.isAllowedBody(body)) return;
+      if (isClosed()) return;
+      const r = await api.reportStatus(body);
+      const at = new Date().toISOString();
+      await updateTeam((tt) => {
+        const prev = tt.status_report && typeof tt.status_report === 'object' ? tt.status_report : null;
+        if (!prev || prev.accepted !== true) return; // stopped meanwhile: nothing is written
+        const last = { at, ok: r.done === true, body, last_ok_at: r.done === true ? at : (prev.last && prev.last.last_ok_at) || null };
+        if (!r.done) last.error = printable(r.error, 200) || 'unknown';
+        prev.last = last;
+        if (r.unsupported) prev.unsupported = { at, version: VERSION }; else delete prev.unsupported;
+      }, snap);
+    } catch (err) { /* a status report never fails a sync */ }
   }
 
   /* What a new policy has to beat: the version held and its canonical digest (same version, other content = refused). */
@@ -357,6 +413,7 @@ function makeTeamOps(ctx) {
           ['Server', host],
           ['Join token', 'ends in ' + joinToken.slice(-6) + ' (check it against the one your administrator sent you)'],
           ['Shares', shares],
+          ['Status', STATUS_REPORT_TEXT],
           ['Applies', "the organization's signed policy for secrets (it can restrict; a new host for a secret asks you first)"],
         ],
         footer: 'If you did not just run `zn team join` yourself with a token from your administrator, choose Deny.',
@@ -411,6 +468,8 @@ function makeTeamOps(ctx) {
           // Records up to this sequence number are never uploaded (0: everything may be).
           upload_after_seq: afterSeq,
           upload_history: history,
+          // The join dialog listed the status report: that is the consent for it (see ops.teamStatusReport for older joins).
+          status_report: { accepted: true, accepted_at: new Date().toISOString(), via: 'join' },
         };
         writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         await state.saveSecrets();
@@ -487,6 +546,42 @@ function makeTeamOps(ctx) {
       return res.out;
     },
 
+    /**
+     * teamStatusReport({action}) -> {on, org, ...}. For a machine that joined before status reports existed (the join
+     * dialog now lists them, which covers a new join): `accept` turns the report on after a dialog on the vault's own
+     * channel, once; `stop` turns it off again (no dialog: it only sends less). Without the acceptance nothing is sent.
+     */
+    async teamStatusReport(args) {
+      const action = args && typeof args === 'object' ? args.action : undefined;
+      if (action !== 'accept' && action !== 'stop') throw znError(CODES.POLICY_DENIED, messages.TEAM_INVALID_REQUEST);
+      const t = await team();
+      if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
+      const orgLabel = t.org_name ? t.org_name + ' (' + t.org + ')' : t.org;
+      if (action === 'accept') {
+        if (t.status_report && t.status_report.accepted === true) return { on: true, already: true, org: t.org, org_name: t.org_name || null };
+        await confirmOutOfBand({
+          kind: 'team',
+          title: 'send a status report to organization ' + t.org + '?',
+          warnings: [],
+          fields: [
+            ['Organization', orgLabel],
+            ['Server', new URL(t.api_base).host],
+            ['Sends', STATUS_REPORT_TEXT],
+            ['Stop', 'run `zn team status-report stop`, or `zn team leave`'],
+          ],
+          footer: 'If you did not just run `zn team status-report accept` yourself, choose Deny.',
+        }, { mode: 'set', reason: 'team_status_report' });
+      }
+      const snap = membership(t);
+      const r = await updateTeam((tt) => {
+        if (action === 'accept') tt.status_report = { accepted: true, accepted_at: new Date().toISOString(), via: 'accept' };
+        else delete tt.status_report;
+        writeAudit({ mode: 'set', decision: 'allow', reason: action === 'accept' ? 'team_status_report_on' : 'team_status_report_off' });
+      }, snap);
+      if (!r) throw znError(CODES.POLICY_DENIED, 'the organization membership changed meanwhile; run the command again');
+      return { on: action === 'accept', org: t.org, org_name: t.org_name || null };
+    },
+
     /** teamInfo() -> what `zn team status` shows. Never the token. */
     async teamInfo() {
       const t = await team();
@@ -512,6 +607,7 @@ function makeTeamOps(ctx) {
         join_pending: st.state === 'none' || st.state === 'invalid',
         upload_after_seq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
         last_sync: lastSyncOf(t),
+        status_report: statusReportView(t),
         ...(pendingList(secrets0).length ? { revocations: revocationsView(secrets0) } : {}),
         ...(dropped ? { revocations_dropped: dropped } : {}),
       };
@@ -636,6 +732,9 @@ function makeTeamOps(ctx) {
       // Keep the readable copy in line with the vault (it may have been edited or deleted), only while this is still
       // the membership that started the sync. A copy that cannot be written fails the sync.
       if (!(await ensureCopies(snap, true))) return stale();
+      // The status report follows the policy step and does not depend on the audit upload. Not when the policy step
+      // found the machine removed or the server unreachable (the report would only time out too).
+      if (!['revoked', 'offline'].includes(out.policy.status) && !isClosed()) await sendStatusReport(snap, api);
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         // The log is checked before anything leaves the machine; one that does not verify is never sent.

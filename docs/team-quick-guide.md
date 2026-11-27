@@ -19,6 +19,7 @@ zn team status
 - `zn team join` is confirmed on the vault's own channel (the terminal of `zn unlock --foreground`, or a system dialog), not in the terminal where the command ran. An AI agent cannot answer that dialog.
 - The dialog shows the organization name, who invited the developer, the server and the last characters of the token. Tell your team to compare them with what you sent, and to choose Deny if they did not start the command.
 - `zn team status` shows the organization, policy version and expiry, and the upload state. It never shows the install token.
+- The join dialog also lists a short status report: the zn-gate version, the OS family, the policy version and state, and whether each agent's hooks are ok, stale or broken. No paths, no names. `zn team status` shows exactly what was sent last.
 
 ## Commands your team will use
 
@@ -27,6 +28,7 @@ zn team status
 | `zn team join <token>` | Connects this machine to your organization. |
 | `zn team status` | Shows the organization, policy version and upload state. `--json` for scripts. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. |
+| `zn team status-report accept` or `stop` | Only for a machine that joined before the status report existed: it sends nothing until you accept once. `stop` turns it off. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
 
 Sync also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. `zn team sync` exits with `1` when the policy is rejected or the machine was removed.

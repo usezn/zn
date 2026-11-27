@@ -171,7 +171,7 @@ and the team commands that join or sync with a zn organization. On a computer
 without internet, leave the cloud check off: with it off, the hooks and
 `zn-gate analyze` send nothing to usezn.com. Two other opt-in features send data
 there: `zn-gate stats share on`, which sends daily counts (off by default), and
-`zn team join`, which uploads audit metadata. See
+`zn team join`, which uploads audit metadata and, with your consent at join, a short status report (zn-gate version, OS, policy state, which agents have hooks; no paths, no names). See
 [Install on a machine without internet](install-matrix.md#install-on-a-machine-without-internet)
 for the full list and the offline install steps.
 

@@ -876,6 +876,7 @@ function makeOps(state, ctl) {
 
     teamJoin: team.teamJoin,
     teamLeave: team.teamLeave,
+    teamStatusReport: team.teamStatusReport,
     teamInfo: team.teamInfo,
     teamHookInfo: team.teamHookInfo,
     teamChangeShown: team.teamChangeShown,
