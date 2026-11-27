@@ -36,7 +36,7 @@
     "writeDenial"
   ],
   "sha256": {
-    "lib/hooks/policy.js": "7aa760d0cced0199da3cc3a23ca8065f5289651794a0cf7eda29ed6ee79ad45d",
+    "lib/hooks/policy.js": "589e023146049d95cbc983485bc07135176a0d69d1de896d9bac757fad77baca",
     "lib/hooks/curl-files.js": "c1c87057eabf0f7cf1eccacf1822ec92e6242b328455b0756d269a168945a6c8",
     "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
     "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",

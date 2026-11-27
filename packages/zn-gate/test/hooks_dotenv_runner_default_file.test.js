@@ -89,3 +89,62 @@ test('a runner given its own file option, or a step that loads nothing, does not
     'node -e "x" dotenvx run -- printenv',
   ]) assert.equal(await verdict(dir, c), 'allow', c);
 });
+
+const BYPASS_FORMS = [
+  'dotenvx --log-level info run -- printenv',
+  'dotenvx -l info run -- printenv',
+  'dotenvx --log-level debug get',
+  'dotenv printenv -f x',
+  'dotenv node app.js -e x',
+  'dotenvx run node app.js -f x',
+  'dotenvx run -- printenv -f x',
+  'dotenvx frobnicate',
+  'dotenvx',
+];
+
+test('a dotenvx option with a value before the step, or a file option of the wrapped command, does not hide the default .env', async (t) => {
+  const dir = project(t, SECRET);
+  for (const c of BYPASS_FORMS) assert.equal(await verdict(dir, c), 'deny', c);
+  const enc = project(t, ENCRYPTED);
+  for (const c of BYPASS_FORMS) assert.equal(await verdict(enc, c), 'deny', c);
+});
+
+test('the same forms pass when .env has no plain secret or does not exist', async (t) => {
+  for (const dir of [project(t, 'PORT=1\n'), project(t, null)]) {
+    for (const c of BYPASS_FORMS) assert.equal(await verdict(dir, c), 'allow', c);
+  }
+});
+
+test('a file option that belongs to the runner still stands in for the default .env', async (t) => {
+  const dir = project(t, SECRET);
+  for (const c of [
+    'dotenvx --log-level info run -f other.txt -- printenv',
+    'dotenvx run -f other.txt -- printenv -f x',
+    'dotenv -e other.txt printenv',
+    'dotenv -e other.txt -- node app.js -e x',
+    'dotenvx --log-level info ls',
+    'dotenvx --version',
+    'dotenvx run --help',
+  ]) assert.equal(await verdict(dir, c), 'allow', c);
+});
+
+test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
+  const dir = project(t, null);
+  fs.mkdirSync(path.join(dir, 'sub'));
+  fs.mkdirSync(path.join(dir, 'ok'));
+  fs.writeFileSync(path.join(dir, 'sub', '.env'), SECRET);
+  fs.writeFileSync(path.join(dir, 'ok', '.env'), 'PORT=1\n');
+  for (const c of [
+    'cd sub && dotenvx run -- printenv',
+    'cd sub; dotenv -- printenv',
+    'pushd sub && dotenvx get',
+    'cd ./sub && npx dotenvx run -- env',
+    'cd $APP_DIR && dotenvx run -- printenv',
+    'cd sub && dotenv -e other.txt -- printenv && dotenvx run -- printenv',
+  ]) assert.equal(await verdict(dir, c), 'deny', c);
+  for (const c of [
+    'cd ok && dotenvx run -- printenv',
+    'cd ok && dotenv -- printenv',
+    'cd sub && dotenvx run -f other.txt -- printenv',
+  ]) assert.equal(await verdict(dir, c), 'allow', c);
+});
