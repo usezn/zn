@@ -498,16 +498,26 @@ impl ZnEngine {
         }
     }
 
+    /// True when removing `name` would leave no policy while enforcement is configured: the hot reload and
+    /// the delete endpoint must never swap to an empty set.
+    pub fn is_protected_last_policy(&self, name: &str) -> bool {
+        self.policy_enforcement_configured()
+            && self.policies.len() == 1
+            && self.policies.contains_key(name)
+    }
+
     /// Unregister a policy by name, unless that would leave no policy while enforcement is configured.
     /// Returns false (and keeps the policy) in that case: the hot reload must never swap to an empty set.
     pub fn unregister_policy_unless_last(&self, name: &str) -> bool {
-        if self.policy_enforcement_configured()
-            && self.policies.len() == 1
-            && self.policies.contains_key(name)
-        {
+        self.unregister_policy_unless_last_because(name, "it was removed from the folder")
+    }
+
+    /// Same as `unregister_policy_unless_last`, with the reason that is logged when the policy is kept.
+    pub fn unregister_policy_unless_last_because(&self, name: &str, reason: &str) -> bool {
+        if self.is_protected_last_policy(name) {
             error!(
-                "Policy '{}' was removed from the folder, but it is the last one and policy enforcement is configured: keeping the loaded policy",
-                name
+                "Policy '{}' should be unloaded because {}, but it is the last one and policy enforcement is configured: keeping the loaded policy",
+                name, reason
             );
             #[cfg(test)]
             self.kept_last_refusals

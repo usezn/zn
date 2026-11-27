@@ -830,7 +830,10 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
     for notice in &config_notices {
         eprintln!("Warning: {notice}");
     }
+    build_pipeline_from(config).await
+}
 
+async fn build_pipeline_from(config: ZnConfig) -> Result<AnalyzerPipeline> {
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
         gas_limit: config.engine.gas_limit,
@@ -1957,6 +1960,13 @@ async fn policies_delete_handler(
     // file to delete is the matching entry of a listing of the policy
     // directory, never a path built from the name. A missing file is not an
     // error, so deleting twice succeeds.
+    // The last policy cannot be deleted while enforcement is configured: check before touching the file.
+    if state.engine.is_protected_last_policy(&payload.name) {
+        return axum::response::Json(serde_json::json!({
+            "status": "error",
+            "error": format!("Policy '{}' is the last loaded policy and policy enforcement is configured (a signing key or allowed policy hashes): it was not deleted. Upload another policy first.", payload.name)
+        }));
+    }
     if let Err(e) = zn::engine::remove_policy_file(&state.config.engine.policy_dir, &payload.name) {
         return axum::response::Json(serde_json::json!({
             "status": "error",
@@ -1965,7 +1975,7 @@ async fn policies_delete_handler(
     }
 
     // Unregister from engine
-    state.engine.unregister_policy(&payload.name);
+    state.engine.unregister_policy_unless_last(&payload.name);
 
     axum::response::Json(serde_json::json!({
         "status": "ok",
@@ -2675,6 +2685,72 @@ mod audit_isolation_tests {
             "{msg}"
         );
         assert!(msg.contains("--port") && msg.contains("ZN_PORT"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn build_pipeline_refuses_without_policies_when_enforcement_is_configured() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = zn::config::ZnConfig::default();
+        config.engine.policy_dir = dir.path().to_string_lossy().into_owned();
+        config.engine.allowed_policy_hashes = vec!["00".repeat(32)];
+        let err = build_pipeline_from(config)
+            .await
+            .err()
+            .expect("must refuse without policies");
+        assert!(err.to_string().contains("zn did not start"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn deleting_the_last_policy_is_refused_and_keeps_the_file() {
+        let (mut state, dir) = test_state(None);
+        let policies = dir.path().join("policies");
+        std::fs::create_dir_all(&policies).unwrap();
+        let wasm: &[u8] = b"\0asm\x01\0\0\0";
+        for n in ["one", "two"] {
+            std::fs::write(policies.join(format!("{n}.wasm")), wasm).unwrap();
+        }
+        let mut cfg = (*state.config).clone();
+        cfg.engine.policy_dir = policies.to_string_lossy().into_owned();
+        state.config = Arc::new(cfg);
+        let hash = {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(wasm))
+        };
+        state.engine = Arc::new(
+            ZnEngine::new(zn::engine::ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![hash],
+                signing_public_key: None,
+            })
+            .expect("engine"),
+        );
+        state.engine.load_all_policies(&policies).expect("load");
+        assert_eq!(state.engine.policy_count(), 2);
+        let call = |name: &str| {
+            policies_delete_handler(
+                axum::extract::State(state.clone()),
+                axum::Extension(tenant("t", TenantRole::SuperAdmin)),
+                axum::Json(DeletePolicyRequest {
+                    name: name.to_string(),
+                }),
+            )
+        };
+
+        let ok = call("one").await.0;
+        assert_eq!(ok["status"], "ok", "{ok}");
+        assert!(!policies.join("one.wasm").exists());
+        assert!(!state.engine._has_policy("one"));
+
+        let refused = call("two").await.0;
+        assert_eq!(refused["status"], "error", "{refused}");
+        assert!(
+            refused["error"].as_str().unwrap().contains("last"),
+            "{refused}"
+        );
+        assert!(policies.join("two.wasm").exists(), "the file stays");
+        assert!(state.engine._has_policy("two"));
     }
 
     fn tenant(namespace: &str, role: TenantRole) -> TenantContext {

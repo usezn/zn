@@ -58,24 +58,29 @@ impl PolicyWatcher {
 
             while let Some(event) = rx.recv().await {
                 if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
-                    let removed = event.kind.is_remove();
                     for path in event.paths {
                         match classify(&path) {
-                            PolicyFile::Policy if !removed => {
-                                reload(&engine, &path).await;
+                            // A directory that happens to be named x.wasm is not a policy.
+                            PolicyFile::Policy if path.is_dir() => {}
+                            // Created or changed, or the target of a rename: load it.
+                            PolicyFile::Policy if path.exists() => {
+                                reload(&engine, &path, false).await;
                             }
+                            // Deleted, or renamed away (the old path is gone): unload it unless it is
+                            // the last policy and enforcement is configured.
                             PolicyFile::Policy => {
                                 if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
                                     engine.unregister_policy_unless_last(name);
                                 }
                             }
-                            // A signature file is not the policy: adding, changing or removing it
-                            // never unregisters anything. The policy is verified again against the
-                            // signature as it is now; a failure keeps the policy that is loaded
-                            // and is logged.
+                            // A signature file is not the policy. The policy is verified again against
+                            // the signature as it is now. With enforcement configured a policy that no
+                            // longer verifies is unloaded (fail closed), unless it is the last one: then
+                            // it stays loaded and the error names the reason. Without enforcement
+                            // a failure is only logged and the loaded policy stays.
                             PolicyFile::Signature(policy) => {
                                 if policy.is_file() {
-                                    reload(&engine, &policy).await;
+                                    reload(&engine, &policy, true).await;
                                 }
                             }
                             PolicyFile::Other => {}
@@ -112,13 +117,21 @@ fn classify(path: &std::path::Path) -> PolicyFile {
     }
 }
 
-async fn reload(engine: &ZnEngine, path: &std::path::Path) {
+async fn reload(engine: &ZnEngine, path: &std::path::Path, signature_event: bool) {
     info!("Policy change detected: {:?}", path);
     // Give some time for the file to be fully written
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     if let Err(e) = engine.register_policy_from_file(path) {
         error!("Failed to reload policy {:?}: {}", path, e);
+        if signature_event && engine.policy_enforcement_configured() {
+            if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                engine.unregister_policy_unless_last_because(
+                    name,
+                    "its signature was removed or no longer verifies",
+                );
+            }
+        }
     } else {
         info!("Policy successfully reloaded: {:?}", path);
     }
@@ -337,26 +350,108 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn deleting_the_signature_keeps_the_signed_policy_loaded() {
+    async fn deleting_or_breaking_a_signature_unloads_the_policy_unless_it_is_the_last() {
         let dir = tempfile::tempdir().expect("tempdir");
         let sk = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
         let engine = signed_engine(&sk);
         let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+        let refusals = || {
+            engine
+                .kept_last_refusals
+                .load(std::sync::atomic::Ordering::SeqCst)
+        };
 
-        write_signed(dir.path(), &sk, "p");
-        wait_until("p registered", || engine._has_policy("p"));
-        write_signed(dir.path(), &sk, "q");
-        wait_until("q registered", || engine._has_policy("q"));
+        for name in ["p", "q", "r"] {
+            write_signed(dir.path(), &sk, name);
+            wait_until("registered", || engine._has_policy(name));
+        }
 
-        // The signature goes away: p is checked again, fails, and stays as it was; it is not unregistered.
+        // The signature is removed: p no longer verifies and is unloaded; the others stay.
         std::fs::remove_file(dir.path().join("p.wasm.sig")).unwrap();
-        // Positive control, handled after the removal.
-        write_signed(dir.path(), &sk, "control");
+        wait_until("p unloaded", || !engine._has_policy("p"));
+        assert!(engine._has_policy("q") && engine._has_policy("r"));
+        assert!(
+            dir.path().join("p.wasm").exists(),
+            "the policy file is not touched"
+        );
+
+        // The signature is changed to an invalid value: q is unloaded.
+        std::fs::write(dir.path().join("q.wasm.sig"), "AAAA").unwrap();
+        wait_until("q unloaded", || !engine._has_policy("q"));
+        assert!(engine._has_policy("r"));
+
+        // A .wasm.pqs event (no PQ key configured, so it changes nothing for r) keeps r loaded.
+        std::fs::write(dir.path().join("r.wasm.pqs"), b"x").unwrap();
+        // r is the last one: breaking its signature keeps it and says why.
+        std::fs::remove_file(dir.path().join("r.wasm.sig")).unwrap();
+        wait_until("removal for the last policy refused", || refusals() >= 1);
+        assert!(engine._has_policy("r"));
+        assert_eq!(engine.policy_count(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_broken_signature_only_logs_without_enforcement() {
+        // A file named p.sig or p.wasm.pqs is ignored, and without enforcement a reload failure keeps the policy.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let engine = test_engine();
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+        std::fs::write(dir.path().join("p.wasm"), EMPTY_WASM).unwrap();
+        wait_until("p registered", || engine._has_policy("p"));
+        std::fs::write(dir.path().join("p.wasm.pqs"), b"x").unwrap();
+        std::fs::write(dir.path().join("p.wasm.sig"), b"x").unwrap();
+        std::fs::remove_file(dir.path().join("p.wasm.sig")).unwrap();
+        std::fs::write(dir.path().join("control.wasm"), EMPTY_WASM).unwrap();
         wait_until("control registered", || engine._has_policy("control"));
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(engine._has_policy("p"));
-        assert!(engine._has_policy("q"));
-        assert_eq!(engine.policy_count(), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn renaming_a_wasm_file_away_unloads_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let engine = test_engine();
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+        std::fs::write(dir.path().join("a.wasm"), EMPTY_WASM).unwrap();
+        std::fs::write(dir.path().join("b.wasm"), EMPTY_WASM).unwrap();
+        wait_until("both registered", || {
+            engine._has_policy("a") && engine._has_policy("b")
+        });
+        std::fs::rename(dir.path().join("a.wasm"), dir.path().join("a.wasm.bak")).unwrap();
+        wait_until("a unloaded", || !engine._has_policy("a"));
+        assert!(engine._has_policy("b"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn renaming_the_last_wasm_file_away_keeps_it_under_enforcement() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("only.wasm"), EMPTY_WASM).unwrap();
+        let engine = engine_allowing_only(EMPTY_WASM);
+        engine.load_all_policies(dir.path()).expect("load");
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+        std::fs::rename(
+            dir.path().join("only.wasm"),
+            dir.path().join("only.wasm.bak"),
+        )
+        .unwrap();
+        wait_until("rename refused", || {
+            engine
+                .kept_last_refusals
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 1
+        });
+        assert!(engine._has_policy("only"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_directory_named_like_a_policy_is_ignored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let engine = test_engine();
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+        std::fs::create_dir(dir.path().join("x.wasm")).unwrap();
+        std::fs::write(dir.path().join("control.wasm"), EMPTY_WASM).unwrap();
+        wait_until("control registered", || engine._has_policy("control"));
+        assert!(!engine._has_policy("x"));
+        assert_eq!(engine.policy_count(), 1);
     }
 
     #[test]
