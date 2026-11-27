@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import json
 import http.client
+import ipaddress
 import os
+import re
 import socket
 import threading
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import Any, Dict, Optional, cast
 
 from .rules import evaluate, redact_secrets
@@ -91,6 +94,14 @@ class _BoundedHTTPSHandler(urllib.request.HTTPSHandler):
         return self.do_open(_BoundedHTTPSConnection, req, context=getattr(self, "_context", None))
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Never follows a redirect: the API key must not travel to any URL but the one the caller chose.
+    With no new request, urllib reports the 3xx answer as an HTTPError, like any other HTTP error (Node stops there too)."""
+
+    def redirect_request(self, req: Any, fp: Any, code: Any, msg: Any, headers: Any, newurl: Any) -> None:
+        return None
+
+
 _OPENER: Optional[urllib.request.OpenerDirector] = None
 
 
@@ -98,8 +109,42 @@ def _open(req: Any, timeout: Optional[float] = None) -> Any:
     """urlopen with the proxy settings of the environment and a name lookup that ends within `timeout`."""
     global _OPENER
     if _OPENER is None:
-        _OPENER = urllib.request.build_opener(_BoundedHTTPSHandler)
+        _OPENER = urllib.request.build_opener(_BoundedHTTPSHandler, _NoRedirectHandler)
     return _OPENER.open(req, timeout=timeout)
+
+
+# The shape of a usable key, as in the Node.js client (lib/cloud-key.js): 16 to 256 letters, digits, dot, underscore or dash.
+_KEY_RE = re.compile(r"[A-Za-z0-9._-]{16,256}")
+
+
+def usable_api_key(value: Any) -> Optional[str]:
+    """The key without surrounding spaces when it has a usable shape, else None."""
+    if not isinstance(value, str):
+        return None
+    k = value.strip()
+    return k if _KEY_RE.fullmatch(k) else None
+
+
+def _is_loopback_host(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _check_endpoint(endpoint: str) -> None:
+    """Refuses any endpoint that is not https (plain http only to this machine) before a request is built."""
+    parsed = urllib.parse.urlsplit(endpoint)
+    scheme = parsed.scheme.lower()
+    if scheme == "https" and parsed.hostname:
+        return
+    if scheme == "http" and _is_loopback_host(parsed.hostname):
+        return
+    raise ValueError("the cloud endpoint must be an https URL: the API key is not sent anywhere else")
 
 
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
@@ -168,8 +213,13 @@ def analyze_cloud(
     timeout: float = 4.0,
     long_input: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Sends a payload to the zn cloud gate (stdlib urllib). Secrets are always redacted first."""
+    """Sends a payload to the zn cloud gate (stdlib urllib). Secrets are always redacted first.
+    The key goes only to the endpoint given (https; http only to this machine), and a redirect is never followed."""
     endpoint = endpoint_url or DEFAULT_ENDPOINT
+    key = usable_api_key(api_key)
+    if key is None:
+        raise ValueError("no usable API key (16 to 256 letters, digits, dot, underscore or dash)")
+    _check_endpoint(endpoint)
     redacted, _ = redact_secrets(input_text)
     body: Dict[str, Any] = {"input": redacted}
     if long_input == "windows":
@@ -177,7 +227,7 @@ def analyze_cloud(
     payload = json.dumps(body).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key.strip()}",
+        "Authorization": f"Bearer {key}",
         "User-Agent": f"zn-gate/{__version__} (python-stdlib-client)",
     }
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
