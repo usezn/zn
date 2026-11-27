@@ -235,6 +235,7 @@ test('dotenv counts as a runner only as the program or right after a launcher', 
     'pnpm dlx dotenv -e .env -- node app.js', 'yarn dlx dotenv -e .env -- node app.js', 'npm exec dotenv -e .env -- node app.js',
     'pnpx dotenv -e .env -- node app.js', 'pnpm exec dotenv -e .env -- node app.js', 'bun x dotenv -e .env -- node app.js',
     'npx -y dotenv -e .env -- node app.js', 'npx --yes dotenv -e .env -- node app.js',
+    'cd sub && npx dotenv -e ../.env -- node app.js; npx dotenv -e .env -- node app.js',
     'dotenvx run -f .env -- node app.js']) {
     assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', command);
   }
@@ -245,7 +246,10 @@ test('dotenv counts as a runner only as the program or right after a launcher', 
     "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" pnpm dlx dotenv -e .env",
     'python3 w.py bunx dotenv -e .env', 'cp notes.txt npm exec dotenv -e .env',
     // Only value-less launcher flags may stand between the launcher and dotenv; any other word ends the launch.
-    'npx w.js dotenv -e .env', 'pnpm w.js dlx dotenv -e .env']) {
+    'npx w.js dotenv -e .env', 'pnpm w.js dlx dotenv -e .env',
+    // A launcher word repeated as an argument does not start a new launch.
+    'npx w.js npx dotenv -e .env', 'bunx w.js bunx dotenv -e .env', 'npm exec w.js npm exec dotenv -e .env',
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" node npx dotenv -e .env"]) {
     assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
   }
 });

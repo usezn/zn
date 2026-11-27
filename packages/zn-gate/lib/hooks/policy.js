@@ -1626,7 +1626,9 @@ function dotenvReadOnlyWord(w, shellChecked) {
 /**
  * The words of a command that are the value of an env-file option: --env-file X or --env-file=X of node, bun, deno, docker or podman,
  * and -e / -f / --env-file X (or =X) of dotenv, dotenv-cli or dotenvx, before a `--`. Only a plain name that classifies as a watched
- * dotenv file counts. Returns a Map from the word to the name it reads.
+ * dotenv file counts. Returns a Map from the word to the name it reads. words is one reading of the command (see allWords): its
+ * program word is the first word of each simple command that names the program, so a later word with the same text (npx w.js npx
+ * dotenv ...) is an argument, not a new start.
  */
 function envFileValueWords(words, opts) {
   const out = new Map();
@@ -1639,14 +1641,15 @@ function envFileValueWords(words, opts) {
   // the first word of a two-word launcher, null otherwise. Only an open launch makes the next dotenv runner the launched program.
   let launch = null;
   let launchHead = null;
+  let seenProgram = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
-    // The words hold each reading of the command in turn; a reading starts again at the program word.
-    const programWord = programName(t) === programName(w.head);
-    if (programWord) { runner = false; ended = false; }
+    // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
+    const programWord = !seenProgram && programName(t) === programName(w.head);
+    if (programWord) seenProgram = true;
     const wasLaunch = launch;
     if (programWord) {
       const p = programName(t);
@@ -3007,7 +3010,9 @@ function bashDenialOf(cmd, opts = {}) {
   // The same for the code an interpreter runs (python -c "open('.env')"), where a path sits inside quotes and brackets.
   // A program that is not read-only (awk 'BEGIN{print 1 > ".env"}', sed -n 'w .env') can name a dotenv file inside its own program text: its
   // words are split too.
-  const envFileValues = envFileValueWords(words, opts);
+  // Each reading is read on its own: its simple commands restart the program word (allWords numbers them from 1 in every reading).
+  const envFileValues = new Map();
+  for (const reading of readings) for (const [k, v] of envFileValueWords(reading, opts)) envFileValues.set(k, v);
   opts.envFileValues = envFileValues;
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
       (/\.env/i.test(text) && words.some((w) => w.head !== '' && !envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)))) {
