@@ -342,29 +342,65 @@ def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool, inclu
     return ",".join(cells)
 
 
+def _read_error_check(message: str) -> Dict[str, Any]:
+    """The check result for a log that could not be read to the end: not valid, read_error set."""
+    return {"valid": False, "error": message, "broken_index": None, "truncated_tail": False, "total": 0,
+            "tip_hash": GENESIS_HASH, "tip_record_hash": None, "first_timestamp": None,
+            "last_timestamp": None, "read_error": True, "rows": [], "parsed": []}
+
+
+def _same_file(src_fd: int, file_path: str) -> bool:
+    """False when the path now names another file than the one that is open (log replaced meanwhile)."""
+    try:
+        a = os.fstat(src_fd)
+        b = os.stat(file_path)
+    except OSError:
+        return True  # a missing path is not a different file; the bytes copied are still one file's
+    if not (a.st_ino and b.st_ino):
+        return True  # no usable identity on this platform
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
 @contextmanager
 def ledger_snapshot(file_path: str) -> Iterator[str]:
     """Yields the path of a private copy of the log (up to its size when it was opened), so that the
     chain check and everything built from it read the same bytes even if the log changes meanwhile.
-    A log that does not exist, or cannot be copied, is yielded as it is: the check then reports it."""
-    tmp_dir = tempfile.mkdtemp(prefix="zn-export-")
+    A log that does not exist is yielded as it is: the check then reports it as empty. Any other
+    failure (cannot open or copy, the log got shorter while it was copied, the log was replaced)
+    raises EvidenceLedgerError: the live file is never read instead, as in the npm package."""
     try:
-        copy = os.path.join(tmp_dir, "evidence.jsonl")
+        src = open(file_path, "rb")
+    except FileNotFoundError:
+        yield file_path
+        return
+    except OSError as e:
+        raise EvidenceLedgerError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    with src:
+        tmp_dir = tempfile.mkdtemp(prefix="zn-export-")
         try:
-            with open(file_path, "rb") as src, open(copy, "xb") as dst:
-                left = os.fstat(src.fileno()).st_size
-                while left > 0:
-                    data = src.read(min(256 * 1024, left))
-                    if not data:
-                        break
-                    dst.write(data)
-                    left -= len(data)
-        except OSError:
-            yield file_path
-            return
-        yield copy
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+            copy = os.path.join(tmp_dir, "evidence.jsonl")
+            try:
+                size = os.fstat(src.fileno()).st_size
+                with open(copy, "xb") as dst:
+                    left = size
+                    while left > 0:
+                        data = src.read(min(256 * 1024, left))
+                        if not data:
+                            raise EvidenceLedgerError(
+                                "Cannot read the evidence log: the log got shorter while it was read")
+                        dst.write(data)
+                        left -= len(data)
+                if os.fstat(src.fileno()).st_size < size:
+                    raise EvidenceLedgerError(
+                        "Cannot read the evidence log: the log got shorter while it was read")
+            except OSError as e:
+                raise EvidenceLedgerError(f"Cannot read the evidence log: {e.strerror or e}") from e
+            if not _same_file(src.fileno(), file_path):
+                raise EvidenceLedgerError(
+                    "Cannot read the evidence log: the log was replaced while it was read")
+            yield copy
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def inspect_ledger(file_path: str) -> Dict[str, Any]:
@@ -437,8 +473,11 @@ def export_timesketch(file_path: str, fmt: str, include_preview: bool = False) -
     """The whole Timesketch export as one string, with the chain check result (same fields as
     export_evidence_ledger). Lines that are not JSON objects give no event; a record after a
     break is written with zn_chain_verified false."""
-    with ledger_snapshot(file_path) as snapshot:
-        check = inspect_ledger(snapshot)
+    try:
+        with ledger_snapshot(file_path) as snapshot:
+            check = inspect_ledger(snapshot)
+    except EvidenceLedgerError as e:
+        check = _read_error_check(str(e))
     out: List[str] = []
     if fmt == "timesketch-csv":
         out.append(",".join(timesketch_csv_headers(include_preview)) + "\n")
@@ -497,16 +536,20 @@ def export_plain(file_path: str, fmt: str) -> Dict[str, Any]:
     """The jsonl or csv export, byte for byte what the Node package writes for the same log, with
     the chain check result. csv gives one row for every line that is a JSON value other than null."""
     # One copy of the log: the chain check and the raw text read the same bytes.
-    with ledger_snapshot(file_path) as snapshot:
-        check = inspect_ledger(snapshot)
-        if fmt == "csv":
-            out = [",".join(PLAIN_CSV_HEADERS) + "\n"]
-            for rec, ok in check["parsed"]:
-                if ok and rec is not None:
-                    out.append(_csv_row(rec) + "\n")
-            content = "".join(out)
-        else:
-            content = _raw_jsonl(snapshot, check)
+    try:
+        with ledger_snapshot(file_path) as snapshot:
+            check = inspect_ledger(snapshot)
+            if fmt == "csv":
+                out = [",".join(PLAIN_CSV_HEADERS) + "\n"]
+                for rec, ok in check["parsed"]:
+                    if ok and rec is not None:
+                        out.append(_csv_row(rec) + "\n")
+                content = "".join(out)
+            else:
+                content = _raw_jsonl(snapshot, check)
+    except EvidenceLedgerError as e:
+        check = _read_error_check(str(e))
+        content = ""
     result = {
         "content": content, "format": fmt, "valid": check["valid"], "error": check["error"],
         "tip_hash": check["tip_hash"], "total": check["total"], **_manifest_fields(check),
