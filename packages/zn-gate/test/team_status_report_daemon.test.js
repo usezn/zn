@@ -21,7 +21,8 @@ const { isAllowedBody } = require('../lib/team/status-report');
 
 const confirmations = [];
 let answer = true;
-const confirm = async (req) => { confirmations.push(req); return answer; };
+const confirmFn = { current: null };
+const confirm = async (req) => { if (confirmFn.current) return confirmFn.current(req); confirmations.push(req); return answer; };
 let srv = null;
 let cloud = null;
 let vault = null;
@@ -65,4 +66,41 @@ test('join turns the report on, the daemon sends it, stop and accept go through 
   assert.strictEqual(inst.statusReports, 2);
   info = await vault.teamInfo();
   assert.strictEqual(info.status_report.via, 'accept');
+});
+
+test('accept with no confirmation channel stores nothing and sends nothing', async () => {
+  await vault.teamStatusReport({ action: 'stop' });
+  const inst = [...cloud.state.installs.values()][0];
+  const before = inst.statusReports;
+  const saved = confirmations.length;
+  const noChannel = async () => { const e = new Error('no confirmation channel'); e.noChannel = true; throw e; };
+  const prev = confirmFn.current;
+  confirmFn.current = noChannel;
+  try {
+    await assert.rejects(vault.teamStatusReport({ action: 'accept' }));
+  } finally {
+    confirmFn.current = prev;
+  }
+  assert.strictEqual(confirmations.length, saved);
+  let info = await vault.teamInfo();
+  assert.strictEqual(info.status_report.on, false);
+  await vault.teamSync({});
+  assert.strictEqual(inst.statusReports, before);
+  info = await vault.teamInfo();
+  assert.strictEqual(info.status_report.on, false);
+  assert.strictEqual(info.status_report.last, null);
+});
+
+test('a join through the client still needs the dialog, so there is no consent without it', async () => {
+  await vault.teamLeave({}).catch(() => {});
+  const noChannel = async () => { const e = new Error('no confirmation channel'); e.noChannel = true; throw e; };
+  const prev = confirmFn.current;
+  confirmFn.current = noChannel;
+  try {
+    await assert.rejects(vault.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 5 }), api_base: cloud.base, agent: 'claude-code' }));
+  } finally {
+    confirmFn.current = prev;
+  }
+  const info = await vault.teamInfo();
+  assert.strictEqual(info.joined, false);
 });

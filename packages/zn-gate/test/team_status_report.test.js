@@ -354,3 +354,39 @@ test('the api: reportStatus never throws for an answer, and a body with the wron
   cloud.setStatusMode({ status: 429, headers: { 'Retry-After': '12' } });
   assert.strictEqual((await api.reportStatus({ zn_gate_version: '1.19.0', os: 'linux', policy: { version: 1, state: 'none' }, agents: [] })).retryAfterSeconds, 12);
 });
+
+test('a stop that lands while the report is being built sends nothing and stores no last report', async () => {
+  const m = machine();
+  cloud.publishPolicy({ rules: [] });
+  const r = await m.o.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 20 }), api_base: cloud.base, agent: 'claude-code' });
+  let stopped = 0;
+  // The hook listing runs after the first read of the flag and before the request: the stop lands exactly there.
+  const racing = makeTeamOps({
+    state: { opts: { home: process.env.ZN_HOME }, paths: { auditFile: path.join(process.env.ZN_HOME, 'audit.jsonl') }, loadSecrets: async () => m.secrets, saveSecrets: async () => {}, serial: (fn) => fn() },
+    fetchImpl, writeAudit: () => {},
+    listHooks: () => { stopped += 1; delete m.secrets.team.status_report; return HOOKS; },
+    confirmOutOfBand: async () => {},
+  });
+  m.secrets.team.status_report = { accepted: true, accepted_at: new Date().toISOString(), via: 'join' };
+  await racing.teamSync({});
+  assert.strictEqual(stopped, 1);
+  assert.strictEqual(statusRequests().length, 0);
+  assert.strictEqual(cloud.state.installs.get(r.install_id).statusReports || 0, 0);
+  assert.strictEqual(m.secrets.team.status_report, undefined);
+  const info = await racing.teamInfo();
+  assert.strictEqual(info.status_report.on, false);
+  assert.strictEqual(info.status_report.last, null);
+});
+
+test('the status request carries only the install token and the client header besides the standard ones', async () => {
+  const m = await joined();
+  await m.o.teamSync({});
+  const q = statusRequests();
+  assert.strictEqual(q.length, 1);
+  assert.strictEqual(q[0].authorized, true);
+  // The client sets accept, content-type, user-agent and x-zn-client; fetch adds only transport headers. Nothing else.
+  const allowed = new Set(['accept', 'content-type', 'user-agent', 'x-zn-client', 'host', 'connection', 'content-length', 'accept-encoding', 'accept-language', 'sec-fetch-mode']);
+  assert.deepStrictEqual(Object.keys(q[0].headers).filter((h) => !allowed.has(h)), []);
+  for (const h of ['accept', 'content-type', 'user-agent', 'x-zn-client', 'content-length']) assert.ok(q[0].headers[h], h);
+  assert.match(q[0].headers['x-zn-client'], /^zn-gate\/[0-9A-Za-z.+_-]{1,32}$/);
+});

@@ -190,6 +190,9 @@ function makeTeamOps(ctx) {
       const body = statusReport.buildStatusBody({ version: VERSION, os: osName(), policyState: st.state, policyVersion: st.version, hooks });
       if (!body || !statusReport.isAllowedBody(body)) return;
       if (isClosed()) return;
+      // Consent can be withdrawn (stop, leave, removal) while the body was built: look again right before sending.
+      const again = await team();
+      if (!sameMembership(again, snap) || !again.status_report || again.status_report.accepted !== true) return;
       const r = await api.reportStatus(body);
       const at = new Date().toISOString();
       await updateTeam((tt) => {
