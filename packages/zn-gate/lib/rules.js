@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.1
+ * RULES_VERSION: 2026-11-27.9
  */
 
-const RULES_VERSION = '2026-11-27.1';
+const RULES_VERSION = '2026-11-27.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -779,11 +779,14 @@ function isWrapChar(c) {
 // is text.length). Returns null when the text has no invisible character. A
 // match [s, e) in `clean` covers text [map[s], map[e - 1] + 1), which includes
 // the invisible characters inside it.
-function invisibleView(text) {
+// With `parity` 0 or 1, only every second wrap break is joined (the even or the odd ones), so a key wrapped across two
+// lines is joined alone, whatever the lines around it.
+function invisibleView(text, parity = null) {
   const runs = [];
   for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
   for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
   if (text.length <= MAX_WRAP_VIEW_CHARS && text.includes('\n')) {
+    let breaks = 0;
     for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
       let start = i;
       if (start > 0 && text[start - 1] === '\r') start--;
@@ -792,7 +795,10 @@ function invisibleView(text) {
       if (start === 0 || !isWrapChar(text.charCodeAt(start - 1))) continue;
       WRAP_BREAK_AT_RE.lastIndex = start;
       const m = WRAP_BREAK_AT_RE.exec(text);
-      if (m) runs.push(start, start + m[0].length);
+      if (m) {
+        if (parity === null || breaks % 2 === parity) runs.push(start, start + m[0].length);
+        breaks++;
+      }
     }
   }
   if (runs.length === 0) return null;
@@ -1076,9 +1082,11 @@ const SECRET_PATTERNS = [
   { id: 'secret:anthropic_key', pattern: /(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_ANTHROPIC_KEY]' },
   // A key without a known prefix ends at the first character that is not a letter or digit.
   { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))/g, replacement: '[REDACTED_OPENAI_KEY]' },
+  // Before the AWS rules, as in Python: the start of a GitHub token on a line of its own, joined to the next line, is a token
+  // until the key on that line is redacted.
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
   { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
-  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
   // The lookahead + backreference pairs act as atomic groups, so a long run of
   // "-eyJ" cannot make the engine retry every split point, and the lookbehind
@@ -1358,25 +1366,6 @@ function spanIn(map, start, end) {
 // has invisible characters, on the text without them, so a secret is found when
 // either run finds it: "AKIA" + 16 characters + zero-width space + "foo" is found
 // on the original text, and "AKIA" + zero-width space + 16 characters on the view.
-// True when a rule of `patterns` matches starting at the first non-space character after `from`
-// (before `limit`): the next line starts a secret of its own, so it is not the tail of a wrapped one.
-const STICKY = new WeakMap();
-function startsSecretAt(text, from, limit, patterns) {
-  let pos = from;
-  while (pos < limit && /\s/.test(text[pos])) pos++;
-  if (pos >= limit) return false;
-  for (const p of patterns) {
-    let re = STICKY.get(p);
-    if (!re) {
-      re = new RegExp(p.pattern.source, p.pattern.flags.replace(/[gy]/g, '') + 'y');
-      STICKY.set(p, re);
-    }
-    re.lastIndex = pos;
-    if (re.test(text)) return true;
-  }
-  return false;
-}
-
 // The spaced view of the last text a rule was run on (see spaceInvisible), so the many rules of one text
 // build it once.
 let spacedMemo = { text: null, spaced: null };
@@ -1385,8 +1374,69 @@ function spacedView(text) {
   return spacedMemo.spaced;
 }
 
-function ruleCandidates(item, text, view, budget, out, patterns = null) {
+// How far a joined match is followed to the end of the token it stopped inside, and how many line breaks inside a
+// joined match are tried as the end of the first key (see MAX_WRAP_EXTEND in rules.py).
+const MAX_WRAP_EXTEND = 2048;
+const MAX_WRAP_CUTS = 8;
+// How many more passes redactSecrets makes over a text that still has a joinable line break.
+const MAX_WRAP_SWEEPS = 2;
+const MARKER_RE = /\[REDACTED_[A-Z0-9_]+\]/g;
+
+// The end of the token a joined match stopped inside, through the line breaks WRAP_BREAK_RE joins: `end` itself when
+// the match does not stop inside a token (see _run_end in rules.py).
+function runEnd(text, end) {
+  const n = text.length;
+  if (end >= n || !isWrapChar(text.charCodeAt(end))) return end;
+  const limit = Math.min(n, end + MAX_WRAP_EXTEND);
+  for (;;) {
+    while (end < limit && isWrapChar(text.charCodeAt(end))) end++;
+    WRAP_BREAK_AT_RE.lastIndex = end;
+    const m = WRAP_BREAK_AT_RE.exec(text);
+    if (m === null || end + m[0].length > limit) return end;
+    end += m[0].length;
+  }
+}
+
+// True when the secret rules redact every character of `text` but whitespace.
+function allRedacted(text) {
+  return redactSecrets(text).sanitized.replace(MARKER_RE, '').replace(/\s+/g, '') === '';
+}
+
+// What to do with a match of the wrap-joined text, text[start, end), that holds line breaks (see _wrap_resolve in
+// rules.py). { action: 'cut', at }: the first key ends at the line break `at`, because the rest is redacted by the
+// rules on its own (only breaks from `lo` on are tried). { action: 'keep', at }: the match stands and ends at `at`,
+// the end of the token it stopped inside, so no part of that token is left readable.
+function wrapResolve(text, start, end, lo) {
+  const ext = runEnd(text, end);
+  const re = new RegExp(WRAP_BREAK_RE.source, 'g');
+  re.lastIndex = lo;
+  let tried = 0;
+  let m;
+  while ((m = re.exec(text)) !== null && m.index < end) {
+    if (m.index <= start) continue;
+    if (++tried > MAX_WRAP_CUTS) break;
+    if (allRedacted(text.slice(m.index + m[0].length, ext))) return { action: 'cut', at: m.index };
+  }
+  return { action: 'keep', at: ext };
+}
+
+// The two views of `text` that join every second wrap break, without the ones equal to the view that joins all of them:
+// empty for a text with fewer than two breaks (see _parity_views in rules.py).
+function parityViews(text, view) {
+  if (!view || !text.includes('\n') || text.length > MAX_WRAP_VIEW_CHARS) return [];
+  const out = [];
+  for (const parity of [0, 1]) {
+    const v = invisibleView(text, parity);
+    if (v && v.clean !== view.clean && v.clean !== text && out.every((o) => o.clean !== v.clean)) out.push(v);
+  }
+  return out;
+}
+
+function ruleCandidates(item, text, view, budget, out, extraViews = []) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  // The views that join every second line break find a key wrapped across two lines next to other lines; a match there
+  // that overlaps a match on the text itself is left to the view that joins all of them.
+  for (const v of extraViews) passes.push([v.clean, v.map, false, true]);
   // A third pass reads each invisible character as a space; its indexes are the original ones.
   if (view) {
     const spaced = spacedView(text);
@@ -1401,7 +1451,7 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const foundEnds = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
-  for (const [hay, map, spaced] of passes) {
+  for (const [hay, map, spaced, extra] of passes) {
     if (item.requires && !hay.includes(item.requires)) continue;
     if (item.prefilter && !item.prefilter.test(hay)) continue;
     regex.lastIndex = 0;
@@ -1425,7 +1475,8 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
           if (item.valueFilter(value, prefix)) continue;
         }
       }
-      const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      const [start, spanEnd] = spanIn(map, m.index, m.index + m[0].length);
+      let end = spanEnd;
       if (spaced) {
         // Same indexes as the original: the span cannot join two matches, and it is not in order.
       } else if (!map) {
@@ -1434,8 +1485,13 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
       } else {
         const first = upperBound(foundEnds, start);
         const over = lowerBound(foundStarts, end) - first;
-        if (over >= 2) continue;
-        if (over === 1 && patterns && startsSecretAt(text, foundEnds[first], end, patterns)) continue;
+        if (over >= 2 || (extra && over >= 1)) continue;
+        if (text.slice(start, end).includes('\n')) {
+          const r = wrapResolve(text, start, end, start + 1);
+          // The first key is already a match on the text itself: the joined match adds nothing to it.
+          if (r.action === 'cut' && over === 1 && foundStarts[first] <= start && foundEnds[first] >= r.at) continue;
+          if (!item.replacement.includes('$')) end = r.at;
+        }
       }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
@@ -1657,6 +1713,41 @@ function redactCredentials(text) {
 // of what both find, so a secret split by a zero-width or tag character is
 // redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
+  return closeOpenEndedTails(redactSecretsPasses(text));
+}
+
+// A key with no fixed length (OpenAI sk-..., Anthropic sk-ant-..., PyPI pypi-...) that is wrapped across lines ends
+// wherever the line ends, so the rules cannot tell where it stopped: a last piece that is shorter than a joinable
+// line, or one that the key on the next line was hiding, stays behind the marker. A line that is nothing but a token
+// (token characters, then at most closing quotes or brackets and spaces) right after the marker of such a key is the
+// rest of that key and goes with it, whatever the token looks like: a plain word there is redacted too, which is the
+// price of leaving no part of a key readable. A line with more text after its first word is not touched.
+const OPEN_TAIL_RE = /(\[REDACTED_(?:OPENAI_KEY|ANTHROPIC_KEY|PYPI_TOKEN)\])[ \t]*\r?\n[ \t]*[A-Za-z0-9_\-+/=]{1,256}(?=[\x22'`;,)\]}>]*[ \t]*(?:\r?\n|(?![\s\S])))/g;
+
+function closeOpenEndedTails(result) {
+  const t = result.sanitized;
+  if (result.detections.length === 0 || typeof t !== 'string' || !t.includes('\n') || t.length > MAX_WRAP_VIEW_CHARS || !t.includes('[REDACTED_')) return result;
+  const out = t.replace(OPEN_TAIL_RE, '$1');
+  return out === t ? result : { sanitized: out, detections: result.detections };
+}
+
+function redactSecretsPasses(text) {
+  let result = credentialPass(text);
+  // A key that a later rule's redaction was hiding from an earlier one (two keys on adjacent lines are read as one
+  // joined token until one of them is redacted) is found by one more pass over what is left. Only a text that still
+  // has a line break the wrap-join would remove is read again.
+  for (let i = 0; i < MAX_WRAP_SWEEPS; i++) {
+    const t = result.sanitized;
+    if (result.detections.length === 0 || typeof t !== 'string' || !t.includes('\n') || t.length > MAX_WRAP_VIEW_CHARS ||
+        !new RegExp(WRAP_BREAK_RE.source).test(t)) break;
+    const more = credentialPass(t);
+    if (more.detections.length === 0) break;
+    result = { sanitized: more.sanitized, detections: result.detections.concat(more.detections) };
+  }
+  return result;
+}
+
+function credentialPass(text) {
   const first = redactCredentials(text);
   if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
   const second = redactProviderFormats(first.sanitized);
@@ -1716,7 +1807,7 @@ function redactScanRules(text) {
 function redactScanSecrets(text) {
   const first = redactCredentials(text);
   const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
-  return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
+  return closeOpenEndedTails({ sanitized: second.sanitized, detections: first.detections.concat(second.detections) });
 }
 
 function redactWith(text, patterns) {
@@ -1727,14 +1818,16 @@ function redactWith(text, patterns) {
   const detections = [];
   const budget = { left: MAX_FILTERED_CHARS };
   let view = null;
+  let extraViews = [];
   let dirty = true;
   for (const item of patterns) {
     if (dirty) {
       view = invisibleView(sanitized);
+      extraViews = parityViews(sanitized, view);
       dirty = false;
     }
     const cands = [];
-    ruleCandidates(item, sanitized, view, budget, cands, patterns);
+    ruleCandidates(item, sanitized, view, budget, cands, extraViews);
     if (cands.length === 0) continue;
     let out = '';
     let last = 0;
@@ -1982,6 +2075,7 @@ function copyResult(res) {
 }
 
 module.exports = {
+  wrapResolve,
   evaluate,
   ADVISORY_BY_DEFAULT,
   analyzePrompt: evaluate,
@@ -1999,6 +2093,7 @@ module.exports = {
   MIN_INVISIBLE_CHECK_CHARS,
   normalizeInput,
   invisibleView,
+  parityViews,
   scanWindows,
   truncatedBlocks,
   MAX_SCAN_CHARS,
