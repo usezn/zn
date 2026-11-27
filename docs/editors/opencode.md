@@ -58,7 +58,7 @@ If the runner cannot be started, times out or answers something the plugin does 
 
 ### The events
 
-- `tool.execute.before`: the call is checked before it runs. Reads of secret files are blocked, and a question zn would ask is a deny with the way to approve it (OpenCode cannot show a question). The arguments of MCP tool calls are checked too, as for Claude Code and Cursor: a placeholder or a secret value in a call to another MCP server is blocked. Only the `secrets` server that zn installs may carry placeholders.
+- `tool.execute.before`: the call is checked before it runs. Reads of secret files are blocked, and a question zn would ask is a deny with the way to approve it (OpenCode cannot show a question). The arguments of MCP tool calls are checked too, as for Claude Code and Cursor: a placeholder or a secret value in a call to another MCP server is blocked, and personal data goes through the same check (it follows the egress setting; where zn would ask, OpenCode shows a block). Only the `secrets` server that zn installs may carry placeholders.
 - `tool.execute.after`: secret values are replaced with `__ZN_` tokens in the output the model sees — the plain output, MCP tool results, and the preview OpenCode keeps in its local database. Output that OpenCode stored while the command was still running was written before the hook ran and is out of its reach.
 - `chat.message`: the message is checked before it is stored and sent.
 

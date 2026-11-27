@@ -129,3 +129,49 @@ test('opencode mcp: built-ins that only return text (TOKENIZED_OUTPUT) skip the 
   const mcp = await call(project, 'github_get_file', { path: 'a' }, { engine: boom });
   assert.equal(mcp.decision.decision, 'deny');
 });
+
+test('opencode mcp: only config files up to the git root count; one above it does not make the server ours', async (t) => {
+  const dir = tempDir(t, 'zn-ocmcp-git-');
+  const home = path.join(dir, 'xdg');
+  fs.mkdirSync(home);
+  const outer = path.join(dir, 'outer');
+  const repo = path.join(outer, 'repo');
+  const sub = path.join(repo, 'pkg');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.mkdirSync(path.join(repo, '.git'));
+  const names = ['XDG_CONFIG_HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR'];
+  const saved = {};
+  for (const k of names) saved[k] = process.env[k];
+  process.env.XDG_CONFIG_HOME = home;
+  delete process.env.OPENCODE_CONFIG;
+  delete process.env.OPENCODE_CONFIG_CONTENT;
+  delete process.env.OPENCODE_CONFIG_DIR;
+  t.after(() => { for (const k of names) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  const tool = 'secrets_secrets_http_request';
+  // Above the git root: not read.
+  fs.writeFileSync(path.join(outer, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  assert.equal((await call(sub, tool, { token: MARKER })).output.action, 'deny');
+  // At the git root: read, from a subfolder of the repository.
+  fs.writeFileSync(path.join(repo, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  assert.notEqual((await call(sub, tool, { token: MARKER })).decision.decision, 'deny');
+  // Without any .git above, only the working folder is read.
+  const loose = path.join(dir, 'loose');
+  const looseSub = path.join(loose, 'a');
+  fs.mkdirSync(looseSub, { recursive: true });
+  fs.writeFileSync(path.join(loose, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  assert.equal((await call(looseSub, tool, { token: MARKER })).output.action, 'deny');
+  assert.notEqual((await call(loose, tool, { token: MARKER })).decision.decision, 'deny');
+});
+
+test('opencode mcp: personal data in a third-party call follows the egress setting', async (t) => {
+  const project = setup(t, { mcp: { github: THIRD } });
+  const pii = { scan: (text) => { const i = String(text).indexOf('jane@example.com'); return i < 0 ? [] : [{ start: i, end: i + 16, type: 'EMAIL', source: 'pii' }]; }, async prepare(ctx) { return ctx; } };
+  const args = { body: 'write to jane@example.com' };
+  // Default: zn would ask; OpenCode cannot ask, so the call is denied with the reason.
+  const ask = await call(project, 'github_create_issue', args, { engine: pii, egressCheck: 'ask' });
+  assert.equal(ask.output.action, 'deny');
+  assert.match(ask.output.message, /personal data/);
+  // With the egress check off, nobody is asked and the call goes through.
+  const off = await call(project, 'github_create_issue', args, { engine: pii, egressCheck: 'off' });
+  assert.equal(off.decision.decision, 'allow');
+});

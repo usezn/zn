@@ -116,12 +116,20 @@ function readMcpServers(root, env) {
   if (env.OPENCODE_CONFIG_DIR) dirs.push(path.resolve(env.OPENCODE_CONFIG_DIR));
   for (const d of dirs) { readFile(path.join(d, 'opencode.json')); readFile(path.join(d, 'opencode.jsonc')); }
   if (env.OPENCODE_CONFIG) readFile(path.resolve(env.OPENCODE_CONFIG));
-  let dir = path.resolve(root);
-  for (;;) {
-    for (const f of ['opencode.json', 'opencode.jsonc', path.join('.opencode', 'opencode.json'), path.join('.opencode', 'opencode.jsonc')]) readFile(path.join(dir, f));
+  // The project files OpenCode reads: from the working folder up to the git work tree root (the nearest folder with
+  // .git), and no further. With no .git above, only the working folder.
+  const start = path.resolve(root);
+  const dirsUp = [];
+  let found = false;
+  for (let dir = start; ;) {
+    dirsUp.push(dir);
+    if (fs.existsSync(path.join(dir, '.git'))) { found = true; break; }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
+  }
+  for (const dir of found ? dirsUp : [start]) {
+    for (const f of ['opencode.json', 'opencode.jsonc', path.join('.opencode', 'opencode.json'), path.join('.opencode', 'opencode.jsonc')]) readFile(path.join(dir, f));
   }
   if (env.OPENCODE_CONFIG_CONTENT) {
     try { take(parseJsonc(String(env.OPENCODE_CONFIG_CONTENT))); } catch (_) { ok = false; }
