@@ -227,11 +227,12 @@ test('a percent-encoded file: URI naming .env on a line of a multi-line value is
   }
 });
 
-// A search, title or message that is only the word ".env" is text, not a file: it passes. A path (./.env, sub/.env) under the same
-// keys, and a bare .env under a file key or any other key, is still refused.
-test('a free-text value that is only the word .env passes; a path to .env under the same key does not', async (t) => {
+// A search query that is only the word ".env", in a tool whose name says it reads or searches, is text, not a file: it passes. A path
+// (./.env, sub/.env) under the same keys, a bare .env under any other key (title, message, a file key), and a .env in an array are
+// still refused.
+test('a search query that is only the word .env passes; a path to .env, or .env under another key, does not', async (t) => {
   const dir = project(t);
-  for (const [key, value] of [['query', '.env'], ['q', '.env.local'], ['title', ' .env '], ['search', '.env']]) {
+  for (const [key, value] of [['query', '.env'], ['q', '.env.local'], ['search_term', ' .env '], ['search', '.env']]) {
     assert.equal(await verdict(claude, cc(dir, 'mcp__search__find', { [key]: value })), 'allow', 'claude ' + key);
     assert.equal(await verdict(gemini, gem(dir, 'mcp_search_find', { [key]: value })), 'allow', 'gemini ' + key);
     assert.equal(await verdict(copilot, cop(dir, 'search-find', { [key]: value })), 'allow', 'copilot ' + key);
@@ -243,8 +244,16 @@ test('a free-text value that is only the word .env passes; a path to .env under 
     assert.equal(await verdict(gemini, gem(dir, 'mcp_' + name.replace('__', '_'), { [key]: '.env', content: 'X=1' })), 'deny', 'gemini ' + name);
     assert.equal(await verdict(copilot, cop(dir, name.replace('__', '-'), { [key]: '.env', content: 'X=1' })), 'deny', 'copilot ' + name);
   }
+  // Even in a search tool, only a single query string is exempt: title, message or body, and an array of queries, are checked.
+  for (const args of [{ title: '.env' }, { message: '.env' }, { body: '.env' }, { query: ['.env'] }, { messages: ['.env'] }]) {
+    const label = JSON.stringify(args);
+    assert.equal(await verdict(claude, cc(dir, 'mcp__search__find', { ...args, content: 'X=1' })), 'deny', 'claude ' + label);
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_search_find', { ...args, content: 'X=1' })), 'deny', 'gemini ' + label);
+    assert.equal(await verdict(copilot, cop(dir, 'search-find', { ...args, content: 'X=1' })), 'deny', 'copilot ' + label);
+  }
   for (const [key, value] of [['query', './.env'], ['query', 'sub/.env'], ['path', '.env'], ['target', '.env'], ['x', '.env']]) {
     assert.equal(await verdict(claude, cc(dir, 'mcp__fs__write', { [key]: value, content: 'X=1' })), 'deny', 'claude ' + key + ' ' + value);
     assert.equal(await verdict(gemini, gem(dir, 'mcp_fs_write', { [key]: value, content: 'X=1' })), 'deny', 'gemini ' + key + ' ' + value);
+    assert.equal(await verdict(copilot, cop(dir, 'fs-write', { [key]: value, content: 'X=1' })), 'deny', 'copilot ' + key + ' ' + value);
   }
 });

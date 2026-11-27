@@ -428,13 +428,14 @@ function localFileUrl(v) {
  * text scan). Objects left unvisited because of the depth or node limit make the result `bad`: a path may be hidden there, so the
  * call is refused, never dropped.
  */
-// Keys that hold free text (a search, a title, a message): a value there that is only a bare dotenv name (".env", ".env.local", no
-// folder, no ./ in front) is a word of the text, not a file the call opens. With a folder or ./ it still counts as a file name.
-const FREE_TEXT_KEY_RE = /^(?:q|query|queries|search|search_?term|text|title|body|message|messages|description|prompt|question|comment|summary|subject|note|notes)$/i;
+// Keys that hold a search query: a value there that is only a bare dotenv name (".env", ".env.local", no folder, no ./ in front) is
+// the text searched for, not a file the call opens. With a folder or ./ it still counts as a file name. Keys such as title, subject,
+// message or body are not here: a tool that writes can take one of them as the name of what it creates.
+const FREE_TEXT_KEY_RE = /^(?:q|query|search|search_?query|search_?terms?|keywords?)$/i;
 const BARE_DOTENV_RE = /^\s*\.env(?:\.[A-Za-z0-9_-]+)*\s*$/i;
 // Words of an MCP tool name that mark it as one that only reads or searches, and words that mark it as one that may write or act.
-// A tool counts as read-only only with a read word and no write word (search_docs yes; create_note, tool, sync_search no), so a tool
-// zn cannot place keeps the full check: it may use a title or a message as the name of the file it writes.
+// The server picks the name, so this is a second condition only: the main limit is that the exemption covers query keys alone.
+// A tool counts as read-only only with a read word and no write word (search_docs yes; create_note, tool, sync_search no).
 const READ_TOOL_WORDS = new Set(['search', 'query', 'find', 'lookup', 'get', 'list', 'read', 'fetch', 'view', 'show', 'describe',
   'ask', 'grep', 'browse', 'retrieve', 'count', 'explain', 'summarize']);
 const WRITE_TOOL_WORDS = new Set(['write', 'create', 'update', 'set', 'put', 'save', 'edit', 'delete', 'remove', 'rename', 'move',

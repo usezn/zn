@@ -994,7 +994,8 @@ function dotenvNamesIn(args, pathOpts, toolName) {
       checkOne(v);
     } else if (v && typeof v === 'object' && !seen.has(v) && depth <= MAX_NEST_DEPTH) {
       seen.add(v);
-      if (Array.isArray(v)) for (const x of v) walk(x, depth + 1, key);
+      // An item of an array has no key of its own: the free-text exemption is for a single query string only.
+      if (Array.isArray(v)) for (const x of v) walk(x, depth + 1, undefined);
       else for (const [k, x] of Object.entries(v)) walk(x, depth + 1, k);
     }
   };
