@@ -2045,21 +2045,16 @@ def _starts_secret_at(text: str, start: int, limit: int,
 
 
 def _stop_at_line_break(text: str, start: int, end: int) -> int:
-    """A key that a match joins across line breaks stops at a line break: when the match ends in the middle
-    of a line and the part of that line it took does not look like key material, it ends at the last break
-    instead (that part is a word of its own). Returns the new end (see stopAtLineBreak in rules.js)."""
+    """A key that a match joins across line breaks stops at the last line break only when the match ends inside
+    a word of the last line: the next character continues that word (as in "run-deploy"), and the part the match
+    took holds no digit and no upper-case letter. The last line of a wrapped key ends where the key ends, so a
+    wrapped key is still redacted whole. Returns the new end (see stopAtLineBreak in rules.js)."""
     last = text.rfind('\n', start, end)
     if last == -1:
         return end
-    pos = end
-    while pos < len(text) and text[pos] in ' \t':
-        pos += 1
-    if pos >= len(text) or text[pos] in '\n\r\u2028\u2029':
+    if end >= len(text) or re.match('[A-Za-z0-9_-]', text[end]) is None:
         return end
-    # The last line of a wrapped key looks like key material (a digit or an upper-case letter): a plain
-    # lower-case word such as "run-deploy" does not, and stays outside the key.
-    tail = text[last + 1:end]
-    if re.search('[0-9A-Z]', tail):
+    if re.search('[0-9A-Z]', text[last + 1:end]):
         return end
     cut = last
     while cut > start and text[cut - 1] in '\r \t':

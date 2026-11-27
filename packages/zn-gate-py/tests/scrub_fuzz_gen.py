@@ -139,7 +139,7 @@ def wrap(key, width, sep):
 
 
 def make_case(case_seed):
-    """case_seed is a string like 'B8212:3:ghp:17'; the same string always gives the same case."""
+    """case_seed is a string like 'split-keys:3:ghp:17'; the same string always gives the same case."""
     rnd = random.Random(case_seed)
     name = rnd.choice(PROVIDER_NAMES)
     return build_case(case_seed, name, rnd)

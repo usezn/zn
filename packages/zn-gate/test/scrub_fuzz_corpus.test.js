@@ -38,3 +38,17 @@ for (const c of corpus) {
     assert.equal(remnant(c.secret_parts.join(''), out), c.node_remnant, 'node state changed: update the corpus');
   });
 }
+
+// A wrapped key whose last line is lower-case and ends at punctuation is redacted whole; a plain word that goes on
+// past the key characters on the next line stays in the text. Python has the same tests (tests/test_scrubber_fuzz.py).
+test('the lower-case last line of a wrapped key is redacted with the key', () => {
+  const out = redactSecrets('token sk-proj-FAKEABCDEFGHJKLMNPQRSTUVWXYZABCDEFGHJK\nqwertyuiop.').sanitized;
+  assert.ok(!out.includes('qwertyuiop'), out);
+  assert.ok(!out.includes('FAKEABCD'), out);
+});
+
+test('the first word of the next line stays out of a key', () => {
+  const out = redactSecrets('export SERVICE_TOKEN=ghp_1HgSmcm5ja6GtiTRH4iFAKEOaL6axQvi9LxX\nrun-deploy --now\n').sanitized;
+  assert.ok(out.includes('\nrun-deploy --now'), out);
+  assert.ok(!out.includes('FAKEOaL6'), out);
+});

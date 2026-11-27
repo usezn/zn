@@ -1,6 +1,6 @@
 """Large seeded fuzz of the Node.js and Python secret scrubbers on split fake keys.
 
-  python3 -m tests.fuzz_scrubber_at_scale --seed B8212 --per-provider 300 --out failures.json
+  python3 -m tests.fuzz_scrubber_at_scale --seed split-keys --per-provider 300 --out failures.json
 
 Run from packages/zn-gate-py. Prints counts per provider (cases, remnants, mismatches, crashes) and
 writes every failure (with its case seed) to --out. Fake keys only; nothing is printed that is a key.
@@ -152,7 +152,7 @@ def build_corpus(found):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus-out", help="also write the minimised corpus of failure classes to this file")
-    ap.add_argument("--seed", default="B8212")
+    ap.add_argument("--seed", default="split-keys")
     ap.add_argument("--per-provider", type=int, default=100)
     ap.add_argument("--out", default="failures.json")
     a = ap.parse_args()

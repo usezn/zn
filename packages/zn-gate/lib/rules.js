@@ -1385,20 +1385,15 @@ function spacedView(text) {
   return spacedMemo.spaced;
 }
 
-// A key that a match joins across line breaks stops at a line break: when the match ends in the middle of a
-// line and the part of that line it took does not look like key material, it ends at the last break instead
-// (that part is a word of its own). Returns the new end (see _stop_at_line_break in rules.py).
+// A key that a match joins across line breaks stops at the last line break only when the match ends inside a word
+// of the last line: the next character continues that word (as in "run-deploy"), and the part the match took holds
+// no digit and no upper-case letter. The last line of a wrapped key ends where the key ends, so a wrapped key is
+// still redacted whole. Returns the new end (see _stop_at_line_break in rules.py).
 function stopAtLineBreak(text, start, end) {
   let last = end - 1;
   while (last >= start && text.charCodeAt(last) !== 10) last--;
   if (last < start) return end;
-  let pos = end;
-  while (pos < text.length && (text[pos] === ' ' || text[pos] === '\t')) pos++;
-  if (pos >= text.length) return end;
-  const c = text[pos];
-  if (c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029') return end;
-  // The last line of a wrapped key looks like key material (a digit or an upper-case letter): a plain
-  // lower-case word such as "run-deploy" does not, and stays outside the key.
+  if (end >= text.length || !/[A-Za-z0-9_-]/.test(text[end])) return end;
   const tail = text.slice(last + 1, end);
   if (/[0-9A-Z]/.test(tail)) return end;
   let cut = last;
