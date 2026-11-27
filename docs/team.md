@@ -272,7 +272,7 @@ ignored.
 
 The policy is applied by the vault, not by one agent, so it reaches every agent
 that uses a secret through `zn run` or the `secrets` MCP server: Claude Code,
-Codex and Cursor alike. What differs is what each agent lets zn do:
+Codex, Cursor and OpenCode alike. What differs is what each agent lets zn do:
 
 - **Claude Code** is the only agent where zn can put a value back into a file
   the agent writes. The policy is checked first, so a secret the organization
@@ -290,9 +290,25 @@ Codex and Cursor alike. What differs is what each agent lets zn do:
   Without it, Cursor has no way to use a stored secret, so the policy has
   nothing to apply to. Because the entry names the agent, a rule written for
   `cursor` can offer a new host for approval, as described above.
+- **OpenCode** keeps the arguments a plugin rewrites in its session, where the
+  model could read them back, so zn rewrites a call only to wrap a command in
+  `zn run`, never to put a value in. A shell command with a `__ZN_NAME__`
+  marker is blocked with the instruction to run it again with
+  `zn run --secrets NAME -- <command>`. A marker the agent writes into a file
+  (`write`, `edit` or `apply_patch`) stays a marker: no value is put back, so
+  nothing the policy blocks can leak that way. If the hook cannot answer, the
+  plugin blocks the call.
+- OpenCode also needs the `secrets` MCP server added by hand. `zn hooks
+  install opencode` prints the line to add to `opencode.json` under `mcp`; for
+  a project it is
+  `"secrets": { "type": "local", "command": ["zn", "secrets-mcp", "--agent", "opencode"] }`.
+  Without it, OpenCode has no way to use a stored secret, so the policy has
+  nothing to apply to. Because the entry names the agent, a rule written for
+  `opencode` can offer a new host for approval, as described above.
 
-This is covered by tests of the vault, the `secrets` server and Cursor's hook
-adapter. It has not been run with the Cursor app itself.
+This is covered by tests of the vault, the `secrets` server and the hook
+adapters of Cursor and OpenCode. It has not been run with the Cursor or
+OpenCode apps themselves.
 
 ### The three choices: Not blocked, Warn, Block
 

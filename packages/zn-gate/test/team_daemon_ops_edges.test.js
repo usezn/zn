@@ -621,7 +621,7 @@ test('an expired policy held in the vault is shown as expired, restricts, and is
   assert.strictEqual(info.policy.version, 1);
 
   // Strict mode: the deny still applies; a host the policy would open is not offered.
-  for (const agent of ['codex', 'cursor']) {
+  for (const agent of ['codex', 'cursor', 'opencode']) {
     const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], agent, true);
     assert.strictEqual(list[0].deny, true, agent);
     assert.strictEqual(list[0].denyReason, 'policy:org_deny');
@@ -648,7 +648,7 @@ test('a held policy that does not verify is reported as invalid and blocks every
   assert.strictEqual(info.policy.state, 'invalid');
   assert.strictEqual(info.policy.error, 'bad signature');
   // Strict mode: the tampered copy (its deny was removed) is not trusted; nothing is opened and all is blocked.
-  for (const agent of ['codex', 'cursor']) {
+  for (const agent of ['codex', 'cursor', 'opencode']) {
     const list = await m.o.effectiveList([{ name: 'PROD_DB', allowHosts: ['db.example.com'] }, { name: 'DEV_DB', allowHosts: [] }], agent, true);
     for (const e of list) {
       assert.strictEqual(e.deny, true, agent);

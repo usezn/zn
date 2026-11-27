@@ -249,7 +249,7 @@ test('a policy issued in the future: the cache reads as expired (strict mode), a
   const st = policy.state({ home, now: behind });
   assert.strictEqual(st.state, 'expired');
   assert.strictEqual(st.clock, 'behind');
-  for (const agent of ['codex', 'cursor']) {
+  for (const agent of ['codex', 'cursor', 'opencode']) {
     const e = effective('PROD_DB', { mode: 'env', allowHosts: [], allowCommands: [], allowIn: ['header'] }, { policy: st.policy, state: st.state, agent, agentTrusted: true });
     assert.strictEqual(e.deny, true, agent);
   }
