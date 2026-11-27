@@ -589,12 +589,14 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
     await test('the build leaves out the package README, the setup guide and the unused BLS curves, and keeps what the vault uses', async () => {
       const left = [
         'README.md', 'lib/init-guide.js', 'lib/x.d.ts', 'lib/x.js.map',
+        'lib/native/linux-x64/zn-hook-launcher', 'lib/native/linux-arm64/zn-hook-launcher',
         'node_modules/@noble/curves/abstract/bls.js', 'node_modules/@noble/curves/abstract/tower.js', 'node_modules/@noble/curves/bls12-381.js',
         'node_modules/@noble/curves/bn254.js', 'node_modules/@noble/curves/misc.js', 'node_modules/@noble/curves/index.js',
         'node_modules/@noble/post-quantum/node_modules/@noble/curves/abstract/bls.js', 'node_modules/@noble/post-quantum/node_modules/@noble/curves/index.js',
       ];
       const kept = [
         'package.json', 'bin/cli.js', 'lib/init.js', 'lib/hooks/runner.js', 'docs/README.md', 'node_modules/age-encryption/README.md',
+        'lib/native/hook-launcher.json', 'lib/agents/static-launcher.js', 'lib/native/linux-x64/zn-hook-launcher.sig',
         'node_modules/@noble/curves/ed25519.js', 'node_modules/@noble/curves/nist.js', 'node_modules/@noble/curves/abstract/edwards.js',
         'node_modules/@noble/curves/abstract/modular.js',
       ];

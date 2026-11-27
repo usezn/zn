@@ -934,7 +934,11 @@ impl ZnConfig {
         }
 
         if let Ok(hashes) = std::env::var("ZN_POLICY_HASHES") {
-            self.engine.allowed_policy_hashes = hashes.split(',').map(|s| s.to_string()).collect();
+            self.engine.allowed_policy_hashes = hashes
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
 
         if let Ok(key) = std::env::var("ZN_SIGNING_PUBLIC_KEY") {
