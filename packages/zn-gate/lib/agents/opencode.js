@@ -85,6 +85,79 @@ function usesPowerShell(shell, platform) {
   return !BASH_LIKE.has(shellBase(shell));
 }
 
+/* ---------------------- which MCP server a tool belongs to ---------------------- */
+
+// OpenCode names an MCP tool <server>_<tool>, both parts with every character outside [A-Za-z0-9_-] turned into "_".
+function mcpSafeName(s) { return String(s).replace(/[^A-Za-z0-9_-]/g, '_'); }
+
+/* The MCP servers OpenCode's configuration files define, by name: { servers: Map(name -> [entries]), ok }.
+ * ok is false when a file that exists cannot be read or parsed (or a config variable is not valid JSON): nothing is
+ * then trusted as zn's own server. A missing file is normal. */
+function readMcpServers(root, env) {
+  const { parseJsonc } = require('../audit/parse');
+  const servers = new Map();
+  let ok = true;
+  const take = (data) => {
+    const m = data && typeof data === 'object' && data.mcp && typeof data.mcp === 'object' && !Array.isArray(data.mcp) ? data.mcp : null;
+    if (!m) return;
+    for (const name of Object.keys(m)) {
+      const key = mcpSafeName(name);
+      if (!servers.has(key)) servers.set(key, []);
+      servers.get(key).push(m[name]);
+    }
+  };
+  const readFile = (file) => {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return; ok = false; return; }
+    try { take(parseJsonc(text)); } catch (_) { ok = false; }
+  };
+  const base = env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(os.homedir(), '.config');
+  const dirs = [path.join(base, 'opencode')];
+  if (env.OPENCODE_CONFIG_DIR) dirs.push(path.resolve(env.OPENCODE_CONFIG_DIR));
+  for (const d of dirs) { readFile(path.join(d, 'opencode.json')); readFile(path.join(d, 'opencode.jsonc')); }
+  if (env.OPENCODE_CONFIG) readFile(path.resolve(env.OPENCODE_CONFIG));
+  let dir = path.resolve(root);
+  for (;;) {
+    for (const f of ['opencode.json', 'opencode.jsonc', path.join('.opencode', 'opencode.json'), path.join('.opencode', 'opencode.jsonc')]) readFile(path.join(dir, f));
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (env.OPENCODE_CONFIG_CONTENT) {
+    try { take(parseJsonc(String(env.OPENCODE_CONFIG_CONTENT))); } catch (_) { ok = false; }
+  }
+  return { servers, ok };
+}
+
+/* True when every entry of the server is zn's own secrets server (a local command, never a URL). */
+function entriesAreOurs(entries, root) {
+  const { isOurMcp } = require('../audit')._internal;
+  return entries.length > 0 && entries.every((cfg) => {
+    if (!cfg || typeof cfg !== 'object' || cfg.url || (cfg.type !== undefined && cfg.type !== 'local')) return false;
+    if (!Array.isArray(cfg.command) || !cfg.command.length || !cfg.command.every((w) => typeof w === 'string')) return false;
+    try { return Boolean(isOurMcp(cfg.command, { rec: { root } })); } catch (_) { return false; }
+  });
+}
+
+/* ev.mcp for an OpenCode tool name: the configured server whose name is the longest prefix of it, and `ours: 'secrets'`
+ * only when that server is zn's own and the rest of the name is exactly one of its tools. A name that matches no
+ * configured server leaves the server unknown. Fails closed: an unreadable configuration means not ours. */
+function mcpInfo(toolName, root, env = process.env) {
+  const { isSecretsToolName } = require('../broker/secrets-tools');
+  const info = { server: '', tool: toolName };
+  let found;
+  try { found = readMcpServers(root, env); } catch (_) { return info; }
+  let best = null;
+  for (const name of found.servers.keys()) {
+    if (toolName.startsWith(name + '_') && (best === null || name.length > best.length)) best = name;
+  }
+  if (best === null) return info;
+  info.server = best;
+  info.tool = toolName.slice(best.length + 1);
+  if (found.ok && isSecretsToolName(info.tool) && entriesAreOurs(found.servers.get(best), root)) info.ours = 'secrets';
+  return info;
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const args = raw.args && typeof raw.args === 'object' ? raw.args : {};
@@ -120,7 +193,16 @@ function normalize(raw) {
     input.tooLong = tooLong;
     input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
   }
-  if (raw.hook === 'tool.execute.before') return { ...base, event: 'pre_tool', tool, toolName: t, input };
+  if (raw.hook === 'tool.execute.before') {
+    const ev = { ...base, event: 'pre_tool', tool, toolName: t, input };
+    // MCP tools are checked before they run, as for Claude Code and Cursor. The built-ins that only return text the
+    // model reads (TOKENIZED_OUTPUT) are not MCP calls and are left alone.
+    if (tool === 'mcp' && !TOKENIZED_OUTPUT.has(t)) {
+      input.args = args;
+      ev.mcp = mcpInfo(t, root);
+    }
+    return ev;
+  }
   if (raw.hook === 'tool.execute.after') {
     const output = {};
     if (typeof raw.output === 'string') output.output = raw.output;
