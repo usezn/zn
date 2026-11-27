@@ -1684,6 +1684,13 @@ function envFileValueWords(words, opts) {
   let valueNext = false; // the previous word is an option known to take a value
   // dotenvx -f / --env-file takes several values (-f a.txt .env loads both): every word after it up to the next option or -- is a file.
   let variadic = false;
+  // A dotenvx file value that names a watched file. run with no option before the step judges it as a read; get refuses it with the
+  // read message (it prints the values); for every other step, or a step that follows an option, nothing is recorded here and the word
+  // stays refused as an unproven write.
+  const judgeFile = (word, name) => {
+    if (dxSub === 'run' && !dxAfterOption) out.set(word, name);
+    else if (dxSub === 'get' && !dxAfterOption) getWords.add(word);
+  };
   let infoOnly = false; // --help / --version
   const defaults = new Set();
   const noteDefaults = () => {
@@ -1761,11 +1768,10 @@ function envFileValueWords(words, opts) {
         lastDash = true;
       } else if (variadic) {
         // Another value of -f / --env-file, for every dotenvx step and also before the step or after an option that came before it
-        // (the step may not be identified yet): a word that names a watched file is judged as a read for run, and refused otherwise
-        // (get prints the values, the other steps rewrite the file); a word that is not a watched file is ignored.
+        // (the step may not be identified yet): a word that names a watched file goes through judgeFile; any other word is ignored.
         lastDash = false;
         if (isDotenvName(t)) {
-          if (dxSub === 'run' && !dxAfterOption) out.set(w, t); else getWords.add(w);
+          judgeFile(w, t);
           continue;
         }
         if (dxSub === null && !wasValue) variadic = false;
@@ -1783,18 +1789,20 @@ function envFileValueWords(words, opts) {
         cmdStarted = true;
       }
     }
-    const runnerReads = runner && (!dotenvx || (dxSub === 'run' && !dxAfterOption));
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
-    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runnerReads ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
-    if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
-    if (runner && dotenvx && dxSub === 'get' && !dxAfterOption) {
+    if (runner && dotenvx) {
+      // The file value of a dotenvx -f / --env-file, glued (-f=X) or separate (-f X), goes through judgeFile (the same function as the
+      // extra values above) at any step and before or after an option that came before the step.
       const gg = /^(?:-f|--env-file)=(.+)$/.exec(t);
-      if (gg && isDotenvName(gg[1])) { getWords.add(w); continue; }
-      if ((t === '-f' || t === '--env-file') && nextValue()) { getWords.add(next); i++; valueNext = false; lastDash = false; continue; }
+      if (gg && isDotenvName(gg[1])) { judgeFile(w, gg[1]); continue; }
+      if ((t === '-f' || t === '--env-file') && nextValue()) { judgeFile(next, next.text); i++; valueNext = false; lastDash = false; continue; }
+    } else {
+      const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
+      if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
+      const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
+      if (opt && nextValue()) { out.set(next, next.text); i++; valueNext = false; lastDash = false; }
     }
-    const opt = (envProg && t === '--env-file') || (runnerReads && (t === '-e' || t === '-f' || t === '--env-file'));
-    if (opt && nextValue()) { out.set(next, next.text); i++; valueNext = false; lastDash = false; }
   }
   noteDefaults();
   out.defaults = [...defaults];

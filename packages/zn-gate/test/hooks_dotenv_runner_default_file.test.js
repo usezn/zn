@@ -183,6 +183,38 @@ test('every dotenvx step takes several -f values, also after an option before th
   for (const c of ['dotenvx run -f other.txt .env -- printenv', 'dotenvx get -f other.txt']) assert.equal(await verdict(plain, c), 'allow', c);
 });
 
+test('the glued -f=X / --env-file=X is judged like the separate form in every position', async (t) => {
+  const glued = [
+    'dotenvx --log-level debug get -f=.env',
+    'dotenvx --log-level info run -f=.env -- printenv',
+    'dotenvx decrypt -f=.env',
+    'dotenvx encrypt --env-file=.env',
+    'dotenvx set K 1 -f=.env',
+    'dotenvx --log-level debug decrypt --env-file=.env',
+    'dotenvx run -f=other.txt -f=.env -- printenv',
+  ];
+  for (const content of [SECRET, ENCRYPTED]) {
+    const dir = project(t, content);
+    for (const c of glued) assert.equal(await verdict(dir, c), 'deny', c);
+    for (const c of ['dotenvx run -f=other.txt -- node app.js', 'dotenvx --log-level debug run -f=other.txt -- node app.js', 'dotenvx get -f=other.txt', 'dotenvx decrypt --env-file=other.txt']) {
+      assert.equal(await verdict(dir, c), 'allow', c);
+    }
+  }
+});
+
+test('every step x option position x -f form reads a secret .env', async (t) => {
+  const steps = ['run', 'get', 'set K 1', 'encrypt', 'decrypt'];
+  const befores = ['', '--log-level debug '];
+  const forms = ['-f other.txt .env', '-f=.env', '--env-file=.env', '-f other.txt -f .env', '--env-file other.txt .env'];
+  const secret = project(t, SECRET);
+  const enc = project(t, ENCRYPTED);
+  for (const step of steps) for (const before of befores) for (const form of forms) {
+    const c = 'dotenvx ' + before + step + ' ' + form + (step === 'run' ? ' -- printenv' : '');
+    assert.equal(await verdict(secret, c), 'deny', c);
+    assert.equal(await verdict(enc, c), 'deny', c);
+  }
+});
+
 test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
   const dir = project(t, null);
   fs.mkdirSync(path.join(dir, 'sub'));
