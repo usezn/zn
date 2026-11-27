@@ -161,6 +161,28 @@ test('dotenv-cli has no -f / --env-file: it still loads the default .env', async
   for (const dir of [project(t, 'PORT=1\n'), project(t, null)]) for (const c of forms) assert.equal(await verdict(dir, c), 'allow', c);
 });
 
+test('every dotenvx step takes several -f values, also after an option before the step', async (t) => {
+  const forms = [
+    'dotenvx get -f other.txt .env',
+    'dotenvx get KEY -f other.txt .env',
+    'dotenvx get -f other.txt more.txt .env',
+    'dotenvx decrypt -f other.txt .env',
+    'dotenvx encrypt -f other.txt .env',
+    'dotenvx set KEY 1 -f other.txt .env',
+    'dotenvx --log-level debug run -f other.txt .env -- printenv',
+    'dotenvx --log-level debug get -f other.txt .env',
+  ];
+  for (const content of [SECRET, ENCRYPTED]) {
+    const dir = project(t, content);
+    for (const c of forms) assert.equal(await verdict(dir, c), 'deny', c);
+    for (const c of ['dotenvx get -f other.txt', 'dotenvx run -f other.txt -- node app.js', 'dotenvx --log-level debug run -f other.txt -- node app.js']) {
+      assert.equal(await verdict(dir, c), 'allow', c);
+    }
+  }
+  const plain = project(t, 'PORT=1\n');
+  for (const c of ['dotenvx run -f other.txt .env -- printenv', 'dotenvx get -f other.txt']) assert.equal(await verdict(plain, c), 'allow', c);
+});
+
 test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
   const dir = project(t, null);
   fs.mkdirSync(path.join(dir, 'sub'));

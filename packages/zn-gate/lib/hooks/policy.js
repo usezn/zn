@@ -1759,10 +1759,16 @@ function envFileValueWords(words, opts) {
         valueNext = !t.includes('=') && DOTENV_VALUE_OPTIONS.has(t);
         variadic = dotenvx && /^(?:-f|--env-file)(?:=|$)/.test(t);
         lastDash = true;
-      } else if (variadic && dxSub === 'run' && !dxAfterOption) {
-        // Another value of -f / --env-file: judged like the first one (a word that is not a watched file is ignored).
+      } else if (variadic) {
+        // Another value of -f / --env-file, for every dotenvx step and also before the step or after an option that came before it
+        // (the step may not be identified yet): a word that names a watched file is judged as a read for run, and refused otherwise
+        // (get prints the values, the other steps rewrite the file); a word that is not a watched file is ignored.
         lastDash = false;
-        if (isDotenvName(t)) { out.set(w, t); continue; }
+        if (isDotenvName(t)) {
+          if (dxSub === 'run' && !dxAfterOption) out.set(w, t); else getWords.add(w);
+          continue;
+        }
+        if (dxSub === null && !wasValue) variadic = false;
       } else if (wasValue) {
         lastDash = false;
       } else if (dotenvx && dxSub === null) {
