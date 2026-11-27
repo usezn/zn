@@ -8,25 +8,25 @@ Short meanings of words used in the zn-gate docs.
 
 **Node.js**: the program that runs zn-gate's npm commands. `npx` comes with it. You can get it at [nodejs.org](https://nodejs.org/).
 
-**Secret**: a value that gives access to something, such as an API key, a token or a password.
+**Secret**: a value that gives access to something, such as an API key, a token or a password. You manage secrets with the [`secret` command](cli.md#secret).
 
 **`.env` file**: a file in a project that holds secrets and other settings for your app.
 
-**Vault**: an encrypted store on your machine where zn-gate keeps the real values of your secrets.
+**Vault**: an encrypted store on your machine where zn-gate keeps the real values of your secrets. See the [`vault` command](cli.md#vault).
 
 **Marker**: a stand-in for a secret, such as `__ZN_STRIPE_KEY__`. Your agent sees the marker. The real value stays in the vault. A marker is filled in for web requests and files, never in a command's arguments.
 
 **Redact**: replace a secret in some text with a marker or a label, so nobody who reads the text sees the value.
 
-**Shadow** (`env shadow`): move the secret values of a `.env` file into the vault and leave markers in their place.
+**Shadow** (`env shadow`): move the secret values of a `.env` file into the vault and leave markers in their place. See the [`env shadow` command](cli.md#env-shadow).
 
-**Hook**: a small check that your agent runs before or after it reads a file, runs a command or gets your prompt. zn-gate uses hooks to block or redact.
+**Hook**: a small check that your agent runs before or after it reads a file, runs a command or gets your prompt. zn-gate uses hooks to block or redact. See the [`hooks`](cli.md#hooks) and [`hook`](cli.md#hook) commands.
 
 **Plugin**: the zn-gate add-on for Claude Code. It sets up zn-gate's hooks in one step; since version 1.14.0 it adds no MCP server.
 
-**MCP server**: a tool your agent can call. MCP is the standard way agents connect to tools. zn-gate can also run as one.
+**MCP server**: a tool your agent can call. MCP is the standard way agents connect to tools. zn-gate can also run as one with the [`mcp` command](cli.md#mcp).
 
-**Proxy** (`shield`): a layer that sits between your agent and an MCP server and checks what passes through.
+**Proxy** (`shield`): a layer that sits between your agent and an MCP server and checks what passes through. See the [`shield` command](cli.md#shield).
 
 **Prompt injection**: text that tries to make an agent ignore your instructions, for example hidden inside a file or a web page.
 
@@ -36,11 +36,11 @@ Short meanings of words used in the zn-gate docs.
 
 **Classifier**: a model that sorts text into groups, such as safe or an injection attempt.
 
-**Self-test**: `zn-gate test`. It runs zn-gate's built-in examples.
+**Self-test**: `zn-gate test`. It runs zn-gate's built-in examples. See the [`test` command](cli.md#test).
 
 **Exit code**: the number a command returns when it ends. `0` means success; other numbers say what went wrong. The codes of each command are in the [command line reference](cli.md#exit-codes).
 
-**Alias**: another name for the same command, for example `doctor` for `check`.
+**Alias**: another name for the same command, for example `doctor` for [`check`](cli.md#check).
 
 **Dry run** (`--dry-run`): show what a command would change, and change nothing.
 
@@ -48,7 +48,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Scrubber**: the part of zn-gate that finds secret values in text, such as a tool's output, and redacts them. See [Secrets](secrets.md).
 
-**Broker**: the part of zn-gate that uses a secret for a command on your behalf, so the agent never sees the value. `zn-gate run` is the broker's command.
+**Broker**: the part of zn-gate that uses a secret for a command on your behalf, so the agent never sees the value. [`zn-gate run`](cli.md#run) is the broker's command.
 
 **Placeholder**: another word for a marker, as in `__ZN_` placeholders.
 
@@ -58,11 +58,11 @@ Short meanings of words used in the zn-gate docs.
 
 **Passphrase**: the password that protects your vault. If you lose it, `vault reset` is the way out: it starts a new, empty vault.
 
-**Lock and unlock**: while the vault is locked, nobody can read secrets from it. `unlock` opens it for a limited time; `lock` closes it at once.
+**Lock and unlock**: while the vault is locked, nobody can read secrets from it. `unlock` opens it for a limited time; `lock` closes it at once. See the [`unlock`](cli.md#unlock) and [`lock`](cli.md#lock) commands.
 
-**Pin** (`pins`): the saved description of the tools of an MCP server. When a tool changes later, `shield` notices and waits until you approve it.
+**Pin** (`pins`): the saved description of the tools of an MCP server. When a tool changes later, `shield` notices and waits until you approve it. See the [`pins` command](cli.md#pins).
 
-**Wrap** (`init --wrap-mcp`): change an agent's MCP server entry so that the server starts through `shield`.
+**Wrap** (`init --wrap-mcp`): change an agent's MCP server entry so that the server starts through `shield`. See the [`init` command](cli.md#init).
 
 **Stdio**: standard input and output, the plain text channels of a program. MCP servers started by an agent talk over them.
 
@@ -94,7 +94,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Decision log**: the local record of what zn-gate allowed or blocked. It is the file `~/.zn/evidence.jsonl`, also called the evidence log. Check it with `zn-gate evidence --verify`. See [How the log works](architecture.md).
 
-**`zn audit`**: a command that reviews the agent configuration of a repository before you open it. It has nothing to do with the vault audit log. See [Audit](audit.md).
+**`zn audit`**: a command that reviews the agent configuration of a repository before you open it. It has nothing to do with the vault audit log. See [Audit](audit.md) and the [`audit` command](cli.md#audit).
 
 **Hash chain**: a way to make a log tamper-evident. Each record includes a fingerprint of the one before it, so a changed or deleted record breaks the chain. `vault verify` checks the vault audit log and `evidence --verify` checks the decision log.
 
@@ -106,19 +106,19 @@ Short meanings of words used in the zn-gate docs.
 
 **Best effort**: it works where the agent gives zn-gate enough information to act, and not everywhere. The [compatibility table](compat.md) marks these cases.
 
-**zn Team**: the optional service for organizations. It shares a policy with every developer's machine and collects the vault audit log. See [Team](team.md).
+**zn Team**: the optional service for organizations. It shares a policy with every developer's machine and collects the vault audit log. See [Team](team.md) and the [`team` command](cli.md#team).
 
 **Join token**: the one-time code an admin gives you so that `team join` can connect your machine to your organization.
 
-**Managed configuration** (`team managed-config`): settings files that an administrator deploys to all machines, for example with MDM (mobile device management), so the hooks run for every developer.
+**Managed configuration** (`team managed-config`): settings files that an administrator deploys to all machines, for example with MDM (mobile device management), so the hooks run for every developer. See the [`team managed-config` command](cli.md#team-managed-config).
 
 **Launcher script**: the small script under `~/.zn/hooks` that an agent's hook goes through. It is shared by every profile of the same agent on your machine, so `hooks uninstall` leaves it in place. See [the command list](cli.md#hooks-uninstall) and [Check that it works](check.md).
 
 **Fail on** (`--fail-on`): the lowest severity of a finding that makes `audit` or `reach` exit with `1`. For `audit` it is `low`, `medium`, `high` (default), `critical` or `none`; for `reach` the default is `none`, so it is a report. See the [command list](cli.md).
 
-**Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [command list](cli.md).
+**Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [`evidence` command](cli.md#evidence).
 
-**Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`.
+**Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`. See the [`stats` command](cli.md#stats).
 
 ## Worked examples
 

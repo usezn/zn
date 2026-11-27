@@ -17,3 +17,5 @@ ignora = "ignora"
 deine = "deine"
 # Misspelled secret name used as an example of a typo in a secret name (docs/secrets.md).
 EXMPLE = "EXMPLE"
+# "Nd" is the N-days placeholder in the report help text of the CLI (--since Nd) and in docs/cli.md.
+Nd = "Nd"

@@ -81,6 +81,7 @@ More short walk-throughs in [examples/](examples/), all with fake values:
 - [Init and uninstall](examples/init-and-uninstall.md): set up zn-gate, preview, then remove it.
 - [Offline and local only](examples/offline-and-local-only.md): use zn-gate with no network and with the cloud check off.
 - [Python API](examples/python-api.md): five short examples of the Python package.
+- [Python commands](examples/python-commands.md): `status`, `test`, `analyze --local-only` and `stats --days 7` of the Python package, run one after another with sample output.
 - [Reach report file](examples/reach-report-file.md): write the reach report to a file in CI.
 - [Scripting](examples/scripting.md): exit codes and JSON output in a shell script and a CI job.
 - [Uninstall one agent](examples/uninstall-one-agent.md): remove zn-gate from one agent and keep the others.

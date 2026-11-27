@@ -118,7 +118,16 @@ MCP server (optional): restart VS Code, then ask the agent to call `zn_status` (
 
 ## Uninstall
 
-Run `zn hooks uninstall copilot` (add `--project` if you installed it in a project): it removes `zn-gate.json` and leaves other hooks alone. If you added the MCP server, open the settings file you edited in Install, delete the `zn-gate` entry (and any wrapper you added around another MCP server with `zn-gate shield`, putting back its original command), save the file and restart VS Code. None of this changes your code. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally. See [Remove zn-gate](../uninstall.md).
+Run each step in your own terminal, not through the agent: zn-gate refuses `zn hooks uninstall` and `zn-gate uninstall` when an AI agent or a script runs them (they need an interactive terminal); the other steps are file edits or `npm`, which it does not guard. None of this changes your code. Go in this order, with the MCP servers first, then the hooks, and the program last.
+
+1. **Put back the MCP servers you wrapped.** If you put `-y zn-gate shield --` in front of another server's command (see [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers)), open the settings file you edited, take those words out of its `args` and put back its original command. `zn-gate init --revert` does not do this for you, because `init --wrap-mcp` does not edit VS Code's settings.
+2. **Remove the zn-gate MCP server**, if you added it. In the same file (`mcp.json`, opened with **MCP: Open User Configuration**, or `.mcp.json` / `.vscode/mcp.json` in a project), delete the `zn-gate` entry and keep your other servers. Save the file. zn-gate writes no MCP file of its own in VS Code, so no command removes this entry.
+3. **Remove the hooks.** Run `zn hooks uninstall copilot`. If you installed them for one project, run `zn hooks uninstall copilot --project` from that project's folder. It removes `zn-gate.json` and leaves other hooks alone. To do it by hand instead, delete the file `~/.copilot/hooks/zn-gate.json` (`$COPILOT_HOME/hooks/zn-gate.json` when you set `COPILOT_HOME`; `.github/hooks/zn-gate.json` in the project): it holds only zn-gate's hooks. GitHub Copilot has no launcher script to delete.
+4. **Restart VS Code.**
+5. **Check that it is off.** Run `npx -y zn-gate check`. It says which part, if any, is still set up.
+6. **Remove the program itself, last.** Run `npm uninstall -g zn-gate` if you installed it globally. If you remove the program first, the hooks stay and point at a command that is gone.
+
+`npx -y zn-gate uninstall` removes the hooks for you (for your user, and for the project folder you run it in) after you confirm the list, but it does not touch the entries you added by hand in VS Code's MCP settings: do steps 1 and 2 yourself. If you ran `env shadow` or keep secrets in the vault, read [Remove zn-gate](../uninstall.md) before you remove the program. For every file zn-gate writes, see [Files zn-gate writes in each editor](remove-by-hand.md#github-copilot-cli-experimental-vs-code-not-tested).
 
 ## Troubleshooting
 

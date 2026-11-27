@@ -33,7 +33,7 @@ Set up zn-gate in Zed in two minutes: add it as an MCP server, and what zn-gate 
    npx -y zn-gate check
    ```
 
-   `status` shows the version and whether the optional cloud check is on. `check` prints one line for each supported agent (eight in all), then a closing sentence. An agent that is not installed on your machine is marked **not found on this machine**. The result looks like this for a machine with Claude Code set up and Codex CLI not yet set up (your lines will differ):
+   `status` shows the version and whether the optional cloud check is on. In a clean setup its **Active Engine** line reads `Local rules only` and **Leaves machine** reads `Nothing` (see [Reading the Active Engine line](../check.md#reading-the-active-engine-line)). `check` prints one line for each supported agent (eight in all), then a closing sentence. An agent that is not installed on your machine is marked **not found on this machine**. The result looks like this for a machine with Claude Code set up and Codex CLI not yet set up (your lines will differ):
 
    ```text
    zn-gate check: does zn stop your coding agent from reading a secret?

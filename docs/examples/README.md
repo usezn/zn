@@ -17,6 +17,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [hooks-uninstall-then-verify.md](hooks-uninstall-then-verify.md): remove zn's hooks and confirm with `zn-gate check --hooks` that none is left.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [moving-to-a-new-computer.md](moving-to-a-new-computer.md): set up zn-gate on a new computer, or on a second one, with fictional values.
+- [node-version-change.md](node-version-change.md): what to run after you switch, upgrade or remove Node.js with nvm, fnm or Homebrew, so the hooks point at the Node.js you keep.
 - [python-only-first-run.md](python-only-first-run.md): from `pip install zn-gate` to a fake secret being blocked, with the Python package and no Node.js.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [switching-agents-checklist.md](switching-agents-checklist.md): a checklist for moving zn-gate protection from one coding agent to another.
@@ -50,6 +51,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [doctor-before-asking-for-help.md](doctor-before-asking-for-help.md): the commands to run in your own terminal, and paste, before you ask for help.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [evidence-example.md](evidence-example.md): the local evidence log, and what `zn-gate evidence` prints.
+- [evidence-log.md](evidence-log.md): the local evidence log in practice: list the last records, check the chain with `--verify`, and export the records to a file.
 - [evidence-verify-after-restore.md](evidence-verify-after-restore.md): check that a decision log you brought to a new computer arrived whole and unchanged.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [mcp-pin-review-checklist.md](mcp-pin-review-checklist.md): what to compare in a changed MCP tool before you approve it with `pins approve`.
@@ -68,6 +70,7 @@ The code examples that run with zn-gate, with the command to run each one, are i
 - [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [stats-share-controls.md](stats-share-controls.md): check, turn on and turn off the optional sharing of daily counts.
+- [status-and-test.md](status-and-test.md): run `zn-gate status` and `zn-gate test` on a new machine and read each line of their output.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-audit-reading-a-medium-finding.md](zn-audit-reading-a-medium-finding.md): follow one medium finding of zn-gate audit from the report to a decision: pin it, accept it with --approve, or drop the server.
@@ -147,11 +150,13 @@ The code examples that run with zn-gate, with the command to run each one, are i
 
 ## Scripts, CI and APIs
 
+- [analyze-text.md](analyze-text.md): check one short text with `zn-gate analyze`, read its JSON answer, and see one example for each exit code (0, 1 and 2).
 - [ci-secret-scan-gate.md](ci-secret-scan-gate.md): a GitHub Actions job that fails when `zn-gate scan` finds a secret, with the Action and with `npx`.
 - [ci-step-example.md](ci-step-example.md): a fake CI job that runs the audit and reads its exit code.
 - [node-api.md](node-api.md): a short tour of the Node.js API, with one small example per call.
 - [pre-commit-scan.md](pre-commit-scan.md): run `zn-gate scan` on the files of each commit with a git pre-commit hook.
 - [python-api.md](python-api.md): five short examples of the Python package.
+- [python-commands.md](python-commands.md): the `status`, `test`, `analyze --local-only` and `stats --days 7` commands of the Python package, one after another on a made-up project, with sample output.
 - [reach-report-file.md](reach-report-file.md): write the reach report to a file in a CI job.
 - [scripting.md](scripting.md): use zn-gate from a shell script or a CI job, and read its exit codes.
 - [zn-check-json-with-jq-in-a-shell-script.md](zn-check-json-with-jq-in-a-shell-script.md): read `zn-gate check --json` with `jq` in a shell script, and stop the script when an agent is not protected.

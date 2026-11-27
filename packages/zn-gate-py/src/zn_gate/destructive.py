@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-25.4"
+COMMAND_RULES_VERSION = "2026-11-27.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -120,7 +120,10 @@ _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
 # Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
 # The option patterns are linear: an option word that may say "no program from stdin" has at most 32 letters on
 # each side of its key letter. A longer word is not taken as such an option, so a pipe into it stays blocked.
-_INTERPRETER_RE = re.compile(r"^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)\Z", _A)
+_INTERPRETER_RE = re.compile(
+    r"^(?:py|python(?:\d{1,3}(?:\.\d{1,3}){0,3})?|pypy(?:\d{1,3}(?:\.\d{1,3}){0,3})?|node(?:js)?(?:\d{1,3}(?:\.\d{1,3}){0,3})?|perl|ruby)\Z",
+    _A,
+)
 class _InterpSpec(NamedTuple):
     """How one interpreter family takes code and options on its command line."""
 
@@ -1141,13 +1144,15 @@ def _interpreter_code(kind: str, rest: List[str]) -> List[str]:
             if i + 1 < len(rest):
                 out.append(rest[i + 1])
             i += 2
-            if kind in ("py", "node"):
+            # Python hands everything after its -c code to the program; node keeps reading options, so every -e / -p code counts.
+            if kind == "py":
                 break
             continue
         m = _NODE_EVAL_EQ_RE.match(w) if kind == "node" else None
         if m:
             out.append(m.group(1))
-            break
+            i += 1
+            continue
         if w in spec.skip:
             i += 1
         i += 1

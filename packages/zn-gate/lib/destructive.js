@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-25.4';
+const COMMAND_RULES_VERSION = '2026-11-27.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -92,7 +92,7 @@ const PS_DISK_RE = /(?:^|[\s;&|(])(?:format-volume|clear-disk)\b/i;
 // Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
 // The option patterns are linear: an option word that may say "no program from stdin" has at most 32 letters on
 // each side of its key letter. A longer word is not taken as such an option, so a pipe into it stays blocked.
-const INTERPRETER_RE = /^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)$/;
+const INTERPRETER_RE = /^(?:py|python(?:\d{1,3}(?:\.\d{1,3}){0,3})?|pypy(?:\d{1,3}(?:\.\d{1,3}){0,3})?|node(?:js)?(?:\d{1,3}(?:\.\d{1,3}){0,3})?|perl|ruby)$/;
 const INTERPRETERS = {
   py: { skip: new Set(['-W', '-X']), code: /^-[A-Za-z]*c$/, noStdin: /^(?:-[A-Za-z]{0,32}[cmVh][A-Za-z]{0,32}|--(?:version|help))$/ },
   node: { skip: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader']), code: /^(?:-e|-p|-pe|--eval|--print)$/, noStdin: /^(?:-[A-Za-z]{0,32}[epcvh][A-Za-z]{0,32}|--(?:eval|print|check|version|help|test)(?:=.*)?)$/ },
@@ -612,11 +612,12 @@ function interpreterCode(kind, rest) {
     if (def.code.test(w)) {
       if (i + 1 < rest.length) out.push(rest[i + 1]);
       i++;
-      if (kind === 'py' || kind === 'node') break;
+      // Python hands everything after its -c code to the program; node keeps reading options, so every -e / -p code counts.
+      if (kind === 'py') break;
       continue;
     }
     const m = kind === 'node' ? /^--(?:eval|print)=([\s\S]*)$/.exec(w) : null;
-    if (m) { out.push(m[1]); break; }
+    if (m) { out.push(m[1]); continue; }
     if (def.skip.has(w)) i++;
   }
   return out;

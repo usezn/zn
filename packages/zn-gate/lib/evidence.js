@@ -19,6 +19,10 @@ function ensureZnDir(filePath = EVIDENCE_FILE) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true, mode: LEDGER_DIR_MODE });
+    // The mode given to mkdir is cut by the umask and a folder inside a setgid parent inherits that bit: set the exact mode.
+    if (process.platform !== 'win32') {
+      try { fs.chmodSync(dir, LEDGER_DIR_MODE); } catch (_) { /* best effort, as before */ }
+    }
   }
 }
 

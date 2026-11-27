@@ -24,7 +24,25 @@ Whichever way you remove zn-gate, follow this order:
 
 If you remove the program first, your agent's settings still point at a command that is gone.
 
-`npx -y zn-gate uninstall` does steps 1 and 2 for you, in that order, after you confirm the list. It also deletes the launcher scripts `~/.zn/hooks/zn-hook-<agent>.sh` that go with your user hooks. It then asks separately whether to delete the vault (the vault part of step 3), runs `zn-gate check`, and prints the program removal as its last line. It does not edit your `.env` files, does not delete the rest of the `.zn` folder (apart from the launcher scripts, and the vault files if you say yes), and does not remove the program. Those are yours to do: put your `.env` values back if you want them (`env unshadow`), delete the rest of the `.zn` folder if you want it gone, and remove the program yourself, last (step 4).
+`npx -y zn-gate uninstall` does steps 1 and 2 for you, in that order, after you confirm the list. It also deletes the launcher scripts `~/.zn/hooks/zn-hook-<agent>.sh` that go with your user hooks.
+
+After that, it:
+
+- asks separately whether to delete the vault (the vault part of step 3),
+- runs `zn-gate check`,
+- prints the program removal as its last line.
+
+It does not:
+
+- edit your `.env` files,
+- delete the rest of the `.zn` folder (apart from the launcher scripts, and the vault files if you say yes),
+- remove the program.
+
+Those are yours to do:
+
+- Put your `.env` values back if you want them (`env unshadow`).
+- Delete the rest of the `.zn` folder if you want it gone.
+- Remove the program yourself, last (step 4).
 
 ## One step: `zn-gate uninstall`
 
