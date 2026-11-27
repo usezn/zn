@@ -861,6 +861,7 @@ module.exports = {
   id,
   HOOK_TIMEOUT_S,
   isZnSecretsServer,
+  isInstalledSecretsServer,
   znMcpServerKind,
   detect,
   install,

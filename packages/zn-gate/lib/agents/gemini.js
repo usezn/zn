@@ -52,6 +52,7 @@ const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 
 const id = 'gemini';
+const MCP_SERVER_NAME = 'secrets';
 const HOOK_NAME = 'zn-gate';
 const HOOK_TIMEOUT_MS = 15000;
 const MATCHER = '*';
@@ -130,7 +131,40 @@ function pathsOf(args) {
   return { paths: out, bad };
 }
 
-function normalize(raw) {
+/**
+ * Whether the "secrets" MCP server a call goes to is zn's own. The user settings name it and it is the server
+ * `zn hooks install gemini` writes (this machine's Node.js and a zn-gate bin/cli.js, by absolute path, outside the
+ * project). A project settings file (this folder or any above it) or the system settings file that defines a server
+ * with that name at all, or any settings file that cannot be read, gives null: Gemini CLI lets the project win over the
+ * user, so a project cannot stand in for zn's server. Returns 'secrets' or null.
+ */
+function znSecretsServerIsOurs(cwd, opts = {}) {
+  const env = opts.env || process.env;
+  const read = (file) => {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch (err) { return err.code === 'ENOENT' ? undefined : null; }
+  };
+  const serversOf = (data) => (isObj(data) && isObj(data.mcpServers) ? data.mcpServers : {});
+  const user = read(settingsFile({ home: opts.home }));
+  if (user === null) return null;
+  const mine = serversOf(user)[MCP_SERVER_NAME];
+  if (mine === undefined || (isObj(mine) && mine.disabled === true)) return null;
+  const others = [opts.systemSettings || systemSettingsFile()];
+  const seen = new Set();
+  for (let dir = path.resolve(cwd || process.cwd()); !seen.has(dir); dir = path.dirname(dir)) {
+    seen.add(dir);
+    others.push(path.join(dir, '.gemini', 'settings.json'));
+  }
+  const userFile = path.resolve(settingsFile({ home: opts.home }));
+  for (const f of others) {
+    if (path.resolve(f) === userFile) continue;
+    const data = read(f);
+    if (data === null || (data !== undefined && serversOf(data)[MCP_SERVER_NAME] !== undefined)) return null;
+  }
+  const { isInstalledSecretsServer } = require('./claude-code');
+  return isInstalledSecretsServer(mine, { env, cwd: path.resolve(cwd || process.cwd()) }) ? 'secrets' : null;
+}
+
+function normalize(raw, opts = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const base = { cwd: typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : process.cwd(), sessionId: raw.session_id || null, raw };
   // zn registers BeforeTool only, so a payload that names no event is a malformed BeforeTool, not another event.
@@ -151,7 +185,9 @@ function normalize(raw) {
     const server = typeof mc.server_name === 'string' && mc.server_name ? mc.server_name : mcp[1];
     const tool = typeof mc.tool_name === 'string' && mc.tool_name ? mc.tool_name : mcp[2];
     const mp = pathsOf(args);
-    const e = { ...ev, tool: 'mcp', mcp: { server, tool }, input: { args, paths: mp.paths, texts: [] } };
+    // `ours` only for an exact tool of zn's own secrets server, verified from the settings files Gemini CLI reads.
+    const ours = server === MCP_SERVER_NAME && require('../broker/secrets-tools').isSecretsToolName(tool) ? znSecretsServerIsOurs(base.cwd, opts) : null;
+    const e = { ...ev, tool: 'mcp', mcp: { server, tool, ...(ours ? { ours } : {}) }, input: { args, paths: mp.paths, texts: [] } };
     if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
   }
@@ -264,6 +300,18 @@ function commandFor(opts = {}) {
   return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_MS / 1000), deadlineSoft: true }), 'BeforeTool', platform);
 }
 
+/** The top-level "mcpServers" object of a Gemini CLI settings file (created when `create`). */
+function mcpServersOf(data, file, create) {
+  if (data.mcpServers === undefined || data.mcpServers === null) return create ? (data.mcpServers = {}) : {};
+  if (!isObj(data.mcpServers)) throw new Error('"mcpServers" in ' + file + ' must be an object (left unchanged)');
+  return data.mcpServers;
+}
+
+function mcpServerConfig(opts = {}) {
+  const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js');
+  return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cli, 'secrets-mcp', '--agent', id] };
+}
+
 function install(opts = {}) {
   const scope = opts.scope || 'user';
   const file = settingsFile(opts);
@@ -279,6 +327,23 @@ function install(opts = {}) {
   groups.push({ matcher: MATCHER, hooks: [{ name: HOOK_NAME, type: 'command', command, timeout: HOOK_TIMEOUT_MS }] });
   hooks.BeforeTool = groups;
   data.hooks = hooks;
+  // The "secrets" MCP server: it makes zn's vault reachable from Gemini CLI, so the organization (Team) policy applies to secret
+  // use there like for the other agents (host openings are offered only to an agent id named by this configuration).
+  // A project settings file is shared: it gets a hint naming zn on the PATH, never a write.
+  if (opts.mcp !== false) {
+    if (scope === 'project') {
+      report.warnings.push('optional: to let Gemini CLI use the secrets kept in zn\'s vault, run `zn hooks install gemini` without --project: it adds the "secrets" MCP server to ~/.gemini/settings.json.');
+    } else {
+      const servers = mcpServersOf(data, file, true);
+      const existing = servers[MCP_SERVER_NAME];
+      if (existing !== undefined && !require('./claude-code').isZnSecretsServer(existing)) {
+        report.warnings.push('an MCP server named "' + MCP_SERVER_NAME + '" already exists in ' + file + '; left unchanged');
+      } else {
+        servers[MCP_SERVER_NAME] = mcpServerConfig(opts);
+        report.mcp = file;
+      }
+    }
+  }
   cfg.writeJson(file, data);
   report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets.');
   report.warnings.push('Gemini CLI treats a hook that crashes or times out as a warning and runs the tool anyway (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher script blocks the tool instead; run `zn-gate check` to see that the hook works.');
@@ -301,7 +366,14 @@ function uninstall(opts = {}) {
     const kept = stripOurs(hooks[event]);
     if (Array.isArray(kept) && kept.length === 0) delete hooks[event]; else hooks[event] = kept;
   }
-  if (JSON.stringify(hooks) === before) return report;
+  // zn's own "secrets" server goes too; one that is not zn's is left alone.
+  const servers = mcpServersOf(data, file, false);
+  const dropServer = servers[MCP_SERVER_NAME] !== undefined && require('./claude-code').isZnSecretsServer(servers[MCP_SERVER_NAME]);
+  if (JSON.stringify(hooks) === before && !dropServer) return report;
+  if (dropServer) {
+    delete servers[MCP_SERVER_NAME];
+    if (Object.keys(servers).length === 0) delete data.mcpServers;
+  }
   if (Object.keys(hooks).length === 0) delete data.hooks; else data.hooks = hooks;
   report.backup = cfg.backup(file);
   report.removed = 1;
@@ -334,5 +406,6 @@ module.exports = {
   settingsFile,
   hooksFile: settingsFile,
   systemSettingsFile,
+  mcpServerConfig,
   pathsOf,
 };
