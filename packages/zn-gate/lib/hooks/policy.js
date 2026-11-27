@@ -1599,9 +1599,13 @@ const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 
 const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
 const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
 // Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
-// npm exec). A dotenv runner counts only as the program word or right after one of these, never as an argument of another program.
+// npm exec, pnpm exec, bun x). A dotenv runner counts only as the program word, or as the program a launcher runs when the launcher is
+// itself the program word; never as an argument of another program (node -e "..." npx dotenv -e .env is not launched).
 const PACKAGE_RUNNERS = new Set(['npx', 'bunx', 'pnpx']);
 const PACKAGE_RUNNER_PAIRS = new Set(['pnpm dlx', 'yarn dlx', 'npm exec', 'pnpm exec', 'bun x']);
+const PACKAGE_RUNNER_PAIR_HEADS = new Set([...PACKAGE_RUNNER_PAIRS].map((p) => p.split(' ')[0]));
+// Launcher options that take no value and may stand between the launcher and the program it runs (npx -y dotenv ...).
+const PACKAGE_RUNNER_FLAGS = new Set(['-y', '--yes', '-q', '--quiet']);
 // A word that is one plain name: no quote, expansion, bracket or separator that could hide more than a file name.
 const PLAIN_NAME_RE = /^[^\s'"`$(){};|&<>]+$/;
 // git steps that read, or that only change the index or the history (add, commit). checkout, restore, reset and stash are not here:
@@ -1631,26 +1635,33 @@ function envFileValueWords(words, opts) {
   let runner = false;
   let ended = false;
   let envProg = false;
-  let prev1 = null; // the two words before this one in the same reading (to tell npx dotenv from node x.js dotenv)
-  let prev2 = null;
+  // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
+  // the first word of a two-word launcher, null otherwise. Only an open launch makes the next dotenv runner the launched program.
+  let launch = null;
+  let launchHead = null;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; prev1 = null; prev2 = null; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // The words hold each reading of the command in turn; a reading starts again at the program word.
     const programWord = programName(t) === programName(w.head);
-    if (programWord) { runner = false; ended = false; prev1 = null; prev2 = null; }
-    const before1 = prev1;
-    const before2 = prev2;
-    prev2 = prev1;
-    prev1 = programName(t);
+    if (programWord) { runner = false; ended = false; }
+    const wasLaunch = launch;
+    if (programWord) {
+      const p = programName(t);
+      launch = PACKAGE_RUNNERS.has(p) ? 'open' : PACKAGE_RUNNER_PAIR_HEADS.has(p) ? 'pair' : null;
+      launchHead = p;
+    } else if (launch === 'pair') {
+      launch = PACKAGE_RUNNER_PAIRS.has(launchHead + ' ' + t) ? 'open' : null;
+    } else if (launch === 'open' && !PACKAGE_RUNNER_FLAGS.has(t)) {
+      launch = null;
+    }
     if (t === '--') { ended = true; continue; }
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      const launched = before1 !== null && (PACKAGE_RUNNERS.has(before1) || PACKAGE_RUNNER_PAIRS.has(before2 + ' ' + before1));
-      if (programWord || launched) runner = true;
+      if (programWord || wasLaunch === 'open') runner = true;
       continue;
     }
     const next = words[i + 1];
