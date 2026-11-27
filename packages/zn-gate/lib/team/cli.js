@@ -5,6 +5,8 @@
  *   zn team join <znj_token> | - | (ZN_TEAM_JOIN_TOKEN) [--api https://...] [--agent claude-code|codex|...] [--include-history]
  *   zn team status [--json] [--rules]
  *   zn team sync                      download the policy now and upload the audit log
+ *   zn team status-report accept|stop turn the status report on (once, for a machine that joined before it
+ *                                     existed) or off
  *   zn team leave
  *
  * and the local OpenTelemetry export of the audit log (free, no account):
@@ -30,7 +32,7 @@ const { isVerbose } = require('../verbose');
 const messages = require('../messages');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] [--rules] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] [--rules] | zn team sync | zn team status-report accept|stop | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 // Largest export kept in memory before it is written to stdout (larger logs: --out FILE).
 let STDOUT_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
@@ -162,6 +164,8 @@ async function statusCmd(args) {
     // true until a valid organization policy has been applied on this machine
     join_pending: joined && (!st || st.state === 'none' || st.state === 'invalid'),
     last_sync: (info && info.last_sync) || null,
+    // Whether the status report is on and the exact last body (from the vault; null while it is locked).
+    status_report: (info && info.status_report) || null,
     // The server was not told yet that an installation left: kept in the vault and retried.
     revocation_pending: (info && Array.isArray(info.revocations)) ? info.revocations : [],
     // Pending revocations that were dropped because more than 8 were waiting: the server was never told about them.
@@ -192,11 +196,30 @@ async function statusCmd(args) {
       // A removed installation cannot sync again: retrying would not help.
       (res.revoked_at ? '' : '; run `zn team sync` to retry')));
   }
+  for (const l of describeStatusReport(res.status_report)) out(l);
   for (const l of describeRevocations(res.revocation_pending)) out(l);
   for (const l of describeDropped(res.revocations_dropped)) out(l);
   if (wantRules) out('Local view only: with --rules the vault and the server were not contacted, so upload counts, last sync and removal status are left out. Run `zn team status` without --rules for those.');
   else if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
+}
+
+/* Lines for `zn team status` about the status report: on or off, and the exact body and time of the last attempt. */
+function describeStatusReport(sr) {
+  if (!sr) return [];
+  if (!sr.on) {
+    return [
+      'Status report: OFF. Nothing about this machine is sent besides the policy request and the audit upload.',
+      '  Your organization can show zn-gate version, OS, policy version and state, and which agents have hooks, if you accept it once: `zn team status-report accept` (a dialog asks you).',
+    ];
+  }
+  const lines = ['Status report: on (accepted ' + (sr.accepted_at || 'earlier') + (sr.via === 'join' ? ', when you joined' : '') + '). Stop it with `zn team status-report stop`.'];
+  const l = sr.last;
+  if (!l) { lines.push('  Not sent yet: it goes out with the next sync (every 15 minutes while the vault is unlocked), or run `zn team sync`.'); return lines; }
+  lines.push('  Last attempt: ' + (l.ok ? 'sent ' + l.at : 'FAILED ' + l.at + ': ' + (l.error || 'unknown') + (l.last_ok_at ? ' (last success ' + l.last_ok_at + ')' : ' (never succeeded)')));
+  if (sr.unsupported) lines.push('  The server does not take status reports yet; zn-gate asks again after a day.');
+  if (l.body) lines.push('  Body: ' + JSON.stringify(l.body));
+  return lines;
 }
 
 /* Lines for `zn team status` about installations that left but whose revocation the server has not taken yet. */
@@ -243,6 +266,22 @@ async function syncCmd() {
   return o.ok ? 0 : 1;
 }
 
+/* zn team status-report accept|stop: the one-time acceptance for a machine that joined before status reports existed. */
+async function statusReportCmd(args) {
+  const action = args[2];
+  if (action !== 'accept' && action !== 'stop') { err('[zn] usage: zn team status-report accept | zn team status-report stop'); return 2; }
+  const r = await withClient((c) => c.teamStatusReport({ action }));
+  const label = r.org_name ? r.org_name + ' (' + r.org + ')' : r.org;
+  if (action === 'stop') {
+    out('Status report is off for ' + label + '. Nothing about this machine is sent besides the policy request and the audit upload.');
+  } else if (r.already) {
+    out('Status report is already on for ' + label + '. `zn team status` shows the last one sent.');
+  } else {
+    out('Status report is on for ' + label + '. It goes out with the next sync (every 15 minutes while the vault is unlocked); `zn team sync` sends it now, and `zn team status` shows exactly what was sent.');
+  }
+  return 0;
+}
+
 async function leaveCmd() {
   const r = await withClient((c) => c.teamLeave());
   const stuck = Array.isArray(r.pending_files) ? r.pending_files : [];
@@ -276,6 +315,7 @@ async function runTeamCommand(args, io) {
     if (sub === 'join') return await joinCmd(args, io);
     if (sub === 'status' || sub === undefined) return await statusCmd(args);
     if (sub === 'sync') return await syncCmd();
+    if (sub === 'status-report') return await statusReportCmd(args);
     if (sub === 'leave') return await leaveCmd();
     if (sub === 'managed-config') return require('./managed-config').run(args.slice(2));
     err('[zn] ' + messages.teamNotACommand(sub));

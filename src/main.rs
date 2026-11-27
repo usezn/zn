@@ -136,9 +136,19 @@ struct Args {
     #[arg(long, short, global = true)]
     config: Option<String>,
 
-    /// API key for Management API authentication (also accepted after `start` and `dashboard`)
+    /// Refused unless --allow-insecure-api-key-flag is also given: a key on the command line is
+    /// visible to every local user in the process list. Use ZN_API_KEY or --api-key-file.
     #[arg(long, global = true)]
     api_key: Option<String>,
+
+    /// File that holds the API key for Management API authentication (owner-only access; also
+    /// accepted after `start` and `dashboard`)
+    #[arg(long, global = true)]
+    api_key_file: Option<String>,
+
+    /// Accept --api-key anyway (the key stays visible in the process list)
+    #[arg(long, global = true, default_value_t = false)]
+    allow_insecure_api_key_flag: bool,
 
     /// Database path for audit logs (also accepted after `start`)
     #[arg(long, global = true)]
@@ -196,7 +206,13 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    zn::tls::install_default_crypto_provider();
     let args = Args::parse();
+
+    // The key flags are global, so every command accepts them. Refuse them
+    // here, before any command runs (the mcp path returns early), unless the
+    // command actually uses a key.
+    reject_unused_key_flags(&args)?;
 
     // MCP stdio mode owns stdout (protocol frames only): no branding, no tracing.
     // Handled here so intro()/init_tracing() below can never touch stdout.
@@ -266,6 +282,32 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Whether the command uses the management API key (start and dashboard, in
+/// either form).
+fn command_uses_api_key(args: &Args) -> bool {
+    match &args.command {
+        Some(Commands::Start) | Some(Commands::Dashboard) => true,
+        Some(_) => false,
+        None => args.start || args.dashboard,
+    }
+}
+
+/// `--api-key` and `--api-key-file` are global flags. On a command that does
+/// not use a key they would be silently ignored while a key given with
+/// `--api-key` stays visible in the process list, so they are refused. The
+/// message never contains the key.
+fn reject_unused_key_flags(args: &Args) -> Result<()> {
+    if command_uses_api_key(args) {
+        return Ok(());
+    }
+    if args.api_key.is_some() || args.api_key_file.is_some() {
+        anyhow::bail!(
+            "--api-key and --api-key-file are only accepted by `zn start` and `zn dashboard`. Remove the flag; set ZN_API_KEY in the environment if a key is needed."
+        );
+    }
+    Ok(())
+}
+
 /// Open the dashboard on the port given with --port, or else the port from the
 /// settings file or ZN_PORT, or else the default one.
 async fn run_dashboard(args: &Args) -> Result<()> {
@@ -274,7 +316,54 @@ async fn run_dashboard(args: &Args) -> Result<()> {
             .ok()
             .map(|c| c.server.port)
     });
-    tui::TuiApp::run(args.api_key.clone(), port).await
+    tui::TuiApp::run(resolve_cli_api_key(args)?, port).await
+}
+
+/// The API key given on the command line, if any: from --api-key-file (a file only its owner
+/// can access), or from --api-key when --allow-insecure-api-key-flag is also given. A key on
+/// the command line is visible to every local user in `ps` and in /proc, so by default the
+/// flag is refused and the message names the replacements. `None` means "use ZN_API_KEY".
+fn resolve_cli_api_key(args: &Args) -> Result<Option<String>> {
+    resolve_api_key_sources(
+        args.api_key.as_deref(),
+        args.api_key_file.as_deref().map(std::path::Path::new),
+        args.allow_insecure_api_key_flag,
+    )
+}
+
+fn resolve_api_key_sources(
+    flag: Option<&str>,
+    file: Option<&std::path::Path>,
+    allow_flag: bool,
+) -> Result<Option<String>> {
+    if flag.is_some() && file.is_some() {
+        return Err(anyhow!(
+            "Give the API key once: use --api-key-file or the ZN_API_KEY environment variable, not both with --api-key."
+        ));
+    }
+    if let Some(path) = file {
+        let bytes = zn::private_file::read_private_file(path).map_err(|e| {
+            anyhow!(
+                "Cannot read the API key file {}: {e}. The file must be a regular file that only its owner can access (for example mode 0600).",
+                path.display()
+            )
+        })?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| anyhow!("The API key file {} is not text.", path.display()))?;
+        return match zn::config::normalize_credential(Some(text)) {
+            Some(key) => Ok(Some(key)),
+            None => Err(anyhow!("The API key file {} is empty.", path.display())),
+        };
+    }
+    if let Some(key) = flag {
+        if !allow_flag {
+            return Err(anyhow!(
+                "--api-key is refused: a key on the command line is visible to every local user in the process list (ps, /proc). Set the ZN_API_KEY environment variable, or put the key in a file only you can read and pass --api-key-file <path>. To keep using --api-key anyway, add --allow-insecure-api-key-flag."
+            ));
+        }
+        return Ok(zn::config::normalize_credential(Some(key.to_string())));
+    }
+    Ok(None)
 }
 
 /// The startup error for a Management API address that cannot be bound.
@@ -302,8 +391,11 @@ async fn start_proxy(args: Args) -> Result<()> {
     if let Some(port) = args.port {
         zn_config.server.port = port;
     }
-    if let Some(api_key) = args.api_key {
-        zn_config.security.api_key = zn::config::normalize_credential(Some(api_key));
+    if let Some(api_key) = resolve_cli_api_key(&args)? {
+        if args.api_key.is_some() {
+            log::warning("--api-key leaves the key visible in the process list. Use ZN_API_KEY or --api-key-file instead.")?;
+        }
+        zn_config.security.api_key = Some(api_key);
     }
     if let Some(db_path) = args.db_path {
         zn_config.audit.db_path = db_path;
@@ -3012,7 +3104,9 @@ mod audit_metadata_tests {
 
 #[cfg(test)]
 mod cli_form_tests {
-    use super::{Args, Commands};
+    use super::{
+        reject_unused_key_flags, resolve_api_key_sources, resolve_cli_api_key, Args, Commands,
+    };
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -3059,8 +3153,226 @@ mod cli_form_tests {
     }
 
     #[test]
+    fn the_api_key_flag_is_refused_without_the_explicit_opt_in() {
+        let err = resolve_api_key_sources(Some("secret-value-123"), None, false)
+            .expect_err("the flag must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("ZN_API_KEY") && msg.contains("--api-key-file"));
+        assert!(!msg.contains("secret-value-123"));
+        let args = Args::try_parse_from(["zn", "start", "--api-key", "k"]).unwrap();
+        assert!(resolve_cli_api_key(&args).is_err());
+        let args = Args::try_parse_from([
+            "zn",
+            "start",
+            "--api-key",
+            " k ",
+            "--allow-insecure-api-key-flag",
+        ])
+        .unwrap();
+        assert_eq!(resolve_cli_api_key(&args).unwrap().as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn key_flags_are_refused_on_commands_that_do_not_use_a_key() {
+        for cmd in [
+            vec!["zn", "mcp"],
+            vec!["zn", "init"],
+            vec!["zn", "analyze", "some text"],
+            vec!["zn", "shield", "scan"],
+            vec!["zn"],
+        ] {
+            for flag in [
+                vec!["--api-key", "secret-value-123"],
+                vec![
+                    "--api-key",
+                    "secret-value-123",
+                    "--allow-insecure-api-key-flag",
+                ],
+                vec!["--api-key=secret-value-123"],
+                vec!["--api-key-file", "k.txt"],
+                vec!["--api-key-file=k.txt"],
+            ] {
+                let mut argv = cmd.clone();
+                argv.extend(flag.clone());
+                let args = Args::try_parse_from(argv.clone())
+                    .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+                let err =
+                    reject_unused_key_flags(&args).expect_err(&format!("{argv:?} must be refused"));
+                assert!(!err.to_string().contains("secret-value-123"));
+            }
+        }
+    }
+
+    #[test]
+    fn key_flags_are_not_refused_where_a_key_is_used() {
+        for argv in [
+            vec!["zn", "start", "--api-key-file", "k.txt"],
+            vec!["zn", "dashboard", "--api-key", "k"],
+            vec!["zn", "--start", "--api-key-file", "k.txt"],
+            vec!["zn", "--dashboard", "--api-key", "k"],
+            vec!["zn", "mcp"],
+        ] {
+            let args = Args::try_parse_from(argv.clone()).unwrap();
+            assert!(reject_unused_key_flags(&args).is_ok(), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn no_flag_and_no_file_means_use_the_environment() {
+        assert_eq!(resolve_api_key_sources(None, None, false).unwrap(), None);
+    }
+
+    #[test]
+    fn the_flag_and_the_file_cannot_be_combined() {
+        let path = std::path::Path::new("k.txt");
+        assert!(resolve_api_key_sources(Some("k"), Some(path), true).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_api_key_file_is_read_and_its_mode_is_checked() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("api-key.txt");
+        std::fs::write(&path, "  file-key-456\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let err = resolve_api_key_sources(None, Some(&path), false).expect_err("0644 is refused");
+        assert!(!err.to_string().contains("file-key-456"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            resolve_api_key_sources(None, Some(&path), false)
+                .unwrap()
+                .as_deref(),
+            Some("file-key-456")
+        );
+        std::fs::write(&path, " \n").unwrap();
+        assert!(resolve_api_key_sources(None, Some(&path), false).is_err());
+    }
+
+    #[test]
     fn a_port_out_of_range_is_still_refused() {
         assert!(Args::try_parse_from(["zn", "start", "--port", "99999"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cors_layer_tests {
+    use super::build_cors_layer;
+    use axum::{routing::get, Router};
+    use reqwest::{Method, Response};
+
+    async fn serve(origins: &[&str]) -> String {
+        let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
+        let app = Router::new()
+            .route("/ping", get(|| async { "pong" }))
+            .layer(build_cors_layer(&origins));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/ping")
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    async fn preflight(url: &str, origin: &str) -> Response {
+        client()
+            .request(Method::OPTIONS, url)
+            .header("Origin", origin)
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", "authorization")
+            .send()
+            .await
+            .unwrap()
+    }
+
+    fn header(resp: &Response, name: &str) -> Option<String> {
+        resp.headers()
+            .get(name)
+            .map(|v| v.to_str().unwrap().to_ascii_lowercase())
+    }
+
+    #[tokio::test]
+    async fn a_preflight_from_a_default_origin_is_answered_with_the_configured_policy() {
+        let url = serve(&[]).await;
+        let resp = preflight(&url, "http://localhost:5173").await;
+        assert!(resp.status().is_success(), "{}", resp.status());
+        assert_eq!(
+            header(&resp, "access-control-allow-origin").as_deref(),
+            Some("http://localhost:5173")
+        );
+        assert_eq!(
+            header(&resp, "access-control-allow-credentials").as_deref(),
+            Some("true")
+        );
+        let methods = header(&resp, "access-control-allow-methods").unwrap();
+        for m in ["get", "post", "options"] {
+            assert!(methods.contains(m), "{methods}");
+        }
+        assert!(!methods.contains("delete"), "{methods}");
+        let headers = header(&resp, "access-control-allow-headers").unwrap();
+        for h in ["content-type", "authorization", "x-api-key"] {
+            assert!(headers.contains(h), "{headers}");
+        }
+        assert!(header(&resp, "vary").unwrap().contains("origin"));
+    }
+
+    #[tokio::test]
+    async fn an_origin_that_is_not_listed_gets_no_allow_origin_header() {
+        let url = serve(&[]).await;
+        let resp = preflight(&url, "https://evil.example.com").await;
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+        let resp = client()
+            .get(&url)
+            .header("Origin", "https://evil.example.com")
+            .send()
+            .await
+            .unwrap();
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+    }
+
+    #[tokio::test]
+    async fn configured_origins_replace_the_defaults() {
+        let url = serve(&["https://dashboard.example.com"]).await;
+        let resp = preflight(&url, "https://dashboard.example.com").await;
+        assert_eq!(
+            header(&resp, "access-control-allow-origin").as_deref(),
+            Some("https://dashboard.example.com")
+        );
+        let resp = preflight(&url, "http://localhost:5173").await;
+        assert!(header(&resp, "access-control-allow-origin").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_normal_request_from_a_listed_origin_carries_the_allow_headers() {
+        let url = serve(&["https://dashboard.example.com"]).await;
+        let resp = client()
+            .get(&url)
+            .header("Origin", "https://dashboard.example.com")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            header(&resp, "access-control-allow-origin").as_deref(),
+            Some("https://dashboard.example.com")
+        );
+        assert_eq!(
+            header(&resp, "access-control-allow-credentials").as_deref(),
+            Some("true")
+        );
+        assert_eq!(resp.text().await.unwrap(), "pong");
+    }
+
+    #[tokio::test]
+    async fn entries_that_are_not_valid_header_values_are_dropped() {
+        // Nothing valid is left, so no origin is allowed (the defaults are not used).
+        let url = serve(&["bad\nvalue"]).await;
+        let resp = preflight(&url, "http://localhost:5173").await;
+        assert!(header(&resp, "access-control-allow-origin").is_none());
     }
 }
 

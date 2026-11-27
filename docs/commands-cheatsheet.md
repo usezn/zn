@@ -89,6 +89,7 @@ Needs the vault unlocked. See [zn Team](team.md).
 | [`team join`](cli.md#team-join) | `--api`, `--agent`, `--include-history` | `zn-gate team join -` |
 | [`team status`](cli.md#team-status) | `--json`, `--rules` | `zn-gate team status --json` |
 | [`team sync`](cli.md#team-sync) | none | `zn-gate team sync` |
+| [`team status-report`](cli.md#team-status-report) | `accept`, `stop` | `zn-gate team status-report accept` |
 | [`team leave`](cli.md#team-leave) | none | `zn-gate team leave` |
 | [`team managed-config`](cli.md#team-managed-config) | `--agent`, `--os`, `--managed-hooks-only`, `--exclusive-mcp`, `--json` | `zn-gate team managed-config --agent claude-code --os linux` |
 

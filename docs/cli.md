@@ -740,7 +740,7 @@ Needs the vault unlocked. Joining and leaving are confirmed outside the agent. [
 ### `team`
 
 ```text
-zn-gate team <join|status|sync|leave|managed-config>
+zn-gate team <join|status|sync|status-report|leave|managed-config>
 ```
 
 With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an error, `2` wrong usage.
@@ -764,7 +764,7 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json] [--rules]
 ```
 
-Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, whether the status report is on and the exact body and time of the last one sent, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
@@ -773,6 +773,15 @@ zn-gate team sync
 ```
 
 Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
+
+#### `team status-report`
+
+```bash
+zn-gate team status-report accept
+zn-gate team status-report stop
+```
+
+After each sync a machine in a Team organization sends a short status report: the zn-gate version, the OS family, the version and state of the organization policy (`active`, `expired`, `refused` or `none`), and for each agent whether its zn hooks are `ok`, `stale` or `broken`. No paths, host names or user names. Joining with this version covers it: the join dialog lists it. A machine that joined before this version sends nothing until you run `accept` once; a dialog on the vault's own channel (like the join dialog) asks you, so an agent cannot accept for you. `stop` turns the report off again without a dialog. `team status` shows whether it is on and the exact last body. See [zn Team](team.md#what-is-sent).
 
 #### `team leave`
 
