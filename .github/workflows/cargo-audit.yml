@@ -1,22 +1,20 @@
-# cargo audit of the Rust dependencies on pull requests that change them, daily and on demand; a failed automated run opens an issue.
+# cargo audit of the Rust dependencies, on pull requests that change them, daily and on demand; a failed automated run opens an issue.
 name: Cargo audit
 
 # Checks the Rust dependencies of the legacy gateway in src/ against the RustSec advisory database.
-# "cargo audit" is meant to be a required check of pull requests into next; it is added to the branch rules right
-# after this workflow lands, and the merge queue runs it too. It audits only a
-# change to the Rust dependencies (Cargo.lock, any Cargo.toml, .cargo/audit.toml or this workflow): any other pull request
-# passes it at once, so an advisory published on an unrelated day does not hold up the queue. The job runs on every
-# pull request and merge queue group, with no paths filter, because a required check skipped by a filter would stay
-# pending. It also runs every day on main and every night on next, on a push to main or next that changes those
-# files, on every push to a release branch (cargo-audit-release.yml calls this workflow), and on demand. When a run outside pull requests and the merge queue fails, one issue is opened (or the open
-# one gets a comment), so a new advisory is still seen the same day. The advisory ignore list is .cargo/audit.toml.
+# On pull requests it runs only when a Rust dependency file changes (Cargo.lock, any Cargo.toml, .cargo/**, deny.toml,
+# or this workflow); other pull requests do not start it. It is not a required check. It runs every day on main,
+# every night on next, on a push to main or next that changes those files, on every push to a release branch
+# (cargo-audit-release.yml calls this workflow), and on demand. When a run outside pull requests fails, one issue is
+# opened (or the open one gets a comment), so a new advisory is still seen the same day. The advisory ignore list is
+# .cargo/audit.toml.
 on:
   push:
     branches: [main, next]
     paths: ["Cargo.lock", "Cargo.toml", "**/Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
   pull_request:
     branches: [main, next, 'release/**']
-  merge_group:
+    paths: ["Cargo.lock", "Cargo.toml", "**/Cargo.toml", ".cargo/**", "deny.toml", ".github/workflows/cargo-audit.yml"]
   schedule:
     - cron: "47 6 * * *" # daily advisory check on main
     - cron: "52 3 * * *" # nightly advisory check on next
@@ -59,7 +57,7 @@ jobs:
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || out true
           git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || out true
           files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD 2>/dev/null)" || out true
-          if grep -qxE 'Cargo\.lock|(.*/)?Cargo\.toml|\.cargo/audit\.toml|\.github/workflows/cargo-audit\.yml' <<< "$files"; then out true; fi
+          if grep -qxE 'Cargo\.lock|(.*/)?Cargo\.toml|\.cargo/.*|deny\.toml|\.github/workflows/cargo-audit\.yml' <<< "$files"; then out true; fi
           echo "No Rust dependency file changed: nothing to audit for this change."
           out false
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
