@@ -199,7 +199,7 @@ def _check_line(i: int, rec: Any, parse_error: Optional[Exception], expected_pre
                 total: int, is_cut_tail: bool, bad_reason: Optional[str]) -> Optional[Dict[str, Any]]:
     """The failure of line i, or None. Same checks, in the same order, as verify_evidence_ledger."""
     if bad_reason is not None:
-        return _corrupt_result(total, i, bad_reason)
+        return _corrupt_result(total, i, f"Invalid UTF-8 bytes at line {i + 1}: the log was corrupted or modified.")
     if parse_error is not None:
         if is_cut_tail:
             return _truncated_tail_result(total, i)
@@ -209,9 +209,10 @@ def _check_line(i: int, rec: Any, parse_error: Optional[Exception], expected_pre
         return _corrupt_result(total, i, f"Malformed record at line {i + 1}: not a JSON object.")
     rec_prev = rec.get("prev_hash")
     if rec_prev != expected_prev:
+        found = rec_prev[:8] if isinstance(rec_prev, str) else "undefined"
         return {"valid": False, "total": total, "verified": i, "broken_index": i,
-                "error": f"Broken chain link at line {i + 1} (record {rec.get('id')}): "
-                         f"expected {expected_prev[:8]}... found {str(rec_prev)[:8]}..."}
+                "error": f"Broken chain link at line {i + 1} (record {_template_text(rec, 'id')}): "
+                         f"expected prev_hash {expected_prev[:8]}... but found {found}..."}
     recorded_hash = rec.get("record_hash")
     base = {k: v for k, v in rec.items() if k != "record_hash"}
     # Same as verify_evidence_ledger: a whole-number confidence is hashed as an integer.
@@ -224,8 +225,8 @@ def _check_line(i: int, rec: Any, parse_error: Optional[Exception], expected_pre
     }
     if not isinstance(recorded_hash, str) or recorded_hash not in accepted:
         return {"valid": False, "total": total, "verified": i, "broken_index": i,
-                "error": f"Tamper detected at line {i + 1} (record {rec.get('id')}): "
-                         "hash mismatch! Log contents were modified."}
+                "error": f"Tamper detected at line {i + 1} (record {_template_text(rec, 'id')}): "
+                         "hash mismatch. The content of this log was altered!"}
     return None
 
 
@@ -234,6 +235,15 @@ def timesketch_csv_headers(include_preview: bool = False) -> List[str]:
     if not include_preview:
         return list(TIMESKETCH_CSV_HEADERS)
     return TIMESKETCH_CSV_HEADERS[:-2] + ["zn_payload_preview"] + TIMESKETCH_CSV_HEADERS[-2:]
+
+
+def _template_text(rec: Dict[str, Any], key: str) -> str:
+    """${rec[key]} in a JavaScript template: undefined when missing, null when null."""
+    if key not in rec:
+        return "undefined"
+    if rec[key] is None:
+        return "null"
+    return _js_string(rec[key])
 
 
 def _event(rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> Dict[str, Any]:
@@ -275,7 +285,7 @@ def inspect_ledger(file_path: str) -> Dict[str, Any]:
     verified) for every line that is a JSON object."""
     empty = {"valid": True, "error": None, "broken_index": None, "truncated_tail": False, "total": 0,
              "tip_hash": GENESIS_HASH, "tip_record_hash": None, "first_timestamp": None,
-             "last_timestamp": None, "read_error": False, "rows": []}
+             "last_timestamp": None, "read_error": False, "rows": [], "parsed": []}
     if not os.path.exists(file_path):
         return empty
     try:
@@ -288,10 +298,12 @@ def inspect_ledger(file_path: str) -> Dict[str, Any]:
     expected_prev = GENESIS_HASH
     failure: Optional[Dict[str, Any]] = None
     rows: List[Tuple[int, Dict[str, Any], bool]] = []
+    parsed: List[Tuple[Any, bool]] = []
     first_ts: Optional[str] = None
     last_ts: Optional[str] = None
     for i, text in enumerate(lines):
         rec, parse_error = _parse_record(text)
+        parsed.append((rec, parse_error is None))
         is_cut_tail = i == total - 1 and text.startswith(_RECORD_START) and not ends_with_newline
         if failure is None:
             failure = _check_line(i, rec, parse_error, expected_prev, total, is_cut_tail, bad.get(i))
@@ -321,6 +333,7 @@ def inspect_ledger(file_path: str) -> Dict[str, Any]:
         "last_timestamp": last_ts,
         "read_error": False,
         "rows": rows,
+        "parsed": parsed,
     }
 
 
@@ -340,6 +353,67 @@ def export_timesketch(file_path: str, fmt: str, include_preview: bool = False) -
     }
     if check["truncated_tail"]:
         result["truncated_tail"] = True
+    if check["read_error"]:
+        result["read_error"] = True
+    return result
+
+
+PLAIN_CSV_HEADERS = [
+    "timestamp", "verdict", "phase", "tool_name", "agent_environment", "rule", "reason",
+    "payload_sha256", "record_hash", "prev_hash", "latency_us",
+]
+
+
+def _js_string(value: Any) -> str:
+    """String(value) for a value taken from JSON, as the csv row of the Node package writes it:
+    null gives '', an object gives [object Object], and an array is joined with commas."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return "[object Object]"
+    if isinstance(value, list):
+        return ",".join(_js_string(v) for v in value)
+    return _scalar_text(value)
+
+
+def _csv_row(rec: Any) -> str:
+    """One csv row (csvRow in the Node package). A line that is not a JSON object gives empty cells."""
+    cells = []
+    for header in PLAIN_CSV_HEADERS:
+        val = _js_string(rec.get(header)) if isinstance(rec, dict) else ""
+        cells.append('"' + val.replace('"', '""') + '"')
+    return ",".join(cells)
+
+
+def _raw_jsonl(file_path: str, check: Dict[str, Any]) -> str:
+    """The log as it is, decoded (undecodable bytes replaced), with a final newline. Line endings
+    are kept, as the Node package keeps them."""
+    if check["read_error"] or not os.path.exists(file_path):
+        return ""
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    text = raw.decode("utf-8", errors="replace")
+    return text if raw.endswith(b"\n") else text + "\n"
+
+
+def export_plain(file_path: str, fmt: str) -> Dict[str, Any]:
+    """The jsonl or csv export, byte for byte what the Node package writes for the same log, with
+    the chain check result. csv gives one row for every line that is a JSON value other than null."""
+    check = inspect_ledger(file_path)
+    if fmt == "csv":
+        out = [",".join(PLAIN_CSV_HEADERS) + "\n"]
+        for rec, ok in check["parsed"]:
+            if ok and rec is not None:
+                out.append(_csv_row(rec) + "\n")
+        content = "".join(out)
+    else:
+        content = _raw_jsonl(file_path, check)
+    result = {
+        "content": content, "format": fmt, "valid": check["valid"], "error": check["error"],
+        "tip_hash": check["tip_hash"], "total": check["total"],
+    }
+    if check["read_error"]:
+        result["read_error"] = True
     return result
 
 

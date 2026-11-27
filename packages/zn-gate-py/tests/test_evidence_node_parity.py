@@ -279,9 +279,9 @@ def _cli_pair(tmp_path, ledger, fmt, extra):
     return node, python, node_out, py_out
 
 
-def _same_export_and_manifest(tmp_path, ledger, fmt, extra):
+def _same_export_and_manifest(tmp_path, ledger, fmt, extra, expect_code=0):
     node, python, node_out, py_out = _cli_pair(tmp_path, ledger, fmt, extra)
-    assert python.returncode == 0, python.stderr
+    assert node.returncode == python.returncode == expect_code, (node.stderr, python.stderr)
     assert node_out.read_bytes() == py_out.read_bytes()
     if "--manifest" in extra:
         n_man = (node_out.parent / "out.txt.manifest.json").read_bytes()
@@ -289,6 +289,7 @@ def _same_export_and_manifest(tmp_path, ledger, fmt, extra):
         assert _GENERATOR.search(n_man) and _GENERATOR.search(p_man)
         # generator is the only field allowed to differ, when the two versions differ
         assert _GENERATOR.sub(b'"generator":"G"', n_man) == _GENERATOR.sub(b'"generator":"G"', p_man)
+    return node, python
 
 
 @pytest.mark.parametrize("fmt, extra", [
@@ -296,11 +297,34 @@ def _same_export_and_manifest(tmp_path, ledger, fmt, extra):
     ("timesketch-csv", ["--include-preview"]),
     ("timesketch", ["--manifest"]),
     ("timesketch-csv", ["--manifest", "--include-preview"]),
+    ("jsonl", []),
     ("jsonl", ["--manifest"]),
-], ids=["ts-preview", "tscsv-preview", "ts-manifest", "tscsv-manifest-preview", "jsonl-manifest"])
+    ("csv", []),
+    ("csv", ["--manifest"]),
+], ids=["ts-preview", "tscsv-preview", "ts-manifest", "tscsv-manifest-preview",
+        "jsonl", "jsonl-manifest", "csv", "csv-manifest"])
 def test_cli_export_and_manifest_match_node(tmp_path, fmt, extra):
     ledger = _node_write(tmp_path, TS_EVENTS)
     _same_export_and_manifest(tmp_path, ledger, fmt, extra)
+
+
+@pytest.mark.parametrize("fmt", ["jsonl", "csv", "timesketch", "timesketch-csv"])
+def test_stdout_bytes_match_node(tmp_path, fmt):
+    """Without --output the export goes to stdout: same bytes, LF line endings, same exit code."""
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    home = tmp_path / "home"
+    home.mkdir()
+    shutil.copy(ledger, home / "evidence.jsonl")
+    env = {**os.environ, "ZN_HOME": str(home)}
+    node = subprocess.run([NODE, str(NODE_CLI), "evidence", "--export", "--format", fmt],
+                          capture_output=True, env=env, timeout=120)
+    python = subprocess.run(
+        [sys.executable, "-m", "zn_gate", "evidence", "--export", "--format", fmt],
+        capture_output=True, env={**env, "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1"}, timeout=120,
+    )
+    assert node.returncode == python.returncode == 0, python.stderr
+    assert node.stdout == python.stdout
+    assert b"\r\n" not in python.stdout
 
 
 def test_cli_manifest_matches_node_after_tamper(tmp_path):
@@ -308,6 +332,9 @@ def test_cli_manifest_matches_node_after_tamper(tmp_path):
     lines = ledger.read_text(encoding="utf-8").split("\n")
     lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"deny"', 1)
     ledger.write_text("\n".join(lines), encoding="utf-8")
-    _same_export_and_manifest(tmp_path, ledger, "timesketch-csv", ["--manifest", "--include-preview"])
+    node, python = _same_export_and_manifest(tmp_path, ledger, "timesketch-csv",
+                                             ["--manifest", "--include-preview"], expect_code=1)
+    # Both exit 1 and print the same first line (the tamper message).
+    assert node.stderr.decode("utf-8").splitlines()[0] == python.stderr.decode("utf-8").splitlines()[0]
     man = (tmp_path / "py" / "out.txt.manifest.json").read_text(encoding="utf-8")
     assert '"chain_verified":false,"chain_break_index":2' in man

@@ -816,8 +816,14 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         else:
             res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
+        if res.get("read_error"):
+            # Same message as the npm package; nothing is written, so the output is never half a log.
+            incomplete = f" {args.output} is incomplete: do not use it." if getattr(args, "output", None) else ""
+            print(f"zn-gate: the export stopped. {res.get('error')}.{incomplete}", file=sys.stderr)
+            return 1
         if not res.get("valid"):
-            print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+            # Same two lines as the npm package.
+            print(f"Tamper detected: {res.get('error')}", file=sys.stderr)
             print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
             try:
@@ -835,12 +841,20 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         else:
             # The content already ends with a newline (or is empty when the
             # ledger has no records); print() would add a blank line, which
-            # Node's process.stdout.write does not.
-            sys.stdout.write(out_content)
+            # Node's process.stdout.write does not. Bytes go out as they are,
+            # so Windows does not turn \n into \r\n (the npm package writes \n).
+            raw_stdout = getattr(sys.stdout, "buffer", None)
+            if raw_stdout is None:
+                sys.stdout.write(out_content)
+            else:
+                sys.stdout.flush()
+                raw_stdout.write(out_content.encode("utf-8", errors="replace"))
+                raw_stdout.flush()
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
-        return 0
+        # A log whose chain does not verify in full is not proof: exit 1, like --verify (the npm package does the same).
+        return 0 if res.get("valid") else 1
 
     stats = get_evidence_stats()
     print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")

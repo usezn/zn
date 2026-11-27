@@ -107,7 +107,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 | Command | Codes | Meaning |
 |---|---|---|
 | `evidence --verify` | `1` | `1` when the SHA-256 chain was changed. |
-| `evidence --export` | `0`, `1`, `2` | npm package. `0` done; `1` the log could not be read to the end (the output is then incomplete), the output could not be written, or the exported chain does not verify (the file is still written and says `Integrity: TAMPERED`); `2` `--output` is the evidence log itself, or a link or hard link to it, or `--format` is not `jsonl` or `csv`. |
+| `evidence --export` | `0`, `1`, `2` | npm package. `0` done; `1` the log could not be read to the end (the output is then incomplete), the output could not be written, or the exported chain does not verify (the file is still written and says `Integrity: TAMPERED`); `2` `--output` is the evidence log itself, or a link or hard link to it, or `--format` is not `jsonl`, `csv`, `timesketch` or `timesketch-csv`, or `--manifest` without `--output`, or `--include-preview` with another format. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
 | `stats share on` | `1` | `1` when you do not confirm. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |
@@ -128,7 +128,7 @@ The Python package (`pip install zn-gate`) has a smaller command line than the n
 | `test "<text>"` | `0`, `1` | `0` nothing was flagged; `1` the text was blocked or contains a secret. It does not run the self-test that `test` runs in the npm package. |
 | `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked; without a text, `2` (the npm package exits `1`). |
 | `scan [path]` | `0`, `1`, `3` | `0` nothing found; `1` something was found or the path does not exist; `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
-| `evidence` | `0`, `1`, `2` | `0` done, including an export whose chain does not verify: the file is still written and says `Integrity: TAMPERED`, and the Python package exits `0` for that (only `--verify` exits `1`); `1` `--verify` found a changed SHA-256 chain or a cut-off last record, or the export was not saved; `2` `--output` is the evidence log itself, or a link or hard link to it. |
+| `evidence` | `0`, `1`, `2` | `0` done; `1` `--verify` found a changed SHA-256 chain or a cut-off last record, an export whose chain does not verify (the file is still written and says `Integrity: TAMPERED`, the same as the npm package), or the export was not saved; `2` `--output` is the evidence log itself, or a link or hard link to it. |
 | `status` | `0` | Always `0`. |
 | `stats` | `0`, `2` | `0` done; `2` `--days` is out of range (1 to 90). |
 | The other commands on this page | `2` | They exist only in the npm package: the Python package prints a short note that points to it, then exits `2`. `help` does the same. |
