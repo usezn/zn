@@ -4121,8 +4121,12 @@ function suspectSubstitutionDenial(text) {
     if (r.truncated) return TOO_MANY_MESSAGE;
     for (const x of r) {
       if (typeof x.text !== 'string' || x.text.indexOf(SUSPECT_MARK) < 0) continue;
-      // echo and printf only print their words; a redirect target is a file whatever the command.
-      if (!x.redirectTarget && (x.head === 'echo' || x.head === 'printf' || (x.git && x.sub === 'commit'))) continue;
+      // echo and printf only print their words; a redirect target is a file whatever the command. What they print can still reach a
+      // reader (echo $(...) | xargs cat, echo $(...) > list; xargs cat < list), so a pipe after them, or a redirect on the same
+      // command, keeps the word judged as a read.
+      const prints = x.head === 'echo' || x.head === 'printf';
+      const printsToReader = prints && (x.opAfter === '|' || r.some((y) => y.seq === x.seq && y.redirectTarget));
+      if (!x.redirectTarget && !printsToReader && (prints || (x.git && x.sub === 'commit'))) continue;
       return SUSPECT_MESSAGE(x.text.replace(/\u0003/g, '$(...)'));
     }
   }

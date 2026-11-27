@@ -236,3 +236,24 @@ test('a plain echo may decode escapes (zsh, dash): both readings are judged, and
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('what echo or printf prints can reach a reader through a pipe or a file: refused; plain echo stays allowed', () => {
+  const { opts } = project();
+  for (const c of [
+    'echo $(echo vne. | rev) | xargs cat',
+    'printf %s $(printf %s .e nv) | xargs cat',
+    "echo $(echo vne. | rev | tr -d ' ') | xargs cat",
+    'echo $(echo vne. | rev) |& xargs cat',
+    'echo $(echo vne. | rev) > list.txt; xargs cat < list.txt',
+  ]) {
+    assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+  }
+  for (const c of [
+    'echo $(pwd)',
+    'echo $(date) | tee log.txt',
+    'printf %s $(echo a | rev)',
+    'echo $(echo a | rev); cat notes.md',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
