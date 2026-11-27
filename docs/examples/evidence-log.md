@@ -20,11 +20,7 @@ With no option, the command prints the counts and the last 20 records. To see a 
 zn-gate evidence --tail 5
 ```
 
-`logs` is another name for the same command, so this does the same:
-
-```bash
-zn-gate logs --tail 5
-```
+`zn-gate logs` is another name for the same command, so `zn-gate logs --tail 5` does the same.
 
 ## Check the chain
 

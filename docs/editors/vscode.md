@@ -127,7 +127,7 @@ Run each step in your own terminal, not through the agent: zn-gate refuses to un
 5. **Check that it is off.** Run `npx -y zn-gate check`. It says which part, if any, is still set up.
 6. **Remove the program itself, last.** Run `npm uninstall -g zn-gate` if you installed it globally. If you remove the program first, the hooks stay and point at a command that is gone.
 
-`npx -y zn-gate uninstall` removes the hooks for you (for your user, and for the project folder you run it in) after you confirm the list, but it does not touch the entries you added by hand in VS Code's MCP settings: do steps 1 and 2 yourself. If you ran `env shadow` or keep secrets in the vault, read [Remove zn-gate](../uninstall.md) before you remove the program. For every file zn-gate writes, see [Files zn-gate writes in each editor](remove-by-hand.md#github-copilot-vs-code-cli).
+`npx -y zn-gate uninstall` removes the hooks for you (for your user, and for the project folder you run it in) after you confirm the list, but it does not touch the entries you added by hand in VS Code's MCP settings: do steps 1 and 2 yourself. If you ran `env shadow` or keep secrets in the vault, read [Remove zn-gate](../uninstall.md) before you remove the program. For every file zn-gate writes, see [Files zn-gate writes in each editor](remove-by-hand.md#github-copilot-cli-experimental-vs-code-not-tested).
 
 ## Troubleshooting
 
