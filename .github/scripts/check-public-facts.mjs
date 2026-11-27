@@ -314,6 +314,7 @@ export function check(facts, files, read, options = {}) {
   }
 
   for (const fact of facts.fields || []) {
+    if (fact.maxLength && fact.value.length > fact.maxLength) errors.push(`${fact.id}: ${fact.value.length} characters, over the ${fact.maxLength} the registry shows`);
     for (const { file, json: path, regex } of fact.files) {
       let got;
       if (path) got = getPath(json(file), path);

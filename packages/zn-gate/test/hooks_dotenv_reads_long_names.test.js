@@ -226,3 +226,48 @@ test('a percent-encoded file: URI naming .env on a line of a multi-line value is
     }
   }
 });
+
+// A tool may take a list of names on one line: under a file key each piece between tabs, commas or spaces is checked, and the
+// Unicode line separators split lines like CR and LF. Free text under other keys is not split.
+test('a .env in a list of names under a file key, or after a Unicode line separator, is refused', async (t) => {
+  const dir = project(t);
+  const uriEnv = 'file://' + path.join(dir, '.env').split(path.sep).join('/').replace(/^([A-Za-z]):/, '/$1:');
+  for (const value of ['notes.txt\t.env', 'notes.txt,.env', 'notes.txt .env', 'notes.txt\u2028.env', 'notes.txt\u2029sub/.env', 'a.txt, ./.env.local',
+    // A file: URI first in the list: the whole URI names no .env, but the first piece does.
+    uriEnv + ',notes.txt', uriEnv + '\tnotes.txt', uriEnv + ' notes.txt', uriEnv + '\u2028notes.txt']) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__custom__write_names', { path: value })), 'deny', 'claude ' + JSON.stringify(value));
+    assert.equal(await verdict(gemini, gem(dir, 'mcp_custom_write_names', { path: value })), 'deny', 'gemini ' + JSON.stringify(value));
+    assert.equal(await verdict(antigravity, ag(dir, 'mcp_custom_write_names', { path: value })), 'deny', 'antigravity ' + JSON.stringify(value));
+    assert.equal(await verdict(copilot, cop(dir, 'custom-write_names', { path: value })), 'deny', 'copilot ' + JSON.stringify(value));
+  }
+  for (const [key, value] of [['path', 'My Documents/report.txt'], ['query', 'how to load .env in node'], ['title', 'fix .env, then test']]) {
+    assert.equal(await verdict(claude, cc(dir, 'mcp__custom__tool', { [key]: value })), 'allow', 'claude ' + key);
+  }
+});
+
+// A dotenv runner makes its -e / -f value a read only as the program word or right after a launcher; as an argument of another
+// program (node -e "..." dotenv -e .env) it is a plain word, so the .env there is judged like any other.
+test('dotenv counts as a runner only as the program or right after a launcher', async (t) => {
+  const dir = project(t);
+  for (const command of ['dotenv -e .env -- node app.js', 'npx dotenv -e .env -- node app.js', 'bunx dotenv -e .env -- node app.js',
+    'pnpm dlx dotenv -e .env -- node app.js', 'yarn dlx dotenv -e .env -- node app.js', 'npm exec dotenv -e .env -- node app.js',
+    'pnpx dotenv -e .env -- node app.js', 'pnpm exec dotenv -e .env -- node app.js', 'bun x dotenv -e .env -- node app.js',
+    'npx -y dotenv -e .env -- node app.js', 'npx --yes dotenv -e .env -- node app.js',
+    'cd sub && npx dotenv -e ../.env -- node app.js; npx dotenv -e .env -- node app.js',
+    'dotenvx run -f .env -- node app.js']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', command);
+  }
+  for (const command of ["node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" dotenv -e .env",
+    'python3 w.py dotenv -e .env', 'cp notes.txt dotenv -e .env', 'echo dotenv -e .env | sh',
+    // A launcher that is itself an argument of another program does not launch anything.
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" npx dotenv -e .env",
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" pnpm dlx dotenv -e .env",
+    'python3 w.py bunx dotenv -e .env', 'cp notes.txt npm exec dotenv -e .env',
+    // Only value-less launcher flags may stand between the launcher and dotenv; any other word ends the launch.
+    'npx w.js dotenv -e .env', 'pnpm w.js dlx dotenv -e .env',
+    // A launcher word repeated as an argument does not start a new launch.
+    'npx w.js npx dotenv -e .env', 'bunx w.js bunx dotenv -e .env', 'npm exec w.js npm exec dotenv -e .env',
+    "node -e \"require('fs').appendFileSync(process.argv.at(-1),'X=1')\" node npx dotenv -e .env"]) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
+  }
+});

@@ -54,6 +54,9 @@ const PLUGIN_MARK = '// zn-gate plugin for OpenCode';
 const BUILTIN = new Set(['bash', 'read', 'write', 'edit', 'grep', 'glob', 'webfetch', 'websearch', 'apply_patch', 'task', 'todowrite', 'todoread', 'todo', 'skill', 'question', 'plan', 'list', 'patch', 'multiedit', 'lsp']);
 
 const TOKENIZED_OUTPUT = new Set(['task', 'websearch', 'glob', 'list', 'skill', 'codesearch']);
+// Built-ins whose arguments leave the machine (the query goes to a search service): checked before they run like an MCP
+// call to an unknown server, so a secret or a marker in the query is refused. task, glob, list and skill stay local.
+const OUTBOUND_QUERY = new Set(['websearch', 'codesearch']);
 
 function textsOf(tool, args) {
   const texts = [];
@@ -83,6 +86,87 @@ function usesPowerShell(shell, platform) {
   if (isPowerShellName(shell)) return true;
   if (platform !== 'win32') return false;
   return !BASH_LIKE.has(shellBase(shell));
+}
+
+/* ---------------------- which MCP server a tool belongs to ---------------------- */
+
+// OpenCode names an MCP tool <server>_<tool>, both parts with every character outside [A-Za-z0-9_-] turned into "_".
+function mcpSafeName(s) { return String(s).replace(/[^A-Za-z0-9_-]/g, '_'); }
+
+/* The MCP servers OpenCode's configuration files define, by name: { servers: Map(name -> [entries]), ok }.
+ * ok is false when a file that exists cannot be read or parsed (or a config variable is not valid JSON): nothing is
+ * then trusted as zn's own server. A missing file is normal. */
+function readMcpServers(root, env) {
+  const { parseJsonc } = require('../audit/parse');
+  const servers = new Map();
+  let ok = true;
+  const take = (data) => {
+    const m = data && typeof data === 'object' && data.mcp && typeof data.mcp === 'object' && !Array.isArray(data.mcp) ? data.mcp : null;
+    if (!m) return;
+    for (const name of Object.keys(m)) {
+      const key = mcpSafeName(name);
+      if (!servers.has(key)) servers.set(key, []);
+      servers.get(key).push(m[name]);
+    }
+  };
+  const readFile = (file) => {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return; ok = false; return; }
+    try { take(parseJsonc(text)); } catch (_) { ok = false; }
+  };
+  const base = env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(os.homedir(), '.config');
+  const dirs = [path.join(base, 'opencode')];
+  if (env.OPENCODE_CONFIG_DIR) dirs.push(path.resolve(env.OPENCODE_CONFIG_DIR));
+  for (const d of dirs) { readFile(path.join(d, 'opencode.json')); readFile(path.join(d, 'opencode.jsonc')); }
+  if (env.OPENCODE_CONFIG) readFile(path.resolve(env.OPENCODE_CONFIG));
+  // The project files OpenCode reads: from the working folder up to the git work tree root (the nearest folder with
+  // .git), and no further. With no .git above, only the working folder.
+  const start = path.resolve(root);
+  const dirsUp = [];
+  let found = false;
+  for (let dir = start; ;) {
+    dirsUp.push(dir);
+    if (fs.existsSync(path.join(dir, '.git'))) { found = true; break; }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  for (const dir of found ? dirsUp : [start]) {
+    for (const f of ['opencode.json', 'opencode.jsonc', path.join('.opencode', 'opencode.json'), path.join('.opencode', 'opencode.jsonc')]) readFile(path.join(dir, f));
+  }
+  if (env.OPENCODE_CONFIG_CONTENT) {
+    try { take(parseJsonc(String(env.OPENCODE_CONFIG_CONTENT))); } catch (_) { ok = false; }
+  }
+  return { servers, ok };
+}
+
+/* True when every entry of the server is zn's own secrets server (a local command, never a URL). */
+function entriesAreOurs(entries, root) {
+  const { isOurMcp } = require('../audit')._internal;
+  return entries.length > 0 && entries.every((cfg) => {
+    if (!cfg || typeof cfg !== 'object' || cfg.url || (cfg.type !== undefined && cfg.type !== 'local')) return false;
+    if (!Array.isArray(cfg.command) || !cfg.command.length || !cfg.command.every((w) => typeof w === 'string')) return false;
+    try { return Boolean(isOurMcp(cfg.command, { rec: { root } })); } catch (_) { return false; }
+  });
+}
+
+/* ev.mcp for an OpenCode tool name: the configured server whose name is the longest prefix of it, and `ours: 'secrets'`
+ * only when that server is zn's own and the rest of the name is exactly one of its tools. A name that matches no
+ * configured server leaves the server unknown. Fails closed: an unreadable configuration means not ours. */
+function mcpInfo(toolName, root, env = process.env) {
+  const { isSecretsToolName } = require('../broker/secrets-tools');
+  const info = { server: '', tool: toolName };
+  let found;
+  try { found = readMcpServers(root, env); } catch (_) { return info; }
+  let best = null;
+  for (const name of found.servers.keys()) {
+    if (toolName.startsWith(name + '_') && (best === null || name.length > best.length)) best = name;
+  }
+  if (best === null) return info;
+  info.server = best;
+  info.tool = toolName.slice(best.length + 1);
+  if (found.ok && isSecretsToolName(info.tool) && entriesAreOurs(found.servers.get(best), root)) info.ours = 'secrets';
+  return info;
 }
 
 function normalize(raw) {
@@ -120,7 +204,19 @@ function normalize(raw) {
     input.tooLong = tooLong;
     input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
   }
-  if (raw.hook === 'tool.execute.before') return { ...base, event: 'pre_tool', tool, toolName: t, input };
+  if (raw.hook === 'tool.execute.before') {
+    const ev = { ...base, event: 'pre_tool', tool, toolName: t, input };
+    // MCP tools are checked before they run, as for Claude Code and Cursor. Of the built-ins whose output is tokenized
+    // (TOKENIZED_OUTPUT), those that send their query out (OUTBOUND_QUERY) are checked too, as a call to a server that is
+    // not zn's; the others (task, glob, list, skill) stay on the machine and are left alone.
+    if (tool === 'mcp' && !TOKENIZED_OUTPUT.has(t)) {
+      input.args = args;
+      ev.mcp = mcpInfo(t, root);
+    } else if (tool === 'mcp' && OUTBOUND_QUERY.has(t)) {
+      input.args = args;
+    }
+    return ev;
+  }
   if (raw.hook === 'tool.execute.after') {
     const output = {};
     if (typeof raw.output === 'string') output.output = raw.output;

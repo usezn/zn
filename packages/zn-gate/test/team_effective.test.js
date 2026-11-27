@@ -24,6 +24,9 @@ test('a deny applies to every caller, whatever agents the rule names', () => {
   assert.strictEqual(eff('PROD_DB', p, { agent: null }).deny, true);
   assert.strictEqual(eff('DEV_DB', p, trusted('codex')).deny, false);
   assert.strictEqual(eff('PROD_DB', p, trusted('codex'), { state: 'expired' }).deny, true);
+  const forCursor = pol([{ secret: 'PROD_*', agents: ['cursor'], deny: true }]);
+  assert.strictEqual(eff('PROD_DB', forCursor, trusted('cursor')).deny, true);
+  assert.strictEqual(eff('PROD_DB', forCursor, trusted('cursor'), { state: 'expired' }).deny, true);
 });
 
 test('for an untrusted agent, every matching rule restricts and none opens', () => {
@@ -67,6 +70,9 @@ test('restricting applies at once: fewer hosts and commands, proxy mode, placeme
   const q = effective('X', { mode: 'proxy', allowHosts: [], allowCommands: [], allowIn: ['header'] },
     { policy: pol([{ secret: '*', agents: ['*'], injectAt: 'query' }]), state: 'active', agent: 'codex', agentTrusted: true });
   assert.deepStrictEqual(q.meta.allowIn, []);
+  const c = effective('X', { mode: 'proxy', allowHosts: [], allowCommands: [], allowIn: ['header', 'query'] },
+    { policy: pol([{ secret: '*', agents: ['cursor'], injectAt: 'query' }]), state: 'active', agent: 'cursor', agentTrusted: true });
+  assert.deepStrictEqual(c.meta.allowIn, ['query'], 'injectAt narrows for Cursor too');
 });
 
 test('only hosts can be opened, with a local approval; strict mode withdraws them', () => {
@@ -108,12 +114,14 @@ test('no policy yet or no state leaves local settings alone', () => {
 test('an invalid policy blocks every secret, uses nothing from its content and opens nothing', () => {
   // Even a copy whose rules would open a host or lift every restriction is not read.
   const opens = pol([{ secret: '*', agents: ['*'], allowHosts: ['new.example.com'] }]);
-  for (const p of [opens, null, undefined]) {
-    const r = effective('X', LOCAL, { policy: p, state: 'invalid', org: ORG, agent: 'codex', agentTrusted: true });
-    assert.strictEqual(r.deny, true);
-    assert.strictEqual(r.reason, 'policy:org_invalid');
-    assert.deepStrictEqual(r.pending, []);
-    assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts);
+  for (const agent of ['codex', 'cursor']) {
+    for (const p of [opens, null, undefined]) {
+      const r = effective('X', LOCAL, { policy: p, state: 'invalid', org: ORG, agent, agentTrusted: true });
+      assert.strictEqual(r.deny, true, agent);
+      assert.strictEqual(r.reason, 'policy:org_invalid', agent);
+      assert.deepStrictEqual(r.pending, [], agent);
+      assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts, agent);
+    }
   }
 });
 
@@ -187,4 +195,23 @@ test('the warn notice names the secret and the rule reason in plain words', () =
   assert.match(odd, /\(policy note: "ok 'quoted' x+"\)\. It was allowed/);
   assert.ok(odd.length < 320);
   assert.strictEqual(WARN_REASON, 'policy:warn');
+});
+
+// Exact host match on the effective allowHosts list (a list of host names, compared whole).
+const hasHost = (list, host) => list.some((h) => h === host);
+
+test('a host opened for Cursor needs a local approval and an agent id zn can identify', () => {
+  const p = pol([{ secret: 'STRIPE_KEY', agents: ['cursor'], allowHosts: ['api.stripe.com', 'new.example.net'] }]);
+  const approvals = new Set([approvalKey(ORG, 'STRIPE_KEY', 'host', 'new.example.net')]);
+  // The secrets MCP server started with --agent cursor: a trusted id, so the approved host opens.
+  const open = eff('STRIPE_KEY', p, trusted('cursor'), { approvals });
+  assert.ok(hasHost(open.meta.allowHosts, 'new.example.net'));
+  // No approval yet: it is offered, not applied.
+  const asked = eff('STRIPE_KEY', p, trusted('cursor'));
+  assert.ok(!hasHost(asked.meta.allowHosts, 'new.example.net'));
+  assert.ok(asked.pending.length > 0);
+  // A self-reported id (ZN_AGENT=cursor) is not trusted: the host stays closed, even with an approval.
+  const self = eff('STRIPE_KEY', p, { agent: 'cursor', agentTrusted: false }, { approvals });
+  assert.ok(!hasHost(self.meta.allowHosts, 'new.example.net'));
+  assert.deepStrictEqual(self.pending, []);
 });

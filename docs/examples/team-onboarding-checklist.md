@@ -22,6 +22,7 @@ A checklist for the first day of a new member of a zn Team organization: one lin
 
 - [ ] `zn team join` says no join token was given: it exited `2`. Check that you pasted a token that starts with `znj_`, or set `ZN_TEAM_JOIN_TOKEN` and run `zn team join`.
 - [ ] The command asks you to unlock: run `zn unlock`, then repeat the step.
+- [ ] `zn team join` says there is "no confirmation channel": zn could not ask you outside the agent, which happens over `ssh` or in a container with no desktop. Start the vault with `zn unlock --foreground` in a terminal of its own (over `ssh`, use `ssh -t`), where it asks, and run the join again.
 - [ ] `zn team join` says your admin has not published a policy yet: this is expected, and no restrictions apply for now. The join stays pending and the command exits `1`. zn checks again by itself; run `zn team sync` to check now.
 - [ ] `zn team join` says the join is not finished (offline, or a policy that was refused): the machine is registered, but no valid policy applies yet. Fix the cause it names, then run `zn team sync`. It exits `0` only when a valid policy is applied and nothing failed to upload.
 - [ ] `zn team status` shows `Policy:` as `none received yet (PENDING ...)`: run `zn team sync`. If it still fails, ask your lead whether a policy has been published.

@@ -249,8 +249,10 @@ test('a policy issued in the future: the cache reads as expired (strict mode), a
   const st = policy.state({ home, now: behind });
   assert.strictEqual(st.state, 'expired');
   assert.strictEqual(st.clock, 'behind');
-  const e = effective('PROD_DB', { mode: 'env', allowHosts: [], allowCommands: [], allowIn: ['header'] }, { policy: st.policy, state: st.state, agent: 'codex', agentTrusted: true });
-  assert.strictEqual(e.deny, true);
+  for (const agent of ['codex', 'cursor']) {
+    const e = effective('PROD_DB', { mode: 'env', allowHosts: [], allowCommands: [], allowIn: ['header'] }, { policy: st.policy, state: st.state, agent, agentTrusted: true });
+    assert.strictEqual(e.deny, true, agent);
+  }
   // A normal read is not marked as a clock problem.
   assert.strictEqual(policy.state({ home, now: iss + 60000 }).clock, undefined);
 });

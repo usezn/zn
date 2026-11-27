@@ -310,7 +310,33 @@ function createApi(options = {}) {
     return { done: false, error: 'the server answered HTTP ' + r.status, status: r.status };
   }
 
-  return { base, preview, join, getPolicy, ingest, leaveInstall };
+  /**
+   * The status report: POST /v1/org/install/status with the install token and the body of lib/team/status-report.js.
+   * Never throws for an HTTP answer or a network failure:
+   *   {done: true}                                                     200 or 204
+   *   {done: false, error, status?, retryAfterSeconds?, unsupported?}  404/405 (an older server without the endpoint:
+   *                                                                    unsupported, the caller does not retry every sync),
+   *                                                                    401, 429, 5xx, a network error or a timeout
+   */
+  async function reportStatus(body) {
+    const client = /^zn-gate\/[0-9A-Za-z.+_-]{1,32}$/.test(userAgent) ? { 'X-ZN-Client': userAgent } : undefined;
+    let r;
+    try {
+      r = await request('POST', '/v1/org/install/status', { auth: true, body, extraHeaders: client });
+    } catch (err) {
+      if (err && err.code === 'ZN_USAGE') throw err;
+      return { done: false, error: err && err.code === 'ZN_TEAM_TIMEOUT' ? 'the server did not answer in time' : 'could not reach the server' };
+    }
+    if (r.status === 200 || r.status === 204) return { done: true };
+    if (r.status === 404 || r.status === 405) return { done: false, error: 'this server does not take status reports yet (HTTP ' + r.status + ')', status: r.status, unsupported: true };
+    if (r.status === 429) {
+      const secs = Number.parseInt(r.retryAfter, 10);
+      return { done: false, error: 'the server asked to retry later (HTTP 429)', status: 429, ...(Number.isFinite(secs) && secs > 0 ? { retryAfterSeconds: Math.min(secs, 86400) } : {}) };
+    }
+    return { done: false, error: 'the server answered HTTP ' + r.status, status: r.status };
+  }
+
+  return { base, preview, join, getPolicy, ingest, leaveInstall, reportStatus };
 }
 
 module.exports = { checkBase, createApi, TeamApiError, POLICY_FEATURES_HEADER, POLICY_FEATURES };

@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.7';
+const POLICY_RULES_VERSION = '2026-11-26.9';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1598,6 +1598,14 @@ const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 
 // Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
 const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
 const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
+// Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
+// npm exec, pnpm exec, bun x). A dotenv runner counts only as the program word, or as the program a launcher runs when the launcher is
+// itself the program word; never as an argument of another program (node -e "..." npx dotenv -e .env is not launched).
+const PACKAGE_RUNNERS = new Set(['npx', 'bunx', 'pnpx']);
+const PACKAGE_RUNNER_PAIRS = new Set(['pnpm dlx', 'yarn dlx', 'npm exec', 'pnpm exec', 'bun x']);
+const PACKAGE_RUNNER_PAIR_HEADS = new Set([...PACKAGE_RUNNER_PAIRS].map((p) => p.split(' ')[0]));
+// Launcher options that take no value and may stand between the launcher and the program it runs (npx -y dotenv ...).
+const PACKAGE_RUNNER_FLAGS = new Set(['-y', '--yes', '-q', '--quiet']);
 // A word that is one plain name: no quote, expansion, bracket or separator that could hide more than a file name.
 const PLAIN_NAME_RE = /^[^\s'"`$(){};|&<>]+$/;
 // git steps that read, or that only change the index or the history (add, commit). checkout, restore, reset and stash are not here:
@@ -1618,7 +1626,9 @@ function dotenvReadOnlyWord(w, shellChecked) {
 /**
  * The words of a command that are the value of an env-file option: --env-file X or --env-file=X of node, bun, deno, docker or podman,
  * and -e / -f / --env-file X (or =X) of dotenv, dotenv-cli or dotenvx, before a `--`. Only a plain name that classifies as a watched
- * dotenv file counts. Returns a Map from the word to the name it reads.
+ * dotenv file counts. Returns a Map from the word to the name it reads. words is one reading of the command (see allWords): its
+ * program word is the first word of each simple command that names the program, so a later word with the same text (npx w.js npx
+ * dotenv ...) is an argument, not a new start.
  */
 function envFileValueWords(words, opts) {
   const out = new Map();
@@ -1627,16 +1637,36 @@ function envFileValueWords(words, opts) {
   let runner = false;
   let ended = false;
   let envProg = false;
+  // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
+  // the first word of a two-word launcher, null otherwise. Only an open launch makes the next dotenv runner the launched program.
+  let launch = null;
+  let launchHead = null;
+  let seenProgram = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
-    // The words hold each reading of the command in turn; a reading starts again at the program word.
-    if (programName(t) === programName(w.head)) { runner = false; ended = false; }
+    // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
+    const programWord = !seenProgram && programName(t) === programName(w.head);
+    if (programWord) seenProgram = true;
+    const wasLaunch = launch;
+    if (programWord) {
+      const p = programName(t);
+      launch = PACKAGE_RUNNERS.has(p) ? 'open' : PACKAGE_RUNNER_PAIR_HEADS.has(p) ? 'pair' : null;
+      launchHead = p;
+    } else if (launch === 'pair') {
+      launch = PACKAGE_RUNNER_PAIRS.has(launchHead + ' ' + t) ? 'open' : null;
+    } else if (launch === 'open' && !PACKAGE_RUNNER_FLAGS.has(t)) {
+      launch = null;
+    }
     if (t === '--') { ended = true; continue; }
     if (ended) continue;
-    if (DOTENV_RUNNERS.has(programName(t))) { runner = true; continue; }
+    if (DOTENV_RUNNERS.has(programName(t))) {
+      // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
+      if (programWord || wasLaunch === 'open') runner = true;
+      continue;
+    }
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
     const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
@@ -2980,7 +3010,9 @@ function bashDenialOf(cmd, opts = {}) {
   // The same for the code an interpreter runs (python -c "open('.env')"), where a path sits inside quotes and brackets.
   // A program that is not read-only (awk 'BEGIN{print 1 > ".env"}', sed -n 'w .env') can name a dotenv file inside its own program text: its
   // words are split too.
-  const envFileValues = envFileValueWords(words, opts);
+  // Each reading is read on its own: its simple commands restart the program word (allWords numbers them from 1 in every reading).
+  const envFileValues = new Map();
+  for (const reading of readings) for (const [k, v] of envFileValueWords(reading, opts)) envFileValues.set(k, v);
   opts.envFileValues = envFileValues;
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
       (/\.env/i.test(text) && words.some((w) => w.head !== '' && !envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)))) {

@@ -179,6 +179,8 @@ zn-gate check
 
 Shows that zn stops your agent from reading a fake secret, in a temporary folder. zn-gate sends nothing over the network and no setting changes. It runs the installed zn hooks on two test requests, and each blocked test request is written to your local decision log (see [what check writes to the log](check.md#what-check-writes-to-the-decision-log)). The only agent program it starts is `<agent> --version` for each agent it finds, to read the version, with no tokens and with updates turned off. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
+`check` also reads the files an administrator deploys with device management (Claude Code `managed-settings.json`, Cursor's enterprise `hooks.json`, Codex `requirements.toml`) at their system paths; on Windows those are `C:\Program Files\ClaudeCode\` for Claude Code and folders under `%ProgramData%` for Cursor and Codex (the table in [Deploy zn-gate's hooks](team.md#deploy-zn-gates-hooks-to-every-machine-managed-settings) lists them). zn in one of them counts as set up and the file is named; a managed file that turns hooks off is reported as not protected. See [Deploy zn-gate's hooks to every machine](team.md#deploy-zn-gates-hooks-to-every-machine-managed-settings).
+
 Aliases: `doctor`.
 
 Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
@@ -767,7 +769,7 @@ Needs the vault unlocked. Joining and leaving are confirmed outside the agent. [
 ### `team`
 
 ```text
-zn-gate team <join|status|sync|leave|managed-config>
+zn-gate team <join|status|sync|status-report|leave|managed-config>
 ```
 
 With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an error, `2` wrong usage.
@@ -791,7 +793,7 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json] [--rules]
 ```
 
-Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, whether the status report is on and the exact body and time of the last one sent, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
@@ -800,6 +802,15 @@ zn-gate team sync
 ```
 
 Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
+
+#### `team status-report`
+
+```bash
+zn-gate team status-report accept
+zn-gate team status-report stop
+```
+
+After each sync a machine in a Team organization sends a short status report: the zn-gate version, the OS family, the version and state of the organization policy (`active`, `expired`, `refused` or `none`), and for each agent whether its zn hooks are `ok`, `stale` or `broken`. No paths, host names or user names. Joining with this version covers it: the join dialog lists it. A machine that joined before this version sends nothing until you run `accept` once; a dialog on the vault's own channel (like the join dialog) asks you, so an agent cannot accept for you. `stop` turns the report off again without a dialog. `team status` shows whether it is on and the exact last body. See [zn Team](team.md#what-is-sent).
 
 #### `team leave`
 

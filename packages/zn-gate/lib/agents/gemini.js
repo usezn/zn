@@ -100,13 +100,16 @@ function pathsOf(args) {
   };
   const add = (v) => {
     if (typeof v !== 'string' || !v) return;
-    if (/^file:/i.test(v)) {
+    // A file: URI is decoded whole; one that also holds a list or line separator (file:///p/.env,notes.txt) is split as well, so a
+    // name in the list is checked on its own.
+    const uri = /^file:/i.test(v);
+    if (uri) {
       try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
-      return;
+      if (!/[\r\n\u2028\u2029\u0085\t, ]/.test(v)) return;
     }
     // A long value is classified like any other (classifyPath reads long input); a value with line breaks (code, a message) is
     // not one file name: its trimmed whole and each line that starts like a path are checked (pathCandidatesOf).
-    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v)) addName(x); return; }
+    if (uri || v.length > MAX_PATH_LEN || /[\r\n\u2028\u2029\u0085\t, ]/.test(v)) { for (const x of require('./copilot').pathCandidatesOf(v, true, true)) if (!(uri && x === v)) addName(x); return; }
     out.push(v);
   };
   const keyOk = (k) => PATH_KEY_RE.test(k) && !NOT_PATH_KEY_RE.test(k);

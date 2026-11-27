@@ -154,7 +154,12 @@ impl BatchPipeline {
                     let pipeline = BatchPipeline::new(config.clone(), embedder.clone());
                     if let Ok(results) = pipeline.process_batch_with_items(items).await {
                         for (text, embedding) in results {
-                            tracing::info!("Batch processed: {} -> {} dims", text, embedding.len());
+                            // The text can hold anything the user typed: log its size only.
+                            tracing::debug!(
+                                "Batch item processed: {} chars -> {} dims",
+                                text.chars().count(),
+                                embedding.len()
+                            );
                         }
                     }
                     last_process = Instant::now();

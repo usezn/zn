@@ -89,7 +89,7 @@ fn api_key_header(key: &str) -> std::result::Result<reqwest::header::HeaderValue
     let key = key.trim();
     if key.is_empty() {
         return Err(
-            "The API key is empty. Pass it with --api-key, or set the ZN_API_KEY environment variable."
+            "The API key is empty. Set the ZN_API_KEY environment variable, or pass --api-key-file <path>."
                 .to_string(),
         );
     }
@@ -99,7 +99,7 @@ fn api_key_header(key: &str) -> std::result::Result<reqwest::header::HeaderValue
             Ok(value)
         }
         Err(_) => Err(
-            "The API key has characters that cannot be sent in an HTTP header (for example a line break or an accented letter). Copy the key again, without extra characters, and pass it with --api-key or ZN_API_KEY."
+            "The API key has characters that cannot be sent in an HTTP header (for example a line break or an accented letter). Copy the key again, without extra characters, and set it in ZN_API_KEY or in the file given with --api-key-file."
                 .to_string(),
         ),
     }
@@ -111,7 +111,7 @@ fn first_reply_problem(status: u16, api_url: &str) -> Option<String> {
     match status {
         200..=299 => None,
         401 | 403 => Some(format!(
-            "The gateway at {api_url} rejected the API key (HTTP {status}). Use the key the gateway was started with: pass it with --api-key, or set ZN_API_KEY. If zn generated the key, it is in the file zn-superadmin-key.txt next to the audit database."
+            "The gateway at {api_url} rejected the API key (HTTP {status}). Use the key the gateway was started with: set ZN_API_KEY or pass --api-key-file <path>. If zn generated the key, it is in the file zn-superadmin-key.txt next to the audit database."
         )),
         _ => Some(format!(
             "The gateway at {api_url} answered with HTTP {status} instead of its statistics. Check that this is the zn gateway, and that --port is the port it listens on."
@@ -136,7 +136,7 @@ impl TuiApp {
             Some(key) => key,
             None => std::env::var("ZN_API_KEY").map_err(|_| {
                 anyhow::anyhow!(
-                    "No API key was given. Pass it with --api-key, or set the ZN_API_KEY environment variable."
+                    "No API key was given. Set the ZN_API_KEY environment variable, or pass --api-key-file <path>."
                 )
             })?,
         };
