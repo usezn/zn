@@ -4,9 +4,21 @@ A one-page summary for the person who sets zn Team up for a small team. It only 
 
 zn Team lets your organization publish one policy for how developers' AI agents may use secrets, and collect the audit records of that use. zn-gate is a local guardrail, not device management: someone with full control of their own machine can leave the organization or stop zn-gate. The dashboard shows each machine's last policy version and last upload, so a machine that stops reporting is visible.
 
+## Set up the organization (lead)
+
+You do this once, in the dashboard at usezn.com, signed in with the account that will own the organization. Set up two-factor authentication first (**Settings → Security**): inviting people, publishing a policy and creating join tokens ask for a second factor from the last 10 minutes.
+
+1. Create the organization and start the Team trial from the **Team** page.
+2. Invite people: **Team → Members → Invite**, with their email address and a role. The invitation link works once, for that address, for 7 days. It adds the person to the organization on the web; it is not what a machine joins with.
+3. Create a join token: **Team → Members → Connected installations → New join token**. It starts with `znj_`, is valid for 7 days and works for as many machines as the organization has seats. Send it to each developer in a private message, together with the organization name.
+4. Publish a policy: **Team → Policies** (the format is below).
+5. Check that machines report in: **Team → Members → Connected installations** shows each machine's zn-gate version, when it was last seen and its audit records.
+
+Every dashboard step is described in [Administer your organization](https://usezn.com/docs/team/admin/).
+
 ## What each developer does
 
-Each machine needs zn-gate installed and the vault unlocked.
+Each machine needs zn-gate installed globally (`npm install -g zn-gate`, which puts the short `zn` command on the PATH; with `npx -y zn-gate` only, write `npx -y zn-gate team join -` instead of `zn team join -`) and the vault unlocked (`zn unlock` creates it the first time).
 
 ```bash
 zn unlock
@@ -75,11 +87,13 @@ zn team managed-config --agent claude-code --os macos
 
 ## Export the audit log
 
+For the whole organization, owners, admins and auditors export from the dashboard: **Team → Evidence**, as CSV, JSON or OpenTelemetry logs. Every export is recorded in the activity log with its SHA-256; the download also states its row count and whether it was cut short ([Export the audit trail](https://usezn.com/docs/team/export/)). There is no `zn team` command for this.
+
+On one machine, the local vault audit log can be written as OpenTelemetry logs. This needs no account:
+
 ```bash
 zn vault log export --otlp --since 7d --out zn-audit.otlp.jsonl
 ```
-
-This writes the local vault audit log as OpenTelemetry logs. It needs no account.
 
 ## More
 
@@ -90,6 +104,7 @@ This writes the local vault audit log as OpenTelemetry logs. It needs no account
 
 | Section on this page | Full page |
 |---|---|
+| Set up the organization (lead) | [Roles in a team](team.md#roles-in-a-team), [Administer your organization](https://usezn.com/docs/team/admin/) |
 | What each developer does | [Commands in team.md](team.md#commands), [`team join` in cli.md](cli.md#team-join) |
 | Commands your team will use | [Commands in team.md](team.md#commands), [zn Team in cli.md](cli.md#zn-team) |
 | Write a policy | [The organization policy in team.md](team.md#the-organization-policy) |

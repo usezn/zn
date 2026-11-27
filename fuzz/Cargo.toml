@@ -9,7 +9,7 @@ description = "Fuzz targets for the zn gateway parsers (cargo-fuzz)."
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "=0.4.13"
 serde_json = "1.0"
 zn = { path = ".." }
 
@@ -43,3 +43,8 @@ path = "fuzz_targets/policy_wasm.rs"
 test = false
 doc = false
 bench = false
+
+# Same shim as the root workspace: gemm (via candle) still uses the unmaintained paste crate
+# (RUSTSEC-2024-0436), so paste is routed to its maintained successor pastey.
+[patch.crates-io]
+paste = { path = "../tools/paste-shim" }

@@ -115,16 +115,29 @@ test('opencode mcp: the server is the longest configured name that prefixes the 
   assert.deepEqual(ours.input.args, {});
 });
 
-test('opencode mcp: built-ins that only return text (TOKENIZED_OUTPUT) skip the MCP check', async (t) => {
+test('opencode mcp: local built-ins that only return text skip the MCP check; search queries do not', async (t) => {
   const boom = { scan() { throw new Error('engine used'); }, async prepare() { throw new Error('engine used'); } };
   const project = setup(t);
-  for (const name of ['task', 'websearch', 'glob', 'list', 'skill', 'codesearch']) {
+  for (const name of ['task', 'glob', 'list', 'skill']) {
     const ev = opencode.normalize({ hook: 'tool.execute.before', tool: name, cwd: project, args: { query: 'x' } });
     assert.equal(ev.input.args, undefined, name);
     assert.equal(ev.mcp, undefined, name);
   }
-  const r = await call(project, 'websearch', { query: 'zn' }, { engine: boom });
+  const r = await call(project, 'task', { prompt: 'zn' }, { engine: boom });
   assert.equal(r.decision.decision, 'allow');
+  // websearch and codesearch send their query to a search service: checked, never treated as zn's own server.
+  for (const name of ['websearch', 'codesearch']) {
+    const ev = opencode.normalize({ hook: 'tool.execute.before', tool: name, cwd: project, args: { query: 'x' } });
+    assert.deepEqual(ev.input.args, { query: 'x' }, name);
+    assert.equal(ev.mcp, undefined, name);
+    const key = await call(project, name, { query: 'why does ' + AWS + ' fail' });
+    assert.equal(key.output.action, 'deny', name + ' secret');
+    assert.ok(!JSON.stringify(key.output).includes(AWS), name + ' not echoed');
+    const marker = await call(project, name, { query: 'use ' + MARKER });
+    assert.equal(marker.output.action, 'deny', name + ' marker');
+    const plain = await call(project, name, { query: 'how to rotate an access key' });
+    assert.equal(plain.decision.decision, 'allow', name + ' plain');
+  }
   // A real MCP call does use the engine (it fails closed here).
   const mcp = await call(project, 'github_get_file', { path: 'a' }, { engine: boom });
   assert.equal(mcp.decision.decision, 'deny');

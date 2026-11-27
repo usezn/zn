@@ -486,6 +486,8 @@ The formats come from each vendor's documentation, read on 2026-10-19: [Claude C
 
 After a machine has the policy, `zn hooks install` for that agent warns if a managed policy leaves zn's hooks out.
 
+`zn-gate check` also reads these managed files (read-only), at the paths in the table above for the system it runs on. A machine that has zn only through the managed file shows as protected, and `check` names the file; zn in both the managed file and the developer's own configuration shows a note that the hooks run twice. A managed file that turns hooks off (`disableAllHooks` for Claude Code, `[features] hooks = false` for Codex) is reported as not protected, and the fix is for your administrator to change that file. For Cursor, a zn hook in the enterprise `hooks.json` without `failClosed` is a note. `check` does not see policy delivered through an MDM profile, the Windows registry or the vendor's cloud.
+
 ## Export the audit log to OpenTelemetry
 
 ```bash
