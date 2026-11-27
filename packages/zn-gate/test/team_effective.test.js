@@ -195,18 +195,21 @@ test('the warn notice names the secret and the rule reason in plain words', () =
   assert.strictEqual(WARN_REASON, 'policy:warn');
 });
 
+// Exact host match on the effective allowHosts list (a list of host names, compared whole).
+const hasHost = (list, host) => list.some((h) => h === host);
+
 test('a host opened for Cursor needs a local approval and an agent id zn can identify', () => {
   const p = pol([{ secret: 'STRIPE_KEY', agents: ['cursor'], allowHosts: ['api.stripe.com', 'new.example.net'] }]);
   const approvals = new Set([approvalKey(ORG, 'STRIPE_KEY', 'host', 'new.example.net')]);
   // The secrets MCP server started with --agent cursor: a trusted id, so the approved host opens.
   const open = eff('STRIPE_KEY', p, trusted('cursor'), { approvals });
-  assert.ok(open.meta.allowHosts.includes('new.example.net'));
+  assert.ok(hasHost(open.meta.allowHosts, 'new.example.net'));
   // No approval yet: it is offered, not applied.
   const asked = eff('STRIPE_KEY', p, trusted('cursor'));
-  assert.ok(!asked.meta.allowHosts.includes('new.example.net'));
+  assert.ok(!hasHost(asked.meta.allowHosts, 'new.example.net'));
   assert.ok(asked.pending.length > 0);
   // A self-reported id (ZN_AGENT=cursor) is not trusted: the host stays closed, even with an approval.
   const self = eff('STRIPE_KEY', p, { agent: 'cursor', agentTrusted: false }, { approvals });
-  assert.ok(!self.meta.allowHosts.includes('new.example.net'));
+  assert.ok(!hasHost(self.meta.allowHosts, 'new.example.net'));
   assert.deepStrictEqual(self.pending, []);
 });
