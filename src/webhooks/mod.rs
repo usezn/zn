@@ -9,30 +9,63 @@ use tracing::{error, info, warn};
 
 /// A URL as it is safe to print: scheme and host only. A webhook URL is a
 /// secret (the path or query usually holds the token), and user info before
-/// the host can hold a password. Anything that does not look like a URL with
-/// a scheme prints as `<redacted>`.
+/// the host can hold a password. The URL is parsed with the same parser the
+/// HTTP client uses, so what is printed as the host is the host that
+/// receives the request (a backslash ends the authority just like a slash).
+/// Anything that does not parse as a URL with a host prints as `<redacted>`.
 pub fn redact_url(url: &str) -> String {
-    let Some((scheme, rest)) = url.trim().split_once("://") else {
+    let trimmed = url.trim();
+    let Some((_, after_scheme)) = trimmed.split_once("://") else {
         return "<redacted>".to_string();
     };
-    if scheme.is_empty()
-        || !scheme
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
-    {
+    // No host before the first separator: the parser would take the next
+    // path segment as the host, so print nothing rather than that segment.
+    if after_scheme.starts_with(['/', '\\']) {
         return "<redacted>".to_string();
     }
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..end];
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    if host.is_empty() {
+    let Ok(parsed) = reqwest::Url::parse(trimmed) else {
         return "<redacted>".to_string();
-    }
-    if end < rest.len() {
-        format!("{scheme}://{host}/<redacted>")
+    };
+    let Some(host) = parsed.host_str().filter(|h| !h.is_empty()) else {
+        return "<redacted>".to_string();
+    };
+    let authority = match parsed.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    };
+    let has_rest = parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || trimmed.ends_with(['/', '\\']);
+    if has_rest {
+        format!("{}://{authority}/<redacted>", parsed.scheme())
     } else {
-        format!("{scheme}://{host}")
+        format!("{}://{authority}", parsed.scheme())
     }
+}
+
+/// Text of a log line about a failed send. The error text has any copy of the
+/// request URL removed (see `reqwest::Error::without_url`) and, as a second
+/// guard, any remaining occurrence of the configured URL replaced by its
+/// redacted form.
+fn send_failure_message(url: &str, err: &dyn std::fmt::Display) -> String {
+    let text = err.to_string().replace(url, &redact_url(url));
+    format!("Failed to send webhook to {}: {}", redact_url(url), text)
+}
+
+/// Text of the log line for a delivered webhook.
+fn send_success_message(url: &str) -> String {
+    format!("Webhook sent successfully to {}", redact_url(url))
+}
+
+/// Text of the log line for a webhook answered with a non-success status.
+fn non_success_message(url: &str, status: impl std::fmt::Display, body: &str) -> String {
+    format!(
+        "Webhook to {} returned status {}: {}",
+        redact_url(url),
+        status,
+        body.replace(url, &redact_url(url))
+    )
 }
 
 /// Webhook configuration
@@ -155,7 +188,7 @@ impl WebhookManager {
 
                 // Send webhook
                 if let Err(e) = self.send_webhook(config, &alert).await {
-                    error!("Failed to send webhook to {}: {}", config.url, e);
+                    error!("{}", send_failure_message(&config.url, &e));
                 }
             }
         }
@@ -173,17 +206,20 @@ impl WebhookManager {
             WebhookType::Generic => serde_json::to_value(alert)?,
         };
 
-        let response = self.client.post(&config.url).json(&body).send().await?;
+        let response = self
+            .client
+            .post(&config.url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
 
         if response.status().is_success() {
-            info!("Webhook sent successfully to {}", config.url);
+            info!("{}", send_success_message(&config.url));
         } else {
-            warn!(
-                "Webhook to {} returned status {}: {}",
-                config.url,
-                response.status(),
-                response.text().await.unwrap_or_default()
-            );
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            warn!("{}", non_success_message(&config.url, status, &body));
         }
 
         Ok(())
@@ -291,6 +327,71 @@ mod tests {
         assert_eq!(redact_url("fake-token-without-scheme"), "<redacted>");
         assert_eq!(redact_url(""), "<redacted>");
         assert_eq!(redact_url("https:///path-only"), "<redacted>");
+    }
+
+    #[test]
+    fn redact_url_follows_the_client_parser_for_backslashes() {
+        assert_eq!(
+            redact_url("https://hooks.example.com\\@fake-token/path"),
+            "https://hooks.example.com/<redacted>"
+        );
+        assert_eq!(
+            redact_url("https://hooks.example.com\\fake-token"),
+            "https://hooks.example.com/<redacted>"
+        );
+        assert_eq!(redact_url("https://\\fake-token/x"), "<redacted>");
+        assert_eq!(
+            redact_url("https://[::1]:8080/fake-token"),
+            "https://[::1]:8080/<redacted>"
+        );
+    }
+
+    #[test]
+    fn dispatcher_log_messages_do_not_expose_url_secrets() {
+        let url = "https://hooks.example.com/services/fake-webhook-token?key=fake-query-secret";
+        let err = "error sending request for url (https://hooks.example.com/services/fake-webhook-token?key=fake-query-secret): connection refused";
+        let msgs = [
+            send_failure_message(url, &err),
+            send_success_message(url),
+            non_success_message(url, 500, &format!("echo {url}")),
+        ];
+        for m in &msgs {
+            assert!(
+                !m.contains("fake-webhook-token"),
+                "a log line exposes URL data"
+            );
+            assert!(
+                !m.contains("fake-query-secret"),
+                "a log line exposes URL data"
+            );
+            assert!(
+                m.contains("hooks.example.com"),
+                "the log line lost its host"
+            );
+        }
+    }
+
+    #[test]
+    fn reqwest_errors_carry_no_url_once_stripped() {
+        let url = "http://user:fake-pass@127.0.0.1:1/fake-webhook-token?key=fake-query-secret";
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = rt
+            .block_on(reqwest::Client::new().post(url).send())
+            .unwrap_err()
+            .without_url();
+        let m = send_failure_message(url, &err);
+        assert!(
+            !m.contains("fake-webhook-token"),
+            "a log line exposes URL data"
+        );
+        assert!(
+            !m.contains("fake-query-secret"),
+            "a log line exposes URL data"
+        );
+        assert!(!m.contains("fake-pass"), "a log line exposes URL data");
     }
 
     #[test]

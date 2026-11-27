@@ -1560,7 +1560,10 @@ mod credential_tests {
             "fake-jwt-secret-0000",
             "fake-ws-token-0000",
         ] {
-            assert!(!out.contains(secret), "{secret} leaked");
+            assert!(
+                !out.contains(secret),
+                "a fake secret leaked into the Debug output"
+            );
         }
         assert!(out.contains("<redacted>"));
     }
@@ -1592,7 +1595,10 @@ mod credential_tests {
             "fake-hook-path",
             "fake-hook-query",
         ] {
-            assert!(!out.contains(secret), "{secret} leaked");
+            assert!(
+                !out.contains(secret),
+                "a fake secret leaked into the Debug output"
+            );
         }
         assert!(out.contains("https://siem.example.com/<redacted>"));
         assert!(out.contains("https://hooks.example.com/<redacted>"));
