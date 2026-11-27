@@ -182,6 +182,10 @@ pub struct ZnEngine {
     verifier: signing::PolicyVerifier,
     /// Shared state store for policies
     state_store: Arc<DashMap<String, String>>,
+    /// Serializes every "is this the last policy" check with the removal that follows it, for the
+    /// delete endpoint and the folder watcher alike. Without it two removals can both see two
+    /// loaded policies and leave none.
+    removal_lock: std::sync::Mutex<()>,
     /// Test only: how many removals of the last policy were refused.
     #[cfg(test)]
     pub(crate) kept_last_refusals: std::sync::atomic::AtomicUsize,
@@ -338,6 +342,7 @@ impl ZnEngine {
             policies: DashMap::new(),
             verifier,
             state_store,
+            removal_lock: std::sync::Mutex::new(()),
             #[cfg(test)]
             kept_last_refusals: std::sync::atomic::AtomicUsize::new(0),
         })
@@ -514,6 +519,7 @@ impl ZnEngine {
 
     /// Same as `unregister_policy_unless_last`, with the reason that is logged when the policy is kept.
     pub fn unregister_policy_unless_last_because(&self, name: &str, reason: &str) -> bool {
+        let _guard = self.lock_removals();
         if self.is_protected_last_policy(name) {
             error!(
                 "Policy '{}' should be unloaded because {}, but it is the last one and policy enforcement is configured: keeping the loaded policy",
@@ -526,6 +532,29 @@ impl ZnEngine {
         }
         self.unregister_policy(name);
         true
+    }
+
+    fn lock_removals(&self) -> std::sync::MutexGuard<'_, ()> {
+        // The guard protects no data, so a poisoned lock is still safe to take.
+        self.removal_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Delete a policy for the delete endpoint: refuse when it is the last loaded policy and
+    /// enforcement is configured (the file is not touched), otherwise remove its file and unregister
+    /// it. The check, the file removal and the unregister run under the same lock as the watcher's
+    /// removals, so two removals can never both pass the check. If the file cannot be removed the
+    /// policy stays loaded and the error is returned. Ok(None) means refused; Ok(Some(existed)) means
+    /// the policy is gone, with whether a file was removed.
+    pub fn delete_policy_guarded(&self, dir: impl AsRef<Path>, name: &str) -> Result<Option<bool>> {
+        let _guard = self.lock_removals();
+        if self.is_protected_last_policy(name) {
+            return Ok(None);
+        }
+        let removed = remove_policy_file(dir, name)?;
+        self.unregister_policy(name);
+        Ok(Some(removed))
     }
 
     /// Get a policy by name

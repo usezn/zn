@@ -2067,22 +2067,27 @@ async fn policies_delete_handler(
     // file to delete is the matching entry of a listing of the policy
     // directory, never a path built from the name. A missing file is not an
     // error, so deleting twice succeeds.
-    // The last policy cannot be deleted while enforcement is configured: check before touching the file.
-    if state.engine.is_protected_last_policy(&payload.name) {
-        return axum::response::Json(serde_json::json!({
-            "status": "error",
-            "error": format!("Policy '{}' is the last loaded policy and policy enforcement is configured (a signing key or allowed policy hashes): it was not deleted. Upload another policy first.", payload.name)
-        }));
+    // The last policy cannot be deleted while enforcement is configured. The check, the file
+    // removal and the unregister run under one lock shared with the folder watcher, so two
+    // concurrent deletes cannot both pass the check.
+    match state
+        .engine
+        .delete_policy_guarded(&state.config.engine.policy_dir, &payload.name)
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return axum::response::Json(serde_json::json!({
+                "status": "error",
+                "error": format!("Policy '{}' is the last loaded policy and policy enforcement is configured (a signing key or allowed policy hashes): it was not deleted. Upload another policy first.", payload.name)
+            }));
+        }
+        Err(e) => {
+            return axum::response::Json(serde_json::json!({
+                "status": "error",
+                "error": e.to_string()
+            }));
+        }
     }
-    if let Err(e) = zn::engine::remove_policy_file(&state.config.engine.policy_dir, &payload.name) {
-        return axum::response::Json(serde_json::json!({
-            "status": "error",
-            "error": e.to_string()
-        }));
-    }
-
-    // Unregister from engine
-    state.engine.unregister_policy_unless_last(&payload.name);
 
     axum::response::Json(serde_json::json!({
         "status": "ok",
