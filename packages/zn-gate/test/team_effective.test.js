@@ -227,13 +227,13 @@ test('a host opened for OpenCode needs a local approval and an agent id zn can i
   const approvals = new Set([approvalKey(ORG, 'STRIPE_KEY', 'host', 'new.example.net')]);
   // The secrets MCP server started with --agent opencode: a trusted id, so the approved host opens.
   const open = eff('STRIPE_KEY', p, trusted('opencode'), { approvals });
-  assert.ok(open.meta.allowHosts.includes('new.example.net'));
+  assert.ok(hasHost(open.meta.allowHosts, 'new.example.net'));
   // No approval yet: it is offered, not applied.
   const asked = eff('STRIPE_KEY', p, trusted('opencode'));
-  assert.ok(!asked.meta.allowHosts.includes('new.example.net'));
+  assert.ok(!hasHost(asked.meta.allowHosts, 'new.example.net'));
   assert.ok(asked.pending.length > 0);
   // A self-reported id (ZN_AGENT=opencode) is not trusted: the host stays closed, even with an approval.
   const self = eff('STRIPE_KEY', p, { agent: 'opencode', agentTrusted: false }, { approvals });
-  assert.ok(!self.meta.allowHosts.includes('new.example.net'));
+  assert.ok(!hasHost(self.meta.allowHosts, 'new.example.net'));
   assert.deepStrictEqual(self.pending, []);
 });
