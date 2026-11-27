@@ -666,7 +666,7 @@ The folder holds:
 - `records.jsonl`: the records of the period, in log order. Without `--include-preview` the `payload_preview` field is removed from each record, so the text the agent wrote is not in the pack. With it, the records are the log lines as they are.
 - `--format ocsf`: writes `records.ocsf.jsonl` instead: the same records as OCSF events (the same events as `evidence --export --format ocsf`), with the same preview rule. Lines that are not JSON objects are left out in this format. The jsonl default is the only other format; csv and the Timesketch formats are refused (exit `2`).
 - `chain.json`: the check of the whole log, not only the period: how many records, whether the chain verified, the break position, the hash of the last record that verified, and the first and last record of the period with their positions, so you can see the period sits in a checked chain.
-- `summary.json`: the period, how many records, the undated count, the first and last time, and counts by verdict (`allow`, `deny`, `ask`), by agent and by rule id.
+- `summary.json`: the period, how many records, the undated count, the first and last time, and counts by verdict (the verdicts zn-gate records are `allow` and `block`), by agent and by rule id.
 - `controls.md`: a map, in plain English, of which records may help as evidence for four criteria of the SOC 2 Trust Services Criteria (CC6.1, CC6.6, CC7.2 and CC8.1). It is a guide to where to look. It does not make a system compliant, and the pack is not an attestation: your auditor decides what evidence is sufficient.
 - `manifest.json`: the SHA-256 and size of each file above, the generator and the time of the pack (UTC). It is written last; without it the pack is incomplete.
 - `README.txt`: how to check the pack.
