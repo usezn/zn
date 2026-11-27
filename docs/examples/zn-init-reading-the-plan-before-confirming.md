@@ -20,7 +20,7 @@ zn-gate init: set up zn for the coding agents on this machine
   >  Cursor       not set up yet
   -  OpenCode     not found on this machine
   -  Antigravity  not found on this machine
-  -  GitHub Copilot (VS Code, CLI) not found on this machine
+  -  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   -  Gemini CLI (experimental) not found on this machine
   -  ZCode        not found on this machine
 ```
@@ -43,7 +43,7 @@ install zn-gate <version> for your user: run `npm install -g --fetch-retries=1 -
 
 The hooks must not point into the temporary copy that `npx` makes, because it can be deleted. That is why a plan that installs hooks starts with an install for your user. The question is left out when the plan has no hook install (for example when only the Claude Code plugin is planned), or when zn-gate is already installed for your user in this version or a newer one. If an older version is installed, the question says which one you have.
 
-After that, `init` asks one question for each agent it would set up. For Codex CLI and Cursor, each question names the command that installs the hooks of that agent, for example ``install zn's hooks for Codex CLI: run `zn hooks install codex`? [y/N]``. For Claude Code, the plan is the plugin: with the `claude` command on your PATH it asks about `claude plugin marketplace add usezn/zn#v1.15.0` and `claude plugin install zn-gate@usezn`, and without it, it tells you to type the two `/plugin` commands in Claude Code yourself.
+After that, `init` asks one question for each agent it would set up. For Codex CLI and Cursor, each question names the command that installs the hooks of that agent, for example ``install zn's hooks for Codex CLI: run `zn hooks install codex`? [y/N]``. For Claude Code, the plan is the plugin: with the `claude` command on your PATH it asks about `claude plugin marketplace add usezn/zn#plugin-v1.17.0` and `claude plugin install zn-gate@usezn`, and without it, it tells you to type the two `/plugin` commands in Claude Code yourself.
 
 The exact text of the install command contains your zn-gate version, so it changes from release to release.
 

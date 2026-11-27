@@ -33,6 +33,19 @@ test('projectShCommand is a sh -c command naming the agent for every agent and e
 
 test('projectShCommand is not accepted for another agent', () => {
   assert.equal(launcher.isProjectGuardExact(launcher.projectShCommand('codex', 'PreToolUse'), 'cursor'), false);
+  // The exact form depends on the system: the short scrub is not exact for Windows (a name in another case would survive it), the full one is not exact elsewhere.
+  for (const agent of ['claude-code', 'codex']) {
+    const short = launcher.projectShCommand(agent, 'PreToolUse', { platform: 'linux' });
+    const full = launcher.projectShCommand(agent, 'PreToolUse', { platform: 'win32' });
+    assert.notEqual(short, full);
+    assert.equal(launcher.isProjectGuardExact(short, agent, 'linux'), true, agent);
+    assert.equal(launcher.isProjectGuardExact(short, agent, 'darwin'), true, agent);
+    assert.equal(launcher.isProjectGuardExact(short, agent, 'win32'), false, agent);
+    assert.equal(launcher.isProjectGuardExact(full, agent, 'win32'), true, agent);
+    assert.equal(launcher.isProjectGuardExact(full, agent, 'linux'), false, agent);
+    // Still recognised as a guard (reported as modified by check), never as an unknown command.
+    assert.equal(launcher.isProjectGuard(short, agent), true, agent);
+  }
 });
 
 test('projectShCommand differs between a blocking and a non-blocking event', () => {
@@ -105,4 +118,14 @@ test('isProjectWindowsScriptExact rejects another agent, non-strings and the emp
   assert.equal(launcher.isProjectWindowsScriptExact(null, 'codex'), false);
   assert.equal(launcher.isProjectWindowsScriptExact(42, 'codex'), false);
   assert.equal(launcher.isProjectWindowsScriptExact(script, 'Bad Agent'), false);
+});
+
+test('check: on Windows the short project guard is reported as modified and the full one as guarded; on Linux the other way round', () => {
+  const { parseCommand } = require('../lib/check')._internal;
+  const short = launcher.projectShCommand('claude-code', 'PreToolUse', { platform: 'linux' });
+  const full = launcher.projectShCommand('claude-code', 'PreToolUse', { platform: 'win32' });
+  assert.deepEqual(parseCommand(short, 'claude-code', 'win32'), { onPath: true, guarded: true, modified: true });
+  assert.deepEqual(parseCommand(full, 'claude-code', 'win32'), { onPath: true, guarded: true });
+  assert.deepEqual(parseCommand(short, 'claude-code', 'linux'), { onPath: true, guarded: true });
+  assert.deepEqual(parseCommand(full, 'claude-code', 'linux'), { onPath: true, guarded: true, modified: true });
 });

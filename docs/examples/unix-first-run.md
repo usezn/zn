@@ -67,3 +67,8 @@ This table uses only [Files and folders zn-gate reads or writes](../files-and-fo
 | 7. `status` and `test` | Not listed. |
 | 8. `env shadow .env` | The values move into the vault in the `.zn` folder (`~/.zn`), markers stay in `.env`, and an encrypted copy of the original is made. The command prints its name. |
 | 9. Ask in Discussions | Not listed. |
+
+## More
+
+- [First 5 minutes](../first-5-minutes.md)
+- [Troubleshooting](../troubleshooting.md)

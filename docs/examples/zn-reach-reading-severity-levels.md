@@ -33,7 +33,7 @@ AGENTS
   Cursor       not found on this machine
   OpenCode     not found on this machine
   Antigravity  not found on this machine
-  GitHub Copilot (VS Code, CLI) not found on this machine
+  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   Gemini CLI (experimental) not found on this machine
   ZCode        not found on this machine
 
@@ -60,7 +60,7 @@ AGENTS
   Cursor       not found on this machine
   OpenCode     not found on this machine
   Antigravity  not found on this machine
-  GitHub Copilot (VS Code, CLI) not found on this machine
+  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   Gemini CLI (experimental) not found on this machine
   ZCode        not found on this machine
   HIGH   Claude Code is on this machine and zn does not protect it
@@ -102,7 +102,7 @@ AGENTS
   Cursor       not found on this machine
   OpenCode     not found on this machine
   Antigravity  not found on this machine
-  GitHub Copilot (VS Code, CLI) not found on this machine
+  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   Gemini CLI (experimental) not found on this machine
   ZCode        not found on this machine
 
@@ -170,5 +170,7 @@ That run exits `2`, which stays apart from `1` so that a CI job can tell a broke
 - **A `.env` is `LOW` but you use an agent**: reach did not find the agent. Run `npx -y zn-gate check` to see which agents it detects.
 - **A finding you do not expect is `HIGH`**: read its `Fix:` line. For a `.env`, it is `npx -y zn-gate env shadow .env`.
 - **A `.env` in a sub-folder is missing**: reach checks one folder. Run it in that folder.
+
+## More
 
 More in [what reach shows](../reach.md#what-it-shows), the [severity rules](../reach.md#severity) and the [flags](../reach.md#flags).

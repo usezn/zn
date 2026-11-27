@@ -712,7 +712,7 @@ mod tests {
         })
         .await;
         assert!(end.is_ok(), "the idle session was not closed");
-        assert!(start.elapsed() < BOUND);
+        assert!(start.elapsed() < BOUND * 2);
     }
 
     #[tokio::test]

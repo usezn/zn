@@ -82,7 +82,7 @@ There is no command that prints a value. `secret get` refuses and points you to 
 
 ```text
 $ npx -y zn-gate secret get AWS_PROD
-zn secret: Not allowed: zn does not print secret values. To use one in a command, run: npx -y zn-gate@1.15.0 run --secrets NAME -- <command>
+zn secret: Not allowed: zn does not print secret values. To use one in a command, run: npx -y zn-gate@1.18.0 run --secrets NAME -- <command>
 ```
 
 That run exits with `77`, the code for a refusal on purpose.
@@ -108,5 +108,7 @@ chain: valid, 6 records
 | `1` | Another error |
 | `64` | Wrong usage, for example a name that already exists |
 | `77` | Refused on purpose, for example `secret get` or a command run by an agent |
+
+## More
 
 The full list is in [Exit codes](../exit-codes.md). For the rules that decide what an agent may read, see [Keep secrets out of your coding agent](../secrets.md).

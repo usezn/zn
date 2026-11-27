@@ -9,12 +9,12 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const path = require('path');
 
 const { checkCommand } = require('../lib/destructive');
 const policy = require('../lib/hooks/policy');
-const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const CASES = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'wrapper_value_cases.json'), 'utf8')).cases;
 const rule = (cmd) => { const r = checkCommand(cmd); return r.verdict === 'block' ? r.rule.replace('destructive:', '') : 'allow'; };
@@ -63,11 +63,10 @@ test('long options that take a value are read per wrapper; any other long option
   }
 });
 
-test('many later words behind an unsure chain stay within a small time budget', () => {
-  const cmd = 'nice --adj 5 echo ' + 'rm sh find dd '.repeat(4000);
-  const t0 = cpuNow();
-  const r = checkCommand(cmd);
-  assert.ok(cpuMsSince(t0) < 1500, 'took ' + cpuMsSince(t0) + ' ms');
+test('many later words behind an unsure chain are read in linear time', () => {
+  const build = (n) => 'nice --adj 5 echo ' + 'rm sh find dd '.repeat(n);
+  const r = checkCommand(build(4000));
   // Past the limit of later words the line is refused rather than guessed at.
   assert.equal(r.verdict, 'block');
+  assertLinear(checkCommand, build, 4000);
 });

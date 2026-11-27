@@ -1,4 +1,0 @@
-### Security
-- Rust gateway: when neural blocking is on, a tool call is denied if the neural check cannot run (the model, its classifier or its memory fails), instead of being allowed. `ZN_FAST_BOOT` no longer turns the neural model off silently: the gateway says so when it starts, and refuses to start when neural blocking is on.
-- Rust gateway: a misspelt setting in any section that turns a protection on (`engine`, `kms`, `neural`, `fusion`, `managed_rules`, `loop_breaker`, `consensus`, `guardrails`, as before `security` and `audit`), or a misspelt name of one of those sections, stops the gateway instead of leaving the protection off with a warning.
-- Rust gateway: a multi-signature approval can be used only from the namespace that asked for it, and it is matched on a SHA-256 hash of the arguments. The loop breaker counts each namespace separately, so one tenant can no longer trip it for another.

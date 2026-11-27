@@ -46,6 +46,7 @@ const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
 const { cliName } = require('../zn-command');
+const { LOADER_SOURCE } = require('../loader-env');
 
 const id = 'opencode';
 const PLUGIN_FILE = 'zn-gate.js';
@@ -84,6 +85,87 @@ function usesPowerShell(shell, platform) {
   return !BASH_LIKE.has(shellBase(shell));
 }
 
+/* ---------------------- which MCP server a tool belongs to ---------------------- */
+
+// OpenCode names an MCP tool <server>_<tool>, both parts with every character outside [A-Za-z0-9_-] turned into "_".
+function mcpSafeName(s) { return String(s).replace(/[^A-Za-z0-9_-]/g, '_'); }
+
+/* The MCP servers OpenCode's configuration files define, by name: { servers: Map(name -> [entries]), ok }.
+ * ok is false when a file that exists cannot be read or parsed (or a config variable is not valid JSON): nothing is
+ * then trusted as zn's own server. A missing file is normal. */
+function readMcpServers(root, env) {
+  const { parseJsonc } = require('../audit/parse');
+  const servers = new Map();
+  let ok = true;
+  const take = (data) => {
+    const m = data && typeof data === 'object' && data.mcp && typeof data.mcp === 'object' && !Array.isArray(data.mcp) ? data.mcp : null;
+    if (!m) return;
+    for (const name of Object.keys(m)) {
+      const key = mcpSafeName(name);
+      if (!servers.has(key)) servers.set(key, []);
+      servers.get(key).push(m[name]);
+    }
+  };
+  const readFile = (file) => {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return; ok = false; return; }
+    try { take(parseJsonc(text)); } catch (_) { ok = false; }
+  };
+  const base = env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(os.homedir(), '.config');
+  const dirs = [path.join(base, 'opencode')];
+  if (env.OPENCODE_CONFIG_DIR) dirs.push(path.resolve(env.OPENCODE_CONFIG_DIR));
+  for (const d of dirs) { readFile(path.join(d, 'opencode.json')); readFile(path.join(d, 'opencode.jsonc')); }
+  if (env.OPENCODE_CONFIG) readFile(path.resolve(env.OPENCODE_CONFIG));
+  // The project files OpenCode reads: from the working folder up to the git work tree root (the nearest folder with
+  // .git), and no further. With no .git above, only the working folder.
+  const start = path.resolve(root);
+  const dirsUp = [];
+  let found = false;
+  for (let dir = start; ;) {
+    dirsUp.push(dir);
+    if (fs.existsSync(path.join(dir, '.git'))) { found = true; break; }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  for (const dir of found ? dirsUp : [start]) {
+    for (const f of ['opencode.json', 'opencode.jsonc', path.join('.opencode', 'opencode.json'), path.join('.opencode', 'opencode.jsonc')]) readFile(path.join(dir, f));
+  }
+  if (env.OPENCODE_CONFIG_CONTENT) {
+    try { take(parseJsonc(String(env.OPENCODE_CONFIG_CONTENT))); } catch (_) { ok = false; }
+  }
+  return { servers, ok };
+}
+
+/* True when every entry of the server is zn's own secrets server (a local command, never a URL). */
+function entriesAreOurs(entries, root) {
+  const { isOurMcp } = require('../audit')._internal;
+  return entries.length > 0 && entries.every((cfg) => {
+    if (!cfg || typeof cfg !== 'object' || cfg.url || (cfg.type !== undefined && cfg.type !== 'local')) return false;
+    if (!Array.isArray(cfg.command) || !cfg.command.length || !cfg.command.every((w) => typeof w === 'string')) return false;
+    try { return Boolean(isOurMcp(cfg.command, { rec: { root } })); } catch (_) { return false; }
+  });
+}
+
+/* ev.mcp for an OpenCode tool name: the configured server whose name is the longest prefix of it, and `ours: 'secrets'`
+ * only when that server is zn's own and the rest of the name is exactly one of its tools. A name that matches no
+ * configured server leaves the server unknown. Fails closed: an unreadable configuration means not ours. */
+function mcpInfo(toolName, root, env = process.env) {
+  const { isSecretsToolName } = require('../broker/secrets-tools');
+  const info = { server: '', tool: toolName };
+  let found;
+  try { found = readMcpServers(root, env); } catch (_) { return info; }
+  let best = null;
+  for (const name of found.servers.keys()) {
+    if (toolName.startsWith(name + '_') && (best === null || name.length > best.length)) best = name;
+  }
+  if (best === null) return info;
+  info.server = best;
+  info.tool = toolName.slice(best.length + 1);
+  if (found.ok && isSecretsToolName(info.tool) && entriesAreOurs(found.servers.get(best), root)) info.ours = 'secrets';
+  return info;
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const args = raw.args && typeof raw.args === 'object' ? raw.args : {};
@@ -119,7 +201,16 @@ function normalize(raw) {
     input.tooLong = tooLong;
     input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
   }
-  if (raw.hook === 'tool.execute.before') return { ...base, event: 'pre_tool', tool, toolName: t, input };
+  if (raw.hook === 'tool.execute.before') {
+    const ev = { ...base, event: 'pre_tool', tool, toolName: t, input };
+    // MCP tools are checked before they run, as for Claude Code and Cursor. The built-ins that only return text the
+    // model reads (TOKENIZED_OUTPUT) are not MCP calls and are left alone.
+    if (tool === 'mcp' && !TOKENIZED_OUTPUT.has(t)) {
+      input.args = args;
+      ev.mcp = mcpInfo(t, root);
+    }
+    return ev;
+  }
   if (raw.hook === 'tool.execute.after') {
     const output = {};
     if (typeof raw.output === 'string') output.output = raw.output;
@@ -177,7 +268,7 @@ function pluginSource(opts = {}) {
   // the PATH keeps only its absolute entries, and cmd.exe does not look in the
   // current directory first.
   const shell = project ? 'process.platform === "win32"' : 'false';
-  const env = project ? 'projectEnv()' : 'process.env';
+  const env = project ? 'hookEnv(projectEnv())' : 'hookEnv(process.env)';
   const projectEnvSource = project ? `
 // The environment of \`zn\`: the PATH without its relative or empty entries, and
 // on Windows no search of the current directory by cmd.exe.
@@ -189,7 +280,28 @@ function projectEnv() {
     if (k.toUpperCase() === "PATH") pathValue = String(v || "");
     else env[k] = v;
   }
-  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/"));
+  // A PATH entry, or the zn or node in it, can be a link into node_modules/.bin or into the project: the real paths count too.
+  // An entry whose real folder cannot be read, or that is in a node_modules folder or in the project, is dropped; so is an
+  // entry whose zn or node really is in a node_modules/.bin folder or in the project. The project is the folder OpenCode
+  // runs in, unless that is / or the home folder. (A global npm install links zn into <prefix>/node_modules/zn-gate: kept.)
+  const real = (p) => { try { return realpathSync(p).split("\\\\").join("/").toLowerCase(); } catch (_) { return null; } };
+  const here = real(process.cwd());
+  const home = real(homedir());
+  const inProject = (p) => !!here && here !== home && here.length > 3 && (p === here || p.startsWith(here + "/"));
+  const names = win ? ["zn.cmd", "zn.exe", "zn", "node.exe", "node.cmd"] : ["zn", "node"];
+  const sep = win ? ";" : ":";
+  const keep = (d) => {
+    if (!(win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/")) || /node_modules/i.test(d)) return false;
+    const rd = real(d);
+    if (!rd || rd.includes("/node_modules/") || rd.endsWith("/node_modules") || inProject(rd)) return false;
+    for (const n of names) {
+      const f = d + (win ? "/" : "/") + n;
+      if (!existsSync(f)) continue;
+      const rf = real(f);
+      if (!rf || rf.includes("/node_modules/.bin/") || inProject(rf)) return false;
+    }
+    return true;
+  };
   env.PATH = pathValue.split(win ? ";" : ":").filter(keep).join(win ? ";" : ":");
   if (win) env.NoDefaultCurrentDirectoryInExePath = "1";
   return env;
@@ -200,9 +312,19 @@ function projectEnv() {
 // which blocks reads of secret files, puts commands that use stored secrets
 // through \`zn run\`, and replaces secret values in tool output with __ZN_ tokens.
 import { spawn } from "node:child_process";
-
+${project ? 'import { existsSync, realpathSync } from "node:fs";\nimport { homedir } from "node:os";\n' : ''}
 ${launch}
-${projectEnvSource}const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
+${projectEnvSource}
+// Variables that make Node.js or the dynamic loader load code of the caller's choosing (NODE_OPTIONS=--require, LD_PRELOAD
+// and the like) are not passed to the hook: a project can set the environment of OpenCode, and such code would run inside
+// the hook itself. NODE_EXTRA_CA_CERTS and the proxy settings are passed.
+const LOADER_VAR = new RegExp(${JSON.stringify(LOADER_SOURCE)}, "i");
+function hookEnv(base) {
+  const env = {};
+  for (const [k, v] of Object.entries(base)) if (!LOADER_VAR.test(k)) env[k] = v;
+  return env;
+}
+const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
 const ACTIONS = ["none", "deny", "error", "args", "output"];

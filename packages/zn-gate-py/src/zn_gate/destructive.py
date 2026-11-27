@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-16.18"
+COMMAND_RULES_VERSION = "2026-11-25.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -36,7 +36,7 @@ _REASONS = {
     "disk_overwrite": "it writes to or formats a disk device",
     "perm_root": "it changes permissions or owners across the whole filesystem or a system folder",
     "fork_bomb": "it is a fork bomb, which freezes the machine",
-    "rc_download": "it writes downloaded content into a shell startup file, which runs in every new terminal",
+    "rc_download": "it writes downloaded content into a shell startup file or the SSH authorized_keys file, which run on every login or let a key log in",
 }
 
 _MAX_DEPTH = 3
@@ -78,7 +78,7 @@ _BLOCK_DEVICE_RE = re.compile(
 )
 _RC_UNIX_RE = re.compile(
     r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)\Z"
-    r"|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|environment)\Z|^/etc/profile\.d/",
+    r"|/\.ssh/authorized_keys2?\Z|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|environment)\Z|^/etc/profile\.d/",
     _A,
 )
 _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1\Z", _AI)
@@ -345,7 +345,7 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
                 adv += 1
         out.append((words, sep))
         raw = rest[:end]
-        out.raws.append(raw if "`" in raw else "")
+        out.raws.append(raw if "`" in raw or ("$(" in raw and '"' in raw) else "")
         out.opens.append(0)
         rest = rest[adv:]
         if sep in ("|", "|&"):
@@ -368,6 +368,9 @@ def _is_pipe(sep: Optional[str]) -> bool:
 _MAX_ASSIGNMENTS = 256  # one more and the line is refused
 _MAX_VALUE = 8192  # a longer value is not kept (the variable stays unknown)
 _MAX_EXPANDED = 256 * 1024  # total text added by substitutions; past it the rest stays unresolved
+_MAX_ALTERNATIVES = 16  # values one variable may hold at once; one more and the line is refused
+_MAX_READINGS = 64  # readings of one command (every combination of its variables' values); past it the line is refused
+_MAX_PIPE_READINGS = 64  # combinations of readings checked for one pipeline; past it the line is refused
 _VAR_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)\Z")
 _VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _VAR_SOLE_REF_RE = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))\Z")
@@ -392,21 +395,48 @@ def _join_backticks(words: List[str]) -> List[str]:
     return out if changed else words
 
 
+_OPEN_BLOCK = frozenset(("if", "while", "until", "for", "case", "select"))
+_CLOSE_BLOCK = frozenset(("fi", "done", "esac"))
+# Words after which a new command starts in the same segment.
+_CMD_LEADERS = frozenset(("then", "do", "else", "elif", "{", "!", "time", "if", "while", "until"))
+_OPENER_WORDS = frozenset(("then", "else", "elif", "do", "function"))
+# Words that can stand in front of an assignment without making it part of another command.
+_BEFORE_ASSIGN = frozenset(("if", "then", "else", "elif", "while", "until", "do", "!", "{", "time"))
+
+
 class _Vars:
-    __slots__ = ("vars", "assignments", "expanded", "overflow")
+    """Literal variables assigned earlier on the line. One variable holds the list of values it may have at this point
+    (None = not known, written as it stands). A plain assignment that always runs replaces the list; one that may not
+    run (after && or ||, inside ( ), { }, if, while, until, for or case; a function body is a { } group) adds a possible
+    value, and every reading of a command that uses it is checked."""
+
+    __slots__ = (
+        "vars", "assignments", "expanded", "overflow", "has_multi", "parens", "braces", "blocks", "after_and_or", "cases",
+    )
 
     def __init__(self) -> None:
-        self.vars: Dict[str, str] = {}
+        self.vars: Dict[str, List[Optional[str]]] = {}
         self.assignments = 0
         self.expanded = 0
         self.overflow = False
+        self.has_multi = False
+        # Where the line has got to: inside a ( ) group, a { } group or an if/while/for/case block, or right after && or ||.
+        self.parens = 0
+        self.braces = 0
+        self.blocks = 0
+        self.after_and_or = False
+        self.cases = 0
 
-    def substitute(self, word: str) -> str:
+    def substitute(self, word: str, chosen: Optional[Dict[str, Optional[str]]] = None) -> str:
         if not self.vars or "$" not in word:
             return word
 
         def fill(m: "re.Match[str]") -> str:
-            v = self.vars.get(m.group(1) or m.group(2))
+            name = m.group(1) or m.group(2)
+            alts = self.vars.get(name)
+            if alts is None:
+                return m.group(0)
+            v = chosen[name] if chosen is not None and name in chosen else alts[0]
             if v is None:
                 return m.group(0)
             self.expanded += len(v)
@@ -414,41 +444,159 @@ class _Vars:
 
         return _VAR_REF_RE.sub(fill, word)
 
-    def apply(self, words: List[str], sep: Optional[str]) -> List[str]:
-        """The words of one simple command with the known variables filled in, and any assignment it makes recorded.
-        An assignment in a pipe or a background command runs in a subshell and is not recorded."""
-        out = words
-        if self.vars:
-            out = [self.substitute(w) for w in words]
+    def _readings(self, words: List[str]) -> List[List[str]]:
+        """One word list for each combination of the values the variables of the command may hold."""
+        names: List[str] = []
+        if self.has_multi:
+            seen = set()
+            for w in words:
+                if "$" not in w:
+                    continue
+                for m in _VAR_REF_RE.finditer(w):
+                    n = m.group(1) or m.group(2)
+                    alts = self.vars.get(n)
+                    if alts is not None and len(alts) > 1 and n not in seen:
+                        seen.add(n)
+                        names.append(n)
+        total = 1
+        for n in names:
+            total *= len(self.vars[n])
+            if total > _MAX_READINGS:
+                self.overflow = True
+                total = 1
+                names = []
+                break
+        outs: List[List[str]] = []
+        keys = set()
+        idx = [0] * len(names)
+        for _ in range(total):
+            chosen = {n: self.vars[n][idx[i]] for i, n in enumerate(names)} if names else None
+            out = [self.substitute(w, chosen) for w in words] if self.vars else words
             # A command word that is just a variable ($X url, | $S) is split on blanks, as an unquoted expansion is.
-            if words:
-                m = _VAR_SOLE_REF_RE.match(words[0])
-                if m and (m.group(1) or m.group(2)) in self.vars:
+            if self.vars and words:
+                sole = _VAR_SOLE_REF_RE.match(words[0])
+                if sole and (sole.group(1) or sole.group(2)) in self.vars:
                     out = out[0].split() + out[1:]
-        if sep in ("|", "|&", "&"):
-            return out
-        out = _join_backticks(out)
+            key = "\0".join(out) if total > 1 else ""
+            if key not in keys:
+                keys.add(key)
+                outs.append(out)
+            for i in range(len(idx) - 1, -1, -1):
+                idx[i] += 1
+                if idx[i] < len(self.vars[names[i]]):
+                    break
+                idx[i] = 0
+        return outs
+
+    @staticmethod
+    def _assignments_of(out: List[str]) -> Optional[List[Tuple[str, str]]]:
         i = 0
-        if out and out[0] in _DECLARERS:
-            i = 1
+        while i < len(out) and out[i] in _BEFORE_ASSIGN:
+            i += 1
+        if i < len(out) and out[i] in _DECLARERS:
+            i += 1
             while i < len(out) and re.match(r"^-[A-Za-z]+\Z", out[i]):
                 i += 1
         if i >= len(out):
-            return out
-        if not all(_VAR_ASSIGN_RE.match(w) for w in out[i:]):
-            return out
+            return None
+        pairs: List[Tuple[str, str]] = []
         for w in out[i:]:
             m = _VAR_ASSIGN_RE.match(w)
-            assert m is not None
-            self.assignments += 1
-            if self.assignments > _MAX_ASSIGNMENTS:
-                self.overflow = True
-                return out
-            if len(m.group(2)) > _MAX_VALUE:
-                self.vars.pop(m.group(1), None)
-            else:
-                self.vars[m.group(1)] = m.group(2)
-        return out
+            if not m:
+                return None
+            pairs.append((m.group(1), m.group(2)))
+        return pairs
+
+    def _record(self, name: str, values: List[str], conditional: bool) -> None:
+        alts: List[Optional[str]] = []
+        for v in values:
+            v2: Optional[str] = None if len(v) > _MAX_VALUE else v
+            if v2 not in alts:
+                alts.append(v2)
+        if conditional:
+            merged: List[Optional[str]] = list(self.vars.get(name) or [None])
+            for alt in alts:
+                if alt not in merged:
+                    merged.append(alt)
+            alts = merged
+        if all(v is None for v in alts):
+            self.vars.pop(name, None)
+            return
+        if len(alts) > _MAX_ALTERNATIVES:
+            self.overflow = True
+            return
+        self.vars[name] = alts
+        if len(alts) > 1:
+            self.has_multi = True
+
+    def _track(self, words: List[str], sep: Optional[str], opens: int) -> None:
+        # Every block word that starts a command counts: first in the segment, or after then/do/else/elif/{/!/time (a
+        # block nested as `then if b`, `do for j in 1`, `else case ...`), so its fi/done/esac closes the right block.
+        for i, w in enumerate(words):
+            if i > 0 and words[i - 1] not in _CMD_LEADERS:
+                continue
+            if w in _OPEN_BLOCK:
+                self.blocks += 1
+            elif w in _CLOSE_BLOCK:
+                self.blocks = max(0, self.blocks - 1)
+            if w == "case":
+                self.cases += 1
+            elif w == "esac":
+                self.cases = max(0, self.cases - 1)
+            # A } closes a group only in command position; elsewhere it is a plain argument (echo }, echo '}').
+            if w == "}":
+                self.braces = max(0, self.braces - 1)
+        # Every { word of the segment counts, not only a leading one (a function body opens after f() or function f): an
+        # extra { only keeps later assignments conditional, which fails closed.
+        for w in words:
+            if w == "{":
+                self.braces += 1
+        if sep == "(":
+            self.parens += 1
+        self.parens += opens
+        # Inside a case block a ')' may close a pattern rather than a group: it never lowers the group count there.
+        if sep == ")" and self.cases == 0:
+            self.parens = max(0, self.parens - 1)
+        self.after_and_or = sep in ("&&", "||")
+
+    def _read_and_record(self, words: List[str], sep: Optional[str], conditional: bool) -> List[List[str]]:
+        outs = self._readings(words)
+        # An assignment in a pipe or a background command runs in a subshell: the rest of the line does not see it.
+        if sep in ("|", "|&", "&"):
+            return outs
+        lists = []
+        for k in range(len(outs)):
+            outs[k] = _join_backticks(outs[k])
+            pairs = self._assignments_of(outs[k])
+            if pairs:
+                lists.append(pairs)
+        if not lists:
+            return outs
+        self.assignments += max(len(pairs) for pairs in lists)
+        if self.assignments > _MAX_ASSIGNMENTS:
+            self.overflow = True
+            return outs
+        # Every value a name may take across the readings, in order of appearance.
+        by_name: Dict[str, List[str]] = {}
+        for pairs in lists:
+            for n, v in pairs:
+                by_name.setdefault(n, []).append(v)
+        for n, values in by_name.items():
+            self._record(n, values, conditional)
+        return outs
+
+    def apply(self, words: List[str], sep: Optional[str], opens: int = 0) -> List[List[str]]:
+        """The readings of one simple command with the known variables filled in (one word list for each value its
+        variables may hold; the first is the one when every variable has a single value), and any assignment it makes
+        recorded. An assignment in a pipe or a background command runs in a subshell and is not recorded."""
+        # A group or block opened in this same segment (f() { D=x; }, { D=x; }, then D=x) makes it conditional too.
+        opens_here = any(w in ("{", "(") or w in _OPEN_BLOCK or w in _OPENER_WORDS or w.endswith("()") for w in words)
+        conditional = (self.after_and_or or self.parens > 0 or self.braces > 0 or self.blocks > 0 or opens_here
+                       or sep == "(" or opens > 0)
+        try:
+            return self._read_and_record(words, sep, conditional)
+        finally:
+            self._track(words, sep, opens)
 
 
 # The wrappers that only run the next command, with the short options of each that take a value. One list for the
@@ -539,6 +687,143 @@ def _skip_wrapper(words: List[str], k: int, name: str, info: Optional[Dict[str, 
 
 # Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
+
+
+def _subst_end(text: str, start: int, state: Dict[str, bool], lvl: int) -> int:
+    """The index of the ) that closes a $( opened just before `start` (len(text) when there is none). Quotes inside the
+    substitution start afresh, so in "echo $(sh -c "x")" the quoted x belongs to the substitution. state["deep"] is set
+    when the nesting is too deep to follow."""
+    if lvl > 64:
+        state["deep"] = True
+        return len(text)
+    parens = 0
+    i = start
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 1
+        elif ch == "'":
+            e = text.find("'", i + 1)
+            if e < 0:
+                return n
+            i = e
+        elif ch == '"':
+            i = _dq_end(text, i, state, lvl)
+        elif ch == "#" and (i == start or text[i - 1] in " \t\r\n;&|()"):
+            # A comment (a # that starts a word) runs to the end of the line: a ) inside it does not close the substitution.
+            e = text.find("\n", i)
+            if e < 0:
+                return n
+            i = e
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            i = _subst_end(text, i + 2, state, lvl + 1)
+        elif ch == "(":
+            parens += 1
+        elif ch == ")":
+            if parens == 0:
+                return i
+            parens -= 1
+        i += 1
+    return n
+
+
+def _dq_end(text: str, at: int, state: Dict[str, bool], lvl: int) -> int:
+    """The index of the " that closes the double-quoted string opened at `at` (a $( inside it is read to its end)."""
+    i = at + 1
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 1
+        elif ch == '"':
+            return i
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            i = _subst_end(text, i + 2, state, lvl + 1)
+        i += 1
+    return n
+
+
+def _requote_substitutions(text: str) -> Optional[str]:
+    """A command with a $( ) substitution whose own quotes sit inside a double-quoted string (bash -c "echo $(bash -c "x")")
+    is valid bash, but the word scanner reads the inner quote as the end of the outer string and so misreads the shell code
+    of the -c. The same command is written here with the quotes of every substitution inside a double-quoted string escaped
+    (bash -c "echo $(bash -c \\"x\\")"), the form the scanner reads right, and the nesting is counted as for any other shell
+    string. None when the nesting is too deep to follow."""
+    state = {"deep": False}
+    out = _requote_text(text, state, 0)
+    return None if state["deep"] else out
+
+
+def _requote_text(text: str, state: Dict[str, bool], lvl: int) -> str:
+    # Each level escapes the quotes of the one inside it again, so the text doubles per level: past the shell nesting limit
+    # (plus the one level the outer string adds) the line is refused anyway, and the rewriting stops here.
+    if lvl > _MAX_DEPTH + 1:
+        state["deep"] = True
+        return text
+    out: List[str] = []
+    dq = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            e = text.find("'", i + 1)
+            stop = n - 1 if e < 0 else e
+            out.append(text[i:stop + 1])
+            i = stop + 1
+            continue
+        if ch == '"':
+            dq = not dq
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            end = _subst_end(text, i + 2, state, lvl)
+            body = _requote_text(text[i + 2:end], state, lvl + 1)
+            if dq:
+                body = re.sub(r'[\\"]', lambda m: "\\" + m.group(0), body)
+            out.append("$(" + body + (")" if end < n else ""))
+            i = end + 1
+            continue
+        out.append(ch)
+        i += 1
+    result = "".join(out)
+    if len(result) > _MAX_CHARS:
+        state["deep"] = True
+        return text
+    return result
+
+
+def _dq_subst_bodies(text: str) -> Optional[List[str]]:
+    """The text of every $( ) command substitution that sits inside a double-quoted string (echo "$(...)", x="$(...)"),
+    with its own quotes read afresh. The word scanner takes a double-quoted string as data, but bash runs these. None when
+    the nesting is too deep to follow. An unquoted $( ) is not listed: its commands are read as commands of the line."""
+    bodies: List[str] = []
+    state = {"deep": False}
+    dq = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            e = text.find("'", i + 1)
+            if e < 0:
+                break
+            i = e + 1
+            continue
+        if ch == '"':
+            dq = not dq
+        elif dq and ch == "$" and text[i + 1:i + 2] == "(":
+            end = _subst_end(text, i + 2, state, 0)
+            bodies.append(text[i + 2:end])
+            i = end
+        i += 1
+    return None if state["deep"] else bodies
 
 
 def _backtick_code(text: str) -> str:
@@ -720,9 +1005,9 @@ def _unwrap(args: List[str]) -> List[str]:
     return _unwrap_dir(args)[0]
 
 
-def _resolve_dots(t: str) -> str:
+def _resolve_dots(t: str, depth: int = 2) -> str:
     """Resolve "." and ".." lexically (no filesystem) for a path that starts at "/", a drive or a home word.
-    A ".." above "/" or a drive root stays there; a ".." out of the home folder names its parent. Relative paths are left alone."""
+    A ".." above "/" or a drive root stays there; a ".." out of the home folder is read both ways, since the depth of the real home is not known here (/root is one level, /home/<user> two): depth 2 reads the first step as /home, depth 1 as "/", depth 0 leaves the text alone for a caller that reads both. Relative paths are left alone."""
     if not re.search(r"(?:^|/)\.\.?(?:/|\Z)", t):
         return t
     home = False
@@ -745,16 +1030,24 @@ def _resolve_dots(t: str) -> str:
         elif out:
             out.pop()
         elif home:
-            return "/home"
+            if depth == 0:
+                return t
+            home, anchor = False, "/"
+            if depth == 2:
+                out.append("home")
     return anchor + "/".join(out)
 
 
 def _dangerous_path(word: str) -> str:
+    return _dangerous_path_at(word, 2) or _dangerous_path_at(word, 1)
+
+
+def _dangerous_path_at(word: str, depth: int) -> str:
     """'root', 'home' or 'system' for a path this policy protects, else ''."""
     t = re.sub(r"/{2,}", "/", str(word).replace("\\", "/"))
     if not t:
         return ""
-    t = _resolve_dots(t)
+    t = _resolve_dots(t, depth)
     for _ in range(4):
         s = re.sub(r"/(?:\*|\.\*|\.|\{\*,\.\*\})?\Z", "", t, count=1)
         if s == t and len(t) > 1 and t.endswith("*"):
@@ -1038,10 +1331,20 @@ def _from_cwd(cwd: Any, word: str) -> str:
     if cwd is _CWD_LOST:
         return "/"
     ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
-    return _folder_text(cwd, ups + 4) + "/" + word
+    # The folder and the word joined are read lexically, so cd /opt && curl -o ../etc/profile names /etc/profile.
+    # A ".." out of a home folder stays in the text: _dangerous_path and _is_rc_path read it at both home depths.
+    return _resolve_dots((_folder_text(cwd, ups + 4) + "/" + word).replace("\\", "/"), 0)
 
 
-def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
+def _rc_from_cwd(cwd: Any, word: str) -> str:
+    """A startup-file name written from a folder the line lost track of: it may be in the home folder, so it is read from
+    the root (a name that is not anchored still ends in the same file name). Used for rc targets only; rm keeps _from_cwd."""
+    if cwd is _CWD_LOST and not _ANCHORED_RE.match(str(word)):
+        return "/" + str(word)
+    return _from_cwd(cwd, word)
+
+
+def _check_simple(words: List[str], depth: int, known: Any = None, rc: int = 0) -> Optional[str]:
     args, chdir, overflow, splits, unsure, chain_words, split_tail = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
@@ -1059,16 +1362,16 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
         tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in split_tail)
         # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
         text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
-        hit = _analyze("env " + text + " " + tail, depth + 1, known)
+        hit = _analyze("env " + text + " " + tail, depth + 1, known, rc=rc)
         if hit:
             return hit
     if not args:
         return None
-    hit = _check_head(args, depth, known)
+    hit = _check_head(args, depth, known, rc)
     if hit or not unsure:
         return hit
     # From the first wrapper on, so a word skipped as an option's value is read as a possible command as well.
-    return _check_later_heads(chain_words, depth, known)
+    return _check_later_heads(chain_words, depth, known, rc)
 
 
 def _head_is_read(name: str) -> bool:
@@ -1077,7 +1380,7 @@ def _head_is_read(name: str) -> bool:
             or name in ("su", "eval", "cmd", "find", "chmod", "chown", "chgrp", "dd") or bool(_interpreter_kind(name)))
 
 
-def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]:
+def _check_later_heads(args: List[str], depth: int, known: Any, rc: int = 0) -> Optional[str]:
     """A wrapper chain that may not end on the program (an option zn does not know may have taken the next word as its
     value): each later word that names a program these rules read is checked as the head too, so the option cannot hide
     the command."""
@@ -1088,13 +1391,13 @@ def _check_later_heads(args: List[str], depth: int, known: Any) -> Optional[str]
         n += 1
         if n > _LATER_HEADS_MAX:
             return _OVERFLOW
-        hit = _check_head(args[j:], depth, known)
+        hit = _check_head(args[j:], depth, known, rc)
         if hit:
             return hit
     return None
 
 
-def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
+def _check_head(args: List[str], depth: int, known: Any, rc: int = 0) -> Optional[str]:
     """The rules for one simple command whose head is args[0]."""
     head = _program_name(args[0])
     rest = args[1:]
@@ -1122,8 +1425,11 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
         and _SHELL_RUNS_DOWNLOAD_RE.search('sh -c "' + code + '"')
     ):
         return "pipe_to_shell"
+    # Past the nesting limit a shell string is refused, not skipped: its commands would not be checked.
+    if code is not None and depth >= _MAX_DEPTH and code.strip() != "":
+        return _OVERFLOW
     if code is not None and depth < _MAX_DEPTH:
-        hit = _analyze(code, depth + 1, known)
+        hit = _analyze(code, depth + 1, known, rc=rc)
         if hit:
             return hit
 
@@ -1168,6 +1474,25 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
         # over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
         if delete and "-files0-from" in rest:
             return "rm_root_home"
+        # The command an -exec, -execdir, -ok or -okdir runs (up to its ; or +) is read like any other command, at the same
+        # depth: a shell -c inside it counts toward the nesting limit the way a shell -c inside a shell -c does.
+        i = first
+        while i < len(rest):
+            if re.match(r"^-(?:exec|execdir|ok|okdir)\Z", rest[i]):
+                j = i + 1
+                while j < len(rest) and not re.match(r"^\\?;\Z|^\+\Z", rest[j]):
+                    j += 1
+                # -execdir and -okdir run it from the folder of each matched file, not from the folder find was started in.
+                exec_hit = None
+                if j > i + 1:
+                    if re.match(r"^-(?:execdir|okdir)\Z", rest[i]):
+                        exec_hit = _check_execdir(rest[i + 1:j], depth, known, paths or ["."], rc)
+                    else:
+                        exec_hit = _check_child(rest[i + 1:j], depth, known, rc)
+                if exec_hit:
+                    return exec_hit
+                i = j
+            i += 1
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
@@ -1185,11 +1510,66 @@ def _check_head(args: List[str], depth: int, known: Any) -> Optional[str]:
     return None
 
 
+def _check_child(words: List[str], depth: int, cwd: Any, rc: int = 0) -> Optional[str]:
+    """The command an -exec runs, read from the folder cwd: as a command, and as a one-command pipeline (its downloads)."""
+    return _check_simple(words, depth, cwd, rc) or _check_pipeline([(words, None)], cwd, rc)
+
+
+def _exec_root_folder(word: str, known: Any) -> Any:
+    """The folder a find starting path names: a folder chain, or None when it cannot be told (a variable, a substitution,
+    a glob, ~user, or a relative path from an unknown folder)."""
+    w = str(word)
+    if not w or re.search(r"[$`*?\[\]{}()%]", re.sub(r"^(?:~|\$HOME|\$\{HOME\})(?=/|\Z)", "", w, flags=re.I)):
+        return None
+    if _ANCHORED_RE.match(w):
+        f = _folder_of(w)
+        if f is not None and f is not _CWD_LOST and f is not _CWD_OVERFLOW and f.kind == "other":
+            return None
+        return f
+    return _folder_rel(known, w)
+
+
+# The startup-file and ssh key names a download must not be written to, in whatever folder (see _check_execdir).
+_RC_NAME_RE = re.compile(
+    r"^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)"
+    r"|authorized_keys2?|config\.fish)\Z",
+    _A,
+)
+# rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
+
+
+def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str], rc: int = 0) -> Optional[str]:
+    """find -execdir runs its command from the folder of each matched file, which can be any folder below a starting path.
+    The command is read from each starting path that can be named; and, whatever the folder, a relative target whose name is
+    a protected startup file or authorized_keys counts as protected (the rc mode)."""
+    unsure = False
+    for r in roots:
+        f = _exec_root_folder(r, known)
+        # A folder that cannot be told, including one reached after the folder was lost (cd .. above the home folder): unsure.
+        if f is None or f is _CWD_LOST:
+            unsure = True
+            continue
+        if f is _CWD_OVERFLOW:
+            return _OVERFLOW
+        hit = _check_child(words, depth, f, rc)
+        if hit:
+            return hit
+    # When the folder it runs in cannot be told (a starting path that is not literal, or a relative one from an unknown or lost
+    # folder), any relative target with a folder in it (etc/profile, ../etc/profile) is refused as well; a plain file name is not.
+    if known is _CWD_LOST:
+        unsure = True
+    # The mode is passed down with the call (never kept in module state), so overlapping checks cannot see each other's.
+    return _check_child(words, depth, None if unsure else known, 2 if unsure else 1)
+
+
 def _is_rc_path(w: str) -> bool:
     t = str(w).replace("\\", "/")
     t = re.sub(r"^~/", "/", t)
     t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
-    return bool(_RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)))
+    if _RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)):
+        return True
+    slashed = str(w).replace("\\", "/")
+    return any(u != slashed and _is_rc_path(u) for u in (_resolve_dots(slashed, 2), _resolve_dots(slashed, 1)))
 
 
 def _out_flag(w: str) -> bool:
@@ -1293,7 +1673,9 @@ def _pipe_args(a: List[str], unsure: bool) -> List[str]:
     return a[j:] if j > 0 else a
 
 
-def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
+def _check_pipeline(
+    pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None, rc: int = 0
+) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
         a, d, _ovf, _spl, unsure, _all, _tail = _unwrap_dir(_strip_redirects(words))
@@ -1341,8 +1723,16 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
                     target = w[3:]
                 if target is not None:
                     # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
-                    alts = _brace_alts(_from_cwd(heads[j][4], target))
+                    alts = _brace_alts(_rc_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
+                        return "rc_download"
+                    if rc == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
+                        return "rc_download"
+                    # find -execdir runs the command at an unknown depth below its starting path, so a relative target that
+                    # climbs with .. can land anywhere above it (../etc/profile from /srv is /etc/profile): refused.
+                    if rc and not _ANCHORED_RE.match(target) and re.search(r"(?:^|[\\/])\.\.(?:[\\/]|\Z)", target):
+                        return "rc_download"
+                    if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
@@ -1355,11 +1745,33 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
 _MAX_TICK_READS = 200
 
 
+def _check_pipeline_readings(
+    pipe: List[List[Tuple[List[str], Optional[str]]]], known: Any = None, rc: int = 0
+) -> Optional[str]:
+    """A pipeline whose commands each have several readings is checked once for every combination."""
+    total = 1
+    for r in pipe:
+        total *= len(r)
+        if total > _MAX_PIPE_READINGS:
+            return _OVERFLOW
+    idx = [0] * len(pipe)
+    for _ in range(total):
+        hit = _check_pipeline([r[idx[i]] for i, r in enumerate(pipe)], known, rc)
+        if hit:
+            return hit
+        for i in range(len(idx) - 1, -1, -1):
+            idx[i] += 1
+            if idx[i] < len(pipe[i]):
+                break
+            idx[i] = 0
+    return None
+
+
 def _check_segments(
-    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None, rc: int = 0
 ) -> Optional[str]:
     """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
-    pipe: List[Tuple[List[str], Optional[str]]] = []
+    pipe: List[List[Tuple[List[str], Optional[str]]]] = []  # for each command of the pipeline, its readings
     known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
     # A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
     groups: List[Any] = []
@@ -1367,16 +1779,18 @@ def _check_segments(
     opens = getattr(segs, "opens", None)
     ticks = 0
     var_scope = _Vars()
-    for idx, (words, sep) in enumerate(segs):
-        # Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
-        words = var_scope.apply(words, sep)
+    for idx, (words0, sep) in enumerate(segs):
+        # Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh). A variable an assignment may
+        # not have changed (after &&, in an if, ...) holds each of its values, and every reading is checked.
+        readings = var_scope.apply(words0, sep, opens[idx] if opens else 0)
         if var_scope.overflow:
             return _OVERFLOW
         if sep == "(" and len(groups) < _MAX_SEGMENTS:
             groups.append(known)
-        hit = _check_simple(words, depth, known)
-        if hit:
-            return hit
+        for w1 in readings:
+            hit = _check_simple(w1, depth, known, rc)
+            if hit:
+                return hit
         # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
         # is still the one the line started in, the whole-line reading in _analyze() has already covered it.
         if raws and raws[idx] and known is not cwd0 and depth < _MAX_DEPTH:
@@ -1384,18 +1798,35 @@ def _check_segments(
             if ticks > _MAX_TICK_READS:
                 return _OVERFLOW
             inner = _backtick_code(raws[idx])
-            inner_hit = _analyze(inner, depth + 1, known) if inner else None
+            inner_hit = _analyze(inner, depth + 1, known, rc=rc) if inner else None
             if inner_hit:
                 return inner_hit
-        if sep not in ("|", "|&", "&"):
-            to = _cd_target(_unwrap(words), known)
-            if to is _CWD_OVERFLOW:
+        # The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
+        if raws and raws[idx] and known is not cwd0 and "$(" in raws[idx] and '"' in raws[idx]:
+            bodies = _dq_subst_bodies(raws[idx])
+            if bodies is None or ticks + len(bodies) > _MAX_TICK_READS:
                 return _OVERFLOW
+            ticks += len(bodies)
+            for body in bodies:
+                body_hit = _analyze(body, depth, known, rc=rc) if body.strip() else None
+                if body_hit:
+                    return body_hit
+        if sep not in ("|", "|&", "&"):
+            # A cd whose target depends on which value a variable holds leaves the folder unknown (protected).
+            to: Any = _NOT_CD
+            for w1 in readings:
+                t = _cd_target(_unwrap(w1), known)
+                if t is _CWD_OVERFLOW:
+                    return _OVERFLOW
+                if len(readings) == 1:
+                    to = t
+                elif t is not _NOT_CD:
+                    to = _CWD_LOST
             if to is not _NOT_CD:
                 known = to
-        pipe.append((words, sep))
+        pipe.append([(w1, sep) for w1 in readings])
         if not _is_pipe(sep):
-            hit2 = _check_pipeline(pipe, known)
+            hit2 = _check_pipeline_readings(pipe, known, rc)
             if hit2:
                 return hit2
             pipe = []
@@ -1406,13 +1837,22 @@ def _check_segments(
                     groups.append(known)
         if sep == ")" and groups:
             known = groups.pop()
-    return _check_pipeline(pipe, known) if pipe else None
+    return _check_pipeline_readings(pipe, known, rc) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False, rc: int = 0) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
+    # The same command with the quotes of its substitutions escaped (see _requote_substitutions), read at the same depth.
+    if not requoted and "$(" in text and '"' in text:
+        fixed = _requote_substitutions(text)
+        if fixed is None:
+            return _OVERFLOW
+        if fixed != text:
+            fixed_hit = _analyze(fixed, depth, known, True, rc)
+            if fixed_hit:
+                return fixed_hit
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"
@@ -1432,27 +1872,40 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
         return "pipe_to_shell"
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
+    # Past the nesting limit a backtick substitution is refused, not skipped: its commands would not be checked.
+    if depth >= _MAX_DEPTH and "`" in text and _backtick_code(text):
+        return _OVERFLOW
     segs, truncated = _segments_of(text)
-    hit = _check_segments(segs, depth, known)
+    hit = _check_segments(segs, depth, known, rc)
     if hit:
         return hit
     # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
     if depth < _MAX_DEPTH and "`" in text:
         inner = _backtick_code(text)
-        inner_hit = _analyze(inner, depth + 1, known) if inner else None
+        inner_hit = _analyze(inner, depth + 1, known, rc=rc) if inner else None
         if inner_hit:
             return inner_hit
+    # A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
+    # -c inside it counts as it does anywhere else; the text shrinks with every step, and the quote rewriting above is capped).
+    if "$(" in text and '"' in text:
+        bodies = _dq_subst_bodies(text)
+        if bodies is None or len(bodies) > _MAX_TICK_READS:
+            return _OVERFLOW
+        for body in bodies:
+            body_hit = _analyze(body, depth, known, rc=rc) if body.strip() else None
+            if body_hit:
+                return body_hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
-        posix_hit = _check_segments(_segments_of(text, True)[0], depth, known)
+        posix_hit = _check_segments(_segments_of(text, True)[0], depth, known, rc)
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
     # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
-        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known)
+        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known, rc)
         if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.

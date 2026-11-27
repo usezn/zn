@@ -12,6 +12,7 @@ const shellArgs = (sh) => (/(^|\/)bash$/.test(sh) ? ['--norc', '--noprofile'] : 
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { expandPs } = require('./helpers/ps_expand');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -238,8 +239,9 @@ test('Windows: the project hook is an encoded PowerShell script with the same st
   assert.equal(command.split(' ').length, 5, 'no space inside the argument');
   const script = windowsCommandScript(command);
   assert.ok(launcher.isProjectWindowsScript(script, 'antigravity'));
-  assert.match(script, /\(zf 'zn\.cmd'\)/);
-  assert.match(script, /\{"decision":"deny","reason":"zn: its hook cannot start because zn or Node\.js was not found/);
+  const shown = expandPs(script);
+  assert.match(script, /\(zg 'zn\.cmd'\)/);
+  assert.match(shown, /\{"decision":"deny","reason":"zn: its hook cannot start because zn or Node\.js was not found/);
   assert.match(script, /# zn hook antigravity$/);
   assert.ok(cfg.isOurs(command, 'antigravity'));
   assert.equal(agy.uninstall({ scope: 'project', projectDir: dir }).removed, 1);

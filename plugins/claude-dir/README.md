@@ -13,6 +13,21 @@ This repository is generated from [usezn/zn](https://github.com/usezn/zn) by its
 
 Node.js 20.19 or later. Nothing is downloaded or installed when the plugin is installed: zn-gate is included in this repository (see below).
 
+## Install
+
+In Claude Code, type these two commands, one after the other:
+
+```text
+/plugin marketplace add usezn/zn#plugin-v1.17.0
+/plugin install zn-gate@usezn
+```
+
+In a terminal, the same steps are `claude plugin marketplace add usezn/zn#plugin-v1.17.0` and then `claude plugin install zn-gate@usezn`.
+
+## Remove
+
+In Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. In a terminal, run `claude plugin uninstall zn-gate@usezn`. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
+
 ## What leaves your machine
 
 Nothing. The hooks run locally and make no network requests. See https://usezn.com/privacy

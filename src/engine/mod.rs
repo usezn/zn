@@ -1235,4 +1235,87 @@ mod tests {
         assert_eq!(e.policy_count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ── Small error branches ────────────────────────────────────────
+
+    #[test]
+    fn policy_name_length_and_first_character_limits() {
+        assert!(valid_policy_name(&"a".repeat(MAX_POLICY_NAME_LEN)));
+        assert!(!valid_policy_name(&"a".repeat(MAX_POLICY_NAME_LEN + 1)));
+        assert!(!valid_policy_name(""));
+        for bad in [
+            ".hidden",
+            "-flag",
+            "_x",
+            "caf\u{e9}",
+            "a b",
+            "a/b",
+            "a\\b",
+            "a\0b",
+        ] {
+            assert!(!valid_policy_name(bad), "{bad:?}");
+        }
+        for ok in ["a", "0", "p.v2", "my-policy_1"] {
+            assert!(valid_policy_name(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn unregister_removes_a_policy_and_ignores_unknown_names() {
+        let e = engine();
+        let dir = temp_dir("unregister");
+        e.install_policy(
+            dir.join("one.wasm"),
+            simple_policy("(i32.const 0)").as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(e.list_policies(), vec!["one".to_string()]);
+        assert!(e._get_policy("one").is_some());
+        assert!(e._get_policy("two").is_none());
+        assert!(!e.check_tool_call_all("t", "{}", None).unwrap());
+
+        e.unregister_policy("two");
+        assert_eq!(e.policy_count(), 1);
+        e.unregister_policy("one");
+        assert_eq!(e.policy_count(), 0);
+        assert!(!e._has_policy("one"));
+        assert!(
+            e.check_tool_call_all("t", "{}", None).unwrap(),
+            "no policies means allow"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loading_from_bytes_names_the_policy_in_its_errors() {
+        let wat = simple_policy("(i32.const 1)");
+        let strict = engine_with(1_000_000, 16 * 1024 * 1024, vec!["00".repeat(32)]);
+        let msg = strict
+            ._load_policy_from_bytes(wat.as_bytes(), "named")
+            .expect_err("hash not listed")
+            .to_string();
+        assert!(
+            msg.contains("'named'") && msg.contains("not allowed"),
+            "{msg}"
+        );
+
+        let msg = engine()
+            ._load_policy_from_bytes(b"garbage", "broken")
+            .expect_err("not a module")
+            .to_string();
+        assert!(
+            msg.contains("'broken'") && msg.contains("Failed to compile"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn load_all_policies_on_an_empty_directory_registers_nothing() {
+        let e = engine();
+        let dir = temp_dir("empty-dir");
+        e.load_all_policies(&dir).unwrap();
+        assert_eq!(e.policy_count(), 0);
+        assert!(e.list_policies().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

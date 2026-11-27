@@ -22,7 +22,7 @@ The output below comes from real runs on a throwaway home folder, shown as `~`, 
 - [ ] Look at the vault: `zn-gate vault status`.
 
   ```text
-  Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:23 (in 8 h) at the latest, zn-gate 1.15.0)
+  Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:23 (in 8 h) at the latest, zn-gate 1.18.0)
   Location: ~/.zn/vault
   ```
 

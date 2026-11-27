@@ -51,13 +51,13 @@ Restart Continue. zn-gate's tools are available in Continue's **Agent** mode.
 In Agent mode, ask the agent to call `zn_status`. The tool returns a JSON object
 with the package version, the detection engine, the rules version, whether a
 cloud check is on, what leaves the machine and the lifecycle events covered. The
-example below is what the tool returned when we ran zn-gate 1.15.0 over MCP with
+example below is what the tool returned when we ran zn-gate 1.18.0 over MCP with
 no API key set (the fields are the same in the Continue setup, but the values
 change with each release):
 
 ```json
 {
-  "package": "zn-gate@1.15.0",
+  "package": "zn-gate@1.18.0",
   "engine": "local-rules",
   "endpoint": "none (local only)",
   "rules_version": "2026-11-07.1",
@@ -82,7 +82,7 @@ npx -y zn-gate status
 ```
 
 It prints a status block with the package version, the rules version, the engine
-and what leaves the machine. Captured with zn-gate 1.15.0 and no API key set:
+and what leaves the machine. Captured with zn-gate 1.18.0 and no API key set:
 
 ```text
 [+]  zn-gate Status:

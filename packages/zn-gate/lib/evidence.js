@@ -83,7 +83,11 @@ function readLockToken(lockPath) {
 }
 
 // Test seams: they let a test run code between two steps of the break protocol.
-const testHooks = { afterMutexCreate: null, beforeMutexRelease: null, beforeMutexReclaim: null };
+const testHooks = {
+  afterMutexCreate: null, beforeMutexRelease: null, beforeMutexReclaim: null,
+  // Export: the read chunk size, and a function called before each read (it may throw).
+  exportChunkSize: null, beforeExportRead: null,
+};
 
 // The break mutex holds its owner's token, like the lock: a breaker only deletes the mutex while
 // it is still its own. If it took longer than the stale window, another breaker may have
@@ -754,67 +758,91 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
     };
   }
 
-  const verifyResult = verifyEvidenceLedger(filePath);
-  let raw = '';
-  let lines = [];
+  // The log is read and checked in chunks (see evidence_export.js). This function returns the
+  // whole export as one string, so it suits small logs; the CLI and the dashboard stream it.
+  let out;
   try {
-    raw = LENIENT.decode(fs.readFileSync(filePath));
-    lines = readLedger(filePath).lines;
-  } catch {
-    // Unreadable: verifyResult already carries the reason.
-  }
-
-  let tipHash = GENESIS_HASH;
-  if (lines.length > 0) {
-    try {
-      tipHash = JSON.parse(lines[lines.length - 1]).record_hash || GENESIS_HASH;
-    } catch {}
-  }
-
-  if (normFormat === 'csv') {
-    const headers = [
-      'timestamp',
-      'verdict',
-      'phase',
-      'tool_name',
-      'agent_environment',
-      'rule',
-      'reason',
-      'payload_sha256',
-      'record_hash',
-      'prev_hash',
-      'latency_us'
-    ];
-    const rows = [headers.join(',')];
-    for (const line of lines) {
-      try {
-        const obj = JSON.parse(line);
-        const row = headers.map(h => {
-          const val = obj[h] !== undefined && obj[h] !== null ? String(obj[h]) : '';
-          return `"${val.replace(/"/g, '""')}"`;
-        });
-        rows.push(row.join(','));
-      } catch {}
-    }
-
+    out = exporter.exportToString(filePath, normFormat);
+  } catch (e) {
+    if (!(e instanceof EvidenceLedgerError)) throw e;
+    // A log that cannot be read in full exports nothing and is not valid.
     return {
-      content: rows.join('\n') + '\n',
-      format: 'csv',
-      valid: verifyResult.valid,
-      error: verifyResult.error,
-      tip_hash: tipHash,
-      total: lines.length,
+      content: normFormat === 'csv' ? exporter.CSV_HEADER_LINE + '\n' : '\n',
+      format: normFormat,
+      valid: false,
+      error: e.message,
+      tip_hash: GENESIS_HASH,
+      total: 0,
     };
   }
-
   return {
-    content: raw.endsWith('\n') ? raw : raw + '\n',
-    format: 'jsonl',
-    valid: verifyResult.valid,
-    error: verifyResult.error,
-    tip_hash: tipHash,
-    total: lines.length,
+    content: out.content,
+    format: normFormat,
+    valid: out.result.valid,
+    error: out.result.error,
+    tip_hash: out.result.tip_hash,
+    total: out.result.total,
   };
+}
+
+/**
+ * Streams the export of the ledger to a Writable stream (a file, stdout, an HTTP response) in
+ * bounded memory, checking the hash chain as it reads. Resolves with { format, valid, total,
+ * verified, broken_index, error, tip_hash, truncated_tail? }: the check fields are the same as
+ * verifyEvidenceLedger's, and total is the number of records read and exported. Rejects with an
+ * EvidenceLedgerError if the log cannot be read in full, or with the stream's error (writeError:
+ * true) if the output cannot be written. The stream is left open.
+ *
+ * @param {string} filePath
+ * @param {('jsonl'|'csv')} format
+ * @param {import('stream').Writable} out
+ */
+async function writeEvidenceExport(filePath, format, out) {
+  const normFormat = (format || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl';
+  return exporter.writeExport(filePath, normFormat, out);
+}
+
+/**
+ * Answers /api/export. The log is read twice up to the same size: the first pass checks the chain
+ * (its result goes in the headers), the second streams the records. A read error before the
+ * headers is a 500 with the reason; one after them cuts the connection, so a download is never
+ * complete unless the whole log was read.
+ */
+async function sendEvidenceExport(res, filePath, format) {
+  let check;
+  try {
+    const state = {};
+    let n = 0;
+    for (const piece of exporter.exportChunks(filePath, 'none', state)) {
+      void piece;
+      // Let other requests in now and then while a large log is checked.
+      if (++n % 16 === 0) await new Promise((resolve) => setImmediate(resolve));
+    }
+    check = state.result;
+  } catch (e) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: `${e.message}. Nothing was exported.` }));
+    return;
+  }
+  const contentType = format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8';
+  const filename = `zn-audit-ledger-${new Date().toISOString().slice(0, 10)}.${format}`;
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'X-Evidence-Integrity': check.valid ? 'valid' : 'tampered',
+    'X-Evidence-Tip-Hash': check.tip_hash,
+    'X-Evidence-Total': String(check.total),
+  });
+  try {
+    const sent = await exporter.writeExport(filePath, format, res, { size: check.bytes });
+    if (sent.total !== check.total || sent.tip_hash !== check.tip_hash || sent.valid !== check.valid) {
+      res.destroy(new Error('The evidence log changed while it was exported.'));
+      return;
+    }
+    res.end();
+  } catch (e) {
+    res.destroy(e);
+  }
 }
 
 /**
@@ -884,19 +912,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
     if (req.url.startsWith('/api/export')) {
       const urlObj = new URL(req.url, `http://127.0.0.1:${port}`);
       const format = urlObj.searchParams.get('format') === 'csv' ? 'csv' : 'jsonl';
-      const exportData = exportEvidenceLedger(filePath, format);
-
-      const contentType = format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8';
-      const filename = `zn-audit-ledger-${new Date().toISOString().slice(0, 10)}.${format}`;
-
-      res.writeHead(200, {
-        'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'X-Evidence-Integrity': exportData.valid ? 'valid' : 'tampered',
-        'X-Evidence-Tip-Hash': exportData.tip_hash,
-        'X-Evidence-Total': String(exportData.total),
-      });
-      res.end(exportData.content);
+      sendEvidenceExport(res, filePath, format).catch(() => { res.destroy(); });
       return;
     }
 
@@ -1074,6 +1090,12 @@ Press Ctrl+C to stop dashboard.
   return server;
 }
 
+// Streaming export, built from the helpers above.
+const exporter = require('./evidence_export').createExporter({
+  trimBytes, canonicalForms, genesisHash: GENESIS_HASH, recordStart: RECORD_START, truncatedTailResult,
+  EvidenceLedgerError, testHooks,
+});
+
 module.exports = {
   logEvidence,
   EvidenceLedgerError,
@@ -1082,6 +1104,7 @@ module.exports = {
   verifyEvidenceLedger,
   getEvidenceStats,
   exportEvidenceLedger,
+  writeEvidenceExport,
   startEvidenceUi,
   escapeHtml,
   renderAuditRow,

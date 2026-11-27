@@ -8,7 +8,7 @@ A short walk-through of `init` and `uninstall`, including a dry run of each. Eve
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot (VS Code, CLI), and the experimental Gemini CLI), shows what is missing, and asks before each step. Exit code `0` means it is done, or every agent found is already protected. `1` means no supported agent was found, or the steps were only printed.
+`init` finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot (CLI experimental, VS Code not tested), and the experimental Gemini CLI), shows what is missing, and asks before each step. Exit code `0` means it is done, or every agent found is already protected. `1` means no supported agent was found, or the steps were only printed.
 
 **What to expect:** it asks before each step, and it changes files only for the steps you accept.
 
@@ -60,7 +60,7 @@ It prints the same plan and asks "Remove what is listed above?". Nothing is remo
 
 Exit code `0` means everything listed was removed, or there was nothing to remove. `1` means you answered no, or a step failed. `77` means there was no interactive terminal, or an AI agent ran it: nothing was changed.
 
-## Full pages
+## More
 
 - [Command reference: `init`](../cli.md#init) and [`uninstall`](../cli.md#uninstall)
 - [Remove zn-gate](../uninstall.md), including removing one part at a time

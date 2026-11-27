@@ -136,7 +136,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 | ZNA005 | medium | An MCP server or agent plugin is not pinned (`npx -y pkg`, `@latest`, `uvx pkg` without `==`, container images without a tag or digest, OpenCode plugins without a version) | The code that runs changes whenever the package is republished; a compromised release reaches you on the next start |
 | ZNA006 | medium (http) / low (https) | A remote MCP server, or instructions loaded from a URL | Tool calls and their content go to a third party; with plain `http` anyone on the path can read and change them |
 | ZNA007 | critical / high / medium | The model API endpoint is overridden (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, any `*_BASE_URL`, Codex `model_providers.*.base_url`, OpenCode `provider.*.options.baseURL`) or a proxy is set (`HTTPS_PROXY`) | Your API key and every prompt go to that server. CVE-2026-21852. Critical for a remote host, high for a proxy, medium for a loopback address. In the `env` of one MCP server the override only redirects that server: medium (low for loopback) |
-| ZNA008 | high | An environment variable that loads code or certificates (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH`, `GIT_SSH_COMMAND`, `NODE_EXTRA_CA_CERTS`, ...) or moves where the agent reads its config (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`, `OPENCODE_CONFIG`) | Every process the agent starts runs the injected code or trusts the injected certificate; a moved config directory loads a config shipped in the repository. Also checked in the `env` of every MCP server, zn's own included. CVE-2025-61260 |
+| ZNA008 | critical / high / medium | An environment variable that loads code or certificates (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH`, `GIT_SSH_COMMAND`, `NODE_EXTRA_CA_CERTS`, ...) or moves where the agent reads its config (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`, `OPENCODE_CONFIG`) | Every process the agent starts runs the injected code or trusts the injected certificate; a moved config directory loads a config shipped in the repository. Also checked in the `env` of every MCP server, zn's own included. `LD_TRACE_LOADED_OBJECTS`, or `LD_DEBUG` naming `help`, is reported as critical when it is set for the agent as a whole (Claude Code `env`, a committed `.env`, Codex `shell_environment_policy.set`): on Linux the dynamic loader then stops every program the agent starts before it runs, the shell of each hook included, so the hooks check nothing. In the `env` of one MCP server it is reported as medium instead: only that server fails to start. `COR_ENABLE_PROFILING=1` (or `CORECLR_ENABLE_PROFILING=1`, or `DOTNET_ENABLE_PROFILING=1` from .NET 11) set for the agent as a whole is critical too: on Windows .NET then loads the profiler DLL that `COR_PROFILER_PATH` names into PowerShell before any line of a zn hook runs. The variables that load code are the list the hook launchers use (`NODE_PATH`, `PYTHONPATH`, `GCONV_PATH`, `GLIBC_TUNABLES`, `OPENSSL_CONF`, every `LD_*` and `DYLD_*` name ...), without the loader settings that only log. CVE-2025-61260 |
 | ZNA009 | high | A credential helper command in project settings (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`) | Runs to fetch credentials and decides which key the agent uses |
 | ZNA010 | high / medium | Broad permissions: `Bash(*)`, `Bash`, `*`, interpreter wildcards such as `Bash(python:*)`, `defaultMode: bypassPermissions`, Codex `approval_policy = "never"` with full access, OpenCode `"bash": "allow"`, VS Code `chat.tools.autoApprove` | The agent runs anything an injected instruction asks, without a prompt |
 | ZNA011 | high | A secret value in an agent config or instruction file: a known key format anywhere in the file and, in MCP server configs, a value written in plain text under a name such as an API key, token, password or `Authorization` header, in a credential argument (`--api-key`) or in a URL key (`?api_key=`). A reference (`${NAME}`, `__ZN_NAME__`) is not a finding | Committed credentials leak with the repository; the report never prints the value, only its kind and the name that holds it, and the fix says what to do |
@@ -158,7 +158,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 ### Text
 
 ```text
-zn audit  ./some-repo  (zn-gate 1.15.0)
+zn audit  ./some-repo  (zn-gate 1.18.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -180,7 +180,7 @@ file names) are printed as `\x1b`, never sent to the terminal.
 {
   "version": 1,
   "tool": "zn-gate",
-  "toolVersion": "1.15.0",
+  "toolVersion": "1.18.0",
   "root": "/home/me/some-repo",
   "findings": [
     {
@@ -297,7 +297,7 @@ findings) so alerts survive line moves and stay unique. Findings from
 flag off in CI.
 
 ```yaml
-- run: npx -y zn-gate@1.15.0 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.18.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif
@@ -329,7 +329,7 @@ This walks through the text report from [Output](#text), line by line. The value
 version) are made up; the words are the ones `zn audit` prints.
 
 ```text
-zn audit  ./some-repo  (zn-gate 1.15.0)
+zn audit  ./some-repo  (zn-gate 1.18.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project

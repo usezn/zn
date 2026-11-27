@@ -8,7 +8,7 @@ Run every command in your own terminal, not through your agent.
 
 | | The plugin | The command-line install |
 | - | - | - |
-| Install | `claude plugin marketplace add usezn/zn#v1.15.0`, then `claude plugin install zn-gate@usezn` | `zn hooks install claude-code` |
+| Install | `claude plugin marketplace add usezn/zn#plugin-v1.17.0`, then `claude plugin install zn-gate@usezn` | `zn hooks install claude-code` |
 | Needs | Git and Claude Code 2.1.295 or later; Node.js 20.19 or later | Node.js 18 or later works for the hooks and the CLI |
 | Verify | `npx -y zn-gate check` | `npx -y zn-gate check` |
 | Remove | `claude plugin uninstall zn-gate@usezn` | `zn hooks uninstall claude-code` |
@@ -24,7 +24,7 @@ Do not keep both set up at the same time: the plugin and the hooks of `zn hooks 
 ## Install the plugin
 
 ```bash
-claude plugin marketplace add usezn/zn#v1.15.0
+claude plugin marketplace add usezn/zn#plugin-v1.17.0
 claude plugin install zn-gate@usezn
 ```
 
@@ -64,3 +64,8 @@ With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's h
 ## Remove
 
 Remove the plugin with `claude plugin uninstall zn-gate@usezn`, or the hooks with `zn hooks uninstall claude-code`. To remove everything at once, run `npx -y zn-gate uninstall`: it lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Piece by piece: [Remove zn-gate](../uninstall.md).
+
+## More
+
+- [Install matrix](../install-matrix.md)
+- [Check that it works](../check.md)

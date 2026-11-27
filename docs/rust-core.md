@@ -46,6 +46,18 @@ Only then does it write the file. It writes to a temporary file in the policy di
 
 Known limits that remain, because the gateway is not distributed: bans and the loop breaker follow the agent id that the message gives, inside its namespace, so a client that changes its agent id on every call starts each time with a clean record (the fixed rules and policies still check every call; give each client its own namespace to keep it apart); the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Audit vault
+
+The audit log is a SQLite database. Its path is `audit.db_path` (default `zn.db`, relative to the working directory) and its records are in the `audit_logs` table. It is not the encrypted `age` vault of the Node.js package and the gateway does not write an `audit.jsonl` file.
+
+The database file is not encrypted as a whole. Only the `payload` column is encrypted, and only when an encryption key is set (`ZN_DB_KEY`, or a KMS key from the section below) and `audit.store_payloads` is on. Then:
+
+- The key is derived from the passphrase with Argon2id (version 0x13, 19456 KiB of memory, 2 passes, 1 lane: the default parameters of the `argon2` crate), using a random 16-byte salt kept in the `metadata` table of the same database (`derivation_salt`). A KMS key is hex-encoded and goes through the same derivation.
+- Each payload is encrypted with AES-256-GCM under a new random 12-byte nonce and stored as `v2:<nonce>:<ciphertext>` (both base64). The record id and the namespace are bound to the ciphertext as additional authenticated data, so a payload does not decrypt for another row or namespace.
+- A key check is stored in the database. A wrong key is refused before anything is written.
+
+The other columns (time, event, tool name, status, policy match, agent id, namespace, anomaly score, the `nearest_neighbor` reference and the fusion evidence) are plain text in the file. Keep the file private even when payloads are encrypted.
+
 ## Audit payloads
 
 By default the audit database keeps only metadata for each call: event, time, tool name, status, matched policy, agent and namespace. The request payload is not stored. To keep payloads, set `audit.store_payloads = true` (or `ZN_AUDIT_STORE_PAYLOADS=1`); this needs an encryption key (`ZN_DB_KEY`, or a KMS key) in every environment, and the gateway refuses to start without one. Payloads are scrubbed before they are written. Records written by earlier versions stay readable.
@@ -190,6 +202,26 @@ To avoid the download:
 - `"neural": {"enabled": false}` in `zn.json`: the model is not loaded and the neural check is off.
 - `ZN_NEURAL_MODEL_PATH=/path/to/folder` (or `neural.model_path` in `zn.json`): the gateway loads the model from that folder. Nothing is downloaded if the three files there match their hashes, so a local copy must be byte-identical.
 - `HF_ENDPOINT=<your-mirror-url>`: the gateway downloads from that server instead of huggingface.co. The server must serve the same paths, `<endpoint>/sentence-transformers/all-MiniLM-L6-v2/resolve/<commit>/<file>`.
+
+## Cost of the neural layer
+
+With the neural layer on (the default), the gateway holds the model and its vector memory in memory, and each call pays for an embedding. In a test on a 4 vCPU Linux machine, with a release build, default configuration and stdio mode, one sequential client sent 10,000 small `tools/call` messages (about 130 bytes each) to a fake upstream:
+
+| | Neural layer on (default) | Neural layer off |
+|---|---|---|
+| Start-up until the gateway listens | 0.7 to 1.1 s | about 0.2 s |
+| Idle memory (resident set) | about 125 MB | about 32 MB |
+| Memory after 10,000 calls | about 140 MB (peak 211 MB while loading) | about 40 MB |
+| Time per call, median (p50) | about 81 ms | about 8.6 ms |
+| Time per call, 99th percentile (p99) | about 100 ms | about 9.2 ms |
+
+On this setup the layer adds about 94 MB of idle memory, 0.5 to 0.9 s of start-up and about 72 ms per small request. The test did not show a memory leak: the memory after 10,000 calls was flat once the calls stopped. The numbers depend on the machine, the message size and the transport (this test used one connection over stdio only, with no real upstream), so measure your own setup before you rely on them.
+
+To turn the neural layer off:
+
+- Set `"neural": {"enabled": false}` in `zn.json`. The model is not loaded and the neural check is off. Also set `"active_blocking": false` in the `neural` section: with blocking on, the gateway does not refuse to start when the layer is off in this file, so the check that should block would be missing without any warning.
+- Or set `ZN_NEURAL_ENABLED=false`. Only the values `true` and `false` are read; any other value (for example `0`) leaves the layer on.
+- `ZN_FAST_BOOT=1` also turns the layer off, but it is for tests only (see above).
 
 ## Build it yourself
 
