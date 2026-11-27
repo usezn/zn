@@ -62,13 +62,13 @@ const AGENTS = {
     event: 'PreToolUse',
     install: (f) => require('../lib/agents/claude-code').install(opts(f)),
     entry: (f) => readJson(path.join(f.home, '.claude', 'settings.json')).hooks.PreToolUse.at(-1).hooks[0],
-    denied: (r) => { assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /unset it and restart the agent/); },
+    denied: (r) => { assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /run unset NAME in the terminal, remove its line/); },
   },
   zcode: {
     event: 'PreToolUse',
     install: (f) => require('../lib/agents/zcode').install(opts(f)),
     entry: (f) => readJson(path.join(f.home, '.zcode', 'cli', 'config.json')).hooks.events.PreToolUse.at(-1).hooks[0],
-    denied: (r) => { assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /unset it and restart the agent/); },
+    denied: (r) => { assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /run unset NAME in the terminal, remove its line/); },
   },
   antigravity: {
     event: 'PreToolUse',
@@ -81,7 +81,7 @@ const AGENTS = {
       assert.equal(r.status, 0, r.stdout + r.stderr);
       const o = JSON.parse(r.stdout);
       assert.equal(o.decision, 'deny');
-      assert.match(o.reason, /unset it and restart the agent/);
+      assert.match(o.reason, /run unset NAME in the terminal, remove its line/);
     },
   },
 };

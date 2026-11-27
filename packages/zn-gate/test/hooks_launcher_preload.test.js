@@ -54,7 +54,7 @@ for (const name of loaderEnv.LOADER_PRELOAD) {
     // the script does run it must block, never return success.
     if (dyldKills(name) && r.status !== 2) { assert.notEqual(r.stdout.trim(), '{}', name + ': the hook answered'); return; }
     assert.equal(r.status, 2, name + ': ' + r.stderr);
-    assert.match(r.stderr, /unset it and restart the agent/);
+    assert.match(r.stderr, /run unset NAME in the terminal, remove its line/);
   });
 }
 
@@ -187,7 +187,7 @@ for (const [name, runGuard] of Object.entries(guardForms)) {
         assert.match(JSON.parse(r.stdout.trim()).reason, /loader variable \(LD_PRELOAD, LD_AUDIT/);
       } else {
         assert.equal(r.status, 2, r.stderr);
-        assert.match(r.stderr, /unset it and restart the agent/);
+        assert.match(r.stderr, /run unset NAME in the terminal, remove its line/);
       }
     }
   });

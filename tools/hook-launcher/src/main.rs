@@ -48,8 +48,8 @@ const LOADER_PRELOAD: &[&str] = &[
 const STOPS_WHEN_EMPTY: &[&str] = &["LD_TRACE_LOADED_OBJECTS"];
 
 // The texts of packages/zn-gate/lib/agents/launcher.js (loaderText, loaderWarnText, crashText, crashWarnText).
-const LOADER_TEXT: &str = "zn: its hook was blocked because the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Ask the user to unset it and restart the agent.";
-const LOADER_WARN_TEXT: &str = "zn is NOT protecting this session: the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Please unset it and restart the agent.";
+const LOADER_TEXT: &str = "zn: its hook was blocked because the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into every program, the hook included, before it can start. To fix it: find the variable with the env command, run unset NAME in the terminal, remove its line from the shell profile (~/.bashrc, ~/.zshrc or ~/.profile) or from the env section of the agent settings where it was set, then restart the agent.";
+const LOADER_WARN_TEXT: &str = "zn is NOT protecting this session: the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into every program, the hook included, before it can start. To fix it: find the variable with the env command, run unset NAME in the terminal, remove its line from the shell profile or from the env section of the agent settings where it was set, then restart the agent.";
 const CRASH_TEXT: &str = "zn: its hook failed, so this was blocked. Ask the user to run `zn-gate check` in their terminal to see why.";
 const CRASH_WARN_TEXT: &str = "zn is NOT protecting this session: its hook failed. Please run `zn-gate check` in your own terminal to see why.";
 

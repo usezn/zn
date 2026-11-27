@@ -174,11 +174,11 @@ function parseManifest(text) {
 // The environment of the agent sets a variable that loads a library into every program it starts (the shell that runs this hook
 // included), before any line of the hook can run. A launcher cannot undo that, so it refuses to answer for the hook.
 function loaderText() {
-  return 'zn: its hook was blocked because the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Ask the user to unset it and restart the agent.';
+  return 'zn: its hook was blocked because the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into every program, the hook included, before it can start. To fix it: find the variable with the env command, run unset NAME in the terminal, remove its line from the shell profile (~/.bashrc, ~/.zshrc or ~/.profile) or from the env section of the agent settings where it was set, then restart the agent.';
 }
 
 function loaderWarnText() {
-  return 'zn is NOT protecting this session: the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Please unset it and restart the agent.';
+  return 'zn is NOT protecting this session: the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into every program, the hook included, before it can start. To fix it: find the variable with the env command, run unset NAME in the terminal, remove its line from the shell profile or from the env section of the agent settings where it was set, then restart the agent.';
 }
 
 // The Windows form of loaderText: a .NET profiler turned on in the environment of the agent loads a DLL into powershell.exe before the
