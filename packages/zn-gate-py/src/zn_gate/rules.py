@@ -607,7 +607,7 @@ def _normalize_path_word(word: str) -> str:
 # and so is a glued name that does not start like a path (-o2, prod.env).
 PATH_GLUED_OPT_RE = re.compile(r'^-{1,2}(?!e[.~/\\])[a-z][a-z0-9]*?([.~/\\].*)$')
 PATH_GLUED_SED_RE = re.compile(r'^[wr]([.~/\\].*)$')
-PATH_GLUED_SED_SUBST_RE = re.compile(r'^s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiem0-9]*w(.+)$', re.DOTALL)
+PATH_GLUED_SED_SUBST_RE = re.compile(r'^s([^A-Za-z0-9_\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiem0-9]*w(.+)$', re.DOTALL)
 
 
 def _glued_path_readings(word: str) -> List[str]:

@@ -130,6 +130,7 @@
       "sed r.env notes.txt",
       "sed -n 'w .env' notes.txt",
       "sed s/a/b/w.env notes.txt",
+      "sed s\u00e9a\u00e9b\u00e9w.env notes.txt",
       "grep -f.env notes.txt",
       "diff -u.env notes.txt",
       "sort -o./sub/.env data.txt"
