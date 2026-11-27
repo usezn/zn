@@ -157,38 +157,13 @@ function resolveOverlaps(spans) {
   return out;
 }
 
-/* A pattern span found on the text without its wrapped line breaks (invisibleView joins them) that runs over a
- * secret the direct scan found on its own, one line further down, is the end of the first line only: two keys on
- * adjacent lines are two detections. The span is cut at that line break; the other key is reported by the direct
- * scan, so nothing is left unredacted. `direct` is in order, as scanText returns it. */
-function cutAtOwnSecret(s, direct, text) {
-  if (s.source !== 'pattern' || s.end <= s.start) return s;
-  let lo = 0;
-  let hi = direct.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (direct[mid].start <= s.start) lo = mid + 1; else hi = mid;
-  }
-  for (let i = lo; i < direct.length && direct[i].start < s.end; i++) {
-    const d = direct[i];
-    if (d.source !== 'pattern') continue;
-    let cut = d.start;
-    while (cut > s.start && /\s/.test(text[cut - 1])) cut--;
-    if (cut > s.start && text.slice(cut, d.start).includes('\n')) {
-      // The rest of the span must be covered by secrets the direct scan found, one after another; if a filter
-      // rejected part of it, the span stays whole and redacts it.
-      let reach = d.end;
-      for (let j = i + 1; reach < s.end; j++) {
-        let nxt = reach;
-        while (nxt < s.end && /\s/.test(text[nxt])) nxt++;
-        if (nxt >= s.end) break;
-        if (j >= direct.length || direct[j].start > nxt) return s;
-        if (direct[j].source === 'pattern' && direct[j].end > reach) reach = direct[j].end;
-      }
-      return { ...s, end: cut };
-    }
-  }
-  return s;
+/* A pattern span found on the text without its wrapped line breaks (invisibleView joins them) that holds a line break
+ * is either two keys on adjacent lines, cut at the break (the rest is redacted by the rules on its own, so
+ * two keys are two detections), or one key wrapped across lines, which stands and ends at the end of the token it
+ * stopped inside, so no part of that token is left readable (see wrapResolve in lib/rules.js). */
+function resolveWrapped(s, text) {
+  if (s.source !== 'pattern' || s.end <= s.start || !text.slice(s.start, s.end).includes('\n')) return s;
+  return { ...s, end: require('../rules').wrapResolve(text, s.start, s.end, s.start + 1).at };
 }
 
 /**
@@ -213,11 +188,11 @@ function scan(text, ctx) {
   if (!view && !norm) return direct;
   let all = direct;
   if (view) {
-    all = all.concat(scanText(view.clean, c).map((s) => cutAtOwnSecret({
+    all = all.concat(scanText(view.clean, c).map((s) => resolveWrapped({
       ...s,
       start: view.map[s.start],
       end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
-    }, direct, text)));
+    }, text)));
   }
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a
   // span covers the whole original word or encoded value.
