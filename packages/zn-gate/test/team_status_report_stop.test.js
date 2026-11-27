@@ -94,3 +94,45 @@ test('stop when the report is already off asks nothing', async () => {
   assert.strictEqual(r.already, true);
   assert.strictEqual(m.asked.length, 0);
 });
+
+/* The confirmation can stay open for a long time: a change of membership or consent while it is pending sends nothing. */
+async function changedDuringConfirm(change) {
+  const m = await joined();
+  const before = JSON.parse(JSON.stringify(m.secrets.team));
+  m.answer.fn = async () => { change(m, before); return true; };
+  let err = null;
+  try { await m.o.teamStatusReport({ action: 'stop' }); } catch (e) { err = e; }
+  return { m, before, err };
+}
+
+test('leave before the confirmation resolves: no report to the old organization', async () => {
+  const { m, err } = await changedDuringConfirm((mm) => { delete mm.secrets.team; });
+  assert.ok(err);
+  assert.strictEqual(sent().length, 0);
+  assert.strictEqual(m.secrets.team, undefined);
+});
+
+test('rejoin of another organization before the confirmation resolves: nothing sent, replacement untouched', async () => {
+  const { m, err } = await changedDuringConfirm((mm, before) => {
+    mm.secrets.team = { ...before, org: before.org + '-other', install_id: before.install_id + '-2', install_token: 'other-token', status_report: { accepted: true, accepted_at: new Date().toISOString(), via: 'join' } };
+  });
+  assert.ok(err);
+  assert.strictEqual(sent().length, 0);
+  assert.strictEqual(m.secrets.team.install_token, 'other-token');
+  assert.strictEqual(m.secrets.team.status_report.accepted, true);
+  assert.ok(!m.audit.some((a) => a.reason === 'team_status_report_off'));
+});
+
+test('consent withdrawn before the confirmation resolves: nothing is sent', async () => {
+  const { m } = await changedDuringConfirm((mm) => { delete mm.secrets.team.status_report; });
+  assert.strictEqual(sent().length, 0);
+  assert.strictEqual(m.secrets.team.status_report, undefined);
+});
+
+test('membership unchanged while the confirmation is pending: the final report is still sent', async () => {
+  const m = await joined();
+  m.answer.fn = async () => { await new Promise((r) => setTimeout(r, 30)); return true; };
+  const r = await m.o.teamStatusReport({ action: 'stop' });
+  assert.deepStrictEqual(r.final_report, { sent: true });
+  assert.strictEqual(sent().length, 1);
+});

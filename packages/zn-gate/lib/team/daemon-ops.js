@@ -217,14 +217,17 @@ function makeTeamOps(ctx) {
    * moment it goes quiet. The body keeps the closed schema of every other report (no new field or word); a failure
    * never blocks the stop (it is the person's decision). Returns {sent, error}.
    */
-  async function sendFinalStatusReport(t) {
+  async function sendFinalStatusReport(snap) {
     try {
       const st = await policyState();
       let hooks = null;
       try { hooks = (ctx.listHooks || require('../hooks-list').listHooks)({}); } catch (err) { hooks = null; }
       const body = statusReport.buildStatusBody({ version: VERSION, os: osName(), policyState: st.state, policyVersion: st.version, hooks });
       if (!body || !statusReport.isAllowedBody(body)) return { sent: false, error: 'no report could be built' };
-      const r = await apiFor(t).reportStatus(body);
+      // The confirmation can take a while: a leave, a rejoin or a withdrawn consent in between means nothing is sent.
+      const cur = await team();
+      if (!sameMembership(cur, snap) || !cur.status_report || cur.status_report.accepted !== true) return { sent: false, error: 'the membership changed before the report was sent' };
+      const r = await apiFor(cur).reportStatus(body);
       return r.done === true ? { sent: true } : { sent: false, error: printable(r.error, 200) || 'unknown' };
     } catch (err) {
       return { sent: false, error: 'the final report could not be sent' };
@@ -586,6 +589,7 @@ function makeTeamOps(ctx) {
       if (action !== 'accept' && action !== 'stop') throw znError(CODES.POLICY_DENIED, messages.TEAM_INVALID_REQUEST);
       const t = await team();
       if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
+      const snap = membership(t); // taken before any confirmation: what the person confirmed is this membership
       const orgLabel = t.org_name ? t.org_name + ' (' + t.org + ')' : t.org;
       if (action === 'accept') {
         if (t.status_report && t.status_report.accepted === true) return { on: true, already: true, org: t.org, org_name: t.org_name || null };
@@ -612,9 +616,8 @@ function makeTeamOps(ctx) {
           fields: [['Organization', orgLabel]],
           footer: 'If you did not just run `zn team status-report stop` yourself, choose Deny.',
         }, { mode: 'set', reason: 'team_status_report_stop' });
-        finalReport = await sendFinalStatusReport(t);
+        finalReport = await sendFinalStatusReport(snap);
       }
-      const snap = membership(t);
       const r = await updateTeam((tt) => {
         if (action === 'accept') tt.status_report = { accepted: true, accepted_at: new Date().toISOString(), via: 'accept' };
         else delete tt.status_report;
