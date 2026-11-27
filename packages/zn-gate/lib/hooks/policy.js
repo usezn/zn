@@ -1751,8 +1751,9 @@ function envFileValueWords(words, opts) {
       if (t.startsWith('-')) {
         // Only dotenvx honours these, and only before a step (dotenv-cli: not assumed, so its -h and -V do not count).
         if (dotenvx && dxSub === null && /^(?:--help|--version|-h|-V)$/.test(t)) infoOnly = true;
-        // For dotenvx, -e sets a variable and is not a file option.
-        if (t === '-f' || t === '--env-file' || /^(?:-f|--env-file)=/.test(t) || (!dotenvx && (t === '-e' || t.startsWith('-e=')))) fileGiven = true;
+        // For dotenvx, -e sets a variable and is not a file option; dotenv-cli has no -f / --env-file, only -e, so for it -f is not a file
+        // given and the default .env is still checked.
+        if (dotenvx ? (t === '-f' || t === '--env-file' || /^(?:-f|--env-file)=/.test(t)) : (t === '-e' || t.startsWith('-e='))) fileGiven = true;
         if (t === '--convention' || t === '-c' || t === '--cascade' || /^(?:--convention|-c|--cascade)=/.test(t)) cascade = true;
         if (dotenvx && dxSub === null) optionBeforeStep = true;
         valueNext = !t.includes('=') && DOTENV_VALUE_OPTIONS.has(t);

@@ -150,6 +150,18 @@ test('dotenvx -f takes several values and dotenv -e may repeat: a later .env is 
   assert.equal(await verdict(plain, 'dotenvx run -f other.txt .env -- printenv'), 'allow');
 });
 
+test('dotenv-cli has no -f / --env-file: it still loads the default .env', async (t) => {
+  const forms = ['dotenv -f x -- printenv', 'dotenv --env-file=x -- printenv', 'dotenv --env-file x -- printenv', 'dotenv -f x printenv', 'dotenv-cli -f x -- printenv', 'npx dotenv -f x -- printenv'];
+  for (const content of [SECRET, ENCRYPTED]) {
+    const dir = project(t, content);
+    for (const c of forms) assert.equal(await verdict(dir, c), 'deny', c);
+    assert.equal(await verdict(dir, 'dotenv -e other.txt -- printenv'), 'allow');
+    assert.equal(await verdict(dir, 'dotenvx run -f other.txt -- printenv'), 'allow');
+  }
+  for (const dir of [project(t, 'PORT=1
+'), project(t, null)]) for (const c of forms) assert.equal(await verdict(dir, c), 'allow', c);
+});
+
 test('a cd before the runner judges the .env of the folder it leads to', async (t) => {
   const dir = project(t, null);
   fs.mkdirSync(path.join(dir, 'sub'));
