@@ -97,6 +97,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The static hook launcher (tools/hook-launcher), so its end-to-end tests run here instead of being skipped.
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-unknown-linux-musl
+      - name: Build the static hook launcher for the tests
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/hook-launcher"
+          cargo +1.99.0 test --locked --manifest-path tools/hook-launcher/Cargo.toml
+          cargo +1.99.0 build --locked --release --target x86_64-unknown-linux-musl --manifest-path tools/hook-launcher/Cargo.toml
+          echo "ZN_TEST_HOOK_LAUNCHER=$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/zn-hook-launcher" >> "$GITHUB_ENV"
       - uses: ./.github/actions/node-tests
         with:
           node-version: 22.x
@@ -645,3 +657,57 @@ jobs:
           name: zn-gate-python-dist
           path: ${{ runner.temp }}/dist/*
           retention-days: 7
+
+  go:
+    name: Go (gofmt, vet, test)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
+      - name: Check whether the Go module is present
+        id: go_present
+        if: steps.scope.outputs.run == 'true'
+        shell: bash
+        run: |
+          if [ -f go/go.mod ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "go/go.mod not present; skipping Go checks."
+          fi
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: steps.scope.outputs.run == 'true' && steps.go_present.outputs.present == 'true'
+        with:
+          go-version: "1.22"
+          cache: false
+      - name: Run gofmt, go vet, and go test -race
+        if: steps.scope.outputs.run == 'true' && steps.go_present.outputs.present == 'true'
+        working-directory: go
+        shell: bash
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+          go test -race -count=1 ./...

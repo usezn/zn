@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or the experimental Gemini CLI and Copilot CLI?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -55,7 +55,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (or the experimental Gemini CLI), run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (or the experimental Gemini CLI and Copilot CLI), run `npx -y zn-gate init` (Node 18 or later).
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
@@ -68,7 +68,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
-- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
+- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or the experimental Gemini CLI and Copilot CLI: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
 
 ## Check that it works
 
@@ -111,7 +111,7 @@ print(r.verdict)           # allow
 **Galvanize: prompt-injection detection**
 
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides and comment splicing. Shell commands that decode Base64 text and run it (for example `... | base64 -d | sh`) are recognised; a Base64 string on its own is not decoded.
-- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Today, optional cloud: `analyze()` can also query the Galvanize 3.1 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3.1); [announcement](https://usezn.com/blog/galvanize-3-1/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3-1); the previous models, [Galvanize 3](https://huggingface.co/usezn/Galvanize-3) and [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also have open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
@@ -327,7 +327,7 @@ A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent
 We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency:** the measured table by input size is in the [npm package README](https://github.com/usezn/zn/blob/main/packages/zn-gate/README.md#performance-local-rules-engine-no-network) (Node engine, with hardware and script). For the Python engine, run `python3 bench/bench_python.py` from the [repository](https://github.com/usezn/zn).
-- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; results for the optional cloud classifier, Galvanize 3, are in its [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); they do not measure these local rules.
+- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; results for the optional cloud classifier, Galvanize 3.1, are in its [announcement](https://usezn.com/blog/galvanize-3-1/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3-1); they do not measure these local rules.
 - **Not a sandbox:** zn-gate checks the text and calls that reach it. It does not restrict what a program does. What it covers in each coding agent depends on that agent's hooks: see the [agent compatibility table](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 ## Configuration

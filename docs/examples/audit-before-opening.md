@@ -26,7 +26,7 @@ The report is short. This repository overrides the model API endpoint, and
 `zn audit` reports it as critical:
 
 ```text
-zn audit  ./example-repo  (zn-gate 1.16.0)
+zn audit  ./example-repo  (zn-gate 1.18.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -67,7 +67,7 @@ never fails the job, while setup errors still exit `2` and fail the step. The
 `sarif` format writes SARIF 2.1.0 for GitHub code scanning:
 
 ```yaml
-- run: npx -y zn-gate@1.16.0 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.18.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif

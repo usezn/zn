@@ -56,7 +56,7 @@ the same file:
 | `64` | Wrong usage: no `--` and no program | `zn-gate run` prints `zn run: usage: zn run [--secrets NAME[,NAME...]] [--agent ID] [--egress-allow HOST[:PORT],...] -- <command> [args...]` |
 | `77` | zn-gate refused: a secret was not allowed or not approved | Not reproduced here |
 | `127` | The program was not found | `zn-gate run -- no-such-program-xyz` prints a line that starts with `zn run: Not found:`, names the program and says to check that it is installed and on your PATH |
-| `1` | Any other error | `zn-gate run --secrets EXAMPLE_KEY -- true` with the vault locked prints `zn run: Your secret vault is locked. Unlock it in this terminal with: npx -y zn-gate@1.16.0 unlock. Then run this command again.` |
+| `1` | Any other error | `zn-gate run --secrets EXAMPLE_KEY -- true` with the vault locked prints `zn run: Your secret vault is locked. Unlock it in this terminal with: npx -y zn-gate@1.18.0 unlock. Then run this command again.` |
 
 A program can return `64`, `77` or `127` too, so a script cannot always tell
 who returned the code. Read the line that starts with `zn run:` on standard

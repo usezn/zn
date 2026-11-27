@@ -66,10 +66,10 @@ jobs:
         with:
           node-version: 22
       - name: Scan for secrets
-        run: npx --yes zn-gate@1.16.0 scan . --format github
+        run: npx --yes zn-gate@1.18.0 scan . --format github
 ```
 
-- The version is pinned in the command (`zn-gate@1.16.0`), so a new release cannot change what your job runs.
+- The version is pinned in the command (`zn-gate@1.18.0`), so a new release cannot change what your job runs.
 - `permissions: contents: read` gives the job nothing else, and `persist-credentials: false` does not leave the token in the checkout.
 - `--format github` prints one `::error` annotation per finding, so it shows next to the code in the job log. The default `text` report works too.
 - To read source files as well, add `--all` to the command.

@@ -415,6 +415,17 @@ fn the_health_route_answers() {
     assert_eq!(status, 404);
 }
 
+/// A runtime with a single worker thread is what `zn start` gets on a one-CPU machine (a small VM or a
+/// container with one vCPU). A task that blocks its worker, such as a synchronous channel read, left the
+/// management API without anything to run it: the port was open and no request was ever answered.
+#[test]
+fn the_health_route_answers_on_a_one_worker_runtime() {
+    let gw = Gateway::start_with("one-worker", |_| {}, &[("TOKIO_WORKER_THREADS", "1")]);
+    let (status, body) = http_get(gw.port, "/api/v1/health", Some(API_KEY)).expect("GET health");
+    assert_eq!(status, 200);
+    assert_eq!(body.trim(), "OK");
+}
+
 /// Run `zn start` that is expected to fail and return (exit code, stdout + stderr).
 fn run_start_expecting_exit(dir: &Path, extra_env: &[(&str, &str)]) -> (Option<i32>, String) {
     let mut cmd = zn_command(dir);

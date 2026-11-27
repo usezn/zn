@@ -4,10 +4,10 @@
 //! in the ZnEngine automatically.
 
 use crate::engine::ZnEngine;
-use crossbeam_channel::{unbounded, Receiver};
 use notify::{Config, Event, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tracing::{error, info};
 
 pub struct PolicyWatcher {
@@ -22,7 +22,7 @@ impl PolicyWatcher {
     /// Create a new PolicyWatcher
     pub fn new(engine: Arc<ZnEngine>, policy_dir: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let policy_dir = policy_dir.into();
-        let (tx, rx) = unbounded();
+        let (tx, rx) = unbounded_channel();
 
         let mut watcher = notify::RecommendedWatcher::new(
             move |res| {
@@ -47,13 +47,16 @@ impl PolicyWatcher {
         Ok(watcher_instance)
     }
 
-    fn spawn_handler(&self, rx: Receiver<Event>) {
+    fn spawn_handler(&self, rx: UnboundedReceiver<Event>) {
         let engine = Arc::clone(&self.engine);
 
         tokio::spawn(async move {
+            // The channel is async: a blocking `recv()` here would hold a runtime worker for the life
+            // of the process, and on a one-worker runtime (1 CPU) nothing else would ever run.
+            let mut rx = rx;
             info!("Policy watcher started. Monitoring for changes...");
 
-            while let Ok(event) = rx.recv() {
+            while let Some(event) = rx.recv().await {
                 if event.kind.is_modify() || event.kind.is_create() {
                     for path in event.paths {
                         if path.extension().is_some_and(|ext| ext == "wasm") {
@@ -114,10 +117,8 @@ mod tests {
 
     // ----- reload behavior ---------------------------------------------------
     //
-    // The handler task blocks on a channel `recv()`, so these tests use a
-    // multi-thread runtime (a current-thread one would never get to poll the
-    // test body). Polling uses std sleeps, not tokio timers: the blocked handler
-    // can starve the runtime timer driver and hang the test. Waits are bounded
+    // These tests use a multi-thread runtime and poll with std sleeps, because the
+    // test body blocks its own thread while it waits. Waits are bounded
     // polling loops, never fixed sleeps, except
     // for the negative checks, which always end with a positive control event:
     // events are handled in order, so once the control is seen every earlier

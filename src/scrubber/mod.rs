@@ -73,6 +73,85 @@ fn email_re() -> &'static Regex {
         .get_or_init(|| Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap())
 }
 
+/// The value of the complete JSON `\uXXXX` escape that starts at `b[i]` (the backslash is
+/// unescaped: an odd run of backslashes ends at `i`), or `None`.
+fn unicode_escape_at(b: &[u8], i: usize) -> Option<u32> {
+    if i + 6 <= b.len()
+        && b[i] == b'\\'
+        && b[i + 1] == b'u'
+        && b[i + 2..i + 6].iter().all(u8::is_ascii_hexdigit)
+        && odd_backslashes(b, i + 1)
+    {
+        u32::from_str_radix(std::str::from_utf8(&b[i + 2..i + 6]).ok()?, 16).ok()
+    } else {
+        None
+    }
+}
+
+/// A character the email regex accepts in a local part.
+fn is_email_local_char(c: u32) -> bool {
+    u8::try_from(c)
+        .is_ok_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'%' | b'+' | b'-'))
+}
+
+/// Move the start of an address back over what is still its local part: raw local-part characters
+/// and `\uXXXX` escapes that decode to one, in any mix. It stops at the first character that is
+/// not one, and at an escape that decodes to something else (a boundary). A raw character that
+/// ends a short escape (`\n`) is part of that escape, so the walk never splits one.
+fn extend_email_start(b: &[u8], mut start: usize) -> usize {
+    loop {
+        if start >= 6 {
+            if let Some(c) = unicode_escape_at(b, start - 6) {
+                if is_email_local_char(c) {
+                    start -= 6;
+                    continue;
+                }
+                break;
+            }
+        }
+        let ends_escape = start >= 2 && b[start - 2] == b'\\' && odd_backslashes(b, start - 1);
+        if start > 0 && is_email_local_char(u32::from(b[start - 1])) && !ends_escape {
+            start -= 1;
+            continue;
+        }
+        break;
+    }
+    start
+}
+
+/// Email addresses. The local part may swallow the letters of a JSON escape right before
+/// it (`éuser@example.com`, `\nuser@example.com`); those are left out of the span so
+/// the backslash is never stranded and the output of valid JSON stays valid JSON. An escape
+/// that decodes to a local-part character (`\u0061@example.com` is `a@example.com`) is part
+/// of the address: the span starts at its backslash, with the whole escape, and takes in the
+/// raw characters and escapes of that kind right before it. An escape that decodes to anything else (a space, a
+/// surrogate half) or is a short escape (`\n`) is a boundary, so the span starts after it, and
+/// when nothing is left between it and the `@` there is no address to mask.
+fn email_spans(text: &str) -> Vec<(usize, usize)> {
+    let b = text.as_bytes();
+    email_re()
+        .find_iter(text)
+        .filter_map(|m| {
+            let (s, e) = (m.start(), m.end());
+            let mut start = s;
+            if s > 0 && b[s - 1] == b'\\' && odd_backslashes(b, s) {
+                if b[s] == b'u' && s + 5 <= e && b[s + 1..s + 5].iter().all(u8::is_ascii_hexdigit) {
+                    if unicode_escape_at(b, s - 1).is_some_and(is_email_local_char) {
+                        start = s - 1;
+                    } else {
+                        start = s + 5;
+                    }
+                } else if matches!(b[s], b'n' | b't' | b'r' | b'b' | b'f') {
+                    start = s + 1;
+                }
+            }
+            let start = extend_email_start(b, start);
+            let at = s + m.as_str().find('@')?;
+            (at > start).then_some((start, e))
+        })
+        .collect()
+}
+
 fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
         // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
@@ -538,7 +617,41 @@ fn formatted_nanp_valid(raw: &str) -> bool {
 /* (letters and digits of any script count as part of a token)        */
 /* ------------------------------------------------------------------ */
 
+/// `true` when an odd number of backslashes ends `bytes[..end]`, so the next byte after
+/// them is escaped (in JSON, `\\` is a backslash on its own and escapes nothing).
+fn odd_backslashes(bytes: &[u8], end: usize) -> bool {
+    bytes[..end]
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
+/// `true` when `text[..end]` ends with a complete JSON escape that holds letters or digits:
+/// `\n`, `\t`, `\r`, `\b`, `\f` or `\uXXXX`. Those characters belong to the escape, not to
+/// the word that follows it, so they never glue a key or a number to what comes next.
+fn ends_with_json_escape(text: &str, end: usize) -> bool {
+    let b = text.as_bytes();
+    if end >= 2
+        && matches!(b[end - 1], b'n' | b't' | b'r' | b'b' | b'f')
+        && odd_backslashes(b, end - 1)
+    {
+        return true;
+    }
+    end >= 6
+        && b[end - 4..end].iter().all(u8::is_ascii_hexdigit)
+        && b[end - 5] == b'u'
+        && odd_backslashes(b, end - 5)
+}
+
+/// The character before `start`, or `None` (as at the start of the text) when it belongs to
+/// a JSON escape such as `\n` or `é`, so a value right after one still starts on a boundary.
 fn char_before(text: &str, start: usize) -> Option<char> {
+    if ends_with_json_escape(text, start) {
+        return None;
+    }
     text[..start].chars().next_back()
 }
 
@@ -868,9 +981,7 @@ impl Scrubber {
     pub fn scrub(input: &str) -> String {
         // Apply scrubbing in order of specificity
         let mut output = jwt_re().replace_all(input, "[JWT_REDACTED]").to_string();
-        output = email_re()
-            .replace_all(&output, "[EMAIL_REDACTED]")
-            .to_string();
+        output = replace_spans(&output, &email_spans(&output), "[EMAIL_REDACTED]");
         output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
         output = replace_spans(&output, &github_token_spans(&output), "[SECRET_REDACTED]");
         output = replace_spans(&output, &stripe_key_spans(&output), "[SECRET_REDACTED]");
@@ -2166,5 +2277,181 @@ mod table_parity_tests {
         assert_eq!(v["n"], serde_json::json!([1, 2]));
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+
+    // JSON escapes: masking must not split an escape, and a key after one is still masked.
+
+    fn parses(s: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(s).is_ok()
+    }
+
+    #[test]
+    fn email_after_json_unicode_escape_keeps_json_valid() {
+        // Minimised fuzz reproducer: NUL, then an address-shaped tail.
+        let json = serde_json::json!({ "v": "\u{0}@m.mm" }).to_string();
+        assert!(json.contains(r"\u0000@m.mm"));
+        assert!(parses(&Scrubber::scrub(&json)));
+        let json = serde_json::json!({ "v": "é@example.com" }).to_string();
+        assert!(parses(&Scrubber::scrub(&json)));
+    }
+
+    #[test]
+    fn email_after_json_escape_is_masked_whole_and_json_stays_valid() {
+        let user = ["user", "@", "example", ".com"].concat();
+        for lead in ["\u{e9}", "\u{0}", "\n", "\t", "\r", "a\n"] {
+            let json = serde_json::json!({ "v": format!("{lead}{user}") }).to_string();
+            let out = Scrubber::scrub(&json);
+            assert!(parses(&out), "invalid JSON for {json}: {out}");
+            assert!(!out.contains(&user), "address survived in {out}");
+            assert!(out.contains("[EMAIL_REDACTED]"), "no mask in {out}");
+        }
+    }
+
+    #[test]
+    fn email_made_of_json_unicode_escapes_is_masked_whole() {
+        // A `a` escape decodes to `a`: `a@example.com` is `a@example.com`, so the
+        // whole escape, backslash included, is in the mask and the JSON stays valid.
+        let domain = ["example", ".com"].concat();
+        for local in [r"a", r"auser", r"ab", r"abc", r".a", r"Auser"] {
+            let json = format!(r#"{{"v":"{local}@{domain}"}}"#);
+            assert!(parses(&json), "bad fixture {json}");
+            let out = Scrubber::scrub(&json);
+            assert_eq!(out, r#"{"v":"[EMAIL_REDACTED]"}"#, "for {json}");
+            assert!(parses(&out));
+        }
+        // Text around the address is kept.
+        let out = Scrubber::scrub(&format!(r#"{{"v":"to auser@{domain} now"}}"#));
+        assert_eq!(out, r#"{"v":"to [EMAIL_REDACTED] now"}"#);
+    }
+
+    #[test]
+    fn email_after_json_escape_that_is_not_a_local_character_starts_after_it() {
+        let domain = ["example", ".com"].concat();
+        // A space, a NUL and an accented letter are boundaries, not part of the address.
+        for esc in [r" ", r"\u0000", r"é"] {
+            let json = format!(r#"{{"v":"{esc}user@{domain}"}}"#);
+            assert!(parses(&json), "bad fixture {json}");
+            let out = Scrubber::scrub(&json);
+            assert_eq!(
+                out,
+                format!(r#"{{"v":"{esc}[EMAIL_REDACTED]"}}"#),
+                "for {json}"
+            );
+            // Nothing left between the escape and the `@`: no address.
+            let bare = format!(r#"{{"v":"{esc}@{domain}"}}"#);
+            assert_eq!(Scrubber::scrub(&bare), bare);
+        }
+        // A lone surrogate half is not valid JSON on its own, but it is a boundary too.
+        let out = Scrubber::scrub(&format!(r"\ud83duser@{domain}"));
+        assert_eq!(out, r"\ud83d[EMAIL_REDACTED]");
+    }
+
+    #[test]
+    fn email_local_part_mixing_raw_characters_and_json_escapes_is_masked_whole() {
+        let domain = ["example", ".com"].concat();
+        for local in [
+            r"aabc", r"aa", r"abcd", r"abcd", r"xaybz", r"abcd", r"a.b", r"abcd",
+        ] {
+            let json = format!(r#"{{"v":"{local}@{domain}"}}"#);
+            assert!(parses(&json), "bad fixture {json}");
+            let out = Scrubber::scrub(&json);
+            assert_eq!(out, r#"{"v":"[EMAIL_REDACTED]"}"#, "for {json}");
+            assert!(parses(&out));
+        }
+    }
+
+    #[test]
+    fn email_raw_prefix_after_a_boundary_escape_starts_after_the_escape() {
+        let domain = ["example", ".com"].concat();
+        for (before, expect_keep) in [
+            (r" ", r" "),
+            (r"\n", r"\n"),
+            (r"a ", r"a "),
+            (r"a\n", r"a\n"),
+            (r"é", r"é"),
+        ] {
+            for local in ["abc", r"abc", r"abc"] {
+                let json = format!(r#"{{"v":"{before}{local}@{domain}"}}"#);
+                assert!(parses(&json), "bad fixture {json}");
+                let out = Scrubber::scrub(&json);
+                assert_eq!(
+                    out,
+                    format!(r#"{{"v":"{expect_keep}[EMAIL_REDACTED]"}}"#),
+                    "for {json}"
+                );
+                assert!(parses(&out));
+            }
+        }
+    }
+
+    #[test]
+    fn email_after_escaped_backslash_is_unchanged_in_behaviour() {
+        // `\\n` is a backslash and a letter n: the n is part of the address.
+        let out = Scrubber::scrub(r#"{"v":"\\nuser@example.com"}"#);
+        assert_eq!(out, r#"{"v":"\\[EMAIL_REDACTED]"}"#);
+        assert!(parses(&out));
+    }
+
+    #[test]
+    fn aws_key_after_json_escaped_newline_or_tab_is_masked() {
+        let key = ["AKIA", "IOSFODNN7", "EXAMPLE"].concat();
+        for esc in ["\n", "\t", "\r", "\u{e9}", "\u{1}"] {
+            let json = serde_json::json!({ "cmd": format!("x{esc}{key}{esc}y") }).to_string();
+            let out = Scrubber::scrub(&json);
+            assert!(!out.contains(&key), "key survived in {out}");
+            assert!(parses(&out), "invalid JSON: {out}");
+        }
+    }
+
+    #[test]
+    fn letter_that_is_not_an_escape_still_glues_the_key() {
+        let key = ["AKIA", "IOSFODNN7", "EXAMPLE"].concat();
+        // `\\n` is a literal backslash then n: n touches the key, as before.
+        let text = format!(r"a\\n{key}");
+        assert!(Scrubber::scrub(&text).contains(&key));
+        // A plain letter too.
+        assert!(Scrubber::scrub(&format!("n{key}")).contains(&key));
+    }
+
+    mod json_escape_property {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn scrubbed_json_stays_valid_and_planted_secrets_are_gone(
+                parts in proptest::collection::vec(
+                    prop_oneof![
+                        Just("\n".to_string()),
+                        Just("\t".to_string()),
+                        Just("\"".to_string()),
+                        Just("\\".to_string()),
+                        Just("\u{0}".to_string()),
+                        Just("\u{e9}".to_string()),
+                        Just("\u{1f600}".to_string()),
+                        Just(" ".to_string()),
+                        "[a-f0-9@._-]{0,6}",
+                    ],
+                    0..8,
+                ),
+                which in 0usize..3,
+                esc in prop_oneof![
+                    Just("\n"), Just("\t"), Just("\u{0}"), Just("\u{e9}"), Just(" "),
+                ],
+            ) {
+                let secrets = [
+                    ["AKIA", "IOSFODNN7", "EXAMPLE"].concat(),
+                    ["user", "@", "example", ".com"].concat(),
+                    ["ghp", "_", "aB3dE5gH7jK9mN1pQ3sT", "5vW7yZ2bC4dF6hJ8"].concat(),
+                ];
+                let secret = &secrets[which];
+                let head: String = parts.concat();
+                let value = format!("{head}{esc}{secret}{esc}");
+                let json = serde_json::json!({ "k": value }).to_string();
+                let out = Scrubber::scrub(&json);
+                prop_assert!(parses(&out), "invalid JSON: {}", out);
+                prop_assert!(!out.contains(secret.as_str()), "secret survived: {}", out);
+            }
+        }
     }
 }

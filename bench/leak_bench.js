@@ -71,6 +71,20 @@ const DEFAULT_THRESHOLDS = {
   },
 };
 
+/* macOS runners are slower and noisier on the 64 KB input only: over recent CI
+ * runs the worst values seen were p50 6.0 ms and p95 17.6 ms, while 256 B and
+ * 4 KB stayed far under the default limits. So only 64 KB gets its own limits
+ * there, about 1.7x over the worst value seen; other platforms keep the defaults. */
+const PLATFORM_LATENCY_MS = {
+  darwin: { '64KB': { p50: 10, p95: 30 } },
+};
+
+function defaultThresholds() {
+  const t = JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
+  Object.assign(t.latency_ms, PLATFORM_LATENCY_MS[process.platform] || {});
+  return t;
+}
+
 const USAGE = [
   'usage: node bench/leak_bench.js [--json <path>] [--thresholds <path>]',
   '       [--seed <n>] [--per-type <n>] [--corpus <dir>] [--quick]',
@@ -105,10 +119,11 @@ function parseArgs(argv) {
 }
 
 function loadThresholds(file) {
-  if (!file) return JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
+  const defaults = defaultThresholds();
+  if (!file) return defaults;
   const overrides = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return Object.assign({}, DEFAULT_THRESHOLDS, overrides, {
-    latency_ms: Object.assign({}, DEFAULT_THRESHOLDS.latency_ms, overrides.latency_ms || {}),
+  return Object.assign({}, defaults, overrides, {
+    latency_ms: Object.assign({}, defaults.latency_ms, overrides.latency_ms || {}),
   });
 }
 

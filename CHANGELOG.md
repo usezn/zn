@@ -9,6 +9,223 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-26
+
+### Added
+- A Go client for the optional zn Cloud API, `github.com/usezn/zn/go`. `zn.NewClient(key).Analyze(ctx, text)` checks a tool result, a web page or an email before a model reads it, with timeouts, retries that honour `Retry-After`, typed errors (`IsRateLimited`, `IsQuotaExceeded`, `IsUnauthorized`), a check of the 20,000 UTF-16 unit limit before sending, and `SplitForAnalyze` for callers that want to send long text in pieces. Standard library only. See [go/README.md](https://github.com/usezn/zn/blob/main/go/README.md).
+
+### Changed
+- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace (at the plugin tag) and how to remove it.
+- `zn-gate check` and `zn-gate init` list Copilot as "GitHub Copilot (CLI experimental, VS Code not tested)": the same hooks
+  serve Copilot CLI, which is experimental, and VS Code, where they are documented but were not run in the app. The agent
+  list, the editors page and the Gemini CLI page no longer count Copilot as a seventh supported agent: six agents are
+  supported, and Gemini CLI and Copilot CLI are experimental.
+- The package description and the READMEs now name six supported agents and list Gemini CLI and Copilot CLI as experimental, matching the website.
+- These stay refused when they name a project `.env`: `source .env` and `. .env` (they run the file as shell code, which can
+  rewrite the file itself; use `--env-file` or `dotenv -e`), and `python3 -m venv .env` (give the virtual environment another
+  name).
+
+### Fixed
+- `zn-gate init`, `zn-gate check`, the plugin messages and the docs now add the plugin marketplace at a plugin tag: `claude plugin marketplace add usezn/zn#plugin-v<version>` for Claude Code and `codex plugin marketplace add usezn/zn --ref plugin-v<version>` for Codex. The tag is created on the commit that pins that zn-gate release and never moves, so the plugin you install pins the release you expect. The release tag (`usezn/zn#v<version>`) held the plugin pin of the previous release, which left the plugin one release behind.
+- `zn-gate evidence --export` of a large log (over about 512 MB) no longer writes an empty file and reports it as valid. The export
+  now reads the log in parts, so every record is exported in bounded memory, and the dashboard export does the same. In the npm
+  package, if the log cannot be read to the end the export says so and exits 1, and an export whose chain does not verify
+  also exits 1. The Python package reports a non-verifying export and still exits 0.
+- `evidence --export --output` (Node and Python) refuses an output path that is the evidence log itself, or a link or hard
+  link to it, and exits 2. Before, the log was emptied and the command could report zero records as valid. Nothing is touched
+  when it refuses.
+- `zn team managed-config` now writes the same Claude Code hook command for a given system whichever system runs it: the Windows file keeps the scrub that reads variable names in any case (Git Bash), and the Linux and macOS files the short one.
+- `zn-gate check` on Windows reports a project hook guard with the short Linux and macOS scrub as modified instead of guarded, because that scrub leaves a loader variable written in another case set.
+- With the opt-in public IPv4 masking on, addresses in 192.0.x.x, 198.51.x.x and 203.0.x.x outside the reserved blocks (192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), and 192.0.0.9 and 192.0.0.10, are now masked as public addresses.
+- The scrubber no longer breaks JSON when an email address follows an escape sequence such as `é` or `\n`: the address is masked without leaving a stray backslash, so scrubbed JSON stays valid. Secrets that start right after a JSON escape (an AWS access key id after `\n` or `\t`, and card, SSN, phone, GitHub and Stripe candidates) are now masked too, instead of being skipped because the escape's letter touched them. An address written with JSON unicode escapes (`\u0061user@example.com`, which decodes to `auser@example.com`) is now masked whole, escape included, instead of leaving its first characters outside the mask, and the Node scrubber follows the same rules so its masked output no longer keeps a stray backslash before an escape. In the Node scrubber the 64-character limit of a local part counts the characters of the address once escapes are decoded, not the hex digits of its escapes: an address with escapes and a long raw part is no longer left unmasked, and a local part over 64 decoded characters is not taken for an address.
+- `zn start` now answers on its management port on a machine with one CPU (a 1-vCPU VM or container). The policy watcher read its events with a blocking call inside the async runtime, which held the only worker thread, so the management API accepted connections but never answered a request. The watcher now waits on an async channel.
+- The Go client's `Allowed()` is now false when only part of a long input was checked (a partial, capped or truncated result), so such an allow no longer passes as a full check. `WholeInputChecked()` reports it directly.
+- Commands that load a project `.env` without running it pass again: the `--env-file` option of node, bun, deno, docker and
+  podman, and `-e` / `-f` of the dotenv, dotenv-cli and dotenvx runners. A command that zn cannot prove read-only is still
+  refused, and the message now says that zn cannot tell whether it writes the file and how to load it instead.
+
+### Security
+- The gateway is built with `url` 2.5.9, which fixes a stack overflow in `Url::origin()` on nested `blob:` URLs (RUSTSEC-2026-0592).
+- The gateway is built with `wasmtime` 48.0.9, which fixes eight advisories published on 20 November (RUSTSEC-2026-0566 to RUSTSEC-2026-0573), among them a panic, a process abort and unbounded memory growth through `AsyncWriteStream`.
+- The plugin hook scripts now remove the variables that load code into Node.js before they start it. The Claude Code and
+  Codex plugin script (`scripts/zn-node.sh`) and the ZCode plugin scripts (`zn-hook.sh`, and `zn-hook.ps1` on Windows)
+  passed the agent's environment, which a project can set, to Node.js unchanged, so a `NODE_OPTIONS=--require` preload ran
+  before the plugin launcher could check anything. They now drop the same list as the `zn hooks install` launchers
+  (`NODE_OPTIONS`, `NODE_PATH`, every `LD_*` and `DYLD_*` and the others; on Windows `NODE_OPTIONS`, `NODE_PATH` and
+  `OPENSSL_CONF`). `NODE_EXTRA_CA_CERTS` and the proxy settings are kept. Update the plugin to get the new scripts.
+- The hook launchers no longer pass variables that load code into Node.js. The agent's environment, which a project can
+  set, reached the hook unchanged, so `NODE_OPTIONS=--require` (or `--import`, or `LD_PRELOAD`) could run code inside the
+  hook and turn a blocked call into an allowed one. The sh launcher and the OpenCode plugin now remove the loader and
+  interpreter start-up variables that `zn run` already removed (`NODE_OPTIONS`, `NODE_PATH`, `BASH_ENV` and the others)
+  plus `OPENSSL_CONF`, `NODE_V8_COVERAGE`, and the named library variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`,
+  `DYLD_INSERT_LIBRARIES` and the other `LD_` and `DYLD_` names listed in the source) before they start Node.js. On Linux
+  and macOS only the named variables are removed; on Windows with Git Bash every `LD_*` and `DYLD_*` variable is removed,
+  in any letter case. The Windows PowerShell launcher removes `NODE_OPTIONS`, `NODE_PATH` and `OPENSSL_CONF`. `NODE_EXTRA_CA_CERTS` and the proxy settings are kept.
+  `zn-gate check` warns when one of these variables is set. `npm update -g zn-gate` rewrites the sh launchers; for
+  OpenCode, and for the agents that use the PowerShell launcher on Windows, run `zn hooks install <agent>` again.
+- The sh hook launchers and the project hook guard now refuse to run the hook when a loader variable that loads code or changes
+  what the shell does before its first line is set in the agent's environment: `LD_PRELOAD`, `LD_AUDIT`, `LD_PROFILE`,
+  `LD_TRACE_LOADED_OBJECTS`, `LD_DEBUG`, `LD_PRELOAD_FDS` and the other names listed in the source, and
+  `DYLD_INSERT_LIBRARIES` with the other `DYLD_` preload settings. The dynamic loader loads such a library into the shell
+  before the first line of the launcher, so removing the variable there came too late: the call is now blocked with a
+  message that asks to unset it and restart the agent. Library search paths (`LD_LIBRARY_PATH` and the `DYLD_*_PATH`
+  variables) do not block the hook; they are removed for the hook only. Two limits remain and are written in the threat
+  model: a library that is already loaded runs before the check, and with the trace or debug variables the shell can exit
+  before the script runs.
+- The Windows PowerShell project hook guard now resolves every PATH folder and every `zn.cmd`, `node.exe` and `node.cmd`
+  with junctions and symbolic links followed, and does not run one whose real place is inside the folder the agent runs
+  in or inside a `node_modules` folder. Before, it dropped PATH entries by the text `node_modules` only, so an absolute
+  project folder or a junction into `node_modules\.bin` on the PATH could supply `zn.cmd` or `node.exe`. Run
+  `zn hooks install <agent> --project` again to update an existing project hook.
+- The project hook guard (the command `zn hooks install <agent> --project` writes, for sh and for Windows PowerShell) now
+  removes the variables that load code into Node.js before it starts `zn`, like the user hook launchers do, so a project
+  that sets `NODE_OPTIONS=--require` in the agent's environment cannot run code inside the hook. It also no longer runs a
+  `zn` or `node` from a `node_modules` folder written in another case (`Node_Modules`), which is the same folder on macOS
+  and Windows. Run `zn hooks install <agent> --project` again to update an existing project hook.
+- The project hook guard (sh, and the OpenCode project plugin) now checks where `zn` and `node` really are, with links
+  followed: a PATH folder that is a link into a `node_modules/.bin` folder, or a `zn` that is a link into one or into the
+  project, is no longer run. A global npm install, which links `zn` into `<prefix>/lib/node_modules/zn-gate`, still runs.
+  Where a link cannot be followed (no `readlink -f` or `realpath`), the guard blocks.
+- The hook guard that project installs write (the `sh -c` command, its PowerShell twin and the OpenCode project plugin) no
+  longer runs a `zn` or `node` that sits in a `node_modules` folder. A package can plant a `zn` in `node_modules/.bin`, and
+  `npm run` or direnv put that folder on the PATH, so the planted program could answer for the hook and allow a blocked
+  call. The guard now blocks with its usual message instead. Run `zn hooks install <agent> --project` again to update an
+  existing project hook.
+- The zn hooks now refuse a file write or shell command from the agent that would set `LD_TRACE_LOADED_OBJECTS`, or
+  `LD_DEBUG` with `help`, for the agent in a project `.env` or `.gemini/.env` (Write, Edit, patches and shell commands).
+  On Linux these variables stop every hook before it runs, so the edit is refused while the
+  hooks still work. `zn audit` and the hooks share one test for which settings count.
+- The same writes are also refused when they set `LD_PRELOAD`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES` or another preload
+  variable to a value.
+- Shell commands can no longer write a project `.env` or `.gemini/.env`: any shell write to these files is refused, including
+  redirections (also `<>`), `tee`, `sed -i`, `cp`, `Set-Content`, and any program that names the file (an interpreter, `awk`,
+  `curl -o`) unless it only reads or touches it. zn cannot know what the shell really runs. Use the editor tool instead; zn checks
+  what it writes.
+- Edits to a watched `.env` file by the agent's own file tools are judged on the file they would leave: zn applies the edit or
+  patch to the file on disk, and refuses the write when it cannot work out the result.
+- Any MCP tool call that names a project `.env` or `.gemini/.env` is refused, whatever the server or the tool is called and even
+  with a body (a custom server can call an append or a copy `write_file` or `read_file`): use the agent's own file tools, which
+  zn can check. Copies, moves, renames and links through a tool zn does not know are refused too, as zn cannot see the file
+  they would leave.
+- `git checkout`, `git restore`, `git reset` and `git stash` in a shell command that names a project `.env` are refused: they
+  write stored content into the file. `git add`, `git commit` and `git rm --cached` still pass. A tool zn does not know is read
+  under any key down to 6 levels of nesting for these files in Claude Code, Gemini CLI, Antigravity, ZCode and Copilot CLI, and a
+  call nested deeper, or with more than 500 objects, is refused (all of these agents except OpenCode);
+  OpenCode treats such a tool as an MCP call, and Codex CLI and Cursor never send one to the hook.
+- A write to a project `.env` or `.gemini/.env` through a tool zn does not know is refused even when the call carries the
+  text: such a tool may append or insert it instead of writing the whole file. Only the agents' own whole-file write tools
+  and the edits and patches of their own editors, applied by zn to the file on disk, give zn the file a call leaves; no tool
+  name from an MCP server is trusted for that.
+- The Go client no longer sends the API key over plain http: `WithBaseURL` accepts an https URL, or http only for `localhost`, `127.0.0.1` and `[::1]`, and `Analyze` returns an error wrapping `ErrInsecureBaseURL` for any other URL. A 200 answer whose verdict is missing or is not `allow` or `block` now returns an error wrapping `ErrUnexpectedResponse` instead of a result, so a check on `res.Blocked()` can no longer pass on a malformed answer. The Go client also refuses a redirect to plain http (except to localhost, 127.0.0.1 and [::1]) and returns an error wrapping `ErrInsecureBaseURL` without sending the request, so the API key cannot travel in clear text after an https answer redirects. The check applies to a client you pass with `WithHTTPClient` too; your client is copied, not changed, and its own `CheckRedirect` still runs. The scheme rule is now enforced at the transport for every request the client sends, including after your own `CheckRedirect` rewrites a redirect, and the `Authorization` header is dropped for any host other than the base URL host. The `Authorization` header is also dropped on a cross-host request whatever its capitalization, so a `CheckRedirect` that sets a lower-case `authorization` key cannot send the API key to another host.
+- `zn audit` reports a project that sets `LD_TRACE_LOADED_OBJECTS`, or `LD_DEBUG=help`, for the agent as critical. On Linux
+  these variables make the system stop every program the agent starts before it runs, the shell of each zn hook included, so
+  the hooks cannot check or block anything. No hook can refuse them from inside; the threat model now says which agents
+  let such calls go ahead.
+- `zn run` and the hook launchers on Linux and macOS also drop `PYTHONUSERBASE`, which can point Python at a user site directory whose start-up files run before the approved program.
+- On Linux, a user install for Claude Code and ZCode now starts the hook through a small
+  statically linked launcher. `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG=help` in the agent's environment made the dynamic loader
+  exit before the hook ran, so the call went ahead unchecked. The launcher runs before any loader, denies the call in the
+  agent's own format when `LD_TRACE_LOADED_OBJECTS` is set, or `LD_DEBUG` (any value), `LD_DEBUG_OUTPUT` or a preload
+  variable is set to a value that is not empty, and removes every loader variable before it starts
+  the hook. Without a matching launcher for the machine, the install keeps the earlier hook and says so. Codex CLI, Gemini CLI
+  and GitHub Copilot CLI are detection only, and so is Antigravity until its launch form is run with the real agent (the Claude Code form was verified with a real Claude Code 2.1.331 on x86_64 Linux): `zn audit` reports the variables as critical, the hook cannot refuse them, the call goes ahead. Cursor (not verified) and project installs are not covered either
+  (see the threat model).
+- A shell command that names a project `.env` and is not a read-only or metadata-only command is now refused even while that
+  `.env` is a folder (for example a Python virtual environment). A program could remove the folder and write a `.env` file
+  there after the check. Listing, reading, removing the folder and running the environment (`source .env/bin/activate`) still
+  pass; creating or recreating the environment under that name (`python3 -m venv .env`) is refused, so use another name for it.
+- A file name longer than 4096 characters, or a percent-encoded `file:` address, that names a project `.env` is now refused in
+  an MCP call and in a tool zn does not know, in every agent, and in the file tools of Gemini CLI. Before, such a name was left
+  out of the check, so the call went ahead (for example a path padded with `./` before `.env`). A long name of another
+  protected file in a Gemini CLI file tool is refused the same way.
+
+## [1.17.0] - 2026-11-19
+
+zn-gate 1.17.0 tightens how zn-gate protects its own files from the coding agent it guards. The agent is now refused the commands that would make the hook launchers trust zn-gate files that were changed, and the plugin build refuses more ways of reaching Node's module loader. Both fixes are partial: some indirect ways of running these commands are not covered yet, and coverage will be extended in a later release. The rest of the release adds new checks and reports, and fixes in the CLI, the Python package and the scrubber.
+
+### Added
+- `zn-gate scan --code` and `--all` in the Python package. With either one the scan also reads `.sh`, `.html`, `.go` and `.rs` files, so it reads the same files as the npm package. Without them the Python scan still reads `.py`, `.ts` and `.js` files, as before.
+
+### Changed
+- `zn audit --approve` now also records OpenCode plugin code (`.opencode/plugin/*.js`, `.opencode/plugins/*.js`) and the Amazon Q agent and rule files (`.amazonq/cli-agents/*.json`, `.amazonq/agents/*.json`, `.amazonq/rules/**/*.md`, `.amazonq/default.mcp.json`), each by the hash of its content, so a later audit reports one of them that changed, was added or was removed as ZNA023, by file name only. Links, the size cap and unreadable files follow the same rules as the other recorded files; rule files are searched 8 folder levels deep (a folder below that is recorded as an entry of its own), a linked subfolder is followed when it stays inside the project and recorded when it leaves it (a folder reached a second time, such as a link back to a parent, is recorded once and not read again; at most 2,000 folders are read), a folder that exists but cannot be listed is recorded as unreadable, and past 500 files in one searched folder (for the rules, the whole .amazonq/rules tree counts together) the rest is hashed by content together (up to 5,000 more; past that only the fact that it is over the limit is recorded); `.amazonq/mcp.json` is unchanged. Projects approved before this release see these files as added the first time, until `zn audit --approve` is run again.
+- The Claude Code plugin does not update by itself. The upgrade guide and the plugin README now say how to move it to a new release (remove the usezn marketplace, add it again, install the plugin), and `zn-gate check` and `zn-gate init` say so when the installed plugin is older than zn-gate.
+- The Claude Code plugin README now says how to install zn-gate from the usezn marketplace and how to remove it.
+- The Python `zn-gate test` preview now masks personal values with the same checks as the Node.js scrubber: e-mail addresses (text that only looks like an address, such as a file name or a URL, is left alone), phone numbers in E.164 form with the country length rules, IBAN with the country length and checksum, card numbers with the network, length and Luhn checks, Spanish DNI and NIE with the control letter, and US social security numbers. Both packages read one shared test corpus, so they cannot drift apart. IPv4 addresses and the keyed name, address and username fields are still masked only by the Node.js package.
+- The Python package checks large inputs (16,384 characters or more) against the plain words each rule needs before it runs the rule's regular expression, so an evaluate of a 256 KB text is faster. Verdicts do not change.
+- The next step for a plaintext secret in an MCP server configuration reads as three plain steps: run the commands in a terminal (on Windows, `npx.cmd` and `zn.cmd`), then edit the file and set the server's command to `zn`. On Windows it says that the file keeps `zn`, not `zn.cmd`, because the agent reads that file and nobody types it in a terminal. The Node.js and Python packages print the same text.
+
+### Fixed
+- `zn-gate analyze --json` is accepted by the npm package too, as it already was in the Python package. The output is JSON either way, so the flag changes nothing. Before, the npm package refused it with exit 2.
+- The npm package now accepts `--option=value` for the options of `zn-gate scan` and `zn-gate analyze`, as the Python CLI already did, instead of refusing it with "give the value as the next argument". `--option=value` and `--option value` read the same value, including an empty one (`--format=`) and a value that contains an equals sign.
+- When an agent settings file or MCP config cannot be read as JSON, zn-gate now says why in one plain sentence: the file has comments (JSONC), starts with a byte order mark, or is not valid JSON at a given line. It also says the file was left unchanged and what to do. Before, `zn hooks install` and `zn-gate init --wrap-mcp` printed the raw parser error.
+- `zn-gate init --wrap-mcp` now wraps an MCP config that starts with a byte order mark (for example one saved by Notepad). The mark is kept when the file is written, and `--revert` restores the original bytes.
+- On Linux, a full disk quota is now reported as "Your disk quota is used up, so ... cannot be written" instead of "unknown error" (hooks install, disconnect, init and the vault).
+- `zn secret set`, `zn secret rm` and `zn env shadow` now say why the vault could not be written (full disk, full quota or no permission) instead of "internal error". Other details stay hidden.
+- The Node and Python packages now write the same evidence record for the same event. A confidence of 0 is kept as 0 (Node used to write 1.0), an empty rule or reason is written as null by both (Python used to write an empty string), and these payloads are hashed the same way by both: a missing payload (empty), 0 ("0"), false ("false") and non-ASCII text (as UTF-8). A payload object that holds fractional numbers can still hash differently, because the two languages write numbers such as 1.0 and 0.00001 differently. A confidence below 0.0001 written by one package no longer fails verification in the other as a false "Tamper detected". Ledgers written by earlier versions of either package still verify.
+- Cloud calls (`analyze` with `ZN_CLOUD`, `connect`, `disconnect --revoke`) now end within their configured time (4 s, 8 s) when the network silently drops traffic. Before, the wait for the system name lookup could last about 20 s. The Node package resolves the host with a cancellable resolver (the hosts file first, then the system DNS servers, then the system lookup if the name is not found) and the Python package bounds its lookup the same way; certificates, proxies and `/etc/hosts` overrides work as before. The call itself always ends on time; only when the Node package has to fall back to the system lookup (the last step) can that lookup, which cannot be cancelled, keep the process alive for up to about 20 s after the call has returned.
+- Package registry lookups now encode every slash in a package name, not only the first one. Names that npm accepts were already handled, so nothing changes for them.
+- The evidence log no longer leaves empty lock files behind when the disk is full. Before, a writer that ran out of space while writing its owner token left an empty lock (the Python package) or an empty break mutex used while replacing a stale lock (both packages). Those files made later evidence records wait and then be skipped for up to 10 seconds with "another process is writing to the log", even after space was freed. The disk error is still reported as before, and the next record is written at once.
+- A new evidence record is written on its own line when the log file does not end with a newline (for example after an edit in an editor). Before, it was appended to the last line and the log could not be verified. A line damaged this way by an earlier version is still reported by `zn-gate evidence --verify`, and writing stops until that file is moved aside, as before.
+- The rules block "forget the instructions", "forget previous instructions" and "forget the previous instructions" again, in the Node.js, Python and Rust engines. A negation attached to a longer word no longer slips the attack through: "However forget the previous instructions", "Forever forget the instructions" and "cannot forget the instructions" now block, while the genuine negations "Don't forget the instructions in the README", "Do not forget the previous instructions" and "never forget the instructions" stay allowed. A bare "not" or "ever" before "forget" is not a negation: "Why not forget the previous instructions" and "If you ever forget the system instructions" block.
+- GitHub Copilot's tool output (`toolResult.textResultForLlm` or `tool_result.text_result_for_llm`) is now read as the text it is: it is scanned for secrets and injection like any other tool output and is never mistaken for a file path. Before, odd text there could make zn refuse the whole call, as it does for a malformed file path. Every other field of the event is still checked, and so is a `toolResult` or `tool_result` field sent by any other agent.
+- A secret split by a control character (such as a NUL byte inside a key) in a tool output is now redacted like one split by a zero-width character, for every agent that rewrites tool output.
+- An oversized GitHub Copilot output event named in camelCase (`postToolUse`) is now withheld instead of refused, like the other spellings of the event name.
+- A hook event nested more than 64 levels deep is still blocked, and the reason now says it is nested too deeply instead of reporting invalid Unicode text.
+- Both packages now count C0 control characters as invisible characters (tab, line feed, carriage return and ESC are not counted), so a tool output that is mostly such characters (for example 100,000 NUL bytes) is blocked by both, the same way.
+- `zn-gate init --wrap-mcp` and `zn-gate init --revert` now exit with `1` when a config cannot be changed (for example a full disk), name the file in a plain sentence, and leave no temporary file behind. Before, they exited with `0` and printed the raw system error.
+- The quick test that skips the output check on plain text now also sends text with invisible control characters to the full rules, so a mostly invisible output is blocked as before.
+- `zn-gate test` no longer prints back e-mail addresses, phone numbers, IBAN, card numbers or password values from the text it checks. When a secret is found, the preview shows them as redacted, the same way the scanner does.
+- The Python `zn-gate` CLI takes only full long option names. A shortened name such as `scan --allow` is now an error (exit 2) instead of being read as `--allow-partial`, which could exit 0 with files that were not read.
+- `zn-gate reach --history`: when a home has more than 50,000 history files, the npm and the Python package now read the same files. Both visit the folders in the byte order of the file names. Before, the npm package took them in the order the disk lists them, so the two packages could report different files on the same machine.
+- The documentation of `zn-gate reach --history` now states that the Python package is about 17 times slower than the npm package (measured on a synthetic 192 MB history), so the default 120-second limit covers much less of a large history there.
+- `zn-gate reach --history` no longer reports a file as partly scanned when the time limit passes just as the last bytes were read: a file read to the end is complete and its last line is counted. This applies to both the npm and the Python package.
+- `zn-gate reach --history` checks the time limit while it scans a very long line, so one huge line no longer runs far past `--max-seconds`. A line longer than 4 MB is now read in slices that overlap by 64 KB, so a secret that crosses a slice cut is still found and counted once; only a single unbroken token longer than about 32 KB that crosses a cut can be missed. Lines up to 32 MB are still scanned, in both the npm and the Python package.
+- The reach documentation now gives the scan speed of the Python package (about 3.6 MB per second, against about 62 MB per second for npm, measured on a 192 MB history) and how much history each package covers within the default time limit.
+- A clipboard tool that does not answer within 5 seconds is stopped, and zn reads the next one. If none answers, zn names the tool and tells you to copy the value again or type it at the hidden prompt. Likewise, `claude mcp add-json` and `claude mcp remove` are stopped after 30 seconds, and zn says which command to run yourself (`claude mcp list`, or `claude mcp add` or `claude mcp remove`). Normal runs are unchanged.
+- Copilot and VS Code tasks started with create_and_run_task are now checked in every platform override (linux, osx, windows) as well as the base task, and the strictest verdict wins. A task that sets a custom options.shell is judged like a shell task, as it is launched (shell, flags, command): only known shells with their own flags are accepted (bash, sh, zsh, dash, fish, pwsh, powershell, cmd, nu), named bare (found on PATH) or by a path in a system folder that an ordinary user cannot write to (/bin, /usr/bin, /sbin, /usr/sbin, the Windows system folders and Program Files; a workspace, temporary or user-owned folder such as /usr/local/bin on many Macs is refused), so the command can no longer hide in the shell settings.
+- A task's options.cwd (base or override) is resolved and the line is judged in that folder; a folder outside the workspace, an unknown ${...} variable or a value that is not text is blocked. options.env is checked against the dangerous-environment list, and unknown keys under options are blocked. Overrides, options or shell settings in a shape zn cannot read are blocked instead of passing.
+- `zn-gate evidence --verify` now says when the last record of the ledger is incomplete: cut off by a crash or a full disk, or removed by someone. It is not called tampering, because zn cannot tell the two apart, but it is never shown as harmless. Only a last line that starts like a written record and has no trailing newline counts as a cut-off write; the ledger still counts as not verified, and the output explains how to start a new log. Any other unreadable last line, such as extra text with a trailing newline or an edited record, and any record changed in the middle of the ledger, is still reported as tampering.
+- The destructive-command check reads an unquoted shell comment as a comment, so `curl URL | sh # note` is still caught as a download piped into a shell.
+- zn-gate evidence --export in the Python package no longer prints an extra blank line at the end of the JSONL and CSV output, so it matches the Node package byte for byte. An empty ledger now prints nothing for JSONL, as Node does.
+- The PII scrubber now detects a phone number with a no-break space (U+00A0, U+202F or U+2007) or two spaces between the country code and the number or between its groups, for example `+34` followed by a no-break space and nine digits. Similar-looking values such as short numbers, dates and versions stay unflagged.
+- Checking a very long text with many shell quote pairs and percent escapes for secrets no longer slows down more than the text grows (a 3.6 MB text took about 10 seconds).
+- When the local stats file cannot be read (for example after a crash while it was being written), zn-gate now keeps a copy as stats.damaged.json in the zn folder before it starts a new one, instead of discarding the counts without a trace.
+- `zn unlock --passphrase-stdin` with nothing on standard input now says that no passphrase was read and shows how to pipe one in, instead of "passphrase must be at least 12 characters". The exit code is unchanged. A short passphrase piped in still gets the 12-character message.
+- On Node.js 18, `zn unlock` no longer prints an `ExperimentalWarning` about X25519 on stderr. Only that warning is hidden; other warnings are still shown.
+- `zn vault log export --otlp` printing to the terminal or a pipe now writes nothing unless the audit log is confirmed to be the one the vault verified. If the log changed in between, the command fails with the same message and stdout stays empty, as `--out` already did. The records are held in memory until they are confirmed, so no copy of the audit log is written to disk; a log over 64 MiB is not printed and the command asks for `--out FILE` instead.
+- When ZCode's settings file or plugin files cannot be read as JSON, `zn-gate check` now says why in one plain sentence (the file has comments, or is not valid JSON at a given line) and that the file was left unchanged. Before, it showed a generic message or nothing. A byte order mark is accepted, as in the other agents' settings files.
+
+### Security
+- The destructive-command rules now read a variable that a conditional assignment may have changed as holding every value it may have, and the worst one decides. Before, `D=/usr; [ -n "$X" ] && D=./build; rm -rf "$D"` was read as `rm -rf ./build` and allowed, although at run time `D` may still be a protected folder. The same applies to an assignment after `&&` or `||`, inside an `if`, `case`, `while`, `until` or `for` block, inside a `( )` or `{ }` group and in a function body (also for the download-and-run and startup-file rules and for the network allowlist). An assignment that always runs still replaces the old value, so `D=/usr; D=./build; rm -rf "$D"` stays allowed. A variable with more than 16 possible values, or a command whose variables give more than 64 combinations, is refused rather than guessed at.
+- The destructive-command check now splits an `env -S` string again when the string itself holds an `-S` option, and reads the words after an `-S` string as part of the command it names. `env -S "-S rm -rf ~/docs"` and `env -S "rm" -rf ~/docs` were allowed and are blocked now, like `rm -rf ~/docs`; the same forms on a build folder or a harmless command stay allowed. A line that nests `env -S` strings more than three levels deep is refused instead of read.
+- A `find` that starts at the filesystem root and deletes (`-delete`, or `rm` run through `-exec`, `-execdir`, `-ok` or `-okdir`) is now refused even when it has a filter such as `-name` or `-type`. A filter does not make a delete from the root safe.
+- `-execdir`, `-ok` and `-okdir` with `rm` now count as a delete, like `-exec rm`, and the GNU options `-P`, `-L`, `-H`, `-O` and `-D` before the starting paths no longer hide them (`find -P / -delete` is refused).
+- A `find` that reads its starting paths from `-files0-from` (a file or stdin) and deletes is now refused, also inside your project: the paths are not in the command, so zn cannot check them. `-files0-from` without a delete stays allowed.
+- Otherwise, `find` inside your project, and `find` from the root without a delete, stay allowed.
+- An agent is now refused the commands that make the hook launchers trust changed zn-gate files, in the cases listed below. The launchers run the hook only while the
+  installed package matches the digest they recorded, but the launcher refresh (`lib/agents/refresh.js`, which the
+  package runs after an install) and a reinstall or rebuild record the files as they are now, so an agent that had
+  edited a file of the package could run one of them and have its change trusted. Like `zn hooks install`, these are now
+  refused to the agent with a message that asks you to run them in your own terminal: running the refresh or the
+  launcher writer with Node.js, Bun or Deno (also through `./` or `../` in the path or after a `cd` in the same command), and `npm`, `pnpm`, `yarn`, `bun` or `volta` commands that install, update,
+  rebuild or link zn-gate (also `npm run postinstall` in an installed zn-gate folder). Removing zn-gate, reading its files
+  and other package commands are not affected.
+  Detection is not complete yet: some indirect ways of running these commands are not covered.
+- Experimental Rust gateway (not distributed): when neural blocking is on, a tool call is denied if the neural check cannot run (the model, its classifier or its memory fails), instead of being allowed. `ZN_FAST_BOOT` no longer turns the neural model off silently: the gateway says so when it starts, and refuses to start when neural blocking is on.
+- Experimental Rust gateway (not distributed): a misspelt setting in any section that turns a protection on (`engine`, `kms`, `neural`, `fusion`, `managed_rules`, `loop_breaker`, `consensus`, `guardrails`, as before `security` and `audit`), or a misspelt name of one of those sections, stops the gateway instead of leaving the protection off with a warning.
+- Experimental Rust gateway (not distributed): a multi-signature approval can be used only from the namespace that asked for it, and it is matched on a SHA-256 hash of the arguments. The loop breaker counts each namespace separately, so one tenant can no longer trip it for another.
+- Files in `~/.gnupg` (private keys, keyrings and trust database) are now protected like `~/.ssh/id_*` and `~/.aws/credentials`: reading them with `cat` or any other tool is refused. The folder itself is protected too (on Windows, `%APPDATA%\gnupg`): a command that names it, such as `tar`, `cp -r`, `grep -r`, `zip -r`, `rsync`, `cd` or `ls`, is refused. Only `gpg`, `gpg2`, `gpgconf`, `gpgsm` and `gpgv` may name their own keyring folder, and only when every option of the call is a read-only one written in full (not `gpg-agent` or `gpg-connect-agent`, which can start another program, and not an option that starts a helper program such as `--agent-program`), so `gpg --list-keys` and `gpg --homedir ~/.gnupg --list-keys` are not affected. Exporting a secret key is refused for every gpg program and keyring: `--export-secret-keys` and `--export-secret-subkeys` (also abbreviated), the `--export-secret-key-*` options of `gpgsm` and the agent's `EXPORT_KEY`. `gpg-connect-agent` is refused when zn cannot see the commands it would read: a pipe, an input redirection or a `$` or backtick expansion on its command line, one of its options starting with `--r` or a short option group containing `r`, or a control command other than `/bye` and `/echo` (such as `/run FILE`). Exporting a public key stays allowed.
+- The GitHub Copilot and ZCode hooks now block a tool call whose arguments cannot be read (text that is not valid JSON, a number, a list) on every tool, not only on the tools zn knows. Before, such a call on an unknown tool passed with no check.
+- For a tool zn does not know, the Copilot and ZCode hooks now look for commands and file paths in nested arguments, up to six levels deep, and apply the same shell, secret-file and destructive-command checks as at the top level. A command of the wrong type, or arguments nested deeper than that, are blocked. Calls that carry nothing to check still pass.
+- The experimental Rust gateway (not distributed) now checks every tool-call argument key (`arguments`, `args` and `input`) when a request carries more than one, instead of only the first one found.
+- A frame that repeats a key in any JSON object is now refused before any check, because only the last copy of a repeated key would have been checked.
+- A shell command that names more than 64 files, or that runs the instruction-file check out of time, is no longer allowed silently. It now asks (and is refused in strict mode) with a message saying it names too many files to check, as a write to `AGENTS.md` or `CLAUDE.md` does.
+- The plugin repository build now also refuses code that reaches Node's module loader without the `module`
+  built-in (`require.extensions`, the loader table, the Module class, internal bindings). Detection is partial: it does not yet follow aliases of `require` or `process`, or paths built by string concatenation. The one allowed use is
+  the hook runner's per-call integrity check of the vault client files, pinned to its reviewed text.
+- The shield no longer forwards a line from the agent that is not valid JSON (for example one containing `NaN`) to the MCP server unchecked. It is refused with a parse error when its request id can be read, and dropped and logged otherwise. Shadow mode still passes it on and reports it.
+- zn Team now fails closed when the stored organization policy does not verify (for example an edited copy, or a changed organization key). Before, the whole policy was ignored, including its blocks. Now the machine is in strict mode: every secret is blocked and nothing the organization had opened stays open, until `zn team sync` brings a valid policy. `zn team status` says so.
+
 ## [1.16.0] - 2026-11-16
 
 zn-gate 1.16.0 is a large release: it adds ways to see what zn-gate and your agents are doing, and it closes many gaps in the checks. `zn why` explains the last block in plain words. `zn-gate check --json` and `zn-gate check --hooks` show the protection state of each agent and the health of each installed hook. `zn-gate reach --history` shows whether your coding agents kept secrets in their local session history. `zn-gate scan --package` audits an npm MCP server or skill before you add it, and `zn audit --approve` records the executable configuration of a project so that later changes to it are reported. Two new checks are off by default: `zn run --egress-allow` limits the hosts a command can reach, and an optional check of the packages your agent installs by name.
@@ -1414,7 +1631,9 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.16.0...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.18.0...next
+[1.18.0]: https://github.com/usezn/zn/compare/v1.17.0...v1.18.0
+[1.17.0]: https://github.com/usezn/zn/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/usezn/zn/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/usezn/zn/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/usezn/zn/compare/v1.14.0...v1.14.1

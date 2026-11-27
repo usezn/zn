@@ -50,7 +50,7 @@ each agent's zn hook whether the agent may read them. This is what happened:
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
   -  Antigravity  not found on this machine
-  -  GitHub Copilot (VS Code, CLI) not found on this machine
+  -  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   -  Gemini CLI (experimental) not found on this machine
   -  ZCode        not found on this machine
 
@@ -135,7 +135,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 > **Checklist**
 >
 > - **Node.js:** Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later.
-> - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
+> - **An agent:** at least one supported agent. The [Agent compatibility](compat.md) page lists them all.
 > - **No account and no API key** are needed.
 
 Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command on this page in your own terminal, not through your agent.

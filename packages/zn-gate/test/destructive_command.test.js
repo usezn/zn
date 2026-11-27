@@ -7,6 +7,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { assertLinear } = require('./helpers/time_ratio');
 const fs = require('fs');
 const path = require('path');
 
@@ -282,21 +283,28 @@ test('agent hooks: the policy does not change what the other rules decide', asyn
 });
 
 test('a long chain of cd is followed in one pass and fails closed above the folder-length cap', () => {
-  const t0 = cpuNow();
   // Dot and dot-dot steps stay constant size, so a 200 KB chain is read to the end and the final rm is still caught.
-  const flat = checkCommand('cd ~ && ' + 'cd ./ && '.repeat(22000) + 'rm -rf .');
+  const flatBuild = (n) => 'cd ~ && ' + 'cd ./ && '.repeat(n) + 'rm -rf .';
+  const backBuild = (n) => 'cd ~ && ' + 'cd a && cd .. && '.repeat(n) + 'rm -rf .';
+  const deepBuild = (n) => 'cd ~ && ' + 'cd subfolder && '.repeat(n) + 'ls';
+  const deepVarBuild = (n) => 'cd $WORK && ' + 'cd a && cd .. && '.repeat(n) + 'rm -rf .';
+  const flat = checkCommand(flatBuild(22000));
   assert.equal(flat.verdict, 'block');
   assert.equal(flat.rule, 'destructive:rm_root_home');
-  const back = checkCommand('cd ~ && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
+  const back = checkCommand(backBuild(9000));
   assert.equal(back.rule, 'destructive:rm_root_home');
   // A folder path that keeps growing past the cap is refused, not guessed at.
-  const deep = checkCommand('cd ~ && ' + 'cd subfolder && '.repeat(13000) + 'ls');
+  const deep = checkCommand(deepBuild(13000));
   assert.equal(deep.verdict, 'block');
   assert.equal(deep.rule, 'destructive:too_many_commands');
-  const deepVar = checkCommand('cd $WORK && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
+  const deepVar = checkCommand(deepVarBuild(9000));
   // A folder named by a variable is not followed past its own name; the same chain stays allowed, like cd "$BUILD_DIR" && rm -rf .
   assert.equal(deepVar.verdict, 'allow');
-  assert.ok(cpuMsSince(t0) < 30000, 'took ' + (cpuMsSince(t0)) + ' ms');
+  // 4x the chain takes under 8x the CPU time: the ratio, not an absolute time, tells linear work from a quadratic read.
+  assertLinear(checkCommand, flatBuild, 22000, 'flat chain');
+  assertLinear(checkCommand, backBuild, 9000, 'back and forth');
+  assertLinear(checkCommand, deepBuild, 13000, 'deep chain');
+  assertLinear(checkCommand, deepVarBuild, 9000, 'variable folder');
 });
 
 test('cmd.exe cd /d and a trailing separator are followed', () => {

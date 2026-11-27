@@ -114,7 +114,9 @@ test('an empty event names the agent and how to set it up again', () => {
 test('an empty event from the Claude Code plugin says to update the plugin, not to run hooks install', () => {
   const res = spawnSync(process.execPath, [RUNNER, 'claude-code'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '/example/plugin' } });
   assert.equal(res.status, 2);
-  assert.match(res.stderr, /reinstall the zn-gate plugin at its release/);
-  assert.match(res.stderr, /claude plugin marketplace add usezn\/zn#v\d+\.\d+\.\d+/);
+  assert.match(res.stderr, /reinstall the zn-gate plugin at its release in their terminal/);
+  const { version } = require('../package.json');
+  assert.ok(res.stderr.includes('`claude plugin marketplace add usezn/zn#plugin-v' + version + '`, `claude plugin install zn-gate@usezn`'), res.stderr);
+  assert.doesNotMatch(res.stderr, /marketplace add usezn\/zn(?:#v|@|`)/);
   assert.ok(!/hooks install/.test(res.stderr));
 });

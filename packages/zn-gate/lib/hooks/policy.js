@@ -22,6 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
+const { hookStopAssignedIn, preloadAssignedIn, obscureLoaderKeyIn, loaderNameMentionedIn, shellDotenvWrite, OPAQUE_WRITE, PRELOAD_WRITE_NAMES } = require('../loader-env');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
 const { znCommand, cliName } = require('../zn-command');
@@ -29,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-18.2';
+const POLICY_RULES_VERSION = '2026-11-26.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -981,6 +982,85 @@ function agentConfigDenial(p, c) {
   return 'zn: ' + c.reason + ' (' + p + ') is protected: an agent may not change how zn and its hooks run. Ask the user to make this change.';
 }
 
+/**
+ * A write that would set a variable which stops every hook before it runs (LD_TRACE_LOADED_OBJECTS, LD_DEBUG with help: see
+ * isHookStopVar in loader-env.js, the same test `zn audit` uses for ZNA008), or a preload library variable to a value (LD_PRELOAD,
+ * LD_AUDIT, DYLD_INSERT_LIBRARIES ...: preloadAssignedIn), in a file the agent loads into its environment. Gemini CLI
+ * loads a project .env and .gemini/.env; the agents' own settings files are refused whole (AGENT_CONFIG_RES), so the .env files are the
+ * ones that need this check. `texts` is what the call would write (a file body, a replacement, a patch); returns a deny message or null.
+ */
+function loaderEnvWriteDenial(p, texts, opts = {}) {
+  const c = classifyPath(p, opts);
+  if (!c || c.kind !== 'dotenv') return null;
+  // An edit that could not be applied to the file as it is: the result is unknown, so the write is refused.
+  if (texts && texts.unresolved) {
+    return 'zn: ' + path.basename(String(p)) + ' is a file the agent loads into its environment, and zn could not work out what this edit would leave in it. ' +
+      'An agent may not make this change. Ask the user to make it, or rewrite the whole file.';
+  }
+  for (const t of texts || []) {
+    if (typeof t !== 'string') continue;
+    const name = hookStopAssignedIn(t);
+    if (name) return loaderEnvDenial(name, p);
+    // LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES ... with a value: a library of the project's choosing loaded into every program.
+    const preload = preloadAssignedIn(t);
+    if (preload) return loaderPreloadDenial(preload, p);
+    // A line whose name mentions LD_ or DYLD_ but is not a plain name (quotes, backslashes, $ inside it): which variable it sets is
+    // not plain to see.
+    if (obscureLoaderKeyIn(t)) {
+      return 'zn: ' + path.basename(String(p)) + ' is a file the agent loads into its environment, and this write holds a variable name that mentions LD_ or DYLD_ ' +
+        'but is not a plain name, so zn cannot tell which variable it sets. An agent may not make this change. Ask the user to make it.';
+    }
+  }
+  return null;
+}
+
+function loaderEnvDenial(name, p) {
+  return 'zn: ' + path.basename(String(p)) + ' would set ' + name + ' for the agent. On Linux that makes the dynamic loader end every program the agent starts ' +
+    'before it runs, the shell of every zn hook included, so zn could no longer check any action. An agent may not make this change. Ask the user to make it.';
+}
+
+function loaderPreloadDenial(name, p) {
+  return 'zn: ' + path.basename(String(p)) + ' would set ' + name + ' for the agent. That makes the dynamic loader load a library of the project\'s choosing ' +
+    'into every program the agent starts, the shell of every zn hook included, before zn can check anything. An agent may not make this change. Ask the user to make it.';
+}
+
+function opaqueEnvWriteDenial(p) {
+  const base = path.basename(String(p));
+  return 'Edit ' + base + ' with the file editor tool; shell writes to .env files are blocked. zn cannot see what the shell actually writes.';
+}
+
+/** A program that names a watched dotenv file and is not proven read-only: zn cannot tell whether it writes the file. */
+function unprovenEnvWriteDenial(p) {
+  const base = path.basename(String(p));
+  return 'zn cannot tell whether this command writes ' + base + ', so shell writes to .env files are blocked here. Edit ' + base +
+    ' with the file editor tool. To load it, use --env-file (node, bun, deno, docker, podman) or dotenv -e; source and . run the ' +
+    'file as shell code and are refused.';
+}
+
+/**
+ * A call that names a watched dotenv file without giving zn the file it would leave there: a copy, move, rename, link, upload or
+ * download, or a tool zn does not know. `texts` is what writtenTextsOf found; its `complete` flag says the resulting file is known in
+ * full (a whole body, an edit applied to the file, a patch section). Refused whatever the tool is called: there is no read-only
+ * exemption by name. An MCP server (or any tool whose name zn cannot tie to the agent's own tool list) may call a writing tool
+ * read_file, so a name proves nothing. The agents' own read tools never reach this check: their adapters turn them into a plain
+ * read, which only gets the read checks.
+ */
+function dotenvUnseenWriteDenial(p, texts, opts = {}) {
+  const c = classifyPath(p, opts);
+  if (!c || c.kind !== 'dotenv') return null;
+  if (texts && texts.complete && !texts.unresolved) return null;
+  const base = path.basename(String(p));
+  return 'Edit ' + base + ' with the file editor tool; copies, moves, renames and tools zn does not know are blocked for .env files. ' +
+    'zn cannot see what this call would leave in the file.';
+}
+
+/** The refusal for what a shell write to a dotenv file would do: a loader name it sets or mentions, or OPAQUE_WRITE. */
+function dotenvShellWriteDenial(verdict, p) {
+  if (verdict === OPAQUE_WRITE) return opaqueEnvWriteDenial(p);
+  if (verdict === 'LD_DEBUG' || verdict === 'LD_TRACE_LOADED_OBJECTS') return loaderEnvDenial(verdict, p);
+  return PRELOAD_WRITE_NAMES.includes(verdict) ? loaderPreloadDenial(verdict, p) : loaderEnvDenial(verdict, p);
+}
+
 /** Writes are only blocked for zn's own state and the agents' hook and plugin configuration. */
 function writeDenial(p, opts = {}) {
   const c = classifyPath(p, opts);
@@ -1224,6 +1304,62 @@ function intoDirectory(dest, sources, forced, opts) {
   return landed;
 }
 
+/** The files program `name` writes, given the words after it: the files of a downloader's output option, the destination of
+ *  cp, mv, ln and the like, the of= of dd, an in-place sed or perl's files, and every other argument of the other writers. */
+function programWriteTargets(name, rest, opts) {
+  if (Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, name)) return downloadTargets(name, rest);
+  const candidates = [];
+  if (!INSTRUCTION_WRITERS.has(name)) return candidates;
+  const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
+  if (name === 'dd') {
+    for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
+  } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
+    // These only read their files without an in-place flag.
+  } else if (INSTRUCTION_DEST_LAST.has(name)) {
+    // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
+    const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
+    const dir = psDest !== null ? null : targetDirectoryOf(rest);
+    if (psDest !== null) {
+      candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
+    } else if (dir !== null) {
+      // -t DIR: every other argument is a source, written into DIR.
+      const at = args.indexOf(dir);
+      const sources = args.filter((_, j) => j !== at);
+      candidates.push(...intoDirectory(dir, sources, true, opts));
+    } else if (args.length > 1) {
+      const dest = args[args.length - 1];
+      candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
+    }
+  } else {
+    candidates.push(...args);
+  }
+  return candidates;
+}
+
+/**
+ * Whether word `w` of a shell command is a file its program writes with content zn cannot see: a file that cp, mv, ln, rsync,
+ * install, dd of=, curl -o or wget -O writes, the files of an in-place sed or perl, and every file word of tee, truncate, patch,
+ * ex, ed, Set-Content, Add-Content, Out-File, New-Item and their aliases (also -Path:file). touch only changes times.
+ */
+function writtenByProgram(w, text, readings, opts) {
+  const reading = readings.find((r) => r.includes(w));
+  if (!reading) {
+    const name = programName(w.head);
+    return INSTRUCTION_WRITERS.has(name) && name !== 'touch';
+  }
+  const seg = reading.filter((x) => x.seq === w.seq);
+  const progs = seg.map((x) => x.text.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
+  const at = commandWordAt(seg, progs);
+  if (at < 0 || seg[at] === w) return false;
+  const name = progs[at];
+  if (name === 'touch') return false;
+  const rest = seg.slice(at + 1).map((x) => x.text);
+  // Writers that write every file they name: each dotenv word of theirs counts, whatever its form.
+  if (INSTRUCTION_WRITERS.has(name) && name !== 'dd' && name !== 'sed' && name !== 'perl' && !INSTRUCTION_DEST_LAST.has(name)) return true;
+  const targets = programWriteTargets(name, rest, opts);
+  return targets.includes(text) || targets.includes(w.text);
+}
+
 /** The first notice for a word of a shell command that writes an instruction file; null when none does. */
 function instructionWriteInWords(readings, opts) {
   const seen = new Set();
@@ -1238,35 +1374,7 @@ function instructionWriteInWords(readings, opts) {
       const at = commandWordAt(seg, progs);
       const candidates = [];
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
-      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
-        candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
-      } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
-        const name = progs[at];
-        const rest = seg.slice(at + 1).map((x) => x.text);
-        const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
-        if (name === 'dd') {
-          for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
-        } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
-          // These only read their files without an in-place flag.
-        } else if (INSTRUCTION_DEST_LAST.has(name)) {
-          // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
-          const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
-          const dir = psDest !== null ? null : targetDirectoryOf(rest);
-          if (psDest !== null) {
-            candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
-          } else if (dir !== null) {
-            // -t DIR: every other argument is a source, written into DIR.
-            const at = args.indexOf(dir);
-            const sources = args.filter((_, j) => j !== at);
-            candidates.push(...intoDirectory(dir, sources, true, opts));
-          } else if (args.length > 1) {
-            const dest = args[args.length - 1];
-            candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
-          }
-        } else {
-          candidates.push(...args);
-        }
-      }
+      if (at >= 0) candidates.push(...programWriteTargets(progs[at], seg.slice(at + 1).map((x) => x.text), opts));
       for (const text of candidates) {
         if (!text || seen.has(text)) continue;
         seen.add(text);
@@ -1373,6 +1481,8 @@ function scanFirstCommand(cmd, posix = false) {
 const REDIRECT_OP_WORD_RE = /^(?:[0-9]*|\*)(?:>\||>>?)$/;
 // The same operator glued to the end of a word (`x>` in `echo x> file`), read on the raw source so a quoted ">" is not one.
 const GLUED_END_RE = /(?<![\\<>&])(?:>\||>>?)$/;
+// The read-write operator `<>` at the end of a word (`1<>`, `{fd}<>`, `x<>`): the next word is the file it opens for writing.
+const RW_END_RE = /<>$/;
 // What can stand in front of a redirect operator without being a word of its own: a file descriptor, `*` (PowerShell:
 // all streams) or a bash `{name}` descriptor.
 const REDIRECT_FD_PREFIX_RE = /^(?:[0-9]*|\*|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
@@ -1429,10 +1539,18 @@ function allWords(cmd, posix = false) {
       const prefixRaw = glued ? raw.slice(0, glued.at) : '';
       // A descriptor in front (`2>x`, `{fd}>x`) belongs to the operator; any other prefix is an argument of its own.
       const gluedOp = glued !== null && !REDIRECT_FD_PREFIX_RE.test(prefixRaw);
-      const afterOp = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw);
-      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)(?:>\||>>?)./.test(w.text) || glued !== null;
+      // `<>` opens a file for reading AND writing (`1<> .env`, `{fd}<>.env`, `x<>.env`): it is a write redirection.
+      const rwAt = glued === null ? raw.indexOf('<>') : -1;
+      const afterOp = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw) || RW_END_RE.test(prevRaw);
+      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)(?:>\||>>?)./.test(w.text) || glued !== null || rwAt >= 0;
       let t = w.text;
       let targetRaw = raw;
+      if (rwAt >= 0) {
+        const before = raw.slice(0, rwAt);
+        if (before && !REDIRECT_FD_PREFIX_RE.test(before)) out.push({ text: dequoteFragment(before, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+        targetRaw = raw.slice(rwAt + 2);
+        t = dequoteFragment(targetRaw, posix);
+      }
       if (glued) {
         targetRaw = raw.slice(glued.at + glued.len);
         t = dequoteFragment(targetRaw, posix);
@@ -1466,6 +1584,99 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
+// What a command that names a watched dotenv file may be, apart from READ_ONLY_CMDS: metadata-only commands and read-only git
+// subcommands. Any other program that names the file (python3 -c, node -e, perl, awk, sed w, curl -o, iwr -OutFile, an unknown tool)
+// is refused: zn cannot see whether it writes the file. less is not here (it can run commands).
+// Deleting a file, changing folder and printing a name write no content into it. A shell that runs code (sh -c, bash -lc, powershell
+// -Command) is judged by that code, which is checked on its own (shellCodesOf); `join-path` words are the same words with a folder added.
+const DOTENV_METADATA_CMDS = new Set(['touch', 'test', '[', '[[', 'rm', 'rmdir', 'del', 'erase', 'remove-item', 'cd', 'pushd', 'popd', 'chdir',
+  'set-location', 'sl', 'write-output', 'write-host', 'join-path',
+  // Commands that only print: they come up inside $( ) in a command that reads the file.
+  'date', 'true', 'false', 'whoami', 'hostname', 'uname', 'id', 'basename', 'dirname', 'printf', 'seq', 'expr', 'realpath', 'readlink']);
+const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 'powershell', 'pwsh', 'cmd']);
+// Programs whose --env-file option only reads the file it names, and the dotenv runners whose -e / -f / --env-file option does.
+// Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
+const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
+const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
+// Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
+// npm exec, pnpm exec, bun x). A dotenv runner counts only as the program word, or as the program a launcher runs when the launcher is
+// itself the program word; never as an argument of another program (node -e "..." npx dotenv -e .env is not launched).
+const PACKAGE_RUNNERS = new Set(['npx', 'bunx', 'pnpx']);
+const PACKAGE_RUNNER_PAIRS = new Set(['pnpm dlx', 'yarn dlx', 'npm exec', 'pnpm exec', 'bun x']);
+const PACKAGE_RUNNER_PAIR_HEADS = new Set([...PACKAGE_RUNNER_PAIRS].map((p) => p.split(' ')[0]));
+// Launcher options that take no value and may stand between the launcher and the program it runs (npx -y dotenv ...).
+const PACKAGE_RUNNER_FLAGS = new Set(['-y', '--yes', '-q', '--quiet']);
+// A word that is one plain name: no quote, expansion, bracket or separator that could hide more than a file name.
+const PLAIN_NAME_RE = /^[^\s'"`$(){};|&<>]+$/;
+// git steps that read, or that only change the index or the history (add, commit). checkout, restore, reset and stash are not here:
+// they write stored content into the file in the worktree, which zn cannot see.
+const GIT_READ_SUBS = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'rev-parse',
+  'add', 'commit']);
+function dotenvReadOnlyWord(w, shellChecked) {
+  // source and . are not here: they run the file as shell code, which can write the file itself.
+  if (READ_ONLY_CMDS.has(w.head) || DOTENV_METADATA_CMDS.has(w.head)) return true;
+  if (shellChecked && SHELL_HEADS.has(w.head)) return true;
+  if (w.head !== 'git') return false;
+  const args = w.gitArgs || [];
+  if (args.some((x) => /^--output(=|$)/.test(x))) return false;
+  if (GIT_READ_SUBS.has(w.sub)) return true;
+  // git rm --cached .env only changes the index.
+  return w.sub === 'rm' && args.includes('--cached');
+}
+/**
+ * The words of a command that are the value of an env-file option: --env-file X or --env-file=X of node, bun, deno, docker or podman,
+ * and -e / -f / --env-file X (or =X) of dotenv, dotenv-cli or dotenvx, before a `--`. Only a plain name that classifies as a watched
+ * dotenv file counts. Returns a Map from the word to the name it reads. words is one reading of the command (see allWords): its
+ * program word is the first word of each simple command that names the program, so a later word with the same text (npx w.js npx
+ * dotenv ...) is an argument, not a new start.
+ */
+function envFileValueWords(words, opts) {
+  const out = new Map();
+  const isDotenvName = (t) => PLAIN_NAME_RE.test(t) && (() => { const c = classifyWord(t, opts); return !!c && c.kind === 'dotenv'; })();
+  let seq = null;
+  let runner = false;
+  let ended = false;
+  let envProg = false;
+  // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
+  // the first word of a two-word launcher, null otherwise. Only an open launch makes the next dotenv runner the launched program.
+  let launch = null;
+  let launchHead = null;
+  let seenProgram = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.head === '' || w.redirectTarget) continue;
+    const t = w.text;
+    // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
+    const programWord = !seenProgram && programName(t) === programName(w.head);
+    if (programWord) seenProgram = true;
+    const wasLaunch = launch;
+    if (programWord) {
+      const p = programName(t);
+      launch = PACKAGE_RUNNERS.has(p) ? 'open' : PACKAGE_RUNNER_PAIR_HEADS.has(p) ? 'pair' : null;
+      launchHead = p;
+    } else if (launch === 'pair') {
+      launch = PACKAGE_RUNNER_PAIRS.has(launchHead + ' ' + t) ? 'open' : null;
+    } else if (launch === 'open' && !PACKAGE_RUNNER_FLAGS.has(t)) {
+      launch = null;
+    }
+    if (t === '--') { ended = true; continue; }
+    if (ended) continue;
+    if (DOTENV_RUNNERS.has(programName(t))) {
+      // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
+      if (programWord || wasLaunch === 'open') runner = true;
+      continue;
+    }
+    const next = words[i + 1];
+    const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
+    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
+    if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
+    const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
+    if (opt && nextValue()) { out.set(next, next.text); i++; }
+  }
+  return out;
+}
+
 const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|\.zcode\/(?:cli\/)?config|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
@@ -2797,9 +3008,37 @@ function bashDenialOf(cmd, opts = {}) {
   // Inside $( ) or backticks the text is not split into simple commands, so
   // every word of it is checked on its own, as if it were a word of the command.
   // The same for the code an interpreter runs (python -c "open('.env')"), where a path sits inside quotes and brackets.
-  if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head)))) {
+  // A program that is not read-only (awk 'BEGIN{print 1 > ".env"}', sed -n 'w .env') can name a dotenv file inside its own program text: its
+  // words are split too.
+  // Each reading is read on its own: its simple commands restart the program word (allWords numbers them from 1 in every reading).
+  const envFileValues = new Map();
+  for (const reading of readings) for (const [k, v] of envFileValueWords(reading, opts)) envFileValues.set(k, v);
+  opts.envFileValues = envFileValues;
+  if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
+      (/\.env/i.test(text) && words.some((w) => w.head !== '' && !envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)))) {
     const split = [];
-    for (const t of text.split(/[\s'"`$(){};|&<>=,]+/)) if (t) split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
+    // A plain word already judged read-only on its own (cat .env, source .env, --env-file=.env) is not judged again here: one split
+    // token per such word is set aside. A name that also appears in program text (node -e "...'.env'...") is still split and judged.
+    const SPLIT_RE = /[\s'"`$(){};|&<>=,]+/;
+    // Only the first reading is counted (the others repeat the same words), and nothing is set aside when a name printed by one
+    // program can reach another (a pipe, $( ), xargs, find -exec, read, a loop): echo .env | xargs cp x {} writes .env.
+    const accounted = new Map();
+    const firstReading = Array.isArray(readings[0]) ? readings[0] : words;
+    const namesCanFlow = /[|`]|\$\(|[<>]\(|<<<|(?:^|[\s;&(])(?:xargs|parallel|read|while|for|until|select)(?=$|[\s;&)])|\s-exec(?:dir)?\b|\s-ok\b/.test(text);
+    // git checkout, restore, reset, stash and switch write stored content into the worktree without naming the file (git reset
+    // --hard && cat .env): nothing is set aside then either.
+    const gitWritesWorktree = words.some((w) => w.git && /^(?:checkout|restore|reset|stash|switch)$/.test(String(w.sub || '')));
+    for (const w of namesCanFlow || gitWritesWorktree ? [] : firstReading) {
+      if (w.head === '' || w.redirectTarget || !PLAIN_NAME_RE.test(w.text)) continue;
+      if (!envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)) continue;
+      for (const t of w.text.split(SPLIT_RE)) if (t) accounted.set(t, (accounted.get(t) || 0) + 1);
+    }
+    for (const t of text.split(SPLIT_RE)) {
+      if (!t) continue;
+      const n = accounted.get(t);
+      if (n) { accounted.set(t, n - 1); continue; }
+      split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
+    }
     words.push(...split);
     readings.push(split);
   }
@@ -2873,10 +3112,14 @@ function bashDenialOf(cmd, opts = {}) {
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
   const listed = psListWords(words, opts, cmd);
+  let dotenvWrite; // the verdict of shellDotenvWrite on this command, computed once
+  // Whether every program of the command is a read-only or metadata-only one (see dotenvReadOnlyWord); the words with no program of
+  // their own (the text inside quotes or $( ) that is split into words) are judged by this.
+  const onlyReadOnly = words.every((x) => x.head === '' || (opts.envFileValues && opts.envFileValues.has(x)) || dotenvReadOnlyWord(x, codes.size > 0));
   // More distinct joined paths than zn judges (each adds two entries, backslash and slash forms, so 32 paths fill the 64-entry cap),
   // or a joined path too long to judge: refused, not checked in part.
   if (listed.over) return TOO_SLOW_MESSAGE;
-  for (const w of withEqualsReadings(listed)) {
+  for (const w of withGluedDotenvReadings(withEqualsReadings(listed), opts)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (w.atFile) {
@@ -2946,6 +3189,46 @@ function bashDenialOf(cmd, opts = {}) {
       if (w.redirectTarget || writing) return agentConfigDenial(text, c);
       continue; // reading the settings is allowed
     }
+    // A redirection to a pattern that matches a .env file (echo x > .en?) writes that file when the pattern matches it.
+    const dotenvPattern = w.redirectTarget && c.kind === 'credential' && c.reason === 'a pattern that matches a .env file';
+    let unprovenWrite = false;
+    if ((c.kind === 'dotenv' || dotenvPattern) && (w.redirectTarget || writing)) {
+      // A shell write to a file the agent loads into its environment is refused whatever it writes (shellDotenvWrite in loader-env.js): the
+      // shell can run a different echo, printf or cat than the command shows, so zn cannot see the text. The agent uses the editor tool,
+      // which zn checks. A program that writes the file from elsewhere (cp, tee, sed -i, dd of=, Set-Content ...) is refused the same way.
+      // Any other program that names the file is refused unless it is a read-only or metadata-only one (dotenvReadOnlyWord).
+      let verdict;
+      if (w.redirectTarget) {
+        if (dotenvWrite === undefined) {
+          dotenvWrite = shellDotenvWrite(cmd, (t) => {
+            let k = classifyWord(t, opts);
+            const e = protectedElsewhere(t, opts);
+            if (e) k = e;
+            return !!k && k.kind === 'dotenv';
+          });
+        }
+        // This reading found a redirection to the file that the scan did not: the two readings disagree, so the write is refused too.
+        verdict = dotenvWrite.verdict || loaderNameMentionedIn(cmd) || OPAQUE_WRITE;
+      } else if (writtenByProgram(w, text, readings, opts)) {
+        verdict = loaderNameMentionedIn(cmd) || OPAQUE_WRITE;
+      } else {
+        // Any program that names the file is refused unless it is proven read-only or metadata-only.
+        const readOnly = (opts.envFileValues && opts.envFileValues.has(w)) || (w.head === '' ? onlyReadOnly : dotenvReadOnlyWord(w, codes.size > 0));
+        verdict = loaderNameMentionedIn(cmd);
+        // Not proven read-only: refused, but a read of a secret file keeps its own (earlier) refusal below.
+        // A backslash path (.\.env) names the file only where a backslash is a separator: on Windows or in PowerShell.
+        const backslashElsewhere = text.indexOf(String.fromCharCode(92)) >= 0 && process.platform !== 'win32' && opts.powershell !== true;
+        // Whether .env is a folder when the command is checked does not matter: the program may remove the folder and write a file there
+        // (check, then act), so a program that is not proven read-only is refused for a name that is watched.
+        unprovenWrite = !verdict && !readOnly && !backslashElsewhere;
+      }
+      if (verdict) return dotenvShellWriteDenial(verdict, text);
+    }
+    if (unprovenWrite && !w.redirectTarget) {
+      const read = c ? denialOf(c, text, opts) : null;
+      if (read) return read;
+      return unprovenEnvWriteDenial(text);
+    }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     // The gpg programs use their own home folder (gpg --homedir ~/.gnupg --list-keys); any other program naming it reads it.
     if (c.reason === GNUPG_DIR_REASON && GPG_FOLDER_PROGRAMS.has(programName(w.head)) && gpgReadOnlyCall(listed, w)) continue;
@@ -2965,6 +3248,44 @@ const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
  * `-X:a=.env` is a PowerShell colon value ("a=.env") and also a --name=value word (".env"): the colon reading would hide the
  * second one, so the text after the first '=' is judged as a word of its own as well.
  */
+// A sed substitution with the w flag and its file glued on: s<d>pattern<d>replacement<d>flags w file (any delimiter, escapes allowed).
+const SED_SUBST_WRITE_RE = /^s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiIeEmM0-9]*w(.+)$/;
+// Programs whose volume or mount option names a host file inside a longer spec (-v ./.env:/app/e:rw, --mount source=./.env,target=/x).
+const CONTAINER_HEADS = new Set(['docker', 'podman', 'nerdctl', 'docker-compose', 'podman-compose']);
+/**
+ * Extra readings of words that hold a watched dotenv name glued to something else, so the name gets the same checks as when it
+ * stands alone: an option with its value attached (sort -o.env, -o./sub/.env), a sed write command with its file attached (w.env,
+ * W./.env), and the parts of a container volume or mount spec (./.env:/app/e:rw, source=./.env,target=/x). A reading is added only
+ * when the glued part classifies as a watched dotenv file.
+ */
+function withGluedDotenvReadings(words, opts) {
+  let extra = null;
+  const isDotenv = (t) => { const c = t ? classifyWord(t, opts) : null; return !!c && c.kind === 'dotenv'; };
+  const add = (w, t) => { (extra || (extra = [])).push({ ...w, text: t }); };
+  for (const w of words) {
+    if (w.git || typeof w.text !== 'string' || w.text.length > 4096) continue;
+    const t = w.text;
+    const prog = programName(w.head);
+    // -o.env, -O./sub/.env, --x./.env: an option of one or two dashes with a name glued to it (no = sign; that reading exists already).
+    const opt = /^-{1,2}[A-Za-z][A-Za-z0-9]*?([.~\/\\].*)$/.exec(t);
+    if (opt && t.indexOf('=') < 0 && isDotenv(opt[1])) add(w, opt[1]);
+    // sed's w and W commands write the file named right after them, and so does the w flag of a substitution (s/a/b/w.env, s|a|b|gw.env).
+    if (prog === 'sed' || prog === 'gsed' || w.head === '') {
+      if (/^[wW]./.test(t) && isDotenv(t.slice(1))) add(w, t.slice(1));
+      const sub = SED_SUBST_WRITE_RE.exec(t);
+      if (sub && isDotenv(sub[2])) add(w, sub[2]);
+    }
+    // A container volume or mount spec: each part between : , and = is checked, after an attached short option (-v./.env:/app/e).
+    if (CONTAINER_HEADS.has(prog) && /[:,=]/.test(t)) {
+      const spec = /^-[A-Za-z]([^-].*)$/.exec(t);
+      for (const src of spec ? [t, spec[1]] : [t]) {
+        for (const part of src.split(/[:,=]/)) if (part !== t && isDotenv(part)) add(w, part);
+      }
+    }
+  }
+  return extra ? words.concat(extra) : words;
+}
+
 function withEqualsReadings(words) {
   let extra = null;
   for (const w of words) {
@@ -4317,6 +4638,8 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  loaderEnvWriteDenial,
+  dotenvUnseenWriteDenial,
   adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,

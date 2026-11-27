@@ -40,7 +40,7 @@ The word after `backend` names where the vault key is kept: `macos` for the macO
 ## When the vault is unlocked
 
 ```text
-Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:09 (in 8 h) at the latest, zn-gate 1.16.0)
+Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:09 (in 8 h) at the latest, zn-gate 1.18.0)
 Location: ~/.zn/vault
 ```
 
@@ -48,7 +48,7 @@ Reading the `Vault:` line from left to right:
 
 - `backend passphrase`: the same key-holder word as above.
 - `locks after 30 min idle, or at 23:09 (in 8 h) at the latest`: when the vault locks again — after the idle time with no use, or at the end of the session at the latest, in your local time. The two values are the `--idle` and `--ttl` values of the running unlock (30 minutes idle and 8 hours are the defaults).
-- `zn-gate 1.16.0`: the version of the running vault.
+- `zn-gate 1.18.0`: the version of the running vault.
 
 The `Location:` line is the folder where the vault lives: the `vault` folder inside `~/.zn`, or inside the folder the `ZN_HOME` variable names. It prints the full path on your machine; `~/.zn/vault` here is the short form the docs use.
 

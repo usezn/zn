@@ -8,11 +8,11 @@
 [![npm version](https://img.shields.io/npm/v/zn-gate?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/zn-gate)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/usezn/zn/blob/main/LICENSE)
 
-**The local security layer for coding agents.** zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (plus Gemini CLI, experimental).
+**The local security layer for coding agents.** zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (plus Gemini CLI (experimental) and Copilot CLI (experimental)).
 
 `zn-gate` is an open-source security layer that runs on your machine, between your agent and the tools and content it touches. It checks what the agent reads and calls for prompt injection, redacts secrets from tool output before the model sees it, and audits prompts, skills and configs. No account, no network by default, and no runtime dependencies except `age-encryption` (and its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package at the versions pinned in `package-lock.json`.
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI (experimental) or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI (experimental), Copilot CLI (experimental) or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
 
 ---
 
@@ -41,7 +41,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds the seven coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
+- It finds the six coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, plus Gemini CLI (experimental) and Copilot CLI (experimental).
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
@@ -78,7 +78,7 @@ Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main
 **Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
-claude plugin marketplace add usezn/zn#v1.16.0
+claude plugin marketplace add usezn/zn#plugin-v1.17.0
 claude plugin install zn-gate@usezn
 ```
 
@@ -112,7 +112,7 @@ In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file 
 
 **ZCode desktop app.** `zn hooks install zcode` (or `npx -y zn-gate init`) adds hooks that run before each tool call and before each prompt. It blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret, and a prompt that contains a secret, and the agent cannot edit ZCode's own config file. It cannot remove secrets from what a tool returns (zn adds a notice when an output holds one), ZCode ignores the hooks of a project, and zn's launcher blocks the call when its Node.js is gone, so treat it as a first layer. ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it. Tested end to end on the ZCode desktop app 3.16.3 on Linux x64 and Windows x64 (Windows Server 2022, through the agent the app ships; the Windows app window was not driven); macOS is not tested. **New in 1.15.0:** the ZCode plugin protects tool calls on Windows now. In earlier versions its hooks could not start there, so ZCode ran every tool call without zn. Install the plugin again in ZCode (Settings, Plugins) after updating. Details: [ZCode page](https://github.com/usezn/zn/blob/main/docs/editors/zcode.md).
 
-**GitHub Copilot (VS Code and Copilot CLI).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Details: [Copilot CLI notes](https://github.com/usezn/zn/blob/main/docs/compat.md).
+**Copilot CLI (experimental).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Details: [Copilot CLI notes](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 **Gemini CLI (experimental).** `zn hooks install gemini` adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit Gemini CLI's settings files. It does not change what a tool returns, Gemini CLI hooks cannot ask you for confirmation, and Gemini CLI lets a call run when a hook crashes or times out, so zn blocks it instead (a hook that fails is answered with a block, and zn sets a 15-second timeout on its hook and answers a check still running after 11 seconds with a block), so treat it as a first layer. Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate. Details: [Gemini CLI notes](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
@@ -182,7 +182,7 @@ A short summary of the last 7 days on this computer: blocked actions, secrets hi
 npx -y zn-gate connect
 ```
 
-Optional, and you do it yourself in your own terminal (an agent cannot). It opens usezn.com so you can create an analysis-only API key (it cannot read your usage or manage keys), then asks you to paste it at a hidden prompt. A full-access key is refused. The key is kept in your system keychain (or the zn vault when there is no keychain), never written to a file, and zn's hooks refuse the direct ways for your agent to read it. After that, the text you or your agent send through `analyze_prompt`, with detected secrets removed first, is also checked by the Galvanize 3 classifier at usezn.com. Until you run it, nothing is sent. `zn-gate disconnect` removes the key from this computer and asks whether to revoke it on usezn.com too (default no). [How it works](https://github.com/usezn/zn/blob/main/docs/connect.md).
+Optional, and you do it yourself in your own terminal (an agent cannot). It opens usezn.com so you can create an analysis-only API key (it cannot read your usage or manage keys), then asks you to paste it at a hidden prompt. A full-access key is refused. The key is kept in your system keychain (or the zn vault when there is no keychain), never written to a file, and zn's hooks refuse the direct ways for your agent to read it. After that, the text you or your agent send through `analyze_prompt`, with detected secrets removed first, is also checked by the Galvanize 3.1 classifier at usezn.com. Until you run it, nothing is sent. `zn-gate disconnect` removes the key from this computer and asks whether to revoke it on usezn.com too (default no). [How it works](https://github.com/usezn/zn/blob/main/docs/connect.md).
 
 ## Check that it works
 
@@ -220,7 +220,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 **Galvanize: prompt-injection detection**
 
 - Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- Today, optional cloud: the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
+- Today, optional cloud: the Galvanize 3.1 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3.1); [announcement](https://usezn.com/blog/galvanize-3-1/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3-1); the previous models, [Galvanize 3](https://huggingface.co/usezn/Galvanize-3) and [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also have open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
@@ -244,7 +244,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
-| Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
+| Tool output (`check_tool_result`, `shield`) | Locally | **Never**, with one opt-in exception in Claude Code: a capped sample of web, MCP and shell results, only after `zn-gate connect` and `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json` (see the opt-in cloud check of tool output) |
 | Results of web fetches, MCP tools and shell commands, seen by the Claude Code hook | Locally first | Off by default. Only if you ran `zn-gate connect` and also turned it on with `{"hooks": {"cloudCheckToolOutput": true}}` in your own `~/.zn/config.json`. The setting and the record `zn-gate connect` leaves are read only from the `.zn` folder in the home folder of your operating-system account (the one the system reports for your user, not the `HOME` or `USERPROFILE` variable), and the path stays off when `HOME`, `USERPROFILE` or `ZN_HOME` points zn-gate at another folder. So `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot turn it on, because a project can set environment variables for the agent. zn-gate then sends a sample of each result, at most 16 KiB, counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), to `api.usezn.com` to look for hidden instructions aimed at the agent. It skips a result the local check already flagged. Secrets and personal data (email addresses, phone numbers, IBANs, card numbers and national ID numbers: Spanish DNI and NIE, US SSN) are removed before sending, and each personal value is replaced with [EMAIL], [PHONE], [IBAN], [CARD] or [ID]; IP addresses, names, postal addresses and usernames are not removed, and a secret zn-gate does not recognize is sent as written. `Read` results, other agents and the other hooks send nothing. If the call fails (no connection, a timeout, an error from the service), nothing is blocked or added; if the service answers with a verdict that is neither allow nor block (rule `cloud:unknown-verdict`), the same note is added, and the output is still not blocked or changed. Remove that setting, or set it to `false`, to turn this path off. |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
@@ -280,7 +280,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, as seen by `check_tool_result`, the rules can flag ordinary code comments. 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. Prefer `check_tool_result` for web and third-party content rather than your own repository files.
-- **Detection rates:** on a multilingual set of 3,309 examples, Galvanize 3 has 89.6% recall at a 0.6% false positive rate, and it flags 2.9% of 658 long legitimate documents; these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test above. The set was not used for training; it was used to choose between candidate models. Method and the comparison with nine open detectors are in the [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3). The previous model, Galvanize 2, has open weights and its own results on its [model card](https://huggingface.co/usezn/Galvanize-2). It is one layer of defense, not a guarantee.
+- **Detection rates:** on a multilingual set of 3,309 examples, Galvanize 3.1 has 96.4% recall at a 1.9% false positive rate on short harmless texts, and it flags 1.2% of 658 long legitimate documents (for Galvanize 3 the same figures are 89.6%, 0.6% and 2.9%); these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test above. The set was not used for training; it was used to choose between candidate models. Method, and where Galvanize 3.1 does worse than Galvanize 3, are in the [announcement](https://usezn.com/blog/galvanize-3-1/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3-1). The earlier models, Galvanize 3 and Galvanize 2, have open weights and their own results on their model cards ([Galvanize 3](https://huggingface.co/usezn/Galvanize-3), [Galvanize 2](https://huggingface.co/usezn/Galvanize-2)). It is one layer of defense, not a guarantee.
 
 ---
 

@@ -7,6 +7,7 @@ process.env.ZN_STATS = 'off';
 // starts itself is fixed to the system folder as well.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { expandPs } = require('./helpers/ps_expand');
 const launcher = require('../lib/agents/launcher');
 const confirm = require('../lib/vault/confirm');
 const exe = require('../lib/exe');
@@ -116,11 +117,11 @@ test('every PowerShell script zn runs is free of cmdlets and aliases', () => {
 
 test('the hook scripts, the ZCode launcher included, find zn and node with .NET (zf), not with Get-Command', () => {
   for (const opts of [{}, { deadlineS: 5 }]) {
-    const s = launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js', opts);
+    const s = expandPs(launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js', opts));
     assert.match(s, /function zf\(\$x\)/);
     assert.match(s, /\[System\.IO\.File\]::Exists\('C:\/node\/node\.exe'\)/);
     assert.doesNotMatch(s, /Get-Command|Test-Path|New-Object|Start-Process|Wait-Process|Stop-Process/);
-    if (opts.deadlineS) assert.match(s, /\[System\.Diagnostics\.ProcessStartInfo\]::new\(\)/);
+    if (opts.deadlineS) assert.match(s, /\[System\.Diagnostics\.ProcessStartInfo\]::new\(\$f, \$a\)/);
   }
   const s = launcher.windowsScript('cursor', 'beforeShellExecution', 'C:/node/node.exe', 'C:/z/runner.js');
   assert.match(s, /& \(zf 'zn\.cmd'\) hook cursor/);

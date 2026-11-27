@@ -33,7 +33,7 @@ AGENTS
   Cursor       not found on this machine
   OpenCode     not found on this machine
   Antigravity  not found on this machine
-  GitHub Copilot (VS Code, CLI) not found on this machine
+  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   Gemini CLI (experimental) not found on this machine
   ZCode        not found on this machine
 
@@ -60,7 +60,7 @@ AGENTS
   Cursor       not found on this machine
   OpenCode     not found on this machine
   Antigravity  not found on this machine
-  GitHub Copilot (VS Code, CLI) not found on this machine
+  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   Gemini CLI (experimental) not found on this machine
   ZCode        not found on this machine
   HIGH   Claude Code is on this machine and zn does not protect it
@@ -102,7 +102,7 @@ AGENTS
   Cursor       not found on this machine
   OpenCode     not found on this machine
   Antigravity  not found on this machine
-  GitHub Copilot (VS Code, CLI) not found on this machine
+  GitHub Copilot (CLI experimental, VS Code not tested) not found on this machine
   Gemini CLI (experimental) not found on this machine
   ZCode        not found on this machine
 

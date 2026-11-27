@@ -202,7 +202,10 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   const { windowsCommandScript } = require('../lib/shell-quote');
   const script = launcher.windowsScript('antigravity', 'PreToolUse', 'C:\\Program Files\\nodejs\\node.exe', 'C:\\zn\\lib\\hooks\\runner.js');
   assert.ok(script.endsWith(' # zn hook antigravity'));
-  const m = /WriteLine\('(\{"decision":"deny".*?\})'\); \[Console\]::Error/.exec(script);
+  // The answer reads its text from $zr: put the text back to read the JSON it prints.
+  const zr = /\$zr='([^']*)'; if \(\$env:COR_ENABLE_PROFILING/.exec(script);
+  assert.ok(zr, script);
+  const m = /WriteLine\('(\{"decision":"deny".*?\})'\); \[Console\]::Error/.exec(script.split("' + $zr + '").join(zr[1]));
   assert.ok(m, script);
   const out = JSON.parse(m[1]);
   assert.equal(out.decision, 'deny');

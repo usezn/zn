@@ -753,6 +753,16 @@ def _fs_error_text(err: OSError, path: object) -> str:
     return f"{p} could not be written ({err.strerror or err}). Choose another path, then try again."
 
 
+def _is_evidence_log(output: str, ledger: str) -> bool:
+    """True when output is the evidence log itself, or a link or hard link to it. Checked before anything is opened."""
+    if os.path.normcase(os.path.realpath(output)) == os.path.normcase(os.path.realpath(ledger)):
+        return True
+    try:
+        return os.path.samefile(output, ledger)
+    except OSError:
+        return False
+
+
 def cmd_evidence(args: argparse.Namespace) -> int:
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
@@ -771,6 +781,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 
     if getattr(args, "export", False):
         fmt = getattr(args, "format", "jsonl")
+        # Checked before the export is read or the output is written: writing it would replace the log.
+        if getattr(args, "output", None) and _is_evidence_log(args.output, EVIDENCE_FILE):
+            print("Error: the output file is the evidence log itself; choose another path.", file=sys.stderr)
+            return 2
         res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
         if not res.get("valid"):

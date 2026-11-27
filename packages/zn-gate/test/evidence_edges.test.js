@@ -10,6 +10,7 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
+const fs = require('fs');
 const path = require('path');
 const { tempDir } = require('./helpers/tmp');
 const { logEvidence, startEvidenceUi, escapeHtml, renderAuditRow } = require('../lib/evidence');
@@ -115,8 +116,16 @@ function makeApp(ledger, port = 4321) {
     const res = {
       status: null, headers: {}, body: '',
       writeHead(code, h) { this.status = code; this.headers = Object.fromEntries(Object.entries(h || {}).map(([k, v]) => [k.toLowerCase(), v])); },
-      end(b) { this.body = b === undefined ? '' : String(b); },
+      end(b) { this.body = b === undefined ? '' : String(b); this.finish(); },
+      // The export streams its body: write() adds to it and end() closes it.
+      write(b) { this.streamed = (this.streamed || '') + String(b); return true; },
+      on() { return this; }, once() { return this; }, off() { return this; },
+      destroyed: false,
+      destroy(e) { this.destroyed = true; this.error = e; this.finish(); },
     };
+    // Stats and verify are answered synchronously, so they are ready when the call returns.
+    // The export streams its body and is read through res.done.
+    res.done = new Promise((resolve) => { res.finish = () => resolve(res); });
     handler({ url, headers }, res);
     return res;
   };
@@ -124,7 +133,7 @@ function makeApp(ledger, port = 4321) {
 
 const HOST = 'localhost:4321';
 
-test('evidence server - a missing ledger gives empty stats, a valid verify and an empty export', (t) => {
+test('evidence server - a missing ledger gives empty stats, a valid verify and an empty export', async (t) => {
   const dir = tempDir(t, 'zn-ev-edge-');
   const app = makeApp(path.join(dir, 'none.jsonl'));
   const stats = JSON.parse(app('/api/stats', HOST).body);
@@ -136,26 +145,28 @@ test('evidence server - a missing ledger gives empty stats, a valid verify and a
   assert.equal(verify.status, 200);
   assert.equal(JSON.parse(verify.body).valid, true);
 
-  const exp = app('/api/export', HOST);
+  const exp = await app('/api/export', HOST).done;
   assert.equal(exp.status, 200);
   assert.equal(exp.headers['x-evidence-total'], '0');
-  assert.equal(exp.body, '');
+  assert.equal((exp.streamed || '') + exp.body, '');
 });
 
-test('evidence server - an unknown export format falls back to jsonl, csv is honoured', (t) => {
+test('evidence server - an unknown export format falls back to jsonl, csv is honoured', async (t) => {
   const dir = tempDir(t, 'zn-ev-edge-');
   const ledger = path.join(dir, 'evidence.jsonl');
   logEvidence({ agent: 'test', phase: 'tool-call', tool_name: 'bash', payload: 'fake', verdict: 'allow' }, ledger);
   const app = makeApp(ledger);
   for (const q of ['', '?format=xml', '?format=', '?format=CSV']) {
-    const res = app('/api/export' + q, HOST);
+    const res = await app('/api/export' + q, HOST).done;
     assert.equal(res.status, 200);
+    assert.equal(res.destroyed, false);
+    assert.equal(res.streamed, fs.readFileSync(ledger, 'utf8'));
     assert.ok(res.headers['content-type'].startsWith('application/x-ndjson'), q);
     assert.match(res.headers['content-disposition'], /filename="zn-audit-ledger-\d{4}-\d{2}-\d{2}\.jsonl"/);
     assert.equal(res.headers['x-evidence-integrity'], 'valid');
     assert.equal(res.headers['x-evidence-total'], '1');
   }
-  const csv = app('/api/export?format=csv', HOST);
+  const csv = await app('/api/export?format=csv', HOST).done;
   assert.ok(csv.headers['content-type'].startsWith('text/csv'));
   assert.match(csv.headers['content-disposition'], /\.csv"$/);
 });

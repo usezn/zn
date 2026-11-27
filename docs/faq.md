@@ -26,6 +26,7 @@ Each question links to its answer further down this page.
 | [Does uninstall delete my vault or change my `.env` files?](#9-does-uninstall-delete-my-vault-or-change-my-env-files) | No. It keeps your vault unless you say yes, and it never edits `.env` files. |
 | [Can I remove only one part?](#10-can-i-remove-only-one-part) | Yes. Remove the plugin, one agent's hooks, or the MCP wrapping. |
 | [Where is my data?](#14-where-is-my-data) | On your computer. Only the optional cloud check sends text, and only when you turn it on. |
+| [My agent cannot change a `.env` file from the shell. How do I edit it?](#19-my-agent-cannot-change-a-env-file-from-the-shell-how-do-i-edit-it) | Use the agent's own file tools, or edit it yourself. To load it, use `--env-file` or `dotenv -e`. |
 
 ## Update
 
@@ -199,3 +200,27 @@ Run `npx -y zn-gate why` in your own terminal. It explains the last block in pla
 To count what zn-gate did over the last days, run `npx -y zn-gate stats`. It shows the checks, the blocks and the secrets replaced. Use `--days` to change the period. The options and exit codes are in the command line reference: [why](cli.md#why) and [stats](cli.md#stats).
 
 Every decision is also written to the decision log on your computer, `~/.zn/evidence.jsonl`. The log stays local, and `npx -y zn-gate evidence --verify` checks that its records have not been changed. See [files and folders](files-and-folders.md).
+
+## Environment files
+
+### 19. My agent cannot change a `.env` file from the shell. How do I edit it?
+
+A shell command that names a project `.env` or `.gemini/.env` is refused unless zn can tell it only reads or touches the file. zn cannot know what a shell really runs, so it does not try to judge a write. This covers redirections (`>`, `>>`), `tee`, `sed -i`, `cp`, `Set-Content`, and any other program that names the file, such as an interpreter, `awk` or `curl -o`. The block message says `Edit .env with the file editor tool; shell writes to .env files are blocked` or `zn cannot tell whether this command writes .env`. Nothing was written.
+
+To change the file, do one of these:
+
+- Ask your agent to use its own file tools (the editor, write, edit or patch tool). zn applies the edit to the file on disk and judges the file it would leave, so these writes can pass. An edit that would set a loader variable such as `LD_PRELOAD` for the agent is still refused.
+- Edit the file yourself in your own terminal or editor.
+
+To load a `.env` without writing it, use a command that only reads it. These pass:
+
+- the `--env-file` option of `node`, `bun`, `deno`, `docker` and `podman`, for example `node --env-file=.env app.js`;
+- `-e` or `-f` of `dotenv` and `dotenv-cli`, for example `dotenv -e .env -- npm start`;
+- `dotenvx run -f .env -- npm start`.
+
+These stay refused when they name a project `.env`:
+
+- `source .env` and `. .env`. They run the file as shell code, which can rewrite the file itself. Use `--env-file` or `dotenv -e` instead.
+- `python3 -m venv .env`. Give the virtual environment another name, for example `python3 -m venv .venv`. This also applies when `.env` is a folder. Listing it, reading it, removing it and running the environment with `source .env/bin/activate` still pass.
+
+Separate from this, a command that reads a `.env` holding plain-text secrets is still blocked: see [section 6 of troubleshooting](troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets). More in [the block messages](troubleshooting.md#zn-cannot-tell-whether-this-command-writes-env-so-shell-writes-to-env-files-are-blocked) and the [threat model](threat-model.md).
