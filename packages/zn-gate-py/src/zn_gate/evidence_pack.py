@@ -11,12 +11,18 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shutil
-import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from .evidence_timesketch import _json_js, _parse_record, inspect_ledger, ocsf_event, timesketch_micros
+from .evidence import EvidenceLedgerError
+from .evidence_timesketch import (
+    _json_js,
+    _parse_record,
+    inspect_ledger,
+    ledger_snapshot,
+    ocsf_event,
+    timesketch_micros,
+)
 
 PACK_FILES = ("records.jsonl", "chain.json", "summary.json", "controls.md", "README.txt")
 # Records file name per format. The ocsf format writes OCSF events for JSON-object records only.
@@ -183,32 +189,6 @@ def _write_new(path: str, data: bytes) -> Dict[str, Any]:
     return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
 
 
-def _snapshot_log(file_path: str, tmp_dir: str) -> Optional[str]:
-    """Copies the log, as seen on one open file and up to its size at that moment, to a private file in
-    tmp_dir. Returns the copy's path, or None when the log does not exist. Both passes read the copy."""
-    try:
-        src = open(file_path, "rb")
-    except FileNotFoundError:
-        return None
-    except OSError as e:
-        raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
-    with src:
-        try:
-            size = os.fstat(src.fileno()).st_size
-            copy = os.path.join(tmp_dir, "evidence.jsonl")
-            with open(copy, "xb") as dst:
-                left = size
-                while left > 0:
-                    data = src.read(min(256 * 1024, left))
-                    if not data:
-                        raise PackReadError("Cannot read the evidence log: the log got shorter while it was read")
-                    dst.write(data)
-                    left -= len(data)
-        except OSError as e:
-            raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
-    return copy
-
-
 def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = None, until: Optional[str] = None,
                         fmt: str = "jsonl", include_preview: bool = False, generator: str = "",
                         now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -218,28 +198,28 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
     options, problem = validate_pack_options(since, until, fmt)
     if problem is not None:
         raise ValueError(problem)
+    assert options is not None
     since_day = options["since"]
     until_day = options["until"]
     fmt_name = options["format"]
     has_range = since_day is not None or until_day is not None
 
-    tmp_dir = tempfile.mkdtemp(prefix="zn-pack-")
+    # The same snapshot as the exports (ledger_snapshot): one private copy, and the pack fails closed when the
+    # log is replaced or gets shorter while it is copied. Both passes below read the copy.
     try:
-        snapshot = _snapshot_log(file_path, tmp_dir)
-        if snapshot is None:
-            snapshot = file_path  # does not exist: an empty log
-        check = inspect_ledger(snapshot)
-        if check["read_error"]:
-            raise PackReadError(check["error"])
-        raw = b""
-        if os.path.exists(snapshot):
-            try:
-                with open(snapshot, "rb") as f:
-                    raw = f.read()
-            except OSError as e:
-                raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        with ledger_snapshot(file_path) as snapshot:
+            check = inspect_ledger(snapshot)
+            if check["read_error"]:
+                raise PackReadError(check["error"])
+            raw = b""
+            if os.path.exists(snapshot):
+                try:
+                    with open(snapshot, "rb") as f:
+                        raw = f.read()
+                except OSError as e:
+                    raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
+    except EvidenceLedgerError as e:
+        raise PackReadError(str(e)) from e
 
     os.makedirs(out_dir, exist_ok=True)
     chain_index = 0

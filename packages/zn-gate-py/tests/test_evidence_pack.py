@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -339,12 +338,42 @@ def test_readme_names_the_records_file_the_pack_writes(ledger, run):
 def test_read_error_says_the_pack_was_not_written_and_writes_nothing(ledger, run, monkeypatch):
     from zn_gate import evidence_pack as ep
 
-    def boom(file_path, tmp_dir):
-        raise ep.PackReadError("Cannot read the evidence log: EIO")
+    def boom(file_path):
+        raise ep.EvidenceLedgerError("Cannot read the evidence log: EIO")
 
-    monkeypatch.setattr(ep, "_snapshot_log", boom)
+    monkeypatch.setattr(ep, "ledger_snapshot", boom)
     code, cap = run(ledger.out)
     assert code == 1
     assert f"zn-gate: the pack stopped. Cannot read the evidence log: EIO. {ledger.out} was not written." in cap.err
     assert "incomplete" not in cap.err
+    assert not os.path.exists(ledger.out)
+
+
+def test_pack_log_replaced_during_copy_fails_closed(ledger, run, monkeypatch):
+    from zn_gate import evidence_timesketch as ts
+
+    monkeypatch.setattr(ts, "_same_file", lambda fd, path: False)
+    code, cap = run(ledger.out)
+    assert code == 1
+    assert f"the log was replaced while it was read. {ledger.out} was not written." in cap.err
+    assert not os.path.exists(ledger.out)
+
+
+def test_pack_log_shorter_after_copy_fails_closed(ledger, run, monkeypatch):
+    from zn_gate import evidence_timesketch as ts
+
+    real_fstat = ts.os.fstat
+    calls = {"n": 0}
+
+    def fstat(fd):
+        st = real_fstat(fd)
+        calls["n"] += 1
+        if calls["n"] >= 2:  # the check after the copy sees a shorter log
+            return SimpleNamespace(st_size=st.st_size - 10, st_ino=st.st_ino, st_dev=st.st_dev)
+        return st
+
+    monkeypatch.setattr(ts.os, "fstat", fstat)
+    code, cap = run(ledger.out)
+    assert code == 1
+    assert f"the log got shorter while it was read. {ledger.out} was not written." in cap.err
     assert not os.path.exists(ledger.out)

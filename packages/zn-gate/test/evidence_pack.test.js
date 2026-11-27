@@ -337,3 +337,47 @@ test('README.txt names the records file the pack writes, for each format', (t) =
   assert.match(ocsfReadme, /Get-FileHash -Algorithm SHA256 records\.ocsf\.jsonl\n/);
   assert.equal(/records\.jsonl/.test(ocsfReadme), false);
 });
+
+test('a read error before the folder exists says it was not written; one after says it is incomplete', (t) => {
+  const pack = require('../lib/evidence_pack');
+  // Before: the log cannot be read (a folder where the log should be), so nothing is created.
+  const s = setup(t, SPECS);
+  const bad = path.join(s.dir, 'logdir');
+  fs.mkdirSync(bad);
+  let early;
+  try { evidence.writeEvidencePack(s.out, { generator: 'test' }, bad); } catch (e) { early = e; }
+  assert.ok(early, 'the pack stopped');
+  assert.equal(early.packStarted, false);
+  assert.equal(fs.existsSync(s.out), false);
+  const earlyText = pack.packStoppedMessage(early, s.out);
+  assert.ok(earlyText.endsWith(`${s.out} was not written.`), earlyText);
+  assert.equal(earlyText.includes('incomplete'), false);
+
+  // After: the copy of the log is cut after the chain check, while the records are written.
+  const out2 = path.join(s.dir, 'pack2');
+  afterChainCheck = () => {
+    const dirs = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('zn-pack-'))
+      .map((n) => path.join(os.tmpdir(), n, 'evidence.jsonl')).filter((f) => fs.existsSync(f));
+    assert.ok(dirs.length > 0, 'the copy exists');
+    for (const f of dirs) fs.truncateSync(f, 0);
+  };
+  let late;
+  try { evidence.writeEvidencePack(out2, { generator: 'test' }, s.log); } catch (e) { late = e; }
+  afterChainCheck = null;
+  assert.ok(late, 'the pack stopped');
+  assert.equal(late.packStarted, true);
+  assert.equal(fs.existsSync(out2), true);
+  assert.ok(pack.packStoppedMessage(late, out2).endsWith(`${out2} is incomplete: do not use it.`));
+});
+
+test('CLI: an unreadable log exits 1, says the folder was not written and creates nothing', (t) => {
+  const s = setup(t, SPECS);
+  fs.rmSync(s.log);
+  fs.mkdirSync(s.log);
+  const r = run(s.home, ['pack', '--out', s.out]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /zn-gate: the pack stopped\. Cannot read the evidence log: .*\. .* was not written\./);
+  assert.equal(r.stderr.includes('incomplete'), false);
+  assert.equal(r.stdout.includes('Pack written'), false);
+  assert.equal(fs.existsSync(s.out), false);
+});

@@ -73,7 +73,7 @@ function runEvidencePack(options) {
       generator: `zn-gate ${VERSION}`,
     });
   } catch (err) {
-    process.stderr.write(`zn-gate: the pack stopped. ${err.message}. ${options.packOut} is incomplete: do not use it.\n`);
+    process.stderr.write(pack.packStoppedMessage(err, options.packOut) + '\n');
     process.exitCode = 1;
     return;
   }

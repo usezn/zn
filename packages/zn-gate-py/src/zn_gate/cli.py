@@ -797,6 +797,7 @@ def _run_evidence_pack(args: argparse.Namespace) -> int:
     if problem is not None:
         print(problem, file=sys.stderr)
         return 2
+    assert options is not None
     try:
         res = write_evidence_pack(EVIDENCE_FILE, out, since=options["since"], until=options["until"],
                                   fmt=options["format"], include_preview=bool(getattr(args, "include_preview", False)),

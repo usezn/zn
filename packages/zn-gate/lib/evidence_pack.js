@@ -294,15 +294,21 @@ function snapshotLog(filePath, EvidenceLedgerError) {
  * pack is still written, with chain.json saying so.
  */
 function writeEvidencePack(filePath, outDir, opts, deps) {
-  const snap = snapshotLog(filePath, deps.EvidenceLedgerError);
+  // state.started turns true once the folder exists: an error before that leaves nothing on disk.
+  const state = { started: false };
+  let snap = null;
   try {
-    return writePackFromSnapshot(snap ? snap.path : filePath, outDir, opts, deps);
+    snap = snapshotLog(filePath, deps.EvidenceLedgerError);
+    return writePackFromSnapshot(snap ? snap.path : filePath, outDir, opts, deps, state);
+  } catch (e) {
+    if (e !== null && typeof e === 'object') e.packStarted = state.started;
+    throw e;
   } finally {
     if (snap) snap.cleanup();
   }
 }
 
-function writePackFromSnapshot(filePath, outDir, opts, deps) {
+function writePackFromSnapshot(filePath, outDir, opts, deps, state) {
   const { exporter, EvidenceLedgerError, trimBytes } = deps;
   const req = validatePackOptions(opts);
   if (req.error) throw new Error(req.error);
@@ -317,6 +323,7 @@ function writePackFromSnapshot(filePath, outDir, opts, deps) {
   const size = res.bytes;
 
   fs.mkdirSync(outDir, { recursive: true });
+  state.started = true;
   const write = (name, buf) => {
     const p = path.join(outDir, name);
     fs.writeFileSync(p, buf, { flag: 'wx' });
@@ -435,4 +442,13 @@ function writePackFromSnapshot(filePath, outDir, opts, deps) {
   return { valid: res.valid === true, total: res.total, records: included, undated, files, error: chain.error };
 }
 
-module.exports = { writeEvidencePack, validatePackOptions, packTargetProblem, PACK_FILES, PACK_FORMATS };
+/**
+ * The line printed when the pack stops. Before the folder was created nothing was written; after that
+ * the folder may hold part of the pack, and the message says not to use it.
+ */
+function packStoppedMessage(err, outDir) {
+  const state = err && err.packStarted === true ? 'is incomplete: do not use it.' : 'was not written.';
+  return `zn-gate: the pack stopped. ${err.message}. ${outDir} ${state}`;
+}
+
+module.exports = { writeEvidencePack, validatePackOptions, packTargetProblem, packStoppedMessage, PACK_FILES, PACK_FORMATS };

@@ -671,7 +671,9 @@ The folder holds:
 - `manifest.json`: the SHA-256 and size of each file above, the generator and the time of the pack (UTC). It is written last; without it the pack is incomplete.
 - `README.txt`: how to check the pack.
 
-If the log's chain does not verify, the pack is still written, `chain.json` says so, and the command exits `1`. If the log cannot be read to the end, it exits `1`. The npm package may then leave an incomplete folder and says not to use it. The Python package reads the whole log before it creates the folder, so in that case it writes nothing and says the folder was not written; if it fails later while writing the files, it can leave a partial folder and says not to use it. The npm and PyPI packages write the same bytes for the same log, with one exception: with `--format ocsf` each event carries `metadata.product.version`, the version of the package that wrote it, so those bytes match only when both packages are the same version (as with `generator` in the manifest).
+If the log's chain does not verify, the pack is still written, `chain.json` says so, and the command exits `1`. If the log cannot be read to the end, it exits `1`. Both packages first copy and check the log and create the folder only after that, so a failure there writes nothing and the message says the folder was not written. If a failure comes later, while the files are being written, a partial folder can remain and the message says it is incomplete and not to use it.
+
+For the same log, the npm and PyPI packages write the same `records.jsonl`, `chain.json`, `controls.md` and `README.txt`, byte for byte. These differ: `summary.json` and `manifest.json` carry `generator` (the name and version of the package that wrote them), `manifest.json` also carries `pack_time_utc`, and it holds the hash of `summary.json`, so it differs whenever `summary.json` does. With `--format ocsf`, each event in `records.ocsf.jsonl` carries `metadata.product.version`, the version of the package that wrote it, so that file matches only when both packages are the same version, and its hash in `manifest.json` follows.
 
 ### `why`
 

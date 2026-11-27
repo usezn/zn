@@ -9,8 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from zn_gate import evidence as ev
 from zn_gate import evidence_timesketch as ts
 
