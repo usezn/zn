@@ -74,12 +74,18 @@ test('Cursor on Windows: zn in the enterprise file without failClosed is protect
   const { pd } = programData(t, ['Cursor', 'hooks.json'], 'cursor-windows.json', (s) => s.replace(/"failClosed": true/g, '"failClosed": false'));
   const home = tempDir(t, 'zn-mw-home-');
   const r = byId(await check({ home, env: { HOME: home, PATH: binWithZn(t), ProgramData: pd }, cwd: home, cursorPolicy: { platform: 'win32' } }), 'cursor');
+  assert.equal(r.state, 'protected', JSON.stringify(r));
   assert.equal(r.via, 'managed');
   assert.ok(r.notes.some((n) => /failClosed/.test(n)), JSON.stringify(r.notes));
 });
 
 test('Codex on Windows: a managed requirements.toml that has zn and turns hooks off is a finding', async (t) => {
-  const { pd } = programData(t, ['OpenAI', 'Codex', 'requirements.toml'], 'codex-windows.toml', (s) => (/hooks\s*=\s*true/.test(s) ? s.replace(/hooks\s*=\s*true/, 'hooks = false') : '[features]\nhooks = false\n\n' + s));
+  const { pd } = programData(t, ['OpenAI', 'Codex', 'requirements.toml'], 'codex-windows.toml', (s) => {
+    // The fixture has one [features] table with the exact line hooks = true: turn that line off, nothing else.
+    assert.equal((s.match(/^\[features\]$/gm) || []).length, 1, 'fixture has one [features] table');
+    assert.equal((s.match(/^hooks = true$/gm) || []).length, 1, 'fixture has the exact hooks = true line');
+    return s.replace(/^hooks = true$/m, 'hooks = false');
+  });
   const home = tempDir(t, 'zn-mw-home-');
   const r = byId(await check({ home, env: { HOME: home, PATH: binWithZn(t), ProgramData: pd }, cwd: home, codexPolicy: { platform: 'win32' } }), 'codex');
   assert.equal(r.state, 'not-protected', JSON.stringify(r));
