@@ -535,6 +535,10 @@ mod tests {
                 }),
             )
             .route("/denied", get(|| async { StatusCode::UNAUTHORIZED }))
+            .route(
+                "/upload",
+                axum::routing::post(|body: Bytes| async move { format!("got {}", body.len()) }),
+            )
             .route("/ws", get(ws_echo))
             .route(
                 "/flood",
@@ -761,5 +765,58 @@ mod tests {
         let d = ServeLimits::from_server(&crate::config::ServerConfig::default());
         assert_eq!(d.write_timeout, WRITE_TIMEOUT);
         assert_eq!(d.session_idle_timeout, SESSION_IDLE_TIMEOUT);
+    }
+
+    /// Start a POST /upload with a 6-byte body and send the first two bytes.
+    async fn start_upload(addr: SocketAddr) -> TcpStream {
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        c.write_all(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 6\r\n\r\nab")
+            .await
+            .unwrap();
+        c
+    }
+
+    async fn status_line(c: &mut TcpStream) -> String {
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(BOUND, c.read(&mut buf))
+            .await
+            .expect("no answer")
+            .unwrap();
+        String::from_utf8_lossy(&buf[..n])
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_request_body_that_stalls_is_failed_after_the_idle_time() {
+        let limits = ServeLimits {
+            body_idle_timeout: Duration::from_millis(300),
+            ..ServeLimits::DEFAULT
+        };
+        let addr = spawn(limits).await;
+        let mut c = start_upload(addr).await;
+        // The rest of the body never arrives.
+        let line = status_line(&mut c).await;
+        assert!(line.starts_with("HTTP/1.1 4"), "{line}");
+    }
+
+    #[tokio::test]
+    async fn a_request_body_that_keeps_moving_is_not_cut() {
+        let limits = ServeLimits {
+            body_idle_timeout: Duration::from_millis(400),
+            ..ServeLimits::DEFAULT
+        };
+        let addr = spawn(limits).await;
+        let mut c = start_upload(addr).await;
+        // One byte every 150 ms: 600 ms in total, more than the 400 ms idle limit, but never idle that long.
+        // A total-body deadline of 400 ms would cut this upload; the idle timer lets it finish.
+        for chunk in [b"c", b"d", b"e", b"f"] {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            c.write_all(chunk).await.unwrap();
+        }
+        let line = status_line(&mut c).await;
+        assert_eq!(line, "HTTP/1.1 200 OK");
     }
 }
