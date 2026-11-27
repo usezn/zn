@@ -50,7 +50,7 @@ const { cliName } = require('../zn-command');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
-const { invisibleView } = require('../rules');
+const { invisibleView, stopAtLineBreak } = require('../rules');
 // normalize.js is loaded on first use. A text with no candidate (a %XX, '' or "") has no decoded view, which is what
 // normalisedView returns for it, so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE
 // in normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
@@ -179,11 +179,12 @@ function scan(text, ctx) {
   if (!view && !norm) return direct;
   let all = direct;
   if (view) {
-    all = all.concat(scanText(view.clean, c).map((s) => ({
-      ...s,
-      start: view.map[s.start],
-      end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
-    })));
+    all = all.concat(scanText(view.clean, c).map((s) => {
+      const start = view.map[s.start];
+      const end = s.end > s.start ? view.map[s.end - 1] + 1 : start;
+      // A span that joins lines stops at a line break (see stopAtLineBreak in rules.js).
+      return { ...s, start, end: end > start ? stopAtLineBreak(text, start, end) : end };
+    }));
   }
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a
   // span covers the whole original word or encoded value.

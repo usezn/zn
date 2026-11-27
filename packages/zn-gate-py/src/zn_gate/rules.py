@@ -1157,7 +1157,7 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:private_key", _rc(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", _rc(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
-    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
+    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?![A-Za-z0-9_-])|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
     ("secret:aws_access_key", _rc(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
     ("secret:aws_secret_key", _rc(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
     ("secret:github_token", _rc(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
@@ -1736,8 +1736,9 @@ SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:twilio_auth_token", _rc(r'((?<![A-Za-z0-9])(?:twilio_)?auth_token["\']?[ \t]*[=:][ \t]*["\']?)([0-9a-f]{32})' + _ALNUM_A, re.IGNORECASE | re.ASCII), r'\1[REDACTED_TWILIO_AUTH_TOKEN]'),
     # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Same
     # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
-    # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
-    ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
+    # and the Helicone, sp-, cp- and similar forms stay with the shared rule above. It does not start right after
+    # a dot: an sk- run in the last part of a JWT belongs to the JWT, which a later rule redacts whole.
+    ("secret:openai_key#scrub", _rc(r'(?<![A-Za-z0-9_.-])sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
     # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
     ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
     ("secret:github_token#scrub_pat", _rc(_TB + r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
@@ -2029,7 +2030,41 @@ def _starts_secret_at(text: str, start: int, limit: int,
         pos += 1
     if pos >= limit:
         return False
-    return any(p.match(text, pos) for _, p, _ in patterns)
+    for rule_id, p, _ in patterns:
+        m = p.match(text, pos)
+        if m is None:
+            continue
+        match_check = PROVIDER_MATCH_CHECKS.get(rule_id)
+        if match_check is not None and not match_check(m.group(0)):
+            continue
+        context_check = PROVIDER_CONTEXT_CHECKS.get(rule_id)
+        if context_check is not None and not context_check(text, m.start(), m.end()):
+            continue
+        return True
+    return False
+
+
+def _stop_at_line_break(text: str, start: int, end: int) -> int:
+    """A key that a match joins across line breaks stops at a line break: when the match ends in the middle
+    of a line and the part of that line it took does not look like key material, it ends at the last break
+    instead (that part is a word of its own). Returns the new end (see stopAtLineBreak in rules.js)."""
+    last = text.rfind('\n', start, end)
+    if last == -1:
+        return end
+    pos = end
+    while pos < len(text) and text[pos] in ' \t':
+        pos += 1
+    if pos >= len(text) or text[pos] in '\n\r\u2028\u2029':
+        return end
+    # The last line of a wrapped key looks like key material (a digit or an upper-case letter): a plain
+    # lower-case word such as "run-deploy" does not, and stays outside the key.
+    tail = text[last + 1:end]
+    if re.search('[0-9A-Z]', tail):
+        return end
+    cut = last
+    while cut > start and text[cut - 1] in '\r \t':
+        cut -= 1
+    return cut
 
 
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
@@ -2105,6 +2140,7 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     continue
                 if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
                     continue
+                end = _stop_at_line_break(text, start, end)
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 
