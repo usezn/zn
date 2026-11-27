@@ -67,3 +67,13 @@ def test_a_wrapped_key_then_another_key_is_two_detections():
     assert not _leaks(out), out
     assert key[20:] not in out, out
     assert sorted(d['rule'] for d in found) == sorted([rule, other_rule]), found
+
+
+def test_a_remainder_no_rule_redacts_stays_in_the_joined_match():
+    # The second line starts like a Hugging Face token but its body is too regular for that rule, so no rule of its own
+    # would redact it: the key rule keeps the whole joined match and nothing is left readable.
+    first = 'sk-proj-aB3dE5gH7jK9mN1pQ3sT5v'
+    second = 'hf_' + '0' * 34
+    out, found = redact_secrets(first + '\n' + second)
+    assert '0' * 10 not in out and 'aB3d' not in out, out
+    assert len(found) >= 1, found

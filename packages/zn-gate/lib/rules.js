@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.2
+ * RULES_VERSION: 2026-11-27.4
  */
 
-const RULES_VERSION = '2026-11-27.2';
+const RULES_VERSION = '2026-11-27.4';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1385,15 +1385,55 @@ function spacedView(text) {
   return spacedMemo.spaced;
 }
 
+// True when the rules of the shared table and the provider formats redact all of text[pos, end) as secrets of
+// their own, value filters included (one secret after another, only whitespace between them). It reads a little past
+// `end`, where the last one may run on (see _secrets_cover in rules.py).
+function secretsCover(text, pos, end) {
+  const hay = text.slice(pos, Math.min(text.length, end + 1024));
+  const need = end - pos;
+  const spans = [];
+  for (const item of SECRET_PATTERNS) {
+    if (item.requires && !hay.includes(item.requires)) continue;
+    const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
+    const re = new RegExp(item.pattern.source, flags.includes('g') ? flags : flags + 'g');
+    let m;
+    while ((m = re.exec(hay)) !== null) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      if (item.valueFilter) {
+        const g1 = m.indices[1];
+        const g2 = m.indices[2];
+        if (g2 && item.valueFilter(cleanValue(hay.slice(g2[0], g2[1])), g1 ? cleanValue(hay.slice(g1[0], g1[1])) : '')) continue;
+      }
+      spans.push([m.index, m.index + m[0].length]);
+    }
+  }
+  for (const sp of require('./scrub/engine').scan(hay, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })) spans.push([sp.start, sp.end]);
+  let reach = 0;
+  for (;;) {
+    let nxt = reach;
+    while (nxt < hay.length && /\s/.test(hay[nxt])) nxt++;
+    if (nxt >= need) return true;
+    let best = 0;
+    for (const [st, e] of spans) if (st <= nxt && nxt < e && e > best) best = e;
+    if (best <= nxt) return false;
+    reach = best;
+  }
+}
+
 // Where a match that joins wrapped lines stops being one key: the first line break inside text[start, end)
-// after which the next line starts a secret of its own. -1 when there is no such break (see _wrap_cut in rules.py).
+// after which the next line starts a secret of its own and the rest of the match is redacted by rules of their
+// own. -1 when there is no such break, so the rule keeps the whole joined match (see _wrap_cut in rules.py).
 function wrapCut(text, start, end, patterns) {
   const re = new RegExp(WRAP_BREAK_RE.source, 'g');
   re.lastIndex = start;
   let m;
   // The text after `end` is read too: the match may stop in the middle of the next key (a body that runs on into it).
   while ((m = re.exec(text)) !== null && m.index < end) {
-    if (m.index > start && startsSecretAt(text, m.index, end, patterns)) return m.index;
+    if (m.index > start && startsSecretAt(text, m.index, end, patterns)) {
+      let pos = m.index;
+      while (pos < end && /\s/.test(text[pos])) pos++;
+      return secretsCover(text, pos, end) ? m.index : -1;
+    }
   }
   return -1;
 }

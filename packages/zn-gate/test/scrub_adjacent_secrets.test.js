@@ -66,3 +66,11 @@ test('a wrapped key then another key is two detections', () => {
   assert.ok(!r.sanitized.includes(key.slice(20)), r.sanitized);
   assert.deepEqual(rulesOf(r), [rule, otherRule].sort());
 });
+
+test('a remainder no rule redacts stays in the joined match', () => {
+  // The second line starts like a Hugging Face token but its body is too regular for that rule, so no rule of its own
+  // would redact it: the key rule keeps the whole joined match and nothing is left readable.
+  const r = redactSecrets('sk-proj-aB3dE5gH7jK9mN1pQ3sT5v\n' + 'hf_' + '0'.repeat(34));
+  assert.ok(!r.sanitized.includes('0'.repeat(10)) && !r.sanitized.includes('aB3d'), r.sanitized);
+  assert.ok(r.detections.length >= 1);
+});

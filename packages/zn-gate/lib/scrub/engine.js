@@ -174,7 +174,19 @@ function cutAtOwnSecret(s, direct, text) {
     if (d.source !== 'pattern') continue;
     let cut = d.start;
     while (cut > s.start && /\s/.test(text[cut - 1])) cut--;
-    if (cut > s.start && text.slice(cut, d.start).includes('\n')) return { ...s, end: cut };
+    if (cut > s.start && text.slice(cut, d.start).includes('\n')) {
+      // The rest of the span must be covered by secrets the direct scan found, one after another; if a filter
+      // rejected part of it, the span stays whole and redacts it.
+      let reach = d.end;
+      for (let j = i + 1; reach < s.end; j++) {
+        let nxt = reach;
+        while (nxt < s.end && /\s/.test(text[nxt])) nxt++;
+        if (nxt >= s.end) break;
+        if (j >= direct.length || direct[j].start > nxt) return s;
+        if (direct[j].source === 'pattern' && direct[j].end > reach) reach = direct[j].end;
+      }
+      return { ...s, end: cut };
+    }
   }
   return s;
 }
