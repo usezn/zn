@@ -138,6 +138,26 @@ function isValidJoinBody(body) {
   return true;
 }
 
+const STATUS_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'opencode', 'antigravity', 'copilot', 'gemini', 'zcode']);
+const STATUS_AGENT_STATES = new Set(['ok', 'stale', 'broken']);
+const STATUS_POLICY_STATES = new Set(['active', 'expired', 'refused', 'none']);
+const exactKeys = (o, keys) => isObject(o) && Object.keys(o).length === keys.length && keys.every((k) => k in o);
+
+/* The status report contract: exact keys, closed words, no extras. */
+function isValidStatusBody(body) {
+  if (!exactKeys(body, ['zn_gate_version', 'os', 'policy', 'agents'])) return false;
+  if (typeof body.zn_gate_version !== 'string' || !VERSION_RE.test(body.zn_gate_version)) return false;
+  if (!OS_VALUES.has(body.os)) return false;
+  if (!exactKeys(body.policy, ['version', 'state']) || !Number.isSafeInteger(body.policy.version) || body.policy.version < 0 || !STATUS_POLICY_STATES.has(body.policy.state)) return false;
+  if (!Array.isArray(body.agents) || body.agents.length > STATUS_AGENTS.size) return false;
+  const ids = new Set();
+  for (const a of body.agents) {
+    if (!exactKeys(a, ['id', 'state']) || !STATUS_AGENTS.has(a.id) || !STATUS_AGENT_STATES.has(a.state) || ids.has(a.id)) return false;
+    ids.add(a.id);
+  }
+  return true;
+}
+
 function isValidEvent(e) {
   if (!isObject(e) || Object.keys(e).some((k) => !EVENT_KEYS.has(k))) return false;
   if (e.v !== 1 || !Number.isSafeInteger(e.seq) || e.seq < 1) return false;
@@ -192,6 +212,7 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     previewEnabled: true, // false: an older server without POST /v1/org/join-preview
     previewOrgName: null, // a different name in the preview than in the join (mismatch test)
     previewStatus: null, // force an HTTP status for the preview (e.g. 429, 500)
+    statusMode: null, // POST /v1/org/install/status: null = the real contract; {status, headers?, body?} forces an answer; {network: true} drops the connection
     leaveMode: null, // POST /v1/org/install/leave: null = the real contract; {status, headers?, body?} forces an answer; {network: true} drops the connection
     active: true,
     policyVersion: 0,
@@ -235,6 +256,23 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     inst.tokenHash = null;
     inst.leftHash = hash;
     return send(res, 200, { revoked: true, already: false, install_id: inst.installId });
+  }
+
+  /* POST /v1/org/install/status: the status report (install token only; the body is checked like the real schema, additionalProperties false). */
+  function handleStatus(req, res, body) {
+    const mode = state.statusMode;
+    if (mode && mode.network) { req.socket.destroy(); return undefined; }
+    if (mode && mode.status) return send(res, mode.status, mode.body || { error: 'forced' }, mode.headers || {});
+    const inst = authInstall(req);
+    if (!inst) return send(res, 401, { error: 'Missing or invalid install token' });
+    if (!isValidStatusBody(body)) return send(res, 400, { error: 'Invalid status report' });
+    if (!state.active) return send(res, 402, { error: 'This organization has no active Team subscription' });
+    inst.status = clone(body);
+    inst.statusAt = now();
+    inst.zn_gate_version = body.zn_gate_version;
+    inst.os = body.os;
+    inst.statusReports = (inst.statusReports || 0) + 1;
+    return send(res, 200, { ok: true });
   }
 
   function handlePreview(res, body) {
@@ -379,6 +417,12 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
       return handleJoin(res, body, origin);
     }
     if (isPost && url.pathname === '/v1/org/install/leave') return handleLeave(req, res);
+    if (isPost && url.pathname === '/v1/org/install/status') {
+      // statusMode {status: 404} stands for an older server without the endpoint.
+      let body;
+      try { body = JSON.parse(raw.toString('utf8')); } catch { body = undefined; }
+      return handleStatus(req, res, body);
+    }
     if (req.method === 'GET' && url.pathname === '/v1/org/policy') return handleGetPolicy(req, res);
     if (isPost && url.pathname === '/v1/audit/ingest') {
       let body;
@@ -428,6 +472,10 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     /** Forces the answer of POST /v1/org/install/leave: {status, headers?, body?}, {network: true}, or null for the real one. */
     setLeaveMode(mode) {
       state.leaveMode = mode;
+    },
+    /** Forces the answer of POST /v1/org/install/status: {status, headers?, body?}, {network: true}, or null for the real one. */
+    setStatusMode(mode) {
+      state.statusMode = mode;
     },
     setOrgActive(active) {
       state.active = Boolean(active);
