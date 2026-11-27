@@ -13,6 +13,7 @@ You do this once, in the dashboard at usezn.com, signed in with the account that
 3. Create a join token: **Team → Members → Connected installations → New join token**. It starts with `znj_`, is valid for 7 days and works for as many machines as the organization has seats. Send it to each developer in a private message, together with the organization name.
 4. Publish a policy: **Team → Policies** (the format is below).
 5. Check that machines report in: **Team → Members → Connected installations** shows each machine's zn-gate version, when it was last seen and its audit records.
+6. **Usage by member:** **Team → Billing & seats → Usage by member this period** lists each active person in the organization with their role, the analysis calls they made this month (UTC) and how many of them were blocked, most calls first. It shows counts only, never prompts or content. It counts calls a person made from their own account, including calls made before they joined the organization, so it can be higher than what the shared pool was charged. In a large team, select **Load more members** to see more.
 
 Every dashboard step is described in [Administer your organization](https://usezn.com/docs/team/admin/).
 
