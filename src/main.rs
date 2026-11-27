@@ -431,6 +431,11 @@ async fn start_proxy(args: Args) -> Result<()> {
     let policy_dir = &zn_config.engine.policy_dir;
     let mut policy_load_error: Option<anyhow::Error> = None;
     if let Err(e) = engine.load_all_policies(policy_dir) {
+        if engine.policy_enforcement_configured() {
+            // A signing key or allowed hashes were set: running without those policies would allow
+            // everything they were meant to check, so zn does not start.
+            return Err(anyhow!("zn did not start. {e}. Fix or remove the policy files, or remove engine.signing_public_key and engine.allowed_policy_hashes (ZN_SIGNING_PUBLIC_KEY, ZN_POLICY_HASHES) if you do not use signed policies."));
+        }
         log::warning(zn::user_errors::policy_folder_problem(policy_dir, &e))?;
         policy_load_error = Some(e);
     } else {
