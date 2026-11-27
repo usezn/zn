@@ -606,6 +606,9 @@ def _normalize_path_word(word: str) -> str:
 # sed r.env, sed s/a/b/w.env). Same cases as the hook's withGluedDotenvReadings; -e is left out (it takes a pattern, not a file),
 # and so is a glued name that does not start like a path (-o2, prod.env).
 PATH_GLUED_OPT_RE = re.compile(r'^-{1,2}(?!e[.~/\\])[a-z][a-z0-9]*?([.~/\\].*)$')
+# The value of a long option given with an equals sign (sort --output=.env, grep --file=.env, diff --to-file=.env). An option
+# whose name holds "env" (--env-file=.env of node, docker or uv) only loads the file into a program and stays allowed.
+PATH_EQUALS_OPT_RE = re.compile(r'^--(?![a-z0-9-]*env)[a-z][a-z0-9-]*=(.+)$', re.DOTALL)
 PATH_GLUED_SED_RE = re.compile(r'^[wr]([.~/\\].*)$')
 PATH_GLUED_SED_SUBST_RE = re.compile(r'^s([^A-Za-z0-9_\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiem0-9]*w(.+)$', re.DOTALL)
 
@@ -616,6 +619,9 @@ def _glued_path_readings(word: str) -> List[str]:
         return out
     m = PATH_GLUED_OPT_RE.match(word)
     if m and '=' not in word:
+        out.append(m.group(1))
+    m = PATH_EQUALS_OPT_RE.match(word)
+    if m:
         out.append(m.group(1))
     m = PATH_GLUED_SED_RE.match(word)
     if m:

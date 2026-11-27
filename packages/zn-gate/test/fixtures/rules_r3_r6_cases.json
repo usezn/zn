@@ -133,10 +133,20 @@
       "sed s\u00e9a\u00e9b\u00e9w.env notes.txt",
       "grep -f.env notes.txt",
       "diff -u.env notes.txt",
-      "sort -o./sub/.env data.txt"
+      "sort -o./sub/.env data.txt",
+      "sort --output=.env data.txt",
+      "grep --file=.env notes.txt",
+      "diff --to-file=.env notes.txt",
+      "sort --output=sub/.env data.txt"
     ],
     "benign": [
       "cat .env.example",
+      "sort --output=out.txt data.txt",
+      "npm run build --env=production",
+      "git log --format=%H",
+      "sort --output=.env.example data.txt",
+      "node --env-file=.env app.js",
+      "docker run --env-file=.env example/app",
       "cat .env.example;",
       "cat .env.example && ls",
       "cat .env.example | head",

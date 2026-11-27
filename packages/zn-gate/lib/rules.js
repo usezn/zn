@@ -398,12 +398,17 @@ function normalizePathWord(word) {
 // and so is a glued name that does not start like a path (-o2, prod.env).
 const PATH_GLUED_OPT_RE = /^-{1,2}(?!e[.~\/\\])[a-z][a-z0-9]*?([.~\/\\].*)$/;
 const PATH_GLUED_SED_RE = /^[wr]([.~\/\\].*)$/;
+// The value of a long option given with an equals sign (sort --output=.env, grep --file=.env, diff --to-file=.env). An option
+// whose name holds "env" (--env-file=.env of node, docker or uv) only loads the file into a program and stays allowed.
+const PATH_EQUALS_OPT_RE = /^--(?![a-z0-9-]*env)[a-z][a-z0-9-]*=(.+)$/;
 const PATH_GLUED_SED_SUBST_RE = /^s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiem0-9]*w(.+)$/;
 function gluedPathReadings(word) {
   const out = [];
   if (word.length > 4096) return out;
   const opt = PATH_GLUED_OPT_RE.exec(word);
   if (opt && word.indexOf('=') < 0) out.push(opt[1]);
+  const eq = PATH_EQUALS_OPT_RE.exec(word);
+  if (eq) out.push(eq[1]);
   const sed = PATH_GLUED_SED_RE.exec(word);
   if (sed) out.push(sed[1]);
   const sub = PATH_GLUED_SED_SUBST_RE.exec(word);
