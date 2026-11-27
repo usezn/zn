@@ -73,8 +73,8 @@ link into `zn team join`, zn says so and exits `2` without contacting anything.
 ## Join with your company email domain
 
 An owner or admin can let people join without an invitation. In the
-dashboard, under Team settings, the admin lists up to 10 company email
-domains (for example `example.com`). Someone who signs in with a verified
+dashboard, under **Team → Members → Company email domains**, the admin lists
+up to 10 company email domains (for example `example.com`). Someone who signs in with a verified
 email address of one of those domains can then join the organization.
 
 - Only verified addresses count. An address that is not verified cannot join.
