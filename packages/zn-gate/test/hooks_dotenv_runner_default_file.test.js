@@ -124,7 +124,6 @@ test('a file option that belongs to the runner still stands in for the default .
     'dotenv -e other.txt -- node app.js -e x',
     'dotenvx --log-level info ls',
     'dotenvx --version',
-    'dotenvx run --help',
   ]) assert.equal(await verdict(dir, c), 'allow', c);
 });
 
@@ -177,4 +176,47 @@ test('a cascade follows a cd to the folder with the environment files', async (t
   fs.writeFileSync(path.join(dir, 'sub', '.env.qa'), SECRET);
   assert.equal(await verdict(dir, 'cd sub && dotenv -c qa -- printenv'), 'deny');
   assert.equal(await verdict(dir, 'dotenv -c qa -- printenv'), 'allow');
+});
+
+test('info flags only count where the runner honours them; keypair and ext are checked', async (t) => {
+  const dir = project(t, SECRET);
+  for (const c of ['dotenv -V -- printenv', 'dotenv -h -- printenv', 'dotenv --version -- printenv', 'dotenvx run --help', 'dotenvx run -V -- printenv']) {
+    assert.equal(await verdict(dir, c), 'deny', c);
+  }
+  for (const c of ['dotenvx --version', 'dotenvx --help', 'dotenvx -h', 'dotenvx ls', 'dotenvx help']) assert.equal(await verdict(dir, c), 'allow', c);
+  const enc = project(t, ENCRYPTED);
+  fs.writeFileSync(path.join(enc, '.env.keys'), 'DOTENV_PRIVATE_KEY="fakefakefakefakefakefakefakefakefakefakefakefakefakefakefakefake"\n');
+  for (const c of ['dotenvx keypair', 'dotenvx ext vault', 'dotenvx precommit', 'dotenvx genexample', 'dotenvx radar']) assert.equal(await verdict(enc, c), 'deny', c);
+  const keysOnly = project(t, null, '.env.keys');
+  fs.writeFileSync(path.join(keysOnly, '.env.keys'), 'DOTENV_PRIVATE_KEY="fakefakefakefakefakefakefakefakefakefakefakefakefakefakefakefake"\n');
+  assert.equal(await verdict(keysOnly, 'dotenvx keypair'), 'deny');
+  assert.equal(await verdict(project(t, 'PORT=1\n'), 'dotenvx keypair'), 'allow');
+});
+
+test('a cd the hook cannot follow, with a cascade or convention, is refused', async (t) => {
+  for (const dir of [project(t, 'PORT=1\n'), project(t, null)]) {
+    for (const c of ['cd $APP_DIR && dotenv -c qa -- printenv', 'cd $APP_DIR && dotenvx run --convention flow -- printenv', 'cd $APP_DIR && dotenv -c qa -e other.txt -- printenv']) {
+      assert.equal(await verdict(dir, c), 'deny', c);
+    }
+  }
+});
+
+test('a dotenv runner behind a wrapper is judged like the runner alone', async (t) => {
+  const dir = project(t, SECRET);
+  for (const c of [
+    'env dotenvx run -- printenv', 'env dotenvx get', 'env -i dotenvx get', 'env FOO=1 dotenvx run -- printenv', 'env -u HOME dotenvx get',
+    'sudo dotenvx get', 'sudo dotenvx run -- printenv', 'sudo -u root dotenvx get', 'command dotenvx get', 'nice dotenvx get',
+    'nice -n 5 dotenvx run -- printenv', 'nohup dotenvx get', 'time dotenvx get', 'timeout 5 dotenvx get', 'stdbuf -o0 dotenvx get',
+    'env dotenv -- printenv', 'sudo dotenv -- printenv', 'sudo env dotenv -- printenv', 'env npx dotenvx run -- env',
+    'sudo -u root npx dotenv -c qa -- printenv',
+    // named file through a wrapper
+    'env dotenvx run -f .env -- printenv', 'sudo dotenv -e .env -- printenv',
+  ]) assert.equal(await verdict(dir, c), 'deny', c);
+  for (const c of [
+    'env dotenvx run -f other.txt -- printenv', 'sudo -u root dotenvx get -f other.txt', 'sudo dotenv -e other.txt -- printenv',
+    'env dotenvx --version', 'sudo dotenvx ls', 'env printenv', 'sudo echo dotenvx get',
+  ]) assert.equal(await verdict(dir, c), 'allow', c);
+  for (const quiet of [project(t, 'PORT=1\n'), project(t, null)]) {
+    for (const c of ['env dotenvx run -- printenv', 'sudo -u root dotenvx get', 'command dotenv -- printenv']) assert.equal(await verdict(quiet, c), 'allow', c);
+  }
 });

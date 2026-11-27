@@ -1613,7 +1613,12 @@ function cascadeFilesIn(dir) {
     return fs.readdirSync(dir).filter((n) => /^\.env\..+/i.test(n) && !DOTENV_TEMPLATE_RE.test(n));
   } catch (_) { return []; }
 }
-const DOTENVX_NO_LOAD_SUBS = new Set(['help', 'ls', 'keypair', 'ext', 'precommit', 'prebuild', 'genexample', 'gitignore', 'radar']);
+// Only steps that certainly print neither values nor keys and load nothing; every other step (keypair prints the private keys,
+// ext runs sub-steps that read or decrypt files, precommit, prebuild, genexample and radar read the files) is checked.
+const DOTENVX_NO_LOAD_SUBS = new Set(['help', 'ls', 'gitignore']);
+// Steps that read or print the keys file as well.
+const DOTENVX_KEYS_SUBS = new Set(['keypair', 'ext']);
+const DOTENV_KEYS_FILE = '.env.keys';
 const DOTENVX_KNOWN_SUBS = new Set([...DOTENVX_NO_LOAD_SUBS, 'run', 'get', 'set', 'encrypt', 'decrypt', 'rotate']);
 // Runner options that take the next word as their value (so that word does not start the wrapped command).
 const DOTENV_VALUE_OPTIONS = new Set(['-e', '-f', '--env-file', '-v', '-p', '--convention', '--log-level', '-l', '-fk', '--env-keys-file', '-c', '--cascade']);
@@ -1665,6 +1670,7 @@ function envFileValueWords(words, opts) {
   const defaults = new Set();
   const noteDefaults = () => {
     if (!runner || infoOnly || (dotenvx && DOTENVX_NO_LOAD_SUBS.has(dxSub))) return;
+    if (dotenvx && (DOTENVX_KEYS_SUBS.has(dxSub) || !DOTENVX_KNOWN_SUBS.has(dxSub))) defaults.add(DOTENV_KEYS_FILE);
     // A cascade or convention also reads the files of the environment, whatever file options are given.
     if (cascade) defaults.add(DOTENV_CASCADE);
     if (fileGiven) return;
@@ -1677,13 +1683,30 @@ function envFileValueWords(words, opts) {
   let launch = null;
   let launchHead = null;
   let seenProgram = false;
+  let progWord = null;
+  let loose = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
+    if (w.seq !== seq) {
+      // The program of this simple command: the word after the wrappers (env, sudo, command, nice ...) that the hook reads
+      // elsewhere (GIT_WRAPPERS, skipWrapper). When the chain is unsure, any dotenv runner word of the command counts as the program.
+      const own = [];
+      for (let j = i; j < words.length && words[j].seq === w.seq; j++) own.push(words[j]);
+      let k = own.findIndex((x) => x.head !== '' && !x.redirectTarget && !ASSIGNMENT_RE.test(x.text));
+      const chain = { unsure: false };
+      for (let guard = 0; k >= 0 && k < own.length && guard < 16; guard++) {
+        const name = programName(own[k].text);
+        if (!Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) break;
+        k = skipWrapper(own, k, name, chain);
+      }
+      progWord = k >= 0 && k < own.length ? own[k] : null;
+      loose = chain.unsure;
+    }
     if (w.seq !== seq) { noteDefaults(); seq = w.seq; runner = false; dotenvx = false; dxSub = null; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; infoOnly = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
-    const programWord = !seenProgram && programName(t) === programName(w.head);
+    const programWord = w === progWord || (loose && DOTENV_RUNNERS.has(programName(t)));
     if (programWord) seenProgram = true;
     const wasLaunch = launch;
     if (programWord) {
@@ -1706,7 +1729,8 @@ function envFileValueWords(words, opts) {
       const wasValue = valueNext;
       valueNext = false;
       if (t.startsWith('-')) {
-        if (/^(?:--help|--version|-h|-V)$/.test(t)) infoOnly = true;
+        // Only dotenvx honours these, and only before a step (dotenv-cli: not assumed, so its -h and -V do not count).
+        if (dotenvx && dxSub === null && /^(?:--help|--version|-h|-V)$/.test(t)) infoOnly = true;
         // For dotenvx, -e sets a variable and is not a file option.
         if (t === '-f' || t === '--env-file' || /^(?:-f|--env-file)=/.test(t) || (!dotenvx && (t === '-e' || t.startsWith('-e=')))) fileGiven = true;
         if (t === '--convention' || t === '-c' || t === '--cascade' || /^(?:--convention|-c|--cascade)=/.test(t)) cascade = true;
