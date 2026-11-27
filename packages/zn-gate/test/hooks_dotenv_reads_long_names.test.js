@@ -289,6 +289,22 @@ test('dotenvx run with a child that prints the environment is refused when .env 
   }
 });
 
+// The get refusal names the file the command named, also in a subfolder, never the whole command.
+test('the dotenvx get refusal names the file the command gave', async (t) => {
+  const dir = project(t);
+  fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config', '.env.production'), 'PORT=1\n');
+  for (const [command, file] of [['dotenvx get KEY -f .env', '.env'], ['dotenvx get -f config/.env.production', 'config/.env.production'],
+    ['dotenvx get KEY --env-file=.env', '.env']]) {
+    const res = await runner.handle(claude, cc(dir, 'Bash', { command }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+    const text = JSON.stringify(res.output || {});
+    assert.match(text, /secret-file:dotenv/, command);
+    assert.ok(text.includes('env shadow ' + file), command + ': ' + text.slice(0, 300));
+    assert.ok(text.includes('dotenvx run -f ' + file + ' --'), command);
+    assert.ok(!text.includes('shadow dotenvx'), command);
+  }
+});
+
 // dotenvx rewrites the file it names with set, encrypt, decrypt and its other subcommands, and get prints its decrypted values to the
 // agent; its -f value is a read only for run, which hands the values to the program it starts.
 test('a dotenvx subcommand other than run that names .env is refused', async (t) => {

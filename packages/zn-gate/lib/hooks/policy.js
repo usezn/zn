@@ -1038,8 +1038,9 @@ function unprovenEnvWriteDenial(p) {
 }
 
 /** dotenvx get on a named .env file: it prints the decrypted values where the agent reads them, so it is a read. */
+// `p` is the file word as the command names it (.env, config/.env.production), so the advice names the same file.
 function dotenvxGetDenial(p) {
-  const base = path.basename(String(p));
+  const base = String(p);
   return 'zn: dotenvx get prints the values in ' + base + ', and secret values never go to the model (rule: secret-file:dotenv). ' +
     'Ask the user to run `' + znCommand('env shadow ' + base) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. ' +
     'To use a value in a program, start it with `dotenvx run -f ' + base + ' -- <program>` when the file holds no secret, or `' + znCommand('run --secrets <NAME> -- <program>') + '`.';
