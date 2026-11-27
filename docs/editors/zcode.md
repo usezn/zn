@@ -24,6 +24,8 @@ This writes zn's hooks to `~/.zcode/cli/config.json` for your user, next to anyt
 
 There is no `--project` install. ZCode does not run the hooks of a project (`<project>/.zcode/config.json`), only the ones in your user file, so everyone on a team runs `zn hooks install zcode` once on their own machine.
 
+On Linux (x64 and arm64), a user install for Claude Code and ZCode (`zn hooks install claude-code` or `zn hooks install zcode`) starts the hook through a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`. It runs before any dynamic loader, so `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG=help` in the agent's environment can no longer make the hook exit before it runs: the launcher blocks the call instead. The install copies the launcher only when its SHA-256 matches, runs it once as a test, and switches the hook to it only when the test passes. When the package has no matching launcher for the machine, or the test run fails, the install keeps the earlier hook and prints a warning that this protection is missing. Project installs (`--project`), other systems and the other agents are not covered; see the [threat model](../threat-model.md) for the limits.
+
 ## Verify
 
 Run `npx -y zn-gate check` in your own terminal to see that the hook works on your machine. It makes a temporary folder with a fake `.env` file and asks zn's hook to block reading it; nothing is sent over the network and no setting changes. See [Check that it works](../check.md).

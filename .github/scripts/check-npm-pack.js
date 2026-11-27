@@ -10,15 +10,21 @@
 //   - a required file is missing (entry points, type definitions, LICENSE, THIRD_PARTY_NOTICES.md);
 //   - a bundled dependency from package-lock.json is missing from the tarball,
 //     or is not listed with its exact version in THIRD_PARTY_NOTICES.md;
-//   - the tarball contains the test suite, env files, keys or certificates.
+//   - the tarball contains the test suite, env files, keys or certificates;
+//   - the tarball ships the static hook launcher but THIRD_PARTY_NOTICES.md has no Rust standard library or musl libc section;
+//   - with --hook-launcher (for a local check of a tarball built with the launcher; the release workflow checks the launcher
+//     in its tarball with shell tools, in build-release.yml, so that no new step runs code from the tagged commit): the static
+//     hook launcher binaries for Linux x64 and arm64 or their SHA-256 list (lib/native/hook-launcher.json) are missing, or a
+//     binary does not match the list.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
-const [packJsonPath, pkgDir] = process.argv.slice(2);
-if (!packJsonPath || !pkgDir) {
-  console.error('usage: check-npm-pack.js <pack.json> <package dir>');
+const [packJsonPath, pkgDir, ...flags] = process.argv.slice(2);
+const needLauncher = flags.includes('--hook-launcher');
+if (!packJsonPath || !pkgDir || flags.some((f) => f !== '--hook-launcher')) {
+  console.error('usage: check-npm-pack.js <pack.json> <package dir> [--hook-launcher]');
   process.exit(2);
 }
 
@@ -63,6 +69,31 @@ for (const [key, meta] of bundledEntries) {
 }
 for (const name of pkg.bundleDependencies || pkg.bundledDependencies || []) {
   if (!has.has(`node_modules/${name}/package.json`)) errors.push(`bundleDependencies entry not in tarball: ${name}`);
+}
+
+// The static hook launcher (release build only): both binaries and their SHA-256 list ship, and match.
+if (needLauncher) {
+  const keys = ['linux-x64', 'linux-arm64'];
+  for (const f of ['lib/native/hook-launcher.json', ...keys.map((k) => `lib/native/${k}/zn-hook-launcher`)]) {
+    if (!has.has(f)) errors.push(`static hook launcher file not in tarball: ${f}`);
+  }
+  try {
+    const dir = path.join(pkgDir, 'lib', 'native');
+    const list = JSON.parse(fs.readFileSync(path.join(dir, 'hook-launcher.json'), 'utf8'));
+    for (const k of keys) {
+      const got = require('crypto').createHash('sha256').update(fs.readFileSync(path.join(dir, k, 'zn-hook-launcher'))).digest('hex');
+      if (list[k] !== got) errors.push(`static hook launcher ${k} does not match lib/native/hook-launcher.json`);
+    }
+  } catch (e) {
+    errors.push(`static hook launcher cannot be checked: ${e.message}`);
+  }
+}
+
+// A tarball that ships the static hook launcher carries the notices of what is linked into it: the Rust standard library and musl libc.
+if (has.has('lib/native/hook-launcher.json')) {
+  for (const heading of ['## Rust standard library', '## musl libc']) {
+    if (!notices.split(/\r?\n/).some((l) => l.startsWith(heading))) errors.push(`THIRD_PARTY_NOTICES.md has no "${heading}" section for the static hook launcher`);
+  }
 }
 
 // Nothing that belongs to development or to a local machine.

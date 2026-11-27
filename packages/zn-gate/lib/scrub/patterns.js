@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-19.2';
+const SCRUB_RULES_VERSION = '2026-11-24.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -829,13 +829,87 @@ for (const ch of 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 function isAlnum(c) { return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122); }
 const EMAIL_DOMAIN = /(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])/y;
 
+/* JSON escapes before an address. The local part may swallow the letters of an escape right before it
+ * (`\nuser@x.com`, `auser@x.com`); the span must never cut an escape, or the masked text keeps a stray
+ * backslash and is no longer valid JSON. A `\uXXXX` escape that decodes to a local-part character is part of the
+ * address: the span starts at its backslash and takes in the escapes of that kind right before it. Any other
+ * escape (a space, a surrogate half, `\n`) is a boundary: the span starts after it. Same rules as the Rust scrubber. */
+function oddBackslashes(text, end) {
+  let n = 0;
+  while (end - n > 0 && text.charCodeAt(end - n - 1) === 92) n++;
+  return n % 2 === 1;
+}
+const HEX4 = /^[0-9a-fA-F]{4}$/;
+function unicodeEscapeAt(text, i) {
+  if (i < 0 || i + 6 > text.length || text.charCodeAt(i) !== 92 || text[i + 1] !== 'u') return -1;
+  const hex = text.slice(i + 2, i + 6);
+  if (!HEX4.test(hex) || !oddBackslashes(text, i + 1)) return -1;
+  return parseInt(hex, 16);
+}
+function isLocalCode(c) { return c >= 0 && c < 128 && LOCAL_CHARS[c] === 1; }
+/* Move the start back over what is still the local part: raw local-part characters and `\uXXXX` escapes that decode
+ * to one, in any mix. It stops at the first other character and at an escape that decodes to something else. A raw
+ * character that ends a short escape (`\n`) belongs to that escape, so the walk never splits one. */
+function extendEmailStart(text, start) {
+  for (;;) {
+    if (start >= 6) {
+      const c = unicodeEscapeAt(text, start - 6);
+      if (c >= 0) {
+        if (!isLocalCode(c)) break;
+        start -= 6;
+        continue;
+      }
+    }
+    const endsEscape = start >= 2 && text.charCodeAt(start - 2) === 92 && oddBackslashes(text, start - 1);
+    if (start > 0 && isLocalCode(text.charCodeAt(start - 1)) && !endsEscape) { start--; continue; }
+    break;
+  }
+  return start;
+}
+/* Start of the address span given the start `s` found by the local-part scan, or -1 when no address is left. */
+function emailStartAfterEscape(text, s, at) {
+  if (!(s > 0 && text.charCodeAt(s - 1) === 92 && oddBackslashes(text, s))) return s;
+  const c = text[s];
+  if (c === 'u' && s + 5 <= at && HEX4.test(text.slice(s + 1, s + 5))) {
+    if (isLocalCode(unicodeEscapeAt(text, s - 1))) return s - 1;
+    return s + 5 < at ? s + 5 : -1;
+  }
+  if (c === 'n' || c === 't' || c === 'r' || c === 'b' || c === 'f') return s + 1 < at ? s + 1 : -1;
+  return s;
+}
+
+/* Characters of the local part between `s` and the '@' once decoded: a `\uXXXX` escape counts as one. Counting stops
+ * past `limit`, so a long run costs at most limit + 1 steps. */
+function decodedLocalLength(text, s, at, limit) {
+  let n = 0;
+  for (let i = s; i < at && n <= limit; n++) i += unicodeEscapeAt(text, i) >= 0 ? 6 : 1;
+  return n;
+}
+
 function findEmails(text, check, out) {
   let at = text.indexOf('@');
   while (at >= 0) {
+    // Raw local-part characters right before the '@', at most 64. The scan stops at a `\uXXXX` escape, on its 'u'
+    // as it stops on any backslash: the hex digits of an escape are never counted as characters of the address and
+    // the start never lands inside an escape (extendEmailStart reads the escapes that come before).
     let s = at;
-    while (s > 0 && at - s < 64 && text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]) s--;
+    while (s > 0 && at - s < 64 && text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]) {
+      if (s >= 6 && unicodeEscapeAt(text, s - 6) >= 0) { s -= 5; break; }
+      s--;
+    }
     const boundaryOk = s === 0 || !(text.charCodeAt(s - 1) < 128 && LOCAL_CHARS[text.charCodeAt(s - 1)]);
     if (s < at && boundaryOk && isAlnum(text.charCodeAt(s)) && isAlnum(text.charCodeAt(at - 1))) {
+      s = emailStartAfterEscape(text, s, at);
+      if (s >= 0) s = extendEmailStart(text, s);
+      // the span may now start on a raw '.', '_', '%', '+' or '-': an address starts with a letter or digit
+      while (s >= 0 && s < at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s++;
+      if (s >= 0 && s !== at && text.charCodeAt(s) !== 92 && !isAlnum(text.charCodeAt(s))) s = -1;
+      // an address has at most 64 characters before the '@', counted once escapes are decoded
+      if (s >= 0 && decodedLocalLength(text, s, at, 64) > 64) s = -1;
+    } else {
+      s = -1;
+    }
+    if (s >= 0) {
       EMAIL_DOMAIN.lastIndex = at + 1;
       const m = EMAIL_DOMAIN.exec(text);
       if (m) {

@@ -1,0 +1,25 @@
+[package]
+name = "zn-hook-launcher"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+publish = false
+description = "Statically linked start program for zn's hooks on Linux: removes the dynamic loader variables before any loader runs."
+
+[[bin]]
+name = "zn-hook-launcher"
+path = "src/main.rs"
+
+# No dependencies on purpose: the standard library only, so the static musl build stays small and auditable.
+[dependencies]
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# A crate of its own, not a member of the zn crate: it must not pull in that crate's dependencies.
+[workspace]

@@ -90,6 +90,8 @@ const HOOK_TIMEOUT_S = 15;
 // Older versions wrote the paths in double quotes; both forms are ours.
 // zn's launcher script (lib/agents/launcher.js) is ours too: '<dir>/zn-hook-claude-code.sh' <Event>
 const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code|zn-hook-claude-code\.sh["']? [A-Za-z]+)\s*$/;
+// A hook in exec form (command + args: the static launcher on Linux, see static-launcher.js) read as one command line.
+const entryText = (h) => (h && typeof h.command === 'string' ? (Array.isArray(h.args) ? require('./static-launcher').execText([h.command, ...h.args.map(String)]) : h.command) : '');
 const MCP_SERVER_NAME = 'secrets';
 // `claude mcp` is a CLI that zn runs at install and uninstall: a CLI that never answers must not hang the command.
 const CLAUDE_MCP_TIMEOUT_MS = 30000;
@@ -156,8 +158,15 @@ function unknownToolEvent(base, toolName, ti) {
   if (patch !== undefined) return { ...base, tool: 'write', toolName, input: patchInput(patch) };
   const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti, base.cwd);
   if (cmd === null) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
-  if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
-  const { paths, bad } = pathsOf(ti);
+  if (cmd !== undefined) {
+    // The files the call also names keep their read and write checks (a .env write among them is judged on what the call writes); an
+    // address zn cannot read refuses the call.
+    const named = pathsOf(ti, { loose: true });
+    if (named.bad) return { ...base, tool: 'write', toolName, input: { paths: named.paths, unparsed: true, texts: [] } };
+    return { ...base, tool: 'bash', toolName, input: { command: cmd, alsoPaths: named.paths, texts: [] } };
+  }
+  // A path under any key counts (src, dst, from, to, nested objects), in every node; arguments nested deeper than zn reads are refused.
+  const { paths, bad } = pathsOf(ti, { loose: true });
   if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
   if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };
   return null;
@@ -382,15 +391,19 @@ function stripOurs(groups) {
   const out = [];
   for (const g of groups) {
     if (!g || !Array.isArray(g.hooks)) { out.push(g); continue; }
-    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(h.command) || launcher.isProjectGuard(h.command, id))));
+    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(entryText(h)) || launcher.isProjectGuard(h.command, id))));
     if (hooks.length) out.push({ ...g, hooks });
   }
   return out;
 }
 
-// command: one command for every event, or a function of the event name (the launcher needs it).
+// command: one command for every event, or a function of the event name (the launcher needs it) that returns the command, or
+// {command, args} for the exec form (no shell).
 function ourHooks(command) {
-  const h = (event) => ({ type: 'command', command: typeof command === 'function' ? command(event) : command, timeout: HOOK_TIMEOUT_S });
+  const h = (event) => {
+    const c = typeof command === 'function' ? command(event) : command;
+    return { type: 'command', ...(typeof c === 'string' ? { command: c } : c), timeout: HOOK_TIMEOUT_S };
+  };
   return {
     // A hook that cannot start or times out blocks the call (Claude Code 2.1.295 and later; earlier
     // versions ignore the field, and the launcher covers them).
@@ -414,13 +427,18 @@ function ourHooks(command) {
  * a project install (the file is shared, an absolute path is not) runs `zn` from the PATH inside a start guard that blocks the same
  * way; a command given by the caller keeps the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
  */
-function commandFor(opts = {}) {
+function commandFor(opts = {}, notes = []) {
   if (opts.command) return hookCommand(opts);
   // A project install names `zn` on the PATH inside zn's own start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
   if ((opts.scope || 'user') === 'project') return (event) => launcher.projectShCommand(id, event);
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || runnerPath();
   const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
+  // Linux: the static launcher in exec form (`args`: Claude Code starts it with no shell), so no dynamic loader runs before zn can
+  // refuse a loader variable (see static-launcher.js). Elsewhere, or when it cannot be set up, the launcher script as before.
+  const sl = require('./static-launcher');
+  const st = sl.useStatic(opts, notes, id);
+  if (st) return (event) => ({ command: st, args: sl.execParts(st, id, event, file, [event]).slice(1) });
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }
 
@@ -508,7 +526,9 @@ function install(opts = {}) {
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
   data.hooks = hooksOf(data, file);
-  const ours = ourHooks(commandFor(opts));
+  const notes = [];
+  const ours = ourHooks(commandFor(opts, notes));
+  report.warnings.push(...notes);
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = stripOurs(data.hooks[event]);
     data.hooks[event].push(group);

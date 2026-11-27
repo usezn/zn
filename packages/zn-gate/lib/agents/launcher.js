@@ -40,7 +40,7 @@ const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath } = require('../shell-quote');
 const { winCommandText } = require('../zn-command');
-const { shScrubLines, psScrub, SH_UNSET_NAMES, LOADER_PRELOAD } = require('../loader-env');
+const { shScrubLines, psScrub, psProfilerOn, SH_UNSET_NAMES, LOADER_PRELOAD } = require('../loader-env');
 
 // Events where exit 2 with a reason on stderr is the documented block.
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
@@ -179,6 +179,16 @@ function loaderText() {
 
 function loaderWarnText() {
   return 'zn is NOT protecting this session: the environment of the agent sets a loader variable (LD_PRELOAD, LD_AUDIT, DYLD_INSERT_LIBRARIES and the like) that loads code into the hook before it can start. Please unset it and restart the agent.';
+}
+
+// The Windows form of loaderText: a .NET profiler turned on in the environment of the agent loads a DLL into powershell.exe before the
+// hook script runs (WINDOWS_PROFILER_SWITCHES in loader-env.js). Short: the Windows scripts fit one command line of 8191 characters.
+function profilerText() {
+  return 'zn: blocked, COR_ENABLE_PROFILING loads a DLL into the hook. The user must unset it.';
+}
+
+function profilerWarnText() {
+  return 'zn is NOT protecting this session: COR_ENABLE_PROFILING loads a DLL into the hook. Unset it.';
 }
 
 function crashText(agentId) {
@@ -521,8 +531,10 @@ function projectTexts(agentId) {
   const warnCrash = crashWarnText();
   const loader = loaderText();
   const warnLoader = loaderWarnText();
-  for (const t of [missing, crash, warnMissing, warnCrash, loader, warnLoader]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
-  return { missing, crash, warnMissing, warnCrash, loader, warnLoader };
+  const profiler = profilerText();
+  const warnProfiler = profilerWarnText();
+  for (const t of [missing, crash, warnMissing, warnCrash, loader, warnLoader, profiler, warnProfiler]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
+  return { missing, crash, warnMissing, warnCrash, loader, warnLoader, profiler, warnProfiler };
 }
 
 // What the guard prints when the hook cannot start, for the agents that read a block from a deny JSON on stdout (exit 0).
@@ -542,23 +554,32 @@ const PROJECT_WIN_DENY_JSON = {
  * (exit 2 with the reason on stderr, or the deny JSON); an event that cannot block only warns. Antigravity (no event given)
  * denies every call, as its project hook always did.
  */
-function projectAnswer(agentId, event, why, win) {
+function projectAnswer(agentId, event, why, win, text) {
   const t = projectTexts(agentId);
-  const crash = why === 'crash';
-  const loader = why === 'loader';
+  // [block text, warning text] of each reason; `text` (the Windows guard) puts another text in the same answer.
+  const [br, bw] = { loader: [t.loader, t.warnLoader], crash: [t.crash, t.warnCrash], profiler: [t.profiler, t.warnProfiler] }[why] || [t.missing, t.warnMissing];
+  const r = text !== undefined ? text : br;
+  const w = text !== undefined ? text : bw;
   const block = agentId === 'antigravity' ? true : agentId === 'copilot' ? event === 'preToolUse' : blockExit(agentId).has(event);
   if (block) {
-    const r = loader ? t.loader : crash ? t.crash : t.missing;
     if (PROJECT_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_DENY_JSON[agentId](r)), stderr: null, exit: 0 };
     if (win && PROJECT_WIN_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_WIN_DENY_JSON[agentId](r)), stderr: r, exit: 0 };
     return { stdout: null, stderr: r, exit: 2 };
   }
-  const w = loader ? t.warnLoader : crash ? t.warnCrash : t.warnMissing;
   if (agentId !== 'copilot' && blockJson(agentId).has(event)) {
-    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: loader ? t.loader : crash ? t.crash : t.missing } } }), stderr: null, exit: 0 };
+    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }), stderr: null, exit: 0 };
   }
   if (agentId === 'copilot' || WARN_STDERR.has(agentId)) return { stdout: null, stderr: w, exit: 0 };
   return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
+}
+
+/** The text that projectAnswer puts in its answer for this reason (the block text or the warning, as the event decides). */
+function projectAnswerText(agentId, event, why) {
+  // The answer with a marker as its text, compared with the answers that carry the block text and the warning.
+  const asBlock = JSON.stringify(projectAnswer(agentId, event, why, true, 'ZN_TEXT_B'));
+  const t = projectTexts(agentId);
+  const [br, bw] = { loader: [t.loader, t.warnLoader], crash: [t.crash, t.warnCrash], profiler: [t.profiler, t.warnProfiler] }[why] || [t.missing, t.warnMissing];
+  return asBlock === JSON.stringify(projectAnswer(agentId, event, why, true, 'ZN_TEXT_B')) && JSON.stringify(projectAnswer(agentId, event, why, true)) === asBlock.split('ZN_TEXT_B').join(br) ? br : bw;
 }
 
 // The project guard trusts the zn and node it found only when the folder of each one is an entry of the PATH as written:
@@ -681,17 +702,21 @@ function projectWindowsScript(agentId, event) {
     ...(a.stderr ? ["[Console]::Error.WriteLine('" + a.stderr + "')"] : []),
   ].join('; ') + '; exit ' + a.exit;
   const crash = projectAnswer(agentId, event, 'crash', true);
-  const missing = projectAnswer(agentId, event, 'missing', true);
+  // The answers differ only in their text: the guard writes the answer once and reads its text from $zr, which starts as the
+  // missing text, becomes the crash text once zn ran and failed, or the profiler text when a .NET profiler is on (then nothing runs).
+  const sayZr = say(projectAnswer(agentId, event, 'missing', true, 'ZN_TEXT')).split("('ZN_TEXT')").join('($zr)').split('ZN_TEXT').join("' + $zr + '");
   // Only 0 (done) and 2 (blocked) leave early; with an answer that exits 0 (a deny JSON, a warning) the refusal passes on as exit 0.
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
   // Every PATH entry and every zn.cmd, node.exe or node.cmd found is resolved first, links and junctions followed (see PROJECT_PS_RESOLVE),
   // and is used only when its real place is not inside the folder the agent runs in (the project) and not inside a node_modules folder.
   // A place that cannot be read counts as not trusted. PATH entries that fail the check are dropped, so zn.cmd, which starts
   // `node` through the PATH, cannot reach a project node.exe either.
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + ZF + PROJECT_PS_RESOLVE +
+  // A .NET profiler turned on for this PowerShell already loaded its DLL: zn is not started and the call is blocked (see profilerText).
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + "$zr='" + projectAnswerText(agentId, event, 'missing') + "'; if " + psProfilerOn() +
+    " { $zt=9; $zr='" + projectAnswerText(agentId, event, 'profiler') + "' }; " + ZF + PROJECT_PS_RESOLVE +
     "foreach ($d in ($env:PATH -split ';')) { if ($d -and (zs $d)) { $zo += $d } }; $env:PATH = $zo -join ';'; " +
-    "if ((zg 'zn.cmd') -and ((zg 'node.exe') -or (zg 'node.cmd'))) { $zt=1; & (zg 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
-    'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
+    "if (($zt -eq 0) -and (zg 'zn.cmd') -and ((zg 'node.exe') -or (zg 'node.cmd'))) { $zt=1; & (zg 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
+    "if ($zt -eq 1) { $zr='" + projectAnswerText(agentId, event, 'crash') + "' }; " + sayZr + '; # zn hook ' + agentId;
 }
 
 /** Whether a command is the POSIX project hook of this agent as written by projectShCommand. */
@@ -1194,7 +1219,18 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
   return 'zd; ' + tail;
   };
-  const tail = tailOf(reason, winCommandText(warnText(agentId, true), 'win32'));
+  const warn = winCommandText(warnText(agentId, true), 'win32');
+  // The answer at the end holds its text once, in $zr: the block text, or the warning for an event the agent cannot block; the crash
+  // text once the hook ran and failed (deadline form); the profiler text when a .NET profiler is on for this PowerShell (see
+  // profilerText), and then the hook does not run. A text goes inside a JSON string and a '..' literal: no quote, no backslash.
+  const blocks = tailOf('ZN_TEXT_A', 'ZN_TEXT_B').includes('ZN_TEXT_A');
+  const own = blocks ? reason : warn;
+  const prof = winCommandText(blocks ? profilerText() : profilerWarnText(), 'win32');
+  const crashOwn = winCommandText(blocks ? crashText(agentId) : crashWarnText(), 'win32');
+  for (const x of [own, prof, crashOwn]) if (JSON.stringify(x) !== '"' + x + '"' || x.includes("'")) throw new Error('zn: unsafe text in the Windows launcher');
+  const tail = tailOf('ZN_TEXT', 'ZN_TEXT').split("('ZN_TEXT')").join('($zr)').split('ZN_TEXT').join("' + $zr + '");
+  // The node and runner paths are written once, in $zn and $zj (lib/check.js reads them back).
+  const pre = "$zr='" + own + "'; if " + psProfilerOn() + " { $zt=9; $zr='" + prof + "' }; $zn='" + n + "'; $zj='" + r + "'; ";
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
   // A 0 counts only when the hook confirmed (zk: the ack file holds ok) that its whole answer was written.
@@ -1214,12 +1250,12 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
       ? 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx 0 }'
       : 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx $rc }';
     return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + ZF + zr +
-      "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
+      pre + "if (!$zt -and [System.IO.File]::Exists($zn) -and [System.IO.File]::Exists($zj)) { $zt=1; $rc = zr ('\"' + $zn + '\"') ('\"' + $zj + '\" " + agentId + "'); " + zleave + ' }; ' +
       "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
-      'if ($zt -eq 1) { ' + tailOf(winCommandText(crashText(agentId), 'win32'), winCommandText(crashWarnText(), 'win32')) + ' }; ' + tail + ' # zn hook ' + agentId;
+      "if ($zt -eq 1) { $zr='" + crashOwn + "' }; " + tail + ' # zn hook ' + agentId;
   }
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " + psScrub() + ZF +
-    "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
+    pre + "if (!$zt -and [System.IO.File]::Exists($zn) -and [System.IO.File]::Exists($zj)) { $zt=1; & $zn $zj " + agentId + '; ' + leave + ' }; ' +
     "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     tail + ' # zn hook ' + agentId;
 }
@@ -1249,4 +1285,4 @@ function windowsScriptCommand(script, opts = {}) {
   return (opts.cmd ? q.CMD_POWERSHELL : q.powershellExe()) + ' -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { LAUNCHER_AGENTS, isOurLauncher, removeLauncher, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON, treeManifest, parseManifest };
+module.exports = { loaderText, loaderWarnText, crashText, crashWarnText, LAUNCHER_AGENTS, isOurLauncher, removeLauncher, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON, treeManifest, parseManifest };

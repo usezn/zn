@@ -47,6 +47,8 @@ agent's hook to read it, and deletes the folder. If it says `NOT protected`, see
 | macOS | No separate install steps. The same commands apply; compat.md mentions macOS only for managed settings paths and for how approved programs are started. | `npx -y zn-gate check` |
 | Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
 
+On Linux (x64 and arm64), a user install for Claude Code and ZCode (`zn hooks install claude-code` or `zn hooks install zcode`) starts the hook through a small statically linked launcher, `~/.zn/hooks/zn-hook-launcher`. It runs before any dynamic loader, so `LD_TRACE_LOADED_OBJECTS` or `LD_DEBUG=help` in the agent's environment can no longer make the hook exit before it runs: the launcher blocks the call instead. The install copies the launcher only when its SHA-256 matches, runs it once as a test, and switches the hook to it only when the test passes. When the package has no matching launcher for the machine, or the test run fails, the install keeps the earlier hook and prints a warning that this protection is missing. Project installs (`--project`), other systems and the other agents are not covered; see the [threat model](threat-model.md) for the limits.
+
 Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. The npm package declares Node.js 18 or later in the `engines` field of its package.json. Using only the Python package (`pip install zn-gate`, without the hooks) does not need Node.js. Without `npx`, install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
 
 ## Install on a machine without internet
@@ -91,7 +93,7 @@ It should say that your agent is protected.
 - The cloud check of `zn-gate analyze`. On an offline computer, leave it off: do not set `ZN_CLOUD=1` and do not run `zn-gate connect`. With the cloud check off, nothing is sent to usezn.com.
 - `zn-gate connect`, which checks an API key with usezn.com.
 - The team commands that join or sync with a zn organization.
-- `claude plugin marketplace add usezn/zn#v1.17.0`, which installs the Claude Code plugin from GitHub. Use `zn hooks install claude-code`, as in step 2, instead.
+- `claude plugin marketplace add usezn/zn#plugin-v1.17.0`, which installs the Claude Code plugin from GitHub. Use `zn hooks install claude-code`, as in step 2, instead.
 
 **Updating later.** Download the newer `.tgz` on a computer with internet, copy it over, and run `npm install -g ./zn-gate-<new-version>.tgz --offline` again.
 

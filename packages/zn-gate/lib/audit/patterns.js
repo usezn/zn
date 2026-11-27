@@ -1,4 +1,6 @@
 'use strict';
+
+const loaderEnv = require('../loader-env');
 /**
  * Command and text patterns for `zn audit`. Every regular expression is
  * linear: no nested quantifiers, gaps are bounded, and inputs are cut to
@@ -6,6 +8,7 @@
  */
 
 const path = require('path');
+const { isHookStopVar } = require('../loader-env');
 
 const MAX_LINE = 4000;
 
@@ -264,6 +267,11 @@ function packagesOf(argv) {
 
 const ENDPOINT_KEY = /(?:^|_)(?:BASE_URL|API_BASE|API_BASE_URL|ENDPOINT|ENDPOINT_URL|API_URL|API_HOST)$/i;
 const PROXY_KEY = /^(?:https?_proxy|all_proxy)$/i;
+// The variables that load code into a program come from the one list of lib/loader-env.js (every LD_* and DYLD_* name, the C library
+// and interpreter settings, the .NET profiler), so the audit and the launchers cannot drift apart; the loader settings that only log
+// or print are left out. The names after them are the audit's own: shells, git and SSH helpers, certificates and TLS checks.
+const LOG_ONLY_ENV = new Set(['LD_DEBUG', 'LD_DEBUG_OUTPUT', 'LD_SHOW_AUXV', 'LD_VERBOSE', 'LD_WARN', 'NODE_V8_COVERAGE', 'DYLD_PRINT_LIBRARIES']);
+const isCodeLoaderEnv = (up) => (loaderEnv.isLoaderVar(up) || loaderEnv.WINDOWS_PROFILER_NAMES.includes(up)) && !LOG_ONLY_ENV.has(up);
 const CODE_ENV = new Set([
   'NODE_OPTIONS', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDIT', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH',
   'PYTHONSTARTUP', 'PYTHONHOME', 'BASH_ENV', 'ENV', 'ZDOTDIR', 'PROMPT_COMMAND', 'PATH',
@@ -330,6 +338,10 @@ function maskUrls(text, keep) {
 
 /** Classify an agent-level environment variable. */
 function classifyEnv(key, value) {
+  // glibc's dynamic loader ends every dynamically linked program before its first line when LD_TRACE_LOADED_OBJECTS is set (to any
+  // value, even empty or a placeholder: it prints the library list instead) or when LD_DEBUG names "help" (it prints the debug options).
+  // The shell that runs a hook is such a program, so every hook the agent starts exits 0 having checked nothing.
+  if (isHookStopVar(key, value)) return { kind: 'hookstop' };
   if (isPlaceholder(value)) return null;
   const k = String(key);
   const v = String(value);
@@ -344,7 +356,9 @@ function classifyEnv(key, value) {
   }
   const up = k.toUpperCase();
   if (CONFIG_DIR_ENV.has(up)) return { kind: 'confdir' };
-  if (CODE_ENV.has(up)) {
+  // A .NET profiler turned on loads its DLL into powershell.exe before any line of a Windows hook runs (the Windows twin of LD_PRELOAD).
+  if (loaderEnv.isProfilerOn(up, v)) return { kind: 'profiler' };
+  if (CODE_ENV.has(up) || isCodeLoaderEnv(up)) {
     if (up === 'NODE_OPTIONS' && !/(?:^|\s)(?:-r|--require|--import|--loader|--experimental[-_]loader|--experimental[-_]policy)\b/.test(v)) return null;
     if ((up === 'NODE_TLS_REJECT_UNAUTHORIZED' || up === 'PYTHONHTTPSVERIFY') && v.trim() !== '0') return null;
     if (up === 'GIT_SSL_NO_VERIFY' && !/^(?:1|true|yes)$/i.test(v.trim())) return null;

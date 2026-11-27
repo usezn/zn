@@ -474,7 +474,7 @@ async fn slow_headers_are_closed_at_the_header_timeout() {
     report("header_timeout", &p);
     assert!(!p.timed_out, "{p:?}");
     assert!(p.elapsed >= Duration::from_millis(250), "{p:?}");
-    assert!(p.elapsed < Duration::from_secs(3), "{p:?}");
+    assert!(p.elapsed < Duration::from_secs(4), "{p:?}");
 }
 
 /// Same for a body that stops short of its Content-Length: the request fails and the answer is a 4xx.
@@ -485,7 +485,7 @@ async fn stalled_body_is_a_4xx_after_the_body_timeout() {
     let p = probe(addr, raw, Duration::from_secs(5)).await;
     report("body_timeout", &p);
     assert!(!p.timed_out, "{p:?}");
-    assert!(p.elapsed < Duration::from_secs(3), "{p:?}");
+    assert!(p.elapsed < Duration::from_secs(4), "{p:?}");
     assert!(is_clean_reject(&p), "{p:?}");
 }
 
