@@ -21,7 +21,8 @@ _INSTALLED = []
 
 def _context_class(module, name):
     """A stand-in for a framework class, defined in that framework's module path and held by that module under its
-    name (a class that only claims the module is not skipped), until tearDownModule."""
+    name (a class that only claims the module is not skipped), until the test ends (_restore_contexts). It must not
+    outlive the test: a stand-in left in the real module would be what a later import of the framework finds."""
     import sys
     import types as _types
     cls = type(name, (), {"__module__": module, "__init__": lambda self, **kw: self.__dict__.update(kw)})
@@ -36,7 +37,7 @@ def _context_class(module, name):
     return cls
 
 
-def tearDownModule():
+def _restore_contexts():
     import sys
     for module, name, old in reversed(_INSTALLED):
         if name is None:
@@ -46,6 +47,10 @@ def tearDownModule():
         else:
             setattr(sys.modules[module], name, old)
     _INSTALLED.clear()
+
+
+def tearDownModule():
+    _restore_contexts()
 
 
 def _deep(levels, leaf):
@@ -69,6 +74,9 @@ def _deep_dict(levels, leaf):
 # --- framework context arguments --------------------------------------
 
 class TestFrameworkContextArguments(unittest.TestCase):
+    def tearDown(self):
+        _restore_contexts()
+
     CONTEXTS = [
         ("pydantic_ai._run_context", "RunContext"),
         ("google.adk.tools.tool_context", "ToolContext"),

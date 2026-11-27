@@ -48,7 +48,13 @@ class GuardBlockError extends Error {
 class NestingTooDeep extends Error {}
 
 /** Internal: a tool result holds a value that cannot be read without running its code. */
-class Unscannable extends Error {}
+class Unscannable extends Error {
+  // Explicit: the implicit constructor spreads its arguments through Array.prototype[Symbol.iterator]
+  // on Node.js 18, so a replaced iterator would drop the message and hide why the result is blocked.
+  constructor(message) {
+    super(message);
+  }
+}
 
 // Built-in functions taken when this module is loaded. The result check calls only these (through
 // Reflect.apply), never a method looked up on a live object or prototype, so a built-in replaced
