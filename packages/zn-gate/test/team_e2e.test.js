@@ -1,7 +1,7 @@
 'use strict';
 /*
  * zn Team end to end on one machine: a real vault daemon, the "secrets" MCP
- * server as Claude Code and Codex start it, and a local server that speaks
+ * server as Claude Code, Codex and Cursor start it, and a local server that speaks
  * the zn cloud contract. Join (confirmed outside the agent), signed policy,
  * per-agent deny, an opening that needs a local approval, audit upload,
  * offline, revocation and leave.
@@ -66,6 +66,7 @@ test.before(async () => {
   await vault.setSecret('PROD_DB_URL', 'postgres://u:' + 'p'.repeat(24) + '@db.internal/app', { mode: 'proxy', allowHosts: ['127.0.0.1'] });
   await vault.setSecret('STRIPE_KEY', 'sk_test_' + 'x'.repeat(24), { mode: 'proxy', allowHosts: ['api.stripe.com'] });
   await vault.setSecret('STAGING_TOKEN', 'stg_' + 'q'.repeat(28), { mode: 'proxy', allowHosts: ['127.0.0.1'] });
+  await vault.setSecret('CURSOR_PAY_KEY', 'cpk_' + 'c'.repeat(28), { mode: 'proxy', allowHosts: ['api.stripe.com'] });
   cloud = await startFakeTeamServer();
 });
 
@@ -107,7 +108,7 @@ test('another server never gets the join token before the user confirms', async 
 
 test('a signed policy denies a secret for every agent, and the audit log is uploaded', async () => {
   cloud.publishPolicy({ rules: [
-    { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },
+    { secret: 'PROD_*', agents: ['codex', 'cursor'], deny: true, reason: 'No production credentials in Codex' },
     { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', '127.0.0.1'] },
   ] });
   const s = await vault.teamSync({});
@@ -120,6 +121,10 @@ test('a signed policy denies a secret for every agent, and the audit log is uplo
   const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(codex.isError, true);
   assert.match(codex.text, /organization policy/);
+  // Cursor is named in the rule and denied the same way, through its own MCP server entry.
+  const cursor = await request('cursor', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+  assert.strictEqual(cursor.isError, true);
+  assert.match(cursor.text, /organization policy/);
   // The rule names Codex, but zn-gate cannot prove which agent calls: it applies to all.
   const before = sent.length;
   const claude = await request('claude-code', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
@@ -129,9 +134,10 @@ test('a signed policy denies a secret for every agent, and the audit log is uplo
 
 test('a warn rule allows the use, tells the agent and the user, and the "warn" record is uploaded', async () => {
   const rules = [
-    { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },
+    { secret: 'PROD_*', agents: ['codex', 'cursor'], deny: true, reason: 'No production credentials in Codex' },
     { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', '127.0.0.1'] },
     { secret: 'STAGING_*', agents: ['*'], warn: true, reason: 'Staging credentials need review.' },
+    { secret: 'CURSOR_PAY_KEY', agents: ['cursor'], allowHosts: ['api.stripe.com', '127.0.0.1'] },
   ];
   // A rule with both deny and warn: the whole policy is refused, the last good one stays.
   cloud.publishPolicy({ rules: [...rules.slice(0, 2), { secret: 'STAGING_*', agents: ['*'], deny: true, warn: true }] });
@@ -145,32 +151,37 @@ test('a warn rule allows the use, tells the agent and the user, and the "warn" r
   // The warn rule reached this client because it declared the feature.
   assert.ok(policy.state().policy.rules.some((r) => r.warn === true));
 
-  const told = [];
-  const srvMcp = createSecretsServer({
-    vault, engine: fakeEngine, agent: 'claude-code', notify: (l) => told.push(l),
-    fetch: async (url) => { sent.push(String(url)); return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }); },
-  });
-  const before = sent.length;
-  const r = await srvMcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'secrets_http_request', arguments: { method: 'GET', url: 'http://127.0.0.1:9/x', headers: { Authorization: 'Bearer __ZN_STAGING_TOKEN__' } } } });
-  assert.strictEqual(Boolean(r.result.isError), false, r.result.content[0].text);
-  assert.strictEqual(sent.length, before + 1);
   const notice = 'zn: your team policy would block STAGING_TOKEN here (policy note: "Staging credentials need review."). It was allowed and recorded for your organization.';
-  assert.strictEqual(JSON.parse(r.result.content[0].text).notice, notice);
-  assert.deepStrictEqual(told, [notice]);
+  for (const agent of ['claude-code', 'cursor']) {
+    const told = [];
+    const srvMcp = createSecretsServer({
+      vault, engine: fakeEngine, agent, notify: (l) => told.push(l),
+      fetch: async (url) => { sent.push(String(url)); return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }); },
+    });
+    const before = sent.length;
+    const r = await srvMcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'secrets_http_request', arguments: { method: 'GET', url: 'http://127.0.0.1:9/x', headers: { Authorization: 'Bearer __ZN_STAGING_TOKEN__' } } } });
+    assert.strictEqual(Boolean(r.result.isError), false, agent + ': ' + r.result.content[0].text);
+    assert.strictEqual(sent.length, before + 1);
+    assert.strictEqual(JSON.parse(r.result.content[0].text).notice, notice);
+    assert.deepStrictEqual(told, [notice]);
+  }
 
   // The deny rule still blocks.
   const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(codex.isError, true);
+  assert.strictEqual((await request('cursor', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x')).isError, true);
 
   const up = await vault.teamSync({});
   assert.strictEqual(up.upload.status, 'ok');
   const inst = [...cloud.state.installs.values()][0];
   const warned = inst.events.filter((e) => e.decision === 'warn');
-  assert.strictEqual(warned.length, 1);
-  assert.strictEqual(warned[0].secret, 'STAGING_TOKEN');
-  assert.strictEqual(warned[0].reason, 'policy:warn');
-  assert.strictEqual(warned[0].tool, 'mcp:secrets_http_request');
-  assert.strictEqual(warned[0].host, '127.0.0.1');
+  assert.strictEqual(warned.length, 2, 'one record for Claude Code and one for Cursor');
+  for (const w of warned) {
+    assert.strictEqual(w.secret, 'STAGING_TOKEN');
+    assert.strictEqual(w.reason, 'policy:warn');
+    assert.strictEqual(w.tool, 'mcp:secrets_http_request');
+    assert.strictEqual(w.host, '127.0.0.1');
+  }
 });
 
 /* A restore into a git-ignored file never writes a proxy-mode secret, so the restore tests below run on env-mode copies
@@ -258,6 +269,7 @@ test('deleting or editing the policy file does not lift the restrictions', async
   fs.writeFileSync(file, '{"v":1,"envelope":{}}');
   const edited = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(edited.isError, true);
+  assert.strictEqual((await request('cursor', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x')).isError, true);
   // The next sync puts the readable copy back.
   await vault.teamSync({ upload: false });
   assert.strictEqual(policy.state().state, 'active');
@@ -282,6 +294,24 @@ test('a host the organization opens is used only after a local approval', async 
   assert.strictEqual(confirmations.length, n + 2);
 });
 
+test('a host the organization opens for Cursor is used only after a local approval', async () => {
+  const url = 'http://127.0.0.1:9/charge';
+  const n = confirmations.length;
+  answer = false;
+  const no = await request('cursor', '__ZN_CURSOR_PAY_KEY__', url);
+  assert.strictEqual(no.isError, true);
+  assert.strictEqual(confirmations.length, n + 1);
+  assert.strictEqual(confirmations[n].kind, 'policy');
+  // The rule names Cursor only: Claude Code gets no question and a plain local denial.
+  const other = await request('claude-code', '__ZN_CURSOR_PAY_KEY__', url);
+  assert.strictEqual(other.isError, true);
+  assert.strictEqual(confirmations.length, n + 1);
+  answer = true;
+  const yes = await request('cursor', '__ZN_CURSOR_PAY_KEY__', url);
+  assert.strictEqual(yes.isError, false, yes.text);
+  assert.strictEqual(confirmations.length, n + 2);
+});
+
 test('approving something the policy does not ask for is refused', async () => {
   await assert.rejects(vault.confirmOrgOpening('STRIPE_KEY', 'host', 'evil.example.net', 'claude-code', true), /does not ask for this/);
   // A pending host, but asked for with a self-reported agent id.
@@ -303,6 +333,7 @@ test('offline: the cached policy keeps applying', async () => {
   assert.strictEqual(s.policy.status, 'offline');
   const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(codex.isError, true);
+  assert.strictEqual((await request('cursor', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x')).isError, true);
   cloud = await startFakeTeamServer();
   assert.notStrictEqual(cloud.base, base);
 });
@@ -364,4 +395,6 @@ test('leave is confirmed outside the agent and lifts the organization policy', a
   assert.ok(!fs.existsSync(policy.paths().policyFile));
   const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(codex.isError, false, codex.text);
+  const cursor = await request('cursor', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+  assert.strictEqual(cursor.isError, false, cursor.text);
 });
