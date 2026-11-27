@@ -1635,7 +1635,8 @@ function envFileValueWords(words, opts) {
   const isDotenvName = (t) => PLAIN_NAME_RE.test(t) && (() => { const c = classifyWord(t, opts); return !!c && c.kind === 'dotenv'; })();
   let seq = null;
   let runner = false;
-  // dotenvx: its -f / --env-file value is a read only for the run and get subcommands; set, encrypt, decrypt and the rest rewrite the file.
+  // dotenvx: its -f / --env-file value is a read only for the run subcommand, which hands the values to the program it starts.
+  // get prints decrypted values where the agent reads them; set, encrypt, decrypt and the rest rewrite the file.
   let dotenvx = false;
   let dxSub = null;
   let ended = false;
@@ -1671,7 +1672,7 @@ function envFileValueWords(words, opts) {
       continue;
     }
     if (runner && dotenvx && dxSub === null && !t.startsWith('-')) dxSub = t;
-    const runnerReads = runner && (!dotenvx || dxSub === 'run' || dxSub === 'get');
+    const runnerReads = runner && (!dotenvx || dxSub === 'run');
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
     const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runnerReads ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
