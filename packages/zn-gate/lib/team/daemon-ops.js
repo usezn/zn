@@ -754,7 +754,8 @@ function makeTeamOps(ctx) {
       if (!(await ensureCopies(snap, true))) return stale();
       // The status report follows the policy step and does not depend on the audit upload. Not when the policy step
       // found the machine removed or the server unreachable (the report would only time out too).
-      if (!['revoked', 'offline'].includes(out.policy.status) && !isClosed()) await sendStatusReport(snap, api);
+      // No report when the machine is cut off or the organization has no active subscription (402): nothing to report to.
+      if (!['revoked', 'offline', 'no_subscription'].includes(out.policy.status) && !isClosed()) await sendStatusReport(snap, api);
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         // The log is checked before anything leaves the machine; one that does not verify is never sent.

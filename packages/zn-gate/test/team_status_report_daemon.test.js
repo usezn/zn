@@ -68,6 +68,23 @@ test('join turns the report on, the daemon sends it, stop and accept go through 
   assert.strictEqual(info.status_report.via, 'accept');
 });
 
+test('no status report while the organization has no active subscription (402), and again once it has one', async () => {
+  const inst = [...cloud.state.installs.values()][0];
+  assert.strictEqual((await vault.teamInfo()).status_report.on, true);
+  cloud.setOrgActive(false);
+  try {
+    const before = inst.statusReports;
+    await vault.teamSync({});
+    await vault.teamSync({});
+    assert.strictEqual(inst.statusReports, before, 'a 402 sync sends no report');
+  } finally {
+    cloud.setOrgActive(true);
+  }
+  const before = inst.statusReports;
+  await vault.teamSync({});
+  assert.strictEqual(inst.statusReports, before + 1, 'reports resume once the subscription is active');
+});
+
 test('accept with no confirmation channel stores nothing and sends nothing', async () => {
   await vault.teamStatusReport({ action: 'stop' });
   const inst = [...cloud.state.installs.values()][0];
