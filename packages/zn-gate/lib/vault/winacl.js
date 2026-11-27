@@ -176,10 +176,17 @@ const PRIVATE_SCRIPT = [
   '}',
 ].join('\n');
 
-function applyAcl(target, isDir, userSid, tools) {
+// Sets the list and reads it back in the same PowerShell start (one process instead of two). The read-back is the same SDDL
+// text as readSddl gives and is checked in JavaScript afterwards, exactly as before.
+const APPLY_AND_READ_SCRIPT = PRIVATE_SCRIPT + '\n' + SDDL_FN + '[Console]::Out.Write((sd $p))';
+
+function applyAndReadAcl(target, isDir, userSid, tools) {
   if (!tools.powershell) throw fail(target, 'the system PowerShell was not found');
-  const r = tools.run(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_SCRIPT], { ZN_ACL_PATH: target, ZN_ACL_SID: userSid, ZN_ACL_DIR: isDir ? '1' : '0' });
+  const r = tools.run(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', APPLY_AND_READ_SCRIPT], { ZN_ACL_PATH: target, ZN_ACL_SID: userSid, ZN_ACL_DIR: isDir ? '1' : '0' });
   if (r.status !== 0) throw fail(target, 'could not set its permissions' + why(r));
+  const text = String(r.stdout || '').trim();
+  if (!/D:/.test(text)) throw fail(target, 'could not read its permissions' + why(r));
+  return text;
 }
 
 /**
@@ -192,13 +199,13 @@ function ensurePrivate(target, opts) {
   const key = lower(target);
   if (ok.has(key) && !o.tools) return;
   const tools = o.tools || realTools();
+  if (!o.tools) require('../exe').slowStepNotice('Checking file permissions (this can take a few seconds on Windows)...');
   const sid = o.userSid || currentUserSid(tools);
   if (!SID_RE.test(sid)) throw fail(target, 'unexpected account SID');
   // Already private (the usual case after the first run): nothing to change.
   let issues = problems(readSddl(target, tools), sid, o);
   if (issues.length) {
-    applyAcl(target, !!o.dir, sid, tools);
-    issues = problems(readSddl(target, tools), sid, o);
+    issues = problems(applyAndReadAcl(target, !!o.dir, sid, tools), sid, o);
     if (issues.length) throw fail(target, issues.slice(0, 2).join('; '));
   }
   if (!o.tools) ok.add(key);

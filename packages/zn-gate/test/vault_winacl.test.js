@@ -29,9 +29,10 @@ function fake(initial, opts) {
       calls.push({ file, args, env, kind });
       if (kind === 'sid') return o.sidFails ? { status: 1, stdout: '', stderr: 'Exception' } : { status: 0, stdout: ME + '\r\n' };
       if (kind === 'set') {
+        // setting the list and reading it back is one PowerShell start: the answer is the new SDDL
         if (o.setFails) return { status: 1, stdout: '', stderr: 'UnauthorizedAccessException: denied' };
         sddl = o.afterApply || GOOD_DIR;
-        return { status: 0, stdout: '' };
+        return { status: 0, stdout: sddl };
       }
       return { status: 0, stdout: sddl };
     },
@@ -94,7 +95,9 @@ test('ensurePrivate leaves a private folder alone', () => {
 test('ensurePrivate replaces the list with a protected one that grants only the current SID, then reads it back', () => {
   const { tools, calls } = fake(OPEN_DIR);
   winacl.ensurePrivate('C:\\zn\\vault', { dir: true, tools });
-  assert.deepEqual(calls.map((c) => c.kind), ['sid', 'read', 'set', 'read']);
+  assert.deepEqual(calls.map((c) => c.kind), ['sid', 'read', 'set']);
+  // one PowerShell start fewer than before (it was sid, read, set, read: four starts, now three)
+  assert.equal(calls.length, 3);
   const set = calls.find((c) => c.kind === 'set');
   assert.deepEqual(set.env, { ZN_ACL_PATH: 'C:\\zn\\vault', ZN_ACL_SID: ME, ZN_ACL_DIR: '1' });
   const script = set.args[set.args.length - 1];
@@ -220,4 +223,30 @@ test('real Windows: a folder and a file open to the Users group are made owner-o
 test('on other systems the real entry points do nothing', { skip: process.platform === 'win32' }, () => {
   winacl.ensurePrivate('/nonexistent/x', { dir: true });
   winacl.ensurePipe('/nonexistent/x.sock');
+});
+
+test('the set-and-read-back start still checks the answer: a list that is still open, or an unreadable answer, is refused', () => {
+  const still = fake(OPEN_DIR, { afterApply: OPEN_DIR });
+  assert.throws(() => winacl.ensurePrivate('D:\\zn', { dir: true, tools: still.tools }), (e) => e.code === 'ZN_POLICY_DENIED' && /inherits|BU/.test(e.message));
+  const silent = fake(OPEN_DIR, { afterApply: 'no list here' });
+  assert.throws(() => winacl.ensurePrivate('D:\\zn', { dir: true, tools: silent.tools }), (e) => e.code === 'ZN_POLICY_DENIED' && /could not read its permissions/.test(e.message));
+  // the script that sets also reads: both parts are in the one text
+  const { tools, calls } = fake(OPEN_DIR);
+  winacl.ensurePrivate('C:\\zn\\vault', { dir: true, tools });
+  const script = calls.find((c) => c.kind === 'set').args.pop();
+  assert.ok(script.includes('SetAccessControl') && script.includes('GetSecurityDescriptorSddlForm'));
+});
+
+test('a slow-step notice prints once, only on Windows and only to a terminal', () => {
+  const { slowStepNotice } = require('../lib/exe');
+  const mk = (tty) => { const lines = []; return { lines, isTTY: tty, write: (s) => lines.push(s) }; };
+  const tty = mk(true);
+  assert.equal(slowStepNotice('test notice one', { platform: 'win32', stderr: tty }), true);
+  assert.equal(slowStepNotice('test notice one', { platform: 'win32', stderr: tty }), false);
+  assert.deepEqual(tty.lines, ['[zn] test notice one\n']);
+  const pipe = mk(false);
+  assert.equal(slowStepNotice('test notice two', { platform: 'win32', stderr: pipe }), false);
+  const linux = mk(true);
+  assert.equal(slowStepNotice('test notice three', { platform: 'linux', stderr: linux }), false);
+  assert.equal(pipe.lines.length + linux.lines.length, 0);
 });

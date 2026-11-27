@@ -93,3 +93,35 @@ test('zn-gate check prints the version line under each agent found,', POSIX, asy
   assert.match(out, /Codex CLI[^\n]*\n\s+version 0\.300\.0, newer than 0\.163\.0/);
   assert.doesNotMatch(out, /Cursor\s+not found on this machine\n\s+version/);
 });
+
+test('a .cmd or .bat shim is started through cmd.exe with one fixed quoted command line; anything else directly', () => {
+  const env = { SystemRoot: 'C:\\Windows' };
+  const cmd = V.versionCommand('C:\\Users\\Alex Vibe\\AppData\\Roaming\\npm\\opencode.cmd', env, 'win32');
+  assert.equal(cmd[0], 'C:\\Windows\\System32\\cmd.exe');
+  assert.deepEqual(cmd[1], ['/d', '/s', '/c', '""C:\\Users\\Alex Vibe\\AppData\\Roaming\\npm\\opencode.cmd" --version"']);
+  assert.equal(cmd[2].windowsVerbatimArguments, true);
+  assert.equal(V.versionCommand('C:\\Program Files (x86)\\x\\agent.BAT', env, 'win32')[1][3], '""C:\\Program Files (x86)\\x\\agent.BAT" --version"');
+  // a path with a character cmd.exe reads as syntax, or a relative one, is never run
+  for (const bad of ['C:\\a&calc\\x.cmd', 'C:\\a%PATH%\\x.cmd', 'C:\\a"b\\x.cmd', 'C:\\a^b\\x.cmd', 'C:\\a!b\\x.cmd', 'C:\\a|b\\x.cmd', 'x.cmd', '.\\x.cmd']) assert.equal(V.versionCommand(bad, env, 'win32'), null, bad);
+  // an .exe on Windows, and any file elsewhere: the file itself, --version only, no shell
+  assert.deepEqual(V.versionCommand('C:\\bin\\codex.exe', env, 'win32'), ['C:\\bin\\codex.exe', ['--version'], {}]);
+  assert.deepEqual(V.versionCommand('/usr/bin/codex.cmd', env, 'linux'), ['/usr/bin/codex.cmd', ['--version'], {}]);
+});
+
+test('foundVersion reads the version the program prints (stubbed spawn)', POSIX, (t) => {
+  const m = machine(t, { opencode: 'echo 1.19.6' });
+  const seen = [];
+  const spawn = (file, args) => { seen.push([file, args]); return { status: 0, stdout: 'opencode 1.19.6\n' }; };
+  assert.equal(V.foundVersion('opencode', { env: m.env, cwd: m.cwd, spawn }), '1.19.6');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0][1], ['--version']);
+});
+
+test('on Windows an npm shim (opencode.cmd) on PATH is found and its version read', { skip: process.platform !== 'win32' && 'needs Windows' }, (t) => {
+  const bin = tempDir(t, 'zn-ver-shim-');
+  fs.writeFileSync(path.join(bin, 'opencode.cmd'), '@echo off\r\necho 1.19.6\r\n');
+  const home = tempDir(t, 'zn-ver-home-');
+  const cwd = tempDir(t, 'zn-ver-cwd-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: bin };
+  assert.equal(V.foundVersion('opencode', { env, cwd }), '1.19.6');
+});

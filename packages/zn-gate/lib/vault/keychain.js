@@ -200,6 +200,7 @@ function winCred(op, input, slot) {
   if (!ps) {
     throw znError(CODES.LOCKED, messages.powershellMissing());
   }
+  require('../exe').slowStepNotice('Opening the Windows credential store (the first time can take up to a minute)...');
   const encoded = Buffer.from(WIN_SCRIPT, 'utf16le').toString('base64');
   return run(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], input,
     { PSModulePath: require('../exe').systemPsModulePath(ps), ZN_CRED_OP: op, ZN_CRED_TARGET: sl.service + ':' + sl.account });

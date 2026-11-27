@@ -264,16 +264,35 @@ function programEnv(env = process.env, platform = process.platform, cwd) {
  * zn-gate check mirrors for the node the plugin hooks start. */
 function findProgram(name, env = process.env, cwd, opts = {}) {
   if (hasPathSeparator(name)) return name;
-  const file = isWin && !/\.(?:exe|com)$/i.test(name) ? name + '.exe' : name;
+  // opts.shims (Windows): an npm shim (name.cmd) counts too, after name.exe in the same folder; the caller starts it through cmd.exe.
+  const files = isWin && !/\.(?:exe|com)$/i.test(name) ? (opts.shims ? [name + '.exe', name + '.cmd'] : [name + '.exe']) : [name];
   const places = projectPlaces(cwd, env, isWin);
   for (const dir of absolutePath(pathOf(env), process.platform, { cwd, env }).split(path.delimiter)) {
     if (!dir) continue;
-    const found = whichSync(file, dir);
-    // A program that links into the project counts as the project's.
-    const real = found && realKey(found, isWin);
-    if (found && (!isWin || /\.(?:exe|com)$/i.test(found)) && !(opts.strict ? untrustedPlace(real, places) : (inProject(real, places) || inHomeModules(real, env, isWin)))) return path.resolve(found);
+    for (const file of files) {
+      const found = whichSync(file, dir);
+      // A program that links into the project counts as the project's.
+      const real = found && realKey(found, isWin);
+      const startable = !isWin || /\.(?:exe|com)$/i.test(found || '') || (opts.shims && /\.cmd$/i.test(found || ''));
+      if (found && startable && !(opts.strict ? untrustedPlace(real, places) : (inProject(real, places) || inHomeModules(real, env, isWin)))) return path.resolve(found);
+    }
   }
   return null;
+}
+
+const noticed = new Set();
+/**
+ * One short line on stderr before a step that is slow on Windows (it starts PowerShell), so a person does not think zn hung.
+ * Only on Windows, only when stderr is a terminal (hooks and scripts stay quiet), once per message and process.
+ * `io` is for tests: { platform, stderr }.
+ */
+function slowStepNotice(message, io = {}) {
+  const platform = io.platform || process.platform;
+  const err = io.stderr || process.stderr;
+  if (platform !== 'win32' || !err || err.isTTY !== true || noticed.has(message)) return false;
+  noticed.add(message);
+  try { err.write('[zn] ' + message + '\n'); } catch (_) { /* no stderr */ }
+  return true;
 }
 
 /* The form approvals are stored under: case-insensitive on Windows. */
@@ -534,6 +553,7 @@ module.exports = { programInProject,
   trustedPath,
   programEnv,
   findProgram,
+  slowStepNotice,
   systemPowerShell,
   systemPsModulePath,
   psEnv,

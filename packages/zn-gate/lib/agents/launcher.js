@@ -1048,6 +1048,7 @@ function parseWinAcls(text) {
 
 /** Reads owner, ACL and reparse flag of each path with PowerShell: { user, entries }. Throws when it cannot (the caller fails closed). */
 function readWinAcls(paths, io) {
+  if (!io) require('../exe').slowStepNotice('Checking folder permissions (this can take a few seconds on Windows)...');
   const res = runWinPowerShell(WIN_ACL_SCRIPT, { ZN_ACL_PATHS: paths.join('|') }, io);
   if (res.error || res.status !== 0) throw new Error('could not read the access list of the folder (' + ((res.error && res.error.message) || String(res.stderr || '').trim().slice(0, 200) || 'exit ' + res.status) + ')');
   return parseWinAcls(res.stdout);
@@ -1055,6 +1056,7 @@ function readWinAcls(paths, io) {
 
 /** Gives the folder one owner-only, non-inherited entry for `sid` (the same shape as the private file module). */
 function setWinPrivate(dir, sid, io) {
+  if (!io) require('../exe').slowStepNotice('Setting folder permissions (this can take a few seconds on Windows)...');
   if (!/^S-1-[0-9-]+$/.test(String(sid))) throw new Error('could not make the folder private (unexpected account id)');
   const res = runWinPowerShell(WIN_PRIVATE_SCRIPT, { ZN_DIR: dir, ZN_SID: sid }, io);
   if (res.error || res.status !== 0) throw new Error('could not make the folder private (' + ((res.error && res.error.message) || String(res.stderr || res.stdout || '').trim().slice(0, 200) || 'exit ' + res.status) + ')');

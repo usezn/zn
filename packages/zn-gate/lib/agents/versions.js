@@ -32,19 +32,36 @@ function testedVersion(id) {
   return e && e.tested ? e.tested : null;
 }
 
-/** The version `<agent> --version` prints, or null. opts: env, cwd, timeoutMs. */
+/**
+ * How to start `<file> --version`: [program, args, extra spawn options]. A .cmd or .bat shim (npm installs agents that way on
+ * Windows) cannot be started without cmd.exe, so it goes through `cmd.exe /d /s /c` with one fixed, quoted command line: the
+ * absolute path of the shim and `--version`, nothing else. A path with a character cmd.exe would read as syntax is not run (null).
+ */
+function versionCommand(file, env = process.env, platform = process.platform) {
+  if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(file)) {
+    if (!/^(?:[A-Za-z]:\\|\\\\)[^"%!^&|<>\r\n\0]+$/.test(file)) return null;
+    const root = env.SystemRoot || env.windir || 'C:\\Windows';
+    return [root + '\\System32\\cmd.exe', ['/d', '/s', '/c', '""' + file + '" --version"'], { windowsVerbatimArguments: true }];
+  }
+  return [file, ['--version'], {}];
+}
+
+/** The version `<agent> --version` prints, or null. opts: env, cwd, timeoutMs, spawn (tests), platform (tests). */
 function foundVersion(id, opts = {}) {
   const e = Object.hasOwn(TESTED, id) ? TESTED[id] : null;
   if (!e || !e.command) return null;
   const env = opts.env || process.env;
-  const file = require('./../exe').findProgram(e.command, env, opts.cwd || process.cwd());
+  const platform = opts.platform || process.platform;
+  const file = require('./../exe').findProgram(e.command, env, opts.cwd || process.cwd(), { shims: platform === 'win32' });
   if (!file) return null;
+  const cmd = versionCommand(file, env, platform);
+  if (!cmd) return null;
   const bare = { PATH: require('./../exe').programEnv(env, process.platform, opts.cwd || process.cwd()).PATH, HOME: env.HOME || os.homedir(), USERPROFILE: env.USERPROFILE || os.homedir(), NO_UPDATE_NOTIFIER: '1', DISABLE_AUTOUPDATER: '1', CI: '1' };
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     for (const k of ['SystemRoot', 'ComSpec', 'PATHEXT', 'APPDATA', 'LOCALAPPDATA']) if (env[k]) bare[k] = env[k];
   }
   try {
-    const r = spawnSync(file, ['--version'], { env: bare, cwd: os.tmpdir(), timeout: opts.timeoutMs || 2000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 65536, windowsHide: true });
+    const r = (opts.spawn || spawnSync)(cmd[0], cmd[1], { ...cmd[2], env: bare, cwd: os.tmpdir(), timeout: opts.timeoutMs || 2000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 65536, windowsHide: true });
     if (r.error || r.status !== 0) return null;
     const m = VERSION_RE.exec(String(r.stdout || '').slice(0, 4096));
     return m ? m[0] : null;
@@ -72,4 +89,4 @@ function versionLine(info) {
   return `version ${info.found}, no tested version recorded`;
 }
 
-module.exports = { compareVersions, testedVersion, foundVersion, versionInfo, versionLine, TESTED };
+module.exports = { versionCommand, compareVersions, testedVersion, foundVersion, versionInfo, versionLine, TESTED };
