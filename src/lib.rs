@@ -30,3 +30,6 @@ pub mod webhooks;
 
 #[cfg(test)]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+mod fail_open_audit_tests;
