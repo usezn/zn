@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.1
+RULES_VERSION: 2026-11-27.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.1"
+RULES_VERSION = "2026-11-27.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2032,6 +2032,20 @@ def _starts_secret_at(text: str, start: int, limit: int,
     return any(p.match(text, pos) for _, p, _ in patterns)
 
 
+def _wrap_cut(text: str, start: int, end: int,
+              patterns: List[Tuple[str, re.Pattern[str], str]]) -> Optional[int]:
+    """Where a match that joins wrapped lines stops being one key: the first line break inside text[start:end]
+    after which the next line starts a secret of its own. None when there is no such break (see wrapCut in
+    rules.js)."""
+    # The text after `end` is read too: the match may stop in the middle of the next key (a body that runs on into it).
+    for m in WRAP_BREAK_RE.finditer(text, start):
+        if m.start() >= end:
+            break
+        if m.start() > start and _starts_secret_at(text, m.start(), end, patterns):
+            return m.start()
+    return None
+
+
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
                      view: Optional[Tuple[str, 'array[int]']], budget: List[int],
                      value_filter: Optional[Callable[[str, str], bool]],
@@ -2105,6 +2119,12 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     continue
                 if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
                     continue
+                if over == 0 and patterns and '\\' not in replacement:
+                    # No original match: the view joined two lines. When the second line starts a secret of its own,
+                    # this rule keeps the first line only and the other rule reports the second one.
+                    cut = _wrap_cut(text, start, end, patterns)
+                    if cut is not None:
+                        end = cut
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 

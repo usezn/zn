@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.1
+ * RULES_VERSION: 2026-11-27.2
  */
 
-const RULES_VERSION = '2026-11-27.1';
+const RULES_VERSION = '2026-11-27.2';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1385,6 +1385,19 @@ function spacedView(text) {
   return spacedMemo.spaced;
 }
 
+// Where a match that joins wrapped lines stops being one key: the first line break inside text[start, end)
+// after which the next line starts a secret of its own. -1 when there is no such break (see _wrap_cut in rules.py).
+function wrapCut(text, start, end, patterns) {
+  const re = new RegExp(WRAP_BREAK_RE.source, 'g');
+  re.lastIndex = start;
+  let m;
+  // The text after `end` is read too: the match may stop in the middle of the next key (a body that runs on into it).
+  while ((m = re.exec(text)) !== null && m.index < end) {
+    if (m.index > start && startsSecretAt(text, m.index, end, patterns)) return m.index;
+  }
+  return -1;
+}
+
 function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
   // A third pass reads each invisible character as a space; its indexes are the original ones.
@@ -1425,7 +1438,8 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
           if (item.valueFilter(value, prefix)) continue;
         }
       }
-      const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      const [start, spanEnd] = spanIn(map, m.index, m.index + m[0].length);
+      let end = spanEnd;
       if (spaced) {
         // Same indexes as the original: the span cannot join two matches, and it is not in order.
       } else if (!map) {
@@ -1436,6 +1450,12 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
         const over = lowerBound(foundStarts, end) - first;
         if (over >= 2) continue;
         if (over === 1 && patterns && startsSecretAt(text, foundEnds[first], end, patterns)) continue;
+        if (over === 0 && patterns && !item.replacement.includes('$')) {
+          // No original match: the view joined two lines. When the second line starts a secret of its own,
+          // this rule keeps the first line only and the other rule reports the second one.
+          const cut = wrapCut(text, start, end, patterns);
+          if (cut >= 0) end = cut;
+        }
       }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
@@ -1719,6 +1739,17 @@ function redactScanSecrets(text) {
   return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
 }
 
+// The provider formats of the scrubber engine as {pattern} entries, for startsSecretAt.
+let providerStarts = null;
+function providerStartPatterns() {
+  if (!providerStarts) {
+    providerStarts = require('./scrub/patterns').PATTERNS
+      .filter((p) => SCRUB_PROVIDER_RULES.has(p.type))
+      .map((p) => ({ pattern: p.re }));
+  }
+  return providerStarts;
+}
+
 function redactWith(text, patterns) {
   if (typeof text !== 'string' || !text) {
     return { sanitized: text, detections: [] };
@@ -1728,13 +1759,16 @@ function redactWith(text, patterns) {
   const budget = { left: MAX_FILTERED_CHARS };
   let view = null;
   let dirty = true;
+  // The rules whose start after a line break says the next line is a secret of its own: for the shared table, the
+  // provider formats too (as in Python, where one list holds both).
+  const lookup = patterns === SECRET_PATTERNS ? patterns.concat(providerStartPatterns()) : patterns;
   for (const item of patterns) {
     if (dirty) {
       view = invisibleView(sanitized);
       dirty = false;
     }
     const cands = [];
-    ruleCandidates(item, sanitized, view, budget, cands, patterns);
+    ruleCandidates(item, sanitized, view, budget, cands, lookup);
     if (cands.length === 0) continue;
     let out = '';
     let last = 0;
