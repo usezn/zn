@@ -63,6 +63,7 @@ function describePolicy(p) {
   if (p.state === 'invalid') return 'the stored copy could not be verified (' + (p.error || 'invalid') + ') -- INVALID: strict mode (every secret is blocked, nothing is opened) until a valid policy arrives; run `zn team sync`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
   if (p.state === 'expired' && p.clock === 'behind') return base + " -- STRICT MODE (only restrictions apply): this computer's clock is behind the time this policy was issued. Check the computer's date and time.";
+  if (p.state === 'expired' && p.subscription_inactive_at) return base + " -- EXPIRED: strict mode (only restrictions apply; nothing the organization opened stays open) because your organization's Team subscription is not active. Ask your organization owner or admin.";
   if (p.state === 'expired') return base + " -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.";
   return base;
 }
@@ -159,7 +160,7 @@ async function statusCmd(args) {
     install_id: (info && info.install_id) || (team && team.install_id) || null,
     api_base: (info && info.api_base) || (team && team.api_base) || null,
     revoked_at: info ? info.revoked_at : null,
-    policy: st ? { state: st.state, version: st.version || null, expires_at: st.expires_at || null, change } : null,
+    policy: st ? { state: st.state, version: st.version || null, expires_at: st.expires_at || null, ...(st.subscription_inactive_at ? { subscription_inactive_at: st.subscription_inactive_at } : {}), change } : null,
     upload: { pending, last_upload: upload && upload.last_upload, last_status: upload && upload.last_status },
     // true until a valid organization policy has been applied on this machine
     join_pending: joined && (!st || st.state === 'none' || st.state === 'invalid'),
@@ -185,6 +186,11 @@ async function statusCmd(args) {
   out('Installation: ' + res.install_id + ' via ' + res.api_base);
   if (res.revoked_at) out('REMOVED FROM ORG on ' + res.revoked_at + '. ' + messages.TEAM_REMOVED + ' Note: the cached policy still applies until it expires, then strict mode.');
   out('Policy:       ' + describePolicy(st));
+  if (st && st.subscription_inactive_at && st.state !== 'expired') {
+    out("Subscription: NOT ACTIVE (the server said so on " + st.subscription_inactive_at + "). Your organization's Team subscription is not active. " +
+      (st.state === 'active' ? 'The last policy applies until ' + st.expires_at + '; after that this machine is in strict mode (only restrictions apply; nothing the organization opened stays open). ' : 'No policy is applied on this machine. ') +
+      'Ask your organization owner or admin.');
+  }
   if (wantRules) for (const l of rulesLines(res.rules)) out(l);
   if (change) { const lines = describeChange(change); out('Policy change: ' + lines[0]); for (const l of lines.slice(1)) out(l); }
   out('Audit upload: ' + (pending == null ? 'unknown' : pending + ' records pending') +
@@ -249,7 +255,7 @@ async function syncCmd() {
   const o = syncOutcome(r);
   // The three failures with one plain cause and one next step: removed, offline, organization inactive.
   const inactive = Boolean(r.upload) && r.upload.status === 'inactive';
-  const special = pol.status === 'revoked' ? 'revoked' : inactive ? 'inactive' : pol.status === 'offline' && !(r.upload && r.upload.status === 'tampered') ? 'offline' : null;
+  const special = pol.status === 'revoked' ? 'revoked' : pol.status === 'no_subscription' ? 'nosub' : inactive ? 'inactive' : pol.status === 'offline' && !(r.upload && r.upload.status === 'tampered') ? 'offline' : null;
   if (!special) out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
   if (r.upload && !special) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
   if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
@@ -258,6 +264,7 @@ async function syncCmd() {
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   // Exit 0 only with a valid policy applied and no failed upload.
   if (special === 'revoked') err('[zn] ' + messages.TEAM_REMOVED);
+  else if (special === 'nosub') err('[zn] sync incomplete: ' + o.problems.join('; '));
   else if (special === 'inactive') err('[zn] ' + messages.teamSyncInactive(r.upload.pending));
   else if (special === 'offline') {
     err('[zn] ' + messages.teamSyncNoNetwork().split('\ndetails: ')[0]);
