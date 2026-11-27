@@ -74,7 +74,7 @@ impl PolicyWatcher {
                 } else if event.kind.is_remove() {
                     for path in event.paths {
                         if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            engine.unregister_policy(name);
+                            engine.unregister_policy_unless_last(name);
                         }
                     }
                 }
@@ -209,6 +209,35 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         wait_until("gamma unregistered", || !engine._has_policy("gamma"));
         assert_eq!(engine.policy_count(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn deleting_the_last_wasm_file_keeps_it_when_enforcement_is_configured() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("delta.wasm");
+        std::fs::write(&path, EMPTY_WASM).unwrap();
+        let hash = {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(EMPTY_WASM))
+        };
+        let engine = Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![hash],
+                signing_public_key: None,
+            })
+            .expect("engine init"),
+        );
+        engine.load_all_policies(dir.path()).expect("load");
+        let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
+
+        std::fs::remove_file(&path).unwrap();
+        // Give the watcher time to see the delete; the set must not become empty.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        assert!(engine._has_policy("delta"));
+        assert_eq!(engine.policy_count(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

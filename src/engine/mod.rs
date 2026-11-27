@@ -186,7 +186,14 @@ pub struct ZnEngine {
 
 impl ZnEngine {
     /// Create a new ZnEngine with the given configuration
-    pub fn new(config: ZnEngineConfig) -> Result<Self> {
+    pub fn new(mut config: ZnEngineConfig) -> Result<Self> {
+        // A blank entry (ZN_POLICY_HASHES="" gives [""]) means "not set", not a hash that matches nothing.
+        config.allowed_hashes = config
+            .allowed_hashes
+            .iter()
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect();
         let mut wasm_config = Config::new();
         wasm_config.consume_fuel(true);
         wasm_config.epoch_interruption(true);
@@ -424,25 +431,56 @@ impl ZnEngine {
         Ok(())
     }
 
+    /// True when the settings ask for policy enforcement: a signing key, or a list of allowed policy
+    /// hashes. In that case a gateway without its policies must not run (or must block), because an
+    /// empty policy set would allow everything the operator asked to have checked.
+    pub fn policy_enforcement_configured(&self) -> bool {
+        self.config.signing_public_key.is_some() || !self.config.allowed_hashes.is_empty()
+    }
+
     /// Registered policy count
     pub fn policy_count(&self) -> usize {
         self.policies.len()
     }
 
-    /// Load all policies from a directory
+    /// Load all policies from a directory.
+    ///
+    /// Every policy file that can be loaded is registered. When policy enforcement is configured
+    /// (a signing key or allowed hashes), this returns an error if any policy file failed to load or if
+    /// no policy loaded at all, so the caller can refuse to start. Without enforcement a bad file is
+    /// only logged, and an empty folder is a valid setup.
     pub fn load_all_policies(&self, dir: impl AsRef<Path>) -> Result<()> {
         let dir = dir.as_ref();
         if !dir.exists() {
             std::fs::create_dir_all(dir)?;
         }
 
+        let mut failed: Vec<String> = Vec::new();
         for entry in walkdir::WalkDir::new(dir).max_depth(1) {
             let entry = entry?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "wasm") {
                 if let Err(e) = self.register_policy_from_file(path) {
                     error!("Failed to load policy {:?}: {}", path, e);
+                    let file = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    failed.push(format!("{file} ({e})"));
                 }
+            }
+        }
+        if self.policy_enforcement_configured() {
+            if !failed.is_empty() {
+                return Err(anyhow!(
+                    "policy enforcement is configured (a signing key or allowed policy hashes), but these policy files did not load: {}",
+                    failed.join("; ")
+                ));
+            }
+            if self.policies.is_empty() {
+                return Err(anyhow!(
+                    "policy enforcement is configured (a signing key or allowed policy hashes), but no policy was loaded from the policy folder"
+                ));
             }
         }
         Ok(())
@@ -453,6 +491,23 @@ impl ZnEngine {
         if self.policies.remove(name).is_some() {
             info!("Unregistered policy: {}", name);
         }
+    }
+
+    /// Unregister a policy by name, unless that would leave no policy while enforcement is configured.
+    /// Returns false (and keeps the policy) in that case: the hot reload must never swap to an empty set.
+    pub fn unregister_policy_unless_last(&self, name: &str) -> bool {
+        if self.policy_enforcement_configured()
+            && self.policies.len() == 1
+            && self.policies.contains_key(name)
+        {
+            error!(
+                "Policy '{}' was removed from the folder, but it is the last one and policy enforcement is configured: keeping the loaded policy",
+                name
+            );
+            return false;
+        }
+        self.unregister_policy(name);
+        true
     }
 
     /// Get a policy by name
@@ -482,7 +537,15 @@ impl ZnEngine {
         agent_id: Option<String>,
     ) -> Result<bool> {
         if self.policies.is_empty() {
-            // No policies = allow (default behavior)
+            if self.policy_enforcement_configured() {
+                // Enforcement was asked for (signing key or allowed hashes) but nothing is loaded:
+                // an error, which the caller turns into a block, never an allow.
+                return Err(anyhow!(
+                    "no policy is loaded, but policy enforcement is configured"
+                ));
+            }
+            // Deliberate: with no enforcement configured, a gateway without policies is a valid setup
+            // and allows the call (the other checks still run).
             return Ok(true);
         }
 
@@ -1151,7 +1214,8 @@ mod tests {
             simple_policy("(i32.const 1)"),
         )
         .unwrap();
-        e.load_all_policies(&dir).unwrap();
+        // The hash list is enforcement: the blocked file stops startup, the good one is still registered.
+        assert!(e.load_all_policies(&dir).is_err());
         assert_eq!(e.list_policies(), vec!["good".to_string()]);
 
         let open = engine();
