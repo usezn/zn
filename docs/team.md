@@ -62,6 +62,12 @@ chooses Deny if they did not start the command. A member can look at
 `zn team leave`. Only a member can approve, on their own machine, a secret
 going to a host that their local settings do not allow.
 
+## When someone is removed or leaves
+
+- Removing someone ends their access to the organization at once, and the agent tokens they created stop working. It also revokes the machines they joined, so those installations stop receiving the policy and stop uploading. Join tokens made for them or by them are revoked too, so a removed admin's tokens cannot enrol more machines.
+- zn revokes the machines first and removes the member afterwards. If a machine cannot be revoked, the member is not removed and you see an error: remove them again, and machines that are already revoked are skipped. If a machine still cannot be revoked after the member is gone, revoke it from **Connected installations**.
+- Leaving revokes the machines you joined and the join tokens you made, so they stop receiving the policy and uploading. It does not uninstall zn-gate from your machines.
+
 ## Invited by email?
 
 An invitation email is for the dashboard, not for this command. Its link
