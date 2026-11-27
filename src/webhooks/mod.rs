@@ -81,19 +81,42 @@ const LOG_BODY_READ_LIMIT: usize = 64 * 1024;
 /// log lines or terminal sequences. `extra` is the number of bytes read after
 /// `head` and `extra_is_lower_bound` says the count stopped at the read limit.
 fn format_body_for_log(head: &[u8], extra: usize, extra_is_lower_bound: bool, url: &str) -> String {
-    let text = String::from_utf8_lossy(head);
+    // The byte offset in the original response where the shown part ends. The
+    // omitted count comes from this offset and never from decoded text, so
+    // invalid bytes and URL replacement cannot change it.
+    let mut cut = head.len().min(LOG_BODY_CAP);
+    if cut < head.len() {
+        let mut back = 0;
+        while back < 3 && cut > 0 && (head[cut] & 0xC0) == 0x80 {
+            cut -= 1;
+            back += 1;
+        }
+    }
+    if !url.is_empty() && !head.is_empty() {
+        let needle = url.as_bytes();
+        let mut i = 0;
+        while i + needle.len() <= head.len() {
+            if &head[i..i + needle.len()] == needle {
+                let end = i + needle.len();
+                if i < cut && cut < end {
+                    cut = end;
+                }
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    let dropped = extra + (head.len() - cut);
+    let text = String::from_utf8_lossy(&head[..cut]);
     let text = if url.is_empty() {
         text.into_owned()
     } else {
         text.replace(url, &redact_url(url))
     };
-    let mut end = text.len().min(LOG_BODY_CAP);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let dropped = extra + (text.len() - end);
+    let end = text.len();
     let mut out = String::with_capacity(end + 24);
-    for c in text[..end].chars() {
+    for c in text.chars() {
         if c.is_control() {
             out.push_str(&format!("\\u{{{:04x}}}", c as u32));
         } else {
@@ -815,5 +838,36 @@ mod tests {
         let out = format_body_for_log(&body, 0, false, url);
         assert!(!out.contains("fake-webhook-token"), "{out}");
         assert!(!out.contains("services"), "{out}");
+    }
+
+    #[test]
+    fn log_body_invalid_utf8_counts_original_bytes() {
+        let body = [0xffu8; 512];
+        let out = format_body_for_log(&body, 0, false, "");
+        assert!(!out.contains("more bytes"), "{out}");
+        let body = [0xffu8; 600];
+        let out = format_body_for_log(&body, 0, false, "");
+        assert!(out.ends_with("... (88 more bytes)"), "{out}");
+        let out = format_body_for_log(&body[..516], 84, false, "");
+        assert!(out.ends_with("... (88 more bytes)"), "{out}");
+    }
+
+    #[test]
+    fn log_body_url_redaction_does_not_change_the_omitted_count() {
+        let url = "https://hooks.example.com/services/fake-webhook-token";
+        // The URL sits wholly inside the shown part: 10 + 53 + 937 = 1000 bytes.
+        let mut body = b"0123456789".to_vec();
+        body.extend_from_slice(url.as_bytes());
+        body.resize(1000, b'a');
+        let out = format_body_for_log(&body, 0, false, url);
+        assert!(!out.contains("fake-webhook-token"), "{out}");
+        assert!(out.ends_with("... (488 more bytes)"), "{out}");
+        // The URL straddles the cap: it is shown redacted and counted by its original length.
+        let mut body = "a".repeat(500).into_bytes();
+        body.extend_from_slice(url.as_bytes());
+        body.resize(body.len() + 100, b'b');
+        let out = format_body_for_log(&body, 0, false, url);
+        assert!(!out.contains("fake-webhook-token"), "{out}");
+        assert!(out.ends_with("... (100 more bytes)"), "{out}");
     }
 }
