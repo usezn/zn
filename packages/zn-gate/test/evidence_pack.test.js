@@ -220,3 +220,54 @@ test('an empty log gives an empty pack that verifies', (t) => {
   assert.equal(chain.verified, true);
   assert.equal(readPack(s.out)['records.jsonl'].length, 0);
 });
+
+test('ocsf: records.ocsf.jsonl holds the same events as the ocsf export, no preview by default', (t) => {
+  const s = setup(t, SPECS);
+  const out = path.join(s.dir, 'ocsf');
+  const res = run(s.home, ['pack', '--out', out, '--format', 'ocsf']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(fs.readdirSync(out).sort(), ['README.txt', 'chain.json', 'controls.md', 'manifest.json', 'records.ocsf.jsonl', 'summary.json']);
+  const packed = fs.readFileSync(path.join(out, 'records.ocsf.jsonl'), 'utf8');
+  const exported = run(s.home, ['--export', '--format', 'ocsf']);
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.equal(packed, exported.stdout);
+  const first = JSON.parse(packed.split('\n')[0]);
+  assert.equal(first.class_uid, 2004);
+  assert.equal(first.unmapped.zn_chain_verified, true);
+  assert.equal(packed.includes('payload_preview'), false);
+  assert.equal(packed.includes('preview text'), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+  const body = fs.readFileSync(path.join(out, 'records.ocsf.jsonl'));
+  assert.equal(manifest.files['records.ocsf.jsonl'].sha256, sha256(body));
+});
+
+test('ocsf with --include-preview and a range matches the export with the same preview option', (t) => {
+  const s = setup(t, SPECS);
+  const out = path.join(s.dir, 'ocsf-range');
+  const res = run(s.home, ['pack', '--out', out, '--format', 'ocsf', '--include-preview', '--since', '2026-11-02', '--until', '2026-11-03']);
+  assert.equal(res.status, 0, res.stderr);
+  const packed = fs.readFileSync(path.join(out, 'records.ocsf.jsonl'), 'utf8');
+  const exported = run(s.home, ['--export', '--format', 'ocsf', '--include-preview']);
+  const wanted = exported.stdout.split('\n').slice(1, 3).join('\n') + '\n';
+  assert.equal(packed, wanted);
+  assert.ok(packed.includes('preview text for 2026-11-02'));
+});
+
+test('ocsf: a record after the break is not verified', (t) => {
+  const s = setup(t, SPECS);
+  const lines = fs.readFileSync(s.log, 'utf8').split('\n');
+  lines[1] = lines[1].replace('R-SHELL-1', 'R-EDITED');
+  fs.writeFileSync(s.log, lines.join('\n'));
+  const out = path.join(s.dir, 'ocsf-tampered');
+  assert.equal(run(s.home, ['pack', '--out', out, '--format', 'ocsf']).status, 1);
+  const events = fs.readFileSync(path.join(out, 'records.ocsf.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(events[0].unmapped.zn_chain_verified, true);
+  for (const e of events.slice(1)) assert.equal(e.unmapped.zn_chain_verified, false);
+});
+
+test('refused: an unknown format names jsonl and ocsf', (t) => {
+  const s = setup(t, SPECS);
+  const res = run(s.home, ['pack', '--out', path.join(s.dir, 'x'), '--format', 'timesketch']);
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /jsonl or ocsf/);
+});

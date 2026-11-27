@@ -23,13 +23,13 @@ test('evidence --export with an unknown --format exits 2 and lists the valid for
   assert.strictEqual(r.status, 2);
   assert.strictEqual(r.stdout, '');
   assert.match(r.stderr, /unknown --format "xml"/);
-  assert.match(r.stderr, /jsonl, csv, timesketch and timesketch-csv/);
+  assert.match(r.stderr, /jsonl, csv, timesketch, timesketch-csv and ocsf/);
 });
 
 test('export with an unknown --format is refused the same way', () => {
   const r = run(['export', '--format', 'xml']);
   assert.strictEqual(r.status, 2);
-  assert.match(r.stderr, /jsonl, csv, timesketch and timesketch-csv/);
+  assert.match(r.stderr, /jsonl, csv, timesketch, timesketch-csv and ocsf/);
 });
 
 test('evidence --export still works with jsonl and csv', () => {

@@ -266,7 +266,61 @@ def _event(rec: Dict[str, Any], index: int, verified: bool, include_preview: boo
     return ev
 
 
+EVENT_FORMATS = ("timesketch", "timesketch-csv", "ocsf")
+# OCSF schema version the ocsf format targets.
+OCSF_VERSION = "1.7.0"
+# Verdict -> (action_id, disposition_id, severity_id) of the OCSF Detection Finding. Other verdicts are Unknown (0).
+_OCSF_VERDICTS = {"allow": (1, 1, 1), "block": (2, 2, 3)}
+
+
+def ocsf_event(rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> Dict[str, Any]:
+    """The ocsf event for one record, same as the Node package's ocsfEvent. Class: Detection Finding (2004)
+    in the Findings category (2), activity Create (1), so type_uid is 200401. A Detection Finding is the OCSF
+    record of a policy decision on a detected action; the verdict goes to action_id and disposition_id
+    (allowed or blocked). The zn_ fields go under unmapped, because OCSF has no field for them. A record whose
+    timestamp is not a valid UTC time keeps its place: time is 0 and unmapped.zn_time_unmapped is true
+    (zn_timestamp keeps the raw value)."""
+    from . import __version__  # local import: keeps the package __init__ out of the import cycle
+    ev = _event(rec, index, verified, include_preview)
+    verdict = rec.get("verdict")
+    action_id, disposition_id, severity_id = (
+        _OCSF_VERDICTS.get(verdict, (0, 0, 0)) if isinstance(verdict, str) else (0, 0, 0)
+    )
+    micros = timesketch_micros(rec.get("timestamp"))
+    unmapped = {k: v for k, v in ev.items() if k.startswith("zn_")}
+    unmapped["zn_timestamp"] = rec.get("timestamp")
+    if micros == "":
+        time_ms = 0
+        unmapped["zn_time_unmapped"] = True
+    else:
+        # Whole milliseconds, rounded down (also before 1970), as an integer.
+        time_ms = int(micros) // 1000
+    return {
+        "activity_id": 1,
+        "category_uid": 2,
+        "category_name": "Findings",
+        "class_uid": 2004,
+        "class_name": "Detection Finding",
+        "type_uid": 200401,
+        "action_id": action_id,
+        "disposition_id": disposition_id,
+        "severity_id": severity_id,
+        "time": time_ms,
+        "message": ev["message"],
+        "finding_info": {"uid": _plain(rec.get("id")), "title": ev["message"]},
+        "metadata": {
+            "version": OCSF_VERSION,
+            "product": {"name": "zn-gate", "vendor_name": "zn", "version": __version__},
+        },
+        "cloud": {"provider": "local"},
+        "osint": [],
+        "unmapped": unmapped,
+    }
+
+
 def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> str:
+    if fmt == "ocsf":
+        return _json_js(ocsf_event(rec, index, verified, include_preview))
     ev = _event(rec, index, verified, include_preview)
     if fmt == "timesketch":
         return _json_js(ev)

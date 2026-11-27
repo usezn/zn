@@ -14,10 +14,12 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from .evidence_timesketch import _json_js, _parse_record, inspect_ledger, timesketch_micros
+from .evidence_timesketch import _json_js, _parse_record, inspect_ledger, ocsf_event, timesketch_micros
 
 PACK_FILES = ("records.jsonl", "chain.json", "summary.json", "controls.md", "README.txt")
-PACK_FORMATS = ("jsonl",)
+# Records file name per format. The ocsf format writes OCSF events for JSON-object records only.
+PACK_RECORDS_FILE = {"jsonl": "records.jsonl", "ocsf": "records.ocsf.jsonl"}
+PACK_FORMATS = tuple(PACK_RECORDS_FILE)
 
 # ASCII digits only: \d would also match other Unicode digits.
 _DATE_RE = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
@@ -28,7 +30,7 @@ CONTROLS_TEXT = """# Control map
 
 This map shows which records in this pack may help as evidence for these criteria. zn-gate does not make a system compliant, and this pack is not an attestation. Your auditor decides what evidence is sufficient.
 
-Each entry gives a plain-English reading of one criterion, the records in this pack that may support it, and the fields to look at. Field names are the ones in records.jsonl. The verdict is "allow", "deny" or "ask".
+Each entry gives a plain-English reading of one criterion, the records in this pack that may support it, and the fields to look at. Field names are the ones in records.jsonl. In records.ocsf.jsonl the same values sit under OCSF names, and the zn-gate fields under unmapped. The verdict is "allow", "deny" or "ask".
 
 ## CC6.1 Logical access
 
@@ -69,7 +71,7 @@ README_TEXT = """zn-gate evidence pack
 This folder holds the zn-gate records for one period, the result of checking the whole log, a summary, and a map of records that may help with a few audit criteria.
 
 Files
-- records.jsonl   the records in the period, one per line, in log order
+- records.jsonl   the records in the period, one per line, in log order (with --format ocsf: records.ocsf.jsonl, the same records as OCSF events)
 - chain.json      the result of checking the hash chain of the whole log, and the first and last record of the period
 - summary.json    counts by verdict, agent and rule for the records in this folder
 - controls.md     which records may help as evidence for four criteria, and where to look
@@ -116,7 +118,7 @@ def validate_pack_options(since: Any = None, until: Any = None, fmt: Any = "json
     fmt_text = (fmt or "jsonl").lower()
     if fmt_text not in PACK_FORMATS:
         shown = "".join(c if " " <= c <= "~" else "?" for c in str(fmt))[:40]
-        return None, f'zn-gate: evidence pack supports only --format jsonl for now (got "{shown}").'
+        return None, f'zn-gate: evidence pack supports --format jsonl or ocsf (got "{shown}").'
     since_day = None
     until_day = None
     if since is not None:
@@ -151,6 +153,17 @@ def _bump(counts: Dict[str, int], key: str) -> None:
     counts[key] = counts.get(key, 0) + 1
 
 
+def _pack_line(fmt: str, chunk: bytes, rec: Optional[Dict[str, Any]], include_preview: bool,
+               index: int, verified: bool) -> bytes:
+    """The bytes written for one record, as the Node package's PACK_FORMATS entries give them."""
+    if fmt == "ocsf":
+        return (_json_js(ocsf_event(rec, index, verified, include_preview)) + "\n").encode("utf-8")
+    if rec is not None and not include_preview and "payload_preview" in rec:
+        rest = {k: v for k, v in rec.items() if k != "payload_preview"}
+        return (_json_js(rest) + "\n").encode("utf-8")
+    return chunk + _NEWLINE
+
+
 def _write_new(path: str, data: bytes) -> Dict[str, Any]:
     with open(path, "xb") as f:
         f.write(data)
@@ -168,6 +181,7 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
         raise ValueError(problem)
     since_day = options["since"]
     until_day = options["until"]
+    fmt_name = options["format"]
     has_range = since_day is not None or until_day is not None
 
     check = inspect_ledger(file_path)
@@ -215,11 +229,11 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
             keep = (since_day is None or day >= since_day) and (until_day is None or day <= until_day)
         if not keep:
             continue
-        if is_obj and not include_preview and "payload_preview" in rec:
-            rest = {k: v for k, v in rec.items() if k != "payload_preview"}
-            records_parts.append((_json_js(rest) + "\n").encode("utf-8"))
-        else:
-            records_parts.append(chunk + _NEWLINE)
+        if fmt_name == "ocsf" and not is_obj:
+            continue
+        # A record is verified when the chain verified up to it: every record before the first break.
+        verified = check["valid"] is True or index < check["broken_index"]
+        records_parts.append(_pack_line(fmt_name, chunk, rec if is_obj else None, include_preview, index, verified))
         included += 1
         if ts is not None:
             if first_ts is None:
@@ -240,7 +254,8 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
 
     records_data = b"".join(records_parts)
     files: Dict[str, Any] = {}
-    files["records.jsonl"] = _write_new(os.path.join(out_dir, "records.jsonl"), records_data)
+    records_name = PACK_RECORDS_FILE[fmt_name]
+    files[records_name] = _write_new(os.path.join(out_dir, records_name), records_data)
 
     chain = {
         "records": check["total"],

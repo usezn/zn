@@ -301,14 +301,19 @@ def _same_export_and_manifest(tmp_path, ledger, fmt, extra, expect_code=0):
     ("jsonl", ["--manifest"]),
     ("csv", []),
     ("csv", ["--manifest"]),
+    ("ocsf", []),
+    ("ocsf", ["--include-preview"]),
+    ("ocsf", ["--manifest"]),
+    ("ocsf", ["--manifest", "--include-preview"]),
 ], ids=["ts-preview", "tscsv-preview", "ts-manifest", "tscsv-manifest-preview",
-        "jsonl", "jsonl-manifest", "csv", "csv-manifest"])
+        "jsonl", "jsonl-manifest", "csv", "csv-manifest",
+        "ocsf", "ocsf-preview", "ocsf-manifest", "ocsf-manifest-preview"])
 def test_cli_export_and_manifest_match_node(tmp_path, fmt, extra):
     ledger = _node_write(tmp_path, TS_EVENTS)
     _same_export_and_manifest(tmp_path, ledger, fmt, extra)
 
 
-@pytest.mark.parametrize("fmt", ["jsonl", "csv", "timesketch", "timesketch-csv"])
+@pytest.mark.parametrize("fmt", ["jsonl", "csv", "timesketch", "timesketch-csv", "ocsf"])
 def test_stdout_bytes_match_node(tmp_path, fmt):
     """Without --output the export goes to stdout: same bytes, LF line endings, same exit code."""
     ledger = _node_write(tmp_path, TS_EVENTS)
@@ -338,3 +343,30 @@ def test_cli_manifest_matches_node_after_tamper(tmp_path):
     assert node.stderr.decode("utf-8").splitlines()[0] == python.stderr.decode("utf-8").splitlines()[0]
     man = (tmp_path / "py" / "out.txt.manifest.json").read_text(encoding="utf-8")
     assert '"chain_verified":false,"chain_break_index":2' in man
+
+
+def test_ocsf_tampered_log_matches_node(tmp_path):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    lines = ledger.read_text(encoding="utf-8").split("\n")
+    lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"block"', 1)
+    ledger.write_text("\n".join(lines), encoding="utf-8")
+    node, python = _same_export_and_manifest(tmp_path, ledger, "ocsf", ["--include-preview", "--manifest"],
+                                             expect_code=1)
+    assert node.stderr.decode("utf-8").splitlines()[0] == python.stderr.decode("utf-8").splitlines()[0]
+
+
+def test_ocsf_record_without_valid_time_matches_node(tmp_path):
+    """A record whose timestamp is not a real date keeps its place with time 0 (the chain is broken on
+    purpose, so both exit 1)."""
+    record = {
+        "id": "ev_crafted", "timestamp": "2026-02-30T00:00:00Z", "agent_environment": "a", "phase": "p",
+        "tool_name": "t", "payload_sha256": "0" * 64, "payload_preview": "x", "verdict": "allow",
+        "rule": None, "reason": None, "confidence": 0.5, "latency_us": 3, "engine": "e",
+        "prev_hash": "0" * 64, "record_hash": "1" * 64,
+    }
+    ledger = tmp_path / "crafted.jsonl"
+    ledger.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    _same_export_and_manifest(tmp_path, ledger, "ocsf", [], expect_code=1)
+    exported = (tmp_path / "py" / "out.txt").read_bytes()
+    assert b'"time":0,' in exported
+    assert b'"zn_time_unmapped":true' in exported

@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { timesketchMicros } = require('./evidence_export');
+const { timesketchMicros, ocsfEvent } = require('./evidence_export');
 
 const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -26,16 +26,27 @@ const READ_CHUNK = 256 * 1024;
 
 // The formats of the records file. Each one turns one log line into the bytes written for it, so a
 // new format (OCSF, later) is one more entry here.
+// objectsOnly: the format writes JSON objects only (as the export does for OCSF); other lines are left out.
+// line(raw, rec, ctx): rec is the parsed record when the line is a JSON object, else undefined;
+// ctx = { includePreview, index (chain index), verified (the chain verified up to this record) }.
 const PACK_FORMATS = {
   jsonl: {
     recordsFile: 'records.jsonl',
-    // rec is the parsed record when the line is a JSON object, else undefined.
-    line(raw, rec, includePreview) {
-      if (includePreview || rec === undefined || !Object.prototype.hasOwnProperty.call(rec, 'payload_preview')) {
+    objectsOnly: false,
+    line(raw, rec, ctx) {
+      if (ctx.includePreview || rec === undefined || !Object.prototype.hasOwnProperty.call(rec, 'payload_preview')) {
         return Buffer.concat([raw, NEWLINE]);
       }
       const { payload_preview: _removed, ...rest } = rec;
       return Buffer.from(JSON.stringify(rest) + '\n', 'utf8');
+    },
+  },
+  ocsf: {
+    recordsFile: 'records.ocsf.jsonl',
+    objectsOnly: true,
+    // The same OCSF event the ocsf export writes for the record (preview only with includePreview).
+    line(raw, rec, ctx) {
+      return Buffer.from(JSON.stringify(ocsfEvent(rec, ctx.index, ctx.verified, ctx.includePreview)) + '\n', 'utf8');
     },
   },
 };
@@ -45,7 +56,7 @@ const CONTROLS_TEXT = `# Control map
 
 This map shows which records in this pack may help as evidence for these criteria. zn-gate does not make a system compliant, and this pack is not an attestation. Your auditor decides what evidence is sufficient.
 
-Each entry gives a plain-English reading of one criterion, the records in this pack that may support it, and the fields to look at. Field names are the ones in records.jsonl. The verdict is "allow", "deny" or "ask".
+Each entry gives a plain-English reading of one criterion, the records in this pack that may support it, and the fields to look at. Field names are the ones in records.jsonl. In records.ocsf.jsonl the same values sit under OCSF names, and the zn-gate fields under unmapped. The verdict is "allow", "deny" or "ask".
 
 ## CC6.1 Logical access
 
@@ -86,7 +97,7 @@ const README_TEXT = `zn-gate evidence pack
 This folder holds the zn-gate records for one period, the result of checking the whole log, a summary, and a map of records that may help with a few audit criteria.
 
 Files
-- records.jsonl   the records in the period, one per line, in log order
+- records.jsonl   the records in the period, one per line, in log order (with --format ocsf: records.ocsf.jsonl, the same records as OCSF events)
 - chain.json      the result of checking the hash chain of the whole log, and the first and last record of the period
 - summary.json    counts by verdict, agent and rule for the records in this folder
 - controls.md     which records may help as evidence for four criteria, and where to look
@@ -127,7 +138,7 @@ function parseDay(text) {
 function validatePackOptions(opts = {}) {
   const format = (opts.format || 'jsonl').toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(PACK_FORMATS, format)) {
-    return { error: `zn-gate: evidence pack supports only --format jsonl for now (got "${String(opts.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40)}").` };
+    return { error: `zn-gate: evidence pack supports --format jsonl or ocsf (got "${String(opts.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40)}").` };
   }
   let since = null;
   let until = null;
@@ -292,7 +303,10 @@ function writeEvidencePack(filePath, outDir, opts, deps) {
           keep = (req.since === null || day >= req.since) && (req.until === null || day <= req.until);
         }
         if (!keep) return;
-        writeRecord(format.line(raw, isObj ? rec : undefined, includePreview));
+        if (format.objectsOnly && !isObj) return;
+        // A record is verified when the chain verified up to it: every record before the first break.
+        const verified = res.valid === true || index < res.broken_index;
+        writeRecord(format.line(raw, isObj ? rec : undefined, { includePreview, index, verified }));
         included++;
         if (ts !== null) {
           if (firstTs === null) firstTs = ts;
@@ -340,7 +354,7 @@ function writeEvidencePack(filePath, outDir, opts, deps) {
   };
 
   const files = {
-    'records.jsonl': recordsFile,
+    [format.recordsFile]: recordsFile,
     'chain.json': write('chain.json', Buffer.from(JSON.stringify(chain) + '\n', 'utf8')),
     'summary.json': write('summary.json', Buffer.from(JSON.stringify(summary) + '\n', 'utf8')),
     'controls.md': write('controls.md', Buffer.from(CONTROLS_TEXT, 'utf8')),

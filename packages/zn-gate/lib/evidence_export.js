@@ -39,6 +39,15 @@ function csvRow(obj) {
 // other key becomes a searchable attribute. The message is built only from the verdict, tool,
 // agent and rule id, and payload_preview (text the agent wrote) is never exported here.
 const TIMESKETCH_FORMATS = new Set(['timesketch', 'timesketch-csv']);
+// Formats that write one event per record (the chain check is carried per event).
+const EVENT_FORMATS = new Set(['timesketch', 'timesketch-csv', 'ocsf']);
+// OCSF schema version the ocsf format targets.
+const OCSF_VERSION = '1.7.0';
+// Verdict -> OCSF Detection Finding ids (action_id, disposition_id, severity_id). Other verdicts are Unknown.
+const OCSF_VERDICTS = {
+  allow: { action_id: 1, disposition_id: 1, severity_id: 1 },
+  block: { action_id: 2, disposition_id: 2, severity_id: 3 },
+};
 const TIMESKETCH_DESC = 'zn-gate hook decision';
 const TIMESKETCH_DATA_TYPE = 'zn:gate:decision';
 const TIMESKETCH_RECORD_FIELDS = [
@@ -117,7 +126,58 @@ function timesketchEvent(rec, index, verified, includePreview = false) {
   return ev;
 }
 
+/**
+ * The ocsf event for one record. Class: Detection Finding (2004) in the Findings category (2), activity
+ * Create (1), so type_uid is 200401. A Detection Finding is the OCSF record of a policy decision on a
+ * detected action; the verdict goes to action_id and disposition_id (allowed or blocked). The zn_ fields
+ * (the same ones the Timesketch event carries) go under unmapped, because OCSF has no field for them.
+ * A record whose timestamp is not a valid UTC time keeps its place: time is 0 and unmapped.zn_time_unmapped
+ * is true (zn_timestamp keeps the raw value).
+ */
+function ocsfEvent(rec, index, verified, includePreview = false) {
+  const ev = timesketchEvent(rec, index, verified, includePreview);
+  const known = typeof rec.verdict === 'string' && Object.prototype.hasOwnProperty.call(OCSF_VERDICTS, rec.verdict)
+    ? OCSF_VERDICTS[rec.verdict]
+    : { action_id: 0, disposition_id: 0, severity_id: 0 };
+  const micros = timesketchMicros(rec.timestamp);
+  const unmapped = {};
+  for (const key of Object.keys(ev)) if (key.startsWith('zn_')) unmapped[key] = ev[key];
+  unmapped.zn_timestamp = rec.timestamp === undefined ? null : rec.timestamp;
+  let time = 0;
+  if (micros !== '') {
+    // Whole milliseconds, rounded down (also before 1970), as an integer.
+    const m = BigInt(micros);
+    let ms = m / 1000n;
+    if (m % 1000n < 0n) ms -= 1n;
+    time = Number(ms);
+  } else {
+    unmapped.zn_time_unmapped = true;
+  }
+  return {
+    activity_id: 1,
+    category_uid: 2,
+    category_name: 'Findings',
+    class_uid: 2004,
+    class_name: 'Detection Finding',
+    type_uid: 200401,
+    action_id: known.action_id,
+    disposition_id: known.disposition_id,
+    severity_id: known.severity_id,
+    time,
+    message: ev.message,
+    finding_info: { uid: plainText(rec.id), title: ev.message },
+    metadata: {
+      version: OCSF_VERSION,
+      product: { name: 'zn-gate', vendor_name: 'zn', version: require('../package.json').version },
+    },
+    cloud: { provider: 'local' },
+    osint: [],
+    unmapped,
+  };
+}
+
 function timesketchLine(format, rec, index, verified, includePreview = false) {
+  if (format === 'ocsf') return JSON.stringify(ocsfEvent(rec, index, verified, includePreview));
   const ev = timesketchEvent(rec, index, verified, includePreview);
   if (format === 'timesketch') return JSON.stringify(ev);
   return timesketchCsvHeaders(includePreview).map((h) => {
@@ -204,7 +264,7 @@ function createExporter(deps) {
    */
   function* exportChunks(filePath, format, state, opts = {}) {
     const chunkSize = Math.max(1, (testHooks && testHooks.exportChunkSize) || DEFAULT_CHUNK);
-    const includePreview = !!opts.includePreview && TIMESKETCH_FORMATS.has(format);
+    const includePreview = !!opts.includePreview && EVENT_FORMATS.has(format);
     if (!fs.existsSync(filePath)) {
       if (format === 'csv') yield CSV_HEADER_LINE + '\n';
       if (format === 'timesketch-csv') yield timesketchCsvHeaders(includePreview).join(',') + '\n';
@@ -248,7 +308,7 @@ function createExporter(deps) {
     let firstTs = null;
     let lastTs = null;
     let sawRecord = false;
-    const timesketch = TIMESKETCH_FORMATS.has(format);
+    const timesketch = EVENT_FORMATS.has(format);
 
     const flushHeld = (isLast) => {
       checker.check(held.text, held.rec, held.parseError, held.bad, isLast);
@@ -398,7 +458,7 @@ function createExporter(deps) {
   return { exportChunks, exportToString, writeExport, CSV_HEADER_LINE };
 }
 
-const EXPORT_FORMATS = ['jsonl', 'csv', 'timesketch', 'timesketch-csv'];
+const EXPORT_FORMATS = ['jsonl', 'csv', 'timesketch', 'timesketch-csv', 'ocsf'];
 
 /** sha256 (hex) of a file, read in pieces. */
 function sha256File(file) {
@@ -432,4 +492,7 @@ function manifestText({ format, source, res, exportSha256, generator }) {
   return JSON.stringify(manifest) + '\n';
 }
 
-module.exports = { createExporter, EXPORT_FORMATS, timesketchMicros, TIMESKETCH_CSV_HEADERS, sha256File, manifestText };
+module.exports = {
+  createExporter, EXPORT_FORMATS, EVENT_FORMATS, timesketchMicros, TIMESKETCH_CSV_HEADERS, sha256File, manifestText,
+  ocsfEvent,
+};

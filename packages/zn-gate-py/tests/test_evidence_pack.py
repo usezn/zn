@@ -221,7 +221,7 @@ const ev = require(process.argv[1]);
 const [file, out, optsJson] = process.argv.slice(2);
 const o = JSON.parse(optsJson);
 ev.writeEvidencePack(out, {
-  since: o.since, until: o.until, format: 'jsonl', includePreview: !!o.includePreview,
+  since: o.since, until: o.until, format: o.format || 'jsonl', includePreview: !!o.includePreview,
   generator: 'zn-gate test', now: new Date('2026-11-27T10:00:00Z'),
 }, file);
 """
@@ -239,11 +239,15 @@ PARITY_CASES = [
     {"since": "2026-11-02", "until": "2026-11-03"},
     {"includePreview": True},
     {"since": "2026-11-02", "until": "2026-11-03", "includePreview": True},
+    {"format": "ocsf"},
+    {"format": "ocsf", "since": "2026-11-02", "until": "2026-11-03"},
+    {"format": "ocsf", "includePreview": True},
 ]
 
 
 @pytest.mark.skipif(NODE is None or not NODE_EVIDENCE.is_file(), reason="Node package not available")
-@pytest.mark.parametrize("case", PARITY_CASES, ids=["all", "range", "preview", "range-preview"])
+@pytest.mark.parametrize("case", PARITY_CASES,
+                         ids=["all", "range", "preview", "range-preview", "ocsf", "ocsf-range", "ocsf-preview"])
 def test_node_and_python_write_the_same_pack(tmp_path, case):
     log = tmp_path / "evidence.jsonl"
     _build_ledger(log, PARITY_SPECS)
@@ -252,8 +256,29 @@ def test_node_and_python_write_the_same_pack(tmp_path, case):
                    check=True, timeout=120)
     py_out = tmp_path / "py"
     write_evidence_pack(
-        str(log), str(py_out), since=case.get("since"), until=case.get("until"), fmt="jsonl",
+        str(log), str(py_out), since=case.get("since"), until=case.get("until"), fmt=case.get("format", "jsonl"),
         include_preview=bool(case.get("includePreview")), generator="zn-gate test", now=FIXED_NOW,
     )
-    for name in list(PACK_FILES) + ["manifest.json"]:
+    names = sorted(os.listdir(node_out))
+    assert names == sorted(os.listdir(py_out))
+    assert "manifest.json" in names
+    for name in names:
         assert (node_out / name).read_bytes() == (py_out / name).read_bytes(), name
+
+
+def test_ocsf_pack_has_events_for_records_only_and_verified_flags(ledger, run):
+    assert run(ledger.out, format="ocsf")[0] == 0
+    lines = Path(ledger.out, "records.ocsf.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 5
+    first = json.loads(lines[0])
+    assert first["class_uid"] == 2004
+    assert first["unmapped"]["zn_chain_verified"] is True
+    assert "payload_preview" not in "".join(lines)
+    manifest = json.loads(Path(ledger.out, "manifest.json").read_text(encoding="utf-8"))
+    assert "records.ocsf.jsonl" in manifest["files"]
+    assert "records.jsonl" not in manifest["files"]
+
+
+def test_timesketch_is_refused_and_ocsf_is_accepted(ledger, run):
+    assert run(ledger.dir / "t1", format="timesketch")[0] == 2
+    assert run(ledger.dir / "t2", format="ocsf")[0] == 0
