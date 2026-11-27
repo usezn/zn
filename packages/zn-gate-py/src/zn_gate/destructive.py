@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-25.4"
+COMMAND_RULES_VERSION = "2026-11-27.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -78,7 +78,7 @@ _BLOCK_DEVICE_RE = re.compile(
 )
 _RC_UNIX_RE = re.compile(
     r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)\Z"
-    r"|/\.ssh/authorized_keys2?\Z|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|environment)\Z|^/etc/profile\.d/",
+    r"|/\.ssh/authorized_keys2?\Z|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|zshenv|zprofile|environment)\Z|^/etc/profile\.d/",
     _A,
 )
 _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1\Z", _AI)
@@ -1572,6 +1572,65 @@ def _is_rc_path(w: str) -> bool:
     return any(u != slashed and _is_rc_path(u) for u in (_resolve_dots(slashed, 2), _resolve_dots(slashed, 1)))
 
 
+_DL_URL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s/?#]*/([^\s?#]*)", _A)
+
+
+def _download_dir_targets(words: List[str], wget: bool) -> List[str]:
+    """The files a curl or wget download is saved to when a folder option is given: --output-dir D (curl), -P D, -PD,
+    --directory-prefix[=]D (wget), joined to each -o file and to each URL file name, and the -o files of a curl run with
+    --create-dirs, which makes the folders of a path that climbs with .. . At most 256 words and 16 candidates are read."""
+    d: Optional[str] = None
+    create = False
+    outs: List[str] = []
+    names: List[str] = []
+    ws = words[:256]
+    for i, w in enumerate(ws):
+        w = str(w)
+        nx = str(ws[i + 1]) if i + 1 < len(ws) else None
+        m = None
+        if w in ("--output-dir", "--directory-prefix") or (wget and w == "-P"):
+            if nx is not None:
+                d = nx
+        elif re.match(r"^--(?:output-dir|directory-prefix)=(.+)\Z", w, _A | re.S):
+            d = w.split("=", 1)[1]
+        elif wget and re.match(r"^-P(.+)\Z", w, _A | re.S):
+            d = w[2:]
+        elif w == "--create-dirs":
+            create = True
+        elif _out_flag(w) and nx is not None:
+            outs.append(nx)
+        elif re.match(r"^--output(?:-document)?=(.+)\Z", w, _A | re.S):
+            outs.append(w.split("=", 1)[1])
+        else:
+            m = _DL_URL_NAME_RE.match(w)
+            if m:
+                n = m.group(1).split("/")[-1]
+                if n:
+                    names.append(n)
+    out: List[str] = []
+    if d is not None:
+        base = re.sub(r"[\\/]+\Z", "", d)
+        for f in outs + names:
+            if not _ANCHORED_RE.match(f) and len(out) < 16:
+                out.append(base + "/" + f)
+    elif create:
+        for f in outs:
+            if re.search(r"(?:^|[\\/])\.\.(?:[\\/]|\Z)", f) and len(out) < 16:
+                out.append(f)
+    return out
+
+
+def _climbed_root(w: str) -> Optional[str]:
+    """A relative file that starts by climbing out of the folder, read from the root: ../etc/profile is /etc/profile when the
+    command runs in /. Other relative files are left as they are."""
+    s = str(w).replace("\\", "/")
+    if not s.startswith("../"):
+        return None
+    while re.match(r"^\.{1,2}/", s):
+        s = re.sub(r"^\.{1,2}/", "", s, count=1)
+    return "/" + s
+
+
 def _out_flag(w: str) -> bool:
     return bool(
         re.match(r"^-[A-Za-z]*[oO]\Z", w)
@@ -1733,6 +1792,19 @@ def _check_pipeline(
                     if rc and not _ANCHORED_RE.match(target) and re.search(r"(?:^|[\\/])\.\.(?:[\\/]|\Z)", target):
                         return "rc_download"
                     if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
+                        return "rc_download"
+            # curl --output-dir, wget -P and curl --create-dirs: the file lands in a folder given by an option
+            if heads[j][1] in ("curl", "wget"):
+                for cand in _download_dir_targets(words, heads[j][1] == "wget"):
+                    alts = _brace_alts(_rc_from_cwd(heads[j][4], cand))
+                    if alts is None or any(_is_rc_path(t) for t in alts):
+                        return "rc_download"
+                    if rc == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
+                        return "rc_download"
+                    if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
+                        return "rc_download"
+                    up = _climbed_root(cand)
+                    if up is not None and any(_is_rc_path(t) for t in (_brace_alts(up) or [up])):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):

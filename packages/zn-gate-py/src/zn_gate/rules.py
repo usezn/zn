@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.3
+RULES_VERSION: 2026-11-27.5
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.3"
+RULES_VERSION = "2026-11-27.5"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -632,10 +632,44 @@ def _glued_path_readings(word: str) -> List[str]:
     return out
 
 
+# A container tool in the text: its volume and mount specs (-v ~/.ssh:/root/.ssh, --mount type=bind,source=~/.ssh,target=/k) name
+# host files inside a longer word, as in the hook. Read only when such a program is named, so a colon or an equals sign in other
+# commands stays one word.
+PATH_CONTAINER_RE = _rc(r'(?:^|[\s;&|(/])(?:docker|podman|nerdctl)(?:-compose)?(?=[\s;&|)]|$)')
+PATH_CONTAINER_SPLIT_RE = _rc(r'[:=]')
+PATH_CONTAINER_DIRS = [(_rc(r'(?:^|/)\.ssh$'), '/id_rsa'), (_rc(r'(?:^|/)\.aws$'), '/credentials')]
+PATH_CONTAINER_PARTS_MAX = 16
+
+
+def _container_spec_readings(word: str) -> List[str]:
+    """The parts of one word of a container command, after an attached short option (-v~/.ssh:/r). Mounting the .ssh or .aws
+    folder itself shares every file in it, so such a part also reads as a file inside it."""
+    out: List[str] = []
+    # An option whose name holds env (--env-file=.env) only loads the file into the program: it stays allowed, as in the equals rule above.
+    if len(word) > 4096 or not re.search(r'[:=]', word) or re.match(r'^--[a-z0-9-]*env[a-z0-9-]*=', word):
+        return out
+    attached = re.match(r'^-[a-z]([^-].*)$', word, re.DOTALL)
+    for src in ([word, attached.group(1)] if attached else [word]):
+        n = 0
+        for part in PATH_CONTAINER_SPLIT_RE.split(src):
+            if part == word or not part:
+                continue
+            n += 1
+            if n > PATH_CONTAINER_PARTS_MAX:
+                break
+            out.append(part)
+            norm = _normalize_path_word(part.replace('\\', '/'))
+            for rx, name in PATH_CONTAINER_DIRS:
+                if rx.search(norm):
+                    out.append(norm + name)
+    return out
+
+
 def sensitive_path_view(text: str) -> str:
     """The path view of a text: its normalized words, one per line."""
     lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
     words: List[str] = []
+    container = bool(PATH_CONTAINER_RE.search(lowered))
     for raw in PATH_WORD_SPLIT_RE.split(lowered):
         if not raw:
             continue
@@ -645,6 +679,9 @@ def sensitive_path_view(text: str) -> str:
             words.append(_normalize_path_word(word.replace('\\', '')))
         for g in _glued_path_readings(word):
             words.append(_normalize_path_word(g.replace('\\', '/')))
+        if container:
+            for g in _container_spec_readings(word):
+                words.append(_normalize_path_word(g.replace('\\', '/')))
     return '\n'.join(words)
 
 

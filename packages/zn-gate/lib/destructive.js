@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-25.4';
+const COMMAND_RULES_VERSION = '2026-11-27.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -67,7 +67,7 @@ const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '
   '/sbin', '/srv', '/sys', '/usr', '/var', '/Users', '/System', '/Library', '/Applications', '/private', '/Volumes']);
 const HOME_WORDS = new Set(['~', '$home', '${home}', '$userprofile', '${userprofile}', '%userprofile%', '$env:userprofile', '$env:home', '$env:homepath']);
 const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/;
-const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/\.ssh\/authorized_keys2?$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|environment)$|^\/etc\/profile\.d\//;
+const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/\.ssh\/authorized_keys2?$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|zshenv|zprofile|environment)$|^\/etc\/profile\.d\//;
 const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
 
 const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
@@ -851,6 +851,47 @@ function outFlag(w) {
   return /^-[A-Za-z]*[oO]$/.test(w) || /^--output(?:-document)?$/.test(w) || /^-out(?:f(?:i(?:l(?:e)?)?)?)?$/i.test(w);
 }
 
+/* The files a curl or wget download is saved to when a folder option is given: --output-dir D (curl), -P D, -PD,
+   --directory-prefix[=]D (wget), joined to each -o file and to each URL file name, and the -o files of a curl run with
+   --create-dirs, which makes the folders of a path that climbs with .. . At most 256 words and 16 candidates are read. */
+const DL_URL_NAME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s\/?#]*\/([^\s?#]*)/;
+function downloadDirTargets(words, wget) {
+  let dir = null;
+  let create = false;
+  const outs = [];
+  const names = [];
+  const ws = words.length > 256 ? words.slice(0, 256) : words;
+  for (let i = 0; i < ws.length; i++) {
+    const w = String(ws[i]);
+    const nx = i + 1 < ws.length ? String(ws[i + 1]) : null;
+    let m;
+    if (w === '--output-dir' || w === '--directory-prefix' || (wget && w === '-P')) { if (nx !== null) dir = nx; }
+    else if ((m = /^--(?:output-dir|directory-prefix)=(.+)$/s.exec(w))) dir = m[1];
+    else if (wget && (m = /^-P(.+)$/s.exec(w))) dir = m[1];
+    else if (w === '--create-dirs') create = true;
+    else if (outFlag(w) && nx !== null) outs.push(nx);
+    else if ((m = /^--output(?:-document)?=(.+)$/s.exec(w))) outs.push(m[1]);
+    else if ((m = DL_URL_NAME_RE.exec(w))) { const n = m[1].split('/').pop(); if (n) names.push(n); }
+  }
+  const out = [];
+  if (dir !== null) {
+    const base = dir.replace(/[\\/]+$/, '');
+    for (const f of outs.concat(names)) if (!ANCHORED_RE.test(f) && out.length < 16) out.push(base + '/' + f);
+  } else if (create) {
+    for (const f of outs) if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(f) && out.length < 16) out.push(f);
+  }
+  return out;
+}
+
+/* A relative file that starts by climbing out of the folder, read from the root: ../etc/profile is /etc/profile when the
+   command runs in /. Other relative files are left as they are. */
+function climbedRoot(w) {
+  let s = String(w).replace(/\\/g, '/');
+  if (!/^\.\.\//.test(s)) return null;
+  while (/^\.{1,2}\//.test(s)) s = s.replace(/^\.{1,2}\//, '');
+  return '/' + s;
+}
+
 /* {x..y} with one-character ends or one- and two-digit numbers, as the comma list bash expands it to ({u..u} -> u). */
 function expandSequences(w) {
   return w.replace(/\{(?:([A-Za-z])\.\.([A-Za-z])|(\d{1,2})\.\.(\d{1,2}))\}/g, (all, a, b, n, m) => {
@@ -959,6 +1000,13 @@ function checkPipeline(pipe, known = null, rc = 0) {
         // find -execdir runs the command at an unknown depth below its starting path, so a relative target that climbs with ..
         // can land anywhere above it (../etc/profile from /srv is /etc/profile): refused whatever the starting path.
         if (target !== null && rc > 0 && !ANCHORED_RE.test(target) && /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(target) && on('rc_download')) return 'rc_download';
+      }
+      // curl --output-dir, wget -P and curl --create-dirs: the file lands in a folder given by an option
+      if (heads[j].names.some((n) => n === 'curl' || n === 'wget')) {
+        for (const cand of downloadDirTargets(words, heads[j].names.includes('wget'))) {
+          const up = climbedRoot(cand);
+          if ((isRcTarget(rcFromCwd(heads[j].dir, cand), rc) || (up !== null && isRcTarget(up, rc))) && on('rc_download')) return 'rc_download';
+        }
       }
     }
   }

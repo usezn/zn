@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.3
+ * RULES_VERSION: 2026-11-27.5
  */
 
-const RULES_VERSION = '2026-11-27.3';
+const RULES_VERSION = '2026-11-27.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -417,10 +417,38 @@ function gluedPathReadings(word) {
   return out;
 }
 
+// A container tool in the text: its volume and mount specs (-v ~/.ssh:/root/.ssh, --mount type=bind,source=~/.ssh,target=/k) name
+// host files inside a longer word, as in the hook. Read only when such a program is named, so a colon or an equals sign in other
+// commands stays one word.
+const PATH_CONTAINER_RE = /(?:^|[\s;&|(\/])(?:docker|podman|nerdctl)(?:-compose)?(?=[\s;&|)]|$)/;
+const PATH_CONTAINER_SPLIT_RE = /[:=]/;
+const PATH_CONTAINER_DIRS = [[/(?:^|\/)\.ssh$/, '/id_rsa'], [/(?:^|\/)\.aws$/, '/credentials']];
+const PATH_CONTAINER_PARTS_MAX = 16;
+// The parts of one word of a container command, after an attached short option (-v~/.ssh:/r). Mounting the .ssh or .aws folder
+// itself shares every file in it, so such a part also reads as a file inside it.
+function containerSpecReadings(word) {
+  const out = [];
+  // An option whose name holds env (--env-file=.env) only loads the file into the program: it stays allowed, as in the equals rule above.
+  if (word.length > 4096 || !/[:=]/.test(word) || /^--[a-z0-9-]*env[a-z0-9-]*=/.test(word)) return out;
+  const attached = /^-[a-z]([^-].*)$/.exec(word);
+  for (const src of attached ? [word, attached[1]] : [word]) {
+    let n = 0;
+    for (const part of src.split(PATH_CONTAINER_SPLIT_RE)) {
+      if (part === word || !part) continue;
+      if (++n > PATH_CONTAINER_PARTS_MAX) break;
+      out.push(part);
+      const norm = normalizePathWord(part.replace(/\\/g, '/'));
+      for (const [re, file] of PATH_CONTAINER_DIRS) if (re.test(norm)) out.push(norm + file);
+    }
+  }
+  return out;
+}
+
 // The path view of a text: its normalized words, one per line.
 function sensitivePathView(text) {
   const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
   const words = [];
+  const container = PATH_CONTAINER_RE.test(lowered);
   for (const raw of lowered.split(PATH_WORD_SPLIT_RE)) {
     if (!raw) continue;
     // A $ right before a double quote is a bash locale quote ($"id_rsa"): it is dropped with the quotes.
@@ -428,6 +456,7 @@ function sensitivePathView(text) {
     words.push(normalizePathWord(word.replace(/\\/g, '/')));
     if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
     for (const g of gluedPathReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
+    if (container) for (const g of containerSpecReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
   }
   return words.join('\n');
 }
