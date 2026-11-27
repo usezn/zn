@@ -1608,10 +1608,11 @@ const DOTENV_DEFAULT_FILE = '.env';
 // .env.<name> file of the folder is checked (apart from the example, sample and template ones); the same for --convention.
 const DOTENV_CASCADE = '.env.*';
 const DOTENV_TEMPLATE_RE = /\.(?:example|sample|template)$/i;
+// null when the folder cannot be listed (a folder that does not exist has no files).
 function cascadeFilesIn(dir) {
   try {
     return fs.readdirSync(dir).filter((n) => /^\.env\..+/i.test(n) && !DOTENV_TEMPLATE_RE.test(n));
-  } catch (_) { return []; }
+  } catch (e) { return e && (e.code === 'ENOENT' || e.code === 'ENOTDIR') ? [] : null; }
 }
 // Only steps that certainly print neither values nor keys and load nothing; every other step (keypair prints the private keys,
 // ext runs sub-steps that read or decrypt files, precommit, prebuild, genexample and radar read the files) is checked.
@@ -1706,7 +1707,9 @@ function envFileValueWords(words, opts) {
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
-    const programWord = w === progWord || (loose && DOTENV_RUNNERS.has(programName(t)));
+    // The word after the wrappers, or the first word that names the command's program (which also covers a wrapper the head resolver
+    // knows and the wrapper list does not).
+    const programWord = w === progWord || (loose && DOTENV_RUNNERS.has(programName(t))) || (!seenProgram && programName(t) === programName(w.head));
     if (programWord) seenProgram = true;
     const wasLaunch = launch;
     if (programWord) {
@@ -3148,7 +3151,12 @@ function bashDenialOf(cmd, opts = {}) {
     if (f === DOTENV_CASCADE) {
       const dirs = new Set([path.resolve(opts.cwd || process.cwd()), ...((opts.cdBases && opts.cdBases.dirs) || []).map((d) => path.resolve(d))]);
       for (const dir of dirs) {
-        for (const name of cascadeFilesIn(dir)) {
+        const names = cascadeFilesIn(dir);
+        if (names === null) {
+          return 'zn: this command loads the .env.<environment> files of ' + slash(dir) + ', which zn cannot list, so it cannot check whether they hold secrets and it was blocked. ' +
+            'Ask the user to fix the folder permissions, or to run it.';
+        }
+        for (const name of names) {
           if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
           const deny = readDenial(name, { ...opts, cwd: dir });
           if (deny) return deny;

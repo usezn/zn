@@ -220,3 +220,24 @@ test('a dotenv runner behind a wrapper is judged like the runner alone', async (
     for (const c of ['env dotenvx run -- printenv', 'sudo -u root dotenvx get', 'command dotenv -- printenv']) assert.equal(await verdict(quiet, c), 'allow', c);
   }
 });
+
+test('a wrapper the head resolver reads but the wrapper list does not still marks the runner', async (t) => {
+  const dir = project(t, SECRET);
+  for (const c of ['exec dotenvx run -- printenv', 'doas dotenvx get', 'xargs dotenvx get', 'setsid dotenvx get', 'ionice dotenvx get', 'flock /x/lock dotenvx get', 'taskset 1 dotenvx get']) {
+    assert.equal(await verdict(dir, c), 'deny', c);
+  }
+  assert.equal(await verdict(dir, 'exec dotenvx run -f other.txt -- printenv'), 'allow');
+  assert.equal(await verdict(dir, 'doas dotenv -e other.txt -- printenv'), 'allow');
+});
+
+test('a cascade in a folder that cannot be listed is refused', async (t) => {
+  if (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) return t.skip('needs a non-root POSIX user');
+  const dir = project(t, null);
+  const sub = path.join(dir, 'locked');
+  fs.mkdirSync(sub);
+  try {
+    fs.chmodSync(sub, 0o000);
+    assert.equal(await verdict(dir, 'cd locked && dotenv -c qa -- printenv'), 'deny');
+    assert.equal(await verdict(dir, 'cd missing && dotenv -c qa -- printenv'), 'allow');
+  } finally { fs.chmodSync(sub, 0o755); }
+});
