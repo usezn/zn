@@ -147,3 +147,113 @@ fn an_invalid_signing_key_stops_the_engine_from_starting() {
         assert!(r.is_err(), "signing key {bad:?} must be an error");
     }
 }
+
+// ---- removals are serialized (delete endpoint and folder watcher) ----
+
+fn enforced_engine_with_two_policies() -> (std::sync::Arc<ZnEngine>, tempfile::TempDir) {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE), ("q.wasm", EMPTY_MODULE)]);
+    let e = engine(vec![empty_module_hash()], None);
+    e.load_all_policies(dir.path()).expect("load");
+    assert_eq!(e.policy_count(), 2);
+    (std::sync::Arc::new(e), dir)
+}
+
+#[test]
+fn two_concurrent_deletes_leave_one_policy_and_its_file() {
+    for _ in 0..50 {
+        let (e, dir) = enforced_engine_with_two_policies();
+        let barrier = std::sync::Barrier::new(2);
+        let results: Vec<Option<bool>> = std::thread::scope(|s| {
+            let handles: Vec<_> = ["p", "q"]
+                .into_iter()
+                .map(|name| {
+                    let (e, barrier, path) = (&e, &barrier, dir.path());
+                    s.spawn(move || {
+                        barrier.wait();
+                        e.delete_policy_guarded(path, name).expect("no io error")
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert_eq!(
+            results.iter().filter(|r| r.is_some()).count(),
+            1,
+            "{results:?}"
+        );
+        assert_eq!(
+            results.iter().filter(|r| r.is_none()).count(),
+            1,
+            "{results:?}"
+        );
+        assert_eq!(e.policy_count(), 1);
+        let files = ["p.wasm", "q.wasm"]
+            .iter()
+            .filter(|f| dir.path().join(f).exists())
+            .count();
+        assert_eq!(files, 1, "the refused policy keeps its file");
+        let left = e.list_policies().pop().unwrap();
+        assert!(dir.path().join(format!("{left}.wasm")).exists());
+    }
+}
+
+#[test]
+fn deleting_the_same_policy_twice_concurrently_succeeds_and_keeps_the_other() {
+    let (e, dir) = enforced_engine_with_two_policies();
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|s| {
+        for _ in 0..2 {
+            let (e, barrier, path) = (&e, &barrier, dir.path());
+            s.spawn(move || {
+                barrier.wait();
+                assert!(e.delete_policy_guarded(path, "p").expect("ok").is_some());
+            });
+        }
+    });
+    assert_eq!(e.list_policies(), vec!["q".to_string()]);
+    assert!(dir.path().join("q.wasm").exists());
+}
+
+#[test]
+fn a_watcher_removal_racing_a_delete_cannot_leave_zero_policies() {
+    for _ in 0..50 {
+        let (e, dir) = enforced_engine_with_two_policies();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|s| {
+            let (e1, b1, path) = (&e, &barrier, dir.path());
+            s.spawn(move || {
+                b1.wait();
+                let _ = e1.delete_policy_guarded(path, "p").expect("no io error");
+            });
+            let (e2, b2) = (&e, &barrier);
+            s.spawn(move || {
+                b2.wait();
+                // What the folder watcher does when a .wasm file disappears.
+                e2.unregister_policy_unless_last("q");
+            });
+        });
+        assert_eq!(e.policy_count(), 1);
+    }
+}
+
+#[test]
+fn a_refused_delete_does_not_touch_the_file_and_an_open_engine_may_delete_the_last_policy() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let enforced = engine(vec![empty_module_hash()], None);
+    enforced.load_all_policies(dir.path()).expect("load");
+    assert_eq!(
+        enforced.delete_policy_guarded(dir.path(), "p").unwrap(),
+        None
+    );
+    assert!(dir.path().join("p.wasm").exists());
+    assert_eq!(enforced.policy_count(), 1);
+
+    let open = engine(vec![], None);
+    open.load_all_policies(dir.path()).expect("load");
+    assert_eq!(
+        open.delete_policy_guarded(dir.path(), "p").unwrap(),
+        Some(true)
+    );
+    assert!(!dir.path().join("p.wasm").exists());
+    assert_eq!(open.policy_count(), 0);
+}

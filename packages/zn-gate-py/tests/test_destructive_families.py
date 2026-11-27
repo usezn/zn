@@ -185,8 +185,10 @@ def test_allow_answer_shape():
 
 
 @pytest.mark.parametrize("value", [None, 5, b"rm -rf ~", ["rm", "-rf", "~"]])
-def test_non_string_input_is_allowed(value):
-    assert check_command(value).allowed  # type: ignore[arg-type]
+def test_non_string_input_is_refused(value):
+    res = check_command(value)  # type: ignore[arg-type]
+    assert not res.allowed
+    assert res.rule == "destructive:command_not_a_string"
 
 
 def test_oversized_command_is_refused():

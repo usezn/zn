@@ -15,7 +15,7 @@ Set up zn-gate in OpenCode in two minutes, then the technical details: the plugi
 
    The hooks need zn-gate 1.5 or later from npm. On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally/). On Windows, if PowerShell says running scripts is disabled, see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
-   The install writes the plugin file `~/.config/opencode/plugins/zn-gate.js` (all your projects), or `.opencode/plugins/zn-gate.js` in one project when you run `zn hooks install opencode --project` from that project's folder. A plugin file that is there already and was not written by zn is left unchanged. The install also prints an optional hint: to let OpenCode use the secrets kept in zn's vault, add the `secrets` MCP server to `opencode.json` under `mcp`. A project plugin calls `zn` from the `PATH`, so everyone who uses the project needs zn on their `PATH`.
+   The install writes the plugin file `~/.config/opencode/plugins/zn-gate.js` (all your projects), or `.opencode/plugins/zn-gate.js` in one project when you run `zn hooks install opencode --project` from that project's folder. A plugin file that is there already and was not written by zn is left unchanged. The install also prints an optional hint: to let OpenCode use the secrets kept in zn's vault, add the `secrets` MCP server under `mcp` in your own `~/.config/opencode/opencode.json`. zn lets that server's calls carry secret markers only when the server is defined there (or in the file `OPENCODE_CONFIG` names, outside the project) and its command launches the `bin/cli.js` of this same zn-gate installation; a `secrets` server defined in a project's `opencode.json` or in `OPENCODE_CONFIG_CONTENT`, or one that runs another copy of zn-gate, is checked like any other MCP server, and a project file that uses the name also withdraws the trust from your own entry. A project plugin calls `zn` from the `PATH`, so everyone who uses the project needs zn on their `PATH`.
 
 3. **Restart OpenCode.** OpenCode loads the plugin files in the plugins folder when it starts.
 
@@ -72,7 +72,7 @@ In our end-to-end run on Windows Server 2022 with OpenCode 1.19.3, with PowerShe
 
 Run `npx -y zn-gate check` in your own terminal. It makes a temporary folder with a fake `.env` file and an ordinary file, asks zn's hook to let the agent read each one, and reports whether the hook blocked the `.env` file and allowed the other. Nothing is sent over the network and no setting changes. See [Check that it works](../check.md).
 
-For OpenCode, this checks zn's rules — the hook runner the plugin drives. The plugin itself runs inside OpenCode, which `zn-gate check` does not start. We ran OpenCode end to end with the agent itself, with 0 secret values sent to the model provider; OpenCode 1.19.3 also ran end to end on Windows Server 2022. See [Agent compatibility](../compat.md).
+For OpenCode, this checks zn's rules — the hook runner the plugin drives. The plugin itself runs inside OpenCode, and `zn-gate check` does not open OpenCode or start a session. If OpenCode is installed, check only runs `opencode --version` to read its version, and prints that version in its report. We ran OpenCode end to end with the agent itself, with 0 secret values sent to the model provider; OpenCode 1.19.3 also ran end to end on Windows Server 2022. See [Agent compatibility](../compat.md).
 
 ## Uninstall
 

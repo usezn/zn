@@ -630,9 +630,9 @@ The stored value of a secret goes only into the first command of a command line,
 
 #### "zn: a secret marker in the arguments of a command is not filled in"
 
-**What happened:** the command has a `__ZN_NAME__` marker in its arguments. zn does not fill it in there, because the value would show in the process list and in command-line logs.
+**What happened:** the command has a `__ZN_NAME__` marker in its arguments. zn does not fill it in there, because the value would show in the process list and in command-line logs. A secret marker is a stand-in for a secret stored in zn.
 
-**What to do:** have the agent pass the secret as an environment variable with `zn run --secrets NAME -- <command>`, and have the program read it from there (for example `psql` reads `PGPASSWORD`). For web requests, the agent should use the `secrets_http_request` tool of zn's `secrets` MCP server (zn's own tool that sends the request itself, with the stored value).
+**What to do:** ask the user to run `zn run --secrets NAME -- <command>` in their own terminal, so the program gets the secret as an environment variable, and have the program read it from there (for example `psql` reads `PGPASSWORD`). For web requests, the agent should use the `secrets_http_request` tool of zn's `secrets` MCP server (zn's own tool that sends the request itself, with the stored value).
 
 #### PowerShell commands that carry a secret
 
@@ -685,11 +685,11 @@ In `"deny"` mode the message names the rule `(rule: egress-check)`, says that pe
 
 **What to do:** approve only if that server should get the data. Otherwise decline and ask the agent to send the request without it. Never write the value of a secret in the request. How to change the setting and list trusted hosts: [Network requests that carry personal data](egress-check.md).
 
-#### "zn: this call would send personal data (`<kinds>`) to `<server>`" / "zn: this call would send a secret (`<kinds>`) to `<server>`, so zn blocked it" / "zn: `<server>` never receives secret values"
+#### "zn: this call was stopped because it contains a secret marker" / "zn: this call would send a secret (`<kinds>`) to `<server>`, so zn blocked it" / "zn: this call would send personal data (`<kinds>`) to `<server>`" / "zn: this web search was stopped because its query contains a secret marker"
 
-**What happened:** an MCP call carries personal data (zn asks you), a literal secret, or a `__ZN_NAME__` marker (zn blocks). A stored secret is never passed to another MCP server.
+**What happened:** an MCP call carries a literal secret or a `__ZN_NAME__` marker (a stand-in for a secret stored in zn), and zn blocked it. A stored secret is never passed to another MCP server. The same applies to the query of a web search or code search in OpenCode: the message says "web search" or "code search", not an MCP server.
 
-**What to do:** for personal data, approve only if that server should receive it. For a secret, the agent should use the `secrets_http_request` tool for a web request, or remove the value or marker from the call.
+**What to do:** remove the secret or the marker from the call or the query. To let a program use a stored secret, run `zn run --secrets NAME -- <program>` in your own terminal; the program reads the secret from its environment. For a call that carries personal data (zn asks you), approve only if that server should receive it.
 
 #### "zn: `<agent>` asks for secret `<NAME>`. Add it with: zn secret set `<NAME>`"
 
@@ -1137,6 +1137,12 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 **What happened:** zn could not reach the server. For `join`, the computer was not connected. For `sync`, nothing was changed.
 
 **What to do:** check your internet connection and run the same command again (`zn team join <token>` or `zn team sync`). Run it with `ZN_VERBOSE=1` to see the technical detail.
+
+#### "join failed: this organization has no active Team subscription"
+
+**What happened:** the join token is for an organization whose Team subscription is not active, so this computer was not connected. (`zn team status` says the same in plain words when the organization's subscription ends later.)
+
+**What to do:** ask an admin of your organization to renew or start the Team plan at [usezn.com/pricing](https://usezn.com/pricing/), then run `zn team join <token>` again.
 
 #### "join failed (`<reason>`)" / "the server sent an invalid organization key"
 
