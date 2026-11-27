@@ -160,11 +160,12 @@ def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
 
 
 def is_cloud_enabled(api_key: Optional[str] = None, local_only: bool = False) -> bool:
-    """True only if the user opted in: an API key AND ZN_CLOUD=1, and no local-only override."""
-    key = api_key or os.environ.get("ZN_API_KEY")
+    """True only if the user opted in: a usable API key AND ZN_CLOUD=1, and no local-only override.
+    A key that is blank or has the wrong shape counts as no key, as in the Node.js client."""
+    key = usable_api_key(api_key or os.environ.get("ZN_API_KEY"))
     opted_in = os.environ.get("ZN_CLOUD") == "1"
     force_local = local_only or os.environ.get("ZN_LOCAL_ONLY") == "true"
-    return bool(key) and opted_in and not force_local
+    return key is not None and opted_in and not force_local
 
 
 # Long texts: the cloud gate reads the first 512 tokens unless the request
