@@ -72,8 +72,12 @@ test('checkCommand answers in the shape of evaluate()', () => {
   assert.equal(bad.rule, 'destructive:rm_root_home');
   assert.match(bad.reason, /^Destructive command: /);
   assert.equal(bad.rules_version, COMMAND_RULES_VERSION);
-  assert.equal(checkCommand(undefined).verdict, 'allow');
-  assert.equal(checkCommand(42).verdict, 'allow');
+  for (const value of [undefined, null, Buffer.from('rm -rf /'), new Uint8Array(3), 42, 0, ['rm', '-rf', '/'], { command: 'ls' }, true, false]) {
+    const r = checkCommand(value);
+    assert.equal(r.verdict, 'block', String(value));
+    assert.equal(r.rule, 'destructive:command_not_a_string', String(value));
+    assert.match(r.reason, /^Destructive command: /);
+  }
   assert.equal(client.checkCommand, checkCommand);
 });
 
