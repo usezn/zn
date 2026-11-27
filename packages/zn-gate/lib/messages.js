@@ -359,6 +359,17 @@ function looksLikeEmailInvite(text) {
 const TEAM_INVITE_NOT_A_JOIN_TOKEN = 'That is the link from your invitation email, not a join token. ' +
   'Open the link to accept the invitation at usezn.com/team, then ask your organization admin for a join token (it starts with znj_) and run: zn team join <token>';
 
+/* The one next step for an organization whose Team subscription is not active: only an admin of the organization can fix it. */
+const TEAM_NO_SUBSCRIPTION_STEP = 'ask an admin of your organization to renew or start the Team plan at usezn.com/pricing';
+
+function teamJoinNoSubscription(detail) {
+  return withDetails('join failed: this organization has no active Team subscription, so this machine was not connected. ' +
+    'Next step: ' + TEAM_NO_SUBSCRIPTION_STEP + ', then run: zn team join <token>', detail);
+}
+
+/* One line for the status of the audit upload when the server answers 402. */
+const TEAM_UPLOAD_NO_SUBSCRIPTION = 'your organization has no active Team subscription: ' + TEAM_NO_SUBSCRIPTION_STEP;
+
 function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
@@ -373,7 +384,7 @@ module.exports = {
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_POLICY_UNVERIFIED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
+  teamJoinFailed, teamJoinNoSubscription, TEAM_UPLOAD_NO_SUBSCRIPTION, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
   TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamPendingKept, TEAM_STRICT_NO_SUBSCRIPTION, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

@@ -630,9 +630,9 @@ The stored value of a secret goes only into the first command of a command line,
 
 #### "zn: a secret marker in the arguments of a command is not filled in"
 
-**What happened:** the command has a `__ZN_NAME__` marker in its arguments. zn does not fill it in there, because the value would show in the process list and in command-line logs.
+**What happened:** the command has a `__ZN_NAME__` marker in its arguments. zn does not fill it in there, because the value would show in the process list and in command-line logs. A secret marker is a stand-in for a secret stored in zn.
 
-**What to do:** have the agent pass the secret as an environment variable with `zn run --secrets NAME -- <command>`, and have the program read it from there (for example `psql` reads `PGPASSWORD`). For web requests, the agent should use the `secrets_http_request` tool of zn's `secrets` MCP server (zn's own tool that sends the request itself, with the stored value).
+**What to do:** ask the user to run `zn run --secrets NAME -- <command>` in their own terminal, so the program gets the secret as an environment variable, and have the program read it from there (for example `psql` reads `PGPASSWORD`). For web requests, the agent should use the `secrets_http_request` tool of zn's `secrets` MCP server (zn's own tool that sends the request itself, with the stored value).
 
 #### PowerShell commands that carry a secret
 
@@ -1137,6 +1137,12 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 **What happened:** zn could not reach the server. For `join`, the computer was not connected. For `sync`, nothing was changed.
 
 **What to do:** check your internet connection and run the same command again (`zn team join <token>` or `zn team sync`). Run it with `ZN_VERBOSE=1` to see the technical detail.
+
+#### "join failed: this organization has no active Team subscription"
+
+**What happened:** the join token is for an organization whose Team subscription is not active, so this computer was not connected. (`zn team status` says the same in plain words when the organization's subscription ends later.)
+
+**What to do:** ask an admin of your organization to renew or start the Team plan at [usezn.com/pricing](https://usezn.com/pricing/), then run `zn team join <token>` again.
 
 #### "join failed (`<reason>`)" / "the server sent an invalid organization key"
 

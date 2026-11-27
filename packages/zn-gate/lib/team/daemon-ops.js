@@ -391,7 +391,7 @@ function makeTeamOps(ctx) {
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
         throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid' ? messages.TEAM_JOIN_TOKEN_REJECTED
-          : messages.teamJoinFailed('this organization has no active Team subscription'));
+          : messages.teamJoinNoSubscription());
       }
       const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
       const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;
@@ -453,6 +453,7 @@ function makeTeamOps(ctx) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
         // The user can only get a new invitation (rejected token) or fix the connection: say that, with the technical cause on a details line.
         if (err && [401, 403, 404, 410].includes(err.status)) throw znError(CODES.POLICY_DENIED, messages.teamJoinTokenRejected(why));
+        if (err && err.status === 402) throw znError(CODES.POLICY_DENIED, messages.teamJoinNoSubscription(why));
         if (err && (err.code === 'ZN_TEAM_NETWORK' || err.code === 'ZN_TEAM_TIMEOUT')) throw znError(CODES.POLICY_DENIED, messages.teamJoinNoNetwork(why));
         throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(why));
       }
