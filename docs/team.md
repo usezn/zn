@@ -70,6 +70,35 @@ you sign in with the address it was sent to. A machine joins with a separate
 join token (`znj_...`) from an organization admin. If you paste the invitation
 link into `zn team join`, zn says so and exits `2` without contacting anything.
 
+## Join with your company email domain
+
+An owner or admin can let people join without an invitation. In the
+dashboard, under Team settings, the admin lists up to 10 company email
+domains (for example `example.com`). Someone who signs in with a verified
+email address of one of those domains can then join the organization.
+
+- Only verified addresses count. An address that is not verified cannot join.
+- The match is exact. `ana@example.com` matches `example.com`; `ana@mail.example.com`
+  matches only if `mail.example.com` is in the list; `ana@evil-example.com` never matches.
+- Public email providers (Gmail, Outlook, Yahoo, iCloud, and similar), wildcards,
+  IP addresses and public suffixes such as `co.uk` cannot be listed.
+- A domain belongs to one organization at a time.
+- A person who already belongs to another organization must leave it first.
+- Each join uses a seat, like an invitation. When every seat is in use, the join is
+  refused until the owner adds seats.
+- Every join, join request and change to the domain list is written to the
+  organization activity log. The log records the action and the address, never a token.
+
+There are two approval modes:
+
+- **Join directly** (the default): the person joins as a member at once.
+- **Ask an admin first**: the person sends a request, and an owner or admin
+  approves or rejects it in the dashboard. A request does not use a seat until it is
+  approved. Requests expire after 30 days.
+
+Changing the domain list or the approval mode needs a second factor. The same
+applies to approving a request.
+
 ## Commands
 
 | Command | What it does |
