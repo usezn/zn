@@ -418,7 +418,8 @@ fn default_batch_size() -> usize {
 /// KMS Configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KmsConfig {
-    /// Type of KMS to use (local, aws, gcp, vaults)
+    /// Type of KMS to use: `local` or `aws` (spaces and capitalisation are
+    /// ignored). Any other value stops the gateway at start-up.
     #[serde(default = "default_kms_type")]
     pub kms_type: String,
     /// Key ID / ARN
@@ -445,6 +446,44 @@ impl Default for KmsConfig {
 
 fn default_kms_type() -> String {
     "local".to_string()
+}
+
+/// The vault that `kms.kms_type` selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KmsKind {
+    Local,
+    Aws,
+}
+
+impl KmsConfig {
+    /// The vault kind: only `local` and `aws` are accepted, trimmed and in any
+    /// capitalisation. Anything else (empty, `AWS-KMS`, `aws_kms`, a typo) is an
+    /// error, so an unknown value can never fall back to the local vault.
+    pub fn kind(&self) -> Result<KmsKind> {
+        const KNOWN: [&str; 2] = ["local", "aws"];
+        let value = self.kms_type.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "local" => Ok(KmsKind::Local),
+            "aws" => Ok(KmsKind::Aws),
+            _ => {
+                let hint = KNOWN
+                    .iter()
+                    .find(|k| {
+                        !value.is_empty()
+                            && (edit_distance(&value, k) <= 2
+                                || k.starts_with(value.as_str())
+                                || value.starts_with(**k))
+                    })
+                    .map(|k| format!(" Did you mean \"{k}\"?"))
+                    .unwrap_or_default();
+                Err(anyhow!(
+                    "kms.kms_type (ZN_KMS_TYPE) must be \"local\" or \"aws\", but it is {:?}.{}",
+                    self.kms_type,
+                    hint
+                ))
+            }
+        }
+    }
 }
 
 /// Neural / AI Security configuration
@@ -934,7 +973,11 @@ impl ZnConfig {
         }
 
         if let Ok(hashes) = std::env::var("ZN_POLICY_HASHES") {
-            self.engine.allowed_policy_hashes = hashes.split(',').map(|s| s.to_string()).collect();
+            self.engine.allowed_policy_hashes = hashes
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
 
         if let Ok(key) = std::env::var("ZN_SIGNING_PUBLIC_KEY") {
@@ -1030,6 +1073,20 @@ impl ZnConfig {
 
     /// Validate configuration
     pub fn validate(&self) -> Result<()> {
+        let kms_kind = self.kms.kind()?;
+        if kms_kind == KmsKind::Aws
+            && self
+                .kms
+                .key_id
+                .as_deref()
+                .map(|k| k.trim().is_empty())
+                .unwrap_or(true)
+        {
+            return Err(anyhow!(
+                "kms.kms_type is \"aws\" but kms.key_id (ZN_KMS_KEY_ID) is not set. Set the KMS key id, or use \"local\"."
+            ));
+        }
+
         if let Some(secret) = &self.security.jwt_secret {
             if secret.len() < MIN_JWT_SECRET_BYTES {
                 return Err(anyhow!(
@@ -2052,5 +2109,75 @@ mod bool_flag_tests {
             })
             .expect_err("must fail");
         assert!(err.to_string().contains("ZN_NEURAL_BLOCKING"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod kms_type_tests {
+    use super::*;
+
+    fn kms(kms_type: &str, key_id: Option<&str>) -> ZnConfig {
+        let mut c = ZnConfig::default();
+        c.kms.kms_type = kms_type.to_string();
+        c.kms.key_id = key_id.map(str::to_string);
+        c
+    }
+
+    #[test]
+    fn valid_values_are_trimmed_and_case_insensitive() {
+        for v in [
+            "local", "Local", " LOCAL ", "	local
+",
+        ] {
+            assert_eq!(kms(v, None).kms.kind().unwrap(), KmsKind::Local, "{v:?}");
+        }
+        for v in ["aws", "AWS", " AWS ", "Aws"] {
+            assert_eq!(kms(v, None).kms.kind().unwrap(), KmsKind::Aws, "{v:?}");
+        }
+        assert!(kms(" AWS ", Some("alias/zn")).validate().is_ok());
+        assert!(kms("Local", None).validate().is_ok());
+    }
+
+    #[test]
+    fn unknown_values_are_errors_with_a_suggestion() {
+        for (bad, hint) in [
+            ("AWS-KMS", Some("aws")),
+            ("aws_kms", Some("aws")),
+            ("awss", Some("aws")),
+            ("locall", Some("local")),
+            ("loca", Some("local")),
+            ("gcp", None),
+            ("vault", None),
+        ] {
+            let err = kms(bad, None).validate().expect_err(bad).to_string();
+            assert!(err.contains("kms.kms_type"), "{err}");
+            match hint {
+                Some(h) => assert!(
+                    err.contains(&format!("Did you mean \"{h}\"?")),
+                    "{bad}: {err}"
+                ),
+                None => assert!(!err.contains("Did you mean"), "{bad}: {err}"),
+            }
+        }
+    }
+
+    #[test]
+    fn empty_value_is_an_error() {
+        for bad in ["", "   "] {
+            let err = kms(bad, None).validate().expect_err("empty").to_string();
+            assert!(err.contains("must be"), "{err}");
+            assert!(!err.contains("Did you mean"), "{err}");
+        }
+    }
+
+    #[test]
+    fn aws_without_a_key_id_fails_closed() {
+        for key in [None, Some(""), Some("  ")] {
+            let err = kms("aws", key)
+                .validate()
+                .expect_err("no key id")
+                .to_string();
+            assert!(err.contains("kms.key_id"), "{err}");
+        }
     }
 }

@@ -1,0 +1,2 @@
+### Security
+- Experimental Rust gateway (not distributed): when a signing key or a list of allowed policy hashes is set, the gateway no longer runs without its policies. It refuses to start if a policy file fails to load (the message names the file) or if no policy loads, a tool call is blocked if no policy is loaded, and a hot reload never replaces the loaded policies with an empty set. An empty `ZN_POLICY_HASHES` now counts as not set. Without a signing key or hashes, a gateway with no policies still runs as before.

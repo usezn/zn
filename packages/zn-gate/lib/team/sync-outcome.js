@@ -20,6 +20,7 @@ function policyProblem(pol) {
     case 'none': return 'the organization has not published a policy yet';
     case 'rejected': return 'the downloaded policy was refused' + (pol.error ? ' (' + short(pol.error, 160) + ')' : '') +
       (pol.error === 'policy expired' ? ": this computer's clock may be ahead, so check its date and time" : '');
+    case 'no_subscription': return "the organization's Team subscription is not active: the last policy applies until it expires, then strict mode. Ask your organization owner or admin";
     case 'revoked': return 'this machine was removed from the organization';
     case 'offline': return 'could not reach the zn server';
     case 'stopped': return 'the vault was locked before the sync finished';

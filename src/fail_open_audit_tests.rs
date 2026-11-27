@@ -1,0 +1,149 @@
+//! Tests for the policy-loading paths that decide allow or refuse in the gateway when a signing key
+//! or allowed policy hashes are configured. Every value is made up.
+
+use crate::engine::{ZnEngine, ZnEngineConfig};
+
+/// A WASM module with no sections: it compiles, but exports no memory or functions.
+const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
+/// 32 bytes of hex that are not a real key (zeros).
+const FAKE_HASH_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+fn engine(allowed_hashes: Vec<String>, signing_public_key: Option<String>) -> ZnEngine {
+    ZnEngine::new(ZnEngineConfig {
+        gas_limit: 1_000_000,
+        memory_limit: 10 * 1024 * 1024,
+        timeout_ms: 200,
+        allowed_hashes,
+        signing_public_key,
+    })
+    .expect("engine")
+}
+
+fn dir_with(files: &[(&str, &[u8])]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    for (name, bytes) in files {
+        std::fs::write(dir.path().join(name), bytes).expect("write");
+    }
+    dir
+}
+
+// ---- policy load (engine/mod.rs load_all_policies, check_tool_call_all) ----
+
+fn load_error(e: &ZnEngine, dir: &tempfile::TempDir) -> String {
+    format!(
+        "{}",
+        e.load_all_policies(dir.path()).expect_err("load must fail")
+    )
+}
+
+fn empty_module_hash() -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(EMPTY_MODULE))
+}
+
+#[test]
+fn policy_that_fails_the_hash_list_stops_startup_and_is_named() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let e = engine(vec![FAKE_HASH_HEX.to_string()], None);
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("p.wasm"), "{msg}");
+    assert_eq!(e.policy_count(), 0);
+}
+
+#[test]
+fn a_blank_hash_list_entry_means_not_set() {
+    // ZN_POLICY_HASHES="" (an unset compose variable) is an empty list, not [""] that matches nothing.
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let e = engine(vec![String::new(), "  ".to_string()], None);
+    assert!(!e.policy_enforcement_configured());
+    e.load_all_policies(dir.path()).expect("load returns Ok");
+    assert_eq!(e.policy_count(), 1);
+}
+
+#[test]
+fn policy_without_its_signature_file_stops_startup_and_is_named() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let e = engine(vec![], Some(FAKE_HASH_HEX.to_string()));
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("p.wasm"), "{msg}");
+    assert_eq!(e.policy_count(), 0);
+}
+
+#[test]
+fn one_bad_policy_among_good_ones_stops_startup_when_enforcement_is_configured() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE), ("bad.wasm", b"not a module")]);
+    // A hash list that allows the good file only.
+    let e = engine(vec![empty_module_hash()], None);
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("bad.wasm"), "{msg}");
+    assert!(!msg.contains("p.wasm"), "{msg}");
+}
+
+#[test]
+fn enforcement_configured_and_no_policy_in_the_folder_is_an_error() {
+    let dir = dir_with(&[]);
+    let e = engine(vec![FAKE_HASH_HEX.to_string()], None);
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("no policy was loaded"), "{msg}");
+}
+
+#[test]
+fn a_file_that_is_not_wasm_without_enforcement_is_skipped_and_the_call_is_allowed() {
+    // Deliberate: with nothing asking for signed policies, a gateway without policies is a valid setup.
+    let dir = dir_with(&[("p.wasm", b"not a module")]);
+    let e = engine(vec![], None);
+    e.load_all_policies(dir.path()).expect("load returns Ok");
+    assert_eq!(e.policy_count(), 0);
+    assert!(e.check_tool_call_all("any_tool", "{}", None).unwrap());
+}
+
+#[test]
+fn an_empty_policy_set_with_enforcement_configured_is_an_error_not_an_allow() {
+    for e in [
+        engine(vec![FAKE_HASH_HEX.to_string()], None),
+        engine(vec![], Some(FAKE_HASH_HEX.to_string())),
+    ] {
+        assert_eq!(e.policy_count(), 0);
+        assert!(e.check_tool_call_all("any_tool", "{}", None).is_err());
+    }
+}
+
+#[test]
+fn the_last_policy_is_kept_when_enforcement_is_configured_and_removed_otherwise() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let open = engine(vec![], None);
+    open.load_all_policies(dir.path()).expect("load");
+    assert!(open.unregister_policy_unless_last("p"));
+    assert_eq!(open.policy_count(), 0);
+
+    let enforced = engine(vec![empty_module_hash()], None);
+    enforced.load_all_policies(dir.path()).expect("load");
+    assert!(!enforced.unregister_policy_unless_last("p"));
+    assert_eq!(enforced.policy_count(), 1);
+}
+
+#[test]
+fn a_loaded_policy_that_cannot_run_denies_and_removing_it_allows_without_enforcement() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let e = engine(vec![], None);
+    e.load_all_policies(dir.path()).expect("load");
+    assert_eq!(e.policy_count(), 1);
+    // The module has no memory export: the check errors, which the gateway turns into DENIED.
+    assert!(e.check_tool_call_all("any_tool", "{}", None).is_err());
+    e.unregister_policy("p");
+    assert!(e.check_tool_call_all("any_tool", "{}", None).unwrap());
+}
+
+#[test]
+fn an_invalid_signing_key_stops_the_engine_from_starting() {
+    for bad in ["", "zz", "abcd", "not hex at all"] {
+        let r = ZnEngine::new(ZnEngineConfig {
+            gas_limit: 1,
+            memory_limit: 1024,
+            timeout_ms: 100,
+            allowed_hashes: vec![],
+            signing_public_key: Some(bad.to_string()),
+        });
+        assert!(r.is_err(), "signing key {bad:?} must be an error");
+    }
+}

@@ -431,6 +431,11 @@ async fn start_proxy(args: Args) -> Result<()> {
     let policy_dir = &zn_config.engine.policy_dir;
     let mut policy_load_error: Option<anyhow::Error> = None;
     if let Err(e) = engine.load_all_policies(policy_dir) {
+        if engine.policy_enforcement_configured() {
+            // A signing key or allowed hashes were set: running without those policies would allow
+            // everything they were meant to check, so zn does not start.
+            return Err(anyhow!("zn did not start. {e}. Fix or remove the policy files, or remove engine.signing_public_key and engine.allowed_policy_hashes (ZN_SIGNING_PUBLIC_KEY, ZN_POLICY_HASHES) if you do not use signed policies."));
+        }
         log::warning(zn::user_errors::policy_folder_problem(policy_dir, &e))?;
         policy_load_error = Some(e);
     } else {
@@ -455,8 +460,8 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initialize Secret Vault (KMS)
     use zn::crypto::vault::{AwsKmsVault, LocalVault, SecretVault};
-    let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kms_type.as_str() {
-        "aws" => {
+    let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kind()? {
+        zn::config::KmsKind::Aws => {
             log::info("Initializing AWS KMS Vault...").ok();
             // The data key is kept across restarts through its encrypted copy,
             // saved next to the audit database.
@@ -468,7 +473,7 @@ async fn start_proxy(args: Args) -> Result<()> {
                 .await,
             ))
         }
-        _ => {
+        zn::config::KmsKind::Local => {
             // The audit key is a passphrase for the audit log. The local
             // vault reads it as a raw 32-byte hex key, and only when a key id
             // asks the vault for one. Without a key id, no key is passed in.
