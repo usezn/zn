@@ -12,7 +12,7 @@ import zn_gate.integrations as integrations
 
 def test_unknown_attribute_raises_attribute_error_naming_the_module():
     with pytest.raises(AttributeError, match=re.escape("module 'zn_gate.integrations' has no attribute 'no_such_adapter'")):
-        integrations.no_such_adapter
+        _ = integrations.no_such_adapter
 
 
 def test_unknown_attribute_is_reported_missing_by_hasattr():

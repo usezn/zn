@@ -4,7 +4,6 @@ Ordinary fake inputs only. Skipped when langchain-core is not installed. CI inst
 hash-pinned .github/ci-framework-test-requirements.txt for the python-coverage job and sets
 ZN_REQUIRE_FRAMEWORKS=1, so there a missing framework fails the run instead of skipping.
 """
-import asyncio
 import importlib
 import logging
 import os
