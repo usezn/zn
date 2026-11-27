@@ -1490,6 +1490,13 @@ function mcpServerLabel(server) {
   return s ? 'the MCP server ' + s : 'an MCP server';
 }
 
+/* OpenCode checks the query of its web and code search like an MCP call, but a search is not an MCP server. */
+function searchKindOf(ev) {
+  if (ev.mcp) return '';
+  const name = String(ev.toolName || '').toLowerCase();
+  return name === 'websearch' ? 'web search' : name === 'codesearch' ? 'code search' : '';
+}
+
 async function decideMcp(ev, d, agentId) {
   const text = mcpArgumentText(ev.input.args);
   if (text === null) {
@@ -1499,10 +1506,14 @@ async function decideMcp(ev, d, agentId) {
   const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
   const ours = isOurSecretsServer(ev, deps.findProjectRoot(ev.cwd || process.cwd()));
   if (!ours && markers.findMarkers(text).length) {
+    const search = searchKindOf(ev);
     return {
       decision: 'deny',
-      message: 'zn: ' + mcpServerLabel(server) + ' never receives secret values, so zn blocked this call. ' +
-        'Next step: for an authenticated web request, use the secrets_http_request tool of the zn "secrets" MCP server; otherwise remove the placeholder from the call.',
+      message: search
+        ? 'zn: this ' + search + ' was stopped because its query contains a secret marker (a stand-in for a secret stored in zn), and a search never carries a secret. ' +
+          'Next step: remove the marker from the query and search again.'
+        : 'zn: this call was stopped because it contains a secret marker (a stand-in for a secret stored in zn), and ' + mcpServerLabel(server) + ' is not allowed to receive one. ' +
+          'Next step: remove the marker from the call. To let a program use that secret, the user runs `' + znCommand('run --secrets NAME -- <program>') + '` in their own terminal.',
     };
   }
 
@@ -1531,16 +1542,18 @@ async function decideMcp(ev, d, agentId) {
       decision: 'ask',
       pii: true,
       kinds: [...piiKinds],
-      message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
-        'Approve only if this server should receive it.',
+      message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + (searchKindOf(ev) ? 'a search service' : mcpServerLabel(server)) + '. ' +
+        'Approve only if ' + (searchKindOf(ev) ? 'that service' : 'this server') + ' should receive it.',
     };
   }
   return {
     decision: 'deny',
     kinds: [...kinds],
-    message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
-      'A stored secret cannot be passed to this server. ' +
-      'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
+    message: searchKindOf(ev)
+      ? 'zn: this ' + searchKindOf(ev) + ' would send a secret (' + [...kinds].join(', ') + ') to a search service, so zn blocked it. ' +
+        'Next step: remove the secret from the query and search again.'
+      : 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
+        'Next step: remove the secret from the call. To let a program use a stored secret, the user runs `' + znCommand('run --secrets NAME -- <program>') + '` in their own terminal.',
   };
 }
 
