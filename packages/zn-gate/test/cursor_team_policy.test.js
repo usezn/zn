@@ -51,7 +51,7 @@ async function run(vault, raw) {
   return runner.handle(cursor, raw, { engine: fakeEngine, vault, failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
 }
 
-test('cursor and the team policy: a shell command with a marker is denied and the agent is sent to zn run', async (t) => {
+test('cursor: a shell command with a marker is denied whatever the policy says, and the agent is sent to zn run (where the policy applies)', async (t) => {
   const vault = teamVault();
   await vault.setSecret(DENIED_NAME, DENIED_VALUE, { mode: 'env' });
   const dir = project(t);
@@ -61,7 +61,7 @@ test('cursor and the team policy: a shell command with a marker is denied and th
   assert.ok(!JSON.stringify(r.output).includes(DENIED_VALUE), 'the value is never printed');
 });
 
-test('cursor and the team policy: an MCP call with a marker is denied', async (t) => {
+test('cursor: an MCP call with a marker is denied whatever the policy says', async (t) => {
   const vault = teamVault();
   await vault.setSecret(DENIED_NAME, DENIED_VALUE, { mode: 'env' });
   const dir = project(t);
@@ -80,4 +80,28 @@ test('cursor and the team policy: a file write that holds a marker never gets th
   assert.ok(!JSON.stringify(r.output || {}).includes(DENIED_VALUE), 'the value is not in the answer');
   assert.ok(!(r.output && r.output.updated_input), 'nothing is rewritten');
   assert.ok(!vault.resolved.includes(MARKER), 'the vault is not even asked to put the value back');
+});
+
+// The secrets MCP server is added to Cursor by hand: the install only prints the line. For a project it names zn on the PATH
+// (the file is shared); for the user it names this machine's node and zn-gate. Both carry --agent cursor, which the policy needs
+// to offer a host written for Cursor.
+test('cursor: the install prints the secrets MCP server line with --agent cursor, for the user and for a project', (t) => {
+  const os = require('os');
+  const cursorAgent = getAdapter('cursor');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cursor-hint-home-'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cursor-hint-proj-'));
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+  const lineOf = (r) => r.warnings.find((w) => /"secrets" MCP server/.test(w)) || '';
+  const user = cursorAgent.install({ home, env: {}, mcp: true });
+  const userLine = lineOf(user);
+  assert.match(userLine, /~\/\.cursor\/mcp\.json/);
+  assert.match(userLine, /"secrets-mcp","--agent","cursor"\]/);
+  assert.doesNotMatch(userLine, /"command":"zn"/);
+  const proj = cursorAgent.install({ home, env: {}, mcp: true, scope: 'project', projectDir: project });
+  const projLine = lineOf(proj);
+  assert.match(projLine, /\.cursor\/mcp\.json in this project/);
+  assert.match(projLine, /\{"command":"zn","args":\["secrets-mcp","--agent","cursor"\]\}/);
+  // The install writes no MCP server itself.
+  assert.equal(fs.existsSync(path.join(home, '.cursor', 'mcp.json')), false);
+  assert.equal(fs.existsSync(path.join(project, '.cursor', 'mcp.json')), false);
 });

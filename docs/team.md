@@ -278,15 +278,17 @@ Codex and Cursor alike. What differs is what each agent lets zn do:
   the agent writes. The policy is checked first, so a secret the organization
   blocks is not put back.
 - **Cursor** cannot have a command or a file rewritten by zn. If a
-  shell command carries a `__ZN_NAME__` marker, zn blocks it and tells the agent
-  to run it again with `zn run --`, which applies the policy before any value is
-  used. An MCP call with a marker or a secret value in its arguments is blocked
+  shell command carries a `__ZN_NAME__` marker, zn blocks it whatever the policy
+  says and tells the agent to run it again with `zn run --`, which applies the
+  policy before any value is used. An MCP call with a marker or a secret value in its arguments is blocked
   too. A marker the agent writes into a file stays a marker: no value is put
   back, so nothing the policy blocks can leak that way.
 - Cursor also needs the `secrets` MCP server added by hand. `zn hooks
   install cursor` prints the line to add to `~/.cursor/mcp.json` (or
   `.cursor/mcp.json` in a project) under `mcpServers`; for a project it is
-  `"secrets": { "command": "zn", "args": ["secrets-mcp", "--agent", "cursor"] }`.
+  `"secrets": { "command": "zn", "args": ["secrets-mcp", "--agent", "cursor"] }`,
+  and for your user it names the `node` and the zn-gate install of your machine
+  instead of `zn`.
   Without it, Cursor has no way to use a stored secret, so the policy has
   nothing to apply to. Because the entry names the agent, a rule written for
   `cursor` can offer a new host for approval, as described above.

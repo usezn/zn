@@ -114,12 +114,14 @@ test('no policy yet or no state leaves local settings alone', () => {
 test('an invalid policy blocks every secret, uses nothing from its content and opens nothing', () => {
   // Even a copy whose rules would open a host or lift every restriction is not read.
   const opens = pol([{ secret: '*', agents: ['*'], allowHosts: ['new.example.com'] }]);
-  for (const p of [opens, null, undefined]) {
-    const r = effective('X', LOCAL, { policy: p, state: 'invalid', org: ORG, agent: 'cursor', agentTrusted: true });
-    assert.strictEqual(r.deny, true);
-    assert.strictEqual(r.reason, 'policy:org_invalid');
-    assert.deepStrictEqual(r.pending, []);
-    assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts);
+  for (const agent of ['codex', 'cursor']) {
+    for (const p of [opens, null, undefined]) {
+      const r = effective('X', LOCAL, { policy: p, state: 'invalid', org: ORG, agent, agentTrusted: true });
+      assert.strictEqual(r.deny, true, agent);
+      assert.strictEqual(r.reason, 'policy:org_invalid', agent);
+      assert.deepStrictEqual(r.pending, [], agent);
+      assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts, agent);
+    }
   }
 });
 
