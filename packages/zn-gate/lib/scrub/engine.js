@@ -50,7 +50,7 @@ const { cliName } = require('../zn-command');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
-const { invisibleView, parityViews } = require('../rules');
+const { invisibleView, parityViews, looseView } = require('../rules');
 // normalize.js is loaded on first use. A text with no candidate (a %XX, '' or "") has no decoded view, which is what
 // normalisedView returns for it, so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE
 // in normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
@@ -196,20 +196,24 @@ function scan(text, ctx) {
   const direct = scanText(text, c);
   const view = invisibleView(text);
   const norm = normalisedView(text);
-  if (!view && !norm) return direct;
+  // The view that also joins a last piece followed by more text: its spans count only where the text and the other views
+  // have none (a short word after a complete key is not the end of the key).
+  const loose = looseView(text, view);
+  if (!view && !norm && !loose) return direct;
   let all = direct;
-  if (view) {
+  if (view || loose) {
     // The text without invisible characters and with every wrap break joined, and the views that join every
     // second break (a key wrapped across two lines next to other lines).
     // A span of those views that overlaps a span of the text itself is left to the view that joins all of them.
-    const views = [view].concat(parityViews(text, view));
+    const views = (view ? [view].concat(parityViews(text, view)) : []).concat(loose ? [loose] : []);
     views.forEach((v, k) => {
       let spans = scanText(v.clean, c).map((s) => resolveWrapped({
         ...s,
         start: v.map[s.start],
         end: s.end > s.start ? v.map[s.end - 1] + 1 : v.map[s.start],
       }, text));
-      if (k > 0) spans = spans.filter((s) => !overlapsAny(direct, s.start, s.end));
+      if (v === loose) spans = spans.filter((s) => !overlapsAny(all, s.start, s.end));
+      else if (k > 0) spans = spans.filter((s) => !overlapsAny(direct, s.start, s.end));
       all = all.concat(spans);
     });
   }
@@ -477,7 +481,12 @@ async function prepare(ctx) {
 function textsToFetch(text) {
   const out = [text];
   const view = invisibleView(text);
-  if (view) out.push(view.clean);
+  if (view) {
+    out.push(view.clean);
+    for (const v of parityViews(text, view)) if (!out.includes(v.clean)) out.push(v.clean);
+  }
+  const loose = looseView(text, view);
+  if (loose && !out.includes(loose.clean)) out.push(loose.clean);
   const norm = normalisedView(text);
   if (norm && !out.includes(norm.clean)) out.push(norm.clean);
   return out;

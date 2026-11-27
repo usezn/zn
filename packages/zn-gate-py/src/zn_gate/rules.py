@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.9
+RULES_VERSION: 2026-11-27.10
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.9"
+RULES_VERSION = "2026-11-27.10"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -217,7 +217,15 @@ INVISIBLE_ASTRAL_RE = _rc(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
 # A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
-WRAP_BREAK_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
+WRAP_BREAK_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=]{8})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
+# The same break with a last piece of any length after it (see WRAP_BREAK_LOOSE_RE in rules.js).
+# Digits and capital letters are the anchor characters: a piece of a key has some, a line of plain lowercase words has none.
+# How many anchor characters the two tokens around a break must hold when the break is not between two long pieces
+# (the loose view asks for them always).
+LOOSE_ANCHORS = 3
+WRAP_BREAK_LOOSE_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=.:])(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
+# Where a text can hold a break at all: a cheap test before the pattern is run.
+WRAP_HINT_RE = _rc(r'[\n\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\\"\']')
 NON_ASCII_RE = _rc(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = _rc(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 # Hard caps for the Base64 smuggling check: above either one the command is blocked.
@@ -850,15 +858,74 @@ def _strip_invisible(text: str) -> str:
     return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
 
 
-def invisible_view(text: str, parity: Optional[int] = None) -> Optional[Tuple[str, 'array[int]']]:
+_ANCHORS = frozenset('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+_TOKEN_CHARS = frozenset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+/=.:')
+
+
+def _anchors_around(text: str, start: int, end: int) -> int:
+    """The digits and capital letters in the token before a break and the token after it (up to 32 characters of each;
+    see anchorsAround in rules.js)."""
+    n = 0
+    i = start - 1
+    while i >= 0 and start - 1 - i < 32:
+        ch = text[i]
+        if ch in _ANCHORS:
+            n += 1
+        elif ch not in _TOKEN_CHARS:
+            break
+        i -= 1
+    i = end
+    while i < len(text) and i - end < 32:
+        ch = text[i]
+        if ch in _ANCHORS:
+            n += 1
+        elif ch not in _TOKEN_CHARS:
+            break
+        i += 1
+    return n
+
+
+def _token_before(text: str, start: int) -> bool:
+    """True when at least eight token characters end at `start`, not counting the letter of an escape sequence that the
+    run of letters begins with (see tokenBefore in rules.js)."""
+    n = 0
+    i = start - 1
+    while n < 9 and i >= 0 and text[i] in _TOKEN_CHARS:
+        n += 1
+        i -= 1
+    if n > 0 and i >= 0 and text[i] == chr(92) and text[i + 1] in 'nrt':
+        n -= 1
+    return n >= 8
+
+
+# A break of spaces and one line break: the only kind that is joined between two long pieces whatever they look like.
+PLAIN_BREAK_RE = re.compile(r'[ \t]*\r?\n[ \t]*\Z')
+
+
+def _long_pieces(text: str, start: int, end: int) -> bool:
+    """True when a break has ten or more token characters on each side (see longPieces in rules.js)."""
+    before = 0
+    while before < 10 and start - before > 0 and text[start - before - 1] in _TOKEN_CHARS:
+        before += 1
+    after = 0
+    while after < 10 and end + after < len(text) and text[end + after] in _RUN_CHARS:
+        after += 1
+    return before >= 10 and after >= 10
+
+
+def invisible_view(text: str, parity: Optional[int] = None,
+                   loose: bool = False) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
     the text has no invisible character. With `parity` 0 or 1, only every second wrap break is joined (the even or the
     odd ones), so a key wrapped across two lines is joined alone, whatever the lines around it. See invisibleView in
     rules.js."""
     runs = [m.span() for m in ZERO_WIDTH_RE.finditer(text)] + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)]
-    if len(text) <= MAX_WRAP_VIEW_CHARS and '\n' in text:
-        breaks = [m.span() for m in WRAP_BREAK_RE.finditer(text)]
+    if len(text) <= MAX_WRAP_VIEW_CHARS and WRAP_HINT_RE.search(text) is not None:
+        breaks = [m.span() for m in (WRAP_BREAK_LOOSE_RE if loose else WRAP_BREAK_RE).finditer(text)]
+        # Read only after a piece that can be part of a key (see wrapBreaks in rules.js).
+        breaks = [b for b in breaks if _token_before(text, b[0]) and (not loose and PLAIN_BREAK_RE.match(text[b[0]:b[1]]) is not None and _long_pieces(text, b[0], b[1]) or
+                  _anchors_around(text, b[0], b[1]) >= LOOSE_ANCHORS)]
         runs += breaks if parity is None else breaks[parity::2]
     if not runs:
         return None
@@ -881,7 +948,7 @@ def invisible_view(text: str, parity: Optional[int] = None) -> Optional[Tuple[st
 def _clean_value(text: str) -> str:
     """A value as the secret rules see it: no invisible characters and no wrap breaks."""
     s = _strip_invisible(text)
-    return WRAP_BREAK_RE.sub('', s) if '\n' in s else s
+    return WRAP_BREAK_RE.sub('', s) if WRAP_HINT_RE.search(s) is not None else s
 
 
 def normalize_input(text: str) -> Tuple[str, str]:
@@ -1995,7 +2062,7 @@ def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     # joined token until one of them is redacted) is found by one more pass over what is left. Only a text that still
     # has a line break the wrap-join would remove is read again (see redactSecrets in rules.js).
     for _ in range(MAX_WRAP_SWEEPS):
-        if not found or '\n' not in redacted or len(redacted) > MAX_WRAP_VIEW_CHARS or WRAP_BREAK_RE.search(redacted) is None:
+        if not found or len(redacted) > MAX_WRAP_VIEW_CHARS or WRAP_BREAK_RE.search(redacted) is None:
             break
         redacted, more = _credential_pass(redacted)
         if not more:
@@ -2073,6 +2140,18 @@ def _all_redacted(text: str) -> bool:
     return ''.join(_MARKER_RE.sub('', out).split()) == ''
 
 
+def _span_has_break(text: str, start: int, end: int) -> bool:
+    """True when a break WRAP_BREAK_RE joins starts inside text[start:end] (see spanHasBreak in rules.js)."""
+    lo = max(0, start - 8)
+    hay = text[lo:min(len(text), end + 256)]
+    for m in WRAP_BREAK_RE.finditer(hay):
+        if lo + m.start() >= end:
+            break
+        if lo + m.start() > start:
+            return True
+    return False
+
+
 def _wrap_resolve(text: str, start: int, end: int, lo: int) -> Tuple[str, int]:
     """What to do with a match of the wrap-joined text, text[start:end], that holds line breaks (see wrapResolve in
     rules.js). ('cut', i): the first key ends at the line break i, because the rest is redacted by the rules on its
@@ -2096,7 +2175,7 @@ def _wrap_resolve(text: str, start: int, end: int, lo: int) -> Tuple[str, int]:
 def _parity_views(text: str, view: Optional[Tuple[str, 'array[int]']]) -> List[Tuple[str, 'array[int]']]:
     """The two views of `text` that join every second wrap break (see invisibleView in rules.js), without the ones
     equal to the view that joins all of them: empty for a text with fewer than two breaks."""
-    if view is None or '\n' not in text or len(text) > MAX_WRAP_VIEW_CHARS:
+    if view is None or len(text) > MAX_WRAP_VIEW_CHARS or WRAP_HINT_RE.search(text) is None:
         return []
     out: List[Tuple[str, 'array[int]']] = []
     for parity in (0, 1):
@@ -2106,34 +2185,70 @@ def _parity_views(text: str, view: Optional[Tuple[str, 'array[int]']]) -> List[T
     return out
 
 
+def _keep_filtered_joins(out: List[Tuple[int, int, str, str]], base: int,
+                         deferred: List[Tuple[int, int, str, str]]) -> None:
+    """The joined matches of one rule that its value filter rejected are kept when a candidate that was accepted
+    overlaps them (see keepFilteredJoins in rules.js). `out` holds the candidates from `base` on."""
+    if not deferred:
+        return
+    accepted = _merge_candidates(list(out[base:]))
+    ends = [a[1] for a in accepted]
+    for d in deferred:
+        i = bisect.bisect_right(ends, d[0])
+        if i < len(accepted) and accepted[i][0] < d[1]:
+            out.append(d)
+
+
+def _loose_view(text: str, view: Optional[Tuple[str, 'array[int]']]) -> Optional[Tuple[str, 'array[int]']]:
+    """The view that joins a last piece of any length (WRAP_BREAK_LOOSE_RE), or None when it is the one of `view`."""
+    if len(text) > MAX_WRAP_VIEW_CHARS or WRAP_HINT_RE.search(text) is None:
+        return None
+    v = invisible_view(text, None, True)
+    if v is None or (view is not None and v[0] == view[0]) or v[0] == text:
+        return None
+    return v
+
+
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
                      view: Optional[Tuple[str, 'array[int]']], budget: List[int],
                      value_filter: Optional[Callable[[str, str], bool]],
                      out: List[Tuple[int, int, str, str]],
                      match_check: Optional[Callable[[str], bool]] = None,
                      patterns: Optional[List[Tuple[str, re.Pattern[str], str]]] = None,
-                     extra_views: Sequence[Tuple[str, 'array[int]']] = ()) -> None:
+                     extra_views: Sequence[Tuple[str, 'array[int]']] = (),
+                     loose_view: Optional[Tuple[str, 'array[int]']] = None) -> None:
     """Candidate redactions of one rule as (start, end, rule_id, replacement) in
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
-    passes: List[Tuple[str, Optional['array[int]'], bool, bool]] = [(text, None, False, False)]
+    passes: List[Tuple[str, Optional['array[int]'], bool, bool, bool]] = [(text, None, False, False, False)]
     # Spans this rule found on the original text; a view match overlapping two or more is dropped
     # (see ruleCandidates in rules.js). They come in order and without overlaps, so the ones a
     # view match overlaps are counted with two binary searches.
     found_starts: List[int] = []
     found_ends: List[int] = []
+    base = len(out)
+    deferred: List[Tuple[int, int, str, str]] = []
     if view is not None:
-        passes.append((view[0], view[1], False, False))
+        passes.append((view[0], view[1], False, False, False))
         # The views that join every second line break find a key wrapped across two lines next to other lines; a
         # match there that overlaps a match on the text itself is the view that joins all of them to decide.
         for extra in extra_views:
-            passes.append((extra[0], extra[1], False, True))
+            passes.append((extra[0], extra[1], False, True, False))
+        # (the loose view is added below, after the views that can be absent)
         # A third pass reads each invisible character as a space; its indexes are the original ones.
         spaced = _spaced_view(text)
         if spaced != text:
-            passes.append((spaced, None, True, False))
-    for hay, mapping, is_spaced, is_extra in passes:
+            passes.append((spaced, None, True, False, False))
+    if loose_view is not None:
+        passes.insert(len(passes) - (1 if (view is not None and _spaced_view(text) != text) else 0),
+                      (loose_view[0], loose_view[1], False, True, True))
+    strict_merged: List[Tuple[int, int, str, str]] = []
+    strict_ends: List[int] = []
+    for hay, mapping, is_spaced, is_extra, is_loose in passes:
+        if is_loose:
+            strict_merged = _merge_candidates(list(out[base:]))
+            strict_ends = [a[1] for a in strict_merged]
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in hay:
             continue
@@ -2157,6 +2272,8 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     groups.append(None)
                 else:
                     groups.append(_span_in(mapping, m.start(k), m.end(k)))
+            start, end = _span_in(mapping, m.start(), m.end())
+            filtered = False
             if value_filter is not None:
                 # The value (group 2) decides whether the match is redacted.
                 span = groups[2]
@@ -2170,8 +2287,9 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                 if n <= MAX_FILTERED_VALUE and n <= budget[0]:
                     budget[0] -= n
                     if value_filter(value, prefix):
-                        continue
-            start, end = _span_in(mapping, m.start(), m.end())
+                        if mapping is None or is_spaced:
+                            continue
+                        filtered = True
             if is_spaced:
                 pass  # same indexes as the original: it cannot join two matches, and it is not in order
             elif mapping is None:
@@ -2182,14 +2300,19 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                 over = bisect.bisect_left(found_starts, end) - first
                 if over >= 2 or (is_extra and over >= 1):
                     continue
-                if '\n' in text[start:end]:
+                if is_loose:
+                    li = bisect.bisect_right(strict_ends, start)
+                    if li < len(strict_merged) and strict_merged[li][0] < end:
+                        continue
+                if '\n' in text[start:end] or _span_has_break(text, start, end):
                     action, at = _wrap_resolve(text, start, end, start + 1)
                     # The first key is already a match on the text itself: the joined match adds nothing to it.
                     if action == 'cut' and over == 1 and found_starts[first] <= start and found_ends[first] >= at:
                         continue
                     if '\\' not in replacement:
                         end = at
-            out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
+            (deferred if filtered else out).append((start, end, rule_id, _expand_template(replacement, groups, text)))
+    _keep_filtered_joins(out, base, deferred)
 
 
 def _merge_candidates(cands: List[Tuple[int, int, str, str]]) -> List[Tuple[int, int, str, str]]:
@@ -2251,18 +2374,20 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
     budget = [MAX_FILTERED_CHARS]
     view = None
     extra_views: List[Tuple[str, 'array[int]']] = []
+    loose_view: Optional[Tuple[str, 'array[int]']] = None
     dirty = True
 
     for rule_id, pattern, replacement in patterns:
         if dirty:
             view = invisible_view(redacted)
             extra_views = _parity_views(redacted, view)
+            loose_view = _loose_view(redacted, view)
             dirty = False
         cands: List[Tuple[int, int, str, str]] = []
         value_filter = (SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
                         or SCAN_SECRET_VALUE_FILTERS.get(rule_id))
         _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
-                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id), patterns, extra_views)
+                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id), patterns, extra_views, loose_view)
         if not cands:
             continue
         edits: List[Tuple[int, int, str]] = []
