@@ -151,7 +151,27 @@ def test_several_fake_keys_in_one_text_are_all_redacted(picks, data, pre, post):
         assert key[-12:] not in out, f"key tail survived: {out!r}"
     assert MARKER not in out, out
     assert out.startswith(f"{pre} ") and out.endswith(f" {post}"), out
-    assert len(found) >= len(keys), [d["rule"] for d in found]
+    # A bare line break between two keys is a wrapped token to the scrubber (a key broken over
+    # two lines must still be found), so such neighbours are one detection: count the groups.
+    groups = 1 + sum(1 for i in range(len(keys) - 1) if separators[i % len(separators)] != "\n")
+    assert len(found) >= groups, [d["rule"] for d in found]
+
+
+def test_keys_on_adjacent_lines_are_redacted_as_one_wrapped_token():
+    # Regression: hypothesis found two fake keys separated by a bare line break (an OpenAI-style
+    # key, then a PyPI-style key). The scrubber reads that as one token wrapped over two lines
+    # and redacts both in one detection; the property used to ask for one detection per key.
+    first = "sk-proj-" + MARKER + "0" * 28
+    second = "pypi-AgE" + MARKER + "0" * 19 + "111122233445566778899BCDFGHNOQR"
+    out, found = R.redact_secrets(f"{first}\n{second}")
+    assert first not in out and second not in out and second[-12:] not in out, out
+    assert "REDACTED" in out and MARKER not in out, out
+    assert len(found) == 1, found
+    # With a blank line or a space between them there is one detection per key.
+    for sep in ("\n\n", " "):
+        out, found = R.redact_secrets(f"{first}{sep}{second}")
+        assert MARKER not in out, out
+        assert len(found) == 2, found
 
 
 @SETTINGS
