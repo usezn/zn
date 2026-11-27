@@ -27,10 +27,16 @@ const CSV_HEADERS = [
 ];
 const CSV_HEADER_LINE = CSV_HEADERS.join(',');
 
+// A cell that starts with = + - @ (or a tab or carriage return) is read as a formula by spreadsheet
+// programs: a single quote in front keeps it as text.
+function csvCell(val) {
+  const text = /^[=+\-@\t\r]/.test(val) ? "'" + val : val;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 function csvRow(obj) {
   return CSV_HEADERS.map((h) => {
-    const val = obj[h] !== undefined && obj[h] !== null ? String(obj[h]) : '';
-    return `"${val.replace(/"/g, '""')}"`;
+    return csvCell(obj[h] !== undefined && obj[h] !== null ? String(obj[h]) : '');
   }).join(',');
 }
 
@@ -181,8 +187,7 @@ function timesketchLine(format, rec, index, verified, includePreview = false) {
   const ev = timesketchEvent(rec, index, verified, includePreview);
   if (format === 'timesketch') return JSON.stringify(ev);
   return timesketchCsvHeaders(includePreview).map((h) => {
-    const val = h === 'timestamp' ? timesketchMicros(rec.timestamp) : plainText(ev[h]);
-    return `"${val.replace(/"/g, '""')}"`;
+    return csvCell(h === 'timestamp' ? timesketchMicros(rec.timestamp) : plainText(ev[h]));
   }).join(',');
 }
 

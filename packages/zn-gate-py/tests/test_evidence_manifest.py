@@ -6,6 +6,7 @@ values. The CLI runs in a subprocess with ZN_HOME pointing at a temporary folder
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -161,3 +162,51 @@ def test_preview_never_present_without_flag_even_for_timesketch_library(tmp_path
     ev.log_evidence(RECORDS[0], str(log))
     assert "zn_payload_preview" not in ts.export_timesketch(str(log), "timesketch")["content"]
     assert "zn_payload_preview" in ts.export_timesketch(str(log), "timesketch", include_preview=True)["content"]
+
+
+FORMULA_RECORDS = [
+    {"verdict": "allow", "tool_name": '=HYPERLINK("http://example.invalid")', "agent_environment": "agent-a"},
+    {"verdict": "block", "tool_name": "-2+3", "agent_environment": "@agent", "rule": "+rule"},
+    {"verdict": "allow", "tool_name": "plain", "agent_environment": "agent-a"},
+]
+
+
+def test_csv_formula_cells_get_a_single_quote(tmp_path):
+    home, _ = _home(tmp_path, FORMULA_RECORDS + [{"verdict": "allow", "tool_name": "\tcmd"}])
+    lines = _run(home, "--format", "csv").stdout.split("\n")
+    assert '"\'=HYPERLINK(""http://example.invalid"")"' in lines[1]
+    assert '"\'-2+3"' in lines[2] and '"\'+rule"' in lines[2]
+    assert '"plain"' in lines[3] and '"\'' not in lines[3]
+    assert '"\'\tcmd"' in lines[4]
+    ts_out = _run(home, "--format", "timesketch-csv").stdout
+    assert '"\'=HYPERLINK(""http://example.invalid"")' in ts_out
+    for line in ts_out.split("\n")[1:]:
+        for cell in re.findall(r'"(?:[^"]|"")*"', line):
+            assert not re.match(r'"[=+\-@\t\r]', cell), cell
+
+
+def test_manifest_refuses_an_existing_path(tmp_path):
+    home, _ = _home(tmp_path, RECORDS)
+    out = tmp_path / "out.jsonl"
+    Path(str(out) + ".manifest.json").write_text("keep me")
+    r = _run(home, "--output", str(out), "--manifest")
+    assert r.returncode == 2
+    assert "manifest.json already exists or is a link; --manifest does not overwrite it" in r.stderr
+    assert Path(str(out) + ".manifest.json").read_text() == "keep me"
+    assert not out.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need a privilege on Windows")
+def test_manifest_refuses_a_symlink_and_does_not_write_through_it(tmp_path):
+    home, _ = _home(tmp_path, RECORDS)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    out = tmp_path / "out.jsonl"
+    link = Path(str(out) + ".manifest.json")
+    link.symlink_to(victim)
+    assert _run(home, "--output", str(out), "--manifest").returncode == 2
+    assert victim.read_text() == "keep me"
+    link.unlink()
+    link.symlink_to(tmp_path / "not-there.txt")
+    assert _run(home, "--output", str(out), "--manifest").returncode == 2
+    assert not (tmp_path / "not-there.txt").exists()

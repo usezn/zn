@@ -1186,6 +1186,11 @@ function expandEqualsOptions(command, args) {
 const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
 const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
 const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail', '--out', '--since', '--until'];
+// True when the path exists as anything, a dangling link included (existsSync follows links).
+function lstatExists(p) {
+  try { fs.lstatSync(p); return true; } catch { return false; }
+}
+
 const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', '--manifest', '--include-preview', ...EVIDENCE_VALUE_OPTIONS];
 
 function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
@@ -1476,6 +1481,12 @@ ${ruleLine(process.env, 60)}\n`);
           process.exitCode = 2;
           return;
         }
+        if (options.manifest && lstatExists(`${options.output}.manifest.json`)) {
+          process.stderr.write(`zn-gate: ${options.output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.
+`);
+          process.exitCode = 2;
+          return;
+        }
         try {
           out = fs.createWriteStream(options.output, { fd: fs.openSync(options.output, 'w') });
         } catch (err) {
@@ -1515,8 +1526,14 @@ ${ruleLine(process.env, 60)}\n`);
           const text = exportLib.manifestText({
             format, source: require('path').basename(EVIDENCE_FILE), res, exportSha256, generator: `zn-gate ${VERSION}`,
           });
-          fs.writeFileSync(`${options.output}.manifest.json`, text);
+          fs.writeFileSync(`${options.output}.manifest.json`, text, { flag: 'wx' });
         } catch (err) {
+          if (err && err.code === 'EEXIST') {
+            process.stderr.write(`zn-gate: ${options.output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.
+`);
+            process.exitCode = 2;
+            return;
+          }
           process.stderr.write(`zn-gate: the manifest was not written. ${err.message}\n`);
           process.exitCode = 1;
           return;

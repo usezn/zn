@@ -282,3 +282,11 @@ def test_ocsf_pack_has_events_for_records_only_and_verified_flags(ledger, run):
 def test_timesketch_is_refused_and_ocsf_is_accepted(ledger, run):
     assert run(ledger.dir / "t1", format="timesketch")[0] == 2
     assert run(ledger.dir / "t2", format="ocsf")[0] == 0
+
+
+def test_controls_name_the_verdicts_the_log_holds(ledger, run):
+    assert run(ledger.out)[0] == 0
+    text = _read_pack(ledger.out)["controls.md"].decode("utf-8")
+    assert 'The verdict is "allow" or "block".' in text
+    for stale in ('"deny"', '"ask"', "deny and ask"):
+        assert stale not in text

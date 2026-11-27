@@ -271,3 +271,11 @@ test('refused: an unknown format names jsonl and ocsf', (t) => {
   assert.equal(res.status, 2);
   assert.match(res.stderr, /jsonl or ocsf/);
 });
+
+test('controls.md: names the verdicts the log holds (allow and block), not deny or ask', (t) => {
+  const s = setup(t, SPECS);
+  assert.equal(run(s.home, ['pack', '--out', s.out]).status, 0);
+  const text = fs.readFileSync(path.join(s.out, 'controls.md'), 'utf8');
+  assert.ok(text.includes('The verdict is "allow" or "block".'));
+  assert.equal(/"deny"|"ask"|deny and ask/.test(text), false);
+});

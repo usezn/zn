@@ -30,13 +30,13 @@ CONTROLS_TEXT = """# Control map
 
 This map shows which records in this pack may help as evidence for these criteria. zn-gate does not make a system compliant, and this pack is not an attestation. Your auditor decides what evidence is sufficient.
 
-Each entry gives a plain-English reading of one criterion, the records in this pack that may support it, and the fields to look at. Field names are the ones in records.jsonl. In records.ocsf.jsonl the same values sit under OCSF names, and the zn-gate fields under unmapped. The verdict is "allow", "deny" or "ask".
+Each entry gives a plain-English reading of one criterion, the records in this pack that may support it, and the fields to look at. Field names are the ones in records.jsonl. In records.ocsf.jsonl the same values sit under OCSF names, and the zn-gate fields under unmapped. The verdict is "allow" or "block".
 
 ## CC6.1 Logical access
 
 The criterion is about limiting access to systems and data to the people and programs that need it, and checking that access.
 
-Records that may help: records with verdict "deny" or "ask" show actions that zn-gate stopped or sent for approval. Records with verdict "allow" show actions it let through.
+Records that may help: records with verdict "block" show actions that zn-gate stopped. Records with verdict "allow" show actions it let through.
 
 Where to look: verdict, agent_environment (which agent ran), tool_name (what it tried to do), rule (the rule that decided).
 
@@ -52,7 +52,7 @@ Where to look: rule, reason, phase (the point at which the check ran), verdict.
 
 The criterion is about monitoring the system for unusual activity and reviewing what the monitoring finds.
 
-Records that may help: the deny and ask records over time, and the counts by rule in summary.json. chain.json shows whether the whole log checked out when the pack was made.
+Records that may help: the block records over time, and the counts by rule in summary.json. chain.json shows whether the whole log checked out when the pack was made.
 
 Where to look: timestamp, verdict, rule, agent_environment; chain.json fields verified and break_index.
 

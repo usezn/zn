@@ -764,8 +764,11 @@ def _write_manifest(output: str, fmt: str) -> int:
     try:
         text = manifest_text(fmt=fmt, source=os.path.basename(EVIDENCE_FILE), check=check,
                              export_sha256=sha256_file(output), generator=f"zn-gate {__version__}")
-        with open(output + ".manifest.json", "w", encoding="utf-8", newline="") as manifest_file:
+        with open(output + ".manifest.json", "x", encoding="utf-8", newline="") as manifest_file:
             manifest_file.write(text)
+    except FileExistsError:
+        print(f"zn-gate: {output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.", file=sys.stderr)
+        return 2
     except OSError as err:
         print(f"zn-gate: the manifest was not written. {_fs_error_text(err, output)}", file=sys.stderr)
         return 1
@@ -846,6 +849,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         # Checked before the export is read or the output is written: writing it would replace the log.
         if getattr(args, "output", None) and _is_evidence_log(args.output, EVIDENCE_FILE):
             print("Error: the output file is the evidence log itself; choose another path.", file=sys.stderr)
+            return 2
+        if manifest and (os.path.lexists(args.output + ".manifest.json")):
+            print(f"zn-gate: {args.output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.", file=sys.stderr)
             return 2
         if include_preview:
             res = export_evidence_ledger(format=fmt, include_preview=True)

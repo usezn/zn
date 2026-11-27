@@ -102,3 +102,53 @@ test('include-preview: zn_payload_preview is the last field before zn_chain_inde
   const header = run(home, ['--format', 'timesketch-csv', '--include-preview']).stdout.split('\n')[0].split(',');
   assert.deepEqual(header.slice(-3), ['zn_payload_preview', 'zn_chain_index', 'zn_chain_verified']);
 });
+
+const FORMULA_RECORDS = [
+  { agent: 'agent-a', phase: 'tool-call', tool_name: '=HYPERLINK("http://example.invalid")', verdict: 'allow', engine: 'e', latency_us: 7 },
+  { agent: '@agent', phase: 'tool-call', tool_name: '-2+3', verdict: 'block', rule: '+rule', engine: 'e', latency_us: 7 },
+  { agent: 'agent-a', phase: 'tool-call', tool_name: 'plain', verdict: 'allow', engine: 'e', latency_us: 7 },
+];
+
+test('csv and timesketch-csv: a cell that starts with = + - or @ gets a single quote', (t) => {
+  const { home } = setup(t, FORMULA_RECORDS);
+  const csv = run(home, ['--format', 'csv']).stdout.split('\n');
+  assert.ok(csv[1].includes(`"'=HYPERLINK(""http://example.invalid"")"`), csv[1]);
+  assert.ok(csv[2].includes(`"'-2+3"`) && csv[2].includes(`"'+rule"`), csv[2]);
+  assert.ok(csv[3].includes('"plain"') && !csv[3].includes(`"'`), csv[3]);
+  const ts = run(home, ['--format', 'timesketch-csv']).stdout;
+  assert.ok(ts.includes(`"'=HYPERLINK(""http://example.invalid"")`), ts);
+  for (const line of ts.split('\n').slice(1)) {
+    for (const cell of line.match(/"(?:[^"]|"")*"/g) || []) assert.ok(!/^"[=+\-@\t\r]/.test(cell), cell);
+  }
+  // a tab at the start is guarded too
+  const { home: home2 } = setup(t, [{ agent: 'a', phase: 'p', tool_name: '\tcmd', verdict: 'allow', engine: 'e' }]);
+  assert.ok(run(home2, ['--format', 'csv']).stdout.includes(`"'\tcmd"`));
+});
+
+test('manifest: refuses an existing manifest path, writes nothing, exit 2', (t) => {
+  const { dir, home } = setup(t, RECORDS);
+  const out = path.join(dir, 'out.jsonl');
+  fs.writeFileSync(`${out}.manifest.json`, 'keep me');
+  const r = run(home, ['--output', out, '--manifest']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /manifest\.json already exists or is a link; --manifest does not overwrite it/);
+  assert.equal(fs.readFileSync(`${out}.manifest.json`, 'utf8'), 'keep me');
+  assert.equal(fs.existsSync(out), false, 'the export is not written either');
+});
+
+test('manifest: refuses a symlink (a dangling one too) and does not write through it', { skip: process.platform === 'win32' }, (t) => {
+  const { dir, home } = setup(t, RECORDS);
+  const victim = path.join(dir, 'victim.txt');
+  fs.writeFileSync(victim, 'keep me');
+  const out = path.join(dir, 'out.jsonl');
+  fs.symlinkSync(victim, `${out}.manifest.json`);
+  let r = run(home, ['--output', out, '--manifest']);
+  assert.equal(r.status, 2);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me');
+  fs.unlinkSync(`${out}.manifest.json`);
+  const target = path.join(dir, 'not-there.txt');
+  fs.symlinkSync(target, `${out}.manifest.json`);
+  r = run(home, ['--output', out, '--manifest']);
+  assert.equal(r.status, 2);
+  assert.equal(fs.existsSync(target), false);
+});

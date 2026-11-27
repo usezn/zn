@@ -370,3 +370,47 @@ def test_ocsf_record_without_valid_time_matches_node(tmp_path):
     exported = (tmp_path / "py" / "out.txt").read_bytes()
     assert b'"time":0,' in exported
     assert b'"zn_time_unmapped":true' in exported
+
+
+FORMULA_EVENTS = [
+    _event({"tool_name": '=HYPERLINK("http://example.invalid")'}),
+    _event({"tool_name": "-2+3", "agent": "@agent", "verdict": "block", "rule": "+rule"}),
+    _event({"tool_name": "plain"}),
+]
+
+
+@pytest.mark.parametrize("fmt", ["csv", "timesketch-csv"])
+def test_formula_cells_match_node(tmp_path, fmt):
+    ledger = _node_write(tmp_path, FORMULA_EVENTS)
+    _same_export_and_manifest(tmp_path, ledger, fmt, ["--manifest"])
+    assert b"'=HYPERLINK" in (tmp_path / "py" / "out.txt").read_bytes()
+    assert b"'-2+3" in (tmp_path / "node" / "out.txt").read_bytes()
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_manifest_refusal_matches_node(tmp_path, kind):
+    if kind == "symlink" and os.name == "nt":
+        pytest.skip("symlinks need a privilege on Windows")
+    ledger = _node_write(tmp_path, FORMULA_EVENTS)
+    home = tmp_path / "home"
+    home.mkdir()
+    shutil.copy(ledger, home / "evidence.jsonl")
+    env = {**os.environ, "ZN_HOME": str(home), "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1"}
+    results = []
+    for who, cmd in (("node", [NODE, str(NODE_CLI)]), ("py", [sys.executable, "-m", "zn_gate"])):
+        d = tmp_path / who
+        d.mkdir()
+        victim = d / "victim.txt"
+        victim.write_text("keep me")
+        out = d / "out.txt"
+        link = Path(str(out) + ".manifest.json")
+        if kind == "file":
+            link.write_text("keep me")
+        else:
+            link.symlink_to(victim)
+        r = subprocess.run([*cmd, "evidence", "--export", "--output", str(out), "--manifest"],
+                           capture_output=True, env=env, timeout=120)
+        assert victim.read_text() == "keep me" and not out.exists()
+        results.append((r.returncode, r.stdout, r.stderr.replace(str(d).encode(), b"D")))
+    assert results[0] == results[1], results
+    assert results[0][0] == 2

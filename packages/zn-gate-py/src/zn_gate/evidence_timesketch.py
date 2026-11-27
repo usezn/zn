@@ -318,6 +318,14 @@ def ocsf_event(rec: Dict[str, Any], index: int, verified: bool, include_preview:
     }
 
 
+def csv_cell(val: str) -> str:
+    """A quoted csv cell. One that starts with = + - @ (or a tab or carriage return) is read as a
+    formula by spreadsheet programs: a single quote in front keeps it as text (csvCell in the Node package)."""
+    if val[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        val = "'" + val
+    return '"' + val.replace('"', '""') + '"'
+
+
 def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool, include_preview: bool = False) -> str:
     if fmt == "ocsf":
         return _json_js(ocsf_event(rec, index, verified, include_preview))
@@ -327,7 +335,7 @@ def _event_line(fmt: str, rec: Dict[str, Any], index: int, verified: bool, inclu
     cells = []
     for h in timesketch_csv_headers(include_preview):
         val = timesketch_micros(rec.get("timestamp")) if h == "timestamp" else _plain(ev.get(h))
-        cells.append('"' + val.replace('"', '""') + '"')
+        cells.append(csv_cell(val))
     return ",".join(cells)
 
 
@@ -435,7 +443,7 @@ def _csv_row(rec: Any) -> str:
     cells = []
     for header in PLAIN_CSV_HEADERS:
         val = _js_string(rec.get(header)) if isinstance(rec, dict) else ""
-        cells.append('"' + val.replace('"', '""') + '"')
+        cells.append(csv_cell(val))
     return ",".join(cells)
 
 
