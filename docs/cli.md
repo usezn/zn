@@ -646,6 +646,29 @@ Aliases: `logs`, `export`.
 
 `export` is the same as `evidence --export`.
 
+#### Evidence pack for auditors
+
+```bash
+zn evidence pack --out DIR [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--include-preview]
+```
+
+Writes a folder for an auditor: the records of a period, the result of checking the whole log, a summary, a control map and a README. Nothing is uploaded.
+
+- `--out DIR` (required): the folder to write. It must not exist or must be empty; the command never writes over existing files. Exit `2` otherwise.
+- `--since` and `--until`: the first and last UTC day to include, `YYYY-MM-DD`, both inclusive. A date must exist (no `2026-02-30`). Exit `2` for a bad date or when `--since` is after `--until`. A record's day is the day of its own timestamp. Without a range, every record is included.
+- Records with no valid UTC time are counted as `undated` in `summary.json`. With a range they are left out; without one they are kept.
+
+The folder holds:
+
+- `records.jsonl`: the records of the period, in log order. Without `--include-preview` the `payload_preview` field is removed from each record, so the text the agent wrote is not in the pack. With it, the records are the log lines as they are.
+- `chain.json`: the check of the whole log, not only the period: how many records, whether the chain verified, the break position, the hash of the last record that verified, and the first and last record of the period with their positions, so you can see the period sits in a checked chain.
+- `summary.json`: the period, how many records, the undated count, the first and last time, and counts by verdict (`allow`, `deny`, `ask`), by agent and by rule id.
+- `controls.md`: a map, in plain English, of which records may help as evidence for four criteria of the SOC 2 Trust Services Criteria (CC6.1, CC6.6, CC7.2 and CC8.1). It is a guide to where to look. It does not make a system compliant, and the pack is not an attestation: your auditor decides what evidence is sufficient.
+- `manifest.json`: the SHA-256 and size of each file above, the generator and the time of the pack (UTC). It is written last; without it the pack is incomplete.
+- `README.txt`: how to check the pack.
+
+If the log's chain does not verify, the pack is still written, `chain.json` says so, and the command exits `1`. If the log cannot be read to the end, it exits `1` and the folder is incomplete. The npm and PyPI packages write the same bytes for the same log.
+
 ### `why`
 
 ```bash

@@ -25,6 +25,7 @@ from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 from .evidence_timesketch import inspect_ledger, manifest_text, sha256_file
+from .evidence_pack import PackReadError, pack_target_problem, validate_pack_options, write_evidence_pack
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -781,7 +782,42 @@ def _is_evidence_log(output: str, ledger: str) -> bool:
         return False
 
 
+def _run_evidence_pack(args: argparse.Namespace) -> int:
+    """`evidence pack --out DIR`: an evidence pack for auditors (see evidence_pack.py). Exit 2 for a
+    refused request, 1 when the chain does not verify (the pack is still written) or the log cannot be read."""
+    options, problem = validate_pack_options(getattr(args, "since", None), getattr(args, "until", None), args.format)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 2
+    out = getattr(args, "out", None)
+    if not out:
+        print("zn-gate: evidence pack needs --out DIR (a new or empty folder).", file=sys.stderr)
+        return 2
+    problem = pack_target_problem(out)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 2
+    try:
+        res = write_evidence_pack(EVIDENCE_FILE, out, since=options["since"], until=options["until"],
+                                  fmt=options["format"], include_preview=bool(getattr(args, "include_preview", False)),
+                                  generator=f"zn-gate {__version__}")
+    except PackReadError as err:
+        print(f"zn-gate: the pack stopped. {err}. {out} is incomplete: do not use it.", file=sys.stderr)
+        return 1
+    except OSError as err:
+        print(f"zn-gate: the pack stopped. {_fs_error_text(err, out)}. {out} is incomplete: do not use it.", file=sys.stderr)
+        return 1
+    print(f"Pack written to {out}: {res['records']} records in the period, {res['undated']} undated, "
+          f"chain {'VERIFIED' if res['valid'] else 'NOT VERIFIED'}.")
+    if not res["valid"]:
+        print(f"Tamper detected: {res['error']}\n{recovery_hint()}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_evidence(args: argparse.Namespace) -> int:
+    if getattr(args, "pack_action", None) == "pack":
+        return _run_evidence_pack(args)
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
         if res.get("valid"):
@@ -1122,7 +1158,12 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--manifest", action="store_true",
                            help="With --output: also write FILE.manifest.json (what was exported, and whether the chain verified)")
     ev_parser.add_argument("--include-preview", action="store_true",
-                           help="With --format timesketch or timesketch-csv: add the payload preview as zn_payload_preview")
+                           help="With --format timesketch or timesketch-csv: add the payload preview as zn_payload_preview (with pack: keep payload_preview in the records)")
+    ev_parser.add_argument("pack_action", nargs="?", choices=["pack"],
+                           help="pack: write an evidence pack for auditors into --out DIR (a new or empty folder)")
+    ev_parser.add_argument("--out", help="With pack: the folder to write (must be new or empty)")
+    ev_parser.add_argument("--since", help="With pack: first UTC day to include, YYYY-MM-DD (inclusive)")
+    ev_parser.add_argument("--until", help="With pack: last UTC day to include, YYYY-MM-DD (inclusive)")
 
     # status command
     subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")

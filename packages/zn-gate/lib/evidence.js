@@ -1097,9 +1097,21 @@ const exporter = require('./evidence_export').createExporter({
   EvidenceLedgerError, testHooks,
 });
 
+/**
+ * Writes the evidence pack for auditors into outDir (missing or empty): the records of a date range,
+ * the result of checking the whole chain, a summary, a control map, a manifest and a README.
+ * See evidence_pack.js. Resolves nothing: it returns the result of the write.
+ */
+function writeEvidencePack(outDir, opts = {}, filePath = EVIDENCE_FILE) {
+  return require('./evidence_pack').writeEvidencePack(filePath, outDir, opts, {
+    exporter, EvidenceLedgerError, trimBytes,
+  });
+}
+
 module.exports = {
   logEvidence,
   EvidenceLedgerError,
+  writeEvidencePack,
   recoveryHint,
   getLastHash,
   verifyEvidenceLedger,
