@@ -2732,13 +2732,14 @@ def sanitize_tool_result(
             path.discard(id(val))
 
     def _sanitize_object(val: Any, names: List[str]) -> Any:
-        """Mask the attributes of an object that is not a container, in a copy; the original is left as it was.
+        """Mask the attributes of an object that is not a container; the original is left as it was.
 
         An object with nothing to mask is returned as it is, unless its text form shows a secret: then the masked text is
-        returned instead. When the object cannot be copied (copy or setattr fails),
-        a plain dict of its masked attributes is returned instead, so the secret never survives in the result; the same
-        happens when the copy is the object itself. Attributes that cannot be listed or an object whose text form cannot
-        be read raise SanitizeLimitError (rule type:unscannable).
+        returned instead. When an attribute holds a secret, the masked attributes go into a blank instance of the same
+        class built with object.__new__ and object.__setattr__ (no copy.copy, no __new__, __init__ or __setattr__ of the
+        class); when no such instance can be made, a plain dict of the masked attributes is returned instead, so the
+        secret never survives in the result. Attributes that cannot be listed or an object whose text form cannot be
+        read raise SanitizeLimitError (rule type:unscannable).
         """
         try:
             attrs = {n: getattr(val, n) for n in names}
