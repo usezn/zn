@@ -68,6 +68,70 @@ fn non_success_message(url: &str, status: impl std::fmt::Display, body: &str) ->
     )
 }
 
+/// Most bytes of a non-success webhook response body that are kept for the log.
+const LOG_BODY_CAP: usize = 512;
+/// Most bytes read from the network in all, only to count what is left out.
+const LOG_BODY_READ_LIMIT: usize = 64 * 1024;
+
+/// Turns the start of a response body into one safe log value: any copy of the
+/// webhook URL is replaced by its redacted form, the text is cut at
+/// `LOG_BODY_CAP` bytes on a character boundary with a marker that says how
+/// much was left out, and control characters (C0, DEL, C1, so ANSI escapes, CR,
+/// LF and NUL too) are escaped as `\u{..}`, so a remote server cannot add fake
+/// log lines or terminal sequences. `extra` is the number of bytes read after
+/// `head` and `extra_is_lower_bound` says the count stopped at the read limit.
+fn format_body_for_log(head: &[u8], extra: usize, extra_is_lower_bound: bool, url: &str) -> String {
+    let text = String::from_utf8_lossy(head);
+    let text = if url.is_empty() {
+        text.into_owned()
+    } else {
+        text.replace(url, &redact_url(url))
+    };
+    let mut end = text.len().min(LOG_BODY_CAP);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let dropped = extra + (text.len() - end);
+    let mut out = String::with_capacity(end + 24);
+    for c in text[..end].chars() {
+        if c.is_control() {
+            out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    if dropped > 0 {
+        let at_least = if extra_is_lower_bound {
+            "at least "
+        } else {
+            ""
+        };
+        out.push_str(&format!("... ({at_least}{dropped} more bytes)"));
+    }
+    out
+}
+
+/// Reads at most `LOG_BODY_READ_LIMIT` bytes of the body and keeps only the
+/// first `LOG_BODY_CAP + url_len + 4` of them (room for a URL copy that the log
+/// text masks, and for a character cut in two). Returns the kept bytes, how many
+/// more were read, and whether the read stopped at the limit.
+async fn read_body_head(mut response: reqwest::Response, url_len: usize) -> (Vec<u8>, usize, bool) {
+    let keep = LOG_BODY_CAP + url_len + 4;
+    let mut head: Vec<u8> = Vec::new();
+    let mut extra = 0usize;
+    let mut total = 0usize;
+    while let Ok(Some(chunk)) = response.chunk().await {
+        total += chunk.len();
+        let take = keep.saturating_sub(head.len()).min(chunk.len());
+        head.extend_from_slice(&chunk[..take]);
+        extra += chunk.len() - take;
+        if total >= LOG_BODY_READ_LIMIT {
+            return (head, extra, true);
+        }
+    }
+    (head, extra, false)
+}
+
 /// Webhook configuration
 #[derive(Clone, Deserialize, Serialize)]
 pub struct WebhookConfig {
@@ -218,7 +282,8 @@ impl WebhookManager {
             info!("{}", send_success_message(&config.url));
         } else {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let (head, extra, lower_bound) = read_body_head(response, config.url.len()).await;
+            let body = format_body_for_log(&head, extra, lower_bound, &config.url);
             warn!("{}", non_success_message(&config.url, status, &body));
         }
 
@@ -676,5 +741,79 @@ mod tests {
         assert_eq!(rx.recv().await.unwrap().status, "FIRST");
         pending.await.unwrap();
         assert_eq!(rx.recv().await.unwrap().status, "SECOND");
+    }
+
+    #[test]
+    fn log_body_short_text_is_unchanged() {
+        assert_eq!(format_body_for_log(b"nope", 0, false, ""), "nope");
+    }
+
+    #[test]
+    fn log_body_long_text_is_capped_with_a_marker() {
+        let body = vec![b'a'; 2000];
+        let out = format_body_for_log(&body, 0, false, "");
+        assert!(out.starts_with(&"a".repeat(512)), "{out}");
+        assert!(out.ends_with("... (1488 more bytes)"), "{out}");
+        assert_eq!(out.len(), 512 + "... (1488 more bytes)".len());
+        let out = format_body_for_log(&body[..516], 100, true, "");
+        assert!(out.ends_with("... (at least 104 more bytes)"), "{out}");
+    }
+
+    #[test]
+    fn log_body_control_characters_are_escaped() {
+        let out = format_body_for_log(b"x\x1b[31mred\r\n2026 FAKE line\0end\x7f", 0, false, "");
+        assert!(!out.chars().any(|c| c.is_control()), "{out:?}");
+        assert!(
+            out.contains("\\u{001b}[31mred\\u{000d}\\u{000a}2026"),
+            "{out}"
+        );
+        assert!(out.contains("\\u{0000}end\\u{007f}"), "{out}");
+        let c1 = format_body_for_log("a\u{85}b\u{9b}c".as_bytes(), 0, false, "");
+        assert!(!c1.chars().any(|c| c.is_control()), "{c1:?}");
+    }
+
+    #[test]
+    fn log_body_cap_inside_a_multibyte_character_does_not_panic() {
+        // 511 ASCII bytes, then a 3-byte character that straddles the cap.
+        let mut body = vec![b'a'; 511];
+        body.extend_from_slice("\u{20ac}\u{20ac}".as_bytes());
+        let out = format_body_for_log(&body, 0, false, "");
+        assert!(out.starts_with(&"a".repeat(511)), "{out}");
+        assert!(!out.contains('\u{20ac}'), "{out}");
+        assert!(out.ends_with("... (6 more bytes)"), "{out}");
+        // A body that ends inside a character is lossy, not a panic.
+        let _ = format_body_for_log(&"\u{20ac}".as_bytes()[..2], 0, false, "");
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_non_success_body_is_read_bounded() {
+        let big = "z".repeat(300_000);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                big.len()
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+            let _ = sock.write_all(big.as_bytes()).await;
+        });
+        let (mgr, _rx) = WebhookManager::new(vec![]);
+        let cfg = cfg(&url, WebhookType::Generic);
+        assert!(mgr.send_webhook(&cfg, &alert("DENIED")).await.is_ok());
+    }
+
+    #[test]
+    fn log_body_masks_the_url_even_near_the_cap() {
+        let url = "https://hooks.example.com/services/fake-webhook-token";
+        let mut body = "a".repeat(500).into_bytes();
+        body.extend_from_slice(url.as_bytes());
+        let out = format_body_for_log(&body, 0, false, url);
+        assert!(!out.contains("fake-webhook-token"), "{out}");
+        assert!(!out.contains("services"), "{out}");
     }
 }
