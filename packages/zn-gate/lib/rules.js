@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.6
+ * RULES_VERSION: 2026-11-27.8
  */
 
-const RULES_VERSION = '2026-11-27.6';
+const RULES_VERSION = '2026-11-27.8';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -779,11 +779,14 @@ function isWrapChar(c) {
 // is text.length). Returns null when the text has no invisible character. A
 // match [s, e) in `clean` covers text [map[s], map[e - 1] + 1), which includes
 // the invisible characters inside it.
-function invisibleView(text) {
+// With `parity` 0 or 1, only every second wrap break is joined (the even or the odd ones), so a key wrapped across two
+// lines is joined alone, whatever the lines around it.
+function invisibleView(text, parity = null) {
   const runs = [];
   for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
   for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
   if (text.length <= MAX_WRAP_VIEW_CHARS && text.includes('\n')) {
+    let breaks = 0;
     for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
       let start = i;
       if (start > 0 && text[start - 1] === '\r') start--;
@@ -792,7 +795,10 @@ function invisibleView(text) {
       if (start === 0 || !isWrapChar(text.charCodeAt(start - 1))) continue;
       WRAP_BREAK_AT_RE.lastIndex = start;
       const m = WRAP_BREAK_AT_RE.exec(text);
-      if (m) runs.push(start, start + m[0].length);
+      if (m) {
+        if (parity === null || breaks % 2 === parity) runs.push(start, start + m[0].length);
+        breaks++;
+      }
     }
   }
   if (runs.length === 0) return null;
@@ -1414,8 +1420,23 @@ function wrapResolve(text, start, end, lo) {
   return { action: 'keep', at: ext };
 }
 
-function ruleCandidates(item, text, view, budget, out) {
+// The two views of `text` that join every second wrap break, without the ones equal to the view that joins all of them:
+// empty for a text with fewer than two breaks (see _parity_views in rules.py).
+function parityViews(text, view) {
+  if (!view || !text.includes('\n') || text.length > MAX_WRAP_VIEW_CHARS) return [];
+  const out = [];
+  for (const parity of [0, 1]) {
+    const v = invisibleView(text, parity);
+    if (v && v.clean !== view.clean && v.clean !== text && out.every((o) => o.clean !== v.clean)) out.push(v);
+  }
+  return out;
+}
+
+function ruleCandidates(item, text, view, budget, out, extraViews = []) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  // The views that join every second line break find a key wrapped across two lines next to other lines; a match there
+  // that overlaps a match on the text itself is left to the view that joins all of them.
+  for (const v of extraViews) passes.push([v.clean, v.map, false, true]);
   // A third pass reads each invisible character as a space; its indexes are the original ones.
   if (view) {
     const spaced = spacedView(text);
@@ -1430,7 +1451,7 @@ function ruleCandidates(item, text, view, budget, out) {
   const foundEnds = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
-  for (const [hay, map, spaced] of passes) {
+  for (const [hay, map, spaced, extra] of passes) {
     if (item.requires && !hay.includes(item.requires)) continue;
     if (item.prefilter && !item.prefilter.test(hay)) continue;
     regex.lastIndex = 0;
@@ -1464,7 +1485,7 @@ function ruleCandidates(item, text, view, budget, out) {
       } else {
         const first = upperBound(foundEnds, start);
         const over = lowerBound(foundStarts, end) - first;
-        if (over >= 2) continue;
+        if (over >= 2 || (extra && over >= 1)) continue;
         if (text.slice(start, end).includes('\n')) {
           const r = wrapResolve(text, start, end, start + 1);
           // The first key is already a match on the text itself: the joined match adds nothing to it.
@@ -1778,14 +1799,16 @@ function redactWith(text, patterns) {
   const detections = [];
   const budget = { left: MAX_FILTERED_CHARS };
   let view = null;
+  let extraViews = [];
   let dirty = true;
   for (const item of patterns) {
     if (dirty) {
       view = invisibleView(sanitized);
+      extraViews = parityViews(sanitized, view);
       dirty = false;
     }
     const cands = [];
-    ruleCandidates(item, sanitized, view, budget, cands);
+    ruleCandidates(item, sanitized, view, budget, cands, extraViews);
     if (cands.length === 0) continue;
     let out = '';
     let last = 0;
@@ -2051,6 +2074,7 @@ module.exports = {
   MIN_INVISIBLE_CHECK_CHARS,
   normalizeInput,
   invisibleView,
+  parityViews,
   scanWindows,
   truncatedBlocks,
   MAX_SCAN_CHARS,

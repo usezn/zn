@@ -42,10 +42,24 @@ for (const w of WRAPPABLE) {
     add(`key+wrapped/${o}+${w}`, { text: KEYS[o][0] + '\n' + wrap(w, 20, '\n'), keys: [o, w] });
   }
 }
-// Two wrapped keys one after the other: the first one open-ended (openai, pypi), or github followed by an open-ended one.
-// A fixed-length key wrapped and followed by another wrapped fixed-length key, or by a long plain line, is not read apart yet.
-for (const a of ['openai', 'pypi']) for (const b of WRAPPABLE) add(`wrapped+wrapped/${a}+${b}`, { text: wrap(a, 20, '\n') + '\n' + wrap(b, 20, '\n'), keys: [a, b] });
-for (const b of ['openai', 'pypi']) add(`wrapped+wrapped/github+${b}`, { text: wrap('github', 20, '\n') + '\n' + wrap(b, 20, '\n'), keys: ['github', b] });
+// Two wrapped keys one after the other, whatever their kind.
+for (const a of WRAPPABLE) for (const b of WRAPPABLE) add(`wrapped+wrapped/${a}+${b}`, { text: wrap(a, 20, '\n') + '\n' + wrap(b, 20, '\n'), keys: [a, b] });
+// A wrapped key between plain lines and next to a short plain line. The body of an open-ended key (openai, pypi) can
+// run on into a plain token with an underscore, so that line is not asserted to stay for those two (no key is left).
+const PLAIN = ['plain_variable_name_here', 'see the notes below for details', 'a short note', 'README.md'];
+const OPEN_ENDED = ['openai', 'pypi'];
+for (const w of WRAPPABLE) {
+  PLAIN.forEach((plain, i) => {
+    const other = PLAIN[(i + 1) % PLAIN.length];
+    const kept = (...lines) => (OPEN_ENDED.includes(w) ? lines.filter((l) => !l.includes('_')) : lines);
+    add(`wrapped+plain/${w}/${i}`, { text: wrap(w, 20, '\n') + '\n' + plain + '\n', keys: [w] }, kept(plain));
+    add(`plain+wrapped/${w}/${i}`, { text: plain + '\n' + wrap(w, 20, '\n') + '\n', keys: [w] }, [plain]);
+    add(`plain+wrapped+plain/${w}/${i}`, { text: other + '\n' + wrap(w, 20, '\n') + '\n' + plain + '\n', keys: [w] }, kept(plain, other).concat(OPEN_ENDED.includes(w) ? [] : []));
+  });
+}
+// Three wrapped keys, and a wrapped key between two keys.
+for (const w of WRAPPABLE) add(`wrapped x3/${w}`, { text: [wrap(w, 20, '\n'), wrap(w, 20, '\n'), wrap(w, 20, '\n')].join('\n'), keys: [w, w, w] });
+add('wrapped between keys', { text: KEYS.aws[0] + '\n' + wrap('github', 20, '\n') + '\n' + KEYS.slack[0], keys: ['aws', 'github', 'slack'] });
 
 const triples = [['openai', 'pypi', 'github'], ['github', 'aws', 'slack'], ['anthropic', 'npm', 'stripe'], ['hf', 'github', 'pypi']];
 for (const t of triples) {
@@ -63,11 +77,13 @@ for (const o of ['aws', 'github', 'huggingface', 'npm', 'slack', 'stripe']) {
   }
 }
 // The first 20 characters of a github key, then a whole aws key on the next line: the start of the github key is
-// redacted too. (With a long plain line after the aws key, that start is not read as a github key yet.)
+// redacted too, with or without a plain line after the aws key.
 const prefix = KEYS.github[0].slice(0, 20);
 for (const [sn, sep] of Object.entries(SEPS)) {
   cases.push({ id: `partial/github20+aws/${sn}`, text: prefix + sep + KEYS.aws[0], keys: [prefix, KEYS.aws[0]], rules: ['secret:aws_access_key', 'secret:github_token'], keep: [] });
 }
+
+cases.push({ id: 'partial/github20+aws+benign', text: prefix + '\n' + KEYS.aws[0] + '\nplain_variable_name_here\n', keys: [prefix, KEYS.aws[0]], rules: ['secret:aws_access_key', 'secret:github_token'], keep: ['plain_variable_name_here'] });
 
 // The file spells the first separator of two key formats as a JSON escape, so secret scanners that read the file do not
 // take the fake keys for real ones; JSON.parse gives the same strings.

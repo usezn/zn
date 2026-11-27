@@ -50,7 +50,7 @@ const { cliName } = require('../zn-command');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
-const { invisibleView } = require('../rules');
+const { invisibleView, parityViews } = require('../rules');
 // normalize.js is loaded on first use. A text with no candidate (a %XX, '' or "") has no decoded view, which is what
 // normalisedView returns for it, so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE
 // in normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
@@ -157,6 +157,17 @@ function resolveOverlaps(spans) {
   return out;
 }
 
+// True when a span of `spans` (in order, without overlaps) overlaps [start, end).
+function overlapsAny(spans, start, end) {
+  let lo = 0;
+  let hi = spans.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid].end <= start) lo = mid + 1; else hi = mid;
+  }
+  return lo < spans.length && spans[lo].start < end;
+}
+
 /* A pattern span found on the text without its wrapped line breaks (invisibleView joins them) that holds a line break
  * is either two keys on adjacent lines, cut at the break (the rest is redacted by the rules on its own, so
  * two keys are two detections), or one key wrapped across lines, which stands and ends at the end of the token it
@@ -188,11 +199,19 @@ function scan(text, ctx) {
   if (!view && !norm) return direct;
   let all = direct;
   if (view) {
-    all = all.concat(scanText(view.clean, c).map((s) => resolveWrapped({
-      ...s,
-      start: view.map[s.start],
-      end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
-    }, text)));
+    // The text without invisible characters and with every wrap break joined, and the views that join every
+    // second break (a key wrapped across two lines next to other lines).
+    // A span of those views that overlaps a span of the text itself is left to the view that joins all of them.
+    const views = [view].concat(parityViews(text, view));
+    views.forEach((v, k) => {
+      let spans = scanText(v.clean, c).map((s) => resolveWrapped({
+        ...s,
+        start: v.map[s.start],
+        end: s.end > s.start ? v.map[s.end - 1] + 1 : v.map[s.start],
+      }, text));
+      if (k > 0) spans = spans.filter((s) => !overlapsAny(direct, s.start, s.end));
+      all = all.concat(spans);
+    });
   }
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a
   // span covers the whole original word or encoded value.
