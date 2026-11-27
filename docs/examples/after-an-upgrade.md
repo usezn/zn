@@ -51,3 +51,8 @@ zn-gate status
 ```
 
 A good result: it shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. It always exits with `0`, so use `zn-gate check` for the pass or fail answer.
+
+## More
+
+- [Upgrading](../upgrading.md)
+- [Check that it works](../check.md)

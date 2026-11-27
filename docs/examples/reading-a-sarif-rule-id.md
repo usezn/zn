@@ -105,7 +105,7 @@ In GitHub, the same fields show under **Security** > **Code scanning**: the
 rule ID, the file and line, and the help text of the rule. The fingerprint in
 the file keeps an alert open when its line moves.
 
-## Next
+## Next steps
 
 - [Audit a repository before you open it](audit-before-opening.md): the same
   rule in the text report.

@@ -1,2 +1,0 @@
-### Changed
-- Output sent to a pipe, a file or a CI log is plain printable ASCII for `help`, `status`, `test`, `init --dry-run`, `scan`, `evidence` and `logs`, in both the Node and Python packages. Emoji and box-drawing characters are printed only on a terminal, and setting `CI` turns them off as `NO_COLOR` does. Where they are off, short ASCII markers take their place, such as `[ok]`, `[!]`, `[x]` and `[+]`, and rules are drawn with dashes. The status words are unchanged. See `NO_COLOR` and `CI` in the CLI reference.
