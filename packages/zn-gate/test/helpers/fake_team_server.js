@@ -336,6 +336,8 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
 
   function handleGetPolicy(req, res) {
     if (!authInstall(req)) return send(res, 401, { error: 'Missing or invalid install token' });
+    // Like the real server: before the 404 and before the ETag, an organization without an active subscription gets no policy.
+    if (!state.active) return send(res, 402, { error: 'This organization has no active Team subscription', code: 'no_subscription' });
     if (state.policyVersion === 0) return send(res, 404, { error: 'No policy published for this organization' });
     const dayStart = Math.floor(now() / DAY) * DAY;
     const day = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, '');
