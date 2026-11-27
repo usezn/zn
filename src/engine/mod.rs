@@ -182,6 +182,9 @@ pub struct ZnEngine {
     verifier: signing::PolicyVerifier,
     /// Shared state store for policies
     state_store: Arc<DashMap<String, String>>,
+    /// Test only: how many removals of the last policy were refused.
+    #[cfg(test)]
+    pub(crate) kept_last_refusals: std::sync::atomic::AtomicUsize,
 }
 
 impl ZnEngine {
@@ -335,6 +338,8 @@ impl ZnEngine {
             policies: DashMap::new(),
             verifier,
             state_store,
+            #[cfg(test)]
+            kept_last_refusals: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -504,6 +509,9 @@ impl ZnEngine {
                 "Policy '{}' was removed from the folder, but it is the last one and policy enforcement is configured: keeping the loaded policy",
                 name
             );
+            #[cfg(test)]
+            self.kept_last_refusals
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             return false;
         }
         self.unregister_policy(name);
