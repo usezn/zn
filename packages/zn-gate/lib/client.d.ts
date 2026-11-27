@@ -26,7 +26,7 @@ export interface AnalyzeOptions extends EvaluateOptions {
   apiKey?: string;
   /** Never use the cloud for this call (also ZN_LOCAL_ONLY=true). */
   localOnly?: boolean;
-  /** Custom gateway URL. Ignored for a key saved by `zn-gate connect`. Falls back to ZN_API_URL. */
+  /** Custom gateway URL: https only (plain http only for localhost, 127.0.0.1 and ::1), else the call is refused and the local rules decide. Ignored for a key saved by `zn-gate connect`. Falls back to ZN_API_URL. */
   apiUrl?: string;
   /** Gateway stage, "v30" (default) or "prod". Falls back to ZN_STAGE. */
   stage?: string;

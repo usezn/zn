@@ -39,7 +39,7 @@ const FIXED_API_ORIGIN = 'https://api.usezn.com';
  * The gateway URL. A key that `zn-gate connect` stored (keychain or vault) is
  * only ever sent to https://api.usezn.com: --url and ZN_API_URL are ignored
  * for it (`stored: true`). A custom URL works only with a key the caller gave
- * explicitly (--key or ZN_API_KEY).
+ * explicitly (--key or ZN_API_KEY), and it must be https (plain http only to localhost, 127.0.0.1 and ::1).
  */
 function resolveEndpoint(options = {}, { stored = false } = {}) {
   if (!stored && (options.apiUrl || process.env.ZN_API_URL)) {
@@ -145,9 +145,31 @@ function degradedFields(cloudRes) {
   return decidedBy.startsWith('ml-error') ? { degraded: true, degraded_reason: DEGRADED_REASON } : {};
 }
 
+/** True for the names and addresses of this machine: localhost, 127.0.0.0/8 and ::1 (the host of a WHATWG URL, IPv6 in brackets). */
+function isLoopbackHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (h === 'localhost' || h === '[::1]') return true;
+  const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  return Boolean(m) && m.slice(1).every((n) => Number(n) <= 255);
+}
+
+/**
+ * Refuses any endpoint that is not https (plain http only to this machine) before a request is built, so a key given
+ * with --key or ZN_API_KEY is never sent in clear. Same rule as the Python client. Returns the parsed URL.
+ */
+function checkEndpoint(endpointUrl) {
+  const refusal = () => new Error('the cloud endpoint must be an https URL: the API key is not sent anywhere else');
+  let url;
+  try { url = new URL(endpointUrl); } catch (_) { throw refusal(); }
+  if (url.protocol === 'https:' && url.hostname) return url;
+  if (url.protocol === 'http:' && isLoopbackHost(url.hostname)) return url;
+  throw refusal();
+}
+
 function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) {
   return new Promise((resolve, reject) => {
-    const url = new URL(endpointUrl);
+    let url;
+    try { url = checkEndpoint(endpointUrl); } catch (err) { reject(err); return; }
     const postData = JSON.stringify({ input, ...extra });
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
@@ -342,6 +364,7 @@ module.exports = {
   verifyEvidenceLedger,
   logEvidence,
   isCloudEnabled,
+  _checkEndpoint: checkEndpoint,
   longInputMode,
   LONG_INPUT_MIN_CHARS,
   resolveEndpoint,
