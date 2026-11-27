@@ -1,0 +1,2 @@
+### Security
+- The `.env` guard no longer treats the file named after `-f` or `--env-file` as a read for every `dotenvx` command. Only `dotenvx run` reads it, handing the values to the program it starts, and it is refused when that `.env` holds a secret or an encrypted value, so the program cannot print it. Every other `dotenvx` subcommand that names a `.env` file is refused: `get`, which prints decrypted values where the agent can read them, and `set`, `encrypt`, `decrypt` and the rest, which rewrite the file.
