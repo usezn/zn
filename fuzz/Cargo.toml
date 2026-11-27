@@ -44,5 +44,7 @@ test = false
 doc = false
 bench = false
 
+# Same shim as the root workspace: gemm (via candle) still uses the unmaintained paste crate
+# (RUSTSEC-2024-0436), so paste is routed to its maintained successor pastey.
 [patch.crates-io]
 paste = { path = "../tools/paste-shim" }

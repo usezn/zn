@@ -196,6 +196,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    zn::tls::install_default_crypto_provider();
     let args = Args::parse();
 
     // MCP stdio mode owns stdout (protocol frames only): no branding, no tracing.
