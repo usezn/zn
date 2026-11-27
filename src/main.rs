@@ -208,6 +208,11 @@ struct AppState {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    // The key flags are global, so every command accepts them. Refuse them
+    // here, before any command runs (the mcp path returns early), unless the
+    // command actually uses a key.
+    reject_unused_key_flags(&args)?;
+
     // MCP stdio mode owns stdout (protocol frames only): no branding, no tracing.
     // Handled here so intro()/init_tracing() below can never touch stdout.
     if matches!(args.command, Some(Commands::Mcp)) {
@@ -273,6 +278,32 @@ async fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Whether the command uses the management API key (start and dashboard, in
+/// either form).
+fn command_uses_api_key(args: &Args) -> bool {
+    match &args.command {
+        Some(Commands::Start) | Some(Commands::Dashboard) => true,
+        Some(_) => false,
+        None => args.start || args.dashboard,
+    }
+}
+
+/// `--api-key` and `--api-key-file` are global flags. On a command that does
+/// not use a key they would be silently ignored while a key given with
+/// `--api-key` stays visible in the process list, so they are refused. The
+/// message never contains the key.
+fn reject_unused_key_flags(args: &Args) -> Result<()> {
+    if command_uses_api_key(args) {
+        return Ok(());
+    }
+    if args.api_key.is_some() || args.api_key_file.is_some() {
+        anyhow::bail!(
+            "--api-key and --api-key-file are only accepted by `zn start` and `zn dashboard`. Remove the flag; set ZN_API_KEY in the environment if a key is needed."
+        );
+    }
     Ok(())
 }
 
@@ -3072,7 +3103,9 @@ mod audit_metadata_tests {
 
 #[cfg(test)]
 mod cli_form_tests {
-    use super::{resolve_api_key_sources, resolve_cli_api_key, Args, Commands};
+    use super::{
+        reject_unused_key_flags, resolve_api_key_sources, resolve_cli_api_key, Args, Commands,
+    };
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -3136,6 +3169,51 @@ mod cli_form_tests {
         ])
         .unwrap();
         assert_eq!(resolve_cli_api_key(&args).unwrap().as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn key_flags_are_refused_on_commands_that_do_not_use_a_key() {
+        for cmd in [
+            vec!["zn", "mcp"],
+            vec!["zn", "init"],
+            vec!["zn", "analyze", "some text"],
+            vec!["zn", "shield", "scan"],
+            vec!["zn"],
+        ] {
+            for flag in [
+                vec!["--api-key", "secret-value-123"],
+                vec![
+                    "--api-key",
+                    "secret-value-123",
+                    "--allow-insecure-api-key-flag",
+                ],
+                vec!["--api-key=secret-value-123"],
+                vec!["--api-key-file", "k.txt"],
+                vec!["--api-key-file=k.txt"],
+            ] {
+                let mut argv = cmd.clone();
+                argv.extend(flag.clone());
+                let args = Args::try_parse_from(argv.clone())
+                    .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+                let err =
+                    reject_unused_key_flags(&args).expect_err(&format!("{argv:?} must be refused"));
+                assert!(!err.to_string().contains("secret-value-123"));
+            }
+        }
+    }
+
+    #[test]
+    fn key_flags_are_not_refused_where_a_key_is_used() {
+        for argv in [
+            vec!["zn", "start", "--api-key-file", "k.txt"],
+            vec!["zn", "dashboard", "--api-key", "k"],
+            vec!["zn", "--start", "--api-key-file", "k.txt"],
+            vec!["zn", "--dashboard", "--api-key", "k"],
+            vec!["zn", "mcp"],
+        ] {
+            let args = Args::try_parse_from(argv.clone()).unwrap();
+            assert!(reject_unused_key_flags(&args).is_ok(), "{argv:?}");
+        }
     }
 
     #[test]
