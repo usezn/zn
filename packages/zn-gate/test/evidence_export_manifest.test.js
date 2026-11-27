@@ -49,7 +49,7 @@ test('include-preview: refused for jsonl and csv, with one line and exit 2', (t)
   for (const fmt of ['jsonl', 'csv']) {
     const r = run(home, ['--format', fmt, '--include-preview']);
     assert.equal(r.status, 2, fmt);
-    assert.equal(r.stderr.trim(), 'zn-gate: --include-preview works only with --format timesketch or timesketch-csv.');
+    assert.equal(r.stderr.trim(), 'zn-gate: --include-preview works only with --format timesketch, timesketch-csv or ocsf.');
     assert.equal(r.stdout, '');
   }
 });

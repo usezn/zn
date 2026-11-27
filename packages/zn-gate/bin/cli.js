@@ -372,10 +372,10 @@ EVIDENCE OPTIONS:
   --verify            Verify the SHA-256 hash chain across all records
   --ui                Launch local zero-dependency audit dashboard in browser
   --export            Export audit records to JSONL or CSV
-  --format <jsonl|csv|timesketch|timesketch-csv> Export format (default: jsonl)
+  --format <jsonl|csv|timesketch|timesketch-csv|ocsf> Export format (default: jsonl)
   --output <file>     Write exported audit records to target file
   --manifest          With --output: also write <file>.manifest.json (what was exported, and whether the chain verified)
-  --include-preview   With --format timesketch or timesketch-csv: add the payload preview as zn_payload_preview
+  --include-preview   With --format timesketch, timesketch-csv or ocsf: add the payload preview as zn_payload_preview
   --port <number>     Set HTTP port for dashboard (default: 3100)
   --tail <number>     Display the last N security records (default: 20)
 
@@ -1395,13 +1395,12 @@ ${ruleLine(process.env, 60)}\n`);
       const format = (options.format || 'jsonl').toLowerCase();
       if (!require('../lib/evidence_export').EXPORT_FORMATS.includes(format)) {
         const shown = String(options.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
-        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl, csv, timesketch and timesketch-csv.\n`);
+        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl, csv, timesketch, timesketch-csv and ocsf.\n`);
         process.exitCode = 2;
         return;
       }
-      const isTimesketch = format === 'timesketch' || format === 'timesketch-csv';
-      if (options.includePreview && !isTimesketch) {
-        process.stderr.write('zn-gate: --include-preview works only with --format timesketch or timesketch-csv.\n');
+      if (options.includePreview && !require('../lib/evidence_export').EVENT_FORMATS.has(format)) {
+        process.stderr.write('zn-gate: --include-preview works only with --format timesketch, timesketch-csv or ocsf.\n');
         process.exitCode = 2;
         return;
       }

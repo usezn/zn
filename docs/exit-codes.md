@@ -107,7 +107,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 | Command | Codes | Meaning |
 |---|---|---|
 | `evidence --verify` | `1` | `1` when the SHA-256 chain was changed. |
-| `evidence --export` | `0`, `1`, `2` | npm package. `0` done; `1` the log could not be read to the end (the output is then incomplete), the output could not be written, or the exported chain does not verify (the file is still written and says `Integrity: TAMPERED`); `2` `--output` is the evidence log itself, or a link or hard link to it, or `--format` is not `jsonl`, `csv`, `timesketch` or `timesketch-csv`, or `--manifest` without `--output`, or `--include-preview` with another format. |
+| `evidence --export` | `0`, `1`, `2` | npm package. `0` done; `1` the log could not be read to the end (the output is then incomplete), the output could not be written, or the exported chain does not verify (the file is still written and says `Integrity: TAMPERED`); `2` `--output` is the evidence log itself, or a link or hard link to it, or `--format` is not `jsonl`, `csv`, `timesketch`, `timesketch-csv` or `ocsf`, or `--manifest` without `--output`, or `--include-preview` with another format. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
 | `stats share on` | `1` | `1` when you do not confirm. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |

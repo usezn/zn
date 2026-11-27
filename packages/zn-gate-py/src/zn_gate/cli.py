@@ -801,8 +801,8 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         fmt = getattr(args, "format", "jsonl")
         include_preview = bool(getattr(args, "include_preview", False))
         manifest = bool(getattr(args, "manifest", False))
-        if include_preview and fmt not in ("timesketch", "timesketch-csv"):
-            print("zn-gate: --include-preview works only with --format timesketch or timesketch-csv.", file=sys.stderr)
+        if include_preview and fmt not in ("timesketch", "timesketch-csv", "ocsf"):
+            print("zn-gate: --include-preview works only with --format timesketch, timesketch-csv or ocsf.", file=sys.stderr)
             return 2
         if manifest and not getattr(args, "output", None):
             print("zn-gate: --manifest needs --output FILE.", file=sys.stderr)
@@ -1116,13 +1116,13 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
     ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
-    ev_parser.add_argument("--format", type=str.lower, choices=["jsonl", "csv", "timesketch", "timesketch-csv"], default="jsonl",
-                           help="Export format: jsonl (default), csv, timesketch (JSON Lines for Timesketch) or timesketch-csv")
+    ev_parser.add_argument("--format", type=str.lower, choices=["jsonl", "csv", "timesketch", "timesketch-csv", "ocsf"], default="jsonl",
+                           help="Export format: jsonl (default), csv, timesketch (JSON Lines for Timesketch), timesketch-csv or ocsf (JSON Lines, OCSF Detection Finding)")
     ev_parser.add_argument("--output", help="Write export output to file")
     ev_parser.add_argument("--manifest", action="store_true",
                            help="With --output: also write FILE.manifest.json (what was exported, and whether the chain verified)")
     ev_parser.add_argument("--include-preview", action="store_true",
-                           help="With --format timesketch or timesketch-csv: add the payload preview as zn_payload_preview")
+                           help="With --format timesketch, timesketch-csv or ocsf: add the payload preview as zn_payload_preview")
 
     # status command
     subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")

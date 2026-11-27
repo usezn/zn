@@ -129,7 +129,7 @@ def test_include_preview_refused_for_other_formats(tmp_path, fmt):
     home, _ = _home(tmp_path, RECORDS)
     proc = _run(home, "--format", fmt, "--include-preview")
     assert proc.returncode == 2
-    assert proc.stderr.strip() == "zn-gate: --include-preview works only with --format timesketch or timesketch-csv."
+    assert proc.stderr.strip() == "zn-gate: --include-preview works only with --format timesketch, timesketch-csv or ocsf."
     assert proc.stdout == ""
 
 

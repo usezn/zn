@@ -769,7 +769,7 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
     """
     target_path = file_path if file_path else EVIDENCE_FILE
     asked = (format or "jsonl").lower()
-    if asked in ("timesketch", "timesketch-csv"):
+    if asked in ("timesketch", "timesketch-csv", "ocsf"):
         from .evidence_timesketch import export_timesketch  # local import: that module imports this one
         return export_timesketch(target_path, asked, include_preview)
     norm_format = "csv" if asked == "csv" else "jsonl"
