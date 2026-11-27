@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-26.9';
+const POLICY_RULES_VERSION = '2026-11-27.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1037,6 +1037,15 @@ function unprovenEnvWriteDenial(p) {
     'file as shell code and are refused.';
 }
 
+/** dotenvx get on a named .env file: it prints the decrypted values where the agent reads them, so it is a read. */
+// `p` is the file word as the command names it (.env, config/.env.production), so the advice names the same file.
+function dotenvxGetDenial(p) {
+  const base = String(p);
+  return 'zn: dotenvx get prints the values in ' + base + ', and secret values never go to the model (rule: secret-file:dotenv). ' +
+    'Ask the user to run `' + znCommand('env shadow ' + base) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. ' +
+    'To use a value in a program, start it with `dotenvx run -f ' + base + ' -- <program>` when the file holds no secret, or `' + znCommand('run --secrets <NAME> -- <program>') + '`.';
+}
+
 /**
  * A call that names a watched dotenv file without giving zn the file it would leave there: a copy, move, rename, link, upload or
  * download, or a tool zn does not know. `texts` is what writtenTextsOf found; its `complete` flag says the resulting file is known in
@@ -1632,9 +1641,15 @@ function dotenvReadOnlyWord(w, shellChecked) {
  */
 function envFileValueWords(words, opts) {
   const out = new Map();
+  // Words that are the file of a dotenvx get: refused, but with the read message (get prints the values), not the write one.
+  const getWords = new Set();
   const isDotenvName = (t) => PLAIN_NAME_RE.test(t) && (() => { const c = classifyWord(t, opts); return !!c && c.kind === 'dotenv'; })();
   let seq = null;
   let runner = false;
+  // dotenvx: its -f / --env-file value is a read only for the run subcommand, which hands the values to the program it starts.
+  // get prints decrypted values where the agent reads them; set, encrypt, decrypt and the rest rewrite the file.
+  let dotenvx = false;
+  let dxSub = null;
   let ended = false;
   let envProg = false;
   // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
@@ -1644,7 +1659,7 @@ function envFileValueWords(words, opts) {
   let seenProgram = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) { seq = w.seq; runner = false; dotenvx = false; dxSub = null; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
@@ -1664,16 +1679,24 @@ function envFileValueWords(words, opts) {
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      if (programWord || wasLaunch === 'open') runner = true;
+      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; }
       continue;
     }
+    if (runner && dotenvx && dxSub === null && !t.startsWith('-')) dxSub = t;
+    const runnerReads = runner && (!dotenvx || dxSub === 'run');
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
-    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
+    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runnerReads ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
     if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
-    const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
+    if (runner && dotenvx && dxSub === 'get') {
+      const gg = /^(?:-f|--env-file)=(.+)$/.exec(t);
+      if (gg && isDotenvName(gg[1])) { getWords.add(w); continue; }
+      if ((t === '-f' || t === '--env-file') && nextValue()) { getWords.add(next); i++; continue; }
+    }
+    const opt = (envProg && t === '--env-file') || (runnerReads && (t === '-e' || t === '-f' || t === '--env-file'));
     if (opt && nextValue()) { out.set(next, next.text); i++; }
   }
+  out.getWords = getWords;
   return out;
 }
 
@@ -3012,8 +3035,14 @@ function bashDenialOf(cmd, opts = {}) {
   // words are split too.
   // Each reading is read on its own: its simple commands restart the program word (allWords numbers them from 1 in every reading).
   const envFileValues = new Map();
-  for (const reading of readings) for (const [k, v] of envFileValueWords(reading, opts)) envFileValues.set(k, v);
+  const dotenvxGetWords = new Set();
+  for (const reading of readings) {
+    const found = envFileValueWords(reading, opts);
+    for (const [k, v] of found) envFileValues.set(k, v);
+    for (const k of found.getWords) dotenvxGetWords.add(k);
+  }
   opts.envFileValues = envFileValues;
+  opts.dotenvxGetWords = dotenvxGetWords;
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head))) ||
       (/\.env/i.test(text) && words.some((w) => w.head !== '' && !envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)))) {
     const split = [];
@@ -3227,6 +3256,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (unprovenWrite && !w.redirectTarget) {
       const read = c ? denialOf(c, text, opts) : null;
       if (read) return read;
+      if (opts.dotenvxGetWords && opts.dotenvxGetWords.has(w)) return dotenvxGetDenial(text);
       return unprovenEnvWriteDenial(text);
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
