@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.7';
+const POLICY_RULES_VERSION = '2026-11-27.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1607,6 +1607,31 @@ const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'ash', 
 // Only the option's value counts as read; the program as a whole is judged as before (node -e can still write .env).
 const ENV_FILE_OPTION_PROGRAMS = new Set(['node', 'nodejs', 'bun', 'deno', 'docker', 'podman', 'docker-compose', 'podman-compose']);
 const DOTENV_RUNNERS = new Set(['dotenv', 'dotenv-cli', 'dotenvx']);
+// A dotenv runner given no file loads .env from the folder it runs in; with a convention (dotenvx) or a cascade (dotenv-cli) it also
+// loads the .env.<environment> and .env*.local files. dotenvx steps that load the default file (get prints its values; set, encrypt,
+// decrypt and rotate rewrite it) are judged like a read of that file, the same as when its name is typed. Anything zn cannot tell
+// apart is treated as loading it: a dotenvx step that is not one of the known steps that load nothing, an option whose value may be
+// the step name, and a file option that comes after the wrapped command started.
+const DOTENV_DEFAULT_FILE = '.env';
+// The environment name of a cascade comes from the command (-c staging) or from NODE_ENV, which zn cannot always know, so every
+// .env.<name> file of the folder is checked (apart from the example, sample and template ones); the same for --convention.
+const DOTENV_CASCADE = '.env.*';
+const DOTENV_TEMPLATE_RE = /\.(?:example|sample|template)$/i;
+// null when the folder cannot be listed (a folder that does not exist has no files).
+function cascadeFilesIn(dir) {
+  try {
+    return fs.readdirSync(dir).filter((n) => /^\.env\..+/i.test(n) && !DOTENV_TEMPLATE_RE.test(n));
+  } catch (e) { return e && (e.code === 'ENOENT' || e.code === 'ENOTDIR') ? [] : null; }
+}
+// Only steps that certainly print neither values nor keys and load nothing; every other step (keypair prints the private keys,
+// ext runs sub-steps that read or decrypt files, precommit, prebuild, genexample and radar read the files) is checked.
+const DOTENVX_NO_LOAD_SUBS = new Set(['help', 'ls', 'gitignore']);
+// Steps that read or print the keys file as well.
+const DOTENVX_KEYS_SUBS = new Set(['keypair', 'ext']);
+const DOTENV_KEYS_FILE = '.env.keys';
+const DOTENVX_KNOWN_SUBS = new Set([...DOTENVX_NO_LOAD_SUBS, 'run', 'get', 'set', 'encrypt', 'decrypt', 'rotate']);
+// Runner options that take the next word as their value (so that word does not start the wrapped command).
+const DOTENV_VALUE_OPTIONS = new Set(['-e', '-f', '--env-file', '-v', '-p', '--convention', '--log-level', '-l', '-fk', '--env-keys-file', '-c', '--cascade']);
 // Launchers that run the program named right after them (npx dotenv ..., bunx dotenv ...), and the two-word ones (pnpm dlx, yarn dlx,
 // npm exec, pnpm exec, bun x). A dotenv runner counts only as the program word, or as the program a launcher runs when the launcher is
 // itself the program word; never as an argument of another program (node -e "..." npx dotenv -e .env is not launched).
@@ -1650,6 +1675,32 @@ function envFileValueWords(words, opts) {
   // get prints decrypted values where the agent reads them; set, encrypt, decrypt and the rest rewrite the file.
   let dotenvx = false;
   let dxSub = null;
+  let dxAfterOption = false;
+  let optionBeforeStep = false; // an option came before the dotenvx step
+  let fileGiven = false;
+  let cascade = false;
+  let cmdStarted = false; // the runner's own options are over: later words belong to the wrapped command
+  let lastDash = false; // the previous word was an option (it may have taken this word as its value)
+  let valueNext = false; // the previous word is an option known to take a value
+  // dotenvx -f / --env-file takes several values (-f a.txt .env loads both): every word after it up to the next option or -- is a file.
+  let variadic = false;
+  // A dotenvx file value that names a watched file. run with no option before the step judges it as a read; get refuses it with the
+  // read message (it prints the values); for every other step, or a step that follows an option, nothing is recorded here and the word
+  // stays refused as an unproven write.
+  const judgeFile = (word, name) => {
+    if (dxSub === 'run' && !dxAfterOption) out.set(word, name);
+    else if (dxSub === 'get' && !dxAfterOption) getWords.add(word);
+  };
+  let infoOnly = false; // --help / --version
+  const defaults = new Set();
+  const noteDefaults = () => {
+    if (!runner || infoOnly || (dotenvx && DOTENVX_NO_LOAD_SUBS.has(dxSub))) return;
+    if (dotenvx && (DOTENVX_KEYS_SUBS.has(dxSub) || !DOTENVX_KNOWN_SUBS.has(dxSub))) defaults.add(DOTENV_KEYS_FILE);
+    // A cascade or convention also reads the files of the environment, whatever file options are given.
+    if (cascade) defaults.add(DOTENV_CASCADE);
+    if (fileGiven) return;
+    defaults.add(DOTENV_DEFAULT_FILE);
+  };
   let ended = false;
   let envProg = false;
   // launch: 'open' while the words so far are a launcher program word (plus its second word and value-less flags), 'pair' right after
@@ -1657,13 +1708,32 @@ function envFileValueWords(words, opts) {
   let launch = null;
   let launchHead = null;
   let seenProgram = false;
+  let progWord = null;
+  let loose = false;
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    if (w.seq !== seq) { seq = w.seq; runner = false; dotenvx = false; dxSub = null; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
+    if (w.seq !== seq) {
+      // The program of this simple command: the word after the wrappers (env, sudo, command, nice ...) that the hook reads
+      // elsewhere (GIT_WRAPPERS, skipWrapper). When the chain is unsure, any dotenv runner word of the command counts as the program.
+      const own = [];
+      for (let j = i; j < words.length && words[j].seq === w.seq; j++) own.push(words[j]);
+      let k = own.findIndex((x) => x.head !== '' && !x.redirectTarget && !ASSIGNMENT_RE.test(x.text));
+      const chain = { unsure: false };
+      for (let guard = 0; k >= 0 && k < own.length && guard < 16; guard++) {
+        const name = programName(own[k].text);
+        if (!Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) break;
+        k = skipWrapper(own, k, name, chain);
+      }
+      progWord = k >= 0 && k < own.length ? own[k] : null;
+      loose = chain.unsure;
+    }
+    if (w.seq !== seq) { noteDefaults(); seq = w.seq; runner = false; dotenvx = false; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; variadic = false; infoOnly = false; ended = false; launch = null; seenProgram = false; envProg = ENV_FILE_OPTION_PROGRAMS.has(programName(w.head)); }
     if (w.head === '' || w.redirectTarget) continue;
     const t = w.text;
     // Only the first word that names the program starts it (wrappers such as sudo or env may come before it).
-    const programWord = !seenProgram && programName(t) === programName(w.head);
+    // The word after the wrappers, or the first word that names the command's program (which also covers a wrapper the head resolver
+    // knows and the wrapper list does not).
+    const programWord = w === progWord || (loose && DOTENV_RUNNERS.has(programName(t))) || (!seenProgram && programName(t) === programName(w.head));
     if (programWord) seenProgram = true;
     const wasLaunch = launch;
     if (programWord) {
@@ -1679,23 +1749,63 @@ function envFileValueWords(words, opts) {
     if (ended) continue;
     if (DOTENV_RUNNERS.has(programName(t))) {
       // Only the program itself, or the program a launcher runs, is a runner: node -e "..." dotenv -e .env is not.
-      if (programWord || wasLaunch === 'open') { runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; }
+      if (programWord || wasLaunch === 'open') { if (runner) noteDefaults(); runner = true; dotenvx = programName(t) === 'dotenvx'; dxSub = null; dxAfterOption = false; optionBeforeStep = false; fileGiven = false; cascade = false; cmdStarted = false; lastDash = false; valueNext = false; variadic = false; infoOnly = false; }
       continue;
     }
-    if (runner && dotenvx && dxSub === null && !t.startsWith('-')) dxSub = t;
-    const runnerReads = runner && (!dotenvx || dxSub === 'run');
+    if (runner && !cmdStarted) {
+      const wasValue = valueNext;
+      valueNext = false;
+      if (t.startsWith('-')) {
+        // Only dotenvx honours these, and only before a step (dotenv-cli: not assumed, so its -h and -V do not count).
+        if (dotenvx && dxSub === null && /^(?:--help|--version|-h|-V)$/.test(t)) infoOnly = true;
+        // For dotenvx, -e sets a variable and is not a file option; dotenv-cli has no -f / --env-file, only -e, so for it -f is not a file
+        // given and the default .env is still checked.
+        if (dotenvx ? (t === '-f' || t === '--env-file' || /^(?:-f|--env-file)=/.test(t)) : (t === '-e' || t.startsWith('-e='))) fileGiven = true;
+        if (t === '--convention' || t === '-c' || t === '--cascade' || /^(?:--convention|-c|--cascade)=/.test(t)) cascade = true;
+        if (dotenvx && dxSub === null) optionBeforeStep = true;
+        valueNext = !t.includes('=') && DOTENV_VALUE_OPTIONS.has(t);
+        variadic = dotenvx && /^(?:-f|--env-file)(?:=|$)/.test(t);
+        lastDash = true;
+      } else if (variadic) {
+        // Another value of -f / --env-file, for every dotenvx step and also before the step or after an option that came before it
+        // (the step may not be identified yet): a word that names a watched file goes through judgeFile; any other word is ignored.
+        lastDash = false;
+        if (isDotenvName(t)) {
+          judgeFile(w, t);
+          continue;
+        }
+        if (dxSub === null && !wasValue) variadic = false;
+      } else if (wasValue) {
+        lastDash = false;
+      } else if (dotenvx && dxSub === null) {
+        // The first word that is not an option is the step, unless an option before it may have taken it as its value
+        // (dotenvx --log-level info run): then only a known step name counts, and an unknown word is skipped.
+        if (DOTENVX_KNOWN_SUBS.has(t) || !lastDash) dxSub = t;
+        // A step that follows an option is not certain (the option may take a different number of words): its -f value is not
+        // taken as a read of the named file, which stays refused as an unproven write.
+        dxAfterOption = optionBeforeStep;
+        lastDash = false;
+      } else {
+        cmdStarted = true;
+      }
+    }
     const next = words[i + 1];
     const nextValue = () => next && next.seq === w.seq && !next.redirectTarget && next.head !== '' && isDotenvName(next.text);
-    const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runnerReads ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
-    if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
-    if (runner && dotenvx && dxSub === 'get') {
+    if (runner && dotenvx) {
+      // The file value of a dotenvx -f / --env-file, glued (-f=X) or separate (-f X), goes through judgeFile (the same function as the
+      // extra values above) at any step and before or after an option that came before the step.
       const gg = /^(?:-f|--env-file)=(.+)$/.exec(t);
-      if (gg && isDotenvName(gg[1])) { getWords.add(w); continue; }
-      if ((t === '-f' || t === '--env-file') && nextValue()) { getWords.add(next); i++; continue; }
+      if (gg && isDotenvName(gg[1])) { judgeFile(w, gg[1]); continue; }
+      if ((t === '-f' || t === '--env-file') && nextValue()) { judgeFile(next, next.text); i++; valueNext = false; lastDash = false; continue; }
+    } else {
+      const glued = envProg ? /^--env-file=(.+)$/.exec(t) : runner ? /^(?:-e|-f|--env-file)=(.+)$/.exec(t) : null;
+      if (glued && isDotenvName(glued[1])) { out.set(w, glued[1]); continue; }
+      const opt = (envProg && t === '--env-file') || (runner && (t === '-e' || t === '-f' || t === '--env-file'));
+      if (opt && nextValue()) { out.set(next, next.text); i++; valueNext = false; lastDash = false; }
     }
-    const opt = (envProg && t === '--env-file') || (runnerReads && (t === '-e' || t === '-f' || t === '--env-file'));
-    if (opt && nextValue()) { out.set(next, next.text); i++; }
   }
+  noteDefaults();
+  out.defaults = [...defaults];
   out.getWords = getWords;
   return out;
 }
@@ -3041,10 +3151,12 @@ function bashDenialOf(cmd, opts = {}) {
   // words are split too.
   // Each reading is read on its own: its simple commands restart the program word (allWords numbers them from 1 in every reading).
   const envFileValues = new Map();
+  const defaultEnvFiles = new Set();
   const dotenvxGetWords = new Set();
   for (const reading of readings) {
     const found = envFileValueWords(reading, opts);
     for (const [k, v] of found) envFileValues.set(k, v);
+    for (const f of found.defaults) defaultEnvFiles.add(f);
     for (const k of found.getWords) dotenvxGetWords.add(k);
   }
   opts.envFileValues = envFileValues;
@@ -3089,6 +3201,32 @@ function bashDenialOf(cmd, opts = {}) {
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
   opts.elsewhere = new Map();
+  // A dotenv runner with no file option loads a file it does not name: judged as a read of that file (a missing file, or one with no
+  // plain secret, is allowed), also in the folder a cd in the command leads to.
+  for (const f of defaultEnvFiles) {
+    if (f === DOTENV_CASCADE) {
+      const dirs = new Set([path.resolve(opts.cwd || process.cwd()), ...((opts.cdBases && opts.cdBases.dirs) || []).map((d) => path.resolve(d))]);
+      for (const dir of dirs) {
+        const names = cascadeFilesIn(dir);
+        if (names === null) {
+          return 'zn: this command loads the .env.<environment> files of ' + slash(dir) + ', which zn cannot list, so it cannot check whether they hold secrets and it was blocked. ' +
+            'Ask the user to fix the folder permissions, or to run it.';
+        }
+        for (const name of names) {
+          if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+          const deny = readDenial(name, { ...opts, cwd: dir });
+          if (deny) return deny;
+        }
+      }
+      continue;
+    }
+    const deny = readDenial(f, opts) || dotenvElsewhereDenial(f, opts);
+    if (deny) return deny;
+  }
+  if (defaultEnvFiles.has(DOTENV_CASCADE) && opts.cdBases && opts.cdBases.unknown) {
+    const deny = dotenvElsewhereDenial(DOTENV_DEFAULT_FILE, opts);
+    if (deny) return deny;
+  }
   markLinkWords(readings);
   if (mayRunCurl(words)) {
     const curlFiles = curlFilesOf();
