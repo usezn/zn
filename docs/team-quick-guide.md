@@ -16,6 +16,17 @@ You do this once, in the dashboard at usezn.com, signed in with the account that
 
 Every dashboard step is described in [Administer your organization](https://usezn.com/docs/team/admin/).
 
+### First-day checklist
+
+Until the setup is done, the **Team** overview shows a **Set up your team** card to owners and admins. It has four steps, and each open step links to the page where you do it:
+
+1. **Organization created.** Always done once you can see the card.
+2. **Invite a teammate** from **Members**. Done when an invitation is pending or another person has joined.
+3. **Join the first machine:** **Members → Connected installations → New join token**. Done when any machine has joined with a join token, even if it was revoked later.
+4. **Publish your first policy** in **Policies**.
+
+The card shows how many steps are done and disappears when all four are. Members and auditors never see it.
+
 ## What each developer does
 
 Each machine needs zn-gate installed globally (`npm install -g zn-gate`, which puts the short `zn` command on the PATH; with `npx -y zn-gate` only, write `npx -y zn-gate team join -` instead of `zn team join -`) and the vault unlocked (`zn unlock` creates it the first time).
