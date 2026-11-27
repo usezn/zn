@@ -839,7 +839,7 @@ zn-gate status
 ```
 
 ```text
-  status              Show engine configuration and gateway connectivity
+  status              Show the engine, rules version and endpoint settings (no network check)
 ```
 
 [`test`](#test): run the built-in self-test.

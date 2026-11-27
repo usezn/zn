@@ -27,7 +27,7 @@ On a new machine, with no cloud check set up:
   Leaves machine  : Nothing
 ```
 
-`status` only reads files: nothing is run, changed or sent. It always exits `0`, so its exit code tells you nothing; read the lines.
+`status` reads your settings and the saved key, if any; it opens no network connection and changes nothing. It does not check that the endpoint it shows can be reached. It always exits `0`, so its exit code tells you nothing; read the lines.
 
 ### `Package Version`
 
