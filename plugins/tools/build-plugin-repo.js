@@ -23,7 +23,10 @@
  *    (plugins/zn-gate/scripts/zn-gate.lock.json).
  * 2. zn-gate is written to vendor/zn-gate without TypeScript sources, type
  *    declarations and source maps, so the plugin stays well under the
- *    directory's file limit. Every bundled file is the exact bytes from the
+ *    directory's file limit. The prebuilt static hook launchers
+ *    (lib/native/<platform>/zn-hook-launcher) are left out too: only
+ *    `zn-gate install` copies them, the plugin's hooks never start them,
+ *    and they are over the directory's size limit for a non-image file. Every bundled file is the exact bytes from the
  *    tarball.
  * 3. ES modules are resolved by Node from disk, outside the launcher's
  *    verified loader (require() calls are resolved by the launcher, only to
@@ -103,7 +106,7 @@ const GITATTRIBUTES = '* -text\n';
 //   lib/init-guide.js  the setup guide of the zn-gate command line (`zn-gate init`), which the plugin never runs
 //   @noble/curves      its BLS and BN254 pairing curves and the index and misc entry points that import them; zn-gate
 //                      and age-encryption use only the ed25519 and nist modules (also under @noble/post-quantum)
-const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$|^README\.md$|^lib\/init-guide\.js$|^node_modules\/(?:@noble\/post-quantum\/node_modules\/)?@noble\/curves\/(?:abstract\/(?:bls|tower)|bls12-381|bn254|misc|index)\.js$/;
+const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$|^README\.md$|^lib\/init-guide\.js$|^lib\/native\/linux-x64\/zn-hook-launcher$|^lib\/native\/linux-arm64\/zn-hook-launcher$|^node_modules\/(?:@noble\/post-quantum\/node_modules\/)?@noble\/curves\/(?:abstract\/(?:bls|tower)|bls12-381|bn254|misc|index)\.js$/;
 const MAX_FILES = 512;
 const MAX_TEXT_BYTES = 256 * 1024;
 const MAX_BYTES = 5 * 1024 * 1024;
