@@ -69,20 +69,22 @@ test('join turns the report on, the daemon sends it, stop and accept go through 
 });
 
 test('no status report while the organization has no active subscription (402), and again once it has one', async () => {
-  const inst = [...cloud.state.installs.values()][0];
+  // Count the requests that reach the server, not the reports it accepts: the server may refuse a report for an
+  // inactive organization, which would hide a client that keeps sending.
+  const sent = () => cloud.requests.filter((q) => q.method === 'POST' && q.path === '/v1/org/install/status').length;
   assert.strictEqual((await vault.teamInfo()).status_report.on, true);
   cloud.setOrgActive(false);
   try {
-    const before = inst.statusReports;
+    const before = sent();
     await vault.teamSync({});
     await vault.teamSync({});
-    assert.strictEqual(inst.statusReports, before, 'a 402 sync sends no report');
+    assert.strictEqual(sent(), before, 'a 402 sync sends no report');
   } finally {
     cloud.setOrgActive(true);
   }
-  const before = inst.statusReports;
+  const before = sent();
   await vault.teamSync({});
-  assert.strictEqual(inst.statusReports, before + 1, 'reports resume once the subscription is active');
+  assert.strictEqual(sent(), before + 1, 'reports resume once the subscription is active');
 });
 
 test('accept with no confirmation channel stores nothing and sends nothing', async () => {
