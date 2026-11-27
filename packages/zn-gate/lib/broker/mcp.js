@@ -33,7 +33,7 @@ const { gitStatusOf, realTargetOf } = require('./files');
 const policy = require('../hooks/policy');
 const deps = require('../deps');
 const CLOUD_KEY_SECRET = require('../cloud-key').VAULT_SECRET;
-const { pickOpening, warnNotice, WARN_REASON } = require('../team/effective');
+const { teamStrictNote, pickOpening, warnNotice, WARN_REASON } = require('../team/effective');
 
 // Not available on Windows: 0 there, and the path checks still run.
 const O_NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
@@ -223,7 +223,7 @@ function createSecretsServer(opts = {}) {
       }
       if (s.deny) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'policy:org_deny' });
-        return denied(m.marker + ' is blocked for this agent by your organization policy. No request was made.');
+        return denied(m.marker + ' is blocked for this agent by your organization policy. No request was made.' + teamStrictNote(s));
       }
       // The key `zn-gate connect` keeps in the vault is for zn-gate's own analysis calls only. An agent could use it
       // here to revoke the key (DELETE) or spend its quota, so this tool never fills it in, whatever its allowHosts.
@@ -240,7 +240,7 @@ function createSecretsServer(opts = {}) {
       }
       if (!markers.hostAllowed(s.allowHosts, host)) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'host not in allowHosts' });
-        return denied(m.marker + ' may not be sent to ' + host + ' (allowed: ' + ((s.allowHosts || []).join(', ') || 'none') + '). No request was made.');
+        return denied(m.marker + ' may not be sent to ' + host + ' (allowed: ' + ((s.allowHosts || []).join(', ') || 'none') + '). No request was made.' + teamStrictNote(s));
       }
       // An empty list (cut down by the organization policy) allows nowhere.
       const allowIn = Array.isArray(s.allowIn) ? s.allowIn : ['header'];
@@ -433,7 +433,7 @@ function createSecretsServer(opts = {}) {
       if (!s) return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' is not in the vault' }, true);
       if (s.deny) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'deny', reason: 'policy:org_deny' });
-        return denied(m.marker + ' is blocked for this agent by your organization policy. Nothing was written.');
+        return denied(m.marker + ' is blocked for this agent by your organization policy. Nothing was written.' + teamStrictNote(s));
       }
       if (s.mode !== 'file') {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'deny', reason: 'mode is not file' });
