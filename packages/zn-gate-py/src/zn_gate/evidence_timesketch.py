@@ -409,7 +409,7 @@ def inspect_ledger(file_path: str) -> Dict[str, Any]:
     tip_record_hash (the last record that verified, or None), first_timestamp and last_timestamp
     (of the first and last line that is a JSON object), read_error, and rows: (index, record,
     verified) for every line that is a JSON object."""
-    empty = {"valid": True, "error": None, "broken_index": None, "truncated_tail": False, "total": 0,
+    empty: Dict[str, Any] = {"valid": True, "error": None, "broken_index": None, "truncated_tail": False, "total": 0,
              "tip_hash": GENESIS_HASH, "tip_record_hash": None, "first_timestamp": None,
              "last_timestamp": None, "read_error": False, "rows": [], "parsed": []}
     if not os.path.exists(file_path):

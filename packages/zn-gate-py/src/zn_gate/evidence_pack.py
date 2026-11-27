@@ -169,6 +169,7 @@ def _pack_line(fmt: str, chunk: bytes, rec: Optional[Dict[str, Any]], include_pr
                index: int, verified: bool) -> bytes:
     """The bytes written for one record, as the Node package's PACK_FORMATS entries give them."""
     if fmt == "ocsf":
+        assert rec is not None  # the caller writes OCSF events for JSON-object records only
         return (_json_js(ocsf_event(rec, index, verified, include_preview)) + "\n").encode("utf-8")
     if rec is not None and not include_preview and "payload_preview" in rec:
         rest = {k: v for k, v in rec.items() if k != "payload_preview"}
@@ -261,11 +262,12 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
         try:
             rec, parse_error = _parse_record(stripped.decode("utf-8"))
         except UnicodeDecodeError:
-            rec, parse_error = None, True
+            rec, parse_error = None, ValueError("invalid UTF-8")
         is_obj = parse_error is None and isinstance(rec, dict)
+        obj: Dict[str, Any] = rec if is_obj and isinstance(rec, dict) else {}
         ts = None
-        if is_obj and isinstance(rec.get("timestamp"), str) and timesketch_micros(rec["timestamp"]) != "":
-            ts = rec["timestamp"]
+        if is_obj and isinstance(obj.get("timestamp"), str) and timesketch_micros(obj["timestamp"]) != "":
+            ts = obj["timestamp"]
         if ts is None:
             undated += 1
             keep = not has_range
@@ -285,14 +287,14 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
                 first_ts = ts
             last_ts = ts
         if is_obj:
-            if isinstance(rec.get("verdict"), str):
-                _bump(verdicts, rec["verdict"])
-            if isinstance(rec.get("agent_environment"), str):
-                _bump(agents, rec["agent_environment"])
-            if isinstance(rec.get("rule"), str) and rec["rule"] != "":
-                _bump(rules, rec["rule"])
-            if isinstance(rec.get("record_hash"), str):
-                entry = {"chain_index": index, "record_hash": rec["record_hash"]}
+            if isinstance(obj.get("verdict"), str):
+                _bump(verdicts, obj["verdict"])
+            if isinstance(obj.get("agent_environment"), str):
+                _bump(agents, obj["agent_environment"])
+            if isinstance(obj.get("rule"), str) and obj["rule"] != "":
+                _bump(rules, obj["rule"])
+            if isinstance(obj.get("record_hash"), str):
+                entry = {"chain_index": index, "record_hash": obj["record_hash"]}
                 if range_first is None:
                     range_first = entry
                 range_last = entry
