@@ -184,18 +184,11 @@ def test_allow_answer_shape():
     assert res.rules_version == COMMAND_RULES_VERSION
 
 
-def test_none_is_empty_input_and_allowed():
-    assert check_command(None).allowed  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("value", [5, ["curl", "x"]])
-def test_input_that_is_not_text_raises(value):
-    with pytest.raises(TypeError):
-        check_command(value)  # type: ignore[arg-type]
-
-
-def test_bytes_are_read_as_text():
-    assert not check_command(b"dd if=/dev/zero of=/dev/sda").allowed
+@pytest.mark.parametrize("value", [None, 5, b"rm -rf ~", ["rm", "-rf", "~"]])
+def test_non_string_input_is_refused(value):
+    res = check_command(value)  # type: ignore[arg-type]
+    assert not res.allowed
+    assert res.rule == "destructive:command_not_a_string"
 
 
 def test_oversized_command_is_refused():

@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-17.2
+RULES_VERSION: 2026-11-27.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-17.2"
+RULES_VERSION = "2026-11-27.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -629,6 +629,36 @@ def _normalize_path_word(word: str) -> str:
     return ('/' if absolute else '') + '/'.join(out)
 
 
+# A name glued to an option or to a sed command, read as a word of its own (sort -o.env, grep -f.env, diff -u.env, sed w.env,
+# sed r.env, sed s/a/b/w.env). Same cases as the hook's withGluedDotenvReadings; -e is left out (it takes a pattern, not a file),
+# and so is a glued name that does not start like a path (-o2, prod.env).
+PATH_GLUED_OPT_RE = re.compile(r'^-{1,2}(?!e[.~/\\])[a-z][a-z0-9]*?([.~/\\].*)$')
+# The value of a long option given with an equals sign (sort --output=.env, grep --file=.env, diff --to-file=.env). An option
+# whose name holds "env" (--env-file=.env of node, docker or uv) only loads the file into a program and stays allowed.
+PATH_EQUALS_OPT_RE = re.compile(r'^--(?![a-z0-9-]*env)[a-z][a-z0-9-]*=(.+)$', re.DOTALL)
+PATH_GLUED_SED_RE = re.compile(r'^[wr]([.~/\\].*)$')
+PATH_GLUED_SED_SUBST_RE = re.compile(r'^s([^A-Za-z0-9_\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiem0-9]*w(.+)$', re.DOTALL)
+
+
+def _glued_path_readings(word: str) -> List[str]:
+    out: List[str] = []
+    if len(word) > 4096:
+        return out
+    m = PATH_GLUED_OPT_RE.match(word)
+    if m and '=' not in word:
+        out.append(m.group(1))
+    m = PATH_EQUALS_OPT_RE.match(word)
+    if m:
+        out.append(m.group(1))
+    m = PATH_GLUED_SED_RE.match(word)
+    if m:
+        out.append(m.group(1))
+    m = PATH_GLUED_SED_SUBST_RE.match(word)
+    if m:
+        out.append(m.group(2))
+    return out
+
+
 def sensitive_path_view(text: str) -> str:
     """The path view of a text: its normalized words, one per line."""
     lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
@@ -640,6 +670,8 @@ def sensitive_path_view(text: str) -> str:
         words.append(_normalize_path_word(word.replace('\\', '/')))
         if '\\' in word:
             words.append(_normalize_path_word(word.replace('\\', '')))
+        for g in _glued_path_readings(word):
+            words.append(_normalize_path_word(g.replace('\\', '/')))
     return '\n'.join(words)
 
 

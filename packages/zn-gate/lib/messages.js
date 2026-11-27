@@ -328,11 +328,18 @@ function teamSyncNoNetwork(detail) {
   return withDetails('Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync', detail);
 }
 
+/* Appended to a block that strict mode caused when the organization's Team subscription is not active. */
+const TEAM_STRICT_NO_SUBSCRIPTION = " This machine is in strict mode because your organization's Team subscription is not active and its last policy expired. Ask your organization owner or admin.";
+
+/* What happens to the audit records while the organization is inactive: they stay here and are sent later. */
+function teamPendingKept(pending) {
+  return pending > 0
+    ? 'Nothing is lost: ' + pending + ' audit record' + (pending === 1 ? ' stays' : 's stay') + ' on this machine and ' + (pending === 1 ? 'is' : 'are') + ' sent when it is active again.'
+    : 'Nothing is lost.';
+}
+
 function teamSyncInactive(pending) {
-  const kept = pending > 0
-    ? 'Nothing is lost: ' + pending + ' audit record' + (pending === 1 ? ' stays' : 's stay') + ' on this machine and ' + (pending === 1 ? 'is' : 'are') + ' sent when it is active again. '
-    : 'Nothing is lost. ';
-  return 'Your organization is not active on zn right now: ask your organization admin. ' + kept + 'Once it is active, run: zn team sync';
+  return 'Your organization is not active on zn right now: ask your organization admin. ' + teamPendingKept(pending) + ' Once it is active, run: zn team sync';
 }
 
 function teamNotACommand(sub) {
@@ -352,6 +359,17 @@ function looksLikeEmailInvite(text) {
 const TEAM_INVITE_NOT_A_JOIN_TOKEN = 'That is the link from your invitation email, not a join token. ' +
   'Open the link to accept the invitation at usezn.com/team, then ask your organization admin for a join token (it starts with znj_) and run: zn team join <token>';
 
+/* The one next step for an organization whose Team subscription is not active: only an admin of the organization can fix it. */
+const TEAM_NO_SUBSCRIPTION_STEP = 'ask an admin of your organization to renew or start the Team plan at usezn.com/pricing';
+
+function teamJoinNoSubscription(detail) {
+  return withDetails('join failed: this organization has no active Team subscription, so this machine was not connected. ' +
+    'Next step: ' + TEAM_NO_SUBSCRIPTION_STEP + ', then run: zn team join <token>', detail);
+}
+
+/* One line for the status of the audit upload when the server answers 402. */
+const TEAM_UPLOAD_NO_SUBSCRIPTION = 'your organization has no active Team subscription: ' + TEAM_NO_SUBSCRIPTION_STEP;
+
 function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
@@ -366,7 +384,7 @@ module.exports = {
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_POLICY_UNVERIFIED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
-  TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
+  teamJoinFailed, teamJoinNoSubscription, TEAM_UPLOAD_NO_SUBSCRIPTION, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
+  TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamPendingKept, TEAM_STRICT_NO_SUBSCRIPTION, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

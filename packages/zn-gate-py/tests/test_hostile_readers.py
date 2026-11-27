@@ -211,8 +211,8 @@ class StrHook(str):
 def test_text_input_refuses_spoofed_and_hooked_text(make):
     with pytest.raises(TypeError):
         evaluate(make())
-    with pytest.raises(TypeError):
-        check_command(make())
+    res = check_command(make())
+    assert not res.allowed and res.rule == "destructive:command_not_a_string"
     assert RAN == []
 
 
@@ -227,7 +227,6 @@ def test_text_input_plain_values_unchanged():
     assert evaluate(b"What is the weather today?").allowed
     assert evaluate(bytearray(b"What is the weather today?")).allowed
     assert evaluate(memoryview(b"What is the weather today?")).allowed
-    assert check_command(None).allowed  # type: ignore[arg-type]
 
 
 def test_sanitize_refuses_hooked_bytes_and_spoofed_str():

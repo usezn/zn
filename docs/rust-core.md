@@ -41,7 +41,7 @@ A policy upload is verified before anything is written. The gateway checks these
 - the ML-DSA-65 signature, when `ZN_PQ_PUBLIC_KEY` is set (this then makes it mandatory);
 - that the WASM compiles.
 
-It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy.
+It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy. While the gateway runs, only the `.wasm` file adds, replaces or removes a policy (renaming it away removes it). Adding, changing or removing a signature file checks the policy again: when a signing key or allowed hashes are set and it no longer verifies, the policy is unloaded; the last loaded policy is never unloaded (nor deleted through the API) while they are set, it stays and an error is logged. Without them a failed check is only logged. `zn analyze` and `zn mcp` refuse to start when a signing key or allowed hashes are set and no policy loads, like `zn start`.
 
 Only then does it write the file. It writes to a temporary file in the policy directory, which is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
 
@@ -74,6 +74,8 @@ The on/off environment settings `ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRI
 If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant also sees the local stdio calls of this process.
 
 ## AWS KMS data key
+
+`kms.kms_type` (or `ZN_KMS_TYPE`) accepts only `local` (the default) and `aws`; surrounding whitespace and capitalisation are ignored. Any other value, including an empty one, stops the gateway at start-up with a message that suggests the closest valid value, so a typo such as `aws_kms` can never fall back to the local vault. `aws` also needs `kms.key_id`; without it the gateway refuses to start.
 
 With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.
 
@@ -196,6 +198,12 @@ A search runs on the request path, so it is tried once and gives up after one se
 ## Model download on first start
 
 `zn start` loads a sentence embedding model for its neural check. If the folder `~/.zn/models/all-MiniLM-L6-v2` does not hold it yet, the gateway downloads `sentence-transformers/all-MiniLM-L6-v2` (about 90 MB) from `https://huggingface.co` into that folder on the first start. `zn analyze` and `zn mcp` load the same model. The download is pinned to one commit of the model repository (`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, set in `src/ai/embedder.rs`). The files `config.json`, `tokenizer.json` and `model.safetensors` must match their SHA-256 hashes; a file that does not match is deleted and downloaded again. If the download fails, the gateway stops at start-up.
+
+### Result of `zn analyze` and the `analyze_prompt` tool
+
+Both print one JSON object: `{"verdict": "allow"|"block", "rule": <name or null>, "score": <0 to 1>}`, plus `fusion` when the fusion check blocked.
+
+When a check that is turned on in the configuration (`neural.enabled`, `fusion.enabled`) cannot run, for example because the model failed to load, `ZN_FAST_BOOT` replaced it with the stub, or inference failed, the object also carries `degraded` with the reason (for example `neural backend unavailable: model failed to load`). A memory search error (for example a busy or locked vector database) counts too: the text is blocked with rule `check_unavailable` and the reason `neural inference error: memory search failed`, even though the model worked. A block by a rule keeps its own rule and exit code `0`, as before. The key is absent when every configured check ran. Such a result is never a plain allow: unless a rule blocked the text, the verdict is `block` with rule `check_unavailable`. `zn analyze` prints that object, writes a message to stderr and exits with code `2` (the code of a blocked action; the npm package `zn-gate analyze` has its own exit codes, listed in [Exit codes](exit-codes.md)), and the `analyze_prompt` tool returns it as an error result. With both `neural.enabled` and `fusion.enabled` set to `false` in the configuration file, or when every enabled check ran, nothing changes and `degraded` does not appear.
 
 To avoid the download:
 

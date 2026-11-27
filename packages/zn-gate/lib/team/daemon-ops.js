@@ -140,6 +140,12 @@ function makeTeamOps(ctx) {
     return ['teamFile', 'policyFile', 'uploadState', 'uploadLock'].map((k) => f[k]).filter((file) => !policy.removeFile(file));
   }
 
+  /* When the server last said this organization has no active Team subscription (null: it did not, or answered fine since). */
+  function inactiveSince(t) {
+    const s = t && t.subscription_inactive;
+    return s && typeof s === 'object' && typeof s.seen_at === 'string' && Number.isFinite(Date.parse(s.seen_at)) ? printable(s.seen_at, 40) : null;
+  }
+
   /* The last sync result as `zn team status` shows it: printable text only. */
   function lastSyncOf(t) {
     const l = t.last_sync;
@@ -385,7 +391,7 @@ function makeTeamOps(ctx) {
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
         throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid' ? messages.TEAM_JOIN_TOKEN_REJECTED
-          : messages.teamJoinFailed('this organization has no active Team subscription'));
+          : messages.teamJoinNoSubscription());
       }
       const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
       const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;
@@ -447,6 +453,7 @@ function makeTeamOps(ctx) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
         // The user can only get a new invitation (rejected token) or fix the connection: say that, with the technical cause on a details line.
         if (err && [401, 403, 404, 410].includes(err.status)) throw znError(CODES.POLICY_DENIED, messages.teamJoinTokenRejected(why));
+        if (err && err.status === 402) throw znError(CODES.POLICY_DENIED, messages.teamJoinNoSubscription(why));
         if (err && (err.code === 'ZN_TEAM_NETWORK' || err.code === 'ZN_TEAM_TIMEOUT')) throw znError(CODES.POLICY_DENIED, messages.teamJoinNoNetwork(why));
         throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(why));
       }
@@ -605,6 +612,7 @@ function makeTeamOps(ctx) {
         policy: {
           state: st.state, version: st.version || null, expires_at: st.expires_at || null, fetched_at: st.fetched_at || null, error: st.error || null,
           change: changes.cleanChange(t.policy && t.policy.change),
+          subscription_inactive_at: inactiveSince(t),
         },
         // The join is pending until a valid policy has been applied.
         join_pending: st.state === 'none' || st.state === 'invalid',
@@ -673,6 +681,8 @@ function makeTeamOps(ctx) {
       try {
         const r = await api.getPolicy({ etag: held.state === 'active' ? held.etag : undefined });
         if (isClosed()) return { policy: { status: 'stopped' }, upload: null };
+        // A server answer that is not a 402: the organization has an active subscription again (or still has one).
+        if (t.subscription_inactive && !(await updateTeam((tt) => { delete tt.subscription_inactive; }, snap))) return stale();
         // The answer belongs to the membership that asked; if this machine left, rejoined or changed token meanwhile, drop it.
         if (!(await isCurrent())) return stale();
         if (r.status === 304) {
@@ -723,7 +733,15 @@ function makeTeamOps(ctx) {
         }
         if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; }, snap);
       } catch (err) {
-        if (err && err.status === 401) {
+        if (err && err.status === 402) {
+          // The organization has no active Team subscription. Never read as "no restrictions": the policy held keeps
+          // applying until it expires, then strict mode, exactly as when the server cannot be reached. The time is
+          // remembered (not a secret) so `zn team status` and the block messages can say why.
+          if (!(await isCurrent())) return stale();
+          const seen = new Date().toISOString();
+          if (!(await updateTeam((tt) => { tt.subscription_inactive = { seen_at: seen }; }, snap))) return stale();
+          out.policy = { status: 'no_subscription' };
+        } else if (err && err.status === 401) {
           if (!(await isCurrent())) return stale();
           out.policy = { status: 'revoked' };
           if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); }, snap);
@@ -737,7 +755,8 @@ function makeTeamOps(ctx) {
       if (!(await ensureCopies(snap, true))) return stale();
       // The status report follows the policy step and does not depend on the audit upload. Not when the policy step
       // found the machine removed or the server unreachable (the report would only time out too).
-      if (!['revoked', 'offline'].includes(out.policy.status) && !isClosed()) await sendStatusReport(snap, api);
+      // No report when the machine is cut off or the organization has no active subscription (402): nothing to report to.
+      if (!['revoked', 'offline', 'no_subscription'].includes(out.policy.status) && !isClosed()) await sendStatusReport(snap, api);
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         // The log is checked before anything leaves the machine; one that does not verify is never sent.
@@ -815,7 +834,7 @@ function makeTeamOps(ctx) {
           warn: eff.warn === true,
           warnReason: eff.warn ? printable(eff.warnReason, 200) || undefined : undefined,
           orgPending: eff.pending.length ? eff.pending : undefined,
-          orgPolicy: { version: st.version, state: st.state },
+          orgPolicy: Object.assign({ version: st.version, state: st.state }, inactiveSince(t) ? { subscription_inactive: true } : {}),
         });
       });
     },

@@ -146,6 +146,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Synchronous, local, never touches the network. Calling it is the opt-in: it always applies the check. The agent hooks apply two of the rules by default (a recursive delete of the home folder or the root, and a write to a disk device) and the rest only when you turn them on with `hooks.blockDestructiveCommands` or `ZN_BLOCK_DESTRUCTIVE=1` (see [Destructive commands](destructive-commands.md)).
 - Blocks only a few narrow shapes: recursive delete of the home folder or the root, a download piped to a shell, writes to a disk device, `chmod -R` or `chown -R` on the root or a system folder, a fork bomb, and a download written into a shell startup file. It reads the command text only: a path built at run time, or a script saved first and run later, is not seen.
 - Returns the shape of `evaluate`: `{ verdict, confidence, rule, reason, engine, rules_version }`, with `rule` such as `destructive:rm_root_home` or `destructive:pipe_to_shell` when blocked.
+- `command` must be a string. Anything else (`null`, `undefined`, a `Buffer`, a number, an array such as `['rm', '-rf', '/']`, an object, a boolean) is refused, not allowed: the verdict is `block` with `rule` `destructive:command_not_a_string`, because text that was never read cannot be called safe. It does not throw. Join an array into one string yourself before you call it. `check_command` in Python gives the same answer.
 
 ### `checkToolCall(toolName, args, options)`
 
@@ -263,8 +264,8 @@ except GuardBlockError as e:
 
 - Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Local, never touches the network. Calling it is the opt-in: it always applies the check. Same rules and same answers as `checkCommand` in Node.js for text input; the two differ only for input that is not text: Python raises `TypeError` and reads `bytes` as UTF-8, while Node.js `checkCommand` allows anything that is not a string (a number, `null`, an object) without reading it. See [Destructive commands](destructive-commands.md) for what it blocks and what it does not see.
 - Returns an `Assessment` with `rule` such as `destructive:rm_root_home` when blocked.
-- Input that is not text raises `TypeError` instead of being allowed unread: `bytes` are read as UTF-8, `None` is empty input and is allowed, any other type (a list, a dict, a number) raises. `evaluate` and the LlamaIndex `check_query` behave the same; `check_query` also reads the `query_str` of a LlamaIndex `QueryBundle`.
-- Shell code nested inside shell code (`sh -c "sh -c ..."`, `eval`, backticks) is read up to three levels deep; deeper code is refused with `destructive:too_many_commands` rather than skipped.
+- `command` must be a `str`. Anything else (`None`, `bytes`, `bytearray`, a number, a list such as `["rm", "-rf", "/"]`, a dict, a bool) is refused, not allowed: the verdict is `block` with `rule` `destructive:command_not_a_string`, because text that was never read cannot be called safe. It does not raise. Decode bytes and join a list into one string yourself before you call it.
+- `evaluate` and the LlamaIndex `check_query` read `bytes` as UTF-8 and raise `TypeError` for any other input that is not text (`None` is empty input and is allowed); `check_query` also reads the `query_str` of a LlamaIndex `QueryBundle`.
 
 ### `normalize_input(text: str) -> tuple[str, str]`
 

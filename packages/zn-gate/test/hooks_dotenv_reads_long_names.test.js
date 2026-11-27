@@ -271,3 +271,81 @@ test('dotenv counts as a runner only as the program or right after a launcher', 
     assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
   }
 });
+
+// The run exception covers only a .env that holds no secret value (PORT=1 above). When the file holds a secret or a dotenvx
+// encrypted value, every run is refused, so a child such as printenv or env cannot print it.
+test('dotenvx run with a child that prints the environment is refused when .env holds a secret or an encrypted value', async (t) => {
+  const bodies = [
+    'API_KEY=sk_test_fake_0000000000000000\n',
+    'DOTENV_PUBLIC_KEY="03fakefakefakefakefakefakefakefakefakefakefakefakefakefakefakefake"\nAPI_KEY="encrypted:BFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE=="\n',
+  ];
+  for (const body of bodies) {
+    const dir = project(t);
+    fs.writeFileSync(path.join(dir, '.env'), body);
+    for (const command of ['dotenvx run -f .env -- printenv', 'dotenvx run -f .env -- env', 'npx dotenvx run -f .env -- printenv API_KEY',
+      "dotenvx run -f .env -- node -e 'console.log(process.env)'", 'dotenvx run -f .env -- node app.js', 'dotenv -e .env -- printenv']) {
+      assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', body.slice(0, 20) + ' ' + command);
+    }
+  }
+});
+
+// The get refusal names the file the command named, also in a subfolder, never the whole command.
+test('the dotenvx get refusal names the file the command gave', async (t) => {
+  const dir = project(t);
+  fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config', '.env.production'), 'PORT=1\n');
+  for (const [command, file] of [['dotenvx get KEY -f .env', '.env'], ['dotenvx get -f config/.env.production', 'config/.env.production'],
+    ['dotenvx get KEY --env-file=.env', '.env']]) {
+    const res = await runner.handle(claude, cc(dir, 'Bash', { command }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+    const text = JSON.stringify(res.output || {});
+    assert.match(text, /secret-file:dotenv/, command);
+    assert.ok(text.includes('env shadow ' + file), command + ': ' + text.slice(0, 300));
+    assert.ok(text.includes('dotenvx run -f ' + file + ' --'), command);
+    assert.ok(!text.includes('shadow dotenvx'), command);
+  }
+});
+
+// dotenvx rewrites the file it names with set, encrypt, decrypt and its other subcommands, and get prints its decrypted values to the
+// agent; its -f value is a read only for run, which hands the values to the program it starts.
+test('a dotenvx subcommand other than run that names .env is refused', async (t) => {
+  const dir = project(t);
+  for (const command of ['dotenvx set X 1 --plain -f .env', 'dotenvx set X 1 -f .env', 'dotenvx encrypt -f .env', 'dotenvx decrypt -f .env',
+    'npx dotenvx set X 1 -f .env', 'dotenvx rotate -f .env', 'dotenvx keypair -f .env', 'dotenvx ext -f .env',
+    'dotenvx get KEY -f .env', 'dotenvx get -f .env', 'npx dotenvx get -f .env']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'deny', command);
+  }
+  for (const command of ['dotenvx run -f .env -- node app.js', 'npx dotenvx run -f .env -- node app.js',
+    'dotenv -e .env -- node app.js']) {
+    assert.equal(await verdict(claude, cc(dir, 'Bash', { command })), 'allow', command);
+  }
+});
+
+// dotenvx get is a read (it prints decrypted values), so its refusal speaks of reading secrets, not of writing .env: with a secret in
+// the file and with none. A value-taking global option before the subcommand (dotenvx --log-level debug run -f .env -- node app.js)
+// makes the word after it look like the subcommand, so that run is refused too: it fails closed, which is accepted.
+async function reasonOf(dir, command) {
+  const res = await runner.handle(claude, cc(dir, 'Bash', { command }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+  const o = res.output && res.output.hookSpecificOutput;
+  return o && o.permissionDecision === 'deny' ? String(o.permissionDecisionReason) : null;
+}
+
+test('a refused dotenvx get gives the read refusal, not the write one', async (t) => {
+  const bodies = ['PORT=1\n', 'API_KEY=sk_test_fake_0000000000000000\n'];
+  for (const body of bodies) {
+    const dir = project(t);
+    fs.writeFileSync(path.join(dir, '.env'), body);
+    for (const command of ['dotenvx get KEY -f .env', 'dotenvx get -f .env', 'npx dotenvx get --env-file=.env']) {
+      const reason = await reasonOf(dir, command);
+      assert.ok(reason, command);
+      assert.match(reason, /secret-file:dotenv/, command);
+      assert.doesNotMatch(reason, /cannot tell whether this command writes/, command);
+    }
+  }
+  const dir = project(t);
+  assert.match(await reasonOf(dir, 'dotenvx set X 1 -f .env'), /cannot tell whether this command writes/);
+});
+
+test('a value-taking dotenvx global option before run fails closed', async (t) => {
+  const dir = project(t);
+  assert.equal(await verdict(claude, cc(dir, 'Bash', { command: 'dotenvx --log-level debug run -f .env -- node app.js' })), 'deny');
+});

@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-25.5';
+const COMMAND_RULES_VERSION = '2026-11-27.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -40,14 +40,12 @@ const REASONS = {
 };
 
 const MAX_DEPTH = 3;
-// Shell code inside shell code (sh -c, eval, backticks) is read this deep; deeper is refused, not skipped.
-// Each level is read twice (the Windows and the POSIX reading of its quotes), so the work doubles with every level.
-// Same value in the Python port, which always runs every rule (Node's denial() can enable a subset).
-const MAX_SHELL_DEPTH = 3;
 // Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
 const MAX_SEGMENTS = 50000;
 const OVERFLOW = 'too_many_commands';
 const OVERFLOW_REASON = 'it has more commands than can be checked, so it is refused rather than guessed at';
+const NOT_A_STRING = 'command_not_a_string';
+const NOT_A_STRING_REASON = 'it is not text, so it cannot be checked and is refused rather than guessed at';
 const MAX_CHARS = 200 * 1024;
 const QUOTE_SCAN_MAX = 20000;
 
@@ -280,7 +278,6 @@ function rcFromCwd(cwd, word) {
 
 /* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read
    as commands, or '' when there is none. An escaped backtick inside one is a nested substitution. One pass over the text. */
-// Always returns a string: '' when there is none, also for an unmatched backtick (its body runs to the end of the text).
 function backtickCode(text) {
   const bodies = [];
   let quote = '';
@@ -740,9 +737,6 @@ function checkHead(args, depth, known, rc = 0) {
   if (code !== null && depth < MAX_DEPTH) {
     const hit = analyze(code, depth + 1, known, false, rc);
     if (hit) return hit;
-  } else if (code !== null && code.trim() && (ENABLED === null || ENABLED.size > 0)) {
-    // Shell code nested past the depth limit is refused, not skipped (as for env -S strings).
-    return OVERFLOW;
   }
 
   // Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
@@ -1025,13 +1019,11 @@ function checkSegments(segs, depth, cwd0 = null, rc = 0) {
     seg = segs1[0];
     // A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder is
     // still the one the line started in, the whole-line reading in analyze() has already covered it.
-    if (seg.raw && known !== cwd0 && depth < MAX_SHELL_DEPTH) {
+    if (seg.raw && known !== cwd0 && depth < MAX_DEPTH) {
       if (++ticks > MAX_TICK_READS) return OVERFLOW;
       const inner = backtickCode(seg.raw);
       const innerHit = inner ? analyze(inner, depth + 1, known, false, rc) : null;
       if (innerHit) return innerHit;
-    } else if (seg.raw && known !== cwd0 && backtickCode(seg.raw).trim() && (ENABLED === null || ENABLED.size > 0)) {
-      return OVERFLOW;
     }
     // The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
     if (seg.raw && known !== cwd0 && seg.raw.includes('$(') && seg.raw.includes('"')) {
@@ -1097,12 +1089,10 @@ function analyze(cmd, depth = 0, known = null, requoted = false, rc = 0) {
   const hit = checkSegments(segs, depth, known, rc);
   if (hit) return hit;
   // A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
-  if (depth < MAX_SHELL_DEPTH && text.includes('`')) {
+  if (depth < MAX_DEPTH && text.includes('`')) {
     const inner = backtickCode(text);
     const innerHit = inner ? analyze(inner, depth + 1, known, false, rc) : null;
     if (innerHit) return innerHit;
-  } else if (text.includes('`') && backtickCode(text).trim() && (ENABLED === null || ENABLED.size > 0)) {
-    return OVERFLOW;
   }
   // A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
   // -c inside it counts as it does anywhere else; the text shrinks with every step, and the quote rewriting above is capped).
@@ -1136,13 +1126,14 @@ function analyze(cmd, depth = 0, known = null, requoted = false, rc = 0) {
  * Returns the same shape as evaluate(): { verdict: 'allow' | 'block', confidence, rule, reason, engine, rules_version }.
  */
 function checkCommand(command) {
-  const hit = typeof command === 'string' ? analyze(command, 0) : null;
+  // A command that is not text (null, a Buffer, a number, an array...) was never read, so it is refused, not allowed.
+  const hit = typeof command === 'string' ? analyze(command, 0) : NOT_A_STRING;
   if (!hit) return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: COMMAND_RULES_VERSION };
   return {
     verdict: 'block',
     confidence: 0.95,
     rule: 'destructive:' + hit,
-    reason: 'Destructive command: ' + (REASONS[hit] || OVERFLOW_REASON),
+    reason: 'Destructive command: ' + (hit === NOT_A_STRING ? NOT_A_STRING_REASON : REASONS[hit] || OVERFLOW_REASON),
     engine: 'oss-local',
     rules_version: COMMAND_RULES_VERSION,
   };
@@ -1163,4 +1154,4 @@ function denial(command, rules) {
 /** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */
 const DEFAULT_RULES = ['rm_root_home', 'disk_overwrite'];
 
-module.exports = { checkCommand, denial, backtickCode, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };
+module.exports = { checkCommand, denial, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };

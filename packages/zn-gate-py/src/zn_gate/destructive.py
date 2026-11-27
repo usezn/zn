@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-25.5"
+COMMAND_RULES_VERSION = "2026-11-27.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -40,16 +40,12 @@ _REASONS = {
 }
 
 _MAX_DEPTH = 3
-# Shell code inside shell code (sh -c, eval, backticks) is read this deep; deeper is refused, not skipped.
-# Each level is read twice (the Windows and the POSIX reading of its quotes), so the work doubles with every level:
-# near the shell scan cap three levels take about two seconds, four about four, eight about a minute. Same value in Node.
-# check_command has no rule subset (Node's denial() can enable only some rules), so every rule always runs and the
-# overflow returns below need no guard like Node's ENABLED check.
-_MAX_SHELL_DEPTH = 3
 # Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
 _MAX_SEGMENTS = 50000
 _OVERFLOW = "too_many_commands"
 _OVERFLOW_REASON = "it has more commands than can be checked, so it is refused rather than guessed at"
+_NOT_A_STRING = "command_not_a_string"
+_NOT_A_STRING_REASON = "it is not text, so it cannot be checked and is refused rather than guessed at"
 _MAX_CHARS = 200 * 1024
 _QUOTE_SCAN_MAX = 20000
 _A = re.ASCII
@@ -832,7 +828,6 @@ def _dq_subst_bodies(text: str) -> Optional[List[str]]:
     return None if state["deep"] else bodies
 
 
-# Always returns a str: "" when there is none, also for an unmatched backtick (its body runs to the end of the text).
 def _backtick_code(text: str) -> str:
     """The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be
     read as commands, or "" when there is none. An escaped backtick inside one is a nested substitution."""
@@ -1439,9 +1434,6 @@ def _check_head(args: List[str], depth: int, known: Any, rc: int = 0) -> Optiona
         hit = _analyze(code, depth + 1, known, rc=rc)
         if hit:
             return hit
-    elif code is not None and code.strip():
-        # Shell code nested past the depth limit is refused, not skipped (as for env -S strings).
-        return _OVERFLOW
 
     # Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
     kind = _interpreter_kind(head)
@@ -1803,7 +1795,7 @@ def _check_segments(
                 return hit
         # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
         # is still the one the line started in, the whole-line reading in _analyze() has already covered it.
-        if raws and raws[idx] and known is not cwd0 and depth < _MAX_SHELL_DEPTH:
+        if raws and raws[idx] and known is not cwd0 and depth < _MAX_DEPTH:
             ticks += 1
             if ticks > _MAX_TICK_READS:
                 return _OVERFLOW
@@ -1811,8 +1803,6 @@ def _check_segments(
             inner_hit = _analyze(inner, depth + 1, known, rc=rc) if inner else None
             if inner_hit:
                 return inner_hit
-        elif raws and raws[idx] and known is not cwd0 and _backtick_code(raws[idx]).strip():
-            return _OVERFLOW
         # The same for a $( ) inside a double-quoted string: read at the same level, from the folder the line has reached.
         if raws and raws[idx] and known is not cwd0 and "$(" in raws[idx] and '"' in raws[idx]:
             bodies = _dq_subst_bodies(raws[idx])
@@ -1892,13 +1882,11 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
     if hit:
         return hit
     # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
-    if depth < _MAX_SHELL_DEPTH and "`" in text:
+    if depth < _MAX_DEPTH and "`" in text:
         inner = _backtick_code(text)
         inner_hit = _analyze(inner, depth + 1, known, rc=rc) if inner else None
         if inner_hit:
             return inner_hit
-    elif "`" in text and _backtick_code(text).strip():
-        return _OVERFLOW
     # A $( ) inside a double-quoted string runs too (echo "$(...)"): its text is read as commands, at the same level (a shell
     # -c inside it counts as it does anywhere else; the text shrinks with every step, and the quote rewriting above is capped).
     if "$(" in text and '"' in text:
@@ -1932,15 +1920,21 @@ def check_command(command: str) -> Assessment:
     Returns an Assessment: verdict 'block' with rule 'destructive:<name>' for one of the narrow shapes
     listed in this module's docstring, else 'allow'.
     """
-    from .rules import text_input
-    command = text_input(command, "check_command()")
-    hit = _analyze(command, 0) if isinstance(command, str) else None
+    # A command that is not text (None, bytes, a number, a list...) was never read, so it is refused, not allowed.
+    # The real type decides, never isinstance(), which asks the object for __class__ (a spoofed one passes as str).
+    # A subclass of str is read through its built-in storage, so no code of its own runs.
+    if type(command) is str:
+        hit = _analyze(command, 0)
+    elif issubclass(type(command), str):
+        hit = _analyze(str.__str__(command), 0)
+    else:
+        hit = _NOT_A_STRING
     if not hit:
         return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, rules_version=COMMAND_RULES_VERSION)
     return Assessment(
         verdict="block",
         confidence=0.95,
         rule="destructive:" + hit,
-        reason="Destructive command: " + (_REASONS.get(hit) or _OVERFLOW_REASON),
+        reason="Destructive command: " + (_NOT_A_STRING_REASON if hit == _NOT_A_STRING else _REASONS.get(hit) or _OVERFLOW_REASON),
         rules_version=COMMAND_RULES_VERSION,
     )
