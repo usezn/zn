@@ -60,12 +60,33 @@ const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'ls
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
+// Config files that did not parse during this process (see lib/user-config.js); handle() tells the user about them.
+const configProblems = new Map();
+
 function readConfigIn(dir) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) || {};
-  } catch (_) {
-    return {};
+  const res = require('../user-config').readConfigFile(dir);
+  if (res.problem) configProblems.set(res.problem.file, res.problem);
+  return res.config;
+}
+
+/* A line for the user about an invalid config.json, once per version of the file (a marker next to it); null when none. */
+function takeConfigProblemNote() {
+  if (!configProblems.size) return null;
+  const uc = require('../user-config');
+  const lines = [];
+  for (const p of configProblems.values()) {
+    const dir = path.dirname(p.file);
+    const marker = path.join(dir, '.config-warned');
+    let sig = '';
+    try { const st = fs.statSync(p.file); sig = st.size + ':' + st.mtimeMs; } catch (_) { /* gone */ }
+    let seen = null;
+    try { seen = fs.readFileSync(marker, 'utf8'); } catch (_) { /* never warned */ }
+    if (seen === p.file + '|' + sig) continue;
+    lines.push(uc.problemText(p));
+    try { fs.writeFileSync(marker, p.file + '|' + sig); } catch (_) { /* warns again next time */ }
   }
+  configProblems.clear();
+  return lines.length ? lines.join(' ') : null;
 }
 
 /*
@@ -2379,6 +2400,8 @@ async function handle(adapter, rawEvent, opts = {}) {
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
+  const configNote = takeConfigProblemNote();
+  if (configNote && decision) decision.userMessage = decision.userMessage ? decision.userMessage + ' ' + configNote : configNote;
   // An event zn cannot read on a hook that can block is refused by the caller (exit code and answer of the agent).
   const output = decision.refuseText ? null : adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts, latencyMs);
@@ -3007,7 +3030,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES, applyHunks };
+module.exports = { _takeConfigProblemNote: takeConfigProblemNote, readConfig, handle, main, failDecision, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop, hasPrivateKey, VAULT_CLIENT_FILES, applyHunks };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

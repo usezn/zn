@@ -183,7 +183,9 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
+If `~/.zn/config.json` is not valid JSON (a comment, a trailing comma, a byte order mark, truncated text), `check` names the file and the parse error and exits `1`. Until you fix it, the hooks use the defaults for that file, keep on any of `strict`, `blockDestructiveCommands`, `checkToolOutputInstructions` and `replaceToolOutputOnSecret` that its text sets to `true`, and tell you once in the message your agent shows you.
+
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, none is set up, or a settings file is invalid. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--verbose`) exits with `2`, names it and lists the options that `check` takes (`--hooks` and `--json`).
 
 ```bash
 zn-gate check --hooks

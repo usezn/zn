@@ -1,0 +1,2 @@
+### Security
+- An invalid `~/.zn/config.json` (a comment, a trailing comma, a byte order mark, truncated JSON) no longer silently turns off opt-in protections such as `blockDestructiveCommands` and `strict`. The hooks now tell you once, in the message the agent shows you, which file is broken and where; protections the text switches on stay on; and `zn-gate check` and `zn-gate doctor` fail until the file is fixed.

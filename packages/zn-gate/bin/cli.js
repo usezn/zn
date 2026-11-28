@@ -1645,6 +1645,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
       const data = await zc.check({});
       let rulesErrors = [];
       try { rulesErrors = require('../lib/rules').loadCustomConfig(true).errors.map(String); } catch (_) { /* never fails on the rules file */ }
+      try { rulesErrors = rulesErrors.concat(require('../lib/user-config').invalidConfigs().map((p) => p.file + ': ' + p.error)); } catch (_) { /* never fails on the settings file */ }
       const out = zc.toJson(data, { version: require('../package.json').version, rulesErrors });
       process.stdout.write(JSON.stringify(out, null, 2) + '\n');
       process.exitCode = out.exit_code;
@@ -1661,6 +1662,13 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
         process.exitCode = 1;
       }
     } catch (_) { /* the check never fails on the rules file */ }
+    try {
+      const bad = require('../lib/user-config').invalidConfigs();
+      for (const p of bad) {
+        process.stdout.write('Settings file: ' + p.file + ' is not valid JSON (' + p.error + '), so zn-gate uses its defaults for it' + (p.kept.length ? ' plus ' + p.kept.join(', ') + ' (switched on in the text)' : '') + '. Fix or delete the file.\n\n');
+        process.exitCode = 1;
+      }
+    } catch (_) { /* the check never fails on the settings file */ }
     try {
       // One line on hook health from the same helper as `check --hooks`; it never changes the exit code.
       const hl = require('../lib/hooks-list');
