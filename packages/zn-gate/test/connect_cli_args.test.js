@@ -72,6 +72,14 @@ test('connect refuses a key given as an argument and does not echo it', async ()
   }
 });
 
+test('connect without a terminal explains what a terminal is and why a pipe does not work', async () => {
+  const messages = require('../lib/messages');
+  const text = messages.connectNeedsTerminal('zn-gate connect');
+  assert.match(text, /^zn-gate connect needs an interactive terminal\. /);
+  assert.match(text, /A terminal is the window where you type commands/);
+  assert.match(text, /cannot take the key from a pipe, a script, an environment variable or a file/);
+});
+
 test('connect without a person at the terminal stops with the terminal message', async () => {
   const h = harness({ human: false });
   const code = await connectCli.connect([], h.io);

@@ -1,0 +1,2 @@
+### Changed
+- `zn-gate connect` now says in plain words what to do when the key cannot be stored (two steps, using the command that works on your computer) and, without a terminal, what a terminal is and why the key cannot be piped in. `zn-gate test` explains what it checks and ends with a plain summary, and `zn-gate test "<text>"` now checks that text (exit `1` if it is blocked) instead of ignoring it.

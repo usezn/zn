@@ -78,11 +78,11 @@ test('self-test with dead proxies and ZN_LOCAL_ONLY exits 0 and passes every vec
   const { r } = await runSelfTest();
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /FAILED/);
-  const m = r.stdout.match(/Summary\s+: (\d+)\/(\d+) vectors passed \(100\.0%\)/);
+  const m = r.stdout.match(/Examples passed\s+: (\d+) of (\d+) \(100\.0%\)/);
   assert.ok(m, r.stdout);
   assert.equal(m[1], m[2]);
   assert.match(r.stdout, /ALL TESTS PASSED \(100%\)/);
-  assert.match(r.stdout, /never uses the network/);
+  assert.match(r.stdout, /sends nothing to the internet/);
 });
 
 test('self-test with dead proxies opens no connection and resolves no name', async () => {

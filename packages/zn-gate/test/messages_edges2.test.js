@@ -51,15 +51,16 @@ test('invalidDuration quotes empty, blank and odd values as given', () => {
 test('connectNoStore puts the command in the next step', () => {
   const out = m.connectNoStore('zn unlock');
   const lines = out.split('\n');
-  assert.equal(lines.length, 2);
-  assert.match(lines[0], /never in a plain file/);
-  assert.equal(lines[1], 'Next step: run `zn unlock` (it asks you for a passphrase), then run `zn-gate connect` again.');
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /never writes the key to a plain file/);
+  assert.equal(lines[1], 'Step 1: run `zn unlock` and choose a passphrase.');
+  assert.equal(lines[2], 'Step 2: run `zn-gate connect` again and paste your key.');
 });
 
 test('connectNoStore with empty, missing and npx-style commands', () => {
-  assert.match(m.connectNoStore(''), /Next step: run `` \(it asks/);
-  assert.match(m.connectNoStore(undefined), /Next step: run `undefined` \(it asks/);
-  assert.match(m.connectNoStore('npx example-zn unlock'), /run `npx example-zn unlock` \(it asks/);
+  assert.match(m.connectNoStore(''), /Step 1: run `` and choose/);
+  assert.match(m.connectNoStore(undefined), /Step 1: run `undefined` and choose/);
+  assert.match(m.connectNoStore('npx example-zn unlock'), /run `npx example-zn unlock` and choose/);
 });
 
 test('connectNoStore text is the same apart from the command', () => {

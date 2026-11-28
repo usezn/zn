@@ -231,10 +231,18 @@ function revokeNotReached(detail, shownKey, dashboard, env) {
   return d + ' Key ' + shownKey + ' was not revoked. Revoke it at ' + dashboard + '.';
 }
 
-function connectNoStore(unlockCmd) {
-  return 'zn-gate keeps the key only in your system keychain or the zn vault, never in a plain file. ' +
-    'This computer has no system keychain and the vault is locked, so nothing was saved.\n' +
-    'Next step: run `' + unlockCmd + '` (it asks you for a passphrase), then run `zn-gate connect` again.';
+function connectNoStore(unlockCmd, connectCmd = 'zn-gate connect') {
+  return 'Your key was not saved. This computer has no system password store (keychain), and the zn vault is locked. ' +
+    'zn-gate never writes the key to a plain file.\n' +
+    'Step 1: run `' + unlockCmd + '` and choose a passphrase.\n' +
+    'Step 2: run `' + connectCmd + '` again and paste your key.';
+}
+
+/* connect needs a person typing at a terminal: the key goes in at a hidden prompt, never through a pipe, a script, a variable or a file. */
+function connectNeedsTerminal(what) {
+  return notInteractive(what) + ' A terminal is the window where you type commands (Terminal on macOS, PowerShell or Windows Terminal on Windows). ' +
+    'It asks you to paste your key at a hidden prompt, so it cannot take the key from a pipe, a script, an environment variable or a file. ' +
+    'That is on purpose: the key never lands in your shell history or in a log.';
 }
 
 /* The environment of this terminal could change how the key travels, so it is not sent.
@@ -388,7 +396,7 @@ function teamJoinFailed(why) {
 
 module.exports = {
   UNREADABLE_FILE_ADDRESS, UNREADABLE_MCP_ARGUMENTS, TOO_DEEP_ACTION,
-  agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable, clipboardTimedOut,
+  agentNote, agentRefusal, notInteractive, connectNeedsTerminal, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable, clipboardTimedOut,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,
   keychainProblem, secretToolMissing, powershellMissing, keychainHelperFailed, keychainLostKey,

@@ -145,7 +145,8 @@ async function connect(args, io) {
     return 2;
   }
   try { c.tty.requireHuman('zn-gate connect', c.ttyIo); } catch (e) {
-    c.err(String(e.message) + '\n');
+    const msg = String(e.message);
+    c.err((msg === messages.notInteractive('zn-gate connect') ? messages.connectNeedsTerminal('zn-gate connect') : msg) + '\n');
     return 1;
   }
   const marker = cloudKey.readMarker();
@@ -155,7 +156,7 @@ async function connect(args, io) {
     return 0;
   }
   const store = await cloudKey.availableStore(c.deps);
-  if (!store) { c.err(messages.connectNoStore(znCommand('unlock')) + '\n'); return 1; }
+  if (!store) { c.err(messages.connectNoStore(znCommand('unlock'), znCommand('connect')) + '\n'); return 1; }
 
   c.out('zn-gate connect (optional)\n\n'
     + 'Right now zn-gate runs entirely on your computer and sends nothing.\n'
@@ -198,7 +199,7 @@ async function connect(args, io) {
 
   let where;
   try { where = await cloudKey.saveKey(key, c.deps); } catch (e) {
-    if (e instanceof cloudKey.NoSecureStore || (e && e.code === 'ZN_NO_SECURE_STORE')) { c.err(messages.connectNoStore(znCommand('unlock')) + '\n'); return 1; }
+    if (e instanceof cloudKey.NoSecureStore || (e && e.code === 'ZN_NO_SECURE_STORE')) { c.err(messages.connectNoStore(znCommand('unlock'), znCommand('connect')) + '\n'); return 1; }
     c.err(messages.connectSaveFailed(scrub(e && e.message, key)) + '\n');
     return 1;
   }

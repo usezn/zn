@@ -361,9 +361,9 @@ test('without a keychain or an unlocked vault nothing is stored, ZN_API_KEY is e
     const h = harness({ key, deps });
     assert.equal(await connectCli.connect([], h.io), 1);
     // Errors go to stderr, in plain words with one next step, and no setting names.
-    assert.equal(h.out.join('').includes('keeps the key only'), false);
-    assert.match(h.err.join(''), /keeps the key only in your system keychain or the zn vault, never in a plain file/);
-    assert.match(h.err.join(''), winRe(/run `(?:zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` \(it asks you for a passphrase\), then run `zn-gate connect` again/));
+    assert.equal(h.out.join('').includes('Your key was not saved'), false);
+    assert.match(h.err.join(''), /Your key was not saved..*never writes the key to a plain file/);
+    assert.match(h.err.join(''), winRe(/Step 1: run `(?:zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` and choose a passphrase\.\nStep 2: run `(?:zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) connect` again and paste your key/));
     assert.doesNotMatch(h.err.join(''), /ZN_API_KEY|ZN_CLOUD/);
     assert.equal(h.t.calls.hidden.length, 0, 'asked for a key it cannot keep');
     assert.equal(h.h.calls.length, 0);

@@ -448,11 +448,30 @@ Learn more & documentation at https://usezn.com | GitHub: https://github.com/use
 `);
 }
 
+// zn-gate test "<text>": check one piece of text with the local rules and say the verdict in plain words.
+// Exit 1 when the text is blocked, 0 otherwise (the same as the Python package).
+function runTextTest(text, options) {
+  const result = analyzeLocal(text, options);
+  const blocked = isBlockVerdict(result.verdict);
+  if (blocked) {
+    process.stdout.write(`Blocked: zn would stop this text.\nRule:   ${result.rule}\nReason: ${result.reason || 'no reason given'}\n`);
+  } else if (result.advisory) {
+    process.stdout.write(`Allowed with a warning: zn would let this text through but flag it.\nReason: ${result.advisory.reason}\n`);
+  } else {
+    process.stdout.write('Allowed: zn would let this text through.\n');
+  }
+  process.stdout.write('Checked on this computer with the built-in rules (' + RULES_VERSION + '). Nothing was sent to the internet.\n');
+  process.exitCode = blocked ? 1 : 0;
+}
+
 async function runTestSuite(options) {
+  const nAttacks = TEST_VECTORS.filter(v => v.type === 'attack').length;
+  const nBenign = TEST_VECTORS.filter(v => v.type === 'benign').length;
   process.stdout.write(`
-${sym(process.env, '🛡️', undefined, '  ')}Running zn-gate v${VERSION} Self-Test Suite
-Engine: Local rules (the self-test never uses the network) | Rules: ${RULES_VERSION}
-Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v => v.type === 'attack').length} attacks + ${TEST_VECTORS.filter(v => v.type === 'benign').length} benign developer scenarios)...\n
+${sym(process.env, '🛡️', undefined, '  ')}zn-gate v${VERSION} self-test
+This checks ${TEST_VECTORS.length} built-in examples: ${nAttacks} attacks that should be stopped and ${nBenign} ordinary coding requests that should be allowed.
+It runs on this computer with the built-in rules (${RULES_VERSION}) and sends nothing to the internet.
+To check your own text, run: zn-gate test "your text"\n
 `);
 
   let passed = 0;
@@ -493,11 +512,14 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
   const avgMs = (Number(totalTimeNs / BigInt(TEST_VECTORS.length)) / 1e6).toFixed(3);
   process.stdout.write(`
 ${ruleLine(process.env, 77)}
-Summary         : ${passed}/${TEST_VECTORS.length} vectors passed (${((passed / TEST_VECTORS.length) * 100).toFixed(1)}%)
-False Positives : ${falsePositives} of ${TEST_VECTORS.filter(v => v.type === 'benign').length} curated benign vectors (not a general false-positive rate)
-Average Latency : ${avgMs} ms per decision
-Status          : ${failed === 0 ? col.green('ALL TESTS PASSED (100%)') : col.red('FAILURES DETECTED')}
-${ruleLine(process.env, 77)}\n
+Examples passed         : ${passed} of ${TEST_VECTORS.length} (${((passed / TEST_VECTORS.length) * 100).toFixed(1)}%)
+Ordinary requests blocked : ${falsePositives} of ${nBenign} (these ${nBenign} examples are a smoke test, not a general false-positive rate)
+Average time per check  : ${avgMs} ms
+Status                  : ${failed === 0 ? col.green('ALL TESTS PASSED (100%)') : col.red('FAILURES DETECTED')}
+${ruleLine(process.env, 77)}
+${failed === 0
+    ? `Self-test passed: zn stopped all ${nAttacks} test attacks and allowed all ${nBenign} ordinary coding requests. Nothing was sent to the internet.`
+    : `Self-test failed: ${failed} of ${TEST_VECTORS.length} examples did not behave as expected. Run zn-gate check to see whether your setup is affected.`}\n
 `);
 
   if (failed > 0) {
@@ -1632,6 +1654,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'test') {
+    const text = args.slice(1).filter((a) => !a.startsWith('-')).join(' ');
+    if (text.trim()) { runTextTest(text, options); return; }
     await runTestSuite(options);
     return;
   }

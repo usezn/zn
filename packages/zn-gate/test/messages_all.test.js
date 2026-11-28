@@ -106,8 +106,10 @@ test('revokeNotReached covers network, server and local refusals', () => {
 
 test('connectNoStore gives the unlock command as the next step', () => {
   const text = m.connectNoStore('zn unlock --backend passphrase');
-  assert.ok(text.includes('never in a plain file'));
-  assert.ok(text.includes('nothing was saved.\nNext step: run `zn unlock --backend passphrase` (it asks you for a passphrase), then run `zn-gate connect` again.'));
+  assert.ok(text.includes('never writes the key to a plain file'));
+  assert.ok(text.includes('Your key was not saved.'));
+  assert.ok(text.includes('Step 1: run `zn unlock --backend passphrase` and choose a passphrase.\nStep 2: run `zn-gate connect` again and paste your key.'));
+  assert.ok(m.connectNoStore('U', 'npx -y zn-gate@9.9.9 connect').includes('Step 2: run `npx -y zn-gate@9.9.9 connect` again'));
 });
 
 test('disconnect messages', () => {

@@ -209,9 +209,10 @@ Shows the version, the rules version, whether the optional cloud check is on and
 
 ```bash
 zn-gate test
+zn-gate test "<text>"
 ```
 
-Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed.
+Without text, it runs the local self-test on built-in examples (attacks and ordinary developer text) and ends with a plain sentence such as `Self-test passed: zn stopped all 26 test attacks and allowed all 25 ordinary coding requests.` With a text, it checks only that text with the built-in rules and says in plain words whether zn would block it, allow it with a warning, or allow it. Neither form uses the network. Exit codes: without text, `0` all examples passed and `1` at least one failed; with text, `0` the text was allowed and `1` it was blocked.
 
 ### `version`
 
@@ -231,7 +232,7 @@ Turns on the optional cloud check. It opens usezn.com/connect in your browser, w
 
 If you are already connected, it says so and changes nothing. `--reconnect` replaces the saved key.
 
-Problems are printed on the error output, in plain words with one next step. If usezn.com cannot be reached (no internet connection) or is not answering, nothing is saved and the message tells you to check your connection or try again in a few minutes. If a setting of your terminal could change how the key travels (for example `NODE_OPTIONS`), the message names it and says how to remove it. If the computer has no system keychain and the vault is locked, the message tells you to run `unlock` first and then `connect` again.
+Problems are printed on the error output, in plain words with one next step. If usezn.com cannot be reached (no internet connection) or is not answering, nothing is saved and the message tells you to check your connection or try again in a few minutes. If a setting of your terminal could change how the key travels (for example `NODE_OPTIONS`), the message names it and says how to remove it. If the computer has no system keychain and the vault is locked, the message says the key was not saved and gives two steps: run `unlock` and choose a passphrase, then run `connect` again. Without a terminal (for example when the command is piped or run from a script), the message says what a terminal is and that the key cannot be read from a pipe, a script, an environment variable or a file; run `connect` in a terminal window instead.
 
 Exit codes: `0` connected (or already connected), `1` nothing was saved (you said no, cancelled, the key was not accepted, the key could not be checked or stored, or there is no terminal), `2` the command was used wrongly (an option it does not know, or the key on the command line).
 
