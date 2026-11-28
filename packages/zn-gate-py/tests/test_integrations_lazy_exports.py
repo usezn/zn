@@ -19,6 +19,11 @@ def test_unknown_attribute_is_reported_missing_by_hasattr():
     assert not hasattr(integrations, "no_such_adapter")
 
 
+def test_unknown_dunder_name_raises_the_same_error():
+    with pytest.raises(AttributeError, match=re.escape("module 'zn_gate.integrations' has no attribute '__no_such__'")):
+        _ = integrations.__no_such__
+
+
 def test_dir_lists_every_public_lazy_name():
     listed = dir(integrations)
     for name in integrations.__all__:
@@ -37,3 +42,10 @@ def test_dir_is_sorted_and_has_no_duplicates_before_and_after_first_use():
     assert after == sorted(set(after))
     # Loading an adapter also sets its submodule as an attribute, so the new list may only add names.
     assert set(before) <= set(after)
+
+
+def test_lazy_attribute_is_cached_after_first_use():
+    first = integrations.promptfoo_provider
+    assert vars(integrations)["promptfoo_provider"] is first
+    assert integrations.promptfoo_provider is first
+    assert integrations.call_api is integrations.promptfoo_provider
