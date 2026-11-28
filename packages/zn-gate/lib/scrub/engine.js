@@ -50,7 +50,7 @@ const { cliName } = require('../zn-command');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
-const { invisibleView, stopAtLineBreak } = require('../rules');
+const { invisibleView } = require('../rules');
 // normalize.js is loaded on first use. A text with no candidate (a %XX, '' or "") has no decoded view, which is what
 // normalisedView returns for it, so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE
 // in normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
@@ -213,17 +213,11 @@ function scan(text, ctx) {
   if (!view && !norm) return direct;
   let all = direct;
   if (view) {
-    all = all.concat(scanText(view.clean, c).map((s) => {
-      const sp = cutAtOwnSecret({
-        ...s,
-        start: view.map[s.start],
-        end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
-      }, direct, text);
-      // A span that joins lines stops at a line break when the text before it is a span of the same type on its own
-      // (see stopAtLineBreak in rules.js).
-      const whole = (a, b) => scanText(text.slice(a, b), c).some((x) => x.type === sp.type && x.start === 0 && x.end === b - a);
-      return sp.end > sp.start ? { ...sp, end: stopAtLineBreak(text, sp.start, sp.end, whole) } : sp;
-    }));
+    all = all.concat(scanText(view.clean, c).map((s) => cutAtOwnSecret({
+      ...s,
+      start: view.map[s.start],
+      end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
+    }, direct, text)));
   }
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a
   // span covers the whole original word or encoded value.

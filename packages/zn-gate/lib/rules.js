@@ -1385,31 +1385,6 @@ function spacedView(text) {
   return spacedMemo.spaced;
 }
 
-// A key that a match joins across line breaks stops at the last line break only when all of these hold: the match
-// ends inside a word of the last line (the next character continues that word, as in "run-deploy"), the part of
-// that line it took holds no digit and no upper-case letter, and the text before the break is a whole match of the
-// same rule on its own (isWhole). So a key that needs its last line to be a key is always redacted whole, and only
-// a plain word after a complete key stays in the text. Returns the new end (see _stop_at_line_break in rules.py).
-function stopAtLineBreak(text, start, end, isWhole) {
-  let last = end - 1;
-  while (last >= start && text.charCodeAt(last) !== 10) last--;
-  if (last < start) return end;
-  if (end >= text.length || !/[A-Za-z0-9_-]/.test(text[end])) return end;
-  const tail = text.slice(last + 1, end);
-  if (/[0-9A-Z]/.test(tail)) return end;
-  let cut = last;
-  while (cut > start && (text[cut - 1] === '\r' || text[cut - 1] === ' ' || text[cut - 1] === '\t')) cut--;
-  if (cut <= start || !isWhole(start, cut)) return end;
-  return cut;
-}
-
-// isWhole for stopAtLineBreak: the rule's pattern matches all of text[a, b) on its own.
-function wholeMatch(pattern, text, a, b) {
-  const re = new RegExp(pattern.source, pattern.flags.replace('g', '') + 'y');
-  const m = re.exec(text.slice(a, b));
-  return m !== null && m[0].length === b - a;
-}
-
 // True when the rules of the shared table and the provider formats redact all of text[pos, end) as secrets of
 // their own, value filters included (one secret after another, only whitespace between them). It reads a little past
 // `end`, where the last one may run on (see _secrets_cover in rules.py).
@@ -1521,7 +1496,6 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
           const cut = wrapCut(text, start, end, patterns);
           if (cut >= 0) end = cut;
         }
-        end = stopAtLineBreak(text, start, end, (a, b) => wholeMatch(item.pattern, text, a, b));
       }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
@@ -2099,7 +2073,6 @@ module.exports = {
   MIN_INVISIBLE_CHECK_CHARS,
   normalizeInput,
   invisibleView,
-  stopAtLineBreak,
   scanWindows,
   truncatedBlocks,
   MAX_SCAN_CHARS,

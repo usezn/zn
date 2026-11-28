@@ -1736,8 +1736,7 @@ SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:twilio_auth_token", _rc(r'((?<![A-Za-z0-9])(?:twilio_)?auth_token["\']?[ \t]*[=:][ \t]*["\']?)([0-9a-f]{32})' + _ALNUM_A, re.IGNORECASE | re.ASCII), r'\1[REDACTED_TWILIO_AUTH_TOKEN]'),
     # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Same
     # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
-    # and the Helicone, sp-, cp- and similar forms stay with the shared rule above. An sk- run in the last part of a
-    # JWT belongs to the JWT, which a later rule redacts whole (see _not_in_jwt_signature).
+    # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
     ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
     # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
     ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
@@ -1763,22 +1762,8 @@ def _aws_secret_context(text: str, start: int, end: int) -> bool:
     return _AWS_WORDS_RE.search(window) is not None and _SECRET_WORD_RE.search(window) is not None
 
 
-_TOKEN_OR_DOT = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.')
-_JWT_HEAD_RE = _rc(r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*')
-
-
-def _not_in_jwt_signature(text: str, start: int, end: int) -> bool:
-    """False when the match starts in the signature of a JWT (header.payload. right before it, in one token)."""
-    i = start
-    floor = max(0, start - 16384)
-    while i > floor and text[i - 1] in _TOKEN_OR_DOT:
-        i -= 1
-    return _JWT_HEAD_RE.fullmatch(text, i, start) is None
-
-
 PROVIDER_CONTEXT_CHECKS: Dict[str, Any] = {
     "secret:aws_secret_key#scrub": _aws_secret_context,
-    "secret:openai_key#scrub": _not_in_jwt_signature,
 }
 PROVIDER_MATCH_CHECKS.update({
     "secret:openai_key#scrub": _openai_scrub_body,
@@ -2058,31 +2043,6 @@ def _starts_secret_at(text: str, start: int, limit: int,
     return False
 
 
-def _stop_at_line_break(text: str, start: int, end: int, pattern: re.Pattern[str]) -> int:
-    """A key that a match joins across line breaks stops at the last line break only when all of these hold: the
-    match ends inside a word of the last line (the next character continues that word, as in "run-deploy"), the
-    part of that line it took holds no digit and no upper-case letter, and the text before the break is a whole
-    match of the same pattern on its own. So a key that needs its last line to be a key is always redacted whole,
-    and only a plain word after a complete key stays in the text. Returns the new end (see stopAtLineBreak in
-    rules.js)."""
-    last = text.rfind('\n', start, end)
-    if last == -1:
-        return end
-    if end >= len(text) or re.match('[A-Za-z0-9_-]', text[end]) is None:
-        return end
-    if re.search('[0-9A-Z]', text[last + 1:end]):
-        return end
-    cut = last
-    while cut > start and text[cut - 1] in '\r \t':
-        cut -= 1
-    if cut <= start:
-        return end
-    whole = pattern.match(text[start:cut])
-    if whole is None or whole.end() != cut - start:
-        return end
-    return cut
-
-
 def _secrets_cover(text: str, pos: int, end: int,
                    patterns: List[Tuple[str, re.Pattern[str], str]]) -> bool:
     """True when the rules of `patterns` redact all of text[pos:end] as secrets of their own, value filters included
@@ -2223,7 +2183,6 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     cut = _wrap_cut(text, start, end, patterns)
                     if cut is not None:
                         end = cut
-                end = _stop_at_line_break(text, start, end, pattern)
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 
