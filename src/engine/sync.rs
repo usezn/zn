@@ -551,4 +551,16 @@ mod tests {
         drop(listener);
         assert!(ConfigSync::fetch_remote_config(&url, "k").await.is_err());
     }
+    #[tokio::test]
+    async fn fetch_remote_config_rejects_an_untrusted_certificate() {
+        let probe = crate::tls::untrusted_server::spawn();
+        let err = ConfigSync::fetch_remote_config(&probe.url, "api-key-for-test")
+            .await
+            .expect_err("a self-signed certificate must be rejected");
+        assert!(
+            crate::tls::untrusted_server::is_certificate_error(err.root_cause()),
+            "{err:?}"
+        );
+        probe.assert_nothing_received();
+    }
 }

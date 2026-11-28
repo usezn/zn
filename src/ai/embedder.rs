@@ -226,12 +226,7 @@ fn ensure_model_from(
                     .enable_all()
                     .build()?;
                 rt.block_on(async {
-                    let client = reqwest::Client::builder()
-                        .user_agent("zn-gate")
-                        .connect_timeout(Duration::from_secs(20))
-                        .read_timeout(Duration::from_secs(60))
-                        .timeout(Duration::from_secs(1800))
-                        .build()?;
+                    let client = download_client()?;
                     for (url, name, sha) in &jobs {
                         download_file(&client, url, dir, name, sha).await?;
                     }
@@ -242,6 +237,16 @@ fn ensure_model_from(
             .map_err(|_| E::msg("model download thread panicked"))?
     })?;
     Ok(dir.to_path_buf())
+}
+
+/// The HTTP client used for model downloads.
+fn download_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent("zn-gate")
+        .connect_timeout(Duration::from_secs(20))
+        .read_timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(1800))
+        .build()
 }
 
 /// Download `url` into a temp file inside `dir`, verify its SHA-256 and only
@@ -571,5 +576,32 @@ mod tests {
             assert_eq!(sha.len(), 64);
             assert!(sha.bytes().all(|c| c.is_ascii_hexdigit()));
         }
+    }
+    /// The model download client must refuse a certificate no trust store vouches for, send
+    /// nothing, and leave no file behind.
+    #[tokio::test]
+    async fn model_download_rejects_an_untrusted_certificate() {
+        let probe = crate::tls::untrusted_server::spawn();
+        let dir = tempfile::tempdir().unwrap();
+        let client = download_client().unwrap();
+        let err = download_file(&client, &probe.url, dir.path(), "model.bin", "00")
+            .await
+            .expect_err("a self-signed certificate must be rejected");
+        // download_file flattens the error to text, so the cause is checked on the client itself.
+        assert!(
+            err.to_string().contains("downloading model.bin failed"),
+            "{err:?}"
+        );
+        let direct = client
+            .get(&probe.url)
+            .send()
+            .await
+            .expect_err("a self-signed certificate must be rejected");
+        assert!(
+            crate::tls::untrusted_server::is_certificate_error(&direct),
+            "{direct:?}"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        probe.assert_nothing_received();
     }
 }

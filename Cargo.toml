@@ -106,6 +106,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 [dev-dependencies]
 # Property tests for the scrubber (tests/scrubber_properties.rs). Test-only: the shipped binary does not depend on it.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Test-only: throwaway self-signed certificate for the untrusted-certificate tests (src/tls.rs).
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,

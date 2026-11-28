@@ -870,4 +870,19 @@ mod tests {
         assert!(!out.contains("fake-webhook-token"), "{out}");
         assert!(out.ends_with("... (100 more bytes)"), "{out}");
     }
+    #[tokio::test]
+    async fn test_send_webhook_rejects_an_untrusted_certificate() {
+        let probe = crate::tls::untrusted_server::spawn();
+        let config = cfg(&probe.url, WebhookType::Generic);
+        let (mgr, _rx) = WebhookManager::new(vec![]);
+        let err = mgr
+            .send_webhook(&config, &alert("DENIED"))
+            .await
+            .expect_err("a self-signed certificate must be rejected");
+        assert!(
+            crate::tls::untrusted_server::is_certificate_error(err.root_cause()),
+            "{err:?}"
+        );
+        probe.assert_nothing_received();
+    }
 }

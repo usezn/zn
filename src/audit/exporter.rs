@@ -1200,4 +1200,25 @@ mod tests {
         assert!(exporter.backoff.ready(Instant::now()));
         assert!(batch.is_empty());
     }
+    #[tokio::test]
+    async fn the_exporter_rejects_an_untrusted_certificate_and_keeps_the_buffer() {
+        let probe = crate::tls::untrusted_server::spawn();
+        let exporter = exporter_for(&probe.url);
+        let mut batch = buffer_of(3, Some("event-payload"), 100, usize::MAX);
+        assert!(!exporter.send_batch(&probe.url, &mut batch).await);
+        assert_eq!(batch.len(), 3);
+        // The same client, asked directly, fails on the certificate itself.
+        let err = exporter
+            .client
+            .post(&probe.url)
+            .body("event-payload")
+            .send()
+            .await
+            .expect_err("a self-signed certificate must be rejected");
+        assert!(
+            crate::tls::untrusted_server::is_certificate_error(&err),
+            "{err:?}"
+        );
+        probe.assert_nothing_received();
+    }
 }
