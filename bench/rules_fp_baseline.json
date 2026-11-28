@@ -5,5 +5,6 @@
     "exfil:credentials": 2,
     "path:sensitive_file": 2,
     "pi:forget": 2
-  }
+  },
+  "note": "path:sensitive_file=2: Lib/ftplib.py (help text \"set alternate ~/.netrc file\") and Lib/netrc.py (docstring \"interface to .netrc files\") of the pinned CPython corpus name a credentials file in prose; the rule now mirrors the hook, which protects named credential files wherever they are written. Reviewed 2026-11-28."
 }
