@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.9';
+const POLICY_RULES_VERSION = '2026-11-28.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3180,7 +3180,7 @@ function bashDenialOf(cmd, opts = {}) {
       if (!envFileValues.has(w) && !dotenvReadOnlyWord(w, codes.size > 0)) continue;
       for (const t of w.text.split(SPLIT_RE)) if (t) accounted.set(t, (accounted.get(t) || 0) + 1);
     }
-    for (const t of text.split(SPLIT_RE)) {
+    for (const t of joinAdjacentQuoted(text).split(SPLIT_RE)) {
       if (!t) continue;
       const n = accounted.get(t);
       if (n) { accounted.set(t, n - 1); continue; }
@@ -3763,6 +3763,55 @@ function unitEnd(text, from, closer, depth) {
   }
   return -1;
 }
+/**
+ * The text with adjacent quoted parts of a word joined into one single-quoted part: `'*''.log'`, `"*"".log"` and `'*'".log"` are all the
+ * literal word `*.log` (the shell joins them and never expands a quoted `*`), so the word is read whole, not as `*` and `.log`.
+ * Only parts with nothing the shell would act on (no `$`, backtick or backslash in a double-quoted part, no `'` in the result) are
+ * joined; text with a $'...' or $"..." word, or an unclosed quote, is returned as it is.
+ */
+function joinAdjacentQuoted(text) {
+  if (text.indexOf("''") < 0 && text.indexOf('""') < 0 && !/['"]['"]/.test(text)) return text;
+  const pieces = [];
+  let lit = '';
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (c === '\\') { lit += text.slice(i, i + 2); i += 2; continue; }
+    if (c === '$' && (text[i + 1] === "'" || text[i + 1] === '"')) return text;
+    if (c !== "'" && c !== '"') { lit += c; i++; continue; }
+    const end = text.indexOf(c, i + 1);
+    if (end < 0) return text;
+    if (c === '"') {
+      // A backslash inside double quotes can escape the closing quote: not joined, kept as the scanner would see it.
+      let j = i + 1;
+      while (j < n && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      if (j >= n) return text;
+      const body = text.slice(i + 1, j);
+      if (lit) { pieces.push({ lit }); lit = ''; }
+      pieces.push(/[$`\\']/.test(body) ? { raw: text.slice(i, j + 1) } : { q: body, raw: text.slice(i, j + 1) });
+      i = j + 1;
+    } else {
+      if (lit) { pieces.push({ lit }); lit = ''; }
+      pieces.push({ q: text.slice(i + 1, end), raw: text.slice(i, end + 1) });
+      i = end + 1;
+    }
+  }
+  if (lit) pieces.push({ lit });
+  let out = '';
+  for (let k = 0; k < pieces.length; k++) {
+    const x = pieces[k];
+    if (x.lit !== undefined) { out += x.lit; continue; }
+    if (x.q === undefined) { out += x.raw; continue; }
+    let body = x.q;
+    let m = k;
+    while (pieces[m + 1] && pieces[m + 1].q !== undefined) body += pieces[++m].q;
+    out += m === k ? x.raw : "'" + body + "'";
+    k = m;
+  }
+  return out;
+}
+
 /**
  * The text with every shell expansion unit taken out whole, whatever the environment holds (a variable the hook sees may differ from the
  * agent's shell): balanced ${...} (any operator, nested), $NAME, $1, $@ $* $# $? $$ $!, balanced $(...) and backticks. With
