@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.4
+RULES_VERSION: 2026-11-28.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.4"
+RULES_VERSION = "2026-11-28.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1747,6 +1747,9 @@ SCRUB_LAST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:zn_api_key", _rc(_TB + r'zn_[0-9a-f]{48}' + _TA), "[REDACTED_ZN_API_KEY]"),
     # A JWT whose parts are shorter than the shared rule asks for (8 characters after eyJ, a 16-character signature).
     ("secret:jwt_token#scrub", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}' + _TA), "[REDACTED_JWT]"),
+    # A JWT whose signature an earlier rule already redacted in part (an sk- key in it): the rest of the JWT goes
+    # too, so header and payload never stay readable, and the output is the one of the Node.js package.
+    ("secret:jwt_token#scrub_signature", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*\[REDACTED_[A-Z_]+\][A-Za-z0-9_-]*' + _TA), "[REDACTED_JWT]"),
     # 40 base64 characters after the words "aws" and "secret" (the CLI's SecretAccessKey, prose, a config file).
     ("secret:aws_secret_key#scrub", _rc(_B64_B + r'[A-Za-z0-9+/]{40}' + _B64_A), "[REDACTED_AWS_SECRET]"),
     # A private key whose END line was cut off: the header and the base64 lines after it.
@@ -1776,6 +1779,7 @@ PROVIDER_HINTS.update({
     "secret:github_token#scrub_pat": ("github_pat_",),
     "secret:zn_api_key": ("zn_",),
     "secret:jwt_token#scrub": (".eyJ",),
+    "secret:jwt_token#scrub_signature": (".eyJ",),
     "secret:aws_secret_key#scrub": ("ecret", "ECRET"),
     "secret:private_key#scrub": ("-----BEGIN ",),
 })

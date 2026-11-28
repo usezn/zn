@@ -12,6 +12,7 @@ ceilings. These tests need the monorepo checkout and a `node` binary; they are s
 """
 
 import json
+import os
 import shutil
 import unittest
 from pathlib import Path
@@ -23,6 +24,8 @@ from . import scrub_fuzz_gen as G
 NODE_PKG = Path(__file__).resolve().parents[2] / "zn-gate"
 CORPUS = NODE_PKG / "test" / "fixtures" / "scrubber_fuzz_corpus.json"
 HAVE_NODE = shutil.which("node") is not None and CORPUS.exists()
+# In CI the corpus and slice tests must run: without node or the fixture they fail there instead of skipping.
+RUN_NODE_TESTS = HAVE_NODE or bool(os.environ.get("CI"))
 
 # Ceilings for the fixed-seed slice (SLICE_SEED, SLICE_PER_PROVIDER). Lower them when a fix lands.
 # This is a ratchet on known split-key leaks (tracked as their own fixes): the slice only bounds the totals, and
@@ -40,13 +43,13 @@ def _node(texts):
     return node_batch(texts)
 
 
-@unittest.skipUnless(HAVE_NODE, "needs the monorepo checkout and node")
+@unittest.skipUnless(RUN_NODE_TESTS, "needs the monorepo checkout and node")
 class FuzzCorpus(unittest.TestCase):
     def test_every_case_is_in_its_recorded_state(self):
         corpus = json.loads(CORPUS.read_text(encoding="utf8"))
         self.assertGreater(len(corpus), 100)
         node = _node(["".join(c["text_parts"]) for c in corpus])
-        for c, n in zip(corpus, node):
+        for c, n in zip(corpus, node, strict=True):
             with self.subTest(case=c["id"]):
                 self.assertIn("out", n, "node crashed")
                 py = redact_secrets("".join(c["text_parts"]))[0]
@@ -56,7 +59,7 @@ class FuzzCorpus(unittest.TestCase):
                 self.assertEqual(py != n["out"], c["mismatch"], "parity state changed: update the corpus")
 
 
-@unittest.skipUnless(HAVE_NODE, "needs the monorepo checkout and node")
+@unittest.skipUnless(RUN_NODE_TESTS, "needs the monorepo checkout and node")
 class FuzzSlice(unittest.TestCase):
     def test_generator_is_deterministic(self):
         a = [c["text"] for c in G.cases(SLICE_SEED, 2)]
@@ -68,7 +71,7 @@ class FuzzSlice(unittest.TestCase):
         cases = list(G.cases(SLICE_SEED, SLICE_PER_PROVIDER))
         node = _node([c["text"] for c in cases])
         rn = rp = mm = 0
-        for c, n in zip(cases, node):
+        for c, n in zip(cases, node, strict=True):
             self.assertIn("out", n, "node crashed on seed " + c["seed"])
             py = redact_secrets(c["text"])[0]
             rn += bool(G.remnant(c, n["out"]))

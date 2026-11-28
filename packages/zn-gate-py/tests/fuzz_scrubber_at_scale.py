@@ -43,7 +43,7 @@ def py_one(text):
 def run(case_list):
     nres = node_batch([c["text"] for c in case_list])
     found = []
-    for c, n in zip(case_list, nres):
+    for c, n in zip(case_list, nres, strict=True):
         p = py_one(c["text"])
         kinds = []
         if "error" in n:
@@ -105,7 +105,7 @@ def minimize(failure):
             variants.append(v)
     nres = node_batch([v["text"] for v in variants])
     best = None
-    for v, n in zip(variants, nres):
+    for v, n in zip(variants, nres, strict=True):
         p = py_one(v["text"])
         if "out" not in n or "out" not in p:
             continue
