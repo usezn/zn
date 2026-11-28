@@ -193,7 +193,7 @@ The file limit is the only one that can delete another namespace's rows, and onl
 
 The first time a new version opens a file written by an earlier one, it upgrades it in place (schema version 2): existing rows are assigned to the `global` namespace, since earlier versions did not record who wrote them. The first store in a namespace then trims it to its limit, which for the `global` namespace of an older file can delete many rows at once. SQLite does not shrink the file on its own; run `VACUUM` on it while the gateway is stopped to reclaim the space.
 
-A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. Failures are logged as a warning at most once every ten minutes, and at debug level in between.
+A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. In `zn start` with `neural.active_blocking` on, a failed search denies the call instead (see Neural check in `zn start` below). Failures are logged as a warning at most once every ten minutes, and at debug level in between.
 
 ## Model download on first start
 
@@ -268,6 +268,30 @@ curl -H "X-API-Key: <your-key>" http://127.0.0.1:9090/api/v1/health
 ```
 
 `0.0.0.0` is the address inside the container. `-p 127.0.0.1:9090:9090` publishes the port on this machine's loopback only; leave out `127.0.0.1:` and every machine that can reach the host can reach the gateway.
+
+## Messages the rules check
+
+`zn start` reads one JSON-RPC message per line, from stdin or from `/mcp/ws`. The rules, the policies, the neural check and the consensus check look at only two kinds of message:
+
+- `tools/call` requests: the tool name and its arguments are checked.
+- Agent-to-agent (A2A) methods: the task payload is checked.
+
+Any other method is not checked. This includes `resources/read`, `prompts/get`, `sampling/*`, `completion/*` and notifications. Such a message only goes through the secret redaction described below, and no rule, policy, neural check, consensus or loop breaker applies to it.
+
+Secret redaction runs on every line before any check. It hides the values of common secret names (`password`, `token`, `api_key` and similar).
+
+One limit applies. A quoted value of a secret name that contains spaces and whose closing quote is more than 4096 bytes after the opening quote is not handled by the quoted-value pass. The generic key pattern runs on it instead, and that pattern does not cover the whole value, so the rest of a long quoted secret can reach the output unredacted. Keep secrets out of long quoted strings.
+
+## Neural check in `zn start`
+
+The neural check (embedding, classifier and vector-memory search) runs in shadow mode by default, because `neural.active_blocking` is `false`. In shadow mode `zn start` only logs what the check finds, and the call goes on to the rules and policies:
+
+- An anomaly or classifier hit is logged as `NEURAL ANOMALY DETECTED ... (Shadow Mode)`, and the call is allowed.
+- A step that cannot run is logged as `NEURAL CHECK FAILED ... (Shadow Mode)`, and the call is allowed. This covers a model or classifier error and a vector-memory search that fails or passes its one-second deadline (see the vector memory section above).
+
+To block, set `"neural": {"active_blocking": true}` in `zn.json`, or `ZN_NEURAL_BLOCKING=1`. Then an anomaly is a `NEURAL VETO` and the call is denied. A check that cannot run also denies the call, with the message `the neural check could not run and neural.active_blocking is on`. Blocking stays off while `guardrails.alert_only` is on, even if `active_blocking` is set.
+
+`zn analyze` and the `analyze_prompt` tool do not use this setting. A text that the neural check flags is always blocked (rule `neural_anomaly`), and a check that cannot run blocks with rule `check_unavailable` (see the result section above).
 
 ## KMS key and the config fallback
 
