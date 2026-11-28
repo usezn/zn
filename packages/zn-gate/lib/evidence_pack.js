@@ -262,12 +262,16 @@ function snapshotLog(filePath, EvidenceLedgerError) {
     const copy = path.join(dir, 'evidence.jsonl');
     const out = fs.openSync(copy, 'wx', 0o600);
     try {
-      let size;
+      let st;
       try {
-        size = fs.fstatSync(fd).size;
+        st = fs.fstatSync(fd);
       } catch (e) {
         throw new EvidenceLedgerError(`Cannot read the evidence log: ${e.code || e.message}`);
       }
+      // Windows opens a folder for reading without an error and reports size 0 for it, so the copy would be
+      // empty and the pack would say "0 records, chain VERIFIED". A folder at the log path is unreadable, as elsewhere.
+      if (st.isDirectory()) throw new EvidenceLedgerError('Cannot read the evidence log: EISDIR');
+      const size = st.size;
       const buf = Buffer.alloc(Math.max(1, Math.min(READ_CHUNK, size)));
       let pos = 0;
       while (pos < size) {
