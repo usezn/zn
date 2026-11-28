@@ -100,6 +100,15 @@ _rule_types: Optional[Dict[str, str]] = None
 # The rule id a detection reports drops what follows "#", so the fine-grained GitHub token (id secret:github_token#scrub_pat,
 # type GITHUB_PAT in the npm package) is told apart by its own pattern.
 _PAT_RULE = "secret:github_token#scrub_pat"
+_URL_RULE = "secret:url_password"
+# Provider formats whose Python match includes the text around the secret: they are not read first.
+_WIDE_RULES = {"secret:url_password", "secret:bearer_token"}
+_WEB_SCHEME_RE = re.compile(r"^(?:https?|ftps?|wss?|sftp|ssh|git)://", re.IGNORECASE)
+
+
+def _specific_first() -> list:
+    from . import rules
+    return [t for t in rules.PROVIDER_SECRET_PATTERNS if t[0] not in _WIDE_RULES]
 
 
 def action_for(type_: str) -> str:
@@ -369,15 +378,26 @@ def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], 
 
     def add(piece: str, delta: Dict[str, int], sign: int) -> None:
         piece = _cut_markers(piece, known)
-        _redacted, detections = rules.redact_secrets(piece)
-        # redact_secrets also reads the text without invisible characters, so the fine-grained tokens are counted on
-        # that same text: an invisible character inside a token cannot change its type.
+        # The provider formats are read first, as the npm package does, so a key under a generic name (STRIPE_KEY=...,
+        # HF_TOKEN=...) is counted by its own type and not as SECRET. The formats that include the text around the
+        # secret (the URL and the header) keep their place in the shared order.
         view = rules.invisible_view(piece)
         seen = view[0] if view is not None else piece
+        specific, first = rules._redact_with(piece, _specific_first())
+        _redacted, rest = rules.redact_secrets(specific)
+        detections = first + rest
+        # The npm package types a URL password by scheme: URL_PASSWORD for the web schemes, DB_PASSWORD for the others.
+        web = sum(1 for rid, pattern, _x in rules.PROVIDER_SECRET_PATTERNS if rid == _URL_RULE
+                  for m in pattern.finditer(seen) if _WEB_SCHEME_RE.match(m.group(1)))
         pats = sum(1 for rule_id, pattern, _r in rules.SCRUB_FIRST_PATTERNS if rule_id == _PAT_RULE for _m in pattern.finditer(seen))
         for d in detections:
             # An id the table does not know is still a secret: count it as the generic type, never drop it.
             t = types.get(d["rule"]) or "SECRET"
+            if d["rule"] == _URL_RULE:
+                if web > 0:
+                    web -= 1
+                else:
+                    t = "DB_PASSWORD"
             if t == "GITHUB_TOKEN" and pats > 0:
                 pats -= 1
                 t = "GITHUB_PAT"

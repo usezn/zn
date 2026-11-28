@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.2
+ * RULES_VERSION: 2026-11-28.8
  */
 
-const RULES_VERSION = '2026-11-28.2';
+const RULES_VERSION = '2026-11-28.8';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1071,6 +1071,10 @@ const ENV_CREDENTIAL_PREFILTER = /_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][
 const PREFIXED_CREDENTIAL_PREFILTER = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS/;
 
 const SECRET_PATTERNS = [
+  // Twilio auth token: 32 hex digits under a TWILIO_AUTH_TOKEN or auth_token label (any case). It runs first, as in the
+  // Python package, so the credential rules below do not take the value under their generic name.
+  { id: 'secret:twilio_auth_token', pattern: /((?<![A-Za-z0-9])(?:twilio_)?auth_token["']?[ \t]*[=:][ \t]*["']?)([0-9a-f]{32})(?![A-Za-z0-9])/gi, replacement: '$1[REDACTED_TWILIO_AUTH_TOKEN]',
+    valueFilter: (v) => !(/[0-9]/.test(v) && /[a-fA-F]/.test(v)) || /^(.)\1+$/.test(v) },
   // A body may not contain another BEGIN header: linear on repeated headers without END.
   { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
   { id: 'secret:anthropic_key', pattern: /(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_ANTHROPIC_KEY]' },

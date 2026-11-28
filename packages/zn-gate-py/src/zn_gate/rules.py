@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.2
+RULES_VERSION: 2026-11-28.8
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.2"
+RULES_VERSION = "2026-11-28.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.

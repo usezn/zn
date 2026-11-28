@@ -1,0 +1,3 @@
+### Fixed
+- The Python `zn-gate reach --history` now counts a key under a generic name by its own type, as the npm package does: `STRIPE_KEY=...`, `SLACK_BOT_TOKEN=...`, `SENDGRID_API_KEY=...`, `TWILIO_API_KEY=...`, `HF_TOKEN=...`, `GITLAB_TOKEN=...` and `AZURE_CLIENT_SECRET=...` were counted as `SECRET`. A password in a URL that is not a web URL (`redis://`, `amqp://`...) is now `DB_PASSWORD`, not `URL_PASSWORD`.
+- The npm package now redacts a Twilio auth token (`TWILIO_AUTH_TOKEN=...`, `auth_token: ...`) with its own rule and label, `[REDACTED_TWILIO_AUTH_TOKEN]`, as the Python package already did, instead of the generic `[REDACTED_SECRET]`. The hidden text is the same.

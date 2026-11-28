@@ -101,8 +101,9 @@ It is read only and offline. It writes no file, not even the decision log, and
 it needs no account.
 
 The Python package has the same command (`zn-gate reach --history`), with the
-same report, flags, exit codes and `--json` schema. The rest of `reach` is only
-in the npm package.
+same report, flags, exit codes and `--json` schema, and it names a secret with the same type
+(`STRIPE_KEY`, `SLACK_TOKEN`, `HF_TOKEN`, `DB_PASSWORD`...) as the npm package, also when the key sits
+under a generic name such as `STRIPE_KEY=...`. The rest of `reach` is only in the npm package.
 
 ### Where it looks
 

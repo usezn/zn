@@ -96,7 +96,10 @@ class TestPatternParity(unittest.TestCase):
                 self.assertEqual(_py_regex(getattr(R, name)), _js_regex(e))
 
     def test_secret_patterns(self):
-        js = {e["id"]: e for e in self.js["tables"]["SECRET_PATTERNS"]}
+        # A rule the Python package keeps in SCRUB_FIRST_PATTERNS (read before this table) is, in rules.js, at the head
+        # of this one: its behaviour is compared by test_label_parity.py.
+        first = {rule_id for rule_id, _p, _r in R.SCRUB_FIRST_PATTERNS if "#" not in rule_id}
+        js = {e["id"]: e for e in self.js["tables"]["SECRET_PATTERNS"] if e["id"] not in first}
         py = {rule_id: pat for rule_id, pat, _ in R.SECRET_PATTERNS}
         self.assertEqual(list(py), list(js))
         for rule_id, pat in py.items():
