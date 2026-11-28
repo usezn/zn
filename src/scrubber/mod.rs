@@ -839,7 +839,8 @@ fn looks_random(body: &str) -> bool {
 }
 
 /// Spans of `re` matches that do not touch a token character (ASCII letter,
-/// digit, `_` or `-`) on either side, as the Node.js `NB`/`NA` boundaries do,
+/// digit or `-`) on either side, as the Node.js `NB`/`NA` boundaries do (an
+/// underscore is a separator: `__ZN_<key>__`, `x_<key>`, `<key>_post`),
 /// and whose text passes `check`.
 fn token_spans(re: &Regex, text: &str, check: fn(&str) -> bool) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
@@ -850,7 +851,7 @@ fn token_spans(re: &Regex, text: &str, check: fn(&str) -> bool) -> Vec<(usize, u
         };
         let (s, e) = (m.start(), m.end());
         let tok =
-            |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+            |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-');
         if !tok(char_before(text, s)) && !tok(char_after(text, e)) && check(m.as_str()) {
             spans.push((s, e));
             pos = e;
@@ -1900,6 +1901,22 @@ mod tests {
         let out = Scrubber::scrub(&input);
         assert!(!out.contains(&FAKE_BODY[..24]), "key left in minified text");
         assert!(out.contains("const k=\"[SECRET_REDACTED]\";"));
+    }
+
+    #[test]
+    fn test_github_and_stripe_keys_next_to_an_underscore_are_redacted() {
+        let gh = format!("ghp_{FAKE_BODY}");
+        let st = format!("sk_live_{}", &FAKE_BODY[..24]);
+        for key in [gh.as_str(), st.as_str()] {
+            for input in [
+                format!("see __ZN_{key}__ here"),
+                format!("x_{key}"),
+                format!("{key}_post"),
+            ] {
+                let out = Scrubber::scrub(&input);
+                assert!(!out.contains(key), "{out}");
+            }
+        }
     }
 
     #[test]

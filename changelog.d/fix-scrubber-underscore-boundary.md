@@ -1,0 +1,2 @@
+### Security
+- The scrubber and the secret redaction of hook input and tool results now redact a provider key that sits right after or right before an underscore, for example inside a `__ZN_<key>__` wrapper, as `x_<key>` or as `<key>_suffix`. Before, an underscore counted as part of the key, so such a GitHub token, `sk-` key or other provider key stayed visible. The Node.js and Python redactors give the same result.

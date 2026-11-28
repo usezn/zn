@@ -178,8 +178,16 @@ class TestAsciiTokenBoundaries(unittest.TestCase):
                 self.assertNotIn("c" * 30, redacted)
                 self.assertNotIn("d4" * 8, redacted)
 
+    def test_underscore_neighbours_are_separators(self):
+        key = "AKIA" + "Z" * 16
+        for text in ("x_" + key, key + "_x", "__ZN_" + key + "__"):
+            with self.subTest(text=text[:12]):
+                redacted, found = R.redact_secrets(text)
+                self.assertNotIn(key, redacted)
+                self.assertIn("secret:aws_access_key", [d["rule"] for d in found])
+
     def test_ascii_neighbours_still_do_not_match(self):
-        for text in ("x" + "AKIA" + "Z" * 16, "AKIA" + "Z" * 16 + "_x", "my_" + "api_key=" + "d4" * 8):
+        for text in ("x" + "AKIA" + "Z" * 16, "AKIA" + "Z" * 16 + "x", "my_" + "api_key=" + "d4" * 8):
             with self.subTest(text=text[:12]):
                 self.assertEqual(R.redact_secrets(text)[1], [])
 

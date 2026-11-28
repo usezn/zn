@@ -239,6 +239,29 @@ ALLOWED = {
 }
 
 
+# An underscore is a separator, not a token character: a key right after "_", wrapped as __ZN_<key>__ or followed
+# by "_post" is redacted whole by both engines. The forms below are every token case above that sits on its own
+# after a label, except the ones the two engines read differently on purpose (ALLOWED) and the Azure AD client
+# secret, whose own alphabet contains "_" (the key cannot be told from its neighbours).
+WRAPPED = []
+# Cases that neither engine redacts even on their own line (not a secret) or whose span starts at the key name.
+_NOT_REDACTED_ON_ITS_OWN = {"huggingface identifier-like", "discord bot id not digits", "prefect placeholder", "azure storage key"}
+_UNDERSCORE_SKIP = set(ALLOWED) | {"azure ad client secret"}
+_NL = chr(10)
+for _label, _text in list(CASES):
+    if not (_text.startswith("value: ") and _text.endswith(_NL)) or _label in _UNDERSCORE_SKIP:
+        continue
+    _key = _text[len("value: "):-1]
+    if _NL in _key or "://" in _key or _label.startswith("openai underscored"):
+        continue
+    for _suffix, _text2 in ((" after an underscore", "value: x_" + _key + _NL),
+                            (" in a zn wrapper", "value: __ZN_" + _key + "__" + _NL),
+                            (" before an underscore", "value: " + _key + "_post" + _NL)):
+        case(_label + _suffix, _text2)
+        if _label not in _NOT_REDACTED_ON_ITS_OWN:
+            WRAPPED.append((_label + _suffix, _text2, _key))
+
+
 def node_spans(texts):
     node = shutil.which("node")
     if node is None:
@@ -299,6 +322,23 @@ class SecretScrubParityTest(unittest.TestCase):
         detail = "\n".join("%s\n  node:   %s\n  python: %s" % (k, v[0], v[1]) for k, v in list(unexpected.items())[:60])
         self.assertEqual(unexpected, {}, "%d cases differ:\n%s" % (len(unexpected), detail))
         self.assertEqual(stale, [], "these ALLOWED cases no longer differ: remove them")
+
+    def test_keys_next_to_an_underscore_are_redacted_whole(self):
+        """Parity alone would pass if both engines missed a key: each one must cover the whole key."""
+        js = node_spans([t for _, t, _ in WRAPPED])
+        self.assertGreater(len(WRAPPED), 200)
+        missed = []
+        for (label, text, key), spans in zip(WRAPPED, js, strict=True):
+            start = text.index(key)
+            py = [(d["start"], d["end"]) for d in redact_secrets(text)[1]]
+            for engine, found in (("node", [(a, b) for _, a, b in spans]), ("python", py)):
+                covered = [False] * len(key)
+                for a, b in found:
+                    for i in range(max(a, start), min(b, start + len(key))):
+                        covered[i - start] = True
+                if not all(covered):
+                    missed.append((engine, label))
+        self.assertEqual(missed, [])
 
     def test_node_types_have_a_python_rule(self):
         if not PATTERNS_JS.is_file():

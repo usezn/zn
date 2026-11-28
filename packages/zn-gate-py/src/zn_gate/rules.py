@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.2
+RULES_VERSION: 2026-11-28.8
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.2"
+RULES_VERSION = "2026-11-28.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1182,18 +1182,18 @@ def _evaluate_body(input_text: str, strict: bool = False) -> Assessment:
 SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A body may not contain another BEGIN header: linear on repeated headers without END.
     ("secret:private_key", _rc(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
-    ("secret:anthropic_key", _rc(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
+    ("secret:anthropic_key", _rc(r'(?<![A-Za-z0-9])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
-    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?![A-Za-z0-9_-])|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
-    ("secret:aws_access_key", _rc(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
+    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?![A-Za-z0-9_-])|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
+    ("secret:aws_access_key", _rc(r'(?<![A-Za-z0-9])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9])'), "[REDACTED_AWS_KEY]"),
     ("secret:aws_secret_key", _rc(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
-    ("secret:github_token", _rc(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
+    ("secret:github_token", _rc(r'(?<![A-Za-z0-9])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9])'), "[REDACTED_GITHUB_TOKEN]"),
     ("secret:db_url_password", _rc(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
     # The lookahead + backreference pairs act as atomic groups, so a long run of
     # "-eyJ" cannot make the engine retry every split point, and the lookbehind
     # allows a single start per token. Only used when the
     # text contains ".eyJ" (see SECRET_PATTERN_REQUIRES).
-    ("secret:jwt_token", _rc(r'(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_JWT]"),
+    ("secret:jwt_token", _rc(r'(?<![A-Za-z0-9-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_JWT]"),
     # Credential assignments. A name right after "${" is a shell reference, and
     # after "$" (PHP, PowerShell, Perl) only "=" assigns: "$NAME:" is a reference
     # followed by text. The value (group 2) is checked with _is_non_secret_value.
@@ -1449,8 +1449,8 @@ SECRET_VALUE_FILTERS = {
 #     "not a secret", as in SECRET_VALUE_FILTERS.
 # Every regex is linear: bounded repeats and token boundaries, no nesting.
 # ---------------------------------------------------------------------------
-_TB = r'(?<![A-Za-z0-9_-])'    # start of a token
-_TA = r'(?![A-Za-z0-9_-])'     # end of a token
+_TB = r'(?<![A-Za-z0-9-])'    # start of a token (an underscore is a separator)
+_TA = r'(?![A-Za-z0-9-])'     # end of a token (an underscore is a separator)
 _ALNUM_B = r'(?<![A-Za-z0-9])'
 _ALNUM_A = r'(?![A-Za-z0-9])'
 _TOKEN_ALPHA_RE = _rc(r'[A-Za-z]')
@@ -1743,8 +1743,8 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
 # dropped from the detections. SCRUB_FIRST_PATTERNS run before the shared table, so a longer key is
 # redacted whole; SCRUB_LAST_PATTERNS run after it.
 # ---------------------------------------------------------------------------
-_B64_B = r'(?<![A-Za-z0-9+/_-])'
-_B64_A = r'(?![A-Za-z0-9+/=_-])'
+_B64_B = r'(?<![A-Za-z0-9+/-])'
+_B64_A = r'(?![A-Za-z0-9+/=-])'
 _OPENAI_PREFIX_RE = _rc(r'sk-(?:proj-|svcacct-|admin-|or-v1-)?')
 
 
@@ -2208,6 +2208,13 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     continue
                 if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
                     continue
+                if over == 1 and patterns and '\\' not in replacement:
+                    # The joined view runs on past the original match into a later line. When that line starts a
+                    # secret of its own, this rule stops before it: an underscore after its first letters no longer
+                    # hides it from the other rule (`sk_live_...` after a line of key characters).
+                    cut = _wrap_cut(text, start, end, patterns)
+                    if cut is not None and cut > found_ends[first]:
+                        end = cut
                 if over == 0 and patterns and '\\' not in replacement:
                     # No original match: the view joined two lines. When the second line starts a secret of its own,
                     # this rule keeps the first line only and the other rule reports the second one.

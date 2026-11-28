@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-24.2';
+const SCRUB_RULES_VERSION = '2026-11-28.3';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -256,10 +256,10 @@ function ipv4Public(raw) {
 /* ------------------------------------------------------------------ */
 
 /* Boundaries on the token alphabet. */
-const NB = '(?<![A-Za-z0-9_-])';        // not preceded by a token char
-const NA = '(?![A-Za-z0-9_-])';         // not followed by a token char
-const NB64 = '(?<![A-Za-z0-9+/_-])';
-const NA64 = '(?![A-Za-z0-9+/=_-])';
+const NB = '(?<![A-Za-z0-9-])';         // not preceded by a token char (an underscore is a separator: __ZN_<key>__, x_<key>)
+const NA = '(?![A-Za-z0-9-])';          // not followed by a token char (an underscore is a separator: <key>_post)
+const NB64 = '(?<![A-Za-z0-9+/-])';
+const NA64 = '(?![A-Za-z0-9+/=-])';
 
 function re(src, flags) { return new RegExp(src, 'gd' + (flags || '')); }
 
