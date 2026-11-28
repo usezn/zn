@@ -5,6 +5,7 @@ file instead, as the npm package does. Only temporary folders and invented value
 """
 
 import builtins
+import os
 
 import pytest
 
@@ -98,6 +99,7 @@ def test_cli_refuses_with_exit_1_and_writes_nothing(tmp_path, monkeypatch, capsy
     assert "incomplete" not in err
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not rename a file that is open")
 def test_same_file_fails_closed_when_the_path_cannot_be_checked(tmp_path):
     p = _ledger(tmp_path)
     with open(p, "rb") as src:

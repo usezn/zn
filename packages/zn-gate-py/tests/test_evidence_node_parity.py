@@ -411,6 +411,8 @@ def test_manifest_refusal_matches_node(tmp_path, kind):
         r = subprocess.run([*cmd, "evidence", "--export", "--output", str(out), "--manifest"],
                            capture_output=True, env=env, timeout=120)
         assert victim.read_text() == "keep me" and not out.exists()
-        results.append((r.returncode, r.stdout, r.stderr.replace(str(d).encode(), b"D")))
+        # stderr is a message, not an export: Python ends lines with \r\n there on Windows, Node with \n.
+        err = r.stderr.replace(str(d).encode(), b"D").replace(b"\r\n", b"\n")
+        results.append((r.returncode, r.stdout, err))
     assert results[0] == results[1], results
     assert results[0][0] == 2
