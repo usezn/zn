@@ -572,5 +572,15 @@
 {"fn":"e164","input":"+4912345","valid":false},
 {"fn":"e164","input":"+49123456","valid":false},
 {"fn":"e164","input":"+491234567890","valid":false},
-{"fn":"e164","input":"+4912345678901","valid":false}
+{"fn":"e164","input":"+4912345678901","valid":false},
+{"fn":"card","input":"8100007391528814","valid":true},
+{"fn":"card","input":"81234564028178120","valid":true},
+{"fn":"card","input":"815678295817481565","valid":true},
+{"fn":"card","input":"8171994817263817195","valid":true},
+{"fn":"card","input":"8100003629481810003","valid":true},
+{"fn":"card","input":"8000004719352804","valid":false},
+{"fn":"card","input":"8172005382947814","valid":false},
+{"fn":"card","input":"8172006283915817204","valid":false},
+{"fn":"card","input":"812345927463882","valid":false},
+{"fn":"card","input":"8123458365192810","valid":false}
 ]}

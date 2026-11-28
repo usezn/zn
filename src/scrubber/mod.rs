@@ -508,6 +508,10 @@ fn card_network_ok(d: &str) -> bool {
     if p2 == 62 {
         return (16..=19).contains(&len); // UnionPay
     }
+    // UnionPay 81 range (810000-817199), which the 62 prefix does not cover.
+    if (810000..=817199).contains(&p6) {
+        return (16..=19).contains(&len);
+    }
     false
 }
 
