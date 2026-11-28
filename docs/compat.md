@@ -131,7 +131,7 @@ Claude Code builds that have these events use them.
   that is new since the start of the session (for example a download piped into a
   shell, or the model endpoint moved to another server), or when a skill file now
   holds text a person cannot see (Unicode tag characters or bidirectional
-  overrides). zn takes the starting point at the first tool call or prompt of the
+  overrides). A skill file over 1 MiB, or one zn cannot read, is allowed without that check: zn does not read it. zn takes the starting point at the first tool call or prompt of the
   session (or at the first change it sees, if that comes first), before anything
   can have changed it, and only for the project settings file; a finding the file
   already had then is allowed, because `zn audit` reported it when the folder was
