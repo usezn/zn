@@ -2382,7 +2382,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   // An event zn cannot read on a hook that can block is refused by the caller (exit code and answer of the agent).
   const output = decision.refuseText ? null : adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts, latencyMs);
-  recordEvidence(adapter.id, ev, decision, opts);
+  if (!opts.noEvidence) recordEvidence(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision, formatNote: decision.formatNote || null };
 }
 

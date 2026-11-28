@@ -1043,10 +1043,11 @@ async function checkAgent(spec, ctx) {
   const userFile = spec.file(adapter, { home: ctx.home, env: ctx.env });
 
   // zn's own decision for the two requests (no hook involved). Without live checks only the setup is read.
+  // This runs for every agent, set up or not, so it writes no evidence record: only a hook that really ran does (runLive).
   let rulesOk = true;
   if (ctx.live) {
-    const secret = await runner.handle(adapter, spec.request(ctx.dir, ctx.envFile), { home: ctx.home });
-    const control = await runner.handle(adapter, spec.request(ctx.dir, ctx.readme), { home: ctx.home });
+    const secret = await runner.handle(adapter, spec.request(ctx.dir, ctx.envFile), { home: ctx.home, noEvidence: true });
+    const control = await runner.handle(adapter, spec.request(ctx.dir, ctx.readme), { home: ctx.home, noEvidence: true });
     res.message = oneLine(secret.decision && secret.decision.message, 300);
     rulesOk = secret.decision && secret.decision.decision === 'deny' && !(control.decision && control.decision.decision === 'deny');
   }

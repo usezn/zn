@@ -91,7 +91,7 @@ When the program that `zn run` started ends normally, `zn run` exits with that p
 | `vault` and `vault status` | `0`, `2` | `0` done; `2` wrong usage. |
 | `vault log export` | `0`, `1`, `2` | `0` done; `1` error; `2` without `--otlp`. |
 | `vault verify` | `0`, `1`, `2` | `0` the vault audit log is correct; `1` it is broken; `2` wrong usage. |
-| `vault forget` | `1`, `2` | `1` when the vault is not locked; `2` wrong usage. |
+| `vault forget` | `0`, `1`, `2` | `0` the token map of the folder was forgotten, or there was none stored; `1` when the vault is not locked; `2` wrong usage. |
 | `vault reset` | `0`, `1`, `2` | `0` done or there was no vault; `1` refused or cancelled; `2` wrong usage. |
 
 ## Agents and MCP servers

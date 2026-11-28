@@ -538,7 +538,7 @@ Checks the chain and signatures of the vault audit log. If the check fails, it s
 zn-gate vault forget [dir]
 ```
 
-Forgets the token map of a project (default: the current folder). The vault must be locked: otherwise it exits `1`. Wrong usage (an option, or more than one folder) exits `2`.
+Forgets the token map of a project (default: the current folder). Exits `0` when the token map was forgotten, or when none was stored for the folder. The vault must be locked: otherwise it exits `1`. Wrong usage (an option, or more than one folder) exits `2`.
 
 #### `vault reset`
 

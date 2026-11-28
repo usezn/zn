@@ -16,14 +16,14 @@ It always applies all six rules and returns a verdict:
 const { checkCommand } = require('zn-gate/lib/client');
 
 checkCommand('rm -rf ~');
-checkCommand('sudo bash -c "rm -rf /tmp/example"');
+checkCommand('sudo bash -c "rm -rf /usr"');
 ```
 
 Both return a block with the same rule (the `rules_version` is the version of
 the rule set you run):
 
 ```json
-{"verdict":"block","confidence":0.95,"rule":"destructive:rm_root_home","reason":"Destructive command: it deletes the home folder, the filesystem root or a system folder, recursively","engine":"oss-local","rules_version":"2026-11-09.2"}
+{"verdict":"block","confidence":0.95,"rule":"destructive:rm_root_home","reason":"Destructive command: it deletes the home folder, the filesystem root or a system folder, recursively","engine":"oss-local","rules_version":"2026-11-27.2"}
 ```
 
 These wrapped forms are blocked with the same rule, `destructive:rm_root_home`:
@@ -35,8 +35,8 @@ These wrapped forms are blocked with the same rule, `destructive:rm_root_home`:
 | `sh -c 'rm -rf $HOME/*'` | block |
 | `sudo rm -rf /usr` | block |
 | `sudo -u root rm -rf /usr` | block |
-| `env FOO=1 rm -rf /tmp/example` | block |
-| `sudo bash -c 'rm -rf /tmp/example'` | block |
+| `env FOO=1 rm -rf /usr` | block |
+| `sudo bash -c 'rm -rf /usr'` | block |
 | `env -i sudo sh -c "rm -rf /"` | block |
 | `nohup rm -rf ~` | block |
 | `timeout 5 rm -rf ~` | block |
@@ -48,6 +48,8 @@ A wrapper does not make a harmless command look dangerous. These are allowed
 |---|---|
 | `bash -c "rm -rf ./build"` | The target is a project folder, not the home folder or a system folder |
 | `sudo rm -rf ./build` | Same target |
+| `env FOO=1 rm -rf /tmp/example` | A folder below `/tmp` is not the home folder, the filesystem root or a system folder |
+| `sudo bash -c "rm -rf /tmp/example"` | Same target, inside two wrappers |
 | `echo "rm -rf ~"` | The text is only printed |
 | `bash -c "echo rm -rf ~"` | The text is only printed, inside the wrapper too |
 
@@ -87,7 +89,7 @@ reads one event as JSON on standard input ([the hook command, explained](hook-su
 shows the shape). Here is a wrapped command, in a throwaway home folder:
 
 ```json
-{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo bash -c \"rm -rf /tmp/example\""}}
+{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo bash -c \"rm -rf /usr\""}}
 ```
 
 ```sh
