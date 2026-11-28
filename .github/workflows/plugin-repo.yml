@@ -69,7 +69,7 @@ jobs:
       # fails the run on purpose: add it here after reviewing it.
       - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
           allowed-endpoints: >-
@@ -205,7 +205,7 @@ jobs:
       - name: Create a token for the plugin repository
         if: steps.plugin.outputs.skip != 'true'
         id: token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           app-id: ${{ vars.PLUGIN_REPO_APP_ID }}
           private-key: ${{ secrets.PLUGIN_REPO_APP_KEY }}
@@ -248,7 +248,7 @@ jobs:
     steps:
       - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
           allowed-endpoints: >-
@@ -354,7 +354,7 @@ jobs:
     steps:
       - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
           allowed-endpoints: >-
@@ -487,7 +487,7 @@ jobs:
       - name: Create a token for the plugin repository
         if: steps.plugin.outputs.skip != 'true'
         id: token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           app-id: ${{ vars.PLUGIN_REPO_APP_ID }}
           private-key: ${{ secrets.PLUGIN_REPO_APP_KEY }}
