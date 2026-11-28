@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-28.5"
+COMMAND_RULES_VERSION = "2026-11-28.6"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -79,8 +79,8 @@ _BLOCK_DEVICE_RE = re.compile(
     _A,
 )
 _RC_UNIX_RE = re.compile(
-    r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout)\Z"
-    r"|/\.ssh/(?:authorized_keys2?|rc|environment)\Z|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zlogin|environment|zsh/(?:zshenv|zprofile|zlogin|zshrc))\Z|^/etc/profile\.d/",
+    r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout|inputrc|pam_environment)\Z"
+    r"|/\.ssh/(?:authorized_keys2?|rc|environment)\Z|/fish/(?:config\.fish|conf\.d/[^/]+\.fish)\Z|/environment\.d/[^/]+\.conf\Z|^/etc/(?:profile|bash\.bashrc|bash_profile|bash\.bash_logout|csh\.cshrc|zshrc|zlogin|environment|ssh/sshrc|zsh/(?:zshenv|zprofile|zlogin|zshrc))\Z|^/etc/profile\.d/",
     _A,
 )
 _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1\Z", _AI)
@@ -1533,7 +1533,7 @@ def _exec_root_folder(word: str, known: Any) -> Any:
 
 # The startup-file and ssh key names a download must not be written to, in whatever folder (see _check_execdir).
 _RC_NAME_RE = re.compile(
-    r"^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout)"
+    r"^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout|inputrc|pam_environment)"
     r"|authorized_keys2?|config\.fish)\Z",
     _AI,
 )
@@ -1583,7 +1583,7 @@ def _is_rc_path_plain(w: str) -> bool:
 _RC_SHORT_RE = re.compile(r'^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?\Z')
 _RC_LONG_NAMES = (
     ".bashrc", ".bash_profile", ".bash_login", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin",
-    ".kshrc", ".cshrc", ".tcshrc", ".xprofile", ".xinitrc", ".bash_logout", ".zlogout", ".ssh", "authorized_keys", "authorized_keys2", "config.fish", "profile.ps1",
+    ".kshrc", ".cshrc", ".tcshrc", ".xprofile", ".xinitrc", ".bash_logout", ".zlogout", ".inputrc", ".pam_environment", ".ssh", "authorized_keys", "authorized_keys2", "config.fish", "profile.ps1",
     "microsoft.powershell_profile.ps1",
 )
 

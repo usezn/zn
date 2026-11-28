@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-28.5';
+const COMMAND_RULES_VERSION = '2026-11-28.6';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -69,7 +69,7 @@ const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '
   '/sbin', '/srv', '/sys', '/usr', '/var', '/Users', '/System', '/Library', '/Applications', '/private', '/Volumes']);
 const HOME_WORDS = new Set(['~', '$home', '${home}', '$userprofile', '${userprofile}', '%userprofile%', '$env:userprofile', '$env:home', '$env:homepath']);
 const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/;
-const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout)$|\/\.ssh\/(?:authorized_keys2?|rc|environment)$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zlogin|environment|zsh\/(?:zshenv|zprofile|zlogin|zshrc))$|^\/etc\/profile\.d\//;
+const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout|inputrc|pam_environment)$|\/\.ssh\/(?:authorized_keys2?|rc|environment)$|\/fish\/(?:config\.fish|conf\.d\/[^\/]+\.fish)$|\/environment\.d\/[^\/]+\.conf$|^\/etc\/(?:profile|bash\.bashrc|bash_profile|bash\.bash_logout|csh\.cshrc|zshrc|zlogin|environment|ssh\/sshrc|zsh\/(?:zshenv|zprofile|zlogin|zshrc))$|^\/etc\/profile\.d\//;
 const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
 
 const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
@@ -856,7 +856,7 @@ function isRcPathPlain(w) {
 // characters are the stem, so a short name counts as a startup file when its stem starts one (the hook checks them as patterns).
 const RC_SHORT_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
 const RC_LONG_NAMES = ['.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.profile', '.zshrc', '.zprofile', '.zshenv', '.zlogin', '.kshrc',
-  '.cshrc', '.tcshrc', '.xprofile', '.xinitrc', '.bash_logout', '.zlogout', '.ssh', 'authorized_keys', 'authorized_keys2', 'config.fish', 'profile.ps1', 'microsoft.powershell_profile.ps1'];
+  '.cshrc', '.tcshrc', '.xprofile', '.xinitrc', '.bash_logout', '.zlogout', '.inputrc', '.pam_environment', '.ssh', 'authorized_keys', 'authorized_keys2', 'config.fish', 'profile.ps1', 'microsoft.powershell_profile.ps1'];
 function rcShortCandidates(stem, ext) {
   const out = [];
   const st = stem.toLowerCase();
@@ -933,7 +933,7 @@ function braceAlts(w) {
 }
 
 // The startup-file and ssh key names a download must not be written to, in whatever folder (see checkExecdir).
-const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout)|authorized_keys2?|config\.fish)$/i;
+const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout|inputrc|pam_environment)|authorized_keys2?|config\.fish)$/i;
 // rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
 
 function isRcTarget(w, rc = 0) {
