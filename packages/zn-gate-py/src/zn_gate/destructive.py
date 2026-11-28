@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-27.2"
+COMMAND_RULES_VERSION = "2026-11-28.3"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1535,7 +1535,7 @@ def _exec_root_folder(word: str, known: Any) -> Any:
 _RC_NAME_RE = re.compile(
     r"^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)"
     r"|authorized_keys2?|config\.fish)\Z",
-    _A,
+    _AI,
 )
 # rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
 
@@ -1564,13 +1564,17 @@ def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str], r
     return _check_child(words, depth, None if unsure else known, 2 if unsure else 1)
 
 
+# File names are case-insensitive on macOS and Windows, so ~/.BASHRC is the startup file ~/.bashrc there.
+_RC_UNIX_CI_RE = re.compile(_RC_UNIX_RE.pattern, _AI)
+
+
 def _is_rc_path(w: str) -> bool:
-    t = str(w).replace("\\", "/")
-    t = re.sub(r"^~/", "/", t)
+    # Repeated slashes name the same folder (/etc//profile, //etc/profile); "." and ".." segments are resolved below.
+    slashed = re.sub(r"/{2,}", "/", str(w).replace("\\", "/"))
+    t = re.sub(r"^~/", "/", slashed)
     t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
-    if _RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)):
+    if _RC_UNIX_CI_RE.search(t) or _RC_PS_RE.search(str(w)):
         return True
-    slashed = str(w).replace("\\", "/")
     return any(u != slashed and _is_rc_path(u) for u in (_resolve_dots(slashed, 2), _resolve_dots(slashed, 1)))
 
 

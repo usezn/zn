@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-27.2';
+const COMMAND_RULES_VERSION = '2026-11-28.3';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -841,10 +841,14 @@ function worldWritable(mode) {
   return Boolean(m && (m[1] === '' || /[ao]/.test(m[1])));
 }
 
+// File names are case-insensitive on macOS and Windows, so ~/.BASHRC is the startup file ~/.bashrc there.
+const RC_UNIX_CI_RE = new RegExp(RC_UNIX_RE.source, 'i');
+
 function isRcPath(w) {
-  const t = String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
-  if (RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w))) return true;
-  const slashed = String(w).replace(/\\/g, '/');
+  // Repeated slashes name the same folder (/etc//profile, //etc/profile); "." and ".." segments are resolved below.
+  const slashed = String(w).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  const t = slashed.replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
+  if (RC_UNIX_CI_RE.test(t) || RC_PS_RE.test(String(w))) return true;
   return [2, 1].some((d) => { const u = resolveDots(slashed, d); return u !== slashed && isRcPath(u); });
 }
 
@@ -878,7 +882,7 @@ function braceAlts(w) {
 }
 
 // The startup-file and ssh key names a download must not be written to, in whatever folder (see checkExecdir).
-const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)|authorized_keys2?|config\.fish)$/;
+const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)|authorized_keys2?|config\.fish)$/i;
 // rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
 
 function isRcTarget(w, rc = 0) {
