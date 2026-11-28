@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.5
+RULES_VERSION: 2026-11-28.3
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.5"
+RULES_VERSION = "2026-11-28.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -639,12 +639,21 @@ PATH_CONTAINER_RE = _rc(r'(?:^|[\s;&|(/])(?:docker|podman|nerdctl)(?:-compose)?(
 PATH_CONTAINER_SPLIT_RE = _rc(r'[:=]')
 PATH_CONTAINER_DIRS = [(_rc(r'(?:^|/)\.ssh$'), '/id_rsa'), (_rc(r'(?:^|/)\.aws$'), '/credentials')]
 PATH_CONTAINER_PARTS_MAX = 16
+# A compose file written by a tool call has no docker word, but its volumes: key lists the same specs (- ~/.ssh:/root/.ssh, or the long
+# form with source: ~/.ssh), so a text with such a line is read as a container text too.
+PATH_COMPOSE_RE = _rc(r'(?:^|\n)[ \t]*volumes[ \t]*:')
 
 
-def _container_spec_readings(word: str) -> List[str]:
+def _container_spec_readings(word: str, compose: bool = False) -> List[str]:
     """The parts of one word of a container command, after an attached short option (-v~/.ssh:/r). Mounting the .ssh or .aws
     folder itself shares every file in it, so such a part also reads as a file inside it."""
     out: List[str] = []
+    # In a compose file a bare folder (source: ~/.ssh) is a mount too: the folder reads as a file inside it.
+    if compose and len(word) <= 4096:
+        norm = _normalize_path_word(word.replace('\\', '/'))
+        for rx, name in PATH_CONTAINER_DIRS:
+            if rx.search(norm):
+                out.append(norm + name)
     # An option whose name holds env (--env-file=.env) only loads the file into the program: it stays allowed, as in the equals rule above.
     if len(word) > 4096 or not re.search(r'[:=]', word) or re.match(r'^--[a-z0-9-]*env[a-z0-9-]*=', word):
         return out
@@ -669,7 +678,8 @@ def sensitive_path_view(text: str) -> str:
     """The path view of a text: its normalized words, one per line."""
     lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
     words: List[str] = []
-    container = bool(PATH_CONTAINER_RE.search(lowered))
+    compose = bool(PATH_COMPOSE_RE.search(lowered))
+    container = compose or bool(PATH_CONTAINER_RE.search(lowered))
     for raw in PATH_WORD_SPLIT_RE.split(lowered):
         if not raw:
             continue
@@ -680,7 +690,7 @@ def sensitive_path_view(text: str) -> str:
         for g in _glued_path_readings(word):
             words.append(_normalize_path_word(g.replace('\\', '/')))
         if container:
-            for g in _container_spec_readings(word):
+            for g in _container_spec_readings(word, compose):
                 words.append(_normalize_path_word(g.replace('\\', '/')))
     return '\n'.join(words)
 

@@ -1,0 +1,2 @@
+### Security
+- The library checks (the Python and Node.js APIs) now read the volumes: entries of a compose file that a tool call writes, the way they read docker run -v. Before, a compose file that mounted the SSH or AWS credential folder, a credential file inside them or a dotenv file (for example - ~/.ssh:/root/.ssh, or the long form with source: ~/.ssh) was written without a check, because the text names no container program. It is now refused; named volumes and ordinary binds such as ./data:/data are still allowed.

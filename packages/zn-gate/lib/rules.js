@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.5
+ * RULES_VERSION: 2026-11-28.3
  */
 
-const RULES_VERSION = '2026-11-27.5';
+const RULES_VERSION = '2026-11-28.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -424,10 +424,18 @@ const PATH_CONTAINER_RE = /(?:^|[\s;&|(\/])(?:docker|podman|nerdctl)(?:-compose)
 const PATH_CONTAINER_SPLIT_RE = /[:=]/;
 const PATH_CONTAINER_DIRS = [[/(?:^|\/)\.ssh$/, '/id_rsa'], [/(?:^|\/)\.aws$/, '/credentials']];
 const PATH_CONTAINER_PARTS_MAX = 16;
+// A compose file written by a tool call has no docker word, but its volumes: key lists the same specs (- ~/.ssh:/root/.ssh, or the long
+// form with source: ~/.ssh), so a text with such a line is read as a container text too.
+const PATH_COMPOSE_RE = /(?:^|\n)[ \t]*volumes[ \t]*:/;
 // The parts of one word of a container command, after an attached short option (-v~/.ssh:/r). Mounting the .ssh or .aws folder
 // itself shares every file in it, so such a part also reads as a file inside it.
-function containerSpecReadings(word) {
+function containerSpecReadings(word, compose = false) {
   const out = [];
+  // In a compose file a bare folder (source: ~/.ssh) is a mount too: the folder reads as a file inside it.
+  if (compose && word.length <= 4096) {
+    const norm = normalizePathWord(word.replace(/\\/g, '/'));
+    for (const [re, file] of PATH_CONTAINER_DIRS) if (re.test(norm)) out.push(norm + file);
+  }
   // An option whose name holds env (--env-file=.env) only loads the file into the program: it stays allowed, as in the equals rule above.
   if (word.length > 4096 || !/[:=]/.test(word) || /^--[a-z0-9-]*env[a-z0-9-]*=/.test(word)) return out;
   const attached = /^-[a-z]([^-].*)$/.exec(word);
@@ -448,7 +456,8 @@ function containerSpecReadings(word) {
 function sensitivePathView(text) {
   const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
   const words = [];
-  const container = PATH_CONTAINER_RE.test(lowered);
+  const compose = PATH_COMPOSE_RE.test(lowered);
+  const container = compose || PATH_CONTAINER_RE.test(lowered);
   for (const raw of lowered.split(PATH_WORD_SPLIT_RE)) {
     if (!raw) continue;
     // A $ right before a double quote is a bash locale quote ($"id_rsa"): it is dropped with the quotes.
@@ -456,7 +465,7 @@ function sensitivePathView(text) {
     words.push(normalizePathWord(word.replace(/\\/g, '/')));
     if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
     for (const g of gluedPathReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
-    if (container) for (const g of containerSpecReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
+    if (container) for (const g of containerSpecReadings(word, compose)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
   }
   return words.join('\n');
 }
