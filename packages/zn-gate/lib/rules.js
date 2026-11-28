@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.2
+ * RULES_VERSION: 2026-11-28.3
  */
 
-const RULES_VERSION = '2026-11-28.2';
+const RULES_VERSION = '2026-11-28.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1069,6 +1069,7 @@ function evaluateUncached(input, options = {}) {
 // then not run at all.
 const ENV_CREDENTIAL_PREFILTER = /_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]/;
 const PREFIXED_CREDENTIAL_PREFILTER = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS/;
+const CLI_CREDENTIAL_PREFILTER = /--(?:pass|http|ftp|proxy|api|token|secret|access|auth|client)|PGPASSWORD|curl|mysql|mariadb/;
 
 const SECRET_PATTERNS = [
   // A body may not contain another BEGIN header: linear on repeated headers without END.
@@ -1097,23 +1098,26 @@ const SECRET_PATTERNS = [
   // The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
   // redacted when it looks machine-generated (most defaults are for development).
   { id: 'secret:credential_default', pattern: /(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretDefault, requires: '${' },
+  // The secret of a command line: --password=X, --password X, --api-key X, --token X, --secret X and the like,
+  // curl -u user:X, mysql -pX (glued, only after a mysql or mariadb command: -p means other things elsewhere)
+  // and PGPASSWORD=X. A flag without a value, a reference ($VAR, ${VAR}) and a placeholder (<password>, ***,
+  // changeme) are left alone (isNonSecretValue). A quoted value may hold spaces; an unquoted one ends at a space,
+  // a quote, a backslash, a backtick or one of ; | & (so a value inside an escaped JSON string keeps its escapes, and
+  // "`--password=`" in a document is not a value).
+  { id: 'secret:cli_credential_flag', pattern: /((?:(?<![A-Za-z0-9_-])--(?:(?:http-|ftp-|proxy-)?(?:password|passwd|pass)|api[-_]?key|token|secret|access[-_]token|auth[-_]token|client[-_]secret)(?:=|[ \t]+(?!-))(?:\\{0,2}["'])?)|(?:(?<![A-Za-z0-9_-])curl\b[^\n|;&]{0,300}?[ \t](?:-u|--user|--proxy-user)[ \t]+(?:\\{0,2}["'])?[^\s:'"\\]{1,128}:(?:\\{0,2}["'])?)|(?:(?<![A-Za-z0-9_-])(?:mysql[a-z]*|mariadb[a-z-]*)\b[^\n|;&]{0,300}?[ \t]-p(?:\\{0,2}["'])?)|(?:(?<![A-Za-z0-9_])PGPASSWORD=(?:\\{0,2}["'])?))((?<=["'])[^"'\\\n]{1,512}(?=\\{0,2}["'])|[^\s'"\\`;|&]+)((?:\\{0,2}["'])?)/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretValue, prefilter: CLI_CREDENTIAL_PREFILTER },
 ];
 
 // Extra credential forms that only `zn-gate scan` reports (files at rest, not
 // agent traffic). They run after SECRET_PATTERNS, on the text those already
-// redacted, so a value found by both is reported once.
-//   secret:cli_credential_flag   --api-key=..., --password=..., --token=... on
-//     a command line. A flag without a value, a reference ($TOKEN, ${X}) or a
-//     placeholder (<token>, changeme) is left alone.
+// redacted, so a value found by both is reported once. (Command-line credentials are
+// in SECRET_PATTERNS: secret:cli_credential_flag.)
 //   secret:credential_assignment a quoted value assigned to a name that ends
 //     in password, passwd, secret, token or api key, in lower or mixed case,
 //     with =, :, := or => (also $name = "..." in PHP, Perl and PowerShell).
 //     Only values that look machine-generated count, so labels and messages
 //     (i18n files, "password": "Contraseña") are not reported.
-const SCAN_FLAG_PREFILTER = /--(?:api|pass|token|secret|access|auth|client)/;
 const SCAN_ASSIGNMENT_PREFILTER = /[Pp][Aa][Ss][Ss][Ww]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]/;
 const SCAN_SECRET_PATTERNS = [
-  { id: 'secret:cli_credential_flag', pattern: /(?<![A-Za-z0-9_-])(--(?:api[-_]?key|password|passwd|token|secret|access[-_]token|auth[-_]token|client[-_]secret)=["']?)([^\s'"]{8,512})[^\s'"]*(["']?)/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretValue, prefilter: SCAN_FLAG_PREFILTER },
   // The name is at most 40 characters before the keyword, so each start costs a bounded amount.
   { id: 'secret:credential_assignment', pattern: /(?<![A-Za-z0-9_$])(\$?[A-Za-z0-9_]{0,40}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])["']?[ \t]*(?::=|=>|=|:)[ \t]*["'])([^\s'"]{8,512})(["'])/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretDefault, prefilter: SCAN_ASSIGNMENT_PREFILTER },
 ];

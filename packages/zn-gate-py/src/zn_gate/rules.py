@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.2
+RULES_VERSION: 2026-11-28.3
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.2"
+RULES_VERSION = "2026-11-28.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1205,6 +1205,8 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
     # redacted when it looks machine-generated (most defaults are for development).
     ("secret:credential_default", _rc(r"""(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})"""), r'\1[REDACTED_SECRET]\3'),
+    # The secret of a command line (see secret:cli_credential_flag in rules.js).
+    ("secret:cli_credential_flag", _rc(r"""((?:(?<![A-Za-z0-9_-])--(?:(?:http-|ftp-|proxy-)?(?:password|passwd|pass)|api[-_]?key|token|secret|access[-_]token|auth[-_]token|client[-_]secret)(?:=|[ \t]+(?!-))(?:\\{0,2}["'])?)|(?:(?<![A-Za-z0-9_-])curl\b[^\n|;&]{0,300}?[ \t](?:-u|--user|--proxy-user)[ \t]+(?:\\{0,2}["'])?[^\s:'"\\]{1,128}:(?:\\{0,2}["'])?)|(?:(?<![A-Za-z0-9_-])(?:mysql[a-z]*|mariadb[a-z-]*)\b[^\n|;&]{0,300}?[ \t]-p(?:\\{0,2}["'])?)|(?:(?<![A-Za-z0-9_])PGPASSWORD=(?:\\{0,2}["'])?))((?<=["'])[^"'\\\n]{1,512}(?=\\{0,2}["'])|[^\s'"\\`;|&]+)((?:\\{0,2}["'])?)"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
 # Substrings a text must contain before the pattern is run at all.
@@ -1218,6 +1220,7 @@ SECRET_PATTERN_REQUIRES: Dict[str, str] = {
 SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern[str]] = {
     "secret:env_credential": _rc(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
     "secret:prefixed_credential": _rc(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
+    "secret:cli_credential_flag": _rc(r"""--(?:pass|http|ftp|proxy|api|token|secret|access|auth|client)|PGPASSWORD|curl|mysql|mariadb"""),
 }
 
 # ---------------------------------------------------------------------------
@@ -1436,6 +1439,7 @@ SECRET_VALUE_FILTERS = {
     "secret:env_credential": _is_non_secret_value,
     "secret:prefixed_credential": _is_non_secret_value,
     "secret:credential_default": _is_non_secret_default,
+    "secret:cli_credential_flag": _is_non_secret_value,
 }
 
 # ---------------------------------------------------------------------------
@@ -1819,19 +1823,16 @@ PROVIDER_HINTS.update({
 # the text those already redacted.
 # ---------------------------------------------------------------------------
 SCAN_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
-    ("secret:cli_credential_flag", _rc(r"""(?<![A-Za-z0-9_-])(--(?:api[-_]?key|password|passwd|token|secret|access[-_]token|auth[-_]token|client[-_]secret)=["']?)([^\s'"]{8,512})[^\s'"]*(["']?)"""), r'\1[REDACTED_SECRET]\3'),
     # The name is at most 40 characters before the keyword, so each start costs a bounded amount.
     ("secret:credential_assignment", _rc(r"""(?<![A-Za-z0-9_$])(\$?[A-Za-z0-9_]{0,40}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])["']?[ \t]*(?::=|=>|=|:)[ \t]*["'])([^\s'"]{8,512})(["'])"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
 SCAN_SECRET_VALUE_FILTERS = {
-    "secret:cli_credential_flag": _is_non_secret_value,
     # Only values that look machine-generated: labels and messages are not secrets.
     "secret:credential_assignment": _is_non_secret_default,
 }
 
 SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
-    "secret:cli_credential_flag": _rc(r"""--(?:api|pass|token|secret|access|auth|client)"""),
     "secret:credential_assignment": _rc(r"""[Pp][Aa][Ss][Ss][Ww]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]"""),
 }
 

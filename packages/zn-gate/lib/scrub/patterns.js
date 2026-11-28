@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-24.2';
+const SCRUB_RULES_VERSION = '2026-11-28.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -262,6 +262,12 @@ const NB64 = '(?<![A-Za-z0-9+/_-])';
 const NA64 = '(?![A-Za-z0-9+/=_-])';
 
 function re(src, flags) { return new RegExp(src, 'gd' + (flags || '')); }
+
+/* lib/rules.js holds the shared regex of command-line credentials and the value check. It is required lazily by the
+ * check, and eagerly only for the regex source (rules.js does not require this file while loading). */
+function rulesModule() { return require('../rules'); }
+const CLI_ARG_RULE = rulesModule().SECRET_PATTERNS.find((r) => r.id === 'secret:cli_credential_flag');
+const CLI_ARG_PREFILTER = rulesModule().SECRET_PATTERNS.find((r) => r.id === 'secret:cli_credential_flag').prefilter;
 
 const KEY_WORD = 'PRIVATE' + ' KEY';
 const PEM_BEGIN = '-----BEGIN ';
@@ -744,6 +750,10 @@ const PATTERNS = [
   { type: 'SECRET', hints: null, prefilter: S_PREFILTER, find: findStructured },
   /* Quoted value with spaces, or a number, under a secret key (see findQuotedKv). */
   { type: 'SECRET', hints: null, prefilter: KV_PREFILTER, find: findQuotedKv },
+  /* The secret of a command line (--password=X, --token X, curl -u user:X, mysql -pX, PGPASSWORD=X): the
+   * rule secret:cli_credential_flag of lib/rules.js, same regex and same value check. */
+  { type: 'SECRET', hints: null, prefilter: CLI_ARG_PREFILTER, re: re(CLI_ARG_RULE.pattern.source, 'u'),
+    group: 2, check: (v, text, start, m) => !rulesModule().isNonSecretValue(v, m[1]) },
   /* `docker run -e KEY=value` / `--env KEY=value` / `--env=KEY=value`. */
   { type: 'SECRET', hints: ['-e', '--env'],
     re: re('(?<![^\\s])(?:-e|--env)(?:[ \\t]+|=)(["\']?)([A-Za-z_][A-Za-z0-9_]{0,127})=([^\\s"\'`;&|]{1,512})\\1(?![^\\s;&|)])'),

@@ -319,6 +319,25 @@ To fix one:
    a file outside the repository.
 5. Rotate the value if the file was ever committed, synced or shared.
 
+## Credentials on a command line
+
+The value of a credential given on a command line is redacted in the text zn-gate shows, logs
+and scans, in the same way by the Node.js and the Python package:
+
+- `--password`, `--passwd`, `--pass`, `--api-key`, `--token`, `--secret`, `--access-token`,
+  `--auth-token` and `--client-secret`, written `--flag=value` or `--flag value`
+  (also `--http-password`, `--ftp-password` and `--proxy-password`);
+- the password of `curl -u user:password` and `curl --user user:password`;
+- `mysql -pPASSWORD` (the password glued to `-p`), after `mysql`, `mysqldump`, `mariadb` and
+  the other `mysql*` and `mariadb*` commands only: `-p` means something else in other tools;
+- `PGPASSWORD=value`.
+
+Only the value is replaced, as `[REDACTED_SECRET]`. A flag without a value, a reference
+(`$DB_PASS`, `${DB_PASS}`) and a placeholder (`<password>`, `***`, `changeme`) are left alone.
+A quoted value may hold spaces; an unquoted one ends at a space, a quote or one of `;`, `|`
+and `&`. Prefer an environment variable or `zn run` over a secret on a command line, where
+any process on the computer can read it.
+
 ## AWS documentation example keys
 
 Access key ids are redacted by their format, whatever their last characters
