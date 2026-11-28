@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.3
+ * RULES_VERSION: 2026-11-28.8
  */
 
-const RULES_VERSION = '2026-11-28.3';
+const RULES_VERSION = '2026-11-28.8';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -815,9 +815,43 @@ function longPieces(text, start, end) {
   return before >= 10 && after >= 10;
 }
 
+// Known key prefixes (the start of the formats of the provider rules). A token before a break that starts with one, or is the
+// start of one (the first piece of a key cut inside its prefix), counts as anchors: a key's first piece can be all lowercase.
+const KEY_PREFIXES = [
+  'sk-ant-api03-', 'sk-ant-admin01-', 'sk-ant-', 'sk-proj-', 'sk-svcacct-', 'sk-admin-', 'sk-', 'pypi-',
+  'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_', 'glpat-', 'sk_test_',
+  'sk_live_', 'rk_test_', 'rk_live_', 'whsec_', 'AIza', 'GOCSPX-', 'hf_', 'npm_',
+  'SG.', 'key-', 'shpat_', 'shpca_', 'shppa_', 'shpss_', 'dop_v1_', 'doo_v1_',
+  'dor_v1_', 'lin_api_', 'dapi', 'hvs.', 'hvb.', 'gsk_', 'xai-', 'NRAK-',
+  'NRII-', 'dckr_pat_', 'dckr_oat_', 'zn_', 'tvly-', 'fc-', 'polar_', 'r8_',
+  'sbp_', 'EAAA', 'eyJ', 'AKIA', 'ASIA',
+];
+
+// True when the token that ends at `start` holds, within its last 32 characters, a key prefix at a word start, or the
+// first three or more characters of one up to `start`.
+function startsKeyPrefix(text, start) {
+  let i = start;
+  let k = 0;
+  while (i > 0 && k < 32) {
+    const c = text.charCodeAt(i - 1);
+    if (!isWrapChar(c) && c !== 46 && c !== 58) break;
+    i--;
+    k++;
+  }
+  for (; i < start; i++) {
+    const prev = i === 0 ? 0 : text.charCodeAt(i - 1);
+    if (i > 0 && ((prev >= 48 && prev <= 57) || (prev >= 65 && prev <= 90) || (prev >= 97 && prev <= 122) || prev === 95)) continue;
+    const rest = text.slice(i, start);
+    for (const p of KEY_PREFIXES) {
+      if (rest.startsWith(p) || (rest.length >= 3 && p.startsWith(rest))) return true;
+    }
+  }
+  return false;
+}
+
 // The digits and capital letters in the token before a break and the token after it (up to 32 characters of each).
-function anchorsAround(text, start, end) {
-  let n = 0;
+function anchorsAround(text, start, end, chain = false) {
+  let n = chain || startsKeyPrefix(text, start) ? LOOSE_ANCHORS : 0;
   for (let i = start - 1, k = 0; i >= 0 && k < 32; i--, k++) {
     const c = text.charCodeAt(i);
     if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90)) n++;
@@ -868,6 +902,15 @@ function tokenBefore(text, start) {
   return n >= 8;
 }
 
+// True when text[from, to) holds only token characters (a piece of a key, between two line breaks).
+function tokenOnly(text, from, to) {
+  for (let i = from; i < to; i++) {
+    const c = text.charCodeAt(i);
+    if (!isWrapChar(c) && c !== 46 && c !== 58) return false;
+  }
+  return true;
+}
+
 // One slot per kind of break (strict and loose), so a scan that reads both views does not search the text twice.
 const wrapBreaksMemo = [{ text: null, found: null }, { text: null, found: null }];
 function wrapBreaks(text, loose) {
@@ -878,6 +921,10 @@ function wrapBreaks(text, loose) {
   const at = loose ? WRAP_BREAK_LOOSE_AT_RE : WRAP_BREAK_AT_RE;
   const n = text.length;
   let tried = -1;
+  // Whether the break before this one was joined because its left piece began with a key prefix (or was itself joined that
+  // way), and where it ended: the pieces after the first one of a key need no anchors of their own.
+  let chain = false;
+  let prevEnd = -1;
   let m;
   while ((m = hint.exec(text)) !== null) {
     let start = m.index;
@@ -887,15 +934,19 @@ function wrapBreaks(text, loose) {
     hint.lastIndex = after;
     if (start === 0 || start <= tried || !(isWrapChar(text.charCodeAt(start - 1)) || (loose && text.charCodeAt(start - 1) === 46))) continue;
     tried = start;
-    if (!tokenBefore(text, start)) continue;
+    if (!tokenBefore(text, start)) { chain = false; continue; }
     at.lastIndex = start;
     const b = at.exec(text);
-    if (b === null) continue;
+    if (b === null) { chain = false; continue; }
     const end = start + b[0].length;
+    // A piece that starts a key prefix begins another key: the chain stops at it.
+    const inChain = chain && prevEnd >= 0 && tokenOnly(text, prevEnd, start) && !KEY_PREFIXES.some((p) => text.startsWith(p, end));
     if (loose || !PLAIN_BREAK_RE.test(b[0]) || !longPieces(text, start, end)) {
-      if (anchorsAround(text, start, end) < LOOSE_ANCHORS) continue;
+      if (anchorsAround(text, start, end, inChain) < LOOSE_ANCHORS) { chain = false; continue; }
     }
-    if (text.charCodeAt(start - 1) === 46 && digitsAround(text, start, end) < DOT_BREAK_DIGITS) continue;
+    if (text.charCodeAt(start - 1) === 46 && !inChain && digitsAround(text, start, end) < DOT_BREAK_DIGITS) { chain = false; continue; }
+    chain = inChain || startsKeyPrefix(text, start);
+    prevEnd = end;
     out.push(start, end);
     if (end > hint.lastIndex) hint.lastIndex = end;
   }
@@ -918,7 +969,14 @@ function invisibleView(text, parity = null, loose = false) {
   if (text.length <= MAX_WRAP_VIEW_CHARS && WRAP_HINT_RE.test(text)) {
     const found = wrapBreaks(text, loose);
     for (let k = 0, n = 0; k < found.length; k += 2, n++) {
-      if (parity === null || n % 2 === parity) runs.push(found[k], found[k + 1]);
+      if (parity === 'last') {
+        // Every break except the last of a run of breaks one piece apart: a key wrapped across lines, followed by a longer line.
+        const last = k + 2 >= found.length || !tokenOnly(text, found[k + 1], found[k + 2]);
+        const first = k === 0 || !tokenOnly(text, found[k - 1], found[k]);
+        // A piece that starts a key prefix begins another key: that break is not joined.
+        const another = KEY_PREFIXES.some((p) => text.startsWith(p, found[k + 1]));
+        if (!(last && !first) && !another) runs.push(found[k], found[k + 1]);
+      } else if (parity === null || n % 2 === parity) runs.push(found[k], found[k + 1]);
     }
   }
   if (runs.length === 0) return null;
@@ -1558,9 +1616,14 @@ function wrapResolve(text, start, end, lo) {
 function parityViews(text, view) {
   if (!view || text.length > MAX_WRAP_VIEW_CHARS || !WRAP_HINT_RE.test(text)) return [];
   const out = [];
-  for (const parity of [0, 1]) {
+  for (const parity of [0, 1, 'last']) {
     const v = invisibleView(text, parity);
-    if (v && v.clean !== view.clean && v.clean !== text && out.every((o) => o.clean !== v.clean)) out.push(v);
+    if (v && v.clean !== view.clean && v.clean !== text && out.every((o) => o.clean !== v.clean)) {
+      // The view without the last break of a run of breaks is for a key wrapped across lines that is followed by a longer
+      // line; it must not join two keys that the other views read apart.
+      if (parity === 'last') v.last = true;
+      out.push(v);
+    }
   }
   return out;
 }
@@ -1599,7 +1662,7 @@ function ruleCandidates(item, text, view, budget, out, extraViews = [], loose = 
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
   // The views that join every second line break find a key wrapped across two lines next to other lines; a match there
   // that overlaps a match on the text itself is left to the view that joins all of them.
-  for (const v of extraViews) passes.push([v.clean, v.map, false, true]);
+  for (const v of extraViews) passes.push([v.clean, v.map, false, true, v.last ? 'last' : false]);
   if (loose) passes.push([loose.clean, loose.map, false, true, true]);
   // A third pass reads each invisible character as a space; its indexes are the original ones.
   if (view) {
@@ -1659,7 +1722,11 @@ function ruleCandidates(item, text, view, budget, out, extraViews = [], loose = 
         if (over >= 2 || (extra && over >= 1)) continue;
         if (isLoose) {
           const i = lowerBoundBy(strictMerged, start);
-          if (i < strictMerged.length && strictMerged[i].start < end) continue;
+          if (isLoose === 'last') {
+            // The view without the last break of a run: a match that extends one earlier match is the rest of a wrapped key,
+            // one that overlaps two or more joins keys the other views read apart.
+            if (i + 1 < strictMerged.length && strictMerged[i + 1].start < end) continue;
+          } else if (i < strictMerged.length && strictMerged[i].start < end) continue;
         }
         if (text.slice(start, end).includes('\n') || spanHasBreak(text, start, end)) {
           const r = wrapResolve(text, start, end, start + 1);

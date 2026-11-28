@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.3
+RULES_VERSION: 2026-11-28.8
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -21,7 +21,7 @@ import sys
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypedDict, cast, overload
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypedDict, Union, cast, overload
 from ._result_screen import (
     CUSTOM_TEXT_REASON as CUSTOM_TEXT_REASON,
     OVERRIDDEN_READING_REASON as OVERRIDDEN_READING_REASON,
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.3"
+RULES_VERSION = "2026-11-28.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -889,10 +889,43 @@ _ANCHORS = frozenset('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 _TOKEN_CHARS = frozenset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+/=.:')
 
 
-def _anchors_around(text: str, start: int, end: int) -> int:
+# Known key prefixes (see KEY_PREFIXES in rules.js).
+_KEY_PREFIXES = (
+    'sk-ant-api03-', 'sk-ant-admin01-', 'sk-ant-', 'sk-proj-', 'sk-svcacct-', 'sk-admin-', 'sk-', 'pypi-',
+    'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_', 'glpat-', 'sk_test_',
+    'sk_live_', 'rk_test_', 'rk_live_', 'whsec_', 'AIza', 'GOCSPX-', 'hf_', 'npm_',
+    'SG.', 'key-', 'shpat_', 'shpca_', 'shppa_', 'shpss_', 'dop_v1_', 'doo_v1_',
+    'dor_v1_', 'lin_api_', 'dapi', 'hvs.', 'hvb.', 'gsk_', 'xai-', 'NRAK-',
+    'NRII-', 'dckr_pat_', 'dckr_oat_', 'zn_', 'tvly-', 'fc-', 'polar_', 'r8_',
+    'sbp_', 'EAAA', 'eyJ', 'AKIA', 'ASIA',
+)
+
+
+def _starts_key_prefix(text: str, start: int) -> bool:
+    """True when the token that ends at `start` holds, within its last 32 characters, a key prefix at a word start, or the
+    first three or more characters of one up to `start` (see startsKeyPrefix in rules.js)."""
+    i = start
+    k = 0
+    while i > 0 and k < 32 and text[i - 1] in _TOKEN_CHARS:
+        i -= 1
+        k += 1
+    while i < start:
+        prev = text[i - 1] if i > 0 else ''
+        if prev and (prev.isascii() and prev.isalnum() or prev == '_'):
+            i += 1
+            continue
+        rest = text[i:start]
+        for p in _KEY_PREFIXES:
+            if rest.startswith(p) or (len(rest) >= 3 and p.startswith(rest)):
+                return True
+        i += 1
+    return False
+
+
+def _anchors_around(text: str, start: int, end: int, chain: bool = False) -> int:
     """The digits and capital letters in the token before a break and the token after it (up to 32 characters of each;
     see anchorsAround in rules.js)."""
-    n = 0
+    n = LOOSE_ANCHORS if chain or _starts_key_prefix(text, start) else 0
     i = start - 1
     while i >= 0 and start - 1 - i < 32:
         ch = text[i]
@@ -956,6 +989,11 @@ def _token_before(text: str, start: int) -> bool:
 PLAIN_BREAK_RE = _rc(r'[ \t]*\r?\n[ \t]*\Z')
 
 
+def _token_only(text: str, start: int, end: int) -> bool:
+    """True when text[start:end] holds only token characters (see tokenOnly in rules.js)."""
+    return all(ch in _TOKEN_CHARS for ch in text[start:end])
+
+
 def _long_pieces(text: str, start: int, end: int) -> bool:
     """True when a break has ten or more token characters on each side (see longPieces in rules.js)."""
     before = 0
@@ -967,7 +1005,7 @@ def _long_pieces(text: str, start: int, end: int) -> bool:
     return before >= 10 and after >= 10
 
 
-def invisible_view(text: str, parity: Optional[int] = None,
+def invisible_view(text: str, parity: Union[int, str, None] = None,
                    loose: bool = False) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
@@ -978,10 +1016,37 @@ def invisible_view(text: str, parity: Optional[int] = None,
     if len(text) <= MAX_WRAP_VIEW_CHARS and WRAP_HINT_RE.search(text) is not None:
         breaks = [m.span() for m in (WRAP_BREAK_LOOSE_RE if loose else WRAP_BREAK_RE).finditer(text)]
         # Read only after a piece that can be part of a key (see wrapBreaks in rules.js).
-        breaks = [b for b in breaks if _token_before(text, b[0]) and (not loose and PLAIN_BREAK_RE.match(text[b[0]:b[1]]) is not None and _long_pieces(text, b[0], b[1]) or
-                  _anchors_around(text, b[0], b[1]) >= LOOSE_ANCHORS)
-                  and (text[b[0] - 1] != '.' or _digits_around(text, b[0], b[1]) >= DOT_BREAK_DIGITS)]
-        runs += breaks if parity is None else breaks[parity::2]
+        kept: List[Tuple[int, int]] = []
+        chain = False
+        prev_end = -1
+        for b in breaks:
+            if not _token_before(text, b[0]):
+                chain = False
+                continue
+            # A piece that starts a key prefix begins another key: the chain stops at it.
+            in_chain = (chain and prev_end >= 0 and _token_only(text, prev_end, b[0])
+                        and not any(text.startswith(p, b[1]) for p in _KEY_PREFIXES))
+            if not (not loose and PLAIN_BREAK_RE.match(text[b[0]:b[1]]) is not None and _long_pieces(text, b[0], b[1])
+                    or _anchors_around(text, b[0], b[1], in_chain) >= LOOSE_ANCHORS):
+                chain = False
+                continue
+            if text[b[0] - 1] == '.' and not in_chain and _digits_around(text, b[0], b[1]) < DOT_BREAK_DIGITS:
+                chain = False
+                continue
+            chain = in_chain or _starts_key_prefix(text, b[0])
+            prev_end = b[1]
+            kept.append(b)
+        breaks = kept
+        if parity == 'last':
+            for k, b in enumerate(breaks):
+                last = k + 1 >= len(breaks) or not _token_only(text, b[1], breaks[k + 1][0])
+                first = k == 0 or not _token_only(text, breaks[k - 1][1], b[0])
+                # A piece that starts a key prefix begins another key: that break is not joined.
+                another = any(text.startswith(p, b[1]) for p in _KEY_PREFIXES)
+                if not (last and not first) and not another:
+                    runs.append(b)
+        else:
+            runs += breaks if parity is None else breaks[parity::2]
     if not runs:
         return None
     runs.sort(key=lambda r: (r[0], -r[1]))
@@ -2536,16 +2601,18 @@ def _wrap_resolve(text: str, start: int, end: int, lo: int) -> Tuple[str, int]:
     return 'keep', ext
 
 
-def _parity_views(text: str, view: Optional[Tuple[str, 'array[int]']]) -> List[Tuple[str, 'array[int]']]:
+def _parity_views(text: str, view: Optional[Tuple[str, 'array[int]']]) -> List[Tuple[str, 'array[int]', bool]]:
     """The two views of `text` that join every second wrap break (see invisibleView in rules.js), without the ones
     equal to the view that joins all of them: empty for a text with fewer than two breaks."""
     if view is None or len(text) > MAX_WRAP_VIEW_CHARS or WRAP_HINT_RE.search(text) is None:
         return []
-    out: List[Tuple[str, 'array[int]']] = []
-    for parity in (0, 1):
+    out: List[Tuple[str, 'array[int]', bool]] = []
+    for parity in (0, 1, 'last'):
         v = invisible_view(text, parity)
         if v is not None and v[0] != view[0] and v[0] != text and all(v[0] != o[0] for o in out):
-            out.append(v)
+            # The view without the last break of a run of breaks is read only where no other view found anything (see
+            # parityViews in rules.js).
+            out.append((v[0], v[1], parity == 'last'))
     return out
 
 
@@ -2579,7 +2646,7 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                      out: List[Tuple[int, int, str, str]],
                      match_check: Optional[Callable[[str], bool]] = None,
                      patterns: Optional[List[Tuple[str, re.Pattern[str], str]]] = None,
-                     extra_views: Sequence[Tuple[str, 'array[int]']] = (),
+                     extra_views: Sequence[Tuple[str, 'array[int]', bool]] = (),
                      loose_view: Optional[Tuple[str, 'array[int]']] = None) -> None:
     """Candidate redactions of one rule as (start, end, rule_id, replacement) in
     original coordinates. The rule runs on the original text and on the text
@@ -2598,7 +2665,7 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
         # The views that join every second line break find a key wrapped across two lines next to other lines; a
         # match there that overlaps a match on the text itself is the view that joins all of them to decide.
         for extra in extra_views:
-            passes.append((extra[0], extra[1], False, True, False))
+            passes.append((extra[0], extra[1], False, True, 'last' if extra[2] else False))
         # (the loose view is added below, after the views that can be absent)
         # A third pass reads each invisible character as a space; its indexes are the original ones.
         spaced = _spaced_view(text)
@@ -2666,7 +2733,12 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     continue
                 if is_loose:
                     li = bisect.bisect_right(strict_ends, start)
-                    if li < len(strict_merged) and strict_merged[li][0] < end:
+                    if is_loose == 'last':
+                        # The view without the last break of a run: a match that extends one earlier match is the rest of a
+                        # wrapped key, one that overlaps two or more joins keys the other views read apart.
+                        if li + 1 < len(strict_merged) and strict_merged[li + 1][0] < end:
+                            continue
+                    elif li < len(strict_merged) and strict_merged[li][0] < end:
                         continue
                 if '\n' in text[start:end] or _span_has_break(text, start, end):
                     action, at = _wrap_resolve(text, start, end, start + 1)
@@ -2737,7 +2809,7 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
     detections: List[Dict[str, Any]] = []
     budget = [MAX_FILTERED_CHARS]
     view = None
-    extra_views: List[Tuple[str, 'array[int]']] = []
+    extra_views: List[Tuple[str, 'array[int]', bool]] = []
     loose_view: Optional[Tuple[str, 'array[int]']] = None
     dirty = True
 

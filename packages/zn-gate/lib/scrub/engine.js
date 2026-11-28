@@ -213,6 +213,9 @@ function scan(text, ctx) {
         end: s.end > s.start ? v.map[s.end - 1] + 1 : v.map[s.start],
       }, text));
       if (v === loose) spans = spans.filter((s) => !overlapsAny(all, s.start, s.end));
+      // The view without the last break of a run: a span that extends one earlier span is the rest of a wrapped key; one that
+      // overlaps two or more joins keys the other views read apart.
+      else if (v.last) spans = spans.filter((s) => all.filter((a) => a.start < s.end && s.start < a.end).length < 2);
       else if (k > 0) spans = spans.filter((s) => !overlapsAny(direct, s.start, s.end));
       all = all.concat(spans);
     });
