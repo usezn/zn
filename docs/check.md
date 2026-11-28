@@ -700,7 +700,7 @@ In cloud mode the same command prints:
 Two cases keep the engine local even though a key exists:
 
 - A key in `ZN_API_KEY` without `ZN_CLOUD=1` stays local. `API key` then reads `Set (ZN_API_KEY) (unused: cloud requires ZN_CLOUD=1)`.
-- `ZN_LOCAL_ONLY=true` (or `--local-only`) always wins over `ZN_CLOUD=1` and over a saved connection.
+- `ZN_LOCAL_ONLY=true` (or `--local-only`) always wins over `ZN_CLOUD=1` and over a saved connection. `1`, `yes` and `on` work too, and so does any value zn-gate does not recognise (it is reported once): a typo never sends text to the cloud.
 
 `zn-gate status` only reads files: nothing is run, changed or sent. See [Local checks and API data](local-checks-and-api-data.md) for what the cloud check sends, and the [`status` section of the CLI reference](cli.md#status) for the full output.
 

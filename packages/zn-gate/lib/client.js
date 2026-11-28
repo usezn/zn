@@ -27,7 +27,7 @@ try {
  *    command) and, as described above, the tool-output sample of the Claude
  *    Code hook. Either only when BOTH ZN_API_KEY and
  *    ZN_CLOUD=1 are set, or the user ran `zn-gate connect` (and
- *    ZN_LOCAL_ONLY is not "true"). Secrets are redacted locally with
+ *    ZN_LOCAL_ONLY is not a true value such as 1 or true). Secrets are redacted locally with
  *    redactSecrets() before the request is built. `connect` and `disconnect`
  *    (lib/connect-cli.js) are the only other code that contacts the network
  *    here, only on the person's command, and only to https://api.usezn.com.
@@ -54,6 +54,7 @@ function resolveEndpoint(options = {}, { stored = false } = {}) {
 
 const cloudKey = require('./cloud-key');
 const { isVerbose } = require('./verbose');
+const { localOnlyEnv } = require('./env-flag');
 const { usableApiKey } = cloudKey;
 
 /**
@@ -66,7 +67,7 @@ const { usableApiKey } = cloudKey;
  * analyze() then looks the key up and falls back to local rules without one.
  */
 function isCloudEnabled(options = {}) {
-  const forceLocal = Boolean(options.localOnly) || process.env.ZN_LOCAL_ONLY === 'true';
+  const forceLocal = Boolean(options.localOnly) || localOnlyEnv();
   if (forceLocal) return false;
   if (explicitOptIn(options)) return true;
   return cloudKey.isConnected();

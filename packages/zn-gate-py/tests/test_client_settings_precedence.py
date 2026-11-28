@@ -109,13 +109,16 @@ class TestCloudSwitches(_Case):
         os.environ["ZN_CLOUD"] = "1"
         self.assertTrue(client.is_cloud_enabled())
 
-    def test_only_exact_true_forces_local(self):
+    def test_true_values_force_local(self):
+        # 1, true, yes and on in any case force local-only; 0, false, no, off and empty do not;
+        # an unknown value also forces it (see test_local_only_values.py).
         os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1")
-        for value in ("", "1", "TRUE", "True", "yes", "false"):
+        for value in ("", "0", "false", "no", "off"):
             os.environ["ZN_LOCAL_ONLY"] = value
             self.assertTrue(client.is_cloud_enabled(), value)
-        os.environ["ZN_LOCAL_ONLY"] = "true"
-        self.assertFalse(client.is_cloud_enabled())
+        for value in ("true", "1", "TRUE", "True", "yes", "on"):
+            os.environ["ZN_LOCAL_ONLY"] = value
+            self.assertFalse(client.is_cloud_enabled(), value)
 
     def test_local_only_argument_beats_opt_in(self):
         os.environ.update(ZN_API_KEY=KEY_ENV, ZN_CLOUD="1")

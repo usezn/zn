@@ -4,7 +4,7 @@ opinion for prompt analysis. Pure Python stdlib. Zero external dependencies.
 
 Data-flow contract (since 1.4.1): `analyze()` only contacts the network when the
 user explicitly opted in with BOTH `ZN_API_KEY` and `ZN_CLOUD=1` (and
-`ZN_LOCAL_ONLY` is not "true"). Secrets are redacted locally with
+`ZN_LOCAL_ONLY` is not set to a true value such as 1 or true). Secrets are redacted locally with
 `redact_secrets()` before the request is built. Tool results and tool-call
 arguments (guard, integrations, sanitize_tool_result) are always local.
 """
@@ -159,11 +159,38 @@ def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
     return DEFAULT_ENDPOINT
 
 
+_LOCAL_ONLY_TRUE = frozenset(("1", "true", "yes", "on"))
+_LOCAL_ONLY_FALSE = frozenset(("", "0", "false", "no", "off"))
+_LOCAL_ONLY_WARNED: set = set()
+
+
+def local_only_env() -> bool:
+    """True when ZN_LOCAL_ONLY asks for local-only use. 1, true, yes and on (any case, spaces ignored) turn it on;
+    unset, empty, 0, false, no and off leave it off. Any other value also turns it ON: the setting exists to keep
+    text on this machine, so a value this code does not recognise must not send anything. Said once in the log."""
+    raw = os.environ.get("ZN_LOCAL_ONLY")
+    if raw is None:
+        return False
+    value = raw.strip().lower()
+    if value in _LOCAL_ONLY_TRUE:
+        return True
+    if value in _LOCAL_ONLY_FALSE:
+        return False
+    if raw not in _LOCAL_ONLY_WARNED:
+        _LOCAL_ONLY_WARNED.add(raw)
+        import logging
+        logging.getLogger("zn_gate").warning(
+            "zn_gate: ZN_LOCAL_ONLY is set to %r, which is not a value zn_gate knows, so local-only is ON "
+            "(nothing is sent to the cloud). Use 1, true, yes or on to turn it on; unset, empty, 0, false, no or off "
+            "to leave it off.", raw[:20])
+    return True
+
+
 def is_cloud_enabled(api_key: Optional[str] = None, local_only: bool = False) -> bool:
-    """True only if the user opted in: an API key AND ZN_CLOUD=1, and no local-only override."""
+    """True only if the user opted in: an API key AND ZN_CLOUD=1, and no local-only override (ZN_LOCAL_ONLY=1, true, yes or on)."""
     key = api_key or os.environ.get("ZN_API_KEY")
     opted_in = os.environ.get("ZN_CLOUD") == "1"
-    force_local = local_only or os.environ.get("ZN_LOCAL_ONLY") == "true"
+    force_local = local_only or local_only_env()
     return bool(key) and opted_in and not force_local
 
 

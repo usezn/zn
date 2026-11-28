@@ -22,4 +22,29 @@ function envFlag(name) {
   return false;
 }
 
-module.exports = { envFlag, _warned: warned };
+const LOCAL_ONLY_TRUE = new Set(['1', 'true', 'yes', 'on']);
+const LOCAL_ONLY_FALSE = new Set(['', '0', 'false', 'no', 'off']);
+
+/**
+ * True when ZN_LOCAL_ONLY asks for local-only use. 1, true, yes and on (any case, spaces ignored) turn it on;
+ * unset, empty, 0, false, no and off leave it off. Any other value also turns it ON: the setting exists to keep
+ * text on this machine, so a value this code does not recognise must not send anything. Said once on stderr.
+ * Same rule and wording as local_only_env in the Python package.
+ */
+function localOnlyEnv() {
+  const raw = process.env.ZN_LOCAL_ONLY;
+  if (raw === undefined) return false;
+  const value = raw.trim().toLowerCase();
+  if (LOCAL_ONLY_TRUE.has(value)) return true;
+  if (LOCAL_ONLY_FALSE.has(value)) return false;
+  const key = 'ZN_LOCAL_ONLY\0' + raw;
+  if (!warned.has(key)) {
+    warned.add(key);
+    try {
+      process.stderr.write(`zn_gate: ZN_LOCAL_ONLY is set to '${raw.slice(0, 20)}', which is not a value zn_gate knows, so local-only is ON (nothing is sent to the cloud). Use 1, true, yes or on to turn it on; unset, empty, 0, false, no or off to leave it off\n`);
+    } catch (_) { /* a closed stderr must not change a verdict */ }
+  }
+  return true;
+}
+
+module.exports = { envFlag, localOnlyEnv, _warned: warned };

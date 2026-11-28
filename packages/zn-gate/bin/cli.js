@@ -84,6 +84,7 @@ function runEvidencePack(options) {
     process.exitCode = 1;
   }
 }
+const { localOnlyEnv } = require('../lib/env-flag');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -1305,7 +1306,7 @@ async function main() {
     apiKey: process.env.ZN_API_KEY,
     stage: process.env.ZN_STAGE || 'v30',
     apiUrl: process.env.ZN_API_URL,
-    localOnly: process.env.ZN_LOCAL_ONLY === 'true',
+    localOnly: localOnlyEnv(),
     dryRun: args.includes('--dry-run'),
     shadow: args.includes('--shadow'),
     revert: args.includes('--revert'),

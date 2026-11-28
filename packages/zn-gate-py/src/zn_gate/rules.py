@@ -1048,18 +1048,21 @@ def _check_base64_pipes(candidates: Tuple[str, ...], strict: Optional[bool]) -> 
             ), advisory
         try:
             decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
-            inner_res = evaluate(decoded, strict=strict)
-            if inner_res.advisory and advisory is None:
-                advisory = dict(inner_res.advisory)
-            if not inner_res.allowed:
-                return Assessment(
-                    verdict='block',
-                    confidence=inner_res.confidence,
-                    rule='evasion:base64_smuggling',
-                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
-                ), advisory
-        except Exception:
-            pass
+        except (binascii.Error, ValueError, UnicodeError):
+            # Only an undecodable payload is skipped (invalid Base64 is not a command). An error raised by
+            # evaluate() below is not caught here: it reaches the caller, the same as any other evaluator
+            # error, so the input is never allowed because the check broke.
+            continue
+        inner_res = evaluate(decoded, strict=strict)
+        if inner_res.advisory and advisory is None:
+            advisory = dict(inner_res.advisory)
+        if not inner_res.allowed:
+            return Assessment(
+                verdict='block',
+                confidence=inner_res.confidence,
+                rule='evasion:base64_smuggling',
+                reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
+            ), advisory
     return None, advisory
 
 

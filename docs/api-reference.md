@@ -284,7 +284,7 @@ except GuardBlockError as e:
 
 ### `analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`
 
-- Synchronous (the Node function returns a Promise). Same data flow as Node: local rules first, and the cloud only when the user opted in with `ZN_API_KEY` and `ZN_CLOUD=1`, with `ZN_LOCAL_ONLY` not `true`. Text is secret-redacted before it is sent.
+- Synchronous (the Node function returns a Promise). Same data flow as Node: local rules first, and the cloud only when the user opted in with `ZN_API_KEY` and `ZN_CLOUD=1`, with `ZN_LOCAL_ONLY` not set to a true value (`1`, `true`, `yes` or `on`, or any value it does not recognise). Text is secret-redacted before it is sent.
 - `timeout` is in **seconds** (default 4.0, or 12.0 for text over 1,000 characters); the Node option is in milliseconds.
 - Returns a dict with `verdict`, `confidence`, `rule`, `reason`, `engine`, `rules_version` and `mode`: `'hybrid-local-fastpath'`, `'oss-local'` or `'hybrid-cloud'`, as in Node.
 - If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error`. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
@@ -299,7 +299,7 @@ except GuardBlockError as e:
 
 ### `is_cloud_enabled(api_key: str | None = None, local_only: bool = False) -> bool`
 
-- `True` only when a key (`api_key` or `ZN_API_KEY`) is set together with `ZN_CLOUD=1`, and neither `local_only` nor `ZN_LOCAL_ONLY=true` is set. A key saved by `zn-gate connect` is not used.
+- `True` only when a key (`api_key` or `ZN_API_KEY`) is set together with `ZN_CLOUD=1`, and neither `local_only` nor `ZN_LOCAL_ONLY` (`1`, `true`, `yes` or `on`; an unrecognised value counts too and is reported once) is set. A key saved by `zn-gate connect` is not used.
 
 ### `resolve_endpoint(options: dict | None = None) -> str`
 

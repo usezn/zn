@@ -41,6 +41,11 @@ def is_cloud_enabled(*args: Any, **kwargs: Any) -> Any:
     return _is_cloud_enabled(*args, **kwargs)
 
 
+def local_only_env() -> bool:
+    from .client import local_only_env as _local_only_env
+    return _local_only_env()
+
+
 def resolve_endpoint(*args: Any, **kwargs: Any) -> Any:
     from .client import resolve_endpoint as _resolve_endpoint
     return _resolve_endpoint(*args, **kwargs)
@@ -925,7 +930,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         key_line = 'Not set'
     elif cloud:
         key_line = 'Set'
-    elif os.environ.get('ZN_LOCAL_ONLY') == 'true':
+    elif local_only_env():
         key_line = 'Set (unused: ZN_LOCAL_ONLY=true overrides ZN_CLOUD=1)'
     else:
         key_line = 'Set (unused: cloud requires ZN_CLOUD=1)'

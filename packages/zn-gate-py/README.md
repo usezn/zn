@@ -334,7 +334,7 @@ We only publish numbers we can reproduce, with the method next to them.
 
 - `ZN_CLOUD`: `1` lets `analyze()` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). `analyze()` ignores it unless `ZN_CLOUD=1` is set. `analyze_cloud()` takes the key as an argument instead.
-- `ZN_LOCAL_ONLY`: `true` forces local-only.
+- `ZN_LOCAL_ONLY`: `1`, `true`, `yes` or `on` (any case) forces local-only; `0`, `false`, `no`, `off` or empty leave it off. Any other value also forces local-only and is reported once.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_BLOCK_TRUNCATED`: `1` keeps a tool result too large to scan in full blocked (rule `size:truncated`), even when `ZN_ALLOW_TRUNCATED=1` is set. Any other value leaves it off and logs a warning (logger `zn_gate`) naming the accepted values.
 - `ZN_ALLOW_TRUNCATED`: `1` lets a tool result over 4 MB through, marked `truncated`, instead of blocking it. This weakens protection: the part of the output past the limit is never checked, so use it only for a tool you trust. It has no effect on arguments, which are always blocked over 4 MB.

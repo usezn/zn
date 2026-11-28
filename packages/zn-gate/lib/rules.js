@@ -876,18 +876,22 @@ function checkBase64Pipes(candidates, options) {
     if (bytes > MAX_B64_DECODED_BYTES) {
       return { block: { verdict: 'block', confidence: 0.99, reason: 'Smuggled Base64 execution: too much Base64 data to inspect', rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
     }
+    let decoded;
     try {
-      const decoded = Buffer.from(payload, 'base64').toString('utf8');
-      const innerRes = evaluate(decoded, options);
-      if (innerRes.advisory && !advisory) advisory = innerRes.advisory;
-      if (innerRes.verdict === 'block') {
-        return {
-          block: { ...innerRes, reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`, rule: 'evasion:base64_smuggling' },
-          advisory,
-        };
-      }
+      decoded = Buffer.from(payload, 'base64').toString('utf8');
     } catch (e) {
-      // ignore invalid base64
+      // Only an undecodable payload is skipped (invalid Base64 is not a command). An error thrown by
+      // evaluate() below is not caught here: it reaches the caller, the same as any other evaluator error,
+      // so the input is never allowed because the check broke.
+      continue;
+    }
+    const innerRes = evaluate(decoded, options);
+    if (innerRes.advisory && !advisory) advisory = innerRes.advisory;
+    if (innerRes.verdict === 'block') {
+      return {
+        block: { ...innerRes, reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`, rule: 'evasion:base64_smuggling' },
+        advisory,
+      };
     }
   }
   return { block: null, advisory };
@@ -2060,6 +2064,7 @@ function copyResult(res) {
 
 module.exports = {
   evaluate,
+  _checkBase64Pipes: checkBase64Pipes,
   ADVISORY_BY_DEFAULT,
   analyzePrompt: evaluate,
   loadCustomConfig,

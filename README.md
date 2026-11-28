@@ -330,7 +330,7 @@ We only publish numbers we can reproduce, with the method next to them.
 |---|---|---|
 | `ZN_CLOUD` | off | `1` lets prompt analysis also query the cloud classifier. Requires `ZN_API_KEY`. |
 | `ZN_API_KEY` | unset | API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`. |
-| `ZN_LOCAL_ONLY` | unset | `true` forces local-only, even with `ZN_CLOUD=1`. |
+| `ZN_LOCAL_ONLY` | unset | `1`, `true`, `yes` or `on` (any case) forces local-only, even with `ZN_CLOUD=1`. `0`, `false`, `no`, `off` or empty leave it off; any other value also forces local-only and is reported once. |
 | `ZN_STAGE` / `ZN_API_URL` | `v30` | Cloud endpoint selection. |
 
 zn Team: `zn team join <token>` connects a machine to your organization's signed secrets policy and uploads its audit log (metadata only). What the organization can and cannot change on the machine, offline behavior and the OpenTelemetry export (`zn vault log export --otlp`): [docs/team.md](docs/team.md).
