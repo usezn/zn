@@ -29,14 +29,15 @@ zn hooks installed on this machine (nothing was run or changed):
 
 Claude Code (user): ~/.claude/settings.json
   BROKEN -
-  BROKEN: the file is not valid JSON, so Claude Code cannot read its hooks and zn cannot add its own.
-    Fix: run `zn hooks install claude-code` in your own terminal.
+  BROKEN: the file is not in a format Claude Code can read (usually a missing or extra comma or bracket, or a comment), so zn cannot read or add hooks there. zn has not changed it.
+    Fix: open the file in a text editor and repair it. Then run `zn hooks install claude-code` in your own terminal.
+    `zn hooks install claude-code` stops without changing a file it cannot read. Once the file is valid, it saves a backup copy next to it (.bak-zn-<time>) and keeps your other settings.
 
 0 OK, 0 stale, 1 broken.
 To remove the hooks of an agent instead, run `zn hooks uninstall <agent>`.
 ```
 
-The command only reads files. The file counts as one broken row because zn cannot parse it, and the exit code is `1`. The `Fix:` line is the generic one that every broken row gets. For a file with comments it does not help yet: see the next step.
+The command only reads files. The file counts as one broken row because zn cannot parse it, and the exit code is `1`. The `Fix:` lines say to repair the file first and then run the install. For a file with comments, the next steps show how.
 
 ## 3. Try the install
 
@@ -92,7 +93,7 @@ zn writes the settings back without comments, so a file that zn manages cannot k
 
 ## 5. Do not add the comments back
 
-If you put a comment back into the file after the install, the same thing happens again: `check --hooks` shows the file as broken and says `0 OK, 0 stale, 1 broken`. A plain `zn-gate check` then reports the agent as not set up and ends with `Hooks: 0 OK, 0 stale, 1 broken. Run zn-gate check --hooks for details.`, because zn cannot read the hooks it wrote. Keep your notes in a separate file instead, such as the copy from step 4.
+If you put a comment back into the file after the install, the same thing happens again: `check --hooks` shows the file as broken and says `0 OK, 0 stale, 1 broken`. A plain `zn-gate check` then reports the agent as not set up and ends with `Hooks: 0 working, 0 out of date, 1 need repair. Run zn-gate check --hooks to see which.`, because zn cannot read the hooks it wrote. Keep your notes in a separate file instead, such as the copy from step 4.
 
 ## Related
 

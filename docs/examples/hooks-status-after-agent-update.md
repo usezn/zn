@@ -55,7 +55,7 @@ Codex CLI (user): ~/.codex/hooks.json
 The exit code of `zn-gate check --hooks` is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. Plain `zn-gate check` ends with one line about the same hooks:
 
 ```text
-Hooks: 0 OK, 7 stale, 0 broken. Run zn-gate check --hooks for details.
+Hooks: 0 working, 7 out of date, 0 need repair. Run zn-gate check --hooks to see which.
 ```
 
 ## 3. Bring the hooks up to date

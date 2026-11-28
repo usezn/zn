@@ -1037,11 +1037,14 @@ function claudeProjectHooksFile(cwd) {
 
 /* Claude Code not set up: its plugin steps need Git (Claude Code downloads the marketplace with it). Without Git the
    first step fails with "git not found" and the second with a misleading "Plugin not found in marketplace". */
+const PLAIN_CLAUDE_INIT = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one';
 function withGitHint(r, ctx) {
   if (r.id !== 'claude-code' || r.state !== 'not-set-up' || r.found === false) return r;
   const gh = require('./git-hint');
-  if (!gh.gitMissing(ctx.env)) return r;
-  return { ...r, gitMissing: true, fix: gh.checkFirst() + ', and ' + r.fix + '. ' + gh.checkAfter() };
+  // The text report says this in plain words (`plainFix`); `fix` keeps the exact plugin steps for --json and init.
+  const plain = r.fix === AGENTS[0].fix ? PLAIN_CLAUDE_INIT : null;
+  if (!gh.gitMissing(ctx.env)) return plain ? { ...r, plainFix: plain } : r;
+  return { ...r, gitMissing: true, fix: gh.checkFirst() + ', and ' + r.fix + '. ' + gh.checkAfter(), ...(plain ? { plainFix: gh.checkFirst() + ', then ' + plain } : {}) };
 }
 
 async function checkAgent(spec, ctx) {
@@ -1568,7 +1571,8 @@ function report({ results, removed, warnings }, write) {
   let bad = 0;
   const missing = [];
   const { versionLine } = require('./agents/versions');
-  const ver = (r) => { if (r.version) w(`     ${versionLine(r.version)}\n`); };
+  // An agent that is not installed has no version to show: "version: not found" would only confuse.
+  const ver = (r) => { if (r.version && !(r.version.relation === 'not-found' && !r.version.installed)) w(`     ${versionLine(r.version)}\n`); };
   for (const r of results) {
     if (r.state === 'not-set-up' && r.found === false) {
       w(`  -  ${r.name.padEnd(12)} not found on this machine\n`);
@@ -1576,7 +1580,7 @@ function report({ results, removed, warnings }, write) {
     }
     if (r.state === 'not-set-up') {
       missing.push(r.name);
-      w(`  -  ${r.name.padEnd(12)} zn is not set up for this agent. To protect it, ${r.fix}.\n`);
+      w(`  -  ${r.name.padEnd(12)} zn is not set up for this agent. To protect it, ${r.plainFix || r.fix}.\n`);
       ver(r);
       continue;
     }
@@ -1602,8 +1606,8 @@ function report({ results, removed, warnings }, write) {
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';
   // Nothing to set up only when every agent is missing from the machine (a project-only setup counts as found).
   if (!setUp && !results.some((r) => r.found !== false || r.state !== 'not-set-up')) {
-    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), so there is nothing to check.\n');
-    w('Install one, then run `npx -y zn-gate init`. Other editors: https://usezn.com/docs/install\n\n');
+    w('No AI coding tool was found on this computer (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), so there is nothing to check yet.\n');
+    w('Install one, then run: npx -y zn-gate init. Setup guide: https://usezn.com/docs/install\n\n');
   } else if (!setUp) {
     w('zn is not set up for your agents yet, so nothing protects your secrets. To set it up, ' + init);
     w('More: https://usezn.com/docs/install\n\n');

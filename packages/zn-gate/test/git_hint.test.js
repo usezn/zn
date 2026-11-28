@@ -79,3 +79,13 @@ test('check with Git: nothing added', async (t) => {
   assert.match(r.fix, /^install the zn-gate plugin/);
   assert.doesNotMatch(r.fix, /Git/);
 });
+
+test('check with Git: the text says to run init in plain words, and the JSON fix keeps the plugin steps', async (t) => {
+  const m = machine(t, true);
+  const out = await check({ home: m.home, env: m.env, cwd: m.cwd, live: false });
+  let text = '';
+  report(out, (x) => { text += x; });
+  assert.match(text, /Claude Code\s+zn is not set up for this agent\. To protect it, run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one\./);
+  assert.doesNotMatch(text, /plugin marketplace|stale|version: not found/);
+  assert.match(out.results.find((x) => x.id === 'claude-code').fix, /claude plugin marketplace add usezn\/zn#plugin-v/);
+});

@@ -35,10 +35,10 @@ test('no hook installed: no summary line', (t) => {
   assert.deepEqual(lines(runCheck(s, 'check').stdout), []);
 });
 
-test('all hooks OK: the line says 0 stale, 0 broken', SKIP, (t) => {
+test('all hooks OK: the line counts working, out of date and need repair', SKIP, (t) => {
   const s = setup(t, ['codex']);
   const line = summaryLine(listHooks({ home: s.home, env: s.env, cwd: s.cwd }));
-  assert.match(line, /^Hooks: \d+ OK, 0 stale, 0 broken\. Run zn-gate check --hooks for details\.$/);
+  assert.match(line, /^Hooks: \d+ working, 0 out of date, 0 need repair\. Run zn-gate check --hooks to see which\.$/);
   const out = lines(runCheck(s, 'check').stdout);
   assert.deepEqual(out, [line]);
 });
@@ -59,7 +59,7 @@ test('one stale hook: the line says 1 stale, both for check and doctor, and uses
   for (const cmd of ['check', 'doctor']) {
     const out = lines(runCheck(s, cmd).stdout);
     assert.equal(out.length, 1);
-    assert.match(out[0], /^Hooks: 0 OK, 1 stale, 0 broken\. /);
+    assert.match(out[0], /^Hooks: 0 working, 1 out of date, 0 need repair\. /);
   }
 });
 

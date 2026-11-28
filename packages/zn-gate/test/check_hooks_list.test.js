@@ -108,7 +108,12 @@ test('a config file that is not valid JSON is BROKEN; a zn-looking entry in a wr
   const rows = rowsOf(list(s), 'codex');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'BROKEN');
-  assert.match(rows[0].reason, /not valid JSON/);
+  assert.match(rows[0].reason, /not in a format Codex CLI can read .*zn has not changed it/);
+  assert.doesNotMatch(rows[0].reason, /JSON/);
+  let out = '';
+  report(list(s), (x) => { out += x; });
+  assert.match(out, /Fix: open the file in a text editor and repair it\. Then run `zn hooks install codex`/);
+  assert.match(out, /stops without changing a file it cannot read\. Once the file is valid, it saves a backup copy next to it/);
 
   fs.mkdirSync(path.join(s.home, '.cursor'), { recursive: true });
   fs.writeFileSync(path.join(s.home, '.cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { beforeReadFile: [{ command: '/odd path/zn-hook-cursor.sh beforeReadFile' }] } }));

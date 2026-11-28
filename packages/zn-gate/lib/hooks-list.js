@@ -55,7 +55,7 @@ function jsonFileRows(spec, ctx, file, scope, text) {
   let tree;
   try { tree = JSON.parse(text); } catch (err) { tree = undefined; }
   if (tree === undefined || tree === null || typeof tree !== 'object') {
-    return [{ event: '-', command: '', status: 'BROKEN', reason: 'the file is not valid JSON, so ' + spec.name + ' cannot read its hooks and zn cannot add its own', scope }];
+    return [{ event: '-', command: '', status: 'BROKEN', reason: 'the file is not in a format ' + spec.name + ' can read (usually a missing or extra comma or bracket, or a comment), so zn cannot read or add hooks there. zn has not changed it', scope, repair: true }];
   }
   const ours = [];
   for (const e of hookEntries(tree, spec.id, { withDisabled: true })) {
@@ -175,7 +175,10 @@ function report({ agents, counts }, write) {
       // One explanation per distinct problem, not one per event.
       for (const r of why.values()) {
         w('  ' + r.status + ': ' + r.reason + '.\n');
-        w('    Fix: run `' + r.fix + '` in your own terminal.\n');
+        if (r.repair) {
+          w('    Fix: open the file in a text editor and repair it. Then run `' + r.fix + '` in your own terminal.\n');
+          w('    `' + r.fix + '` stops without changing a file it cannot read. Once the file is valid, it saves a backup copy next to it (.bak-zn-<time>) and keeps your other settings.\n');
+        } else w('    Fix: run `' + r.fix + '` in your own terminal.\n');
       }
     }
   }
@@ -211,7 +214,7 @@ function staleWarning(opts = {}) {
  */
 function summaryLine({ agents, counts }) {
   if (!agents.length) return '';
-  return 'Hooks: ' + counts.ok + ' OK, ' + counts.stale + ' stale, ' + counts.broken + ' broken. Run zn-gate check --hooks for details.';
+  return 'Hooks: ' + counts.ok + ' working, ' + counts.stale + ' out of date, ' + counts.broken + ' need repair. Run zn-gate check --hooks to see which.';
 }
 
 module.exports = { listHooks, report, staleWarning, summaryLine };

@@ -264,11 +264,11 @@ function latencySummary({ file, last = LATENCY_KEEP } = {}) {
 
 /** The line `zn-gate check` / `doctor` prints. `off` is true when recording was turned off by ZN_STATS=off. */
 function latencyReport({ file, off = false } = {}) {
-  if (off) return 'Decision time per tool call: off (ZN_STATS=off), nothing is measured.';
+  if (off) return 'Time zn takes to decide: not measured (ZN_STATS=off).';
   const s = latencySummary({ file });
-  if (!s) return 'Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.';
+  if (!s) return 'Time zn takes to decide: no measurements yet. zn times each decision when your coding tool asks whether an action is allowed.';
   const fmt = (v) => v.toFixed(1);
-  return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
+  return 'Time zn takes to decide (last ' + s.count + ' actions, measured on this machine): typically ' + fmt(s.p50) + ' ms, and 19 in 20 within ' + fmt(s.p95) + ' ms. Excludes starting the program, writing the answer, and saving stats and evidence.';
 }
 
 const TOP_RULES_DAYS = 7;

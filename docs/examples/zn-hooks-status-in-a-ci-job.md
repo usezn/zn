@@ -96,7 +96,7 @@ The `Fix:` line is the repair. Run it yourself on that machine, then run the job
 A stale hook still blocks what it blocked before, so the normal check does not notice it. In the same test, `zn-gate check` still said `OK Codex CLI` with the exit code `0`, and its last line only counted the hooks:
 
 ```text
-Hooks: 0 OK, 7 stale, 0 broken. Run zn-gate check --hooks for details.
+Hooks: 0 working, 7 out of date, 0 need repair. Run zn-gate check --hooks to see which.
 ```
 
 `zn-gate check --json` has no hooks field either: it has the fields `exit_code`, `protected` and `agents`, and `exit_code` stayed `0`. So the exit code of `check --hooks` is the one to fail the job on. `check --hooks` takes no `--json`: with both options it exits with `2`.

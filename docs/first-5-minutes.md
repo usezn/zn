@@ -60,10 +60,10 @@ More: https://usezn.com/docs/check/
 
 The test folder was deleted.
 
-Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.
+Time zn takes to decide: no measurements yet. zn times each decision when your coding tool asks whether an action is allowed.
 ```
 
-The `Decision time per tool call` line is the time zn takes to decide each tool call your agent makes on this machine, as the p50 and p95 of the calls it has measured recently. It says `no data yet` until zn has checked a tool call. [What you will see](check.md#what-you-will-see) explains it.
+The `Time zn takes to decide` line is the time zn takes to decide each action your agent asks about on this machine, as a typical time and the time that 19 in 20 recent actions stayed within. It says `no measurements yet` until zn has checked an action. [What you will see](check.md#what-you-will-see) explains it.
 
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
 

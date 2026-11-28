@@ -97,8 +97,10 @@ test('check: no setup at all is a failure, with the command for each agent found
   const { s, code } = textOf(res);
   assert.equal(code, 1);
   assert.match(s, winCmdRe(/Codex CLI\s+zn is not set up for this agent\. To protect it, run `zn hooks install codex` in your own terminal/));
-  assert.match(s, /claude plugin install zn-gate@usezn/);
-  assert.match(s, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn#plugin-v\d+\.\d+\.\d+(?:-[\w.]+)?`/);
+  // The text says it in plain words; the exact plugin steps stay in the JSON fix.
+  assert.match(s, winCmdRe(/Claude Code\s+zn is not set up for this agent\. To protect it, (?:first install Git.*, then )?run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one\./));
+  assert.doesNotMatch(s, /plugin marketplace|version: not found/);
+  assert.match(byId(res, 'claude-code').fix, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn#plugin-v\d+\.\d+\.\d+(?:-[\w.]+)?`, then `claude plugin install zn-gate@usezn`/);
   assert.match(s, /Cursor\s+not found on this machine\n/);
   assert.match(s, winCmdRe(/To set it up, run `npx -y zn-gate init` in your own terminal/));
 });
@@ -117,8 +119,8 @@ test('check: no agent on the machine says so and offers no setup', async (t) => 
   const res = await check({ home, env: { HOME: home, PATH: binDir(t, false) }, cwd: home });
   const { s, code } = textOf(res);
   assert.equal(code, 1);
-  assert.match(s, /No supported coding agent was found on this machine/);
-  assert.match(s, winCmdRe(/Install one, then run `npx -y zn-gate init`/));
+  assert.match(s, /No AI coding tool was found on this computer .*so there is nothing to check yet\./);
+  assert.match(s, winCmdRe(/Install one, then run: npx -y zn-gate init\. Setup guide: https:\/\/usezn\.com\/docs\/install/));
   assert.doesNotMatch(s, winCmdRe(/zn hooks install|plugin install/));
 });
 
