@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.5
+RULES_VERSION: 2026-11-28.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-27.5"
+RULES_VERSION = "2026-11-28.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1184,7 +1184,7 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:private_key", _rc(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", _rc(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
-    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
+    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?![A-Za-z0-9_-])|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
     ("secret:aws_access_key", _rc(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
     ("secret:aws_secret_key", _rc(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
     ("secret:github_token", _rc(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
@@ -1774,6 +1774,9 @@ SCRUB_LAST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:zn_api_key", _rc(_TB + r'zn_[0-9a-f]{48}' + _TA), "[REDACTED_ZN_API_KEY]"),
     # A JWT whose parts are shorter than the shared rule asks for (8 characters after eyJ, a 16-character signature).
     ("secret:jwt_token#scrub", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}' + _TA), "[REDACTED_JWT]"),
+    # A JWT whose signature an earlier rule already redacted in part (an sk- key in it): the rest of the JWT goes
+    # too, so header and payload never stay readable, and the output is the one of the Node.js package.
+    ("secret:jwt_token#scrub_signature", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*\[REDACTED_[A-Z_]+\][A-Za-z0-9_-]*' + _TA), "[REDACTED_JWT]"),
     # 40 base64 characters after the words "aws" and "secret" (the CLI's SecretAccessKey, prose, a config file).
     ("secret:aws_secret_key#scrub", _rc(_B64_B + r'[A-Za-z0-9+/]{40}' + _B64_A), "[REDACTED_AWS_SECRET]"),
     # A private key whose END line was cut off: the header and the base64 lines after it.
@@ -1803,6 +1806,7 @@ PROVIDER_HINTS.update({
     "secret:github_token#scrub_pat": ("github_pat_",),
     "secret:zn_api_key": ("zn_",),
     "secret:jwt_token#scrub": (".eyJ",),
+    "secret:jwt_token#scrub_signature": (".eyJ",),
     "secret:aws_secret_key#scrub": ("ecret", "ECRET"),
     "secret:private_key#scrub": ("-----BEGIN ",),
 })
@@ -2056,7 +2060,18 @@ def _starts_secret_at(text: str, start: int, limit: int,
         pos += 1
     if pos >= limit:
         return False
-    return any(p.match(text, pos) for _, p, _ in patterns)
+    for rule_id, p, _ in patterns:
+        m = p.match(text, pos)
+        if m is None:
+            continue
+        match_check = PROVIDER_MATCH_CHECKS.get(rule_id)
+        if match_check is not None and not match_check(m.group(0)):
+            continue
+        context_check = PROVIDER_CONTEXT_CHECKS.get(rule_id)
+        if context_check is not None and not context_check(text, m.start(), m.end()):
+            continue
+        return True
+    return False
 
 
 def _secrets_cover(text: str, pos: int, end: int,
