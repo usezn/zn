@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-27.1"
+COMMAND_RULES_VERSION = "2026-11-27.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1921,7 +1921,14 @@ def check_command(command: str) -> Assessment:
     listed in this module's docstring, else 'allow'.
     """
     # A command that is not text (None, bytes, a number, a list...) was never read, so it is refused, not allowed.
-    hit = _analyze(command, 0) if isinstance(command, str) else _NOT_A_STRING
+    # The real type decides, never isinstance(), which asks the object for __class__ (a spoofed one passes as str).
+    # A subclass of str is read through its built-in storage, so no code of its own runs.
+    if type(command) is str:
+        hit = _analyze(command, 0)
+    elif issubclass(type(command), str):
+        hit = _analyze(str.__str__(command), 0)
+    else:
+        hit = _NOT_A_STRING
     if not hit:
         return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, rules_version=COMMAND_RULES_VERSION)
     return Assessment(

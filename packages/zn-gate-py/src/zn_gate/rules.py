@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.1
+RULES_VERSION: 2026-11-28.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -14,7 +14,6 @@ import base64
 import binascii
 import bisect
 from array import array
-import json
 import math
 import os
 import re
@@ -23,9 +22,37 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
+from ._result_screen import (
+    CUSTOM_TEXT_REASON as CUSTOM_TEXT_REASON,
+    OVERRIDDEN_READING_REASON as OVERRIDDEN_READING_REASON,
+    SANITIZE_MAX_DEPTH as SANITIZE_MAX_DEPTH,
+    SANITIZE_MAX_ITEMS as SANITIZE_MAX_ITEMS,
+    SanitizeLimitError as SanitizeLimitError,
+    UNREAD_ACCESSORS_REASON as UNREAD_ACCESSORS_REASON,
+    _PLAIN_VALUE_TYPES as _PLAIN_VALUE_TYPES,
+    _SCALAR_TYPES as _SCALAR_TYPES,
+    _TYPE_MODULE as _TYPE_MODULE,
+    _TYPE_DICT as _TYPE_DICT,
+    _TYPE_MRO as _TYPE_MRO,
+    _TYPE_QUALNAME as _TYPE_QUALNAME,
+    _screen_kind as _screen_kind,
+    _type_is as _type_is,
+    _is_iterator as _is_iterator,
+    _is_mapping as _is_mapping,
+    _defines_all as _defines_all,
+    _checked_json as _checked_json,
+    _class_bound as _class_bound,
+    _is_opaque_object as _is_opaque_object,
+    _object_names as _object_names,
+    custom_text_form as custom_text_form,
+    overrides_builtin_reading as overrides_builtin_reading,
+    unread_accessors as unread_accessors,
+)
 
 
-RULES_VERSION = "2026-11-28.1"
+_BYTES_TYPES = (bytes, bytearray, memoryview)
+
+RULES_VERSION = "2026-11-28.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2634,24 +2661,6 @@ class SanitizedToolResult(TypedDict):
     sanitized_content: str
 
 
-# Limits of the deep-data form of sanitize_tool_result, the same as the walker of
-# the guard (guard._DEFAULT_MAX_DEPTH and guard.MAX_OBJECT_VALUES): ten levels of
-# dicts, lists, tuples and sets, and 100,000 values in all.
-SANITIZE_MAX_DEPTH = 10
-SANITIZE_MAX_ITEMS = 100_000
-
-
-class SanitizeLimitError(ValueError):
-    """Raised by sanitize_tool_result(data) for data it will not walk to mask: nested deeper
-    than SANITIZE_MAX_DEPTH levels, a container that contains itself (rule size:nesting) or
-    more than SANITIZE_MAX_ITEMS values (rule size:items)."""
-
-    def __init__(self, rule: str, reason: str):
-        super().__init__(reason)
-        self.rule = rule
-        self.reason = reason
-
-
 @overload
 def sanitize_tool_result(
     tool_or_result: Any,
@@ -2691,7 +2700,9 @@ def sanitize_tool_result(
     In form 1, data nested deeper than ten levels, a container that contains itself
     or more than 100,000 values raises SanitizeLimitError (a ValueError with the
     attributes rule, "size:nesting" or "size:items", and reason) instead of
-    exhausting the stack.
+    exhausting the stack. An object that cannot be read, or that shows values
+    through properties or attribute hooks of its own class (see
+    unread_accessors), raises it too, with rule "type:unscannable".
     In form 2, content that is not a string (a dict, list or object) is checked
     string by string, as check_tool_result does, and as JSON text;
     sanitized_content is that JSON text (as in Node.js), with secrets masked.
@@ -2702,23 +2713,29 @@ def sanitize_tool_result(
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        if isinstance(content, str):
+        if _type_is(type(content), _BYTES_TYPES):
+            content = bytes(content).decode("utf-8", errors="replace")
+        if type(content) is str:
             text_content = content
             assessment = scan_windows(text_content, strict=strict)
         else:
             # Structured output: check every real string value (keys and object
             # attributes included) as check_tool_result does, then the JSON text
             # as Node.js does. str() would escape BiDi and zero-width characters.
+            # check_tool_result comes first: it refuses an object with properties,
+            # attribute hooks, its own text form or a redefined reading method
+            # before anything reads it, so serializing what it allowed runs no
+            # code of the output (see _checked_json).
             from .guard import check_tool_result
-            try:
-                text_content = json.dumps(content, ensure_ascii=False, default=str)
-            except (TypeError, ValueError, RecursionError):
-                text_content = str(content)
-            # The JSON text holds every string of the output: count the invisible
-            # characters before the string-by-string check pays for them.
-            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict, allow_truncated=True)
+            text_content = ""
+            assessment = check_tool_result(content, strict=strict, allow_truncated=True)
             if assessment.allowed:
-                text_assessment = scan_windows(text_content, strict=strict)
+                try:
+                    text_content = _checked_json(content)
+                except SanitizeLimitError as exc:
+                    assessment = Assessment(verdict='block', confidence=1.0, rule=exc.rule, reason=f"Result: {exc.reason}")
+            if assessment.allowed:
+                text_assessment = invisible_block() if too_invisible([text_content]) else scan_windows(text_content, strict=strict)
                 if not text_assessment.allowed:
                     assessment = text_assessment
                 else:
@@ -2794,25 +2811,81 @@ def sanitize_tool_result(
     path: set[int] = set()
     budget = [SANITIZE_MAX_ITEMS]
 
-    def _enter(val: Any) -> None:
+    def _enter(val: Any, size: Optional[int] = None) -> None:
         """Take one level for the container `val`, or raise SanitizeLimitError."""
         if id(val) in path:
             raise SanitizeLimitError("size:nesting", "The data contains itself")
         if len(path) >= SANITIZE_MAX_DEPTH:
             raise SanitizeLimitError("size:nesting", "The data is nested too deeply to mask")
-        budget[0] -= len(val) * 2 if isinstance(val, dict) else len(val)
+        budget[0] -= size if size is not None else (len(val) * 2 if isinstance(val, dict) else len(val))
         if budget[0] < 0:
             raise SanitizeLimitError("size:items", "The data holds too many values to mask")
         path.add(id(val))
 
     def _sanitize(val: Any) -> Any:
+        kind = type(val)
+        if not _type_is(kind, _PLAIN_VALUE_TYPES):
+            # The same screen as check_tool_result, before anything reads the value (even isinstance(), which asks
+            # the object for __class__): a property or attribute hook, its own text form, or a subclass of a built-in
+            # type that redefines how it is read (__iter__, __len__, items...) could show a secret that the walk
+            # below does not see, or run code of the output. Such a value is refused, never walked.
+            _screen_kind(val)
         if not isinstance(val, (dict, list, tuple, set, frozenset)):
-            return _sanitize_value(val)
+            names = _object_names(val)
+            if not names:
+                return _sanitize_value(val)
+            _enter(val, len(names))
+            try:
+                return _sanitize_object(val, names)
+            finally:
+                path.discard(id(val))
         _enter(val)
         try:
             return _sanitize_value(val)
         finally:
             path.discard(id(val))
+
+    def _sanitize_object(val: Any, names: List[str]) -> Any:
+        """Mask the attributes of an object that is not a container; the original is left as it was.
+
+        An object with nothing to mask is returned as it is, unless its text form shows a secret: then the masked text is
+        returned instead. When an attribute holds a secret, the masked attributes go into a blank instance of the same
+        class built with object.__new__ and object.__setattr__ (no copy.copy, no __new__, __init__ or __setattr__ of the
+        class); when no such instance can be made, a plain dict of the masked attributes is returned instead, so the
+        secret never survives in the result. Attributes that cannot be listed or an object whose text form cannot be
+        read raise SanitizeLimitError (rule type:unscannable).
+        """
+        try:
+            attrs = {n: getattr(val, n) for n in names}
+        except Exception:
+            raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
+        before = len(detections)
+        clean = {n: _sanitize(v) for n, v in attrs.items()}
+        if len(detections) == before:
+            target: Any = val
+        else:
+            # A secret was found: the masked attributes go into a blank instance of the same class. It is built with
+            # object.__new__ and object.__setattr__, never copy.copy (which would run a __copy__ or __reduce__ of the
+            # output) and never the class's own __new__, __init__ or __setattr__; the original is not written to.
+            # When no such instance can be made, a plain dict of the masked attributes is returned instead.
+            try:
+                twin = object.__new__(type(val))
+                for n, v in clean.items():
+                    object.__setattr__(twin, n, v)
+            except Exception:
+                return clean
+            target = twin
+        # The text form (__str__, __repr__) can show a secret that no attribute holds. The object is then replaced by
+        # its masked text, so the secret cannot reach the caller through str() of the result.
+        try:
+            text = str(target)
+        except Exception:
+            raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
+        clean_text, text_det = redact_secrets(text)
+        if not text_det:
+            return target
+        detections.extend(text_det)
+        return clean_text
 
     def _sanitize_value(val: Any) -> Any:
         if isinstance(val, str):
@@ -2822,6 +2895,9 @@ def sanitize_tool_result(
             return clean_str
         elif isinstance(val, dict):
             items = list(val.items())
+            for key, _ in items:
+                # A key is screened before anything asks it for its class (isinstance) or its text.
+                _screen_kind(key)
             names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
             taken = {n for n, (k, _) in zip(names, items, strict=True) if n == k}
             out: Dict[Any, Any] = {}
@@ -2838,6 +2914,27 @@ def sanitize_tool_result(
             return frozenset(_sanitize_members(val))
         elif isinstance(val, set):
             return set(_sanitize_members(val))
+        elif isinstance(val, _BYTES_TYPES):
+            if not _type_is(type(val), _BYTES_TYPES):
+                # A subclass of bytes could hand out other bytes through its buffer: refused, never read.
+                raise SanitizeLimitError("type:unscannable", OVERRIDDEN_READING_REASON)
+            text = bytes(val).decode("utf-8", errors="replace")
+            clean_text, det = redact_secrets(text)
+            if not det:
+                return val
+            detections.extend(det)
+            encoded = clean_text.encode("utf-8")
+            return bytearray(encoded) if type(val) is bytearray else encoded
+        elif _is_opaque_object(val):
+            # An object with no attributes to walk: what its text form shows is masked, as a string.
+            try:
+                text = str(val)
+            except Exception:
+                raise SanitizeLimitError("type:unscannable", "An object could not be read to mask it") from None
+            clean_text, det = redact_secrets(text)
+            if det:
+                detections.extend(det)
+                return clean_text
         return val
 
     sanitized = _sanitize(tool_or_result)
@@ -2850,6 +2947,24 @@ _EVAL_CACHE_MAX = 2048
 EVAL_CACHE_MAX_INPUT = 8 * 1024
 _eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
+
+
+def text_input(value: Any, what: str) -> Any:
+    """The text to check: a str as it is, bytes read as UTF-8 (invalid bytes replaced), None as it is (empty input);
+    any other type raises TypeError, because input that is not text is never allowed unread."""
+    # The real type decides, never isinstance(), which asks the object for __class__ (a spoofed one passes as str), and
+    # bytes() is only called on the exact built-in types, since it runs a __bytes__ of its own. A subclass of str is
+    # read through its built-in storage (str.__str__ makes an exact copy without running its code); a subclass of
+    # bytes is refused like any other non-text input.
+    if value is None or type(value) is str:
+        return value
+    if issubclass(type(value), str):
+        return str.__str__(value)
+    if _type_is(type(value), _BYTES_TYPES):
+        return bytes(value).decode("utf-8", errors="replace")
+    # The class name is read with the built-in descriptor of type, never by attribute lookup: a metaclass of the value
+    # could run code of its own to answer __name__.
+    raise TypeError(f"{what} takes text (str or bytes), not {_TYPE_QUALNAME.__get__(type(value))}")
 
 
 # Marks an argument that was not passed, so evaluate(None) keeps its old answer.
@@ -2870,8 +2985,9 @@ def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
         text = input_text
     elif text is _NOT_GIVEN:
         raise TypeError("evaluate() missing the text to check")
-    # None is not a str but keeps its old answer (the check below handles it).
-    input_text = cast(str, text)
+    # None is not a str but keeps its old answer (the check below handles it); bytes are read as UTF-8;
+    # any other type raises TypeError instead of being allowed unread.
+    input_text = cast(str, text_input(text, "evaluate()"))
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)
