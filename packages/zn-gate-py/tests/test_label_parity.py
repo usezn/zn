@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 
 from zn_gate import reach_history
-from zn_gate.rules import redact_secrets
+from zn_gate.rules import mask_pii_preview, redact_secrets
 
 NODE_PKG = Path(__file__).resolve().parents[2] / "zn-gate"
 EXPORT_SCRIPT = NODE_PKG / "test" / "helpers" / "export_label_parity.js"
@@ -94,10 +94,42 @@ def python_out(text):
     sanitized, detections = redact_secrets(text)
     counts = {}
     reach_history.scan_line(text, counts)
-    return {"sanitized": sanitized, "rules": [d["rule"] for d in detections], "reach": counts}
+    return {"sanitized": sanitized, "rules": [d["rule"] for d in detections], "reach": counts,
+            "scrub": mask_pii_preview(sanitized)}
+
+
+# The shape of the scrubbed text (what stays readable, where the quotes are) for a credential in a URL or a quoted
+# value. The label of a password is not compared here (URL_PASSWORD, DB_PASSWORD, SECRET, PASSWORD: each is public
+# in its package); the text around it is, character for character.
+SHAPE_CASES = [
+    "git clone https://deploy:" + r(14) + "@git.example.com/org/repo.git",
+    "DATABASE_URL=postgres://appuser:" + r(16) + "@db.example.com:5432/app",
+    "MONGO=mongodb+srv://svc:" + r(16) + "@cluster0.example.com/db?retryWrites=true",
+    "redis://:" + r(16) + "@cache.example.com:6379/0",
+    "password = '" + "Zx9!" + r(14) + "'",
+    'password = "' + "Zx9!" + r(14) + '"',
+    "password: " + "Zx9!" + r(14),
+    "mail maria.ejemplo@example.com about https://deploy:" + r(14) + "@git.example.com/x",
+]
+_PW_LABEL = __import__("re").compile(r"\[REDACTED_(?:URL_PASSWORD|DB_PASSWORD|SECRET|PASSWORD)\]")
 
 
 class LabelParity(unittest.TestCase):
+    def test_credential_shape_is_the_same(self):
+        js = node_out(SHAPE_CASES)
+        for text, n in zip(SHAPE_CASES, js):
+            p = python_out(text)["scrub"]
+            with self.subTest(text=_PW_LABEL.sub("[PW]", text[:12])):
+                self.assertEqual(_PW_LABEL.sub("[PW]", n["scrub"]), _PW_LABEL.sub("[PW]", p))
+                self.assertNotIn("Zx9!", n["scrub"])
+                self.assertNotIn("Zx9!", p)
+                if "@git.example.com" in text:
+                    self.assertIn("@git.example.com", n["scrub"])
+                    self.assertIn("@git.example.com", p)
+                if text.startswith("password = '") or text.startswith('password = "'):
+                    self.assertEqual(n["scrub"][11], text[11])
+                    self.assertEqual(p[11], text[11])
+
     def test_same_names_in_both_packages(self):
         texts = [t for _label, t in CASES]
         js = node_out(texts)

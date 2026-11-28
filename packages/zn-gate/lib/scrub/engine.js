@@ -270,6 +270,19 @@ function normWindows(norm, c) {
   return out;
 }
 
+/* In scheme://user:password@host the e-mail finder reads "password@host" as an address, so the cluster with the
+ * password span became one EMAIL span that also hid the host. The password span alone hides the secret and keeps the
+ * host readable, so an EMAIL span that starts where a URL_PASSWORD or DB_PASSWORD span starts and runs on from its
+ * "@" is dropped. The password span stays: nothing that was hidden as a password is shown. */
+function dropEmailOfUrlPassword(text, spans) {
+  let any = false;
+  for (const s of spans) if (s.type === 'EMAIL') { any = true; break; }
+  if (!any) return spans;
+  const urlPw = spans.filter((s) => (s.type === 'URL_PASSWORD' || s.type === 'DB_PASSWORD') && text[s.end] === '@');
+  if (urlPw.length === 0) return spans;
+  return spans.filter((s) => !(s.type === 'EMAIL' && urlPw.some((p) => p.start === s.start && p.end < s.end && text[p.end] === '@')));
+}
+
 function scanText(text, c) {
   let spans = [];
   const matcher = matcherFor(c);
@@ -284,7 +297,7 @@ function scanText(text, c) {
   const opts = { pii: c.pii, _hints: hintsIn(text) };
   spans = spans.concat(findPatterns(text, opts));
   if (Array.isArray(c.detectors) && c.detectors.length) spans = spans.concat(findCustom(text, c.detectors));
-  if (c.pii !== false) spans = spans.concat(findPii(text, opts));
+  if (c.pii !== false) spans = dropEmailOfUrlPassword(text, spans.concat(findPii(text, opts)));
   if (spans.length === 0) return spans;
   const ranges = tokenRanges(text, namesOf(c));
   if (ranges.length > 0) spans = spans.filter((s) => !insideRange(s, ranges));

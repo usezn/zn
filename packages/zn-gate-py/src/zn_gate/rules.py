@@ -2563,7 +2563,10 @@ def mask_pii_preview(text: str) -> str:
     NIE, SSN) in a text that zn-gate test prints back. Used after redact_secrets and mask_token_runs."""
     if not text:
         return text
-    text = _PREVIEW_PASSWORD_RE.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED_PASSWORD]", text)
+    # A quoted value keeps its quotes, as the npm package does, so the text stays valid.
+    text = _PREVIEW_PASSWORD_RE.sub(
+        lambda m: m.group(1) + m.group(2) + (m.group(3)[0] if m.group(3)[:1] in "\"'" and len(m.group(3)) > 1 else "") +
+        "[REDACTED_PASSWORD]" + (m.group(3)[-1] if m.group(3)[:1] in "\"'" and len(m.group(3)) > 1 else ""), text)
     for start, end, kind in reversed(find_pii_spans(text)):
         text = text[:start] + "[REDACTED_" + kind + "]" + text[end:]
     return text

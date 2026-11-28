@@ -91,8 +91,9 @@ def test_json_output_masks_a_whole_quoted_password(capsys):
 
 
 def test_mask_pii_preview_password_value_forms():
-    assert mask_pii_preview('password="My Secret Phrase" next') == "password=[REDACTED_PASSWORD] next"
-    assert mask_pii_preview("passwd: 'My Secret Phrase' next") == "passwd: [REDACTED_PASSWORD] next"
-    assert mask_pii_preview('password="a \\"b\\" c" next') == "password=[REDACTED_PASSWORD] next"
+    # A quoted value keeps its quotes (as the npm scrubber does); the text between them is hidden whole.
+    assert mask_pii_preview('password="My Secret Phrase" next') == 'password="[REDACTED_PASSWORD]" next'
+    assert mask_pii_preview("passwd: 'My Secret Phrase' next") == "passwd: '[REDACTED_PASSWORD]' next"
+    assert mask_pii_preview('password="a \\"b\\" c" next') == 'password="[REDACTED_PASSWORD]" next'
     # Unquoted: to the end of the token only.
     assert mask_pii_preview("pwd=hunter two") == "pwd=[REDACTED_PASSWORD] two"
