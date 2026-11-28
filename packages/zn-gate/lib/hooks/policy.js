@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-28.1';
+const POLICY_RULES_VERSION = '2026-11-28.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -3970,6 +3970,8 @@ function dropEmptyExpansions(text, env) {
 function decodeAnsiC(cmd) {
   return cmd.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (m, body) => {
     const text = body.replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (e, x) => {
+      // No hex digit follows: bash keeps the text as it is.
+      if (x.length === 1 && /^[xuU]$/.test(x)) return '\\' + x;
       if (/^[xuU]/.test(x)) {
         const n = parseInt(x.slice(1), 16);
         return n <= 0x10ffff ? String.fromCodePoint(n) : '';

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-28.1"
+COMMAND_RULES_VERSION = "2026-11-28.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -300,6 +300,9 @@ def _decode_ansi_c(cmd: str) -> str:
 
     def esc(m: "re.Match[str]") -> str:
         x = m.group(1)
+        if x in ("x", "u", "U"):
+            # No hex digit follows: bash keeps the text as it is.
+            return "\\" + x
         if x[0] in "xuU":
             n = int(x[1:], 16)
             return chr(n) if n <= 0x10FFFF else ""
