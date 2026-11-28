@@ -794,12 +794,13 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
  * true) if the output cannot be written. The stream is left open.
  *
  * @param {string} filePath
- * @param {('jsonl'|'csv')} format
+ * @param {('jsonl'|'csv'|'timesketch'|'timesketch-csv')} format
  * @param {import('stream').Writable} out
  */
-async function writeEvidenceExport(filePath, format, out) {
-  const normFormat = (format || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl';
-  return exporter.writeExport(filePath, normFormat, out);
+async function writeEvidenceExport(filePath, format, out, opts = {}) {
+  const asked = (format || 'jsonl').toLowerCase();
+  const normFormat = require('./evidence_export').EXPORT_FORMATS.includes(asked) ? asked : 'jsonl';
+  return exporter.writeExport(filePath, normFormat, out, { includePreview: !!opts.includePreview });
 }
 
 /**
@@ -1096,9 +1097,21 @@ const exporter = require('./evidence_export').createExporter({
   EvidenceLedgerError, testHooks,
 });
 
+/**
+ * Writes the evidence pack for auditors into outDir (missing or empty): the records of a date range,
+ * the result of checking the whole chain, a summary, a control map, a manifest and a README.
+ * See evidence_pack.js. Resolves nothing: it returns the result of the write.
+ */
+function writeEvidencePack(outDir, opts = {}, filePath = EVIDENCE_FILE) {
+  return require('./evidence_pack').writeEvidencePack(filePath, outDir, opts, {
+    exporter, EvidenceLedgerError, trimBytes,
+  });
+}
+
 module.exports = {
   logEvidence,
   EvidenceLedgerError,
+  writeEvidencePack,
   recoveryHint,
   getLastHash,
   verifyEvidenceLedger,

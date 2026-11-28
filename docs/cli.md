@@ -632,18 +632,48 @@ Aliases: `mcp-shield`, `wrap`.
 ### `evidence`
 
 ```bash
-zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] [--output file]] [--tail 20]
+zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv|timesketch|timesketch-csv|ocsf] [--output file [--manifest]] [--include-preview]] [--tail 20]
 ```
 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
 - `--ui`: open a local dashboard in your browser (default port 3100).
-- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. The log is read in parts, so a log of any size exports in full. Exit `1` if the log cannot be read to the end (the output is then incomplete) or its chain does not verify (the file is still written and says `Integrity: TAMPERED`). Exit `2` if `--output` is the evidence log itself, or a link or hard link to it: the command refuses before it opens anything, so the log is left as it is. Choose another path.
+- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. In the csv formats (`csv` and `timesketch-csv`) a cell that starts with `=`, `+`, `-` or `@` (or a tab or carriage return) gets a single quote in front, so a spreadsheet program shows it as text and does not run it as a formula. The log is read in parts, so a log of any size exports in full. Exit `1` if the log cannot be read to the end (the npm package may then leave an incomplete output file and says not to use it; the Python package writes nothing and says the output was not written) or its chain does not verify (the file is still written and says `Integrity: TAMPERED`). Exit `2` if `--output` is the evidence log itself, or a link or hard link to it: the command refuses before it opens anything, so the log is left as it is. Choose another path.
+- `--format timesketch` (JSON Lines) and `--format timesketch-csv`: one event per record that [Timesketch](https://timesketch.org/) can import as a timeline. Each event has the fields Timesketch needs (`message`, `datetime`, `timestamp_desc`; the CSV also has `timestamp` in microseconds), the record fields as `zn_*` attributes, and the chain check per record: `zn_record_hash`, `zn_prev_hash`, `zn_chain_index` and `zn_chain_verified`, which is `false` for every record from the first one that does not verify. The `message` is built only from the verdict, the tool, the agent and the rule id, and the payload preview is left out unless you add `--include-preview`, so by default an analyst tool does not read text the agent wrote. The npm and PyPI packages write the same output for the same log.
+- `--format ocsf` (JSON Lines): one event per record in the OCSF format (schema 1.7.0), so SIEM tools that read OCSF can import the log. Each record is a Detection Finding (class 2004, category Findings): the verdict becomes the action and disposition (`allow` is allowed, `block` and `deny` are blocked, any other verdict is unknown; the hooks write `allow` and `block`), and `time` is in milliseconds. The zn fields (tool, agent, rule, hashes and the chain check) are under `unmapped`. A record whose timestamp is not a valid UTC time is kept with `time` 0 and `unmapped.zn_time_unmapped` set to true. The schema requires `cloud` and `osint` on this class; zn-gate runs on your machine, not in a cloud, so every event has `cloud.provider` set to `local` and an empty `osint` list. The payload preview is left out unless you add `--include-preview`.
+- `--include-preview`: only with `--format timesketch`, `timesketch-csv` or `ocsf`. Adds the payload preview (the text the agent wrote) as `zn_payload_preview`, just before `zn_chain_index`, for the records that have one. Off by default, so the export does not contain agent text unless you ask for it. Any other format refuses the option (exit `2`).
+- `--manifest`: only with `--output FILE`. Writes `FILE.manifest.json` next to the export: the format, the log's file name (never a full path), how many records were exported, the first and last timestamp, whether the chain verified, the first record that did not (`chain_break_index`, `null` when it verified), the hash of the last record that verified, and the SHA-256 of the export file. Without `--output` the option refuses (exit `2`). A manifest is written even when the chain does not verify; the export then exits `1`, as above. It never overwrites: if `FILE.manifest.json` already exists, or is a link, the command refuses before it writes anything (exit `2`).
 
 Aliases: `logs`, `export`.
 
 `export` is the same as `evidence --export`.
+
+#### Evidence pack for auditors
+
+```bash
+zn-gate evidence pack --out DIR [--format jsonl|ocsf] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--include-preview]
+```
+
+Writes a folder for an auditor: the records of a period, the result of checking the whole log, a summary, a control map and a README. Nothing is uploaded.
+
+- `--out DIR` (required): the folder to write. It must not exist or must be empty; the command never writes over existing files. Exit `2` otherwise, also when DIR is a link (give the real folder) or cannot be read.
+- `--since` and `--until`: the first and last UTC day to include, `YYYY-MM-DD`, both inclusive. A date must exist (no `2026-02-30`). Exit `2` for a bad date or when `--since` is after `--until`. A record's day is the day of its own timestamp. Without a range, every record is included.
+- Records with no valid UTC time are counted as `undated` in `summary.json`. With a range they are left out; without one they are kept.
+
+The folder holds:
+
+- `records.jsonl`: the records of the period, in log order. Without `--include-preview` the `payload_preview` field is removed from each record, so the text the agent wrote is not in the pack. With it, the records are the log lines as they are.
+- `--format ocsf`: writes `records.ocsf.jsonl` instead: the same records as OCSF events (the same events as `evidence --export --format ocsf`), with the same preview rule. Lines that are not JSON objects are left out in this format. The jsonl default is the only other format; csv and the Timesketch formats are refused (exit `2`).
+- `chain.json`: the check of the whole log, not only the period: how many records, whether the chain verified, the break position, the hash of the last record that verified, and the first and last record of the period with their positions, so you can see the period sits in a checked chain.
+- `summary.json`: the period, how many records, the undated count, the first and last time, and counts by verdict (the verdicts zn-gate records are `allow` and `block`), by agent and by rule id.
+- `controls.md`: a map, in plain English, of which records may help as evidence for four criteria of the SOC 2 Trust Services Criteria (CC6.1, CC6.6, CC7.2 and CC8.1). It is a guide to where to look. It does not make a system compliant, and the pack is not an attestation: your auditor decides what evidence is sufficient.
+- `manifest.json`: the SHA-256 and size of each file above, the generator and the time of the pack (UTC). It is written last; without it the pack is incomplete.
+- `README.txt`: how to check the pack.
+
+If the log's chain does not verify, the pack is still written, `chain.json` says so, and the command exits `1`. If the log cannot be read to the end, it exits `1`. Both packages first copy and check the log and create the folder only after that, so a failure there writes nothing and the message says the folder was not written. If a failure comes later, while the files are being written, a partial folder can remain and the message says it is incomplete and not to use it.
+
+For the same log, the npm and PyPI packages write the same `records.jsonl`, `chain.json`, `controls.md` and `README.txt`, byte for byte. These differ: `summary.json` and `manifest.json` carry `generator` (the name and version of the package that wrote them), `manifest.json` also carries `pack_time_utc`, and it holds the hash of `summary.json`, so it differs whenever `summary.json` does. With `--format ocsf`, each event in `records.ocsf.jsonl` carries `metadata.product.version`, the version of the package that wrote it, so that file matches only when both packages are the same version, and its hash in `manifest.json` follows.
 
 ### `why`
 
@@ -809,7 +839,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
 | `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--code`, `--all`, `--include-home` | Like `scan` in the npm package, with the same `--all` and `--code` options. One difference: without them the Python scan also reads `.py`, `.ts` and `.js` files, which the npm package reads only with `--code`. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
-| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. An export whose chain does not verify still exits `0` (it says `TAMPERED`). Exit `2` if `--output` is the evidence log itself, or a link or hard link to it. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
+| `evidence` | `--verify`, `--export`, `--format jsonl\|csv\|timesketch\|timesketch-csv\|ocsf`, `--output file`, `--manifest`, `--include-preview`, `pack --out DIR` (with `--format jsonl\|ocsf`, `--since`, `--until`) | Counts, chain check and export, like the npm command. An export whose chain does not verify exits `1` (it says `TAMPERED`), the same as the npm package. `pack` writes a folder for an auditor (see the evidence pack section) and exits `1` when the chain does not verify. Exit `2` if `--output` is the evidence log itself, or a link or hard link to it. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 | `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |

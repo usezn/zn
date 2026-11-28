@@ -36,7 +36,7 @@ test('check refuses an unknown option that comes after --hooks', refused(['check
 test('version refuses an unknown option and says it takes none', refused(['version', '--bogus'], '--bogus', /zn-gate version takes no options\./));
 test('status refuses an unknown option and lists its options', refused(['status', '--bogus'], '--bogus', /The options of zn-gate status are --key, --stage, --url, --local-only, --verbose\./));
 test('test refuses an unknown option and says it takes none', refused(['test', '--bogus'], '--bogus', /zn-gate test takes no options\./));
-test('evidence refuses an unknown option and lists its options', refused(['evidence', '--bogus'], '--bogus', /The options of zn-gate evidence are --verify, --ui, --export, --format, --output, --port, --tail\./));
+test('evidence refuses an unknown option and lists its options', refused(['evidence', '--bogus'], '--bogus', /The options of zn-gate evidence are --verify, --ui, --export, --manifest, --include-preview, --format, --output, --port, --tail, --out, --since, --until\./));
 test('logs refuses an unknown option and lists its options', refused(['logs', '--bogus'], '--bogus', /The options of zn-gate logs are /));
 test('team status refuses an unknown option and lists its options', refused(['team', 'status', '--bogus'], '--bogus', /The options of zn-gate team status are --json, --rules\./));
 

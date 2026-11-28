@@ -645,7 +645,8 @@ def test_stats_block_without_rule(tmp_path):
 def test_export_missing_ledger(tmp_path):
     n = str(tmp_path / "none")
     j = export_evidence_ledger(n)
-    assert j == {"content": "", "format": "jsonl", "valid": True, "tip_hash": GENESIS_HASH, "total": 0}
+    assert j == {"content": "", "format": "jsonl", "valid": True, "error": None, "tip_hash": GENESIS_HASH, "total": 0,
+                 "broken_index": None, "tip_record_hash": None, "first_timestamp": None, "last_timestamp": None}
     c = export_evidence_ledger(n, format="CSV")
     assert c["content"].startswith("timestamp,verdict,phase,tool_name") and c["format"] == "csv"
     assert export_evidence_ledger(n, format=None)["format"] == "jsonl"
@@ -658,10 +659,10 @@ def test_export_uses_default_file_when_none_given(tmp_path):
 
 def test_export_jsonl_adds_trailing_newline(tmp_path):
     p = _ledger(tmp_path, 2)
-    with open(p, encoding="utf-8") as f:
-        raw = f.read().rstrip("\n")
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(raw)
+    with open(p, "rb") as f:
+        raw = f.read().decode("utf-8").rstrip("\r\n")
+    with open(p, "wb") as f:
+        f.write(raw.encode("utf-8"))
     r = export_evidence_ledger(p)
     assert r["content"] == raw + "\n" and r["total"] == 2 and r["valid"] is True
     assert r["tip_hash"] == json.loads(raw.splitlines()[-1])["record_hash"]

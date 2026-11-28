@@ -8,7 +8,9 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import functools
+import gc
 import inspect
+import _io
 import io
 import itertools
 import logging
@@ -16,11 +18,16 @@ import os
 import re
 from pathlib import PurePath
 import types
-from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
+from collections.abc import Mapping
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invisible
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
+from .rules import OVERRIDDEN_READING_REASON, UNREAD_ACCESSORS_REASON, overrides_builtin_reading, unread_accessors
+from .rules import CUSTOM_TEXT_REASON, custom_text_form
+from .rules import _TYPE_DICT, _TYPE_MODULE, _TYPE_MRO, _TYPE_QUALNAME, _class_bound, _type_is
+from .rules import _defines_all, _is_iterator, _is_mapping
+from ._result_screen import _trusted_class
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -99,36 +106,73 @@ MAX_OBJECT_VALUES = 100_000
 LENIENT_MAX_DEPTH = 32
 _DEFAULT_MAX_DEPTH = 10
 
-_DICT_VIEWS = (KeysView, ValuesView, ItemsView)
+# The views of a dict, by identity: isinstance() with the ABCs (KeysView...) would hash and compare the class of the
+# output (and run hooks of its metaclass).
+_DICT_VIEWS: Tuple[Any, ...] = (type({}.keys()), type({}.values()), type({}.items()))
+_IO_BASES: Tuple[type, ...] = (io.IOBase, _io._IOBase)
+
+
+def _inherits_any(val: Any, bases: Tuple[type, ...]) -> bool:
+    """True when a class of the MRO of `val` is one of `bases` (identity); no ABC registry or metaclass hook runs."""
+    return any(c is b for c in _TYPE_MRO.__get__(type(val)) for b in bases)
+_PLAIN_CONTAINERS = (dict, list, tuple, set, frozenset)
+
+
+# The slots of a class are its member descriptors, not what its __slots__ attribute says: that attribute can be changed or
+# emptied after the class is made, and a hostile iterable there would run code during the check. A member descriptor is read
+# with the descriptor type's own __get__, so no override of the object answers instead.
+_MEMBER_GET = types.MemberDescriptorType.__get__
+
+
+def _slot_members(cls: type) -> List[Tuple[str, Any, type]]:
+    """(name, member descriptor, class) of every slot of `cls` and its bases, the name as stored (mangled names included)."""
+    out: List[Tuple[str, Any, type]] = []
+    seen: Set[str] = set()
+    for klass in _TYPE_MRO.__get__(cls):
+        for name, attr in dict.items(dict(_TYPE_DICT.__get__(klass))):
+            if type(name) is str and type(attr) is types.MemberDescriptorType and name not in seen:
+                seen.add(name)
+                out.append((name, attr, klass))
+    return out
 
 
 def _object_fields(data: Any) -> Optional[List[Any]]:
     """Attribute names and values of an object (its __dict__ and __slots__), or None if it has none."""
     found = False
     children: List[Any] = []
-    attrs = getattr(data, "__dict__", None)
-    if isinstance(attrs, dict):
+    try:
+        attrs = object.__getattribute__(data, "__dict__")
+    except AttributeError:
+        attrs = None
+    if type(attrs) is dict:
         found = True
         for k, v in attrs.items():
             children.append(k)
             children.append(v)
-    seen: Set[str] = set()
-    for klass in type(data).__mro__:
-        slots = klass.__dict__.get("__slots__", ())
-        if isinstance(slots, str):
-            slots = (slots,)
-        for name in slots:
-            if not isinstance(name, str) or name in ("__dict__", "__weakref__") or name in seen:
-                continue
-            seen.add(name)
-            try:
-                value = object.__getattribute__(data, name)
-            except AttributeError:
-                continue
-            found = True
+    for name, member, klass in _slot_members(type(data)):
+        try:
+            value = _MEMBER_GET(member, data, klass)
+        except AttributeError:
+            continue
+        found = True
+        children.append(name)
+        children.append(value)
+    return children if found else None
+
+
+# The slots of BaseException itself, read directly so that no property of a subclass answers instead.
+_EXCEPTION_SLOTS = tuple((name, BaseException.__dict__[name]) for name in ("args", "__cause__", "__context__"))
+
+
+def _exception_fields(exc: BaseException) -> List[Any]:
+    """The names and values of the args, cause and context of an exception (those that are set)."""
+    children: List[Any] = []
+    for name, slot in _EXCEPTION_SLOTS:
+        value = slot.__get__(exc)
+        if value is not None:
             children.append(name)
             children.append(value)
-    return children if found else None
+    return children
 
 
 # Context objects that agent frameworks pass to a tool next to the model's
@@ -146,22 +190,27 @@ _FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
 )
 
 
-def _is_framework_context(value: Any) -> bool:
-    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES)."""
-    if isinstance(value, (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
+def _is_framework_context(value: Any, verified: bool = True) -> bool:
+    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES).
+
+    The module and name that a class carries are only labels: any class can set them. With `verified` (a tool
+    result, which skips the context unread), they count only when that module, already imported, holds this very
+    class under that name (see rules._class_bound)."""
+    if _is_mapping(value) or issubclass(type(value), (str, bytes, bytearray, list, tuple, set, frozenset, type)):
         return False
     try:
-        mro = type(value).__mro__
+        mro = _TYPE_MRO.__get__(type(value))
     except Exception:  # pragma: no cover - exotic metaclasses
         return False
     for klass in mro:
-        module = getattr(klass, "__module__", None)
+        module = _TYPE_MODULE.__get__(klass)
         if not isinstance(module, str):
             continue
         for prefix, names in _FRAMEWORK_CONTEXT_TYPES:
             if module == prefix or module.startswith(prefix + "."):
-                if names is None or klass.__name__ in names:
-                    return True
+                if names is None or _TYPE_QUALNAME.__get__(klass) in names:
+                    if not verified or _class_bound(klass):
+                        return True
     return False
 
 
@@ -176,13 +225,18 @@ _LOGGER_LINKS = frozenset({"manager", "parent", "_cache"})
 
 class _Walk:
     """State shared by one walk: containers read in full (kept so their ids are not
-    reused during the walk) and a count of parts left out."""
+    reused during the walk), a count of parts left out, and a count of objects whose
+    properties or attribute hooks were not read (see rules.unread_accessors)."""
 
-    __slots__ = ("done", "skipped")
+    __slots__ = ("done", "skipped", "unreadable", "hidden", "stop_hidden")
 
     def __init__(self) -> None:
         self.done: Dict[int, Any] = {}
         self.skipped = 0
+        self.unreadable = 0
+        self.hidden = 0
+        # With stop_hidden (a tool result), the first such object raises _Unscannable before it is read.
+        self.stop_hidden = False
 
 
 def _is_data_object(value: Any) -> bool:
@@ -249,35 +303,85 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     out inside a plain object, and raises _Unscannable (rule type:unscannable)
     anywhere else.
     """
-    if isinstance(data, str):
+    # Judged by the real type: isinstance() also asks the object for __class__, which a property can answer.
+    kind = type(data)
+    if overrides_builtin_reading(data):
+        # A str, list or dict subclass that redefines how it is read could show other text than the one checked
+        # (tool results and arguments alike): refused before any of its code runs.
+        raise _Unscannable("type:unscannable", OVERRIDDEN_READING_REASON)
+    if issubclass(kind, str):
         return [data]
-    if isinstance(data, (bytes, bytearray, memoryview)):
+    if issubclass(kind, (bytes, bytearray, memoryview)):
         return [bytes(data).decode("utf-8", errors="replace")]
-    if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
-            or inspect.isroutine(data):
-        return []
-    if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
+    if (_seen is not None and _seen.stop_hidden and issubclass(kind, (type, types.ModuleType))
+            and custom_text_form(data)):
+        # A tool result: a class whose metaclass (or a module whose class) writes its own text form.
+        raise _Unscannable("type:unscannable", CUSTOM_TEXT_REASON)
+    if data is None or issubclass(kind, (bool, int, float, complex, type, types.ModuleType)):
         return []
     seen = _seen if _seen is not None else _Walk()
+    context = _is_framework_context(data)
+    plain = _type_is(kind, _PLAIN_CONTAINERS)
+    if not plain and not context and unread_accessors(data):
+        # Its properties or attribute hooks are not read (that would run its code): a result blocks on it,
+        # before anything else here reads the object. Files and streams too: the standard-library ones
+        # (io, sys.std*, logging) are trusted by unread_accessors, a subclass of them with a property is not.
+        seen.hidden += 1
+        if seen.stop_hidden:
+            raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
+    if seen.stop_hidden and not plain and not context and custom_text_form(data):
+        # A tool result: str(), repr() or format() of it would run its own code, which could show text that
+        # was never checked, so it is refused before it is read (sanitize_tool_result refuses it too).
+        raise _Unscannable("type:unscannable", CUSTOM_TEXT_REASON)
+    if inspect.isroutine(data):
+        return []
+    if context or isinstance(data, _LOGGING_TYPES):
+        return []
     if id(data) in seen.done:
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
     children: Optional[List[Any]]
-    if isinstance(data, (Mapping, list, tuple, set, frozenset, _DICT_VIEWS)):
+    mapping = _is_mapping(data)
+    own_mapping = mapping and not issubclass(kind, (dict, types.MappingProxyType)) and not _trusted_class(kind)
+    if own_mapping:
+        # A Mapping of its own (inheriting from or registered with collections.abc.Mapping) answers items() and
+        # __iter__ with its own code, which could hide values from the scan. As data it is refused unread, as a
+        # subclass of dict that redefines items. Inside an application object (@guard, best effort) it is read from
+        # the attributes it really stores, never through items() or __iter__ (a requests.Session holds such
+        # mappings: its headers and its urllib3 pool container).
+        if not lenient:
+            raise _Unscannable("type:unscannable", OVERRIDDEN_READING_REASON)
+        mapping = False
+    if mapping or isinstance(data, (list, tuple, set, frozenset)) or _type_is(kind, _DICT_VIEWS):
         try:
-            if isinstance(data, Mapping):
+            if mapping:
                 children = []
-                for k, v in data.items():
-                    children.append(k)
-                    children.append(v)
+                if issubclass(kind, dict):
+                    # A dict (subclasses that redefine items are refused above) is read through dict.items itself.
+                    for k, v in dict.items(data):
+                        children.append(k)
+                        children.append(v)
+                elif _type_is(kind, (types.MappingProxyType,)):
+                    # A mappingproxy answers items() from the mapping it wraps, which can be a mapping of its own:
+                    # that mapping is read instead (gc runs no Python code), through the same checks.
+                    children = list(gc.get_referents(data))
+                else:
+                    # A mapping of the standard library that is not a dict (UserDict, ChainMap) answers items() from
+                    # what it stores (data, maps), which can be a mapping of its own: what it stores is read instead,
+                    # through the same checks.
+                    fields = _object_fields(data)
+                    if fields is None:
+                        raise _Unscannable("type:unscannable", "An object could not be read to check it")
+                    children = fields
             else:
                 children = list(data)
         except Exception:
             if lenient:
+                seen.unreadable += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
-    elif isinstance(data, os.PathLike):
+    elif _defines_all(data, "__fspath__"):
         path_value = os.fspath(data)
         found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects,
                                 lenient_depth=lenient_depth, best_effort_budget=best_effort_budget, _seen=seen)
@@ -286,14 +390,14 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
             found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects,
                                 lenient_depth=lenient_depth, best_effort_budget=best_effort_budget, _seen=seen)
         return found
-    elif isinstance(data, io.IOBase):
+    elif _inherits_any(data, _IO_BASES):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
         return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects,
                                 lenient_depth=lenient_depth,
                                 best_effort_budget=best_effort_budget, _seen=seen) if isinstance(name, (str, bytes)) else []
-    elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
+    elif _is_iterator(data):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
                            "without consuming it; pass a list instead")
@@ -304,6 +408,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         is_model = _is_data_object(data)
         try:
             children = _object_fields(data)
+            if issubclass(kind, BaseException):
+                # str() and repr() of an exception show its args, and a traceback its cause and context:
+                # none of them is in __dict__.
+                children = (children or []) + _exception_fields(data)
             if children is not None and isinstance(data, logging.Logger):
                 children = [c for i in range(0, len(children) - 1, 2)
                             if children[i] not in _LOGGER_LINKS for c in children[i:i + 2]]
@@ -315,13 +423,19 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                     lenient = True
                     if lenient_depth is not None:
                         max_depth += lenient_depth - _DEFAULT_MAX_DEPTH
-            elif isinstance(data, Iterable):
+            elif own_mapping:
+                # No stored attributes to read, and its own iteration is not trusted: left out as unreadable.
+                seen.skipped += 1
+                seen.unreadable += 1
+                return []
+            elif _defines_all(data, "__iter__"):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
                     children.append(item)
         except Exception:
             if lenient or (not is_model and lenient_objects):
                 seen.skipped += 1
+                seen.unreadable += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
@@ -362,11 +476,21 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
 
 def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
                       lenient_depth: Optional[int] = None,
-                      best_effort_budget: bool = False) -> Tuple[List[str], Optional[Assessment]]:
-    """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
+                      best_effort_budget: bool = False,
+                      block_unreadable: bool = False) -> Tuple[List[str], Optional[Assessment]]:
+    """_extract_strings, or a block Assessment when the payload cannot be checked in full.
+    With block_unreadable, an object that raised while it was read is a block too, not a part left out,
+    and so is an object whose properties or attribute hooks were not read (rule type:unscannable)."""
     try:
-        return _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
-                                best_effort_budget=best_effort_budget), None
+        walk = _Walk()
+        walk.stop_hidden = block_unreadable
+        found = _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
+                                 best_effort_budget=best_effort_budget, _seen=walk)
+        if block_unreadable and walk.unreadable:
+            raise _Unscannable("type:unscannable", "An object could not be read to check it")
+        if block_unreadable and walk.hidden:
+            raise _Unscannable("type:unscannable", UNREAD_ACCESSORS_REASON)
+        return found, None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -429,10 +553,12 @@ def _unwrap_partial(func: Any) -> Tuple[Any, Tuple[Any, ...], Dict[str, Any]]:
 
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
                   lenient_objects: bool = True, allow_truncated: bool = False,
-                  lenient_depth: Optional[int] = None, best_effort_budget: bool = False) -> Assessment:
+                  lenient_depth: Optional[int] = None, best_effort_budget: bool = False,
+                  *, block_unreadable: bool) -> Assessment:
     strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects,
                                                   lenient_depth=lenient_depth,
-                                                  best_effort_budget=best_effort_budget)
+                                                  best_effort_budget=best_effort_budget,
+                                                  block_unreadable=block_unreadable)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -485,7 +611,7 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
                          lenient_objects=_lenient_objects,
                          lenient_depth=LENIENT_MAX_DEPTH if _lenient_objects else None,
-                         best_effort_budget=_lenient_objects)
+                         best_effort_budget=_lenient_objects, block_unreadable=not _lenient_objects)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -498,10 +624,14 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     output (over 4 MB) is blocked by default (rule size:truncated); allow_truncated=True
     or ZN_ALLOW_TRUNCATED=1 allows it, and block_truncated=True or ZN_BLOCK_TRUNCATED=1
     forces the block. A result that cannot be
-    checked in full is blocked as for check_tool_call (for example a generator).
+    checked in full is blocked as for check_tool_call (for example a generator),
+    and so is an object whose own class shows values through properties or
+    attribute hooks (rule type:unscannable, see rules.unread_accessors), as
+    sanitize_tool_result refuses it.
     """
     res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
-                        allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH)
+                        allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH,
+                        block_unreadable=True)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
@@ -774,8 +904,8 @@ def _jsonlike(data: Any, depth: int = 0) -> Any:
     if isinstance(data, Mapping):
         return {(k if isinstance(k, str) else str(_jsonlike(k, depth + 1))): _jsonlike(v, depth + 1)
                 for k, v in data.items()}
-    if isinstance(data, (list, tuple, set, frozenset, _DICT_VIEWS)):
-        return [_jsonlike(v, depth + 1) for v in data]
+    if isinstance(data, (list, tuple, set, frozenset, *_DICT_VIEWS)):
+        return [_jsonlike(v, depth + 1) for v in cast(Any, data)]
     dump = getattr(data, "model_dump", None)
     if callable(dump) and not isinstance(data, type):
         try:
@@ -1046,7 +1176,8 @@ class _ResultPolicy:
                         if caught is not None:
                             yield policy.handle_error(caught)
                             return None
-                        return result
+                        # The value the generator returns reaches the consumer (yield from, send): check and mask it too.
+                        return policy.value(result) if result is not None else result
                     pieces, tail, done = policy._chunk(chunk, tail, masker)
                     if not pieces:
                         # Nothing to pass on yet: an empty chunk keeps one output per input chunk,

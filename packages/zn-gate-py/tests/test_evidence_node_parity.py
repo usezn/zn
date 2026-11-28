@@ -1,6 +1,8 @@
 """The Node and Python packages write the same evidence record for the same event, and a ledger
 written by one verifies with the other."""
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -187,3 +189,230 @@ def test_many_old_python_form_ledger_verifies_in_both(tmp_path):
     ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
     assert py_ev.verify_evidence_ledger(str(ledger))["valid"]
     assert _node_verify(tmp_path, ledger)["valid"]
+
+
+_EXPORT_DRIVER = """
+const ev = require(process.argv[2]);
+const { Writable } = require('stream');
+const [file, format] = process.argv.slice(3);
+const chunks = [];
+const out = new Writable({ write(c, _enc, cb) { chunks.push(Buffer.from(c)); cb(); } });
+ev.writeEvidenceExport(file, format, out).then(() => {
+  process.stdout.write(Buffer.concat(chunks));
+});
+"""
+
+# Floats (whole and fractional), booleans, nested objects, a missing field, a non-ASCII tool name
+# and a payload that becomes payload_preview.
+TS_EVENTS = [
+    _event({"tool_name": "herramienta-ñ 工具 \U0001f527", "verdict": "deny", "rule": "R1",
+            "reason": "why", "latency_us": 12.7, "confidence": 0.5}),
+    _event({"latency_us": 12.0, "confidence": 1, "rule": None}),
+    _event({"reason": {"a": 1, "b": [True, None, 2.5]}, "confidence": 1e-7}),
+    _event({"payload": {"k": "secret text the agent wrote"}, "rule": "", "reason": 'x"y\\z'}),
+    _event({"confidence": 0.000123, "latency_us": 5, "reason": False}),
+    dict(BASE),  # no reason, rule or confidence
+]
+
+
+def _node_export(tmp_path, ledger, fmt):
+    driver = tmp_path / "export_driver.js"
+    driver.write_text(_EXPORT_DRIVER, encoding="utf-8")
+    out = subprocess.run(
+        [NODE, str(driver), str(NODE_EVIDENCE), str(ledger), fmt],
+        check=True, capture_output=True, timeout=60,
+    )
+    return out.stdout
+
+
+def _py_export(ledger, fmt):
+    return py_ev.export_evidence_ledger(str(ledger), fmt)["content"].encode("utf-8")
+
+
+@pytest.mark.parametrize("fmt", ["timesketch", "timesketch-csv"])
+def test_timesketch_export_bytes_match_node_on_node_ledger(tmp_path, fmt):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    assert _node_export(tmp_path, ledger, fmt) == _py_export(ledger, fmt)
+
+
+@pytest.mark.parametrize("fmt", ["timesketch", "timesketch-csv"])
+def test_timesketch_export_bytes_match_node_on_python_ledger(tmp_path, fmt):
+    ledger = _py_write(tmp_path, TS_EVENTS)
+    assert _node_export(tmp_path, ledger, fmt) == _py_export(ledger, fmt)
+
+
+@pytest.mark.parametrize("fmt", ["timesketch", "timesketch-csv"])
+def test_timesketch_export_bytes_match_node_after_tamper(tmp_path, fmt):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    lines = ledger.read_text(encoding="utf-8").split("\n")
+    lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"deny"', 1)
+    ledger.write_text("\n".join(lines), encoding="utf-8")
+    node = _node_export(tmp_path, ledger, fmt)
+    assert node == _py_export(ledger, fmt)
+    assert b"false" in node
+
+
+NODE_CLI = ROOT / "zn-gate" / "bin" / "cli.js"
+_GENERATOR = re.compile(rb'"generator":"zn-gate [^"]*"')
+
+
+def _cli_pair(tmp_path, ledger, fmt, extra):
+    """Runs the export through both command lines on the same log (ZN_HOME holds it) and returns
+    (node_result, python_result, node_output, python_output)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    shutil.copy(ledger, home / "evidence.jsonl")
+    node_dir, py_dir = tmp_path / "node", tmp_path / "py"
+    node_dir.mkdir()
+    py_dir.mkdir()
+    node_out, py_out = node_dir / "out.txt", py_dir / "out.txt"
+    env = {**os.environ, "ZN_HOME": str(home)}
+    node = subprocess.run(
+        [NODE, str(NODE_CLI), "evidence", "--export", "--format", fmt, "--output", str(node_out), *extra],
+        capture_output=True, env=env, timeout=120,
+    )
+    py_env = {**env, "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1"}
+    python = subprocess.run(
+        [sys.executable, "-m", "zn_gate", "evidence", "--export", "--format", fmt, "--output", str(py_out), *extra],
+        capture_output=True, env=py_env, timeout=120,
+    )
+    return node, python, node_out, py_out
+
+
+def _same_export_and_manifest(tmp_path, ledger, fmt, extra, expect_code=0):
+    node, python, node_out, py_out = _cli_pair(tmp_path, ledger, fmt, extra)
+    assert node.returncode == python.returncode == expect_code, (node.stderr, python.stderr)
+    assert node_out.read_bytes() == py_out.read_bytes()
+    if "--manifest" in extra:
+        n_man = (node_out.parent / "out.txt.manifest.json").read_bytes()
+        p_man = (py_out.parent / "out.txt.manifest.json").read_bytes()
+        assert _GENERATOR.search(n_man) and _GENERATOR.search(p_man)
+        # generator is the only field allowed to differ, when the two versions differ
+        assert _GENERATOR.sub(b'"generator":"G"', n_man) == _GENERATOR.sub(b'"generator":"G"', p_man)
+    return node, python
+
+
+@pytest.mark.parametrize("fmt, extra", [
+    ("timesketch", ["--include-preview"]),
+    ("timesketch-csv", ["--include-preview"]),
+    ("timesketch", ["--manifest"]),
+    ("timesketch-csv", ["--manifest", "--include-preview"]),
+    ("jsonl", []),
+    ("jsonl", ["--manifest"]),
+    ("csv", []),
+    ("csv", ["--manifest"]),
+    ("ocsf", []),
+    ("ocsf", ["--include-preview"]),
+    ("ocsf", ["--manifest"]),
+    ("ocsf", ["--manifest", "--include-preview"]),
+], ids=["ts-preview", "tscsv-preview", "ts-manifest", "tscsv-manifest-preview",
+        "jsonl", "jsonl-manifest", "csv", "csv-manifest",
+        "ocsf", "ocsf-preview", "ocsf-manifest", "ocsf-manifest-preview"])
+def test_cli_export_and_manifest_match_node(tmp_path, fmt, extra):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    _same_export_and_manifest(tmp_path, ledger, fmt, extra)
+
+
+@pytest.mark.parametrize("fmt", ["jsonl", "csv", "timesketch", "timesketch-csv", "ocsf"])
+def test_stdout_bytes_match_node(tmp_path, fmt):
+    """Without --output the export goes to stdout: same bytes, LF line endings, same exit code."""
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    home = tmp_path / "home"
+    home.mkdir()
+    shutil.copy(ledger, home / "evidence.jsonl")
+    env = {**os.environ, "ZN_HOME": str(home)}
+    node = subprocess.run([NODE, str(NODE_CLI), "evidence", "--export", "--format", fmt],
+                          capture_output=True, env=env, timeout=120)
+    python = subprocess.run(
+        [sys.executable, "-m", "zn_gate", "evidence", "--export", "--format", fmt],
+        capture_output=True, env={**env, "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1"}, timeout=120,
+    )
+    assert node.returncode == python.returncode == 0, python.stderr
+    assert node.stdout == python.stdout
+    assert b"\r\n" not in python.stdout
+
+
+def test_cli_manifest_matches_node_after_tamper(tmp_path):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    lines = ledger.read_text(encoding="utf-8").split("\n")
+    lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"deny"', 1)
+    ledger.write_text("\n".join(lines), encoding="utf-8")
+    node, python = _same_export_and_manifest(tmp_path, ledger, "timesketch-csv",
+                                             ["--manifest", "--include-preview"], expect_code=1)
+    # Both exit 1 and print the same first line (the tamper message).
+    assert node.stderr.decode("utf-8").splitlines()[0] == python.stderr.decode("utf-8").splitlines()[0]
+    man = (tmp_path / "py" / "out.txt.manifest.json").read_text(encoding="utf-8")
+    assert '"chain_verified":false,"chain_break_index":2' in man
+
+
+def test_ocsf_tampered_log_matches_node(tmp_path):
+    ledger = _node_write(tmp_path, TS_EVENTS)
+    lines = ledger.read_text(encoding="utf-8").split("\n")
+    lines[2] = lines[2].replace('"verdict":"allow"', '"verdict":"block"', 1)
+    ledger.write_text("\n".join(lines), encoding="utf-8")
+    node, python = _same_export_and_manifest(tmp_path, ledger, "ocsf", ["--include-preview", "--manifest"],
+                                             expect_code=1)
+    assert node.stderr.decode("utf-8").splitlines()[0] == python.stderr.decode("utf-8").splitlines()[0]
+
+
+def test_ocsf_record_without_valid_time_matches_node(tmp_path):
+    """A record whose timestamp is not a real date keeps its place with time 0 (the chain is broken on
+    purpose, so both exit 1)."""
+    record = {
+        "id": "ev_crafted", "timestamp": "2026-02-30T00:00:00Z", "agent_environment": "a", "phase": "p",
+        "tool_name": "t", "payload_sha256": "0" * 64, "payload_preview": "x", "verdict": "allow",
+        "rule": None, "reason": None, "confidence": 0.5, "latency_us": 3, "engine": "e",
+        "prev_hash": "0" * 64, "record_hash": "1" * 64,
+    }
+    ledger = tmp_path / "crafted.jsonl"
+    ledger.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    _same_export_and_manifest(tmp_path, ledger, "ocsf", [], expect_code=1)
+    exported = (tmp_path / "py" / "out.txt").read_bytes()
+    assert b'"time":0,' in exported
+    assert b'"zn_time_unmapped":true' in exported
+
+
+FORMULA_EVENTS = [
+    _event({"tool_name": '=HYPERLINK("http://example.invalid")'}),
+    _event({"tool_name": "-2+3", "agent": "@agent", "verdict": "block", "rule": "+rule"}),
+    _event({"tool_name": "plain"}),
+]
+
+
+@pytest.mark.parametrize("fmt", ["csv", "timesketch-csv"])
+def test_formula_cells_match_node(tmp_path, fmt):
+    ledger = _node_write(tmp_path, FORMULA_EVENTS)
+    _same_export_and_manifest(tmp_path, ledger, fmt, ["--manifest"])
+    assert b"'=HYPERLINK" in (tmp_path / "py" / "out.txt").read_bytes()
+    assert b"'-2+3" in (tmp_path / "node" / "out.txt").read_bytes()
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_manifest_refusal_matches_node(tmp_path, kind):
+    if kind == "symlink" and os.name == "nt":
+        pytest.skip("symlinks need a privilege on Windows")
+    ledger = _node_write(tmp_path, FORMULA_EVENTS)
+    home = tmp_path / "home"
+    home.mkdir()
+    shutil.copy(ledger, home / "evidence.jsonl")
+    env = {**os.environ, "ZN_HOME": str(home), "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1"}
+    results = []
+    for who, cmd in (("node", [NODE, str(NODE_CLI)]), ("py", [sys.executable, "-m", "zn_gate"])):
+        d = tmp_path / who
+        d.mkdir()
+        victim = d / "victim.txt"
+        victim.write_text("keep me")
+        out = d / "out.txt"
+        link = Path(str(out) + ".manifest.json")
+        if kind == "file":
+            link.write_text("keep me")
+        else:
+            link.symlink_to(victim)
+        r = subprocess.run([*cmd, "evidence", "--export", "--output", str(out), "--manifest"],
+                           capture_output=True, env=env, timeout=120)
+        assert victim.read_text() == "keep me" and not out.exists()
+        # stderr is a message, not an export: Python ends lines with \r\n there on Windows, Node with \n.
+        err = r.stderr.replace(str(d).encode(), b"D").replace(b"\r\n", b"\n")
+        results.append((r.returncode, r.stdout, err))
+    assert results[0] == results[1], results
+    assert results[0][0] == 2

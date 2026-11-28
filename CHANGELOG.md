@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- On Windows, the Python evidence log was written with CRLF line endings, so its exports differed from the ones made on Linux and macOS and from the npm package. The log is now written with LF only on every system, and an export keeps the line endings of the log it reads.
+
 ## [1.18.0] - 2026-11-26
 
 ### Added

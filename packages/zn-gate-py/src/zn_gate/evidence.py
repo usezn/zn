@@ -43,7 +43,8 @@ def _open_for_append(file_path: str) -> TextIO:
     file that is readable by others is restricted to 0600 (POSIX only). If the file is
     not empty and its last byte is not a newline, a newline is written first so the next
     record starts its own line (the caller holds the write lock)."""
-    fd = os.open(file_path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    # O_BINARY (Windows only): no \n -> \r\n translation, so the ledger and its exports are the same bytes everywhere.
+    fd = os.open(file_path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
     try:
         st = os.fstat(fd)
         if os.name == "posix" and st.st_mode & 0o077:
@@ -52,7 +53,7 @@ def _open_for_append(file_path: str) -> TextIO:
             os.lseek(fd, st.st_size - 1, os.SEEK_SET)
             if os.read(fd, 1) != b"\n":
                 os.write(fd, b"\n")  # O_APPEND: always lands at the end of the file
-        return os.fdopen(fd, "a", encoding="utf-8")
+        return os.fdopen(fd, "a", encoding="utf-8", newline="")  # "\n" stays "\n"
     except BaseException:
         os.close(fd)
         raise
@@ -760,89 +761,19 @@ def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[
     }
 
 
-def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl") -> Dict[str, Any]:
+def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl",
+                           include_preview: bool = False) -> Dict[str, Any]:
     """
     Exports the evidence ledger into JSONL or CSV with cryptographic verification.
     Suitable for enterprise compliance audits (SOC 2, ISO 27001, EU AI Act Art. 12).
+    format 'timesketch' (JSON Lines) and 'timesketch-csv' give Timesketch events, see evidence_timesketch.
     """
     target_path = file_path if file_path else EVIDENCE_FILE
-    norm_format = "csv" if (format or "jsonl").lower() == "csv" else "jsonl"
-
-    if not os.path.exists(target_path):
-        empty_content = (
-            "timestamp,verdict,phase,tool_name,agent_environment,rule,reason,payload_sha256,record_hash,prev_hash,latency_us\n"
-            if norm_format == "csv"
-            else ""
-        )
-        return {
-            "content": empty_content,
-            "format": norm_format,
-            "valid": True,
-            "tip_hash": GENESIS_HASH,
-            "total": 0,
-        }
-
-    verify_result = verify_evidence_ledger(target_path)
-    try:
-        lines, _bad = _read_ledger(target_path)
-    except EvidenceLedgerError:
-        lines = []
-
-    tip_hash = GENESIS_HASH
-    if lines:
-        try:
-            tip_hash = json.loads(lines[-1]).get("record_hash", GENESIS_HASH)
-        except Exception:
-            pass
-
-    if norm_format == "csv":
-        headers = [
-            "timestamp",
-            "verdict",
-            "phase",
-            "tool_name",
-            "agent_environment",
-            "rule",
-            "reason",
-            "payload_sha256",
-            "record_hash",
-            "prev_hash",
-            "latency_us",
-        ]
-        rows = [",".join(headers)]
-        for line in lines:
-            try:
-                obj = json.loads(line)
-                row_vals = []
-                for h in headers:
-                    val = str(obj.get(h, "")) if obj.get(h) is not None else ""
-                    escaped = val.replace('"', '""')
-                    row_vals.append(f'"{escaped}"')
-                rows.append(",".join(row_vals))
-            except Exception:
-                pass
-
-        return {
-            "content": "\n".join(rows) + "\n",
-            "format": "csv",
-            "valid": verify_result["valid"],
-            "error": verify_result.get("error"),
-            "tip_hash": tip_hash,
-            "total": len(lines),
-        }
-
-    try:
-        with open(target_path, "rb") as f:
-            # Same line endings as reading in text mode (Windows writes CRLF).
-            raw = f.read().decode("utf-8", errors="replace").replace("\r\n", "\n")
-    except OSError:
-        raw = ""
-
-    return {
-        "content": raw if raw.endswith("\n") else raw + "\n",
-        "format": "jsonl",
-        "valid": verify_result["valid"],
-        "error": verify_result.get("error"),
-        "tip_hash": tip_hash,
-        "total": len(lines),
-    }
+    asked = (format or "jsonl").lower()
+    if asked in ("timesketch", "timesketch-csv", "ocsf"):
+        from .evidence_timesketch import export_timesketch  # local import: that module imports this one
+        return export_timesketch(target_path, asked, include_preview)
+    norm_format = "csv" if asked == "csv" else "jsonl"
+    # Same rendering and chain check as the npm package (lib/evidence_export.js).
+    from .evidence_timesketch import export_plain  # local import: that module imports this one
+    return export_plain(target_path, norm_format)
