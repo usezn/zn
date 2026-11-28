@@ -95,7 +95,7 @@ test('codex: a __ZN_ marker in an MCP call to another server is denied, and zn\'
   const dir = tmpProject(t);
   const other = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__postgres__query', tool_input: { password: '__ZN_DB_PASSWORD__' } }));
   assert.equal(other.output.hookSpecificOutput.permissionDecision, 'deny');
-  assert.match(other.output.hookSpecificOutput.permissionDecisionReason, /secrets_http_request/);
+  assert.match(other.output.hookSpecificOutput.permissionDecisionReason, /secret marker[\s\S]*Next step: remove the marker/);
   await withCodexHome(t, async (home) => {
     const { command, args } = fakeZnSecretsArgs(t);
     const toml = '[mcp_servers.secrets]\ncommand = ' + JSON.stringify(command) + '\nargs = ' + JSON.stringify(args) + '\n';

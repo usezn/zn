@@ -100,7 +100,7 @@ test('arguments that are not a join token or a safe address are refused before a
 test('a join the server refuses or cannot answer is reported with its reason and audited', async () => {
   const m = machine();
   cloud.setOrgActive(false);
-  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /join failed \(HTTP 402: This organization has no active Team subscription\)/);
+  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /^Error: join failed: this organization has no active Team subscription, so this machine was not connected\. Next step: ask an admin of your organization to renew or start the Team plan at usezn\.com\/pricing, then run: zn team join <token>\ndetails: HTTP 402: This organization has no active Team subscription$/);
   assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'team_join_failed' });
   cloud.setOrgActive(true);
   await assert.rejects(m.o.teamJoin({ join_token: 'znj_' + 'Z'.repeat(40), api_base: cloud.base }), /^Error: This join token is expired, already used or not valid, so this machine was not connected\. Ask your organization admin for a new invitation, then run: zn team join <new token>\ndetails: HTTP 403: This join token is invalid, expired or used up$/);

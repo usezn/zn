@@ -57,6 +57,18 @@ function unknownBackend(name, known) {
 }
 
 /* The command a person types, in the form that works on their machine (`zn`, or the npx form when zn is not on PATH). */
+/* A call whose file addresses zn cannot read is blocked; the cause is the call (too nested, too many values, a file: address),
+   not a new agent format, so the step is about the call. The limits are the ones the path scan really uses. */
+const { MAX_NEST_DEPTH, MAX_NEST_NODES } = require('./nest-limits');
+const UNREADABLE_FILE_ADDRESS = 'zn: could not read a file address in this call, so zn cannot check it and blocked it. ' +
+  'The arguments are nested deeper than ' + MAX_NEST_DEPTH + ' levels, hold more than ' + MAX_NEST_NODES + ' values, or contain a file: address zn cannot turn into a path. ' +
+  'Next step: ask the agent to send the call again with flatter arguments and each file named as a plain path.';
+const UNREADABLE_MCP_ARGUMENTS = 'zn: this MCP call was blocked because zn could not read every file name in its arguments: they are nested deeper than ' +
+  MAX_NEST_DEPTH + ' levels, hold more than ' + MAX_NEST_NODES + ' values, or contain a file: address zn cannot turn into a path. ' +
+  'Next step: ask the agent to send the call again with flatter arguments and each file named as a plain path.';
+const TOO_DEEP_ACTION = 'zn: this action is nested too deeply for zn to check, so it was blocked. ' +
+  'Next step: ask the agent to send the same action with flatter arguments.';
+
 function zn(args) {
   return require('./zn-command').znCommand(args);
 }
@@ -359,11 +371,23 @@ function looksLikeEmailInvite(text) {
 const TEAM_INVITE_NOT_A_JOIN_TOKEN = 'That is the link from your invitation email, not a join token. ' +
   'Open the link to accept the invitation at usezn.com/team, then ask your organization admin for a join token (it starts with znj_) and run: zn team join <token>';
 
+/* The one next step for an organization whose Team subscription is not active: only an admin of the organization can fix it. */
+const TEAM_NO_SUBSCRIPTION_STEP = 'ask an admin of your organization to renew or start the Team plan at usezn.com/pricing';
+
+function teamJoinNoSubscription(detail) {
+  return withDetails('join failed: this organization has no active Team subscription, so this machine was not connected. ' +
+    'Next step: ' + TEAM_NO_SUBSCRIPTION_STEP + ', then run: zn team join <token>', detail);
+}
+
+/* One line for the status of the audit upload when the server answers 402. */
+const TEAM_UPLOAD_NO_SUBSCRIPTION = 'your organization has no active Team subscription: ' + TEAM_NO_SUBSCRIPTION_STEP;
+
 function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
 
 module.exports = {
+  UNREADABLE_FILE_ADDRESS, UNREADABLE_MCP_ARGUMENTS, TOO_DEEP_ACTION,
   agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable, clipboardTimedOut,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,
@@ -373,7 +397,7 @@ module.exports = {
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_POLICY_UNVERIFIED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
+  teamJoinFailed, teamJoinNoSubscription, TEAM_UPLOAD_NO_SUBSCRIPTION, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
   TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamPendingKept, TEAM_STRICT_NO_SUBSCRIPTION, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

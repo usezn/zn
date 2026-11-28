@@ -55,7 +55,7 @@ test('join turns the report on, the daemon sends it, stop and accept go through 
 
   assert.strictEqual((await vault.teamStatusReport({ action: 'stop' })).on, false);
   await vault.teamSync({});
-  assert.strictEqual(inst.statusReports, 1);
+  assert.strictEqual(inst.statusReports, 2, 'the final report is sent before stopping');
 
   answer = false;
   await assert.rejects(vault.teamStatusReport({ action: 'accept' }), /declined/);
@@ -63,7 +63,7 @@ test('join turns the report on, the daemon sends it, stop and accept go through 
   assert.strictEqual((await vault.teamStatusReport({ action: 'accept' })).on, true);
   assert.match(confirmations.filter((c) => c.kind === 'team').pop().title, /^send a status report to organization /);
   await vault.teamSync({});
-  assert.strictEqual(inst.statusReports, 2);
+  assert.strictEqual(inst.statusReports, 3);
   info = await vault.teamInfo();
   assert.strictEqual(info.status_report.via, 'accept');
 });

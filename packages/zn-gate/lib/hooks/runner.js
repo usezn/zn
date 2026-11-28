@@ -1216,7 +1216,7 @@ async function decidePre(ev, d, agentId, opts) {
       if (named.bad) {
         // Arguments zn cannot read to the end (nested deeper than it reads): a dotenv path, or the pieces of one that the tool joins
         // (a folder, a name and an extension in separate values), may be hidden there. Refused whatever the text says.
-        return { decision: 'deny', message: 'zn: zn could not read every file name in the arguments of this MCP call (nested too deeply, too many values, or a file: address it cannot turn into a path), so it was blocked.' };
+        return { decision: 'deny', message: require('../messages').UNREADABLE_MCP_ARGUMENTS };
       }
       for (const p of named.paths) {
         const deny = policy.loaderEnvWriteDenial(p, writtenTextsOf(ev, p, ev.cwd, pathOpts), pathOpts);
@@ -1490,6 +1490,13 @@ function mcpServerLabel(server) {
   return s ? 'the MCP server ' + s : 'an MCP server';
 }
 
+/* OpenCode checks the query of its web and code search like an MCP call, but a search is not an MCP server. */
+function searchKindOf(ev) {
+  if (ev.mcp) return '';
+  const name = String(ev.toolName || '').toLowerCase();
+  return name === 'websearch' ? 'web search' : name === 'codesearch' ? 'code search' : '';
+}
+
 async function decideMcp(ev, d, agentId) {
   const text = mcpArgumentText(ev.input.args);
   if (text === null) {
@@ -1499,10 +1506,14 @@ async function decideMcp(ev, d, agentId) {
   const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
   const ours = isOurSecretsServer(ev, deps.findProjectRoot(ev.cwd || process.cwd()));
   if (!ours && markers.findMarkers(text).length) {
+    const search = searchKindOf(ev);
     return {
       decision: 'deny',
-      message: 'zn: ' + mcpServerLabel(server) + ' never receives secret values, so zn blocked this call. ' +
-        'Next step: for an authenticated web request, use the secrets_http_request tool of the zn "secrets" MCP server; otherwise remove the placeholder from the call.',
+      message: search
+        ? 'zn: this ' + search + ' was stopped because its query contains a secret marker (a stand-in for a secret stored in zn), and a search never carries a secret. ' +
+          'Next step: remove the marker from the query and search again.'
+        : 'zn: this call was stopped because it contains a secret marker (a stand-in for a secret stored in zn), and ' + mcpServerLabel(server) + ' is not allowed to receive one. ' +
+          'Next step: remove the marker from the call. To let a program use that secret, the user runs `' + znCommand('run --secrets NAME -- <program>') + '` in their own terminal.',
     };
   }
 
@@ -1531,16 +1542,18 @@ async function decideMcp(ev, d, agentId) {
       decision: 'ask',
       pii: true,
       kinds: [...piiKinds],
-      message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
-        'Approve only if this server should receive it.',
+      message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + (searchKindOf(ev) ? 'a search service' : mcpServerLabel(server)) + '. ' +
+        'Approve only if ' + (searchKindOf(ev) ? 'that service' : 'this server') + ' should receive it.',
     };
   }
   return {
     decision: 'deny',
     kinds: [...kinds],
-    message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
-      'A stored secret cannot be passed to this server. ' +
-      'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
+    message: searchKindOf(ev)
+      ? 'zn: this ' + searchKindOf(ev) + ' would send a secret (' + [...kinds].join(', ') + ') to a search service, so zn blocked it. ' +
+        'Next step: remove the secret from the query and search again.'
+      : 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
+        'Next step: remove the secret from the call. To let a program use a stored secret, the user runs `' + znCommand('run --secrets NAME -- <program>') + '` in their own terminal.',
   };
 }
 
@@ -2234,8 +2247,7 @@ function failDecision(ev, err, mode, agentId) {
       'Ask the user to check the file names in the request.');
   }
   if (err.code === 'ZN_TOO_DEEP') {
-    return failClosed(ev, err, 'zn: this action is nested too deeply for zn to check, so it was blocked. ' +
-      'Ask the user to check the request.');
+    return failClosed(ev, err, require('../messages').TOO_DEEP_ACTION);
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
@@ -2342,7 +2354,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   try {
     ev = adapter.normalize(rawEvent);
     // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
-    if (ev && typeof ev.unreadable === 'string') ev.unreadable += ' ' + formatChangeStep(adapter.id);
+    if (ev && typeof ev.unreadable === 'string' && ev.unreadable !== require('../messages').UNREADABLE_FILE_ADDRESS) ev.unreadable += ' ' + formatChangeStep(adapter.id);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.

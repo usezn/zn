@@ -172,8 +172,13 @@ def test_four_level_nested_sh_c_is_refused():
     assert r.rule == "destructive:too_many_commands"
 
 
-def test_non_string_is_allowed():
-    assert check_command(None).verdict == "allow"  # type: ignore[arg-type]
+def test_non_string_is_refused():
+    for value in (None, b"rm -rf /", bytearray(b"rm -rf /"), 42, 0, ["rm", "-rf", "/"], {"command": "ls"}, True, False):
+        r = check_command(value)  # type: ignore[arg-type]
+        assert r.verdict == "block", value
+        assert r.rule == "destructive:command_not_a_string", value
+        assert r.reason.startswith("Destructive command: "), value
+    assert check_command("ls -la /tmp/example").verdict == "allow"
 
 
 def test_a_paren_in_a_comment_does_not_close_a_substitution_early():

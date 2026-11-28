@@ -59,7 +59,7 @@ test('an unusable token and an organization without a subscription stop before t
   cloud.setOrgActive(false);
   const b = ops();
   try {
-    await assert.rejects(b.o.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 2 }) }), /no active Team subscription/);
+    await assert.rejects(b.o.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 2 }) }), /no active Team subscription.*usezn\.com\/pricing/);
     assert.strictEqual(b.dialogs.length, 0);
   } finally { cloud.setOrgActive(true); }
 });

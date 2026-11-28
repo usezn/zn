@@ -107,7 +107,7 @@ Every `ZN_` variable you can set, with its default and the package that reads it
 | `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
 | `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
 | `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
-| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
+| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address (`https://` only; plain `http://` only for `localhost`, `127.0.0.1` and `::1`). Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
 | `ZN_STAGE` | The production API | Which cloud API route the check is sent to: `prod`, or unset for the default route. Any other value also uses the default route. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values under `--stage`. | Both |
 | `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check. `windows` sends overlapping windows of the text; `off` sends only the start. The values `none`, `truncate`, `0`, `false` and `no` also count as `off`. Any other value counts as `windows`. | Both |
 | `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |

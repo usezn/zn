@@ -235,7 +235,7 @@ function normalize(raw) {
     // Only an exact tool of zn's server counts (a server named secrets_ or secrets__x parses as server secrets).
     const ours = require('../broker/secrets-tools').isSecretsToolName(mcp[2]) ? znMcpServerIsOurs(mcp[1]) : null;
     const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2], ...(ours ? { ours } : {}) }, input: { args: rawInput === undefined || rawInput === null ? {} : rawInput, paths: mp.paths, texts: [] } };
-    if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (mp.bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   if (SHELL_TOOLS.has(toolName)) {
@@ -284,12 +284,12 @@ function normalize(raw) {
   if (scanned && scanned.command !== undefined) {
     // The command is judged as a shell line, and the files the call also names keep their read and write checks.
     const e = { ...ev, tool: 'bash', input: { command: scanned.command, alsoPaths: NAMES_ONLY_TOOLS.has(toolName) ? [] : paths, texts: [] } };
-    if (bad && !NAMES_ONLY_TOOLS.has(toolName)) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad && !NAMES_ONLY_TOOLS.has(toolName)) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   if (!NAMES_ONLY_TOOLS.has(toolName) && (paths.length || bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { path: paths[0], paths, texts: [] } };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   return { ...ev, tool: toolName.toLowerCase(), input: { texts: [] } };

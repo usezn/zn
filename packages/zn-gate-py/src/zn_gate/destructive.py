@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-25.4"
+COMMAND_RULES_VERSION = "2026-11-27.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -44,6 +44,8 @@ _MAX_DEPTH = 3
 _MAX_SEGMENTS = 50000
 _OVERFLOW = "too_many_commands"
 _OVERFLOW_REASON = "it has more commands than can be checked, so it is refused rather than guessed at"
+_NOT_A_STRING = "command_not_a_string"
+_NOT_A_STRING_REASON = "it is not text, so it cannot be checked and is refused rather than guessed at"
 _MAX_CHARS = 200 * 1024
 _QUOTE_SCAN_MAX = 20000
 _A = re.ASCII
@@ -1918,13 +1920,14 @@ def check_command(command: str) -> Assessment:
     Returns an Assessment: verdict 'block' with rule 'destructive:<name>' for one of the narrow shapes
     listed in this module's docstring, else 'allow'.
     """
-    hit = _analyze(command, 0) if isinstance(command, str) else None
+    # A command that is not text (None, bytes, a number, a list...) was never read, so it is refused, not allowed.
+    hit = _analyze(command, 0) if isinstance(command, str) else _NOT_A_STRING
     if not hit:
         return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, rules_version=COMMAND_RULES_VERSION)
     return Assessment(
         verdict="block",
         confidence=0.95,
         rule="destructive:" + hit,
-        reason="Destructive command: " + (_REASONS.get(hit) or _OVERFLOW_REASON),
+        reason="Destructive command: " + (_NOT_A_STRING_REASON if hit == _NOT_A_STRING else _REASONS.get(hit) or _OVERFLOW_REASON),
         rules_version=COMMAND_RULES_VERSION,
     )

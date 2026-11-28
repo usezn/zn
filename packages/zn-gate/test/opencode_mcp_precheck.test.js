@@ -17,6 +17,7 @@ const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
 
+const ORIG_CWD = process.cwd();
 const FAKE = generateAll(5150, { perType: 1, piiPerType: 1 });
 const AWS = FAKE.secrets.find((s) => s.type === 'aws_access_key_id').value;
 const MARKER = '__ZN_DB_PASSWORD__';
@@ -37,7 +38,9 @@ function setup(t, config) {
   delete process.env.OPENCODE_CONFIG;
   delete process.env.OPENCODE_CONFIG_CONTENT;
   delete process.env.OPENCODE_CONFIG_DIR;
-  t.after(() => { for (const k of names) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  // The hook runs in the project, never in the folder of the zn-gate that is installed.
+  process.chdir(project);
+  t.after(() => { process.chdir(ORIG_CWD); for (const k of names) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
   return project;
 }
 
@@ -46,7 +49,17 @@ function call(project, tool, args, extra = {}) {
   return runner.handle(opencode, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --', ...extra });
 }
 
-const OURS = { type: 'local', command: ['zn', 'secrets-mcp', '--agent', 'opencode'] };
+const OWN_CLI = path.resolve(__dirname, '..', 'bin', 'cli.js');
+// The server `zn hooks install opencode` suggests: this Node.js and this zn-gate's bin/cli.js.
+const OURS = { type: 'local', command: [process.execPath, OWN_CLI, 'secrets-mcp', '--agent', 'opencode'] };
+
+// Write opencode.json of the user-level config home (XDG_CONFIG_HOME/opencode) of setup().
+function userConfig(config) {
+  const dir = path.join(process.env.XDG_CONFIG_HOME, 'opencode');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify(config));
+}
+const TOOL = 'secrets_secrets_http_request';
 const THIRD = { type: 'local', command: ['npx', 'x'] };
 
 test('opencode mcp: a marker in a third-party MCP call is denied', async (t) => {
@@ -71,8 +84,9 @@ test('opencode mcp: a benign MCP call is allowed', async (t) => {
   assert.equal(r.decision.decision, 'allow');
 });
 
-test('opencode mcp: a call to the secrets server of zn itself (found in opencode.json) may carry a marker', async (t) => {
-  const project = setup(t, { mcp: { secrets: OURS } });
+test('opencode mcp: a call to the secrets server of zn itself (found in the user-level opencode.json) may carry a marker', async (t) => {
+  const project = setup(t);
+  userConfig({ mcp: { secrets: OURS } });
   const r = await call(project, 'secrets_secrets_http_request', { url: 'https://example.com', headers: { Authorization: 'Bearer ' + MARKER } });
   assert.notEqual(r.decision.decision, 'deny');
   const r2 = await call(project, 'secrets_secrets_render_file', { template: MARKER });
@@ -91,7 +105,8 @@ test('opencode mcp: a server named like the one of zn with another command is de
 });
 
 test('opencode mcp: a second definition of the name that is not the one of zn makes it not ours', async (t) => {
-  const project = setup(t, { mcp: { secrets: OURS } });
+  const project = setup(t);
+  userConfig({ mcp: { secrets: OURS } });
   fs.mkdirSync(path.join(project, '.opencode'));
   fs.writeFileSync(path.join(project, '.opencode', 'opencode.json'), JSON.stringify({ mcp: { secrets: { type: 'local', command: ['node', 'evil.js'] } } }));
   assert.equal((await call(project, 'secrets_secrets_http_request', { token: MARKER })).output.action, 'deny');
@@ -105,7 +120,8 @@ test('opencode mcp: an unreadable configuration is treated as not ours', async (
 });
 
 test('opencode mcp: the server is the longest configured name that prefixes the tool name', (t) => {
-  const project = setup(t, { mcp: { secrets: OURS, secrets_x: THIRD } });
+  const project = setup(t, { mcp: { secrets_x: THIRD } });
+  userConfig({ mcp: { secrets: OURS } });
   const ev = opencode.normalize({ hook: 'tool.execute.before', tool: 'secrets_x_secrets_list', cwd: project, args: {} });
   assert.equal(ev.mcp.server, 'secrets_x');
   assert.equal(ev.mcp.tool, 'secrets_list');
@@ -159,21 +175,28 @@ test('opencode mcp: only config files up to the git root count; one above it doe
   delete process.env.OPENCODE_CONFIG;
   delete process.env.OPENCODE_CONFIG_CONTENT;
   delete process.env.OPENCODE_CONFIG_DIR;
-  t.after(() => { for (const k of names) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  process.chdir(dir);
+  t.after(() => { process.chdir(ORIG_CWD); for (const k of names) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
   const tool = 'secrets_secrets_http_request';
   // Above the git root: not read.
   fs.writeFileSync(path.join(outer, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
   assert.equal((await call(sub, tool, { token: MARKER })).output.action, 'deny');
-  // At the git root: read, from a subfolder of the repository.
+  // At the git root: read, from a subfolder of the repository, but a project file never makes the server ours.
   fs.writeFileSync(path.join(repo, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  assert.equal((await call(sub, tool, { token: MARKER })).output.action, 'deny');
+  // A project file that defines the name also spoils the entry of the user config.
+  userConfig({ mcp: { secrets: OURS } });
+  assert.equal((await call(sub, tool, { token: MARKER })).output.action, 'deny');
+  fs.unlinkSync(path.join(repo, 'opencode.json'));
   assert.notEqual((await call(sub, tool, { token: MARKER })).decision.decision, 'deny');
   // Without any .git above, only the working folder is read.
   const loose = path.join(dir, 'loose');
   const looseSub = path.join(loose, 'a');
   fs.mkdirSync(looseSub, { recursive: true });
   fs.writeFileSync(path.join(loose, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  fs.rmSync(path.join(home, 'opencode'), { recursive: true });
   assert.equal((await call(looseSub, tool, { token: MARKER })).output.action, 'deny');
-  assert.notEqual((await call(loose, tool, { token: MARKER })).decision.decision, 'deny');
+  assert.equal((await call(loose, tool, { token: MARKER })).output.action, 'deny');
 });
 
 test('opencode mcp: personal data in a third-party call follows the egress setting', async (t) => {
@@ -187,4 +210,145 @@ test('opencode mcp: personal data in a third-party call follows the egress setti
   // With the egress check off, nobody is asked and the call goes through.
   const off = await call(project, 'github_create_issue', args, { engine: pii, egressCheck: 'off' });
   assert.equal(off.decision.decision, 'allow');
+});
+
+// A copy of zn-gate (same package name, same file layout) at another place.
+function fakePackage(dir) {
+  fs.mkdirSync(path.join(dir, 'zn-gate', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'zn-gate', 'package.json'), JSON.stringify({ name: 'zn-gate' }));
+  fs.writeFileSync(path.join(dir, 'zn-gate', 'bin', 'cli.js'), '// not the real one\n');
+  return path.join(dir, 'zn-gate', 'bin', 'cli.js');
+}
+const denied = async (project) => (await call(project, TOOL, { token: MARKER })).output.action === 'deny';
+
+test('opencode mcp: the genuine server (this package, also through a link) in the user config is trusted', async (t) => {
+  const project = setup(t);
+  userConfig({ mcp: { secrets: OURS } });
+  assert.equal(await denied(project), false);
+  // The same file reached through a link outside the project.
+  const links = tempDir(t, 'zn-oclink-');
+  const viaLink = path.join(links, 'zn-gate');
+  fs.mkdirSync(path.join(viaLink, 'bin'), { recursive: true });
+  fs.symlinkSync(OWN_CLI, path.join(viaLink, 'bin', 'cli.js'));
+  fs.writeFileSync(path.join(viaLink, 'package.json'), JSON.stringify({ name: 'zn-gate' }));
+  userConfig({ mcp: { secrets: { type: 'local', command: [process.execPath, path.join(viaLink, 'bin', 'cli.js'), 'secrets-mcp'] } } });
+  assert.equal(await denied(project), false);
+});
+
+test('opencode mcp: a lookalike zn-gate/bin/cli.js in the project config is refused', async (t) => {
+  const project = setup(t);
+  const evil = fakePackage(path.join(project, 'evil'));
+  fs.writeFileSync(path.join(project, 'opencode.json'), JSON.stringify({ mcp: { secrets: { type: 'local', command: [process.execPath, evil, 'secrets-mcp'] } } }));
+  assert.equal(await denied(project), true);
+  fs.writeFileSync(path.join(project, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  assert.equal(await denied(project), true);
+});
+
+test('opencode mcp: a copy of zn-gate that is not the running package is refused in the user config', async (t) => {
+  const project = setup(t);
+  const elsewhere = fakePackage(tempDir(t, 'zn-occopy-'));
+  userConfig({ mcp: { secrets: { type: 'local', command: [process.execPath, elsewhere, 'secrets-mcp', '--agent', 'opencode'] } } });
+  assert.equal(await denied(project), true);
+  // Also a link that points at such a copy.
+  const links = tempDir(t, 'zn-occopylink-');
+  fs.mkdirSync(path.join(links, 'zn-gate', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(links, 'zn-gate', 'package.json'), JSON.stringify({ name: 'zn-gate' }));
+  fs.symlinkSync(elsewhere, path.join(links, 'zn-gate', 'bin', 'cli.js'));
+  userConfig({ mcp: { secrets: { type: 'local', command: [process.execPath, path.join(links, 'zn-gate', 'bin', 'cli.js'), 'secrets-mcp'] } } });
+  assert.equal(await denied(project), true);
+  // A bare zn that the PATH resolves to something else.
+  const bin = tempDir(t, 'zn-ocbin-');
+  fs.symlinkSync(elsewhere, path.join(bin, 'zn'));
+  userConfig({ mcp: { secrets: { type: 'local', command: ['zn', 'secrets-mcp'] } } });
+  const savedPath = process.env.PATH;
+  t.after(() => { process.env.PATH = savedPath; });
+  process.env.PATH = bin;
+  assert.equal(await denied(project), true);
+});
+
+test('opencode mcp: a link in the project that points at the real package is not trusted', async (t) => {
+  const project = setup(t);
+  fs.mkdirSync(path.join(project, 'zn-gate', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'zn-gate', 'package.json'), JSON.stringify({ name: 'zn-gate' }));
+  fs.symlinkSync(OWN_CLI, path.join(project, 'zn-gate', 'bin', 'cli.js'));
+  const viaProject = { type: 'local', command: [process.execPath, path.join(project, 'zn-gate', 'bin', 'cli.js'), 'secrets-mcp'] };
+  // In the project config.
+  fs.writeFileSync(path.join(project, 'opencode.json'), JSON.stringify({ mcp: { secrets: viaProject } }));
+  assert.equal(await denied(project), true);
+  fs.unlinkSync(path.join(project, 'opencode.json'));
+  // In the user config, naming a path inside the project.
+  userConfig({ mcp: { secrets: viaProject } });
+  assert.equal(await denied(project), true);
+});
+
+test('opencode mcp: a server defined in OPENCODE_CONFIG_CONTENT is refused', async (t) => {
+  const project = setup(t);
+  process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ mcp: { secrets: OURS } });
+  assert.equal(await denied(project), true);
+  // And it spoils a genuine user-level entry of the same name.
+  userConfig({ mcp: { secrets: OURS } });
+  assert.equal(await denied(project), true);
+});
+
+test('opencode mcp: OPENCODE_CONFIG outside the project counts as user-level; inside it, it does not', async (t) => {
+  const project = setup(t);
+  const outside = tempDir(t, 'zn-occfg-');
+  const file = path.join(outside, 'my.json');
+  fs.writeFileSync(file, JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG = file;
+  assert.equal(await denied(project), false);
+  const inside = path.join(project, 'cfg.json');
+  fs.writeFileSync(inside, JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG = inside;
+  assert.equal(await denied(project), true);
+  delete process.env.OPENCODE_CONFIG;
+  fs.mkdirSync(path.join(project, 'cfgdir'));
+  fs.writeFileSync(path.join(project, 'cfgdir', 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG_DIR = path.join(project, 'cfgdir');
+  assert.equal(await denied(project), true);
+});
+
+test('opencode mcp: a project folder whose name starts with two dots is still inside the project', async (t) => {
+  const project = setup(t);
+  const dotted = path.join(project, '..secrets');
+  fs.mkdirSync(dotted);
+  fs.writeFileSync(path.join(dotted, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG = path.join(dotted, 'opencode.json');
+  assert.equal(await denied(project), true);
+  delete process.env.OPENCODE_CONFIG;
+  process.env.OPENCODE_CONFIG_DIR = dotted;
+  assert.equal(await denied(project), true);
+  delete process.env.OPENCODE_CONFIG_DIR;
+  // A folder outside the project whose name starts with two dots is still user-level.
+  const outside = path.join(tempDir(t, 'zn-occfg2-'), '..cfg');
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'opencode.json'), JSON.stringify({ mcp: { secrets: OURS } }));
+  process.env.OPENCODE_CONFIG = path.join(outside, 'opencode.json');
+  assert.equal(await denied(project), false);
+});
+
+test('opencode mcp: refusal texts are plain and name what was stopped', async (t) => {
+  const project = setup(t, { mcp: { github: THIRD } });
+  const internal = /placeholder|secrets_http_request/;
+  const server = await call(project, 'github_create_issue', { body: 'use ' + MARKER });
+  const serverText = JSON.stringify(server.output);
+  assert.equal(server.output.action, 'deny');
+  assert.match(serverText, /the MCP server github/);
+  assert.match(serverText, /secret marker/);
+  assert.match(serverText, /run --secrets NAME -- <program>/);
+  assert.doesNotMatch(serverText, internal);
+  const literal = await call(project, 'github_create_issue', { body: 'key ' + AWS });
+  assert.doesNotMatch(JSON.stringify(literal.output), internal);
+  for (const [name, label] of [['websearch', 'web search'], ['codesearch', 'code search']]) {
+    const r = await call(project, name, { query: 'use ' + MARKER });
+    const text = JSON.stringify(r.output);
+    assert.equal(r.output.action, 'deny', name);
+    assert.ok(text.includes('this ' + label + ' was stopped'), name);
+    assert.doesNotMatch(text, /MCP|server|placeholder|secrets_http_request/, name);
+    assert.match(text, /remove the marker from the query/, name);
+    const k = await call(project, name, { query: 'why does ' + AWS + ' fail' });
+    const kt = JSON.stringify(k.output);
+    assert.ok(kt.includes('this ' + label + ' would send a secret'), name);
+    assert.doesNotMatch(kt, /MCP|placeholder|secrets_http_request/, name);
+  }
 });
