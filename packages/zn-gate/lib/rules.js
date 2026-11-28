@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.1
+ * RULES_VERSION: 2026-11-28.2
  */
 
-const RULES_VERSION = '2026-11-28.1';
+const RULES_VERSION = '2026-11-28.2';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1099,6 +1099,26 @@ const SECRET_PATTERNS = [
   { id: 'secret:credential_default', pattern: /(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretDefault, requires: '${' },
 ];
 
+// Forms the scrubber reads that the shared table above has no rule for, in the order the Python package runs them
+// (SCRUB_FIRST_PATTERNS before the shared table, SCRUB_LAST_PATTERNS after it). redactCredentials uses the
+// whole list; the shared table alone stays the one the policy checks read.
+// A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. The body
+// must look random and hold a digit, and the Helicone, sp-, cp- and similar forms stay with the shared rule.
+// It runs first, so a JWT signature or a NAME=value around the key never keeps part of it readable.
+const SCRUB_FIRST_PATTERNS = [
+  { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_-])()(sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200})(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_OPENAI_KEY]', requires: 'sk-',
+    valueFilter: (v) => {
+      const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
+      return !(require('./scrub/patterns').looksRandom(body, 2, 3.5) && /[0-9]/.test(body));
+    } },
+];
+// A JWT whose signature an earlier rule redacted in part (an sk- key in it): the rest of the JWT goes too, so its
+// header and payload never stay readable.
+const SCRUB_LAST_PATTERNS = [
+  { id: 'secret:jwt_token', pattern: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*\[REDACTED_[A-Z_]+\][A-Za-z0-9_-]*(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_JWT]', requires: '.eyJ' },
+];
+const REDACT_PATTERNS = SCRUB_FIRST_PATTERNS.concat(SECRET_PATTERNS, SCRUB_LAST_PATTERNS);
+
 // Extra credential forms that only `zn-gate scan` reports (files at rest, not
 // agent traffic). They run after SECRET_PATTERNS, on the text those already
 // redacted, so a value found by both is reported once.
@@ -1707,7 +1727,7 @@ function redactQuotedCredentials(text) {
 // rest of a value behind), then SECRET_PATTERNS.
 function redactCredentials(text) {
   const quoted = redactQuotedCredentials(text);
-  const rest = redactWith(quoted.sanitized, SECRET_PATTERNS);
+  const rest = redactWith(quoted.sanitized, REDACT_PATTERNS);
   if (quoted.detections.length === 0) return rest;
   return { sanitized: rest.sanitized, detections: quoted.detections.concat(rest.detections) };
 }
@@ -1801,7 +1821,7 @@ function redactWith(text, patterns) {
   let dirty = true;
   // The rules whose start after a line break says the next line is a secret of its own: for the shared table, the
   // provider formats too (as in Python, where one list holds both).
-  const lookup = patterns === SECRET_PATTERNS ? patterns.concat(providerStartPatterns()) : patterns;
+  const lookup = patterns === SECRET_PATTERNS || patterns === REDACT_PATTERNS ? patterns.concat(providerStartPatterns()) : patterns;
   for (const item of patterns) {
     if (dirty) {
       view = invisibleView(sanitized);
