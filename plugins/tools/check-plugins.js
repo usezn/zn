@@ -207,11 +207,13 @@ for (const [f, re] of Object.entries(LAUNCHERS)) {
     }
   }
 }
+// Events that can stop a call or prompt block on Windows; the others (output, session and answer events) only warn.
+const CODEX_WINDOWS_WARN_EVENTS = new Set(['PostToolUse', 'SessionStart', 'SubagentStart', 'Stop']);
 for (const [event, groups] of Object.entries(json(PLUGIN + '/com.openai/hooks.json').hooks || {})) {
   for (const h of groups.flatMap((g) => g.hooks || [])) {
     const w = String(h.commandWindows || '');
-    const ok = event === 'PostToolUse' ? /^echo \{"systemMessage":"zn is NOT protecting this session: [^"&|<>^]*"\}$/.test(w) : CODEX_WINDOWS_BLOCK.test(w);
-    if (!ok) fail('com.openai/hooks.json: ' + event + ' hook needs the Windows command that ' + (event === 'PostToolUse' ? 'warns' : 'blocks') + ': ' + w);
+    const ok = CODEX_WINDOWS_WARN_EVENTS.has(event) ? /^echo \{"systemMessage":"zn is NOT protecting this session: [^"&|<>^]*"\}$/.test(w) : CODEX_WINDOWS_BLOCK.test(w);
+    if (!ok) fail('com.openai/hooks.json: ' + event + ' hook needs the Windows command that ' + (CODEX_WINDOWS_WARN_EVENTS.has(event) ? 'warns' : 'blocks') + ': ' + w);
   }
 }
 {

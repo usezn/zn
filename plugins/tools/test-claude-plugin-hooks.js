@@ -67,7 +67,7 @@ try {
     const codexWin = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'com.openai', 'hooks.json'), 'utf8')).hooks;
     for (const [event, groups] of Object.entries(codexWin)) {
       const w = groups[0].hooks[0].commandWindows;
-      if (event === 'PostToolUse') assert.ok(/^echo \{"systemMessage":"zn is NOT protecting this session: /.test(w), w);
+      if (['PostToolUse', 'SessionStart', 'SubagentStart', 'Stop'].includes(event)) assert.ok(/^echo \{"systemMessage":"zn is NOT protecting this session: /.test(w), w);
       else assert.ok(/ 1>&2 & exit 2$/.test(w) && /does not run on Windows/.test(w), event + ': ' + w);
     }
     // The blocking events keep onFailure "block".
@@ -258,17 +258,19 @@ try {
       }
     });
 
-    test('Codex: with no usable Node.js PreToolUse and UserPromptSubmit block (exit 2) and PostToolUse warns', () => {
+    test('Codex: with no usable Node.js PreToolUse, PermissionRequest and UserPromptSubmit block (exit 2) and the other events warn', () => {
       const d = plugin('codex-nonode', { patch: noFallback });
       const work = project('codex-nonode-work', path.join(tmp, 'codex-nonode-ran'));
-      for (const event of ['PreToolUse', 'UserPromptSubmit']) {
+      for (const event of ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
         const r = runCodex(d, event, { cwd: work, PATH: '.:' + emptybin });
         assert.strictEqual(r.status, 2, event + ': ' + r.stderr);
         assert.ok(/^zn: no Node\.js was found.*in Codex \(\/plugins\)\.$/m.test(r.stderr), r.stderr);
       }
-      const p = runCodex(d, 'PostToolUse', { cwd: work, PATH: '.:' + emptybin });
-      assert.strictEqual(p.status, 0);
-      assert.ok(/NOT protecting this session/.test(JSON.parse(p.stdout).systemMessage), p.stdout);
+      for (const event of ['PostToolUse', 'SessionStart', 'SubagentStart', 'Stop']) {
+        const p = runCodex(d, event, { cwd: work, PATH: '.:' + emptybin });
+        assert.strictEqual(p.status, 0, event);
+        assert.ok(/NOT protecting this session/.test(JSON.parse(p.stdout).systemMessage), event + ': ' + p.stdout);
+      }
     });
 
     test('Codex: the start deadline is 26 seconds (its hooks have 30), Claude Code keeps 13', () => {
