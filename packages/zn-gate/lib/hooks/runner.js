@@ -2352,6 +2352,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   let decision;
   const d = lazyDeps(opts);
   try {
+    if (process.env.ZN_TEST_HOOK_FAULTS === '1' && process.env.ZN_TEST_HOOK_FAULT === 'normalize') throw new Error('injected normalize failure');
     ev = adapter.normalize(rawEvent);
     // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
     if (ev && typeof ev.unreadable === 'string' && ev.unreadable !== require('../messages').UNREADABLE_FILE_ADDRESS) ev.unreadable += ' ' + formatChangeStep(adapter.id);
@@ -2369,7 +2370,16 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'instructions_loaded') decision = decideInstructionsLoaded(ev, opts);
     else decision = { decision: 'allow' };
   } catch (err) {
-    decision = failDecision(ev, err, mode, adapter.id);
+    // A Stop event that cannot be read stays an ask with failOpen (see failDecision).
+    const stopRaw = !ev && rawEvent && (rawEvent.hook_event_name === 'Stop' || rawEvent.hookEventName === 'Stop');
+    decision = failDecision(ev || (stopRaw ? { event: 'stop' } : null), err, mode, adapter.id);
+    // normalize() threw, so there is no event: respond() would print nothing and the agent would read that as an allow.
+    // Refuse it as any event zn cannot read (exit code 2, the agent's own deny answer on stdout where it has one).
+    // An adapter that already answers a null event with a deny (Antigravity) keeps its own answer.
+    if (!ev && !stopRaw && decision.decision === 'deny' && decision.failClosed) {
+      const own = adapter.respond({ ...decision, event: null });
+      if (!own || own.action === 'none') decision.refuseText = decision.message;
+    }
   } finally {
     d.closeVault();
   }

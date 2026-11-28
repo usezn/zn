@@ -1,0 +1,2 @@
+### Security
+- The agent hooks now block a call when zn cannot read the event the agent sent. If reading the event failed with an error, Claude Code, Cursor, Gemini CLI, Copilot CLI and OpenCode got no answer and let the call run. They now get exit code 2 with the reason, and the deny answer where the agent has one. A Stop event that cannot be read still does not block. No way to trigger this error was found; it was reported by an internal review.
