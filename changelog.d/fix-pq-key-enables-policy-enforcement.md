@@ -1,0 +1,2 @@
+### Security
+- **A post-quantum key alone now turns policy enforcement on.** With only `ZN_PQ_PUBLIC_KEY` set (no Ed25519 signing key and no allowed policy hashes), the gateway treated enforcement as off: policies without a post-quantum signature were dropped, it started with no policies and allowed every call. Now a post-quantum key counts as a signing key, like the Ed25519 one: the gateway refuses to start when a policy fails to verify or no signed policy loads, and an empty policy set denies calls. This affects the unreleased Rust gateway only.

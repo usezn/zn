@@ -257,3 +257,67 @@ fn a_refused_delete_does_not_touch_the_file_and_an_open_engine_may_delete_the_la
     assert!(!dir.path().join("p.wasm").exists());
     assert_eq!(open.policy_count(), 0);
 }
+
+// ---- post-quantum key only (no Ed25519 key, no hash list) ----
+
+use base64::{engine::general_purpose, Engine as _};
+use ml_dsa::{MlDsa65, Seed, SigningKey};
+
+fn pq_pair() -> (SigningKey<MlDsa65>, String) {
+    let sk = SigningKey::<MlDsa65>::from_seed(&Seed::from([7u8; 32]));
+    let pk_hex = hex::encode(sk.expanded_key().verifying_key().encode());
+    (sk, pk_hex)
+}
+
+fn pq_engine(pk_hex: &str) -> ZnEngine {
+    ZnEngine::new_with_pq_key(
+        ZnEngineConfig {
+            gas_limit: 1_000_000,
+            memory_limit: 10 * 1024 * 1024,
+            timeout_ms: 200,
+            allowed_hashes: vec![],
+            signing_public_key: None,
+        },
+        Some(pk_hex),
+    )
+    .expect("engine")
+}
+
+#[test]
+fn pq_key_alone_counts_as_enforcement_and_an_empty_folder_is_an_error() {
+    let (_sk, pk) = pq_pair();
+    let e = pq_engine(&pk);
+    assert!(e.policy_enforcement_configured());
+    let dir = dir_with(&[]);
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("no policy was loaded"), "{msg}");
+    assert!(e.check_tool_call_all("any_tool", "{}", None).is_err());
+}
+
+#[test]
+fn pq_key_with_an_unsigned_policy_rejects_it_and_never_allows_all() {
+    let (_sk, pk) = pq_pair();
+    let e = pq_engine(&pk);
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("p.wasm"), "{msg}");
+    assert_eq!(e.policy_count(), 0);
+    assert!(e.check_tool_call_all("any_tool", "{}", None).is_err());
+}
+
+#[test]
+fn pq_key_with_a_valid_pq_signed_policy_loads_it() {
+    let (sk, pk) = pq_pair();
+    let e = pq_engine(&pk);
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE)]);
+    let sig = sk
+        .expanded_key()
+        .sign_deterministic(EMPTY_MODULE, &[])
+        .expect("sign");
+    let b64 = general_purpose::STANDARD.encode(sig.encode());
+    std::fs::write(dir.path().join("p.wasm.pqs"), b64).expect("write sig");
+    e.load_all_policies(dir.path())
+        .expect("signed policy loads");
+    assert_eq!(e.policy_count(), 1);
+    assert!(e.policy_enforcement_configured());
+}

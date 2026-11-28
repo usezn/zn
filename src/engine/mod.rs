@@ -193,7 +193,16 @@ pub struct ZnEngine {
 
 impl ZnEngine {
     /// Create a new ZnEngine with the given configuration
-    pub fn new(mut config: ZnEngineConfig) -> Result<Self> {
+    pub fn new(config: ZnEngineConfig) -> Result<Self> {
+        let pq_key_hex = std::env::var("ZN_PQ_PUBLIC_KEY").ok();
+        Self::new_with_pq_key(config, pq_key_hex.as_deref())
+    }
+
+    /// Same as `new`, with the post-quantum public key (hex) given instead of read from `ZN_PQ_PUBLIC_KEY`.
+    pub(crate) fn new_with_pq_key(
+        mut config: ZnEngineConfig,
+        pq_key_hex: Option<&str>,
+    ) -> Result<Self> {
         // A blank entry (ZN_POLICY_HASHES="" gives [""]) means "not set", not a hash that matches nothing.
         config.allowed_hashes = config
             .allowed_hashes
@@ -333,7 +342,8 @@ impl ZnEngine {
             );
         }
 
-        let verifier = signing::PolicyVerifier::new(config.signing_public_key.as_deref())?;
+        let verifier =
+            signing::PolicyVerifier::with_keys(config.signing_public_key.as_deref(), pq_key_hex)?;
 
         Ok(Self {
             engine,
@@ -441,11 +451,13 @@ impl ZnEngine {
         Ok(())
     }
 
-    /// True when the settings ask for policy enforcement: a signing key, or a list of allowed policy
-    /// hashes. In that case a gateway without its policies must not run (or must block), because an
+    /// True when the settings ask for policy enforcement: a signing key (Ed25519, or the post-quantum key
+    /// `ZN_PQ_PUBLIC_KEY` alone or with it), or a list of allowed policy hashes. In that case a gateway without its policies must not run (or must block), because an
     /// empty policy set would allow everything the operator asked to have checked.
     pub fn policy_enforcement_configured(&self) -> bool {
-        self.config.signing_public_key.is_some() || !self.config.allowed_hashes.is_empty()
+        self.verifier.has_signing_key()
+            || self.config.signing_public_key.is_some()
+            || !self.config.allowed_hashes.is_empty()
     }
 
     /// Registered policy count

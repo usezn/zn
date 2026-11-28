@@ -68,6 +68,11 @@ impl PolicyVerifier {
         })
     }
 
+    /// True when a classic or a post-quantum public key is configured, so signed policies are required.
+    pub fn has_signing_key(&self) -> bool {
+        self.public_key.is_some() || self.pq_public_key.is_some()
+    }
+
     /// Verify a policy signature (Classic and/or PQ)
     pub fn verify(&self, wasm_bytes: &[u8], wasm_path: &Path) -> Result<()> {
         let mut verified_at_least_one = false;
