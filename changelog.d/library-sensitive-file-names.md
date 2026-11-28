@@ -1,0 +1,2 @@
+### Security
+- The library checks (`evaluate`, `check_tool_call` and `@guard`, in both packages) now flag package registry, git and cloud credential files by name, as the hook already does: `.npmrc`, `.pypirc`, `.netrc`, `.pgpass`, `.git-credentials`, `.docker/config.json`, `.kube/config`, the GitHub CLI hosts file, the gcloud and Azure token files and the Zcode provider config. A command such as `cp .npmrc out` or a write to `.npmrc` is now blocked; names such as `npmrc.md` or `.npmrc.example` stay allowed.
