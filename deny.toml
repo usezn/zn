@@ -39,10 +39,16 @@ version = "0.2.3"
 allow = ["Unicode-DFS-2016"]
 
 [[licenses.exceptions]]
-# CC0-1.0 alone (no OR alternative): a public-domain dedication.
+# CC0-1.0 alone (no OR alternative): a public-domain dedication. notify 9 is still released under it.
 name = "notify"
-version = "6.1.1"
+version = "9.0.0"
 allow = ["CC0-1.0"]
+
+[[licenses.exceptions]]
+# Boost Software License 1.0 alone (permissive, OSI approved): fast hashing, used by notify 9.
+name = "xxhash-rust"
+version = "0.8.21"
+allow = ["BSL-1.0"]
 
 [[licenses.exceptions]]
 # WTFPL alone (no OR alternative): terminal capability data.
