@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.9';
+const POLICY_RULES_VERSION = '2026-11-28.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -872,6 +872,7 @@ function readDenial(p, opts = {}) {
     const abs = resolvedOf(p, opts);
     const head = readHead(abs, DOTENV_SCAN_BYTES);
     if (head === null) return null; // missing file: nothing to protect
+    if (head === UNREADABLE) return unreadableMessage(abs);
     // Not a regular file (a FIFO), or too big to check whole: refused rather than read.
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
@@ -896,16 +897,19 @@ function overBudget(budget, n) {
   return budget.disk < 0 || Date.now() > budget.until;
 }
 
-/* The first `max` bytes of a file, as latin1 text. null when it does not exist; NOT_A_FILE for anything that is not
+/* The first `max` bytes of a file, as latin1 text. null only when the path does not exist (ENOENT, or ENOTDIR for a
+   path under a file); UNREADABLE when it exists but cannot be opened (no permission, too many open files, a link
+   loop...): zn cannot look inside it, so the protected-file checks refuse rather than allow. NOT_A_FILE for anything that is not
    a regular file (a FIFO, a device, a directory): opening is non-blocking, so a FIFO cannot hold the hook until the
    agent's timeout lets the command through. */
 const NOT_A_FILE = Symbol('not a regular file');
+const UNREADABLE = Symbol('exists but cannot be opened');
 function readHead(abs, max) {
   let fd;
   try {
     fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
-  } catch (_) {
-    return null;
+  } catch (e) {
+    return e && (e.code === 'ENOENT' || e.code === 'ENOTDIR') ? null : UNREADABLE;
   }
   try {
     const st = fs.fstatSync(fd);
@@ -927,11 +931,19 @@ function readHead(abs, max) {
   }
 }
 
+/* The refusal for a protected-looking file that exists but cannot be opened, so zn cannot check what it holds. */
+function unreadableMessage(abs) {
+  return 'zn: ' + path.basename(abs) + ' was not read because zn could not read this file to check it, and a file that may hold secrets is refused when it cannot be checked (rule: secret-file:unreadable). ' +
+    'Ask the user to fix its permissions, or to run the command in their own terminal.';
+}
+
 /* A .pem, .key or .p8 file: refused when it holds a private key, allowed when it is a certificate or a public key. */
 function keyFileDenial(p, c, opts) {
   if (GLOB_RE.test(p)) return keyFileGlobDenial(p, c, opts);
-  const text = readHead(resolvedOf(p, opts), KEY_SCAN_BYTES);
+  const abs = resolvedOf(p, opts);
+  const text = readHead(abs, KEY_SCAN_BYTES);
   if (text === null) return null; // missing file: nothing to protect
+  if (text === UNREADABLE) return unreadableMessage(abs);
   if (text === NOT_A_FILE || PRIVATE_KEY_RE.test(text)) return credentialDenial(p, c);
   return null;
 }
@@ -955,6 +967,7 @@ function keyFileGlobDenial(p, c, opts) {
       if (!hc || hc.kind !== 'keyfile') continue;
       if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
       const text = readHead(hit, KEY_SCAN_BYTES);
+      if (text === UNREADABLE) return unreadableMessage(hit);
       if (text !== null && (text === NOT_A_FILE || PRIVATE_KEY_RE.test(text))) return credentialDenial(p, hc);
     }
   }
