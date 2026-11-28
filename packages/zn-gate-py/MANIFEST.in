@@ -2,4 +2,6 @@
 # secrets on purpose, which secret scanners flag in a published archive); run it from the git tag.
 prune tests
 prune typing_check
+# Build leftovers: a stale src/*.egg-info folder must never ship in the sdist.
+prune src/*.egg-info
 global-exclude *.py[cod] __pycache__
