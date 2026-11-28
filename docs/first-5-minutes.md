@@ -182,6 +182,7 @@ On Windows, zn prints the `.cmd` form in its own messages, so copy the command i
 
 ## If something fails
 
+- `npx.cmd : npm notice ...` followed by `NativeCommandError`, in Windows PowerShell 5.1 (the line looks like a failure, but zn-gate worked): npm prints its update notice on stderr, and Windows PowerShell 5.1 shows anything a program writes to stderr as an error when its output is redirected or captured (for example `2>&1`, a script, or a CI log). Nothing is wrong and the command still succeeds. To hide the notice, set `$env:NPM_CONFIG_UPDATE_NOTIFIER = 'false'` first (or add `--no-update-notifier` to the `npx` command). `--loglevel=error` does not hide it.
 - `npx: command not found`: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
 - "running scripts is disabled on this system" on Windows: use `npx.cmd` instead of `npx`, or see the PowerShell note in the [README](../README.md#install).
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.

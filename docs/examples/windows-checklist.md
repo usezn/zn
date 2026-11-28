@@ -32,6 +32,7 @@ Windows PowerShell blocks the script that starts `npm` and `npx` by default. Not
 
 ## Other messages
 
+- `npx.cmd : npm notice ...` followed by `NativeCommandError`, in Windows PowerShell 5.1 (the line looks like a failure, but zn-gate worked): npm prints its update notice on stderr, and Windows PowerShell 5.1 shows anything a program writes to stderr as an error when its output is redirected or captured (for example `2>&1`, a script, or a CI log). Nothing is wrong and the command still succeeds. To hide the notice, set `$env:NPM_CONFIG_UPDATE_NOTIFIER = 'false'` first (or add `--no-update-notifier` to the `npx` command). `--loglevel=error` does not hide it.
 - `npx: command not found`: install Node.js, open a new terminal and run the command again.
 - `'zn' is not recognized as an internal or external command`: add the folder that `npm config get prefix` prints to your user `PATH`, then open a new terminal ([troubleshooting 14](../troubleshooting.md#14-zn-is-not-recognized-as-an-internal-or-external-command)). Until then, use `npx -y zn-gate` instead of `zn`.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
