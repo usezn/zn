@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-28.3"
+COMMAND_RULES_VERSION = "2026-11-28.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1568,14 +1568,81 @@ def _check_execdir(words: List[str], depth: int, known: Any, roots: List[str], r
 _RC_UNIX_CI_RE = re.compile(_RC_UNIX_RE.pattern, _AI)
 
 
-def _is_rc_path(w: str) -> bool:
+def _is_rc_path_plain(w: str) -> bool:
     # Repeated slashes name the same folder (/etc//profile, //etc/profile); "." and ".." segments are resolved below.
     slashed = re.sub(r"/{2,}", "/", str(w).replace("\\", "/"))
     t = re.sub(r"^~/", "/", slashed)
     t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
     if _RC_UNIX_CI_RE.search(t) or _RC_PS_RE.search(str(w)):
         return True
-    return any(u != slashed and _is_rc_path(u) for u in (_resolve_dots(slashed, 2), _resolve_dots(slashed, 1)))
+    return any(u != slashed and _is_rc_path_plain(u) for u in (_resolve_dots(slashed, 2), _resolve_dots(slashed, 1)))
+
+
+# The names Windows can open a startup file by: 8.3 short names (BASH~1, PROFIL~1.PS1) stand for a long name whose first
+# characters are the stem, so a short name counts as a startup file when its stem starts one (the hook checks them as patterns).
+_RC_SHORT_RE = re.compile(r'^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?\Z')
+_RC_LONG_NAMES = (
+    ".bashrc", ".bash_profile", ".bash_login", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin",
+    ".kshrc", ".cshrc", ".tcshrc", ".ssh", "authorized_keys", "authorized_keys2", "config.fish", "profile.ps1",
+    "microsoft.powershell_profile.ps1",
+)
+
+
+def _rc_short_candidates(stem: str, ext: Optional[str]) -> List[str]:
+    out: List[str] = []
+    st = stem.lower()
+    ex = (ext or "").lower()
+    for name in _RC_LONG_NAMES:
+        bare = name[1:] if name.startswith(".") else name
+        dot = bare.rfind(".")
+        base = (bare[:dot] if dot > 0 else bare).replace(".", "")
+        e = bare[dot + 1:] if dot > 0 else ""
+        if base.startswith(st) and (e == "" if ex == "" else e.startswith(ex)):
+            out.append(name)
+    return out
+
+
+_RC_ECHO_HOME_ANY_RE = re.compile(
+    r"(?:\$\(\s*echo\s+(?:~|\$\{?home\}?)\s*\)|`\s*echo\s+(?:~|\$\{?home\}?)\s*`)(?=[\\/])", re.I
+)
+
+
+def _rc_windows_forms(w: str) -> List[str]:
+    """Other spellings of a startup-file path that Windows (or the shell) opens as the same file: a trailing dot or space and
+    an alternate data stream (.bashrc. , .bashrc::$DATA, .bashrc:x) are dropped, an 8.3 short name stands for each startup name
+    it could belong to. Linear in the length; the combinations are capped."""
+    slashed = re.sub(r"/{2,}", "/", str(w).replace("\\", "/"))
+    forms: List[List[str]] = [[]]
+    segs = slashed.split("/")
+    for i, seg in enumerate(segs):
+        drive = ""
+        if i == 0 and re.match(r"^[A-Za-z]:", seg):
+            drive, seg = seg[:2], seg[2:]
+        colon = seg.find(":")
+        if colon >= 0:
+            seg = seg[:colon]
+        if seg not in (".", "..") and not re.match(r"^\.*\Z", seg):
+            seg = re.sub(r"[. ]+\Z", "", seg)
+        opts = [drive + seg]
+        m = _RC_SHORT_RE.match(seg)
+        if m:
+            opts.extend(drive + c for c in _rc_short_candidates(m.group(1), m.group(2)))
+        nxt: List[List[str]] = []
+        for f in forms:
+            for o in opts:
+                if len(nxt) < 64:
+                    nxt.append(f + [o])
+        forms = nxt
+    return ["/".join(f) for f in forms]
+
+
+def _is_rc_path(w: str) -> bool:
+    if _is_rc_path_plain(w):
+        return True
+    s = str(w)
+    if not re.search(r"[.: ~`]", s):
+        return False
+    return any(_is_rc_path_plain(f) for f in _rc_windows_forms(s))
 
 
 def _out_flag(w: str) -> bool:
@@ -1885,6 +1952,12 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
     hit = _check_segments(segs, depth, known, rc)
     if hit:
         return hit
+    # $(echo ~)/x and `echo ~`/x are the home folder: the line is read again with the substitution written as ~ (the scanner
+    # splits a substitution into words, so the target of a download into $(echo ~)/.bashrc is not seen as one path).
+    if "echo" in text and _RC_ECHO_HOME_ANY_RE.search(text):
+        homed = _analyze(_RC_ECHO_HOME_ANY_RE.sub("~", text), depth, known, requoted, rc)
+        if homed:
+            return homed
     # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
     if depth < _MAX_DEPTH and "`" in text:
         inner = _backtick_code(text)

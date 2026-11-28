@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-28.3';
+const COMMAND_RULES_VERSION = '2026-11-28.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -844,12 +844,63 @@ function worldWritable(mode) {
 // File names are case-insensitive on macOS and Windows, so ~/.BASHRC is the startup file ~/.bashrc there.
 const RC_UNIX_CI_RE = new RegExp(RC_UNIX_RE.source, 'i');
 
-function isRcPath(w) {
+function isRcPathPlain(w) {
   // Repeated slashes name the same folder (/etc//profile, //etc/profile); "." and ".." segments are resolved below.
   const slashed = String(w).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
   const t = slashed.replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
   if (RC_UNIX_CI_RE.test(t) || RC_PS_RE.test(String(w))) return true;
-  return [2, 1].some((d) => { const u = resolveDots(slashed, d); return u !== slashed && isRcPath(u); });
+  return [2, 1].some((d) => { const u = resolveDots(slashed, d); return u !== slashed && isRcPathPlain(u); });
+}
+
+// The names Windows can open a startup file by: 8.3 short names (BASH~1, PROFIL~1.PS1) stand for a long name whose first
+// characters are the stem, so a short name counts as a startup file when its stem starts one (the hook checks them as patterns).
+const RC_SHORT_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
+const RC_LONG_NAMES = ['.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.profile', '.zshrc', '.zprofile', '.zshenv', '.zlogin', '.kshrc',
+  '.cshrc', '.tcshrc', '.ssh', 'authorized_keys', 'authorized_keys2', 'config.fish', 'profile.ps1', 'microsoft.powershell_profile.ps1'];
+function rcShortCandidates(stem, ext) {
+  const out = [];
+  const st = stem.toLowerCase();
+  const ex = (ext || '').toLowerCase();
+  for (const name of RC_LONG_NAMES) {
+    const bare = name.replace(/^\./, '');
+    const dot = bare.lastIndexOf('.');
+    const base = (dot > 0 ? bare.slice(0, dot) : bare).replace(/\./g, '');
+    const e = dot > 0 ? bare.slice(dot + 1) : '';
+    if (base.startsWith(st) && (ex === '' ? e === '' : e.startsWith(ex))) out.push(name);
+  }
+  return out;
+}
+const RC_ECHO_HOME_ANY_RE = /(?:\$\(\s*echo\s+(?:~|\$\{?home\}?)\s*\)|`\s*echo\s+(?:~|\$\{?home\}?)\s*`)(?=[\\/])/gi;
+
+/* Other spellings of a startup-file path that Windows (or the shell) opens as the same file: a trailing dot or space and an
+   alternate data stream (.bashrc. , .bashrc::$DATA, .bashrc:x) are dropped, an 8.3 short name stands for each startup name it
+   could belong to. Linear in the length; the combinations are capped. */
+function rcWindowsForms(w) {
+  const slashed = String(w).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  let forms = [[]];
+  const segs = slashed.split('/');
+  for (let i = 0; i < segs.length; i++) {
+    let seg = segs[i];
+    let drive = '';
+    if (i === 0 && /^[A-Za-z]:/.test(seg)) { drive = seg.slice(0, 2); seg = seg.slice(2); }
+    const colon = seg.indexOf(':');
+    if (colon >= 0) seg = seg.slice(0, colon);
+    if (seg !== '.' && seg !== '..' && !/^\.*$/.test(seg)) seg = seg.replace(/[. ]+$/, '');
+    const opts = [drive + seg];
+    const m = RC_SHORT_RE.exec(seg);
+    if (m) for (const c of rcShortCandidates(m[1], m[2])) opts.push(drive + c);
+    const next = [];
+    for (const f of forms) for (const o of opts) { if (next.length < 64) next.push(f.concat(o)); }
+    forms = next;
+  }
+  return forms.map((f) => f.join('/'));
+}
+
+function isRcPath(w) {
+  if (isRcPathPlain(w)) return true;
+  const s = String(w);
+  if (!/[.: ~`]/.test(s)) return false;
+  return rcWindowsForms(s).some(isRcPathPlain);
 }
 
 /* The flag before the file a download is saved to: curl -o / --output, wget -O / --output-document, iwr -OutFile. */
@@ -1092,6 +1143,12 @@ function analyze(cmd, depth = 0, known = null, requoted = false, rc = 0) {
   const segs = segmentsOf(text);
   const hit = checkSegments(segs, depth, known, rc);
   if (hit) return hit;
+  // $(echo ~)/x and `echo ~`/x are the home folder: the line is read again with the substitution written as ~ (the scanner
+  // splits a substitution into words, so the target of a download into $(echo ~)/.bashrc is not seen as one path).
+  if (text.includes('echo') && text.search(RC_ECHO_HOME_ANY_RE) >= 0) {
+    const homed = analyze(text.replace(RC_ECHO_HOME_ANY_RE, '~'), depth, known, requoted, rc);
+    if (homed) return homed;
+  }
   // A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
   if (depth < MAX_DEPTH && text.includes('`')) {
     const inner = backtickCode(text);

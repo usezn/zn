@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.2
+ * RULES_VERSION: 2026-11-28.7
  */
 
-const RULES_VERSION = '2026-11-28.2';
+const RULES_VERSION = '2026-11-28.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -338,19 +338,21 @@ function matchesRule(rule, text) {
 
 // Protected files: .env files (not templates such as .env.example), SSH
 // private keys and authorized_keys under .ssh (not the .pub public keys),
-// .aws/credentials, /etc/shadow and /etc/passwd, in any directory.
+// any other file under .ssh that is not a public one (known_hosts, config...),
+// .pem, .key and .p8 files, .aws/credentials, /etc/shadow and /etc/passwd, in any directory.
 //
 // The rule matches the text as written and also a path view of it, in which
 // every word is read the way a shell or the Windows file functions would read
 // it. The view is lexical only: it never touches the file system, so symbolic
-// links and Windows short (8.3) names are not resolved.
+// links are not resolved and a Windows short (8.3) name is only matched against the protected names.
 //   - ASCII letters are lower-cased;
 //   - home variables ($HOME, ${HOME}, %USERPROFILE%, $env:USERPROFILE) become
 //     ~ and working-directory variables ($PWD, %CD%) become .;
 //   - quotes inside a word are removed; a backslash is read both as a path
 //     separator and as an escape (two forms of the word);
 //   - ~user becomes ~; ./, repeated separators and dir/.. are collapsed;
-//   - trailing dots and spaces of every segment are dropped (Windows).
+//   - trailing dots and spaces of every segment are dropped (Windows);
+//   - an 8.3 short name (SSH~1, ID_ED~1) is also read as each protected name it could stand for.
 // Every step is linear in the length of the text.
 const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 const PATH_HOME_VAR_RE = /\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%/g;
@@ -416,6 +418,48 @@ function gluedPathReadings(word) {
   return out;
 }
 
+// A Windows 8.3 short name (SSH~1, ID_ED~1, ENV~1.LOC) stands for a long name whose first characters are the stem, which
+// cannot be read from the text. A short name counts as each protected name it could belong to (like the hook, which reads
+// it as a pattern), so SSH~1\ID_ED~1 is .ssh/id_ed25519 and PRO~1\ENV~1 is PRO~1/.env.
+const PATH_SHORT_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
+const PATH_SHORT_NAMES = ['.ssh', '.aws', '.env', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_xmss', 'authorized_keys', 'credentials'];
+function shortNameReadings(word) {
+  if (word.indexOf('~') < 0) return [];
+  let found = false;
+  let forms = [[]];
+  for (const seg of word.split('/')) {
+    const opts = [seg];
+    const m = PATH_SHORT_RE.exec(seg);
+    if (m) {
+      found = true;
+      for (const name of PATH_SHORT_NAMES) {
+        if (!name.replace(/^\./, '').startsWith(m[1])) continue;
+        if (m[2] === undefined) opts.push(name);
+        else if (name === '.env') opts.push('.env.' + m[2]);
+      }
+    }
+    const next = [];
+    for (const f of forms) for (const o of opts) { if (next.length < 32) next.push(f.concat(o)); }
+    forms = next;
+  }
+  return found ? forms.map((f) => f.join('/')) : [];
+}
+
+// Private keys the .env and id_* rules do not name: any .pem, .key or .p8 file, and any file under a .ssh folder that is
+// not one of the public ones (*.pub, known_hosts, config, ...). Matched on the path view, so quoting, variables, trailing
+// dots and ::$DATA streams are already read. A .pub next to the key name (server.pem.pub) is a public key.
+const PATH_KEY_FILE_RE = /(?:^|[\/\n])[^\/\n]*[^\/\n.]\.(?:pem|key|p8)(?=[:\n]|$)/;
+const PATH_SSH_FILE_RE = /(?:^|[\/\n])\.ssh\/([^\/\n]+)/g;
+const PATH_SSH_PUBLIC_RE = /^(?:[^:]*\.pub|known_hosts(?:\.old)?|config(?:\.d)?|authorized_keys2?|environment|rc|allowed_signers)(?::|$)/;
+function testPrivateKeyView(view) {
+  if (PATH_KEY_FILE_RE.test(view)) return true;
+  if (view.indexOf('.ssh/') < 0) return false;
+  for (const m of view.matchAll(PATH_SSH_FILE_RE)) {
+    if (!PATH_SSH_PUBLIC_RE.test(m[1])) return true;
+  }
+  return false;
+}
+
 // The path view of a text: its normalized words, one per line.
 function sensitivePathView(text) {
   const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
@@ -423,7 +467,9 @@ function sensitivePathView(text) {
   for (const raw of lowered.split(PATH_WORD_SPLIT_RE)) {
     if (!raw) continue;
     const word = raw.replace(PATH_QUOTE_RE, '');
-    words.push(normalizePathWord(word.replace(/\\/g, '/')));
+    const slashed = normalizePathWord(word.replace(/\\/g, '/'));
+    words.push(slashed);
+    for (const r of shortNameReadings(slashed)) words.push(r);
     if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
     for (const g of gluedPathReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
   }
@@ -482,7 +528,9 @@ function cmdReadings(text) {
 }
 
 function testSensitivePathAs(text) {
-  return SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text) || SENSITIVE_PATH_RE.test(sensitivePathView(text));
+  if (SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text)) return true;
+  const view = sensitivePathView(text);
+  return SENSITIVE_PATH_RE.test(view) || testPrivateKeyView(view);
 }
 function testSensitivePath(text) {
   return testSensitivePathAs(text) || cmdReadings(text).some(testSensitivePathAs);

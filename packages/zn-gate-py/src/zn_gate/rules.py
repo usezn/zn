@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.2
+RULES_VERSION: 2026-11-28.7
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.2"
+RULES_VERSION = "2026-11-28.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -595,7 +595,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 
 # Protected files and the path view: same rules and steps as rules.js
 # (testSensitivePath). The view is lexical only: it never touches the file
-# system, so symbolic links and Windows short (8.3) names are not resolved.
+# system, so symbolic links are not resolved and a Windows short (8.3) name is only matched against the protected names.
 SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 PATH_HOME_VAR_RE = _rc(r'\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%')
 PATH_CWD_VAR_RE = _rc(r'\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%')
@@ -659,6 +659,56 @@ def _glued_path_readings(word: str) -> List[str]:
     return out
 
 
+# A Windows 8.3 short name (SSH~1, ID_ED~1, ENV~1.LOC) stands for a long name whose first characters are the stem, which
+# cannot be read from the text. A short name counts as each protected name it could belong to (like the hook, which reads
+# it as a pattern), so SSH~1\ID_ED~1 is .ssh/id_ed25519 and PRO~1\ENV~1 is PRO~1/.env.
+PATH_SHORT_RE = _rc(r'^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?\Z')
+PATH_SHORT_NAMES = ('.ssh', '.aws', '.env', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_xmss', 'authorized_keys', 'credentials')
+
+
+def _short_name_readings(word: str) -> List[str]:
+    if '~' not in word:
+        return []
+    found = False
+    forms: List[List[str]] = [[]]
+    for seg in word.split('/'):
+        opts = [seg]
+        m = PATH_SHORT_RE.match(seg)
+        if m:
+            found = True
+            for name in PATH_SHORT_NAMES:
+                bare = name[1:] if name.startswith('.') else name
+                if not bare.startswith(m.group(1)):
+                    continue
+                if m.group(2) is None:
+                    opts.append(name)
+                elif name == '.env':
+                    opts.append('.env.' + m.group(2))
+        nxt: List[List[str]] = []
+        for f in forms:
+            for o in opts:
+                if len(nxt) < 32:
+                    nxt.append(f + [o])
+        forms = nxt
+    return ['/'.join(f) for f in forms] if found else []
+
+
+# Private keys the .env and id_* rules do not name: any .pem, .key or .p8 file, and any file under a .ssh folder that is
+# not one of the public ones (*.pub, known_hosts, config, ...). Matched on the path view, so quoting, variables, trailing
+# dots and ::$DATA streams are already read. A .pub next to the key name (server.pem.pub) is a public key.
+PATH_KEY_FILE_RE = _rc(r'(?:^|[/\n])[^/\n]*[^/\n.]\.(?:pem|key|p8)(?=[:\n]|\Z)')
+PATH_SSH_FILE_RE = _rc(r'(?:^|[/\n])\.ssh/([^/\n]+)')
+PATH_SSH_PUBLIC_RE = _rc(r'^(?:[^:]*\.pub|known_hosts(?:\.old)?|config(?:\.d)?|authorized_keys2?|environment|rc|allowed_signers)(?::|\Z)')
+
+
+def _test_private_key_view(view: str) -> bool:
+    if PATH_KEY_FILE_RE.search(view):
+        return True
+    if '.ssh/' not in view:
+        return False
+    return any(not PATH_SSH_PUBLIC_RE.match(m.group(1)) for m in PATH_SSH_FILE_RE.finditer(view))
+
+
 def sensitive_path_view(text: str) -> str:
     """The path view of a text: its normalized words, one per line."""
     lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
@@ -667,7 +717,9 @@ def sensitive_path_view(text: str) -> str:
         if not raw:
             continue
         word = PATH_QUOTE_RE.sub('', raw)
-        words.append(_normalize_path_word(word.replace('\\', '/')))
+        slashed = _normalize_path_word(word.replace('\\', '/'))
+        words.append(slashed)
+        words.extend(_short_name_readings(slashed))
         if '\\' in word:
             words.append(_normalize_path_word(word.replace('\\', '')))
         for g in _glued_path_readings(word):
@@ -749,9 +801,10 @@ def _cmd_readings(text: str) -> List[str]:
 
 
 def _test_sensitive_path_as(text: str) -> bool:
-    return (SENSITIVE_PATH_TEXT_RE.search(text) is not None
-            or SENSITIVE_PATH_RE.search(text) is not None
-            or SENSITIVE_PATH_RE.search(sensitive_path_view(text)) is not None)
+    if SENSITIVE_PATH_TEXT_RE.search(text) is not None or SENSITIVE_PATH_RE.search(text) is not None:
+        return True
+    view = sensitive_path_view(text)
+    return SENSITIVE_PATH_RE.search(view) is not None or _test_private_key_view(view)
 
 
 def _test_sensitive_path(text: str) -> bool:

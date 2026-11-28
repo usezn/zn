@@ -1,5 +1,5 @@
 {
-  "description": "Paths for the path:sensitive_file rule, shared by the Node.js and Python tests. Each path is checked as a tool argument and inside a shell command. All paths are fictitious. Symbolic links and Windows short (8.3) names are not listed: a text rule cannot resolve them.",
+  "description": "Paths for the path:sensitive_file rule, shared by the Node.js and Python tests. Each path is checked as a tool argument and inside a shell command. All paths are fictitious. Symbolic links are not listed: a text rule cannot resolve them. Windows short (8.3) names and private key files are in library_path_forms.json.",
   "cases": [
     {
       "kind": "base",

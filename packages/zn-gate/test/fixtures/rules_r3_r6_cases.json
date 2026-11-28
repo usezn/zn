@@ -171,7 +171,7 @@
       "type %USERPROFILE%\\.sshkeys\\notes.txt",
       "type $env:USERPROFILE\\Documents\\a.txt",
       "type \"C:\\Users\\John Doe\\Documents\\.ssh_notes.txt\"",
-      "echo $HOMEWORK/.ssh/id_rsa_notes",
+      "echo $HOMEWORK/.ssh/known_hosts",
       "cp notes.txt prod.env",
       "grep -e.env notes.txt",
       "sort -o out.txt data.txt",
