@@ -32,6 +32,10 @@
 {"text":"line one jane@example.com\nline two +34 600 123 456\nline three 12345678Z","spans":[["EMAIL","jane@example.com"],["PHONE","+34 600 123 456"],["DNI","12345678Z"]]},
 {"text":"unicode ñandú jane@example.com ✓ +34 600 123 456 😀 4111111111111111","spans":[["EMAIL","jane@example.com"],["PHONE","+34 600 123 456"],["CARD","4111111111111111"]]},
 {"text":"fullwidth digits ４１１１１１１１１１１１１１１１ and arabic ٤١١١١١١١١١١١١١١١١","spans":[]},
+{"text":"phone: (415) 555-0132 and call (415)555-0132 or +1 (415) 555-0132 now","spans":[["PHONE","(415) 555-0132"],["PHONE","(415)555-0132"],["PHONE","+1 (415) 555-0132"]]},
+{"text":"f(415) 555-0132 and (015) 555-0132 and (415) 055-0132 and (222) 222-2222 and (1999) 2000-2005","spans":[]},
+{"text":"amex 3782 822463 10005 and 378282246310005 and 3782 822463 10005.","spans":[["CARD","3782 822463 10005"],["CARD","378282246310005"],["CARD","3782 822463 10005"]]},
+{"text":"bad amex 3782 822463 10006 and 3782 822463-10005 and 3182 822463 10005","spans":[]},
 {"text":"","spans":[]},
 {"text":"x","spans":[]}
 ]}

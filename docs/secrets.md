@@ -136,7 +136,8 @@ template files.
 
 ### Name, address and username
 
-Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone), the
+Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone; phone numbers include a US number
+written `(415) 555-0132`, and cards include American Express written `3782 822463 10005`), the
 scrubber detects three personal fields that have no checksum: a person's name
 (`PERSON_NAME`), a postal address (`POSTAL_ADDRESS`) and a username (`USERNAME`).
 They are matched only when an explicit key sits next to the value, so a bare
@@ -146,6 +147,8 @@ name in text is never touched. Only the value is replaced; the key stays.
 |---|---|---|
 | `PERSON_NAME` | `X-User-Name`, `X-Full-Name` | `full_name`, `fullname`, `name` |
 | `POSTAL_ADDRESS` | `X-Address` | `address` |
+| `PERSON_NAME` | `full_name:` or `"full_name":` in text, JSON or YAML (two capitalised words), `姓名：`, `氏名：`, `성명：` | |
+| `POSTAL_ADDRESS` | `street:`, `"street_address":`, `address_line1:`, `shipping_address:`, `billing_address:`, `ship to ...` | |
 | `USERNAME` | `X-Username`, `X-User`, `X-Forwarded-User`, `X-Remote-User` | `username`, `user`, `login` |
 
 - Keys are case-insensitive. A header value runs to the end of the line (or to
@@ -153,7 +156,11 @@ name in text is never touched. Only the value is replaced; the key stays.
   or form value runs to the next `&`; spaces must be encoded (`+` or `%20`)
   inside a query string. A `key=value` line is also read when the key starts in
   column 0.
-- Only headers, query strings and form bodies are in scope. Code (keyword
+- A `full_name` label or JSON key, a street key or `ship to` is read too, with stricter checks: the name needs two
+  capitalised words (`full_name: str` is code, not a person), and the address after `ship to` needs a house number
+  first and a street word (`ship to 3 customers` is not an address). After a CJK label (`姓名：山田太郎`) the name
+  is 2 to 12 Chinese, Japanese or Korean letters.
+- Only headers, query strings, form bodies and the keys above are in scope. Code (keyword
   arguments such as `f(user=x)`), JSON schemas, `package.json` and ALL-CAPS
   environment variables (`USER=...`) are not matched.
 - Empty values, placeholders (`${USER}`, `<name>`, `null`, `anonymous`) and

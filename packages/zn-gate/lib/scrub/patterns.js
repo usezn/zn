@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-28.1';
+const SCRUB_RULES_VERSION = '2026-11-28.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -228,6 +228,15 @@ function phoneValid(raw) {
   const cc = /^\+(\d{1,3})[ \u00a0\u202f\u2007]{1,2}\d+$/.exec(raw);
   if (cc && cc[1] !== '1' && !E164_LENGTHS[cc[1]]) return false;
   return e164Valid(raw.replace(/[ .\u00a0\u202f\u2007-]/g, ''));
+}
+
+/* A US or Canadian number written with the area code in parentheses: (415) 555-0132, +1 (415) 555-0132. Area and
+ * exchange codes start with 2 to 9, as in a +1 number above. */
+function usParenPhoneValid(raw) {
+  const m = /^(?:\+1[ .\u00a0-]?)?\((\d{3})\)[ \u00a0]?(\d{3})[ .-](\d{4})$/.exec(raw);
+  if (!m) return false;
+  const digits = m[1] + m[2] + m[3];
+  return /^[2-9]\d{2}[2-9]\d{6}$/.test(digits) && !/^(\d)\1+$/.test(digits);
 }
 
 function ipv4Public(raw) {
@@ -970,7 +979,11 @@ function validAddress(d) {
 }
 
 function keyedFinder(spec) {
-  const hdr = new RegExp('(?<![A-Za-z0-9_-])(' + spec.headers.join('|') + ')["\']?[ \\t]*:[ \\t]*(["\']?)', 'gi');
+  // spec.weakHeaders: keys that are also used for other things (full_name in a schema or a type declaration), so a
+  // single word is never taken as the value (see validPersonName).
+  const weak = spec.weakHeaders || [];
+  const weakRe = weak.length ? new RegExp('^(?:' + weak.join('|') + ')$', 'i') : null;
+  const hdr = new RegExp('(?<![A-Za-z0-9_-])(' + spec.headers.concat(weak).join('|') + ')["\']?[ \\t]*:[ \\t]*(["\']?)', 'gi');
   const frm = new RegExp('(?<![A-Za-z0-9_.-])(' + spec.forms.join('|') + ')=', 'gi');
   const isLetter = (c) => c !== undefined && /\p{L}/u.test(c);
   const accept = (raw, strong, form) => {
@@ -994,7 +1007,7 @@ function keyedFinder(spec) {
       }
       let end = i;
       while (end > start && /[\s,;\\]/.test(text[end - 1])) end--;
-      if (end > start && accept(text.slice(start, end), true, false)) out.push({ start, end });
+      if (end > start && accept(text.slice(start, end), !(weakRe && weakRe.test(m[1])), false)) out.push({ start, end });
       hdr.lastIndex = Math.max(hdr.lastIndex, i);
     }
     frm.lastIndex = 0;
@@ -1025,9 +1038,69 @@ function keyedFinder(spec) {
  * the name is scanned once: with the quote optional between two \s*, a long run could be split
  * between them in every possible way (quadratic). Here the second \s* only follows a quote. */
 const KEYED_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=/i;
-const findPersonName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], forms: ['full_?name', 'name'], valid: validPersonName });
+// Also: a full_name key and the CJK name labels (person name), street keys and "ship to" (postal address).
+const NAME_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=|full[ _]?name|姓名|氏名|성명/i;
+const ADDRESS_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=|street|address_?line|(?:shipping|billing)_?address|ship(?:ping)?[ \t]+to/i;
+const findKeyedName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], weakHeaders: ['full[ _]?name'], forms: ['full_?name', 'name'], valid: validPersonName });
+
+/* A name under a CJK label (姓名：山田太郎): Chinese, Japanese or Korean letters, 2 to 12 of them, ended by anything
+ * that is not a letter or a digit. The label may be followed by a fullwidth or an ASCII colon and a quote. */
+const CJK_NAME_LABEL = /(?:姓名|氏名|성명)[ \t]*[:：][ \t]*["'“「『]?/gu;
+const CJK_NAME_VALUE = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}ー·・]{2,12}(?![\p{L}\p{N}_])/u;
+const CJK_NOT_A_NAME = new Set(['姓名', '氏名', '성명', '未知', '匿名', '保密', '不详', '必填', '無し', 'なし', '없음']);
+function findCjkName(text, check, out) {
+  CJK_NAME_LABEL.lastIndex = 0;
+  let m;
+  while ((m = CJK_NAME_LABEL.exec(text)) !== null) {
+    const start = m.index + m[0].length;
+    const v = CJK_NAME_VALUE.exec(text.slice(start, start + 20));
+    if (v && !CJK_NOT_A_NAME.has(v[0])) out.push({ start, end: start + v[0].length });
+  }
+}
+function findPersonName(text, check, out) {
+  findKeyedName(text, check, out);
+  findCjkName(text, check, out);
+}
 const findUsername = keyedFinder({ headers: ['X-Username', 'X-User', 'X-Forwarded-User', 'X-Remote-User'], forms: ['username', 'user', 'login'], valid: (d) => validUsername(d) });
-const findPostalAddress = keyedFinder({ headers: ['X-Address'], forms: ['address'], valid: (d) => validAddress(d) });
+const findKeyedAddress = keyedFinder({ headers: ['X-Address', 'street_?address', 'street', 'address_?line_?[12]', 'shipping_?address', 'billing_?address'], forms: ['address'], valid: (d) => validAddress(d) });
+
+/* "ship to 742 Evergreen Terrace, Springfield" (with or without a colon): the address runs to the end of the line, to
+ * a quote or to a semicolon. Prose such as "ship to 3 customers" is not an address, so this one needs a house number
+ * first (or a Spanish, French, Italian or German street word first) and a street word in it. */
+const SHIP_TO = /(?<![A-Za-z0-9_])ship(?:ping)?[ \t]+to[ \t]*:?[ \t]*/gi;
+const STREET_WORD = /(?<!\p{L})(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|terrace|ter|way|court|ct|place|pl|square|sq|highway|hwy|parkway|pkwy|circle|cir|alley)\.?(?!\p{L})/iu;
+const STREET_FIRST = /^(?:\d|(?:calle|avenida|rue|via|plaza|paseo)[ \t])/iu;
+/* The first street word, with at most 4 words before it and none of them a function word: "200 stores by Court order"
+ * is a sentence, "10 Downing Street London" an address. */
+const FUNCTION_WORD = /(?<!\p{L})(?:by|for|of|in|the|and|or|to|from|on|at|with|a|an)(?!\p{L})/u;
+function streetWordAfterName(d) {
+  if (/^(?:calle|avenida|rue|via|plaza|paseo)[ \t]/i.test(d)) return true;
+  const m = STREET_WORD.exec(d);
+  if (!m) return false;
+  const before = d.slice(0, m.index);
+  return before.trim().split(/\s+/).length <= 5 && !FUNCTION_WORD.test(before);
+}
+function findShipTo(text, check, out) {
+  SHIP_TO.lastIndex = 0;
+  let m;
+  while ((m = SHIP_TO.exec(text)) !== null) {
+    const start = m.index + m[0].length;
+    let i = start;
+    for (; i < text.length && i - start <= 160; i++) {
+      const c = text[i];
+      if (c === '\n' || c === '\r' || c === '"' || c === ';') break;
+    }
+    let end = i;
+    while (end > start && /[\s,;.\\]/.test(text[end - 1])) end--;
+    const d = text.slice(start, end);
+    if (end > start && STREET_FIRST.test(d) && streetWordAfterName(d) && validAddress(d)) out.push({ start, end });
+    SHIP_TO.lastIndex = Math.max(SHIP_TO.lastIndex, i);
+  }
+}
+function findPostalAddress(text, check, out) {
+  findKeyedAddress(text, check, out);
+  findShipTo(text, check, out);
+}
 
 const PII = [
   { type: 'EMAIL', key: 'email', hints: ['@'], find: findEmails,
@@ -1044,13 +1117,13 @@ const PII = [
       return true;
     } },
   // Compact E.164 (+34600123456), or + country code (1 to 3 digits) and digit groups split by single spaces, dashes
-  // or dots (+34 600 123 456, +1 202-555-0143). National formats without + are not matched on purpose.
-  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9](?:\\d{0,2}(?:(?:[ .\\u00a0\\u202f\\u2007-]|[ \\u00a0\\u202f\\u2007]{2})\\d{1,9}){2,6}|\\d{0,2}[ \\u00a0\\u202f\\u2007]{1,2}\\d{6,12}|\\d{7,14})(?![0-9])'), check: (v) => phoneValid(v) },
+  // or dots (+34 600 123 456, +1 202-555-0143), or a US number with the area code in parentheses ((415) 555-0132). Other national formats without + are not matched on purpose.
+  { type: 'PHONE', key: 'phone', hints: null, prefilter: /\+|\(\d{3}\)/, re: re('(?<![A-Za-z0-9+])(?:\\+[1-9](?:\\d{0,2}(?:(?:[ .\\u00a0\\u202f\\u2007-]|[ \\u00a0\\u202f\\u2007]{2})\\d{1,9}){2,6}|\\d{0,2}[ \\u00a0\\u202f\\u2007]{1,2}\\d{6,12}|\\d{7,14})|(?:\\+1[ .\\u00a0-]?)?\\(\\d{3}\\)[ \\u00a0]?\\d{3}[ .-]\\d{4})(?![0-9])'), check: (v) => (v.includes('(') ? usParenPhoneValid(v) : phoneValid(v)) },
   { type: 'IBAN', key: 'iban', hints: null, prefilter: /[A-Z]{2}\d{2}/,
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },
   { type: 'CARD', key: 'card', hints: null, prefilter: /\d{4}/,
-    re: re('(?<![0-9A-Za-z.,_-])(?:\\d{4}[ -]?){2,3}\\d{1,4}(?:[ -]?\\d{1,3})?(?![0-9A-Za-z_]|[.,]\\d)'),
+    re: re('(?<![0-9A-Za-z.,_-])(?:3[47]\\d{2}[ ]\\d{6}[ ]\\d{5}|(?:\\d{4}[ -]?){2,3}\\d{1,4}(?:[ -]?\\d{1,3})?)(?![0-9A-Za-z_]|[.,]\\d)'),
     check: (v) => {
       const sep = v.match(/[ -]/g);
       if (sep && new Set(sep).size > 1) return false;
@@ -1064,8 +1137,8 @@ const PII = [
     re: re('(?<![0-9A-Za-z.-])\\d{3}-\\d{2}-\\d{4}(?![0-9A-Za-z]|-\\d)'), check: (v) => ssnValid(v) },
   { type: 'IPV4', key: 'ipv4', hints: ['.'],
     re: re('(?<![0-9.])(?:\\d{1,3}\\.){3}\\d{1,3}(?![0-9.])'), check: (v) => ipv4Public(v) },
-  { type: 'PERSON_NAME', key: 'name', hints: null, prefilter: KEYED_PREFILTER, find: findPersonName },
-  { type: 'POSTAL_ADDRESS', key: 'address', hints: null, prefilter: KEYED_PREFILTER, find: findPostalAddress },
+  { type: 'PERSON_NAME', key: 'name', hints: null, prefilter: NAME_PREFILTER, find: findPersonName },
+  { type: 'POSTAL_ADDRESS', key: 'address', hints: null, prefilter: ADDRESS_PREFILTER, find: findPostalAddress },
   { type: 'USERNAME', key: 'username', hints: null, prefilter: KEYED_PREFILTER, find: findUsername },
 ];
 
