@@ -76,7 +76,7 @@ function sectionsOf(lines) {
   const sections = {};
   let cur = null;
   for (const line of lines) {
-    const m = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):(.*)$/);
+    const m = line.match(/^["']?([A-Za-z_][A-Za-z0-9_-]*)["']?:(.*)$/);
     if (m) {
       cur = m[1];
       sections[cur] = { inline: stripComment(m[2]), lines: [] };
@@ -99,20 +99,26 @@ function permsOf(inline, body, headerIndent) {
     for (const part of flow[1].split(',')) {
       const text = part.trim();
       if (!text) continue;
-      const m = text.match(/^([A-Za-z-]+):\s*(\S+)$/);
+      const m = text.match(/^["']?([A-Za-z-]+)["']?:\s*(\S+)$/);
       if (m) map[m[1]] = unquote(m[2]);
       else map.__unreadable = text;
     }
     return map;
   }
   const map = {};
-  const entry = new RegExp('^' + ' '.repeat(headerIndent + 2) + '([A-Za-z-]+):\\s*(\\S+)');
+  const entry = new RegExp('^' + ' '.repeat(headerIndent + 2) + '["\']?([A-Za-z-]+)["\']?:\\s*(\\S+)\\s*$');
   const end = new RegExp('^ {0,' + headerIndent + '}\\S');
   for (const line of body) {
     if (!line.trim() || line.trim().startsWith('#')) continue;
-    const m = line.match(entry);
-    if (m) map[m[1]] = unquote(m[2]);
-    else if (end.test(line)) break;
+    const text = line.replace(/\s+#.*$/, '');
+    const m = text.match(entry);
+    if (m) {
+      map[m[1]] = unquote(m[2]);
+      continue;
+    }
+    if (end.test(line)) break;
+    // Indented inside the block but not a readable "key: value" line (quoted or not): it could hide a scope.
+    map.__unreadable = line.trim();
   }
   return map;
 }
@@ -136,9 +142,9 @@ function jobsOf(lines) {
   const jobs = [];
   let cur = null;
   for (const line of lines) {
-    const block = line.match(/^ {2}([A-Za-z0-9_-]+):\s*(#.*)?$/);
+    const block = line.match(/^ {2}(["']?)([A-Za-z0-9_-]+)\1:\s*(#.*)?$/);
     if (block) {
-      cur = { name: block[1], lines: [], unreadable: false };
+      cur = { name: block[2], lines: [], unreadable: false };
       jobs.push(cur);
       continue;
     }
@@ -151,11 +157,11 @@ function jobsOf(lines) {
   }
   for (const j of jobs) {
     const L = j.lines;
-    const needsIdx = L.findIndex((l) => /^ {4}needs:/.test(l));
+    const needsIdx = L.findIndex((l) => /^ {4}["']?needs["']?:/.test(l));
     j.needs = [];
     j.needsReadable = true;
     if (needsIdx >= 0) {
-      const rest = stripComment(L[needsIdx].replace(/^ {4}needs:/, ''));
+      const rest = stripComment(L[needsIdx].slice(L[needsIdx].indexOf(':') + 1));
       if (rest.startsWith('[')) {
         const m = rest.match(/^\[(.*)\]$/);
         if (m) j.needs = m[1].split(',').map((s) => unquote(s.trim())).filter(Boolean);
@@ -169,12 +175,12 @@ function jobsOf(lines) {
         if (!j.needs.length) j.needsReadable = false;
       }
     }
-    const ifIdx = L.findIndex((l) => /^ {4}if:/.test(l));
-    const ifRest = ifIdx >= 0 ? stripComment(L[ifIdx].replace(/^ {4}if:/, '')) : '';
+    const ifIdx = L.findIndex((l) => /^ {4}["']?if["']?:/.test(l));
+    const ifRest = ifIdx >= 0 ? stripComment(L[ifIdx].slice(L[ifIdx].indexOf(':') + 1)) : '';
     j.ifValue = ifRest && !/^[|>]/.test(ifRest) ? unquote(ifRest) : null;
-    const permIdx = L.findIndex((l) => /^ {4}permissions:/.test(l));
+    const permIdx = L.findIndex((l) => /^ {4}["']?permissions["']?:/.test(l));
     j.perms = permIdx >= 0
-      ? permsOf(stripComment(L[permIdx].replace(/^ {4}permissions:/, '')), L.slice(permIdx + 1), 4)
+      ? permsOf(stripComment(L[permIdx].slice(L[permIdx].indexOf(':') + 1)), L.slice(permIdx + 1), 4)
       : {};
   }
   return jobs;
@@ -189,7 +195,7 @@ export function checkWorkflow(text) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const sec = sectionsOf(lines);
   const on = sec.on || { inline: '', lines: [] };
-  const scheduled = /\bschedule\b/.test(on.inline) || on.lines.some((l) => /^ {2}schedule:/.test(l));
+  const scheduled = /\bschedule\b/.test(on.inline) || on.lines.some((l) => /^ {2}["']?schedule["']?:/.test(l));
   if (!scheduled) return { scheduled: false, hasAlert: false, problems: [] };
 
   const problems = [];

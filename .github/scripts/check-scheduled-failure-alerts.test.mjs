@@ -248,6 +248,64 @@ test('checkDir reports the file of a bad alert job', () => {
   assert.deepEqual(r.problems.map((p) => p.file), ['bad.yml']);
 });
 
+test('a double-quoted issues key in a workflow-level block map fails', () => {
+  const problems = problemsOf(workflow({ topPerms: ['permissions:', '  contents: read', '  "issues": write'] }));
+  assert.match(problems.join('\n'), /workflow-level permissions grant write/);
+});
+
+test('a single-quoted issues key in a workflow-level block map fails', () => {
+  const problems = problemsOf(workflow({ topPerms: ['permissions:', '  contents: read', "  'issues': write"] }));
+  assert.match(problems.join('\n'), /workflow-level permissions grant write/);
+});
+
+test('a double-quoted issues key in another job block map fails and names that job', () => {
+  const problems = problemsOf(workflow({ jobPerms: { lint: ['      "contents": read', '      "issues": write'] } }));
+  assert.match(problems.join('\n'), /job "lint" grants issues: write/);
+});
+
+test('a single-quoted issues key in another job block map fails and names that job', () => {
+  const problems = problemsOf(workflow({ jobPerms: { lint: ["      'contents': read", "      'issues': write"] } }));
+  assert.match(problems.join('\n'), /job "lint" grants issues: write/);
+});
+
+test('an unparseable line inside a workflow-level block fails', () => {
+  const problems = problemsOf(workflow({ topPerms: ['permissions:', '  contents: read', '      issues: write'] }));
+  assert.match(problems.join('\n'), /cannot be read/);
+});
+
+test('an unparseable line inside another job block fails', () => {
+  const problems = problemsOf(workflow({ jobPerms: { lint: ['      contents: read', '      issues write'] } }));
+  assert.match(problems.join('\n'), /job "lint" permissions entry "issues write" cannot be read/);
+});
+
+test('a read-only block with quoted keys passes at both levels', () => {
+  const text = workflow({ topPerms: ['permissions:', '  "contents": read'], jobPerms: { lint: ["      'contents': read"] } });
+  assert.deepEqual(problemsOf(text), []);
+});
+
+function swap(text, from, to) {
+  assert.ok(text.includes(from), `fixture has no ${JSON.stringify(from)}`);
+  return text.replace(from, to);
+}
+
+test('quoted keys for the trigger, on, needs, if, job names and the alert job are read', () => {
+  const base = workflow();
+  const cases = [
+    swap(base, '  schedule:', '  "schedule":'),
+    swap(base, 'on:\n', "'on':\n"),
+    swap(base, '    needs: [check, lint]', "    \"needs\": ['check', \"lint\"]"),
+    swap(base, '    if: ', "    'if': "),
+    swap(base, '  check:', '  "check":'),
+    swap(base, `  ${ALERT_JOB}:`, `  "${ALERT_JOB}":`),
+  ];
+  for (const text of cases) {
+    const r = checkWorkflow(text);
+    assert.equal(r.scheduled, true);
+    assert.equal(r.hasAlert, true);
+    assert.deepEqual(r.problems, []);
+  }
+});
+
 test('the workflows of this repository pass the check', () => {
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'workflows');
   const r = checkDir(dir);
