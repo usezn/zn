@@ -68,5 +68,20 @@ class TestMalformedKeyCloudOff(unittest.TestCase):
         self.assertIn("Nothing", out)
 
 
+    def test_status_with_good_key_says_cloud_on(self):
+        import io
+        from contextlib import redirect_stdout
+        from zn_gate import cli
+        os.environ.update(ZN_CLOUD="1", ZN_API_KEY=GOOD)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli.cmd_status(mock.Mock())
+        out = buf.getvalue()
+        self.assertIn("Local rules + cloud", out)
+        self.assertIn("API key         : Set", out)
+        self.assertNotIn("not a valid key", out)
+        self.assertNotIn(GOOD, out)
+
+
 if __name__ == "__main__":
     unittest.main()
