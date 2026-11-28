@@ -575,6 +575,50 @@ test('ConfigChange blocks a skill file with text a person cannot see, and lets a
   assert.equal((await run(configChange('skills', emoji.file), { home })).output, null);
 });
 
+test('ConfigChange: a skill file zn cannot read or check is not applied; a big clean one is scanned in chunks and a hidden character past the first MiB is found', async (t) => {
+  const home = tempDir(t, 'zn-cc-');
+  const skill = (body) => projectWith(t, '.claude/skills/big/SKILL.md', body);
+  const denied = async (file) => {
+    const res = await run(configChange('skills', file), { home });
+    assert.equal(res.output.decision, 'block');
+    assert.match(res.output.reason, /could not check this skill file/);
+    return res;
+  };
+  const MIB = 1024 * 1024;
+  // 2 MiB of clean text (with multi-byte characters across chunk edges): allowed after the chunked scan.
+  const clean = skill('# Big\n' + 'é中'.repeat(MIB / 5 | 0) + 'x'.repeat(MIB + 7) + '\n');
+  assert.ok(fs.statSync(clean.file).size > 2 * MIB);
+  assert.equal((await run(configChange('skills', clean.file), { home })).output, null);
+  // A hidden character past the first MiB (a tag character, split by no edge in particular) is found, and so is one at a chunk edge.
+  for (const pad of [MIB + 1000, MIB - 1, MIB - 2, MIB - 3]) {
+    const bad = skill('x'.repeat(pad) + '\u{E0041}' + 'y'.repeat(MIB));
+    const res = await run(configChange('skills', bad.file), { home });
+    assert.equal(res.output.decision, 'block', 'pad ' + pad);
+    assert.match(res.output.reason, /text a person cannot see/);
+  }
+  // Over the hard cap: not applied, the file is not read.
+  const huge = skill('x'.repeat(16 * MIB + 1));
+  await denied(huge.file);
+  // A directory, a link that loops, and a file zn is not allowed to read.
+  const dir = path.join(huge.dir, '.claude', 'skills', 'adir');
+  fs.mkdirSync(dir);
+  await denied(dir);
+  const loop = path.join(huge.dir, '.claude', 'skills', 'loop.md');
+  fs.symlinkSync(loop, loop);
+  await denied(loop);
+  const locked = skill('# Locked\n');
+  fs.chmodSync(locked.file, 0o000);
+  if (process.platform !== 'win32' && !(process.getuid && process.getuid() === 0)) await denied(locked.file);
+  fs.chmodSync(locked.file, 0o600);
+  // A link to a plain file is read through; a file that is gone and a path that is not absolute are allowed as before.
+  const real = skill('# Real\n');
+  const ok = path.join(real.dir, '.claude', 'skills', 'link.md');
+  fs.symlinkSync(real.file, ok);
+  assert.equal((await run(configChange('skills', ok), { home })).output, null);
+  assert.equal((await run(configChange('skills', path.join(real.dir, '.claude', 'skills', 'gone.md')), { home })).output, null);
+  assert.equal((await run(configChange('skills', '.claude/skills/x/SKILL.md'), { home })).output, null);
+});
+
 test('InstructionsLoaded gives no answer (Claude Code ignores it) and records an instruction file that carries injected text', async (t) => {
   const home = tempDir(t, 'zn-instr-');
   const clean = projectWith(t, 'CLAUDE.md', '# Project\nRun npm test before committing.\n');

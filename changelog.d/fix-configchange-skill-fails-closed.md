@@ -1,0 +1,2 @@
+### Security
+- A change to a Claude Code skill file is no longer let through unchecked when zn cannot read the file, or when it is a large one. Skill files over 1 MiB are now scanned in pieces (up to 16 MiB) for text a person cannot see, and a skill file that cannot be checked at all (unreadable, not a plain file, or over 16 MiB) is not applied, the same as a settings change that cannot be audited.

@@ -138,7 +138,11 @@ Claude Code builds that have these events use them.
   opened. Without a starting point (the session began before the hooks were
   installed) any critical finding blocks, and a blocked finding is never remembered
   as allowed: a change blocked before the first prompt stays blocked for the whole
-  session, even after an unrelated edit. A skill
+  session, even after an unrelated edit. A skill file is read in chunks up to
+  16 MiB, so a large one is checked too; a skill file zn cannot check (it cannot be
+  read, is not a plain file, or is over 16 MiB) is not applied either, the same as a
+  settings change whose audit cannot run. A skill file that no longer exists and a path that is not absolute
+  are allowed. A skill
   that quotes a prompt-injection example is allowed. The message
   names the file, the rule and the line (for a settings file), and says to run
   `zn audit`. Your own user settings, your local settings

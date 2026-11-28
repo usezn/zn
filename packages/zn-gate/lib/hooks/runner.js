@@ -1900,6 +1900,46 @@ function writeSeen(file, list) {
 // Text a person cannot see in a skill file: Unicode tag characters and bidirectional overrides and isolates.
 const HIDDEN_TEXT_RE = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
 
+// A skill file is scanned for hidden text up to this size, read in chunks; a larger one is not applied (it cannot be checked in time).
+const SKILL_SCAN_HARD_CAP = 16 * 1024 * 1024;
+const SKILL_SCAN_CHUNK = 1024 * 1024;
+
+/** Checks one skill file for text a person cannot see. Returns 'clean', 'hidden', 'gone' (the file does not exist: nothing can hide
+ * in it) or 'unchecked' (it cannot be read, is not a plain file, or is over the hard cap). Up to the first chunk the file is read at once;
+ * a bigger one is read chunk by chunk through a UTF-8 decoder that keeps a character cut by a chunk edge, so nothing is missed at an edge
+ * (every hidden character is one character, so no overlap is needed) and a result equals the one for the whole text. */
+function scanSkillFile(file) {
+  let fd = null;
+  try {
+    try {
+      // Looked at before it is opened: opening a named pipe would wait for a writer.
+      const pre = fs.statSync(file);
+      if (!pre.isFile() || pre.size > SKILL_SCAN_HARD_CAP) return 'unchecked';
+      fd = fs.openSync(file, 'r');
+    } catch (e) {
+      return e && (e.code === 'ENOENT' || e.code === 'ENOTDIR') ? 'gone' : 'unchecked';
+    }
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > SKILL_SCAN_HARD_CAP) return 'unchecked';
+    const { StringDecoder } = require('string_decoder');
+    const decoder = new StringDecoder('utf8');
+    const buf = Buffer.allocUnsafe(SKILL_SCAN_CHUNK);
+    let total = 0;
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      total += n;
+      if (total > SKILL_SCAN_HARD_CAP) return 'unchecked';
+      if (HIDDEN_TEXT_RE.test(decoder.write(buf.subarray(0, n)))) return 'hidden';
+    }
+    return HIDDEN_TEXT_RE.test(decoder.end()) ? 'hidden' : 'clean';
+  } catch (_) {
+    return 'unchecked';
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch (_) { /* nothing to do */ } }
+  }
+}
+
 /**
  * ConfigChange (Claude Code): a settings or skill file changed during the session. The change is blocked, so the new file does not
  * take effect, when
@@ -1919,9 +1959,18 @@ function decideConfigChange(ev, opts) {
   const source = ev.configSource;
   const file = ev.filePath;
   if (source === 'skills') {
-    const text = readReportedFile(file);
-    if (text === null) return { decision: 'allow' };
-    if (HIDDEN_TEXT_RE.test(text)) {
+    // A path that is not absolute is not a path Claude Code reports (the settings branch below allows it the same way).
+    if (typeof file !== 'string' || !path.isAbsolute(file)) return { decision: 'allow' };
+    const scan = scanSkillFile(file);
+    if (scan === 'gone') return { decision: 'allow' };
+    if (scan === 'unchecked') {
+      return {
+        decision: 'deny', kinds: ['config-change-unchecked'],
+        message: 'zn: this change to ' + path.basename(file) + ' was not applied: zn could not check this skill file for text a person cannot see ' +
+          '(it cannot be read, is not a plain file, or is larger than ' + (SKILL_SCAN_HARD_CAP / (1024 * 1024)) + ' MiB). Make it a plain, smaller file and save it again.',
+      };
+    }
+    if (scan === 'hidden') {
       return {
         decision: 'deny', kinds: ['config-change-skill'],
         message: 'zn: this change to a skill file was not applied: the file now holds text a person cannot see (Unicode tag characters or bidirectional overrides). ' +
