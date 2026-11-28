@@ -355,7 +355,7 @@ def _same_file(src_fd: int, file_path: str) -> bool:
         a = os.fstat(src_fd)
         b = os.stat(file_path)
     except OSError:
-        return True  # a missing path is not a different file; the bytes copied are still one file's
+        return False  # fail closed: the path vanished or cannot be checked, so the copy is not known to be the log
     if not (a.st_ino and b.st_ino):
         return True  # no usable identity on this platform
     return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)

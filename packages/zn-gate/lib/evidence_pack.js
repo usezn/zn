@@ -167,13 +167,20 @@ function validatePackOptions(opts = {}) {
 function packTargetProblem(outDir) {
   let st;
   try {
-    st = fs.statSync(outDir);
+    st = fs.lstatSync(outDir);
   } catch (e) {
     if (e.code === 'ENOENT') return null;
     return `zn-gate: cannot use ${outDir}: ${e.code || e.message}.`;
   }
+  if (st.isSymbolicLink()) return `zn-gate: ${outDir} is a link; give the real folder.`;
   if (!st.isDirectory()) return `zn-gate: ${outDir} exists and is not a folder.`;
-  if (fs.readdirSync(outDir).length > 0) return `zn-gate: ${outDir} is not empty; choose a new folder.`;
+  let names;
+  try {
+    names = fs.readdirSync(outDir);
+  } catch (e) {
+    return `zn-gate: cannot use ${outDir}: ${e.code || e.message}.`;
+  }
+  if (names.length > 0) return `zn-gate: ${outDir} is not empty; choose a new folder.`;
   return null;
 }
 

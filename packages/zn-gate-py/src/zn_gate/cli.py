@@ -807,7 +807,9 @@ def _run_evidence_pack(args: argparse.Namespace) -> int:
         print(f"zn-gate: the pack stopped. {err}. {out} was not written.", file=sys.stderr)
         return 1
     except OSError as err:
-        print(f"zn-gate: the pack stopped. {_fs_error_text(err, out)}. {out} is incomplete: do not use it.", file=sys.stderr)
+        # Only an error after the folder was created leaves a partial pack behind.
+        state = "was not written." if getattr(err, "pack_started", True) is False else "is incomplete: do not use it."
+        print(f"zn-gate: the pack stopped. {_fs_error_text(err, out)}. {out} {state}", file=sys.stderr)
         return 1
     print(f"Pack written to {out}: {res['records']} records in the period, {res['undated']} undated, "
           f"chain {'VERIFIED' if res['valid'] else 'NOT VERIFIED'}.")

@@ -377,3 +377,51 @@ def test_pack_log_shorter_after_copy_fails_closed(ledger, run, monkeypatch):
     assert code == 1
     assert f"the log got shorter while it was read. {ledger.out} was not written." in cap.err
     assert not os.path.exists(ledger.out)
+
+
+def test_pack_target_refuses_a_link_and_an_unreadable_folder(ledger, run, monkeypatch):
+    from zn_gate import evidence_pack as ep
+
+    real = Path(ledger.dir, "real")
+    real.mkdir()
+    link = Path(ledger.dir, "link")
+    try:
+        os.symlink(real, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    code, cap = run(str(link))
+    assert code == 2 and f"zn-gate: {link} is a link; give the real folder." in cap.err
+    assert os.listdir(real) == []
+
+    def denied(path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ep.os, "listdir", denied)
+    empty = Path(ledger.dir, "empty")
+    empty.mkdir()
+    code, cap = run(str(empty))
+    assert code == 2 and f"zn-gate: cannot use {empty}: EACCES." in cap.err
+
+
+def test_pack_stopped_before_the_folder_exists_says_not_written(ledger, run, monkeypatch):
+    from zn_gate import evidence_pack as ep
+
+    def no_dir(path, exist_ok=False):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(ep.os, "makedirs", no_dir)
+    code, cap = run(ledger.out)
+    assert code == 1
+    assert f"{ledger.out} was not written." in cap.err and "incomplete" not in cap.err
+
+
+def test_pack_stopped_while_writing_says_incomplete(ledger, run, monkeypatch):
+    from zn_gate import evidence_pack as ep
+
+    def full(path, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ep, "_write_new", full)
+    code, cap = run(ledger.out)
+    assert code == 1
+    assert f"{ledger.out} is incomplete: do not use it." in cap.err and "was not written" not in cap.err

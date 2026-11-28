@@ -8,9 +8,11 @@ without include_preview the payload_preview field is removed from each record.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
+import stat
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -152,13 +154,27 @@ def validate_pack_options(since: Any = None, until: Any = None, fmt: Any = "json
     return {"since": since_day, "until": until_day, "format": fmt_text}, None
 
 
+def _os_error_code(e: OSError) -> str:
+    return errno.errorcode.get(e.errno or 0, e.strerror or str(e))
+
+
 def pack_target_problem(out_dir: str) -> Optional[str]:
     """None when out_dir can be used for a new pack (missing, or an empty folder); else a reason."""
-    if not os.path.lexists(out_dir):
+    try:
+        st = os.lstat(out_dir)
+    except FileNotFoundError:
         return None
-    if not os.path.isdir(out_dir):
+    except OSError as e:
+        return f"zn-gate: cannot use {out_dir}: {_os_error_code(e)}."
+    if stat.S_ISLNK(st.st_mode):
+        return f"zn-gate: {out_dir} is a link; give the real folder."
+    if not stat.S_ISDIR(st.st_mode):
         return f"zn-gate: {out_dir} exists and is not a folder."
-    if os.listdir(out_dir):
+    try:
+        names = os.listdir(out_dir)
+    except OSError as e:
+        return f"zn-gate: cannot use {out_dir}: {_os_error_code(e)}."
+    if names:
         return f"zn-gate: {out_dir} is not empty; choose a new folder."
     return None
 
@@ -220,8 +236,15 @@ def write_evidence_pack(file_path: str, out_dir: str, *, since: Optional[str] = 
                     raise PackReadError(f"Cannot read the evidence log: {e.strerror or e}") from e
     except EvidenceLedgerError as e:
         raise PackReadError(str(e)) from e
+    except OSError as e:
+        e.pack_started = False  # type: ignore[attr-defined]  # nothing is on disk yet
+        raise
 
-    os.makedirs(out_dir, exist_ok=True)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        e.pack_started = False  # type: ignore[attr-defined]  # the folder was never created
+        raise
     chain_index = 0
     undated = 0
     included = 0

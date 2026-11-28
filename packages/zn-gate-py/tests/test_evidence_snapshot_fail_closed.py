@@ -96,3 +96,11 @@ def test_cli_refuses_with_exit_1_and_writes_nothing(tmp_path, monkeypatch, capsy
     err = capsys.readouterr().err
     assert "the export stopped. " in err and f"{out} was not written." in err
     assert "incomplete" not in err
+
+
+def test_same_file_fails_closed_when_the_path_cannot_be_checked(tmp_path):
+    p = _ledger(tmp_path)
+    with open(p, "rb") as src:
+        assert ts._same_file(src.fileno(), str(p)) is True
+        p.rename(tmp_path / "moved.jsonl")  # the log is renamed while it is open
+        assert ts._same_file(src.fileno(), str(p)) is False

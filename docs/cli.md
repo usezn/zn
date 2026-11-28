@@ -657,7 +657,7 @@ zn-gate evidence pack --out DIR [--format jsonl|ocsf] [--since YYYY-MM-DD] [--un
 
 Writes a folder for an auditor: the records of a period, the result of checking the whole log, a summary, a control map and a README. Nothing is uploaded.
 
-- `--out DIR` (required): the folder to write. It must not exist or must be empty; the command never writes over existing files. Exit `2` otherwise.
+- `--out DIR` (required): the folder to write. It must not exist or must be empty; the command never writes over existing files. Exit `2` otherwise, also when DIR is a link (give the real folder) or cannot be read.
 - `--since` and `--until`: the first and last UTC day to include, `YYYY-MM-DD`, both inclusive. A date must exist (no `2026-02-30`). Exit `2` for a bad date or when `--since` is after `--until`. A record's day is the day of its own timestamp. Without a range, every record is included.
 - Records with no valid UTC time are counted as `undated` in `summary.json`. With a range they are left out; without one they are kept.
 

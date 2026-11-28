@@ -381,3 +381,20 @@ test('CLI: an unreadable log exits 1, says the folder was not written and create
   assert.equal(r.stdout.includes('Pack written'), false);
   assert.equal(fs.existsSync(s.out), false);
 });
+
+test('refused: --out that is a link, even to an empty folder; nothing is written through it', (t) => {
+  const s = setup(t, SPECS);
+  const real = path.join(s.dir, 'real');
+  fs.mkdirSync(real);
+  const link = path.join(s.dir, 'link');
+  try {
+    fs.symlinkSync(real, link, 'dir');
+  } catch (e) {
+    t.skip('symlinks not available');
+    return;
+  }
+  const res = run(s.home, ['pack', '--out', link]);
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /is a link; give the real folder\./);
+  assert.deepEqual(fs.readdirSync(real), []);
+});
