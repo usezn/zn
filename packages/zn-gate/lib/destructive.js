@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-27.2';
+const COMMAND_RULES_VERSION = '2026-11-28.7';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -537,6 +537,21 @@ function resolveDots(t, depth = 2) {
   return anchor + out.join('/');
 }
 
+/* A home variable with any parameter-expansion operator (${HOME%/}, ${HOME/x/y}, ${HOME:?}) is read as the home folder: the result is not known here, so the rule fails closed. */
+const HOME_EXPANSION_RE = /^\$\{(?:home|userprofile)[^A-Za-z0-9_}][^}]*\}$/i;
+/* Another user's home word: a tilde and a login name. */
+const TILDE_USER_RE = /^~[A-Za-z_][A-Za-z0-9_.-]*$/;
+/* Folder names are compared without regard to case: macOS and Windows file systems do not tell them apart (fail closed on Linux too). */
+const SYSTEM_DIRS_LOWER = new Set([...SYSTEM_DIRS].map((d) => d.toLowerCase()));
+
+/* Windows drops trailing dots and spaces from every path segment: strip them from a drive path ("." and ".." segments stay). */
+function stripDriveTails(t) {
+  if (!/^[A-Za-z]:(?:\/|$)/.test(t)) return t;
+  const out = [t.slice(0, 2)];
+  for (const seg of t.slice(2).split('/')) out.push(seg === '.' || seg === '..' ? seg : seg.replace(/[. ]+$/, ''));
+  return out.join('/').replace(/\/{2,}/g, '/');
+}
+
 /* The dangerous path a word names, as 'root', 'home' or 'system', or ''. */
 function dangerousPath(word) {
   return dangerousPathAt(word, 2) || dangerousPathAt(word, 1);
@@ -545,7 +560,7 @@ function dangerousPath(word) {
 function dangerousPathAt(word, depth) {
   let t = String(word).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
   if (!t) return '';
-  t = resolveDots(t, depth);
+  t = resolveDots(stripDriveTails(t), depth);
   // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.
   for (let n = 0; n < 4; n++) {
     let s = t.replace(/\/(?:\*|\.\*|\.|\{\*,\.\*\})?$/, '');
@@ -556,9 +571,9 @@ function dangerousPathAt(word, depth) {
   }
   if (t === '*') return '';
   const low = t.toLowerCase();
-  if (HOME_WORDS.has(low)) return 'home';
-  if (SYSTEM_DIRS.has(t)) return 'system';
-  if (/^\/(?:home|Users)\/[^/*.][^/*]*$/.test(t)) return 'home';
+  if (HOME_WORDS.has(low) || HOME_EXPANSION_RE.test(t) || TILDE_USER_RE.test(t)) return 'home';
+  if (SYSTEM_DIRS_LOWER.has(low)) return 'system';
+  if (/^\/(?:home|Users)\/[^/*.][^/*]*$/i.test(t)) return 'home';
   if (/^[A-Za-z]:$/.test(t)) return 'root';
   if (/^[A-Za-z]:\/(?:windows|windows\/system32|users|program files|program files \(x86\)|programdata)$/i.test(t)) return 'system';
   if (/^[A-Za-z]:\/users\/[^/*]+$/i.test(t)) return 'home';

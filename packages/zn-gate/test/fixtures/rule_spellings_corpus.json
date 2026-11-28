@@ -3128,5 +3128,505 @@
   "rule": null,
   "kind": "egress",
   "note": null
+ },
+ {
+  "id": "hr-deny-001",
+  "family": "hr-deny",
+  "spelling": "case /ETC",
+  "cmd": "rm -rf /ETC",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-002",
+  "family": "hr-deny",
+  "spelling": "case /Etc/",
+  "cmd": "rm -rf /Etc/",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-003",
+  "family": "hr-deny",
+  "spelling": "case /HOME",
+  "cmd": "rm -rf /HOME",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-004",
+  "family": "hr-deny",
+  "spelling": "case /uSeRs",
+  "cmd": "rm -rf /uSeRs",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-005",
+  "family": "hr-deny",
+  "spelling": "case /Home/alice",
+  "cmd": "rm -rf /Home/alice",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-006",
+  "family": "hr-deny",
+  "spelling": "case /VAR with sudo",
+  "cmd": "sudo rm -rf /VAR",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-007",
+  "family": "hr-deny",
+  "spelling": "case /ETC chmod",
+  "cmd": "chmod -R 777 /ETC",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-008",
+  "family": "hr-deny",
+  "spelling": "case /Var chown",
+  "cmd": "chown -R nobody /Var",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-009",
+  "family": "hr-deny",
+  "spelling": "case /Home chgrp",
+  "cmd": "chgrp -R staff /Home",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-010",
+  "family": "hr-deny",
+  "spelling": "drive folder trailing dot",
+  "cmd": "rm -rf \"C:\\Windows.\"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-011",
+  "family": "hr-deny",
+  "spelling": "drive folder trailing dots",
+  "cmd": "rm -rf \"C:\\Windows...\"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-012",
+  "family": "hr-deny",
+  "spelling": "drive folder trailing space",
+  "cmd": "rm -rf \"C:\\Users \"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-013",
+  "family": "hr-deny",
+  "spelling": "drive home trailing dot and space",
+  "cmd": "rm -rf \"C:\\Users\\alice. \"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-014",
+  "family": "hr-deny",
+  "spelling": "drive folder dot then slash",
+  "cmd": "rm -rf \"C:/Windows./\"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-015",
+  "family": "hr-deny",
+  "spelling": "drive root trailing space",
+  "cmd": "rm -rf \"C:\\ \"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-016",
+  "family": "hr-deny",
+  "spelling": "drive in rd",
+  "cmd": "rd /s /q \"C:\\Windows. \"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-017",
+  "family": "hr-deny",
+  "spelling": "drive in Remove-Item",
+  "cmd": "Remove-Item -Recurse -Force \"C:\\Users.\"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-018",
+  "family": "hr-deny",
+  "spelling": "drive in forward slashes",
+  "cmd": "rm -rf \"C:/ProgramData. \"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-019",
+  "family": "hr-deny",
+  "spelling": "HOME suffix removal",
+  "cmd": "rm -rf ${HOME%/}",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-020",
+  "family": "hr-deny",
+  "spelling": "HOME prefix removal",
+  "cmd": "rm -rf ${HOME#/}",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-021",
+  "family": "hr-deny",
+  "spelling": "HOME substitution",
+  "cmd": "rm -rf ${HOME/x/y}",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-022",
+  "family": "hr-deny",
+  "spelling": "HOME error word",
+  "cmd": "rm -rf \"${HOME:?}\"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-023",
+  "family": "hr-deny",
+  "spelling": "HOME error word and slash",
+  "cmd": "rm -rf \"${HOME:?}/\"",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-024",
+  "family": "hr-deny",
+  "spelling": "HOME case change",
+  "cmd": "rm -rf ${HOME^^}",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-025",
+  "family": "hr-deny",
+  "spelling": "HOME substring",
+  "cmd": "rm -rf ${HOME:0}",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-026",
+  "family": "hr-deny",
+  "spelling": "USERPROFILE suffix removal",
+  "cmd": "rm -rf ${USERPROFILE%/}",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-027",
+  "family": "hr-deny",
+  "spelling": "HOME suffix chmod",
+  "cmd": "chmod -R 777 ${HOME%/}",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-028",
+  "family": "hr-deny",
+  "spelling": "HOME substitution chmod",
+  "cmd": "chmod -R 777 ${HOME/x/y}",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-029",
+  "family": "hr-deny",
+  "spelling": "tilde user",
+  "cmd": "rm -rf ~alice",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-030",
+  "family": "hr-deny",
+  "spelling": "tilde user slash",
+  "cmd": "rm -rf ~alice/",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-031",
+  "family": "hr-deny",
+  "spelling": "tilde user star",
+  "cmd": "rm -rf ~alice/*",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-032",
+  "family": "hr-deny",
+  "spelling": "tilde root user",
+  "cmd": "rm -rf ~root",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-033",
+  "family": "hr-deny",
+  "spelling": "tilde user with sudo",
+  "cmd": "sudo rm -rf ~bob",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-034",
+  "family": "hr-deny",
+  "spelling": "tilde user find",
+  "cmd": "find ~alice -delete",
+  "expect": "block",
+  "rule": "rm_root_home",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-035",
+  "family": "hr-deny",
+  "spelling": "tilde user chmod",
+  "cmd": "chmod -R 777 ~alice",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-deny-036",
+  "family": "hr-deny",
+  "spelling": "tilde user chmod slash",
+  "cmd": "chmod -R 777 ~alice/",
+  "expect": "block",
+  "rule": "perm_root",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-001",
+  "family": "hr-allow",
+  "spelling": "control: file inside another user home",
+  "cmd": "rm -rf ~alice/build",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-002",
+  "family": "hr-allow",
+  "spelling": "control: HOME operator then a subfolder",
+  "cmd": "rm -rf ${HOME%/}/build",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-003",
+  "family": "hr-allow",
+  "spelling": "control: HOME substitution then a subfolder",
+  "cmd": "rm -rf \"${HOME/x/y}/build\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-004",
+  "family": "hr-allow",
+  "spelling": "control: another variable that starts with HOME",
+  "cmd": "rm -rf ${HOMES%/}",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-005",
+  "family": "hr-allow",
+  "spelling": "control: ordinary name that starts like a system folder",
+  "cmd": "rm -rf /etcetera",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-006",
+  "family": "hr-allow",
+  "spelling": "control: folder inside /ETC",
+  "cmd": "rm -rf /ETC/zn-test",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-007",
+  "family": "hr-allow",
+  "spelling": "control: Windows.old",
+  "cmd": "rm -rf \"C:\\Windows.old\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-008",
+  "family": "hr-allow",
+  "spelling": "control: project below a dotted home folder",
+  "cmd": "rm -rf \"C:\\Users\\alice.\\project\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-009",
+  "family": "hr-allow",
+  "spelling": "control: project folder with trailing dot",
+  "cmd": "rm -rf \"C:\\work\\build.\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-010",
+  "family": "hr-allow",
+  "spelling": "control: drive folder with a longer name",
+  "cmd": "rm -rf \"C:\\Windowsx.\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-011",
+  "family": "hr-allow",
+  "spelling": "control: tilde plus is the working folder, not a home",
+  "cmd": "rm -rf ~+/build",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-012",
+  "family": "hr-allow",
+  "spelling": "control: recursive chmod of a project",
+  "cmd": "chmod -R 755 ~alice/project",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-013",
+  "family": "hr-allow",
+  "spelling": "control: no recursive flag on a user home",
+  "cmd": "rm ~alice/notes.txt",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "hr-allow-014",
+  "family": "hr-allow",
+  "spelling": "control: chmod without -R on a user home",
+  "cmd": "chmod 700 ~alice",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
  }
 ]

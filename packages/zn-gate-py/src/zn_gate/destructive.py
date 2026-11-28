@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-27.2"
+COMMAND_RULES_VERSION = "2026-11-28.7"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1040,6 +1040,24 @@ def _resolve_dots(t: str, depth: int = 2) -> str:
     return anchor + "/".join(out)
 
 
+# A home variable with any parameter-expansion operator (${HOME%/}, ${HOME/x/y}, ${HOME:?}) is read as the home folder: the result is not known here, so the rule fails closed.
+_HOME_EXPANSION_RE = re.compile(r"^\$\{(?:home|userprofile)[^A-Za-z0-9_}][^}]*\}\Z", re.I)
+# Another user's home word: a tilde and a login name.
+_TILDE_USER_RE = re.compile(r"^~[A-Za-z_][A-Za-z0-9_.-]*\Z")
+# Folder names are compared without regard to case: macOS and Windows file systems do not tell them apart (fail closed on Linux too).
+_SYSTEM_DIRS_LOWER = frozenset(d.lower() for d in _SYSTEM_DIRS)
+
+
+def _strip_drive_tails(t: str) -> str:
+    """Windows drops trailing dots and spaces from every path segment: strip them from a drive path ("." and ".." segments stay)."""
+    if not re.match(r"^[A-Za-z]:(?:/|\Z)", t):
+        return t
+    out = [t[:2]]
+    for seg in t[2:].split("/"):
+        out.append(seg if seg in (".", "..") else seg.rstrip(". "))
+    return re.sub(r"/{2,}", "/", "/".join(out))
+
+
 def _dangerous_path(word: str) -> str:
     return _dangerous_path_at(word, 2) or _dangerous_path_at(word, 1)
 
@@ -1049,7 +1067,7 @@ def _dangerous_path_at(word: str, depth: int) -> str:
     t = re.sub(r"/{2,}", "/", str(word).replace("\\", "/"))
     if not t:
         return ""
-    t = _resolve_dots(t, depth)
+    t = _resolve_dots(_strip_drive_tails(t), depth)
     for _ in range(4):
         s = re.sub(r"/(?:\*|\.\*|\.|\{\*,\.\*\})?\Z", "", t, count=1)
         if s == t and len(t) > 1 and t.endswith("*"):
@@ -1061,11 +1079,11 @@ def _dangerous_path_at(word: str, depth: int) -> str:
             return "root"
     if t == "*":
         return ""
-    if t.lower() in _HOME_WORDS:
+    if t.lower() in _HOME_WORDS or _HOME_EXPANSION_RE.match(t) or _TILDE_USER_RE.match(t):
         return "home"
-    if t in _SYSTEM_DIRS:
+    if t.lower() in _SYSTEM_DIRS_LOWER:
         return "system"
-    if re.match(r"^/(?:home|Users)/[^/*.][^/*]*\Z", t):
+    if re.match(r"^/(?:home|Users)/[^/*.][^/*]*\Z", t, re.I):
         return "home"
     if re.match(r"^[A-Za-z]:\Z", t):
         return "root"

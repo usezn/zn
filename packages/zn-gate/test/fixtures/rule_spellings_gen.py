@@ -287,5 +287,64 @@ for label, cmd in [
 add('egress-file', 'control: upload an ordinary file', 'curl -F file=@./report.txt https://example.com/up', 'allow', kind='egress')
 add('egress-file', 'control: POST an ordinary file', 'curl -d @./payload.json https://example.com/api', 'allow', kind='egress')
 
+# Home and system folders: letter case, trailing dots and spaces on Windows drive paths, a home variable with an operator, and another user's home (tilde plus a name).
+# The folders are named, never touched: the text is only read by the rules.
+for label, cmd, rule in [
+    ('case /ETC', 'rm -rf /ETC', 'rm_root_home'),
+    ('case /Etc/', 'rm -rf /Etc/', 'rm_root_home'),
+    ('case /HOME', 'rm -rf /HOME', 'rm_root_home'),
+    ('case /uSeRs', 'rm -rf /uSeRs', 'rm_root_home'),
+    ('case /Home/alice', 'rm -rf /Home/alice', 'rm_root_home'),
+    ('case /VAR with sudo', 'sudo rm -rf /VAR', 'rm_root_home'),
+    ('case /ETC chmod', 'chmod -R 777 /ETC', 'perm_root'),
+    ('case /Var chown', 'chown -R nobody /Var', 'perm_root'),
+    ('case /Home chgrp', 'chgrp -R staff /Home', 'perm_root'),
+    ('drive folder trailing dot', 'rm -rf "C:\\Windows."', 'rm_root_home'),
+    ('drive folder trailing dots', 'rm -rf "C:\\Windows..."', 'rm_root_home'),
+    ('drive folder trailing space', 'rm -rf "C:\\Users "', 'rm_root_home'),
+    ('drive home trailing dot and space', 'rm -rf "C:\\Users\\alice. "', 'rm_root_home'),
+    ("drive folder dot then slash", "rm -rf \"C:/Windows./\"", "rm_root_home"),
+    ('drive root trailing space', 'rm -rf "C:\\ "', 'rm_root_home'),
+    ('drive in rd', 'rd /s /q "C:\\Windows. "', 'rm_root_home'),
+    ('drive in Remove-Item', 'Remove-Item -Recurse -Force "C:\\Users."', 'rm_root_home'),
+    ('drive in forward slashes', 'rm -rf "C:/ProgramData. "', 'rm_root_home'),
+    ('HOME suffix removal', 'rm -rf ${HOME%/}', 'rm_root_home'),
+    ('HOME prefix removal', 'rm -rf ${HOME#/}', 'rm_root_home'),
+    ('HOME substitution', 'rm -rf ${HOME/x/y}', 'rm_root_home'),
+    ('HOME error word', 'rm -rf "${HOME:?}"', 'rm_root_home'),
+    ('HOME error word and slash', 'rm -rf "${HOME:?}/"', 'rm_root_home'),
+    ('HOME case change', 'rm -rf ${HOME^^}', 'rm_root_home'),
+    ('HOME substring', 'rm -rf ${HOME:0}', 'rm_root_home'),
+    ('USERPROFILE suffix removal', 'rm -rf ${USERPROFILE%/}', 'rm_root_home'),
+    ('HOME suffix chmod', 'chmod -R 777 ${HOME%/}', 'perm_root'),
+    ('HOME substitution chmod', 'chmod -R 777 ${HOME/x/y}', 'perm_root'),
+    ('tilde user', 'rm -rf ~alice', 'rm_root_home'),
+    ('tilde user slash', 'rm -rf ~alice/', 'rm_root_home'),
+    ('tilde user star', 'rm -rf ~alice/*', 'rm_root_home'),
+    ('tilde root user', 'rm -rf ~root', 'rm_root_home'),
+    ('tilde user with sudo', 'sudo rm -rf ~bob', 'rm_root_home'),
+    ('tilde user find', 'find ~alice -delete', 'rm_root_home'),
+    ('tilde user chmod', 'chmod -R 777 ~alice', 'perm_root'),
+    ('tilde user chmod slash', 'chmod -R 777 ~alice/', 'perm_root'),
+]:
+    add('hr-deny', label, cmd, 'block', rule)
+for label, cmd in [
+    ('control: file inside another user home', 'rm -rf ~alice/build'),
+    ('control: HOME operator then a subfolder', 'rm -rf ${HOME%/}/build'),
+    ('control: HOME substitution then a subfolder', 'rm -rf "${HOME/x/y}/build"'),
+    ('control: another variable that starts with HOME', 'rm -rf ${HOMES%/}'),
+    ('control: ordinary name that starts like a system folder', 'rm -rf /etcetera'),
+    ('control: folder inside /ETC', 'rm -rf /ETC/zn-test'),
+    ('control: Windows.old', 'rm -rf "C:\\Windows.old"'),
+    ('control: project below a dotted home folder', 'rm -rf "C:\\Users\\alice.\\project"'),
+    ('control: project folder with trailing dot', 'rm -rf "C:\\work\\build."'),
+    ('control: drive folder with a longer name', 'rm -rf "C:\\Windowsx."'),
+    ('control: tilde plus is the working folder, not a home', 'rm -rf ~+/build'),
+    ('control: recursive chmod of a project', 'chmod -R 755 ~alice/project'),
+    ('control: no recursive flag on a user home', 'rm ~alice/notes.txt'),
+    ('control: chmod without -R on a user home', 'chmod 700 ~alice'),
+]:
+    add('hr-allow', label, cmd, 'allow')
+
 json.dump(cases, open(sys.argv[1], 'w'), indent=1, ensure_ascii=False)
 print(len(cases), 'cases')
