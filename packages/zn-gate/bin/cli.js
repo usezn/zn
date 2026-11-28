@@ -41,7 +41,49 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
-const { verifyEvidenceLedger, getEvidenceStats, writeEvidenceExport, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { verifyEvidenceLedger, getEvidenceStats, writeEvidenceExport, writeEvidencePack, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+
+// `evidence pack --out DIR`: an evidence pack for auditors (see lib/evidence_pack.js). Exit 2 for a
+// refused request, 1 when the chain does not verify (the pack is still written) or the log cannot be read.
+function runEvidencePack(options) {
+  const pack = require('../lib/evidence_pack');
+  const req = pack.validatePackOptions({
+    since: options.packSince, until: options.packUntil, format: options.format, includePreview: options.includePreview,
+  });
+  if (req.error) {
+    process.stderr.write(req.error + '\n');
+    process.exitCode = 2;
+    return;
+  }
+  if (!options.packOut) {
+    process.stderr.write('zn-gate: evidence pack needs --out DIR (a new or empty folder).\n');
+    process.exitCode = 2;
+    return;
+  }
+  const problem = pack.packTargetProblem(options.packOut);
+  if (problem) {
+    process.stderr.write(problem + '\n');
+    process.exitCode = 2;
+    return;
+  }
+  let res;
+  try {
+    res = writeEvidencePack(options.packOut, {
+      since: req.since, until: req.until, format: req.format, includePreview: options.includePreview,
+      generator: `zn-gate ${VERSION}`,
+    });
+  } catch (err) {
+    process.stderr.write(pack.packStoppedMessage(err, options.packOut) + '\n');
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(`Pack written to ${options.packOut}: ${res.records} records in the period, ${res.undated} undated, `
+    + `chain ${res.valid ? 'VERIFIED' : 'NOT VERIFIED'}.\n`);
+  if (!res.valid) {
+    process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+    process.exitCode = 1;
+  }
+}
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -256,7 +298,7 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-  evidence            Query the local hash-chained decision log and run the UI dashboard
+  evidence            Query the local hash-chained decision log, run the UI dashboard, or write an evidence pack for auditors (evidence pack --out DIR)
   logs                Tail or inspect security event logs
   why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
   mcp                 Run as standalone bidirectional MCP server for AI agents
@@ -372,8 +414,13 @@ EVIDENCE OPTIONS:
   --verify            Verify the SHA-256 hash chain across all records
   --ui                Launch local zero-dependency audit dashboard in browser
   --export            Export audit records to JSONL or CSV
-  --format <jsonl|csv> Export format (default: jsonl)
+  --format <jsonl|csv|timesketch|timesketch-csv|ocsf> Export format (default: jsonl)
   --output <file>     Write exported audit records to target file
+  --manifest          With --output: also write <file>.manifest.json (what was exported, and whether the chain verified)
+  --include-preview   With --format timesketch, timesketch-csv or ocsf: add the payload preview as zn_payload_preview (with pack: keep payload_preview in the records)
+  --out <dir>         With pack: the new or empty folder to write the evidence pack into
+  --since <YYYY-MM-DD> With pack: first UTC day to include (inclusive)
+  --until <YYYY-MM-DD> With pack: last UTC day to include (inclusive)
   --port <number>     Set HTTP port for dashboard (default: 3100)
   --tail <number>     Display the last N security records (default: 20)
 
@@ -1138,8 +1185,13 @@ function expandEqualsOptions(command, args) {
 // the options the command takes are listed. -h, --help, -V and --version are handled by the general code, so they pass.
 const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
 const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
-const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
-const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
+const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail', '--out', '--since', '--until'];
+// True when the path exists as anything, a dangling link included (existsSync follows links).
+function lstatExists(p) {
+  try { fs.lstatSync(p); return true; } catch { return false; }
+}
+
+const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', '--manifest', '--include-preview', ...EVIDENCE_VALUE_OPTIONS];
 
 function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
   for (let i = start; i < args.length; i++) {
@@ -1259,6 +1311,8 @@ async function main() {
     revert: args.includes('--revert'),
     verify: args.includes('--verify'),
     export: args.includes('--export'),
+    manifest: args.includes('--manifest'),
+    includePreview: args.includes('--include-preview'),
     format: 'jsonl',
     output: null,
     ui: args.includes('--ui'),
@@ -1289,6 +1343,12 @@ async function main() {
       options.formatGiven = true;
     } else if (args[i] === '--output' && args[i + 1]) {
       options.output = args[++i];
+    } else if (args[i] === '--out' && args[i + 1]) {
+      options.packOut = args[++i];
+    } else if (args[i] === '--since' && args[i + 1]) {
+      options.packSince = args[++i];
+    } else if (args[i] === '--until' && args[i + 1]) {
+      options.packUntil = args[++i];
     } else if (args[i] === '--include' && args[i + 1]) {
       options.include = args[++i];
     } else if (args[i] === '--exclude' && args[i + 1]) {
@@ -1386,12 +1446,27 @@ ${ruleLine(process.env, 60)}\n`);
     return;
   }
 
+  if (command === 'evidence' && args[1] === 'pack') {
+    runEvidencePack(options);
+    return;
+  }
+
   if (command === 'evidence' || command === 'logs' || command === 'export') {
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
-      if (format !== 'jsonl' && format !== 'csv') {
+      if (!require('../lib/evidence_export').EXPORT_FORMATS.includes(format)) {
         const shown = String(options.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
-        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl and csv.\n`);
+        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl, csv, timesketch, timesketch-csv and ocsf.\n`);
+        process.exitCode = 2;
+        return;
+      }
+      if (options.includePreview && !require('../lib/evidence_export').EVENT_FORMATS.has(format)) {
+        process.stderr.write('zn-gate: --include-preview works only with --format timesketch, timesketch-csv or ocsf.\n');
+        process.exitCode = 2;
+        return;
+      }
+      if (options.manifest && !options.output) {
+        process.stderr.write('zn-gate: --manifest needs --output FILE.\n');
         process.exitCode = 2;
         return;
       }
@@ -1406,6 +1481,12 @@ ${ruleLine(process.env, 60)}\n`);
           process.exitCode = 2;
           return;
         }
+        if (options.manifest && lstatExists(`${options.output}.manifest.json`)) {
+          process.stderr.write(`zn-gate: ${options.output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.
+`);
+          process.exitCode = 2;
+          return;
+        }
         try {
           out = fs.createWriteStream(options.output, { fd: fs.openSync(options.output, 'w') });
         } catch (err) {
@@ -1415,7 +1496,7 @@ ${ruleLine(process.env, 60)}\n`);
       }
       let res;
       try {
-        res = await writeEvidenceExport(EVIDENCE_FILE, format, out);
+        res = await writeEvidenceExport(EVIDENCE_FILE, format, out, { includePreview: options.includePreview });
         if (out !== process.stdout) {
           await new Promise((resolve, reject) => {
             const fail = (e) => { if (e) e.writeError = true; reject(e); };
@@ -1437,6 +1518,26 @@ ${ruleLine(process.env, 60)}\n`);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
+      }
+      if (options.manifest) {
+        const exportLib = require('../lib/evidence_export');
+        try {
+          const exportSha256 = await exportLib.sha256File(options.output);
+          const text = exportLib.manifestText({
+            format, source: require('path').basename(EVIDENCE_FILE), res, exportSha256, generator: `zn-gate ${VERSION}`,
+          });
+          fs.writeFileSync(`${options.output}.manifest.json`, text, { flag: 'wx' });
+        } catch (err) {
+          if (err && err.code === 'EEXIST') {
+            process.stderr.write(`zn-gate: ${options.output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.
+`);
+            process.exitCode = 2;
+            return;
+          }
+          process.stderr.write(`zn-gate: the manifest was not written. ${err.message}\n`);
+          process.exitCode = 1;
+          return;
+        }
       }
       // A log whose chain does not verify in full is not proof: exit 1, like --verify.
       if (!res.valid) process.exitCode = 1;

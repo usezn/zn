@@ -212,6 +212,28 @@ function makeTeamOps(ctx) {
     } catch (err) { /* a status report never fails a sync */ }
   }
 
+  /*
+   * One last report before `status-report stop` turns the report off, so the organization has the current state at the
+   * moment it goes quiet. The body keeps the closed schema of every other report (no new field or word); a failure
+   * never blocks the stop (it is the person's decision). Returns {sent, error}.
+   */
+  async function sendFinalStatusReport(snap) {
+    try {
+      const st = await policyState();
+      let hooks = null;
+      try { hooks = (ctx.listHooks || require('../hooks-list').listHooks)({}); } catch (err) { hooks = null; }
+      const body = statusReport.buildStatusBody({ version: VERSION, os: osName(), policyState: st.state, policyVersion: st.version, hooks });
+      if (!body || !statusReport.isAllowedBody(body)) return { sent: false, error: 'no report could be built' };
+      // The confirmation can take a while: a leave, a rejoin or a withdrawn consent in between means nothing is sent.
+      const cur = await team();
+      if (!sameMembership(cur, snap) || !cur.status_report || cur.status_report.accepted !== true) return { sent: false, error: 'the membership changed before the report was sent' };
+      const r = await apiFor(cur).reportStatus(body);
+      return r.done === true ? { sent: true } : { sent: false, error: printable(r.error, 200) || 'unknown' };
+    } catch (err) {
+      return { sent: false, error: 'the final report could not be sent' };
+    }
+  }
+
   /* What a new policy has to beat: the version held and its canonical digest (same version, other content = refused). */
   function heldFloor(p) {
     if (!p) return { minVersion: 0, heldDigest: null, heldExpiresAt: null };
@@ -559,13 +581,16 @@ function makeTeamOps(ctx) {
     /**
      * teamStatusReport({action}) -> {on, org, ...}. For a machine that joined before status reports existed (the join
      * dialog now lists them, which covers a new join): `accept` turns the report on after a dialog on the vault's own
-     * channel, once; `stop` turns it off again (no dialog: it only sends less). Without the acceptance nothing is sent.
+     * channel, once; `stop` turns it off again after the same kind of dialog (an injected agent must not be able to
+     * silence the report before it breaks the hooks), and sends one last report first so the organization sees the
+     * current state. Without the acceptance nothing is sent.
      */
     async teamStatusReport(args) {
       const action = args && typeof args === 'object' ? args.action : undefined;
       if (action !== 'accept' && action !== 'stop') throw znError(CODES.POLICY_DENIED, messages.TEAM_INVALID_REQUEST);
       const t = await team();
       if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
+      const snap = membership(t); // taken before any confirmation: what the person confirmed is this membership
       const orgLabel = t.org_name ? t.org_name + ' (' + t.org + ')' : t.org;
       if (action === 'accept') {
         if (t.status_report && t.status_report.accepted === true) return { on: true, already: true, org: t.org, org_name: t.org_name || null };
@@ -582,14 +607,25 @@ function makeTeamOps(ctx) {
           footer: 'If you did not just run `zn team status-report accept` yourself, choose Deny.',
         }, { mode: 'set', reason: 'team_status_report' });
       }
-      const snap = membership(t);
+      let finalReport = null;
+      if (action === 'stop') {
+        if (!(t.status_report && t.status_report.accepted === true)) return { on: false, already: true, org: t.org, org_name: t.org_name || null };
+        await confirmOutOfBand({
+          kind: 'team',
+          title: 'stop the status report to organization ' + t.org + '?',
+          warnings: ['Your administrators will no longer see the state of zn-gate on this machine, and will see it stop reporting.'],
+          fields: [['Organization', orgLabel]],
+          footer: 'If you did not just run `zn team status-report stop` yourself, choose Deny.',
+        }, { mode: 'set', reason: 'team_status_report_stop' });
+        finalReport = await sendFinalStatusReport(snap);
+      }
       const r = await updateTeam((tt) => {
         if (action === 'accept') tt.status_report = { accepted: true, accepted_at: new Date().toISOString(), via: 'accept' };
         else delete tt.status_report;
         writeAudit({ mode: 'set', decision: 'allow', reason: action === 'accept' ? 'team_status_report_on' : 'team_status_report_off' });
       }, snap);
       if (!r) throw znError(CODES.POLICY_DENIED, 'the organization membership changed meanwhile; run the command again');
-      return { on: action === 'accept', org: t.org, org_name: t.org_name || null };
+      return { on: action === 'accept', org: t.org, org_name: t.org_name || null, ...(finalReport ? { final_report: finalReport } : {}) };
     },
 
     /** teamInfo() -> what `zn team status` shows. Never the token. */

@@ -33,7 +33,7 @@ The file is written at once and replaces an existing file of the same name witho
 With `--format` left out, you get one JSON record per line. Any other format is refused with exit code `2`:
 
 ```text
-zn-gate: unknown --format "xml". The valid formats are jsonl and csv.
+zn-gate: unknown --format "xml". The valid formats are jsonl, csv, timesketch, timesketch-csv and ocsf.
 ```
 
 ## What is in the file
