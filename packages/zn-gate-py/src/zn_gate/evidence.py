@@ -43,7 +43,8 @@ def _open_for_append(file_path: str) -> TextIO:
     file that is readable by others is restricted to 0600 (POSIX only). If the file is
     not empty and its last byte is not a newline, a newline is written first so the next
     record starts its own line (the caller holds the write lock)."""
-    fd = os.open(file_path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    # O_BINARY (Windows only): no \n -> \r\n translation, so the ledger and its exports are the same bytes everywhere.
+    fd = os.open(file_path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
     try:
         st = os.fstat(fd)
         if os.name == "posix" and st.st_mode & 0o077:
@@ -52,7 +53,7 @@ def _open_for_append(file_path: str) -> TextIO:
             os.lseek(fd, st.st_size - 1, os.SEEK_SET)
             if os.read(fd, 1) != b"\n":
                 os.write(fd, b"\n")  # O_APPEND: always lands at the end of the file
-        return os.fdopen(fd, "a", encoding="utf-8")
+        return os.fdopen(fd, "a", encoding="utf-8", newline="")  # "\n" stays "\n"
     except BaseException:
         os.close(fd)
         raise

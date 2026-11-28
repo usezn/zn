@@ -186,7 +186,7 @@ def _run_cli_export(monkeypatch, capsys, ledger_path, fmt, expect_code=0):
 def test_cli_export_jsonl_matches_node_bytes(tmp_path, monkeypatch, capsys):
     ledger = tmp_path / "evidence.jsonl"
     text = "".join(json.dumps(r) + "\n" for r in _FIXED_RECORDS)
-    ledger.write_text(text, encoding="utf-8")
+    ledger.write_bytes(text.encode("utf-8"))  # bytes: write_text writes \r\n on Windows
 
     # The fixed records do not form a valid chain, so the export exits 1 (as the npm package does).
     out = _run_cli_export(monkeypatch, capsys, ledger, "jsonl", expect_code=1)
@@ -197,7 +197,7 @@ def test_cli_export_jsonl_matches_node_bytes(tmp_path, monkeypatch, capsys):
 
 def test_cli_export_csv_matches_node_bytes(tmp_path, monkeypatch, capsys):
     ledger = tmp_path / "evidence.jsonl"
-    ledger.write_text("".join(json.dumps(r) + "\n" for r in _FIXED_RECORDS), encoding="utf-8")
+    ledger.write_bytes("".join(json.dumps(r) + "\n" for r in _FIXED_RECORDS).encode("utf-8"))
     expected = (
         _CSV_HEADER + "\n"
         + f'"2026-01-01T00:00:00Z","allow","tool-call","bash","agent-a","","","{"a" * 64}","{"b" * 64}","{GENESIS_HASH}","15"\n'
