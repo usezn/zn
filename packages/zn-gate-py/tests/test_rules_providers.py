@@ -7,6 +7,7 @@ runs findPatterns() in a subprocess; the checkout must be next to this package
 and `node` must be installed, otherwise the test is skipped.
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -39,6 +40,16 @@ UR_ = ALNUM + "-_"
 
 def _uuid():
     return "-".join([_body(8, HX_), _body(4, HX_), _body(4, HX_), _body(4, HX_), _body(12, HX_)])
+
+
+def _hbody(label, n, alphabet):
+    """A fake body of n characters that does not repeat a pattern: bytes of a SHA-256 stream, mapped onto the alphabet."""
+    out, c = [], 0
+    while len(out) < n:
+        for b in hashlib.sha256(("%s|%d" % (label, c)).encode("utf-8")).digest():
+            out.append(alphabet[b % len(alphabet)])
+        c += 1
+    return "".join(out[:n])
 
 
 CASES = [
@@ -152,6 +163,12 @@ CASES = [
     ("secret:azure_ad_client_secret", "AZURE_AD_CLIENT_SECRET", "abc1Q~" + _body(33), "abc1Q~" + _body(29)),
     ("secret:url_password", "URL_PASSWORD", "https://svc-user:Zq8Lm2Xv9Pt4@files.test/path",
      "https://svc-user:Zq8@files.test/path"),
+    ("secret:cloudflare_api_token", "CLOUDFLARE_API_TOKEN", "the api token cfut_" + _hbody("cf1", 40, UR_) + " was pasted",
+     "the api token cfut_" + _hbody("cf2", 8, UR_) + " was short"),
+    ("secret:sentry_org_token", "SENTRY_ORG_TOKEN", "the org token sntrys_" + _hbody("so1", 120, B64) + "_" + _hbody("so2", 43, B64) + " was pasted",
+     "the org token sntrys_" + _hbody("so3", 12, B64) + "_" + _hbody("so4", 43, B64) + " was short"),
+    ("secret:sentry_setup_code", "SENTRY_SETUP_CODE", "the setup code sntryc_" + _hbody("sc1", 80, B64) + "_" + _hbody("sc2", 43, B64) + " was pasted",
+     "the setup code sntryc_" + _hbody("sc3", 8, B64) + "_" + _hbody("sc4", 43, B64) + " was short"),
     ("secret:bearer_token", None, "Authorization: Bearer " + _body(32),
      "Authorization: Bearer __ZN_GITHUB_TOKEN__"),
 ]
@@ -232,6 +249,33 @@ class TestProviderFormatsParity(unittest.TestCase):
                 _, found = R.redact_secrets(text)
                 self.assertNotIn(rule_id, [d["rule"] for d in found])
                 self.assertNotIn(node_type, types)
+
+    def test_additional_documented_formats(self):
+        # The other GitLab prefixes (same rule as glpat-), and the two rules that need their key name: a New Relic
+        # license key (40 hex under NEW_RELIC_LICENSE_KEY) and an npm access token in hex (under _authToken).
+        cases = []
+        for i, pre in enumerate(["gloas-", "glimt-", "glagent-", "glwt-", "glffct-"]):
+            cases.append(("secret:gitlab_token", "GITLAB_TOKEN", "the value " + pre + _hbody("gl%d" % i, 40, UR_) + " was pasted",
+                          "the value " + pre + _hbody("gn%d" % i, 19, UR_) + " was pasted"))
+        cases.append(("secret:newrelic_license_key", "NEWRELIC_LICENSE_KEY", "NEW_RELIC_LICENSE_KEY=" + _hbody("nr1", 40, HEX),
+                      "NEW_RELIC_LICENSE_KEY is a 39 character value " + _hbody("nr2", 39, HEX)))
+        cases.append(("secret:newrelic_license_key", "NEWRELIC_LICENSE_KEY", 'new_relic_license_key: "' + _hbody("nr3", 40, HEX) + '"',
+                      "the account id " + _hbody("nr4", 40, HEX) + " is public"))
+        cases.append(("secret:npm_auth_hex", "NPM_AUTH_HEX", "//registry.npmjs.org/:_authToken=" + _hbody("np1", 36, HEX),
+                      "the _authToken setting reads NPM_TOKEN; the hash is " + _hbody("np2", 40, HEX)))
+        texts = []
+        for _, _, pos, neg in cases:
+            texts.extend([pos, neg])
+        node = _node_types(texts)
+        for i, (rule_id, node_type, pos, neg) in enumerate(cases):
+            with self.subTest(rule=rule_id, text=pos[:40]):
+                redacted, found = R.redact_secrets(pos)
+                self.assertIn(rule_id, [d["rule"] for d in found])
+                self.assertNotIn(pos[-20:], redacted)
+                self.assertIn(node_type, node[2 * i])
+                redacted_neg, found_neg = R.redact_secrets(neg)
+                self.assertEqual(redacted_neg, neg)
+                self.assertNotIn(node_type, node[2 * i + 1])
 
     def test_every_provider_rule_has_a_case(self):
         covered = {rule_id for rule_id, _, _, _ in CASES}

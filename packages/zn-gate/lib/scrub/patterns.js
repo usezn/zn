@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-24.2';
+const SCRUB_RULES_VERSION = '2026-11-28.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -528,7 +528,7 @@ const PATTERNS = [
   { type: 'GITHUB_TOKEN', hints: ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'], re: re(NB + 'gh[pousr]_[A-Za-z0-9]{36,255}' + NA),
     check: (v) => looksRandom(v.slice(4), 2, 3.5) },
   { type: 'GITHUB_PAT', hints: ['github_pat_'], re: re(NB + 'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + NA) },
-  { type: 'GITLAB_TOKEN', hints: ['glpat-', 'gldt-', 'glrt-', 'glptt-', 'glcbt-', 'glft-', 'glsoat-'], re: re(NB + 'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + NA),
+  { type: 'GITLAB_TOKEN', hints: ['glpat-', 'gldt-', 'glrt-', 'glptt-', 'glcbt-', 'glft-', 'glsoat-', 'gloas-', 'glimt-', 'glagent-', 'glwt-', 'glffct-'], re: re(NB + 'gl(?:pat|dt|rt|ptt|cbt|ft|soat|oas|imt|agent|wt|ffct)-[A-Za-z0-9_-]{20,}' + NA),
     check: (v) => looksRandom(v.slice(v.indexOf('-') + 1), 2, 3.3) },
   { type: 'SLACK_TOKEN', hints: ['xox', 'xapp-'], re: re(NB + '(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-\\d-[A-Z0-9]{6,}-\\d{6,}-[a-f0-9]{32,})' + NA) },
   { type: 'SLACK_WEBHOOK', hints: ['hooks.slack.com'], re: re('https://hooks\\.slack\\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}') },
@@ -545,6 +545,11 @@ const PATTERNS = [
   { type: 'HF_TOKEN', hints: ['hf_'], re: re(NB + 'hf_[A-Za-z0-9]{34,40}' + NA),
     check: (v) => (/^[A-Za-z]{34}$/.test(v.slice(3)) && !/^[a-z]*(?:[A-Z][a-z]{2,})*[A-Z]{0,3}[a-z]{0,2}$/.test(v.slice(3))) ||
       looksRandom(v.slice(3), 3, 3.8) },
+  /* npm access token in the older hex form (no npm_ prefix; the docs give no length, so 32 digits is the floor),
+   * under an _authToken label (an .npmrc line). Without the label a hex value (a git SHA, a digest) is left alone. */
+  { type: 'NPM_AUTH_HEX', hints: null, prefilter: /_authtoken/i,
+    re: re('(?<![A-Za-z0-9])_authtoken["\']?[ \t]*[=:][ \t]*["\']?([0-9a-f]{32,})(?![A-Za-z0-9])', 'i'),
+    group: 1 },
   { type: 'NPM_TOKEN', hints: ['npm_'], re: re(NB + 'npm_[A-Za-z0-9]{36}' + NA),
     check: (v) => looksRandom(v.slice(4), 3, 3.8) },
   { type: 'PYPI_TOKEN', hints: ['pypi-'], re: re(NB + 'pypi-AgE[A-Za-z0-9_-]{50,}' + NA) },
@@ -570,6 +575,11 @@ const PATTERNS = [
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
   { type: 'VAULT_TOKEN', hints: ['hvs.', 'hvb.'], re: re(NB + 'hv[sb]\\.[A-Za-z0-9_-]{24,}' + NA) },
   { type: 'DOPPLER_TOKEN', hints: ['dp.'], re: re(NB + 'dp\\.(?:st|pt|sa|scim|audit|ct)\\.[A-Za-z0-9_.-]{40,}' + NA) },
+  /* New Relic license key: 40 hex digits under a NEW_RELIC_LICENSE_KEY label (env, YAML or JSON, quoted or not;
+   * any case). The key has no prefix, so an unlabelled 40-hex value (a git SHA, a digest) is left alone. */
+  { type: 'NEWRELIC_LICENSE_KEY', hints: null, prefilter: /new_?relic_license_key/i,
+    re: re('(?<![A-Za-z0-9])(?:new_?relic_license_key)["\']?[ \t]*[=:][ \t]*["\']?([0-9a-f]{40})(?![A-Za-z0-9])', 'i'),
+    group: 1 },
   { type: 'NEWRELIC_KEY', hints: ['NRAK-', 'NRII-'], re: re(NB + 'NR(?:AK|II)-[A-Z0-9]{27}' + NA) },
   { type: 'GROQ_KEY', hints: ['gsk_'], re: re(NB + 'gsk_[A-Za-z0-9]{52}' + NA) },
   { type: 'XAI_KEY', hints: ['xai-'], re: re(NB + 'xai-[A-Za-z0-9]{80}' + NA) },
@@ -672,6 +682,12 @@ const PATTERNS = [
     check: (v) => prefixedRandom(v, /^rubygems_/) },
   { type: 'BREVO_KEY', hints: ['xkeysib-'], re: re(NB + 'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + NA),
     check: (v) => prefixedRandom(v, /^xkeysib-/) },
+  { type: 'CLOUDFLARE_API_TOKEN', hints: ['cfut_'], re: re(NB + 'cfut_[A-Za-z0-9_-]{20,}' + NA) },
+  /* Sentry organization auth token: sntrys_, then a payload of about 180 to 250 characters, '_', 43 characters. */
+  { type: 'SENTRY_ORG_TOKEN', hints: ['sntrys_'], re: re(NB + 'sntrys_[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}' + NA) },
+  /* Sentry single-use codes (CLI setup, agent handoff; both expire after five minutes). */
+  { type: 'SENTRY_SETUP_CODE', hints: ['sntryc_', 'sntryh_'],
+    re: re(NB + '(?:sntryc_[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}|sntryh_[A-Za-z0-9_-]{43})' + NA) },
   { type: 'SENTRY_USER_TOKEN', hints: ['sntryu_'], re: re(NB + 'sntryu_[a-f0-9]{64}' + NA),
     check: (v) => prefixedRandom(v, /^sntryu_/) },
   { type: 'SHIPPO_KEY', hints: ['shippo_'], re: re(NB + 'shippo_(?:live|test)_[a-fA-F0-9]{40}' + NA),

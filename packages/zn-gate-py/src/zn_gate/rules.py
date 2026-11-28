@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.2
+RULES_VERSION: 2026-11-28.3
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.2"
+RULES_VERSION = "2026-11-28.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1534,7 +1534,7 @@ def _pv_bearer_not_secret(token: str, prefix: str) -> bool:
 
 PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:aws_key_id", _rc(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
-    ("secret:gitlab_token", _rc(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
+    ("secret:gitlab_token", _rc(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat|oas|imt|agent|wt|ffct)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
     ("secret:slack_token", _rc(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
     ("secret:slack_webhook", _rc(r'https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}'), "[REDACTED_SLACK_WEBHOOK]"),
     ("secret:discord_webhook", _rc(r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{15,20}/[A-Za-z0-9_-]{60,}'), "[REDACTED_DISCORD_WEBHOOK]"),
@@ -1590,6 +1590,9 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:readme_key", _rc(_TB + r'rdme_[a-z0-9]{70}' + _TA), "[REDACTED_README_KEY]"),
     ("secret:rubygems_key", _rc(_TB + r'rubygems_[a-f0-9]{48}' + _TA), "[REDACTED_RUBYGEMS_KEY]"),
     ("secret:brevo_key", _rc(_TB + r'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + _TA), "[REDACTED_BREVO_KEY]"),
+    ("secret:cloudflare_api_token", _rc(_TB + r'cfut_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_CLOUDFLARE_API_TOKEN]"),
+    ("secret:sentry_org_token", _rc(_TB + r'sntrys_[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}' + _TA), "[REDACTED_SENTRY_ORG_TOKEN]"),
+    ("secret:sentry_setup_code", _rc(_TB + r'(?:sntryc_[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}|sntryh_[A-Za-z0-9_-]{43})' + _TA), "[REDACTED_SENTRY_SETUP_CODE]"),
     ("secret:sentry_user_token", _rc(_TB + r'sntryu_[a-f0-9]{64}' + _TA), "[REDACTED_SENTRY_USER_TOKEN]"),
     ("secret:shippo_key", _rc(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA), "[REDACTED_SHIPPO_KEY]"),
     ("secret:openshift_token", _rc(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_OPENSHIFT_TOKEN]"),
@@ -1672,7 +1675,10 @@ PROVIDER_VALUE_FILTERS: Dict[str, Any] = {
 # matched without case rules).
 PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
     "secret:aws_key_id": ("AKIA", "ASIA", "ABIA", "ACCA"),
-    "secret:gitlab_token": ("glpat-", "gldt-", "glrt-", "glptt-", "glcbt-", "glft-", "glsoat-"),
+    "secret:gitlab_token": ("glpat-", "gldt-", "glrt-", "glptt-", "glcbt-", "glft-", "glsoat-", "gloas-", "glimt-", "glagent-", "glwt-", "glffct-"),
+    "secret:cloudflare_api_token": ("cfut_",),
+    "secret:sentry_org_token": ("sntrys_",),
+    "secret:sentry_setup_code": ("sntryc_", "sntryh_"),
     "secret:slack_token": ("xox", "xapp-"),
     "secret:slack_webhook": ("hooks.slack.com",),
     "secret:discord_webhook": ("/api/webhooks/",),
@@ -1765,6 +1771,12 @@ SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
     # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
     ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
+    # New Relic license key: 40 hex digits under a NEW_RELIC_LICENSE_KEY label (any case); no prefix, so an
+    # unlabelled 40-hex value (a git SHA, a digest) stays visible. Same shape as the Node.js rule.
+    ("secret:newrelic_license_key", _rc(r'((?<![A-Za-z0-9])(?:new_?relic_license_key)["\']?[ \t]*[=:][ \t]*["\']?)([0-9a-f]{40})' + _ALNUM_A, re.IGNORECASE | re.ASCII), r'\1[REDACTED_NEWRELIC_LICENSE_KEY]'),
+    # npm access token in the older hex form (no npm_ prefix): 32 or more hex digits under an _authToken
+    # label (an .npmrc line). The docs give no length; without the label a hex value is left alone.
+    ("secret:npm_auth_hex", _rc(r'((?<![A-Za-z0-9])_authtoken["\']?[ \t]*[=:][ \t]*["\']?)([0-9a-f]{32,})' + _ALNUM_A, re.IGNORECASE | re.ASCII), r'\1[REDACTED_NPM_AUTH_HEX]'),
     # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
     ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
     ("secret:github_token#scrub_pat", _rc(_TB + r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
