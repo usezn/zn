@@ -49,7 +49,7 @@ These limits are stated on this page and in [compat.md](../compat.md):
 - Support is best effort: Cursor does not document the input of every tool, so `preToolUse` checks writes and deletes as well as it can. A write whose file cannot be read is refused.
 - A Grep without a `path` searches the whole workspace, so files that zn would shadow or refuse can be found that way. zn does not filter those results.
 - A secret written inside inline code is checked only where zn can read the path as a word.
-- Only `beforeReadFile` and `beforeSubmitPrompt` fail closed. If the hook for an MCP call, a shell command or `preToolUse` crashes or times out, the call runs unchecked.
+- Only `beforeReadFile` and `beforeSubmitPrompt` are fail-closed in Cursor's own settings. For shell commands, MCP calls and `preToolUse`, zn answers a block itself about 4 seconds before Cursor's 30-second timeout (at 26 seconds), and its launcher blocks when the Node.js zn-gate was installed with is gone. A hook that Cursor cannot run at all (the command is missing or not executable) lets the call run, because Cursor proceeds when a hook fails.
 - `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
 - MCP arguments over 1 MB are denied, because zn cannot check them.
 - The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.

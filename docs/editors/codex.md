@@ -40,7 +40,7 @@ To undo it: `zn hooks uninstall codex`.
 | Reviews the final answer of the model | Warns you; the warning does not reach the model. It blocks, so Codex asks the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json` |
 | Adds a reminder for the model at session start | Yes, context only: it checks nothing and never stops the session |
 
-**Not covered:** a `PreToolUse` hook of another tool can answer "allow" with a changed command, and Codex then runs the changed command, which zn-gate did not check before it ran (the `PostToolUse` check still hides secret values in the output). When the zn hook cannot start at all, Codex reports a hook failure and runs the call. The Codex documentation calls the hooks "a guardrail, not an enforcement boundary". Keep secrets in the zn-gate vault (`zn unlock`, then `zn env shadow .env`) so your files hold markers instead of real values: hooks are a guardrail, not a sandbox.
+**Not covered:** a `PreToolUse` hook of another tool can answer "allow" with a changed command, and Codex then runs the changed command, which zn-gate did not check before it ran (the `PostToolUse` check still hides secret values in the output). When the zn hook cannot start, Codex runs the call only if the hook is a plain command from an older zn-gate release that predates the launcher: a user install writes a launcher that blocks instead (see The hooks below). Run `zn hooks install codex` again to replace an old hook. The Codex documentation calls the hooks "a guardrail, not an enforcement boundary". Keep secrets in the zn-gate vault (`zn unlock`, then `zn env shadow .env`) so your files hold markers instead of real values: hooks are a guardrail, not a sandbox.
 
 ## Technical reference
 
