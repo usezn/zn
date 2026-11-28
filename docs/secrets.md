@@ -170,6 +170,8 @@ name in text is never touched. Only the value is replaced; the key stays.
   `ubuntu` or similar. An address needs a number and at least two words, so
   URLs, e-mails, IPs and wallet addresses are skipped.
 
+The Python package masks the same name and address values (not the username) in the preview of `zn-gate test`.
+
 They are personal data, not secrets: they follow the scrubber's `pii` setting
 (`pii: false` turns all personal data off) and can be switched off one by one
 with `pii: { name: false, address: false, username: false }`. They are on by

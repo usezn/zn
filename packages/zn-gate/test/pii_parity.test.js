@@ -27,7 +27,7 @@ if (process.env.ZN_UPDATE_PII_PARITY === '1') {
 
 test('the PII corpus has cases of every ported type', () => {
   const seen = new Set(fixture.cases.flatMap((c) => c.spans.map((s) => s[0])));
-  for (const t of ['EMAIL', 'PHONE', 'IBAN', 'CARD', 'DNI', 'NIE', 'SSN']) assert.ok(seen.has(t), t);
+  for (const t of ['EMAIL', 'PHONE', 'IBAN', 'CARD', 'DNI', 'NIE', 'SSN', 'PERSON_NAME', 'POSTAL_ADDRESS']) assert.ok(seen.has(t), t);
 });
 
 fixture.cases.forEach((c, i) => {

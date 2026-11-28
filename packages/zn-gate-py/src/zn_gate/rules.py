@@ -21,6 +21,7 @@ import sys
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
+from urllib.parse import unquote_to_bytes
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 from ._result_screen import (
     CUSTOM_TEXT_REASON as CUSTOM_TEXT_REASON,
@@ -2329,8 +2330,8 @@ def mask_token_runs(text: str) -> str:
 # numbers, Spanish DNI/NIE and US SSN, each with the same pattern and the same validator, so the ordinary
 # numbers that fail a checksum stay as they are. tests/test_pii_parity.py and test/pii_parity.test.js read
 # the same corpus (test/fixtures/pii_parity_cases.json). Left out on purpose: IPv4 (off by default in
-# Node.js) and the keyed fields (person name, postal address, username), which Node.js finds only next to an
-# explicit header or form key with a Unicode-aware state machine.
+# Node.js) and the keyed username. The keyed person name and postal address are ported (see the block before
+# find_pii_spans): they are found only next to an explicit header, form or JSON key.
 # The value is the whole quoted string (single or double quotes, with backslash escapes), or, unquoted, the rest of the token.
 _PREVIEW_PASSWORD_RE = _rc(r"""(?i)\b(password|passwd|pwd)(\s*[:=]\s*)("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\S+)""")
 _PII_EMAIL_DOMAIN_RE = _rc(r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])", re.ASCII)
@@ -2523,6 +2524,342 @@ def _find_emails(text: str) -> List[Tuple[int, int]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Keyed personal fields: a person's name and a postal address. Port of the keyed finders of the Node.js scrubber
+# (packages/zn-gate/lib/scrub/patterns.js: keyedFinder, validPersonName, validHanName, validAddress, findCjkName,
+# findShipTo). They are found only next to an explicit key (an HTTP header such as X-User-Name, a form or query key
+# such as name= or address=, a JSON or YAML key such as full_name or street, a CJK name label, "ship to"); the value
+# alone is never matched. Only the value is the span. The tables below are copied from the Node.js file; the shared
+# corpus test/fixtures/pii_parity_cases.json keeps both sides equal.
+# ---------------------------------------------------------------------------
+_NOT_A_PERSON = frozenset((
+    "admin", "administrator", "bot", "ci", "default", "dependabot", "deploy", "ec2-user", "example", "git",
+    "github-actions", "guest", "me", "mysql", "name", "nginx", "nobody", "postgres", "root", "runner", "self",
+    "service", "system", "test", "tester", "ubuntu", "user", "username", "www-data",
+))
+_NAME_PARTICLES = frozenset((
+    "al", "bin", "da", "das", "de", "del", "di", "do", "dos", "du", "el", "la", "van", "von", "y",
+))
+_NAME_TITLE_WORDS = frozenset((
+    "aeroport", "aeroporto", "aeropuerto", "airport", "avenida", "avenue", "biblioteca", "bibliotheque",
+    "bluetooth", "boulevard", "boutique", "bundle", "cafe", "calle", "camiseta", "carretera", "catedral",
+    "cathedral", "cathedrale", "center", "central", "centre", "centro", "chair", "chapter", "chaussures",
+    "chemin", "church", "cidade", "ciudad", "colecao", "coleccion", "colegio", "collection", "college",
+    "company", "corp", "corporation", "deluxe", "ecole", "edicao", "edicion", "edition", "eglise", "escola",
+    "estacao", "estacion", "estrada", "gare", "gmbh", "guide", "handbook", "headphones", "hopital", "hospital",
+    "hotel", "hub", "iglesia", "igreja", "ile", "ilha", "inc", "invoice", "isla", "jacket", "kit", "lac",
+    "lago", "library", "limited", "lite", "llc", "loja", "ltd", "manual", "mercado", "mini", "model",
+    "montagne", "montana", "montanha", "mountain", "musee", "museo", "museu", "museum", "order", "organic",
+    "original", "paquete", "paseo", "place", "plage", "playa", "plus", "ponte", "portable", "praca", "praia",
+    "premium", "pro", "product", "project", "pueblo", "puente", "release", "report", "resort", "restaurant",
+    "restaurante", "rio", "riviere", "road", "rua", "rue", "school", "series", "speaker", "special", "square",
+    "station", "street", "suite", "summary", "tienda", "travessa", "ultra", "universidad", "universidade",
+    "universite", "university", "valley", "version", "vila", "village", "ville", "volume", "wallet",
+    "wireless", "zapatillas",
+))
+_NAME_LINK_WORDS = frozenset((
+    "and", "at", "avec", "com", "em", "et", "for", "in", "mit", "of", "on", "para", "por", "pour", "sous",
+    "sur", "the", "to", "und", "with",
+))
+_NAME_TITLE_FIRST = frozenset((
+    "fort", "las", "les", "los", "new", "puerto", "san", "santa", "sao", "the", "uma", "une",
+))
+_STREET_WORDS = frozenset((
+    "alameda", "allee", "av", "avda", "ave", "avenida", "avenue", "bd", "blvd", "boulevard", "c/", "calle",
+    "camino", "carretera", "chemin", "circle", "close", "corso", "cours", "court", "crescent", "ct", "dr",
+    "drive", "estrada", "glorieta", "highway", "hwy", "impasse", "lane", "largo", "ln", "parkway", "paseo",
+    "piazza", "pkwy", "pl", "place", "plaza", "praca", "quai", "rd", "road", "ronda", "row", "rua", "rue",
+    "sq", "square", "st", "strada", "street", "terrace", "travesia", "travessa", "via", "viale", "vicolo",
+    "way",
+))
+_CJK_NOT_A_NAME = frozenset((
+    "なし", "不详", "保密", "匿名", "姓名", "必填", "未知", "氏名", "無し", "성명", "없음",
+))
+_HAN_SURNAMES = frozenset((
+    "丁", "万", "严", "于", "付", "任", "何", "余", "侯", "冯", "刘", "卢", "史", "叶", "向", "吕", "吴", "周", "唐", "夏", "姚",
+    "姜", "孔", "孙", "孟", "宋", "尹", "崔", "廖", "张", "彭", "徐", "戴", "方", "曹", "曾", "朱", "李", "杜", "杨", "林", "梁",
+    "武", "段", "毛", "江", "汤", "汪", "沈", "潘", "熊", "王", "田", "白", "石", "秦", "程", "罗", "胡", "苏", "范", "莫", "萧",
+    "董", "蒋", "蔡", "薛", "袁", "覃", "许", "谢", "谭", "贺", "贾", "赵", "邓", "邱", "邵", "邹", "郑", "郝", "郭", "金", "钟",
+    "钱", "闫", "陆", "陈", "陶", "雷", "韦", "韩", "顾", "马", "高", "魏", "黄", "黎", "龙", "龚",
+))
+_HAN_COMPOUND = frozenset(["欧阳","司马","上官","诸葛","东方","皇甫","尉迟","公孙","慕容","令狐","司徒","夏侯","宇文","长孙","轩辕"])
+_KEYED_PLACEHOLDER_RE = _rc(r"(?:\{.*\}|\$.*|<.*>|\[.*\]|%[sd]|__ZN_.*|null|undefined|none|nil|true|false|n/a|na|anonymous|unknown|-+|\*+|x+)", re.IGNORECASE | re.ASCII)
+_HAN_ORG_END = frozenset("市省县区路街村镇乡店院校司厂局站楼园馆")
+_HAN_RANGES = ((0x2E80, 0x2E99), (0x2E9B, 0x2EF3), (0x2F00, 0x2FD5), (0x3005, 0x3005), (0x3007, 0x3007), (0x3021, 0x3029),
+               (0x3038, 0x303B), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFA6D), (0xFA70, 0xFAD9), (0x20000, 0x2A6DF),
+               (0x2A700, 0x2B739), (0x2B740, 0x2B81D), (0x2B820, 0x2CEA1), (0x2CEB0, 0x2EBE0), (0x2F800, 0x2FA1D),
+               (0x30000, 0x3134A), (0x31350, 0x323AF))
+_KANA_HANGUL_RANGES = ((0x3041, 0x3096), (0x309D, 0x309F), (0x30A1, 0x30FA), (0x30FD, 0x30FF), (0x31F0, 0x31FF), (0x32D0, 0x32FE),
+                       (0x3300, 0x3357), (0xFF66, 0xFF6F), (0xFF71, 0xFF9D), (0x1100, 0x11FF), (0x302E, 0x302F), (0x3131, 0x318E),
+                       (0x3200, 0x321E), (0x3260, 0x327E), (0xA960, 0xA97C), (0xAC00, 0xD7A3), (0xD7B0, 0xD7C6), (0xD7CB, 0xD7FB),
+                       (0xFFA0, 0xFFBE), (0xFFC2, 0xFFC7), (0xFFCA, 0xFFCF), (0xFFD2, 0xFFD7), (0xFFDA, 0xFFDC))
+_STREET_SUFFIX_RE = _rc(r"(?:strasse|gasse|weg|platz|allee|ring|damm|ufer)\Z")
+_POSTAL_CODE_RE = _rc(r"(?:\A|[\s,])(?:\d{5}(?:-\d{4})?|\d{4}-\d{3}|\d{6}|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}|[A-Z]\d[A-Z] ?\d[A-Z]\d)(?=\Z|[\s,])", re.ASCII)
+_HOUSE_NUMBER_RE = _rc(r"\d{1,5}[A-Za-z]?(?:[-/]\d{1,4})?", re.ASCII)
+_ASCII_LETTER_WORD_RE = _rc(r"[^\W\d_]{3,}")
+_STREET_WORD_RE = _rc(r"(?<![^\W\d_])(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|terrace|ter|way|court|ct|place|pl|square|sq|highway|hwy|parkway|pkwy|circle|cir|alley)\.?(?![^\W\d_])", re.IGNORECASE)
+_STREET_FIRST_RE = _rc(r"(?:[0-9]|(?:calle|avenida|rue|via|plaza|paseo)[ \t])", re.IGNORECASE)
+_STREET_PREFIX_RE = _rc(r"(?:calle|avenida|rue|via|plaza|paseo)[ \t]", re.IGNORECASE)
+_FUNCTION_WORD_RE = _rc(r"(?<![^\W\d_])(?:by|for|of|in|the|and|or|to|from|on|at|with|a|an)(?![^\W\d_])")
+_SHIP_TO_RE = _rc(r"(?<![A-Za-z0-9_])ship(?:ping)?[ \t]+to[ \t]*:?[ \t]*", re.IGNORECASE | re.ASCII)
+_CJK_NAME_LABEL_RE = _rc("(?:姓名|氏名|성명)[ \\t]*[:：][ \\t]*[\"'“「『]?")
+_NAME_PREFILTER_RE = _rc(r"""X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=|full[ _]?name|姓名|氏名|성명""", re.IGNORECASE | re.ASCII)
+_ADDRESS_PREFILTER_RE = _rc(r"""X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=|street|address_?line|(?:shipping|billing)_?address|ship(?:ping)?[ \t]+to""", re.IGNORECASE | re.ASCII)
+
+
+def _u16len(s: str) -> int:
+    """Length in UTF-16 units, as String#length in JavaScript."""
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _in_ranges(c: str, ranges: Tuple[Tuple[int, int], ...]) -> bool:
+    o = ord(c)
+    return any(a <= o <= b for a, b in ranges)
+
+
+def _is_han(c: str) -> bool:
+    return _in_ranges(c, _HAN_RANGES)
+
+
+def _is_letter(c: str) -> bool:
+    return unicodedata.category(c)[0] == "L"
+
+
+def _plain_word(w: str) -> str:
+    s = "".join(ch for ch in unicodedata.normalize("NFD", w) if not unicodedata.category(ch).startswith("M"))
+    if s.endswith("."):
+        s = s[:-1]
+    return s.lower()
+
+
+def _decode_form_value(v: str) -> str:
+    s = v.replace("+", " ")
+    if re.search(r"%(?![0-9A-Fa-f]{2})", s):
+        return s
+    try:
+        return unquote_to_bytes(s).decode("utf-8")
+    except UnicodeDecodeError:
+        return s
+
+
+def _valid_han_name(d: str) -> bool:
+    chars = list(d)
+    if not 2 <= len(chars) <= 4 or not all(_is_han(c) for c in chars) or chars[-1] in _HAN_ORG_END:
+        return False
+    if len(chars) >= 3 and chars[0] + chars[1] in _HAN_COMPOUND:
+        return True
+    return chars[0] in _HAN_SURNAMES
+
+
+def _valid_person_name(d: str, strong: bool) -> bool:
+    n = _u16len(d)
+    if n < 2 or n > 80:
+        return False
+    if any(_is_han(c) for c in d):
+        return _valid_han_name(d)
+    words = re.split(r"\s+", d.strip())
+    if len(words) > 5:
+        return False
+    for w in words:
+        if not w or not _is_letter(w[0]) or not all(_is_letter(c) or c in "'.-" for c in w[1:]):
+            return False
+    if len(words) == 1:
+        return strong and _u16len(words[0]) >= 2 and words[0].lower() not in _NOT_A_PERSON
+    for w in words:
+        if w == w.lower() and w in _NAME_LINK_WORDS:
+            return False
+        if _plain_word(w) in _NAME_TITLE_WORDS:
+            return False
+    if _plain_word(words[0]) in _NAME_TITLE_FIRST and _u16len(words[0]) > 1 and not words[0].endswith("."):
+        return False
+    if strong:
+        return True
+    return all(unicodedata.category(w[0]) == "Lu" or w.lower() in _NAME_PARTICLES for w in words)
+
+
+def _has_two_letters(d: str) -> bool:
+    return any(_is_letter(a) and _is_letter(b) for a, b in zip(d, d[1:]))
+
+
+def _valid_address(d: str) -> bool:
+    n = _u16len(d)
+    if n < 6 or n > 160 or "://" in d or "@" in d or d[:2].lower() == "0x":
+        return False
+    if any(_is_han(c) for c in d):
+        return re.search(r"[0-9]", d) is not None and re.search("[路街道巷弄号]", d) is not None
+    tokens = [t for t in re.split(r"[\s,]+", d) if t]
+    if len(tokens) < 2 or re.search(r"[0-9]", d) is None or not _has_two_letters(d):
+        return False
+    plain = []
+    for t in tokens:
+        s = "".join(ch for ch in unicodedata.normalize("NFD", t) if not unicodedata.category(ch).startswith("M")).replace("ß", "ss")
+        plain.append((s[:-1] if s.endswith(".") else s).lower())
+    fused = any(_u16len(t) > 6 and _STREET_SUFFIX_RE.search(t) for t in plain)
+    has_number = any(_HOUSE_NUMBER_RE.fullmatch(t) for t in tokens)
+    postal = _POSTAL_CODE_RE.search(d) is not None
+    if not has_number and not postal:
+        return False
+    if fused:
+        return True
+    if len(tokens) >= 3 and any(t in _STREET_WORDS for t in plain):
+        return True
+    words = sum(1 for t in tokens if _ASCII_LETTER_WORD_RE.fullmatch(t))
+    if postal and words >= 1 and len(tokens) >= 3:
+        return True
+    return words >= 2 and bool(_HOUSE_NUMBER_RE.fullmatch(tokens[0]) or _HOUSE_NUMBER_RE.fullmatch(tokens[-1]))
+
+
+def _keyed_finder(headers: Tuple[str, ...], forms: Tuple[str, ...], valid: Callable[[str, bool], bool],
+                  weak_headers: Tuple[str, ...] = ()) -> Callable[[str], List[Tuple[int, int]]]:
+    hdr = _rc(r"(?<![A-Za-z0-9_-])(" + "|".join(headers + weak_headers) + r")[\"']?[ \t]*:[ \t]*([\"']?)", re.IGNORECASE | re.ASCII)
+    frm = _rc(r"(?<![A-Za-z0-9_.-])(" + "|".join(forms) + r")=", re.IGNORECASE | re.ASCII)
+    weak_re = _rc("(?:" + "|".join(weak_headers) + ")", re.IGNORECASE | re.ASCII) if weak_headers else None
+
+    def accept(raw: str, strong: bool, form: bool) -> bool:
+        if not raw:
+            return False
+        d = (_decode_form_value(raw) if form else raw).strip()
+        if _KEYED_PLACEHOLDER_RE.fullmatch(d):
+            return False
+        return valid(d, strong)
+
+    def find(text: str) -> List[Tuple[int, int]]:
+        out: List[Tuple[int, int]] = []
+        n = len(text)
+        pos = 0
+        while True:
+            m = hdr.search(text, pos)
+            if not m:
+                break
+            start = m.end()
+            quote = m.group(2)
+            i = start
+            while i < n:
+                c = text[i]
+                if c in "\n\r\"":
+                    break
+                if quote and c == quote:
+                    break
+                if c == "'" and not (i > 0 and _is_letter(text[i - 1]) and i + 1 < n and _is_letter(text[i + 1])):
+                    break
+                i += 1
+            end = i
+            while end > start and (text[end - 1].isspace() or text[end - 1] in ",;\\"):
+                end -= 1
+            strong = not (weak_re is not None and weak_re.fullmatch(m.group(1)))
+            if end > start and accept(text[start:end], strong, False):
+                out.append((start, end))
+            pos = max(m.end(), i)
+        pos = 0
+        while True:
+            m = frm.search(text, pos)
+            if not m:
+                break
+            key = m.group(1)
+            kstart = m.start()
+            before = text[kstart - 1] if kstart > 0 else "\n"
+            query = before in "?&"
+            if not query and before not in "\n\r":
+                pos = m.end()
+                continue
+            if not query and key == key.upper():
+                pos = m.end()
+                continue
+            start = m.end()
+            i = start
+            while i < n:
+                c = text[i]
+                if c in "\n\r&\"'":
+                    break
+                if query and c in " \t#":
+                    break
+                i += 1
+            end = i
+            while end > start and (text[end - 1].isspace() or text[end - 1] in ",;"):
+                end -= 1
+            strong = key.lower() != "name"
+            if end > start and accept(text[start:end], strong, True):
+                out.append((start, end))
+            pos = max(m.end(), i)
+        return out
+
+    return find
+
+
+_find_keyed_name = _keyed_finder(("X-User-?Name", "X-Full-?Name"), ("full_?name", "name"), _valid_person_name, ("full[ _]?name",))
+_find_keyed_address = _keyed_finder(("X-Address", "street_?address", "street", "address_?line_?[12]", "shipping_?address", "billing_?address"),
+                                    ("address",), lambda d, strong: _valid_address(d))
+
+
+def _is_cjk_name_char(c: str) -> bool:
+    return _is_han(c) or _in_ranges(c, _KANA_HANGUL_RANGES) or c in "ー·・"
+
+
+def _find_cjk_names(text: str) -> List[Tuple[int, int]]:
+    out: List[Tuple[int, int]] = []
+    pos = 0
+    while True:
+        m = _CJK_NAME_LABEL_RE.search(text, pos)
+        if not m:
+            break
+        start = m.end()
+        pos = start
+        window = text[start:start + 20]
+        run = 0
+        while run < len(window) and run < 12 and _is_cjk_name_char(window[run]):
+            run += 1
+        for k in range(run, 1, -1):
+            nxt = window[k:k + 1]
+            if nxt == "" or not (_is_letter(nxt) or unicodedata.category(nxt)[0] == "N" or nxt == "_"):
+                if window[:k] not in _CJK_NOT_A_NAME:
+                    out.append((start, start + k))
+                break
+    return out
+
+
+def _street_word_after_name(d: str) -> bool:
+    if _STREET_PREFIX_RE.match(d):
+        return True
+    m = _STREET_WORD_RE.search(d)
+    if not m:
+        return False
+    before = d[:m.start()]
+    return len(re.split(r"\s+", before.strip())) <= 5 and _FUNCTION_WORD_RE.search(before) is None
+
+
+def _find_ship_to(text: str) -> List[Tuple[int, int]]:
+    out: List[Tuple[int, int]] = []
+    n = len(text)
+    pos = 0
+    while True:
+        m = _SHIP_TO_RE.search(text, pos)
+        if not m:
+            break
+        start = m.end()
+        i = start
+        while i < n and i - start <= 160:
+            if text[i] in "\n\r\";":
+                break
+            i += 1
+        end = i
+        while end > start and (text[end - 1].isspace() or text[end - 1] in ",;.\\"):
+            end -= 1
+        d = text[start:end]
+        if end > start and _STREET_FIRST_RE.match(d) and _street_word_after_name(d) and _valid_address(d):
+            out.append((start, end))
+        pos = max(m.end(), i)
+    return out
+
+
+def _find_keyed_pii(text: str) -> List[Tuple[int, int, str]]:
+    spans: List[Tuple[int, int, str]] = []
+    if _NAME_PREFILTER_RE.search(text):
+        spans.extend((s, e, "PERSON_NAME") for s, e in _find_keyed_name(text) + _find_cjk_names(text))
+    if _ADDRESS_PREFILTER_RE.search(text):
+        spans.extend((s, e, "POSTAL_ADDRESS") for s, e in _find_keyed_address(text) + _find_ship_to(text))
+    return spans
+
+
 def find_pii_spans(text: str) -> List[Tuple[int, int, str]]:
     """(start, end, type) of every personal value in the text, overlaps resolved like the Node.js scrubber:
     spans that overlap form a cluster; one that covers it whole wins, otherwise the cluster is merged into
@@ -2541,6 +2878,7 @@ def find_pii_spans(text: str) -> List[Tuple[int, int, str]]:
         for m in regex.finditer(text):
             if ok(m.group(0)):
                 spans.append((m.start(), m.end(), kind))
+    spans.extend(_find_keyed_pii(text))
     spans.sort(key=lambda s: (s[0], -s[1]))
     out: List[Tuple[int, int, str]] = []
     cluster: List[Tuple[int, int, str]] = []
@@ -2572,7 +2910,7 @@ def find_pii_spans(text: str) -> List[Tuple[int, int, str]]:
 
 def mask_pii_preview(text: str) -> str:
     """Masks password values and the personal values of find_pii_spans (e-mail, phone, IBAN, card, DNI,
-    NIE, SSN) in a text that zn-gate test prints back. Used after redact_secrets and mask_token_runs."""
+    NIE, SSN, keyed person name and postal address) in a text that zn-gate test prints back. Used after redact_secrets and mask_token_runs."""
     if not text:
         return text
     text = _PREVIEW_PASSWORD_RE.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED_PASSWORD]", text)

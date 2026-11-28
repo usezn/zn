@@ -27,7 +27,7 @@ def _cases():
 
 def test_corpus_is_not_empty_and_covers_every_type():
     seen = {s[0] for c in _cases() for s in c["spans"]}
-    assert {"EMAIL", "PHONE", "IBAN", "CARD", "DNI", "NIE", "SSN"} <= seen
+    assert {"EMAIL", "PHONE", "IBAN", "CARD", "DNI", "NIE", "SSN", "PERSON_NAME", "POSTAL_ADDRESS"} <= seen
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda c: repr(c["text"])[:40])

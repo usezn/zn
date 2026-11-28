@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-28.2';
+const SCRUB_RULES_VERSION = '2026-11-28.3';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -276,7 +276,6 @@ function re(src, flags) { return new RegExp(src, 'gd' + (flags || '')); }
  * check, and eagerly only for the regex source (rules.js does not require this file while loading). */
 function rulesModule() { return require('../rules'); }
 const CLI_ARG_RULE = rulesModule().SECRET_PATTERNS.find((r) => r.id === 'secret:cli_credential_flag');
-const CLI_ARG_PREFILTER = rulesModule().SECRET_PATTERNS.find((r) => r.id === 'secret:cli_credential_flag').prefilter;
 
 const KEY_WORD = 'PRIVATE' + ' KEY';
 const PEM_BEGIN = '-----BEGIN ';
@@ -761,7 +760,8 @@ const PATTERNS = [
   { type: 'SECRET', hints: null, prefilter: KV_PREFILTER, find: findQuotedKv },
   /* The secret of a command line (--password=X, --token X, curl -u user:X, mysql -pX, PGPASSWORD=X): the
    * rule secret:cli_credential_flag of lib/rules.js, same regex and same value check. */
-  { type: 'SECRET', hints: null, prefilter: CLI_ARG_PREFILTER, re: re(CLI_ARG_RULE.pattern.source, 'u'),
+  { type: 'SECRET', hints: ['--pass', '--http-', '--ftp-', '--proxy-', '--api', '--token', '--secret', '--access', '--auth', '--client', 'PGPASSWORD', 'curl', 'mysql', 'mariadb'],
+    re: re(CLI_ARG_RULE.pattern.source, 'u'),
     group: 2, check: (v, text, start, m) => !rulesModule().isNonSecretValue(v, m[1]) },
   /* `docker run -e KEY=value` / `--env KEY=value` / `--env=KEY=value`. */
   { type: 'SECRET', hints: ['-e', '--env'],
@@ -950,18 +950,54 @@ function findEmails(text, check, out) {
  * manifests, ALL-CAPS environment variables) is not in scope on purpose. */
 const KEYED_PLACEHOLDER = /^(?:\{.*\}|\$.*|<.*>|\[.*\]|%[sd]|__ZN_.*|null|undefined|none|nil|true|false|n\/a|na|anonymous|unknown|-+|\*+|x+)$/i;
 const NOT_A_PERSON = new Set(['root', 'admin', 'administrator', 'system', 'guest', 'default', 'test', 'tester', 'user', 'username', 'name', 'bot', 'ci', 'runner', 'ubuntu', 'ec2-user', 'nobody', 'www-data', 'service', 'me', 'self', 'github-actions', 'dependabot', 'example', 'git', 'postgres', 'mysql', 'nginx', 'deploy']);
-const NAME_PARTICLES = new Set(['de', 'del', 'la', 'van', 'von', 'da', 'di', 'bin', 'al', 'el', 'y']);
+const NAME_PARTICLES = new Set(['de', 'del', 'la', 'van', 'von', 'da', 'di', 'bin', 'al', 'el', 'y', 'do', 'dos', 'das', 'du']);
 
 function decodeFormValue(v) {
   const s = v.replace(/\+/g, ' ');
   try { return decodeURIComponent(s); } catch (_) { return s; }
 }
+/* Words that mark a product, place or organisation title rather than a person (English, Spanish, French and
+ * Portuguese; compared without accents or case). Only words that are almost never a surname are listed, so
+ * "Park", "Lane", "Max" or "Plaza" stay available as surnames. */
+const NAME_TITLE_WORDS = new Set(('inc ltd llc corp corporation company gmbh street avenue road boulevard square hotel restaurant cafe hospital ' +
+  'university college school church cathedral museum library airport station central centre center edition series collection bundle kit ' +
+  'suite pro plus mini lite ultra premium deluxe version release model volume chapter guide manual handbook project product order invoice ' +
+  'wireless bluetooth portable organic limited original special mountain valley resort headphones speaker chair hub report summary jacket wallet ' +
+  'calle avenida paseo carretera ciudad pueblo puente montana lago rio playa isla restaurante universidad colegio iglesia catedral museo ' +
+  'biblioteca aeropuerto estacion centro tienda edicion coleccion paquete ' +
+  'rue chemin ville village montagne lac riviere plage ile hotel hopital universite ecole eglise cathedrale musee bibliotheque aeroport ' +
+  'boutique collection ' +
+  'rua travessa estrada cidade vila ponte montanha praia ilha universidade escola igreja museu biblioteca aeroporto estacao mercado loja ' +
+  'edicao colecao praca place gare zapatillas camiseta chaussures').split(' '));
+// A lowercase linking word is never inside a person's name; capitalised ones (a surname "Sur") are not tested.
+const NAME_LINK_WORDS = new Set(['of', 'the', 'and', 'for', 'with', 'in', 'on', 'at', 'to', 'et', 'pour', 'avec', 'sur', 'sous', 'para', 'com', 'em', 'por', 'und', 'mit']);
+// A title that opens with one of these is a place or a work, not a person.
+const NAME_TITLE_FIRST = new Set(['the', 'los', 'las', 'les', 'une', 'uma', 'new', 'san', 'santa', 'sao', 'puerto', 'fort']);
+function plainWord(w) { return w.normalize('NFD').replace(/\p{M}/gu, '').replace(/\.$/, '').toLowerCase(); }
+
+/* Han names: a common surname (one or two characters) and one to three given characters, 2 to 4 characters in
+ * all, and not ending in a character that marks a place or an organisation. */
+const HAN_SURNAMES = new Set(Array.from('王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾萧田董潘袁蔡蒋余于杜叶程魏苏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤'));
+const HAN_COMPOUND = ['欧阳', '司马', '上官', '诸葛', '东方', '皇甫', '尉迟', '公孙', '慕容', '令狐', '司徒', '夏侯', '宇文', '长孙', '轩辕'];
+const HAN_ORG_END = /[市省县区路街村镇乡店院校司厂局站楼园馆]$/u;
+function validHanName(d) {
+  if (!/^\p{Script=Han}{2,4}$/u.test(d) || HAN_ORG_END.test(d)) return false;
+  const chars = Array.from(d);
+  if (chars.length >= 3 && HAN_COMPOUND.includes(chars[0] + chars[1])) return true;
+  return HAN_SURNAMES.has(chars[0]);
+}
 function validPersonName(d, strong) {
   if (d.length < 2 || d.length > 80) return false;
+  if (/\p{Script=Han}/u.test(d)) return validHanName(d);
   const words = d.trim().split(/\s+/);
   if (words.length > 5) return false;
   for (const w of words) if (!/^\p{L}[\p{L}'.-]*$/u.test(w)) return false;
   if (words.length === 1) return strong && words[0].length >= 2 && !NOT_A_PERSON.has(words[0].toLowerCase());
+  for (const w of words) {
+    if (w === w.toLowerCase() && NAME_LINK_WORDS.has(w)) return false;
+    if (NAME_TITLE_WORDS.has(plainWord(w))) return false;
+  }
+  if (NAME_TITLE_FIRST.has(plainWord(words[0])) && words[0].length > 1 && !words[0].endsWith('.')) return false;
   if (strong) return true;
   // generic key (name=): every word capitalised, so build names stay out
   return words.every((w) => /^\p{Lu}/u.test(w) || NAME_PARTICLES.has(w.toLowerCase()));
@@ -972,10 +1008,31 @@ function validUsername(d) {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(d)) return false;   // UUID
   return true;
 }
+/* A street word (English, Spanish, French, Portuguese, Italian; compared without accents, case or a final dot) or a
+ * German street suffix. A value with a number and no street word, postal code or house-number shape is not a
+ * postal address ("Version 2 ok", "Windows 11 Pro"). */
+const STREET_WORDS = new Set(('street st road rd avenue ave boulevard blvd lane ln drive dr court ct place pl way terrace square sq highway hwy ' +
+  'parkway pkwy circle crescent close row calle c/ avenida avda av paseo plaza camino carretera ronda travesia glorieta rue bd chemin impasse allee ' +
+  'quai cours rua travessa praca estrada largo alameda via viale piazza corso strada vicolo').split(' '));
+const STREET_SUFFIX = /(?:strasse|gasse|weg|platz|allee|ring|damm|ufer)$/;
+const POSTAL_CODE = /(?:^|[\s,])(?:\d{5}(?:-\d{4})?|\d{4}-\d{3}|\d{6}|[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}|[A-Z]\d[A-Z] ?\d[A-Z]\d)(?=$|[\s,])/;
 function validAddress(d) {
   if (d.length < 6 || d.length > 160 || /:\/\/|@/.test(d) || /^0x/i.test(d)) return false;
+  if (/\p{Script=Han}/u.test(d)) return /\d/.test(d) && /[路街道巷弄号]/u.test(d);
   const tokens = d.split(/[\s,]+/).filter(Boolean);
-  return tokens.length >= 2 && /\d/.test(d) && /\p{L}{2}/u.test(d);
+  if (tokens.length < 2 || !/\d/.test(d) || !/\p{L}{2}/u.test(d)) return false;
+  const plain = tokens.map((t) => t.normalize('NFD').replace(/\p{M}/gu, '').replace(/ß/g, 'ss').replace(/\.$/, '').toLowerCase());
+  const fused = plain.some((t) => t.length > 6 && STREET_SUFFIX.test(t));
+  const number = (t) => /^\d{1,5}[A-Za-z]?(?:[-/]\d{1,4})?$/.test(t);
+  const hasNumber = tokens.some(number);
+  const postal = POSTAL_CODE.test(d);
+  if (!hasNumber && !postal) return false;
+  if (fused) return true;
+  if (tokens.length >= 3 && plain.some((t) => STREET_WORDS.has(t))) return true;
+  const words = tokens.filter((t) => /^\p{L}{3,}$/u.test(t)).length;
+  if (postal && words >= 1 && tokens.length >= 3) return true;
+  // a house number first or last and two longer words: "12 Baker Row London"
+  return words >= 2 && (number(tokens[0]) || number(tokens[tokens.length - 1]));
 }
 
 function keyedFinder(spec) {
@@ -1039,8 +1096,25 @@ function keyedFinder(spec) {
  * between them in every possible way (quadratic). Here the second \s* only follows a quote. */
 const KEYED_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=/i;
 // Also: a full_name key and the CJK name labels (person name), street keys and "ship to" (postal address).
-const NAME_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=|full[ _]?name|姓名|氏名|성명/i;
-const ADDRESS_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=|street|address_?line|(?:shipping|billing)_?address|ship(?:ping)?[ \t]+to/i;
+/* The three keyed finders share one test of the text (the last text is remembered), and the extra keys are looked up as
+ * literals in a lower-cased copy: a regex with the i flag over a large text costs more than all the finders together. */
+const SHIP_TO_HINT = /ship(?:ping)?[ \t]+to/i;
+let keyedMemo = { text: null, keyed: false, name: false, address: false };
+function keyedHints(text) {
+  if (keyedMemo.text === text) return keyedMemo;
+  const keyed = KEYED_PREFILTER.test(text);
+  const lower = text.toLowerCase();
+  const name = keyed || lower.includes('full_name') || lower.includes('fullname') || lower.includes('full name') ||
+    text.includes('姓名') || text.includes('氏名') || text.includes('성명');
+  const address = keyed || lower.includes('street') || lower.includes('address_line') || lower.includes('addressline') ||
+    lower.includes('shipping_address') || lower.includes('shippingaddress') || lower.includes('billing_address') ||
+    lower.includes('billingaddress') || (lower.includes('ship') && SHIP_TO_HINT.test(text));
+  keyedMemo = { text, keyed, name, address };
+  return keyedMemo;
+}
+const NAME_PREFILTER = { test: (text) => keyedHints(text).name };
+const ADDRESS_PREFILTER = { test: (text) => keyedHints(text).address };
+const USERNAME_PREFILTER = { test: (text) => keyedHints(text).keyed };
 const findKeyedName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], weakHeaders: ['full[ _]?name'], forms: ['full_?name', 'name'], valid: validPersonName });
 
 /* A name under a CJK label (姓名：山田太郎): Chinese, Japanese or Korean letters, 2 to 12 of them, ended by anything
@@ -1102,6 +1176,8 @@ function findPostalAddress(text, check, out) {
   findShipTo(text, check, out);
 }
 
+const PHONE_PREFILTER = { test: (text) => text.includes('+') || (text.includes('(') && /\(\d{3}\)/.test(text)) };
+
 const PII = [
   { type: 'EMAIL', key: 'email', hints: ['@'], find: findEmails,
     check: (v, text, index) => {
@@ -1118,7 +1194,7 @@ const PII = [
     } },
   // Compact E.164 (+34600123456), or + country code (1 to 3 digits) and digit groups split by single spaces, dashes
   // or dots (+34 600 123 456, +1 202-555-0143), or a US number with the area code in parentheses ((415) 555-0132). Other national formats without + are not matched on purpose.
-  { type: 'PHONE', key: 'phone', hints: null, prefilter: /\+|\(\d{3}\)/, re: re('(?<![A-Za-z0-9+])(?:\\+[1-9](?:\\d{0,2}(?:(?:[ .\\u00a0\\u202f\\u2007-]|[ \\u00a0\\u202f\\u2007]{2})\\d{1,9}){2,6}|\\d{0,2}[ \\u00a0\\u202f\\u2007]{1,2}\\d{6,12}|\\d{7,14})|(?:\\+1[ .\\u00a0-]?)?\\(\\d{3}\\)[ \\u00a0]?\\d{3}[ .-]\\d{4})(?![0-9])'), check: (v) => (v.includes('(') ? usParenPhoneValid(v) : phoneValid(v)) },
+  { type: 'PHONE', key: 'phone', hints: null, prefilter: PHONE_PREFILTER, re: re('(?<![A-Za-z0-9+])(?:\\+[1-9](?:\\d{0,2}(?:(?:[ .\\u00a0\\u202f\\u2007-]|[ \\u00a0\\u202f\\u2007]{2})\\d{1,9}){2,6}|\\d{0,2}[ \\u00a0\\u202f\\u2007]{1,2}\\d{6,12}|\\d{7,14})|(?:\\+1[ .\\u00a0-]?)?\\(\\d{3}\\)[ \\u00a0]?\\d{3}[ .-]\\d{4})(?![0-9])'), check: (v) => (v.includes('(') ? usParenPhoneValid(v) : phoneValid(v)) },
   { type: 'IBAN', key: 'iban', hints: null, prefilter: /[A-Z]{2}\d{2}/,
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },
@@ -1139,7 +1215,7 @@ const PII = [
     re: re('(?<![0-9.])(?:\\d{1,3}\\.){3}\\d{1,3}(?![0-9.])'), check: (v) => ipv4Public(v) },
   { type: 'PERSON_NAME', key: 'name', hints: null, prefilter: NAME_PREFILTER, find: findPersonName },
   { type: 'POSTAL_ADDRESS', key: 'address', hints: null, prefilter: ADDRESS_PREFILTER, find: findPostalAddress },
-  { type: 'USERNAME', key: 'username', hints: null, prefilter: KEYED_PREFILTER, find: findUsername },
+  { type: 'USERNAME', key: 'username', hints: null, prefilter: USERNAME_PREFILTER, find: findUsername },
 ];
 
 const PII_DEFAULTS = { email: true, phone: true, iban: true, card: true, dni: true, ssn: true, ipv4: false, name: true, address: true, username: true };
