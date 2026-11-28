@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.2
+ * RULES_VERSION: 2026-11-28.3
  */
 
-const RULES_VERSION = '2026-11-28.2';
+const RULES_VERSION = '2026-11-28.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1111,6 +1111,11 @@ const SCRUB_FIRST_PATTERNS = [
       const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
       return !(require('./scrub/patterns').looksRandom(body, 2, 3.5) && /[0-9]/.test(body));
     } },
+  // GitHub tokens of up to 255 characters (the shared rule reads 36 to 40), and fine-grained tokens longer than 82.
+  // The body must look random, as in the scrubber; a shorter one still goes to the shared rule.
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_-])()(gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_GITHUB_TOKEN]', prefilter: /gh[pousr]_/,
+    valueFilter: (v) => !require('./scrub/patterns').looksRandom(v.slice(4), 2, 3.5) },
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_GITHUB_TOKEN]', requires: 'github_pat_' },
 ];
 // A JWT whose signature an earlier rule redacted in part (an sk- key in it): the rest of the JWT goes too, so its
 // header and payload never stay readable.
