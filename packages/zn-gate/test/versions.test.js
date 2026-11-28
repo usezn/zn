@@ -53,14 +53,50 @@ test('a newer, equal and older agent each get their own plain sentence', POSIX, 
   assert.match(V.versionLine(older), /older than 0\.64\.0/);
 });
 
-test('no program, a failing one, a silent one and a slow one all give "not found"', POSIX, (t) => {
+test('no program gives "not found" with no tested-version note', POSIX, (t) => {
+  const m = machine(t, {});
+  for (const id of ['codex', 'opencode', 'copilot']) {
+    const i = V.versionInfo(id, { env: m.env, cwd: m.cwd });
+    assert.equal(i.installed, false, id);
+    assert.equal(V.versionLine(i), 'version: not found', id);
+  }
+});
+
+test('an installed program that fails, is silent or is slow is "unknown", not "not found"', POSIX, (t) => {
   const m = machine(t, { codex: 'exit 3', opencode: 'echo hello', gemini: 'sleep 5; echo 9.9.9' });
   const o = { env: m.env, cwd: m.cwd, timeoutMs: 300 };
-  for (const id of ['codex', 'opencode', 'gemini', 'copilot', 'cursor', 'zcode']) {
+  for (const id of ['codex', 'opencode', 'gemini']) {
     const i = V.versionInfo(id, o);
     assert.equal(i.found, null, id);
-    assert.match(V.versionLine(i), /^version: not found/);
+    assert.equal(i.installed, true, id);
+    assert.equal(V.versionLine(i), 'version: unknown (zn could not read it on this machine)', id);
   }
+});
+
+test('an agent zn cannot look up (no command) is "unknown" when the check found it installed', POSIX, (t) => {
+  const m = machine(t, {});
+  assert.equal(V.versionLine(V.versionInfo('cursor', { env: m.env, cwd: m.cwd, installed: true })), 'version: unknown (zn could not read it on this machine)');
+  assert.equal(V.versionLine(V.versionInfo('cursor', { env: m.env, cwd: m.cwd, installed: false })), 'version: not found');
+});
+
+test('on Windows a .cmd shim counts as installed and is never started', (t) => {
+  const m = machine(t, {});
+  const marker = path.join(m.cwd, 'ran');
+  // A Windows shim cannot run here; the file is only located. Its body must never be executed.
+  fs.writeFileSync(path.join(m.env.PATH.split(path.delimiter)[0], 'codex.cmd'), '@echo off\r\necho 9.9.9 > "' + marker + '"\r\n');
+  const env = { ...m.env, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+  const i = V.versionInfo('codex', { env, cwd: m.cwd, platform: 'win32' });
+  assert.equal(i.found, null);
+  assert.equal(i.installed, true);
+  assert.equal(V.versionLine(i), 'version: unknown (zn could not read it on this machine)');
+  assert.equal(fs.existsSync(marker), false);
+});
+
+test('a Windows shim in the working folder does not count as installed', (t) => {
+  const m = machine(t, {});
+  fs.writeFileSync(path.join(m.cwd, 'codex.cmd'), '@echo off\r\n');
+  const env = { ...m.env, PATH: m.cwd + path.delimiter + m.env.PATH, PATHEXT: '.CMD' };
+  assert.equal(V.versionInfo('codex', { env, cwd: m.cwd, platform: 'win32' }).installed, false);
 });
 
 test('an agent with no tested version says so instead of comparing', POSIX, (t) => {

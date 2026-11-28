@@ -65,9 +65,9 @@ Nothing was installed or changed. Every skipped step prints the command you can 
 
 ```text
   -  Codex CLI    zn is not set up for this agent. To protect it, run `npm install -g zn-gate`, then `zn hooks install codex`, in your own terminal.
-     version: not found (tested with 0.163.0)
+     version: unknown (zn could not read it on this machine)
   -  Cursor       zn is not set up for this agent. To protect it, run `npm install -g zn-gate`, then `zn hooks install cursor`, in your own terminal.
-     version: not found
+     version: unknown (zn could not read it on this machine)
 ```
 
 The exit code is `1` when you skipped a step. It is `0` only when every agent that was found is protected at the end.

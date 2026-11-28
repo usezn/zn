@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `zn-gate check` no longer says "version: not found" for an agent that is installed but whose version it cannot read (on Windows, most agents are `.cmd` scripts that zn does not start). That line now reads "version: unknown (zn could not read it on this machine)", and the "tested with" note is shown only when a version was found. An agent that is not installed still says "version: not found". `check --json` is unchanged.
 - On Windows, the Python evidence log was written with CRLF line endings, so its exports differed from the ones made on Linux and macOS and from the npm package. The log is now written with LF only on every system, and an export keeps the line endings of the log it reads.
 
 ## [1.18.0] - 2026-11-26

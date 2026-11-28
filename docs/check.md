@@ -128,8 +128,10 @@ Under each agent it finds, `zn-gate check` shows the version of that agent on yo
      "zn: ..."
      version 0.170.0, newer than 0.163.0, the last version zn was tested with. It may still work. If a hook does not run, report it at https://github.com/usezn/zn/issues
   -  Cursor       zn is not set up for this agent. To protect it, run `zn hooks install cursor` in your own terminal.
-     version: not found
+     version: unknown (zn could not read it on this machine)
 ```
+
+When the agent is not on the machine, the line says `version: not found`. `version: unknown` means the agent is installed, but zn could not start it to read its version: on Windows, most agents are a `.cmd` script that zn does not run, and an agent that fails or prints no version number gets the same line. The line never says that the agent is missing.
 
 - **Newer than tested**: the agent may still work. If a hook does not run, report it at the link in the line.
 - **Older than tested**: if a hook does not run, update the agent first, then report it.
