@@ -38,7 +38,7 @@ To undo it: `zn hooks uninstall gemini`.
 | Removes secrets from what a tool returns | **No.** zn-gate does not use `AfterTool`, so a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault |
 | Blocks a secret pasted into the chat | No. A pasted secret in a typed prompt is not checked |
 | Asks you for confirmation | No. Gemini CLI hooks cannot ask: a call zn-gate would ask about is blocked, and the reason says what was held back and how to approve it (run it yourself outside the agent). A call zn-gate has no objection to gets no answer, so Gemini CLI's own approval applies |
-| When the hook crashes or times out | Gemini CLI would let the call run (only an explicit refusal blocks). zn-gate blocks instead: a hook that fails is answered with a block, zn-gate sets a 15-second timeout on its hook, and a check still running after 11 seconds is answered with a block |
+| When the hook crashes or times out | Gemini CLI would let the call run (only an explicit refusal blocks). zn-gate blocks instead: a hook that fails is answered with a block, zn-gate sets a 15-second timeout on its hook, and a check still running after 13 seconds (the 15-second hook timeout minus 2 seconds) is answered with a block |
 
 **Not covered:** what a tool returns is not changed, so a secret printed by a shell command or held in a file the agent may read reaches the model. Keep secrets in the zn-gate vault (`zn unlock`, then `zn env shadow .env`) so your files hold markers instead of real values: hooks are a guardrail, not a sandbox.
 

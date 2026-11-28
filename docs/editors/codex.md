@@ -32,7 +32,7 @@ To undo it: `zn hooks uninstall codex`.
 
 | | In Codex CLI |
 | - | - |
-| Blocks reads of `.env` files with values, credential files (`~/.aws/credentials`, `~/.ssh/id_*`...) and `~/.zn` | Yes, for shell commands, patches and MCP call arguments. Writes are checked only for `~/.zn` and agent settings: the `apply_patch` tool of Codex may edit `.env`, while a patch sent as a shell command is refused |
+| Blocks reads of `.env` files with values, credential files (`~/.aws/credentials`, `~/.ssh/id_*`...) and `~/.zn` | Yes, for shell commands, patches and MCP call arguments. Writes are checked for `~/.zn`, agent settings and `.env` files: an `apply_patch` edit to `.env` is judged on the file it leaves (a line that sets a loader variable such as `LD_PRELOAD` is refused), and a shell command that writes `.env` is refused |
 | Blocks a secret pasted into the chat | Yes |
 | Removes secrets from tool output | Yes, lossy: the result is replaced by its scrubbed text (Codex has no field that rewrites a result), and the Codex session log keeps the original output |
 | Checks MCP tool calls before they run | Yes: a secret value or a `__ZN_` marker in the arguments is blocked. Personal data is blocked too, because Codex hooks cannot ask: the reason says what was held back and that you can run it yourself |
