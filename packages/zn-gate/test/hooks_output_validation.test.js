@@ -447,6 +447,25 @@ test('posix launcher with a deadline and an empty PATH still runs the hook (its 
   assert.deepEqual(zfiles(tmp), []);
 });
 
+// A TERM, HUP or INT can arrive at any point: every trap must be installed before the private file it cleans up is made.
+for (const [mode, opts] of MODES) {
+  test('posix launcher, ' + mode + ': the signal traps are installed before any private file is made', { skip: !posix }, () => {
+    const text = launcher.unixScript('claude-code', '/nonexistent/node', '/nonexistent/runner.js', opts);
+    const at = (needle, from = 0) => { const i = text.indexOf(needle, from); assert.ok(i >= 0, needle); return i; };
+    const topTrap = at("trap 'zn_rm \"$ZN_AF\"; zn_block' HUP INT TERM");
+    assert.ok(topTrap < at('zn_mk ack;'), 'ack file');
+    const cap = at('zn_cap() {');
+    assert.ok(at("trap 'zn_rm \"$ZN_OF\" \"$ZN_AF\"; ZN_RAN=1; zn_block' HUP INT TERM", cap) < at('zn_mk out;', cap), 'zn_cap output file');
+    if (opts.deadlineS) {
+      const run = at('zn_run() {');
+      const out = at('zn_mk out;', run);
+      assert.ok(at("trap zn_term HUP INT TERM", run) < out, 'zn_run files (signals)');
+      assert.ok(at("EXIT", run) < out, 'zn_run files (exit)');
+    }
+  });
+}
+
+
 // ---- commands planted in the project: with `.`, an empty entry or a relative folder on the PATH, the launcher runs none of them ----
 
 const PLANTED = ['rm', 'mktemp', 'cat', 'sleep', 'kill', 'wait', 'setsid', 'perl', 'printf', 'read', 'test', '[', 'echo', 'umask', 'trap', 'env', 'sh',
