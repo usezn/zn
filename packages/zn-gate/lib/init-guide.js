@@ -177,6 +177,8 @@ async function plan(opts = {}) {
         else item.steps.push({ label: 'do this yourself', run: null, manual: 'in Claude Code, type /plugin enable zn-gate@usezn' });
       } else if (!hooksVerb) {
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);
+        // Claude Code downloads the marketplace with Git: without it the next steps fail with a message that does not say why.
+        if (require('./git-hint').gitMissing(env)) item.note = require('./git-hint').initNote();
         if (claude) {
           item.steps.push({ label: 'add the usezn plugin marketplace', run: [claude, ['plugin', 'marketplace', 'add', MARKETPLACE_REF]], manual: 'claude plugin marketplace add ' + MARKETPLACE_REF });
           item.steps.push({ label: 'install the zn-gate plugin', run: [claude, ['plugin', 'install', 'zn-gate@usezn']], manual: 'claude plugin install zn-gate@usezn' });

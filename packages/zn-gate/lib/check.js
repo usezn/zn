@@ -1035,6 +1035,15 @@ function claudeProjectHooksFile(cwd) {
   return '';
 }
 
+/* Claude Code not set up: its plugin steps need Git (Claude Code downloads the marketplace with it). Without Git the
+   first step fails with "git not found" and the second with a misleading "Plugin not found in marketplace". */
+function withGitHint(r, ctx) {
+  if (r.id !== 'claude-code' || r.state !== 'not-set-up' || r.found === false) return r;
+  const gh = require('./git-hint');
+  if (!gh.gitMissing(ctx.env)) return r;
+  return { ...r, gitMissing: true, fix: gh.checkFirst() + ', and ' + r.fix + '. ' + gh.checkAfter() };
+}
+
 async function checkAgent(spec, ctx) {
   const { getAdapter } = require('./agents');
   const runner = require('./hooks/runner');
@@ -1518,7 +1527,7 @@ async function check(opts = {}) {
     const results = [];
     for (const spec of AGENTS) {
       try {
-        results.push({ ...(await checkAgent(spec, ctx)), checked: false });
+        results.push({ ...withGitHint(await checkAgent(spec, ctx), ctx), checked: false });
       } catch (err) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
@@ -1534,7 +1543,7 @@ async function check(opts = {}) {
     fs.writeFileSync(ctx.readme, 'An ordinary file that zn lets your agent read.\n');
     for (const spec of AGENTS) {
       try {
-        const r = await checkAgent(spec, ctx);
+        const r = withGitHint(await checkAgent(spec, ctx), ctx);
         if (!(r.state === 'not-set-up' && r.found === false)) r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd });
         results.push(r);
       } catch (err) {
@@ -1653,6 +1662,7 @@ function toJson({ results, removed, warnings }, opts = {}) {
     message: r.state === 'protected' ? hide(r.message || '') : '',
     notes: (r.notes || []).map(hide),
     checked: r.checked !== false,
+    ...(r.gitMissing ? { git_missing: true } : {}),
   }));
   const exitCode = exitCodeOf(results) || ((opts.rulesErrors || []).length ? 1 : 0);
   return {

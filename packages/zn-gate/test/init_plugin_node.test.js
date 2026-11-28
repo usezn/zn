@@ -13,6 +13,7 @@ const { getAdapter } = require('../lib/agents');
 const { guide, plan } = require('../lib/init-guide');
 const { check, _internal } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
+const { gitStubDir } = require('./helpers/git_stub');
 const { hookTimeoutMs } = require('./helpers/time_budget');
 const { writePluginManifest } = require('./helpers/claude_plugin');
 const { WIN, gitBashExe } = require('./helpers/git_bash');
@@ -33,7 +34,7 @@ const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn#plugin-v' + VERSIO
 function machine(t) {
   const home = tempDir(t, 'zn-initnode-home-');
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-  return { home, env: { HOME: home, PATH: '' }, cwd: tempDir(t, 'zn-initnode-cwd-'), claude: CLAUDE, ancestry: () => null, temporary: false };
+  return { home, env: { HOME: home, PATH: gitStubDir(t) }, cwd: tempDir(t, 'zn-initnode-cwd-'), claude: CLAUDE, ancestry: () => null, temporary: false };
 }
 
 function pluginIn(home) {

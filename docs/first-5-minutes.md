@@ -160,6 +160,8 @@ zn-gate protects an agent that is already installed; it does not install the age
 - Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://learn.chatgpt.com/docs/codex/cli).
 - Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
 
+- Claude Code: install it from the [official setup page](https://code.claude.com/docs/en/setup), and sign in with your Claude account. zn-gate protects it with a plugin, and Claude Code downloads that plugin with **Git**. A new computer often has none (a clean Windows PC never does). Run `git --version`; if it says the command is not found, install Git first: Windows: run `winget install --id Git.Git -e` in PowerShell, or download the installer from [git-scm.com](https://git-scm.com/download/win); macOS: run `xcode-select --install`; Linux: install `git` with your package manager, for example `sudo apt install git`. Then open a new terminal. Without Git, `zn hooks install claude-code` protects Claude Code in another way. If a step says **Plugin not found in marketplace**, the step before it failed: see [Troubleshooting](troubleshooting.md#claude-code-plugin-steps-fail-git-not-found-or-plugin-not-found-in-marketplace).
+
 If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
 
 ## Windows PowerShell: the .cmd forms

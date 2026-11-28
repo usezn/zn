@@ -19,6 +19,10 @@ Do not keep both set up at the same time: the plugin and the hooks of `zn hooks 
 
 **The plugin** needs Git and Claude Code 2.1.295 or later, and Node.js 20.19 or later. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)).
 
+**Git comes first.** Claude Code downloads the plugin with Git, and a new computer often has none (a clean Windows PC never does). To see whether you have it, run `git --version`. If it says the command is not found, install Git: Windows: run `winget install --id Git.Git -e` in PowerShell, or download the installer from [git-scm.com](https://git-scm.com/download/win); macOS: run `xcode-select --install`; Linux: install `git` with your package manager, for example `sudo apt install git`. Then open a new terminal. If you would rather not install Git, use the command-line install instead: `zn hooks install claude-code` (it needs an interactive terminal, so run it yourself in your own terminal). `zn-gate init` and `zn-gate check` say this before they print the plugin steps when they cannot find Git.
+
+If `claude plugin install zn-gate@usezn` says **Plugin not found in marketplace**, the step before it failed: `claude plugin marketplace add` could not download the plugin, most often because Git is missing. Install Git, open a new terminal and run both commands again, in order.
+
 **The command-line install** needs zn-gate 1.5 or later from npm (`npm install -g zn-gate`); Node.js 18 or later works for the hooks and the CLI.
 
 ## Install the plugin

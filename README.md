@@ -97,7 +97,7 @@ New here? [First 5 minutes](docs/first-5-minutes.md). All the guides: [docs inde
 
 **One agent at a time** (the same steps `init` runs):
 
-**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
+**Claude Code: the plugin.** You also need Git (a new Windows PC often has none: run `winget install --id Git.Git -e`, then open a new terminal; on macOS run `xcode-select --install`) and Claude Code 2.1.295 or later. Without Git, use `zn hooks install claude-code` instead. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
 claude plugin marketplace add usezn/zn#plugin-v1.17.0

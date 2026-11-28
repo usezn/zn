@@ -1,0 +1,2 @@
+### Fixed
+- On a computer without Git (a new Windows PC, for example), `zn-gate init` and `zn-gate check` now say first that the Claude Code plugin needs Git, how to install it (Windows, macOS, Linux) and that `zn hooks install claude-code` is a route that needs no Git. Before, the plugin steps failed with "git not found" and then with a misleading "Plugin not found in marketplace". `zn-gate check --json` adds `git_missing: true` to the Claude Code entry in that case; nothing else changes.

@@ -49,6 +49,7 @@ Find the command you ran, then the symptom that matches.
   - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
   - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
   - ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook)
+  - [Claude Code plugin steps fail: "git not found" or "Plugin not found in marketplace"](#claude-code-plugin-steps-fail-git-not-found-or-plugin-not-found-in-marketplace)
   - [Hooks are installed but your agent shows no zn-gate activity](#hooks-are-installed-but-your-agent-shows-no-zn-gate-activity)
 - `scan` and `audit`
   - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
@@ -972,6 +973,12 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **What happened:** zn-gate did not understand what you typed, such as a typo, a missing folder or a missing text.
 
 **What to do:** run `zn-gate --help` to see the commands. Examples: `zn-gate scan .`, `zn-gate scan . --format json`, `zn-gate analyze "some text"`.
+
+#### Claude Code plugin steps fail: "git not found" or "Plugin not found in marketplace"
+
+**What happened:** the plugin steps that `zn-gate init` and `zn-gate check` print are `claude plugin marketplace add` (with the plugin tag of your zn-gate version) and then `claude plugin install zn-gate@usezn`. Claude Code downloads the plugin with Git. Without Git, the first one fails with `Command 'git' not found or is in an unsafe location`, and the second one then fails with `Plugin "zn-gate" not found in marketplace "usezn"`, which hides the real reason: the first step never added the marketplace. `zn-gate init` and `zn-gate check` tell you this first when they cannot find Git on your PATH.
+
+**What to do:** run `git --version`. If the command is not found, install Git: Windows: run `winget install --id Git.Git -e` in PowerShell, or download the installer from [git-scm.com](https://git-scm.com/download/win); macOS: run `xcode-select --install`; Linux: install `git` with your package manager, for example `sudo apt install git`. Then open a new terminal. Then run the two plugin commands again, in order, and `zn-gate check`. If you would rather not install Git, run `zn hooks install claude-code` in your own terminal instead (it needs an interactive terminal; do not keep both set up at once, see [Claude Code: the plugin or the command line](examples/claude-code-plugin-or-cli.md)).
 
 #### "Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows"
 

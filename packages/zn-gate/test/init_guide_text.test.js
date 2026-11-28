@@ -10,13 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const { guide, plan } = require('../lib/init-guide');
 const { tempDir } = require('./helpers/tmp');
+const { gitStubDir } = require('./helpers/git_stub');
 const { winCmdRe } = require('./helpers/wincmd');
 
 function machine(t, agents) {
   const home = tempDir(t, 'zn-guide-text-home-');
   const dirs = { 'claude-code': '.claude', codex: '.codex', cursor: '.cursor' };
   for (const a of agents) fs.mkdirSync(path.join(home, dirs[a]), { recursive: true });
-  return { home, env: { HOME: home, PATH: '' }, cwd: tempDir(t, 'zn-guide-text-cwd-'), claude: null, ancestry: () => null };
+  return { home, env: { HOME: home, PATH: gitStubDir(t) }, cwd: tempDir(t, 'zn-guide-text-cwd-'), claude: null, ancestry: () => null };
 }
 
 async function printed(m, extra = {}) {
