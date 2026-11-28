@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.10
+ * RULES_VERSION: 2026-11-27.11
  */
 
-const RULES_VERSION = '2026-11-27.10';
+const RULES_VERSION = '2026-11-27.11';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -689,7 +689,7 @@ const HOMOGLYPH_MAP = {
 // Line breaks are joined only in texts up to this size: wrapped keys are short, and a view of a huge text
 // full of short lines would cost far more than it finds (a 32 MB file of 20-character lines).
 const MAX_WRAP_VIEW_CHARS = 1 << 20;
-const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=]{8})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))/g;
+const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=]{8})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=(?![A-Za-z0-9_.])))/g;
 // The same break with a last piece of any length after it, even one that is followed by more text on its line. It
 // is read as a second view whose matches only count where the view above has none, so a short word after a complete
 // key is not taken for the end of the key.
@@ -697,7 +697,7 @@ const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\
 // How many anchor characters the two tokens around a break must hold when the break is not between two long pieces
 // (the loose view asks for them always).
 const LOOSE_ANCHORS = 3;
-const WRAP_BREAK_LOOSE_RE = /(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=.:])(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))/g;
+const WRAP_BREAK_LOOSE_RE = /(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=.])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=.:])(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=(?![A-Za-z0-9_.])))/g;
 // Where a text can hold a break at all: a cheap test before the pattern is run.
 const WRAP_HINT_RE = /[\n\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\\"\']/;
 // WRAP_BREAK_RE tried at one index only. A match holds exactly one line break, and its lookbehind needs a
@@ -831,6 +831,25 @@ function anchorsAround(text, start, end) {
   return n;
 }
 
+// The digits in the token before a break and the token after it (up to 32 characters of each). A break right after a
+// dot (the dot of a SendGrid key or a JWT ends a line) is read only between pieces of a key, which have digits; a line
+// of prose that ends a sentence has hardly any.
+function digitsAround(text, start, end) {
+  let n = 0;
+  for (let i = start - 1, k = 0; i >= 0 && k < 32; i--, k++) {
+    const c = text.charCodeAt(i);
+    if (c >= 48 && c <= 57) n++;
+    else if (!isWrapChar(c) && c !== 46 && c !== 58) break;
+  }
+  for (let i = end, k = 0; i < text.length && k < 32; i++, k++) {
+    const c = text.charCodeAt(i);
+    if (c >= 48 && c <= 57) n++;
+    else if (!isWrapChar(c) && c !== 46 && c !== 58) break;
+  }
+  return n;
+}
+const DOT_BREAK_DIGITS = 2;
+
 // True when at least eight token characters end at `start`, not counting the letter of an escape sequence (the n of a
 // backslash-n) that the run of letters begins with.
 function tokenBefore(text, start) {
@@ -864,7 +883,7 @@ function wrapBreaks(text, loose) {
     let after = m.index + 1;
     while (after < n && isBreakSpace(text.charCodeAt(after))) after++;
     hint.lastIndex = after;
-    if (start === 0 || start <= tried || !isWrapChar(text.charCodeAt(start - 1))) continue;
+    if (start === 0 || start <= tried || !(isWrapChar(text.charCodeAt(start - 1)) || (loose && text.charCodeAt(start - 1) === 46))) continue;
     tried = start;
     if (!tokenBefore(text, start)) continue;
     at.lastIndex = start;
@@ -874,6 +893,7 @@ function wrapBreaks(text, loose) {
     if (loose || !PLAIN_BREAK_RE.test(b[0]) || !longPieces(text, start, end)) {
       if (anchorsAround(text, start, end) < LOOSE_ANCHORS) continue;
     }
+    if (text.charCodeAt(start - 1) === 46 && digitsAround(text, start, end) < DOT_BREAK_DIGITS) continue;
     out.push(start, end);
     if (end > hint.lastIndex) hint.lastIndex = end;
   }
@@ -1903,11 +1923,46 @@ function redactSecretsPasses(text) {
 }
 
 function credentialPass(text) {
+  const plain = credentialPassPlain(text);
+  // Only a text where a rule redacted something and that can hold a wrap break is read again: the pre-pass below costs a
+  // scan of the text, which a text with no secret never pays.
+  if (plain.detections.length === 0) return plain;
+  const wrapped = redactWrappedProviderKeys(text);
+  if (wrapped.detections.length === 0) return plain;
+  const again = credentialPassPlain(wrapped.sanitized);
+  return { sanitized: again.sanitized, detections: wrapped.detections.concat(again.detections) };
+}
+
+function credentialPassPlain(text) {
   const first = redactCredentials(text);
   if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
   const second = redactProviderFormats(first.sanitized);
   if (second.detections.length === 0) return first;
   return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
+}
+
+// A provider key that is wrapped across lines (or split by quotes or spaces) and sits in a NAME=value assignment: the
+// generic assignment rules read the first piece only and would redact it as a plain secret before the provider format
+// sees the joined key, which would leave the other pieces readable. The provider formats therefore run first on the
+// keys that hold a wrap break, so the specific rule wins and the whole joined key goes. A key on one line is left to the
+// rules in their usual order (the assignment rule names it a secret, as before).
+function redactWrappedProviderKeys(text) {
+  if (typeof text !== 'string' || text.length > MAX_WRAP_VIEW_CHARS || !WRAP_HINT_RE.test(text) ||
+      !(new RegExp(WRAP_BREAK_RE.source).test(text) || new RegExp(WRAP_BREAK_LOOSE_RE.source).test(text))) return { sanitized: text, detections: [] };
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
+    .filter((s) => text.slice(s.start, s.end).includes('\n') || spanHasBreak(text, s.start, s.end))
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+  if (spans.length === 0) return { sanitized: text, detections: [] };
+  const detections = [];
+  let out = '';
+  let last = 0;
+  for (const s of spans) {
+    if (s.start < last) continue;
+    detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
+    out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
+    last = s.end;
+  }
+  return { sanitized: out + text.slice(last), detections };
 }
 
 // Scrubber secret types that count as provider formats, with the rule id the

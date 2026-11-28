@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.10
+RULES_VERSION: 2026-11-27.11
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.10"
+RULES_VERSION = "2026-11-27.11"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -217,13 +217,13 @@ INVISIBLE_ASTRAL_RE = _rc(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
 # A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
-WRAP_BREAK_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=]{8})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
+WRAP_BREAK_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=]{8})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=(?![A-Za-z0-9_.])))')
 # The same break with a last piece of any length after it (see WRAP_BREAK_LOOSE_RE in rules.js).
 # Digits and capital letters are the anchor characters: a piece of a key has some, a line of plain lowercase words has none.
 # How many anchor characters the two tokens around a break must hold when the break is not between two long pieces
 # (the loose view asks for them always).
 LOOSE_ANCHORS = 3
-WRAP_BREAK_LOOSE_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=.:])(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
+WRAP_BREAK_LOOSE_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=.:]{7}[A-Za-z0-9_\-+/=.])(?:[ \t]*\r?\n[ \t]*|[ \t]*\\\r?\n[ \t]*|[ \t]*(?:\\{1,2}[nrt])+[ \t]*|(?=[ \t]*[\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])[ \t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|["\'][ \t\r\n+]*["\'])(?=[A-Za-z0-9_\-+/=.:])(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=(?![A-Za-z0-9_.])))')
 # Where a text can hold a break at all: a cheap test before the pattern is run.
 WRAP_HINT_RE = _rc(r'[\n\t\u00a0\u0085\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\\"\']')
 NON_ASCII_RE = _rc(r'[^\x00-\x7f]')
@@ -885,6 +885,33 @@ def _anchors_around(text: str, start: int, end: int) -> int:
     return n
 
 
+_DIGITS = frozenset('0123456789')
+DOT_BREAK_DIGITS = 2
+
+
+def _digits_around(text: str, start: int, end: int) -> int:
+    """The digits in the token before a break and the token after it (up to 32 characters of each). A break right after
+    a dot is read only between pieces of a key (see digitsAround in rules.js)."""
+    n = 0
+    i = start - 1
+    while i >= 0 and start - 1 - i < 32:
+        ch = text[i]
+        if ch in _DIGITS:
+            n += 1
+        elif ch not in _TOKEN_CHARS:
+            break
+        i -= 1
+    i = end
+    while i < len(text) and i - end < 32:
+        ch = text[i]
+        if ch in _DIGITS:
+            n += 1
+        elif ch not in _TOKEN_CHARS:
+            break
+        i += 1
+    return n
+
+
 def _token_before(text: str, start: int) -> bool:
     """True when at least eight token characters end at `start`, not counting the letter of an escape sequence that the
     run of letters begins with (see tokenBefore in rules.js)."""
@@ -925,7 +952,8 @@ def invisible_view(text: str, parity: Optional[int] = None,
         breaks = [m.span() for m in (WRAP_BREAK_LOOSE_RE if loose else WRAP_BREAK_RE).finditer(text)]
         # Read only after a piece that can be part of a key (see wrapBreaks in rules.js).
         breaks = [b for b in breaks if _token_before(text, b[0]) and (not loose and PLAIN_BREAK_RE.match(text[b[0]:b[1]]) is not None and _long_pieces(text, b[0], b[1]) or
-                  _anchors_around(text, b[0], b[1]) >= LOOSE_ANCHORS)]
+                  _anchors_around(text, b[0], b[1]) >= LOOSE_ANCHORS)
+                  and (text[b[0] - 1] != '.' or _digits_around(text, b[0], b[1]) >= DOT_BREAK_DIGITS)]
         runs += breaks if parity is None else breaks[parity::2]
     if not runs:
         return None
@@ -2071,7 +2099,50 @@ def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     return redacted, found
 
 
+def _wrapped_provider_keys(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """A provider key that is wrapped across lines (or split by quotes or spaces) and sits in a NAME=value assignment:
+    the generic assignment rules read the first piece only and would redact it as a plain secret before the provider
+    format sees the joined key, which would leave the other pieces readable. The provider formats therefore run first
+    on the keys that hold a wrap break, so the specific rule wins and the whole joined key goes. A key on one line is
+    left to the rules in their usual order (see redactWrappedProviderKeys in rules.js)."""
+    if (len(text) > MAX_WRAP_VIEW_CHARS or WRAP_HINT_RE.search(text) is None
+            or (WRAP_BREAK_RE.search(text) is None and WRAP_BREAK_LOOSE_RE.search(text) is None)):
+        return text, []
+    view = invisible_view(text)
+    extra_views = _parity_views(text, view)
+    loose_view = _loose_view(text, view)
+    budget = [MAX_FILTERED_CHARS]
+    cands: List[Tuple[int, int, str, str]] = []
+    zn_key = [r for r in SCRUB_LAST_PATTERNS if r[0] == 'secret:zn_api_key']
+    for rule_id, pattern, replacement in PROVIDER_SECRET_PATTERNS + zn_key:
+        found: List[Tuple[int, int, str, str]] = []
+        _rule_candidates(rule_id, pattern, replacement, text, view, budget, PROVIDER_VALUE_FILTERS.get(rule_id),
+                         found, PROVIDER_MATCH_CHECKS.get(rule_id), PROVIDER_SECRET_PATTERNS, extra_views, loose_view)
+        cands.extend(c for c in found if '\n' in text[c[0]:c[1]] or _span_has_break(text, c[0], c[1]))
+    if not cands:
+        return text, []
+    detections: List[Dict[str, Any]] = []
+    edits: List[Tuple[int, int, str]] = []
+    for start, end, found_rule, new in _merge_candidates(cands):
+        detections.append({"rule": found_rule.partition("#")[0], "start": start, "end": end})
+        edits.append((start, end, new))
+    return _apply_edits(text, edits), detections
+
+
 def _credential_pass(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    redacted, found = _credential_pass_plain(text)
+    # Only a text where a rule redacted something and that can hold a wrap break is read again: the pre-pass costs a
+    # scan of the text, which a text with no secret never pays (see credentialPass in rules.js).
+    if not found:
+        return redacted, found
+    wrapped, lead = _wrapped_provider_keys(text)
+    if not lead:
+        return redacted, found
+    again, more = _credential_pass_plain(wrapped)
+    return again, lead + more
+
+
+def _credential_pass_plain(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     redacted, first = _redact_quoted_credentials(text)
     redacted, rest = _redact_with(
         redacted, SCRUB_FIRST_PATTERNS + SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS + SCRUB_LAST_PATTERNS)
