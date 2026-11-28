@@ -100,7 +100,7 @@ New here? [First 5 minutes](docs/first-5-minutes.md). All the guides: [docs inde
 **Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
-claude plugin marketplace add usezn/zn#plugin-v1.17.0
+claude plugin marketplace add usezn/zn#plugin-v1.18.0
 claude plugin install zn-gate@usezn
 ```
 
@@ -378,10 +378,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@72c65423e76ecaa6bb0aa75d0cc6dae475cf3962 # v1.17.0
+        uses: usezn/zn@16706dd973e6f523f9a6e87df1942ae1cf4814ce # v1.18.0
         with:
-          version: '1.17.0'
-          package-sha256: '804d80e8086efdcccbb975129fd9281019a1ee9ec4b633ccb9afe279e7fe3a63'
+          version: '1.18.0'
+          package-sha256: 'f7c5cc14db99c7b54d8c151afda6ae500a8dc6b3bc6648ea1dd79c2af03412ef'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -413,9 +413,9 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@72c65423e76ecaa6bb0aa75d0cc6dae475cf3962 # v1.17.0
+        uses: usezn/zn@16706dd973e6f523f9a6e87df1942ae1cf4814ce # v1.18.0
         with:
-          version: '1.17.0'
+          version: '1.18.0'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
