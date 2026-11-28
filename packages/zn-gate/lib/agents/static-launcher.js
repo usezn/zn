@@ -131,7 +131,10 @@ function execParts(file, agentId, event, program, args = []) {
 
 /** True when a program path names the static launcher. */
 function isStaticLauncher(p) {
-  return typeof p === 'string' && path.posix.basename(p) === NAME && p.startsWith('/');
+  if (typeof p !== 'string') return false;
+  // Both separators: a launcher path written on Windows is C:\... (or \\server\...), not a POSIX path.
+  const absolute = p.startsWith('/') || /^([A-Za-z]:[\\/]|\\\\)/.test(p);
+  return absolute && p.split(/[\\/]/).pop() === NAME;
 }
 
 /**
