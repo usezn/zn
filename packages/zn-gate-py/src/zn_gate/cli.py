@@ -24,6 +24,8 @@ from . import mcp_secrets as _mcp
 from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence_timesketch import manifest_text, sha256_file
+from .evidence_pack import PackReadError, pack_target_problem, validate_pack_options, write_evidence_pack
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -753,6 +755,23 @@ def _fs_error_text(err: OSError, path: object) -> str:
     return f"{p} could not be written ({err.strerror or err}). Choose another path, then try again."
 
 
+def _write_manifest(output: str, fmt: str, check: Dict[str, Any]) -> int:
+    """Writes OUTPUT.manifest.json for the export just written. check is the result of the export's own
+    chain check, so the manifest describes the log as the export saw it. Returns an exit code (0 = written)."""
+    try:
+        text = manifest_text(fmt=fmt, source=os.path.basename(EVIDENCE_FILE), check=check,
+                             export_sha256=sha256_file(output), generator=f"zn-gate {__version__}")
+        with open(output + ".manifest.json", "x", encoding="utf-8", newline="") as manifest_file:
+            manifest_file.write(text)
+    except FileExistsError:
+        print(f"zn-gate: {output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.", file=sys.stderr)
+        return 2
+    except OSError as err:
+        print(f"zn-gate: the manifest was not written. {_fs_error_text(err, output)}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _is_evidence_log(output: str, ledger: str) -> bool:
     """True when output is the evidence log itself, or a link or hard link to it. Checked before anything is opened."""
     if os.path.normcase(os.path.realpath(output)) == os.path.normcase(os.path.realpath(ledger)):
@@ -763,7 +782,46 @@ def _is_evidence_log(output: str, ledger: str) -> bool:
         return False
 
 
+def _run_evidence_pack(args: argparse.Namespace) -> int:
+    """`evidence pack --out DIR`: an evidence pack for auditors (see evidence_pack.py). Exit 2 for a
+    refused request, 1 when the chain does not verify (the pack is still written) or the log cannot be read."""
+    options, problem = validate_pack_options(getattr(args, "since", None), getattr(args, "until", None), args.format)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 2
+    out = getattr(args, "out", None)
+    if not out:
+        print("zn-gate: evidence pack needs --out DIR (a new or empty folder).", file=sys.stderr)
+        return 2
+    problem = pack_target_problem(out)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 2
+    assert options is not None
+    try:
+        res = write_evidence_pack(EVIDENCE_FILE, out, since=options["since"], until=options["until"],
+                                  fmt=options["format"], include_preview=bool(getattr(args, "include_preview", False)),
+                                  generator=f"zn-gate {__version__}")
+    except PackReadError as err:
+        # The log is read before anything is written, so the folder is not created.
+        print(f"zn-gate: the pack stopped. {err}. {out} was not written.", file=sys.stderr)
+        return 1
+    except OSError as err:
+        # Only an error after the folder was created leaves a partial pack behind.
+        state = "was not written." if getattr(err, "pack_started", True) is False else "is incomplete: do not use it."
+        print(f"zn-gate: the pack stopped. {_fs_error_text(err, out)}. {out} {state}", file=sys.stderr)
+        return 1
+    print(f"Pack written to {out}: {res['records']} records in the period, {res['undated']} undated, "
+          f"chain {'VERIFIED' if res['valid'] else 'NOT VERIFIED'}.")
+    if not res["valid"]:
+        print(f"Tamper detected: {res['error']}\n{recovery_hint()}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_evidence(args: argparse.Namespace) -> int:
+    if getattr(args, "pack_action", None) == "pack":
+        return _run_evidence_pack(args)
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
         if res.get("valid"):
@@ -781,31 +839,65 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 
     if getattr(args, "export", False):
         fmt = getattr(args, "format", "jsonl")
+        include_preview = bool(getattr(args, "include_preview", False))
+        manifest = bool(getattr(args, "manifest", False))
+        if include_preview and fmt not in ("timesketch", "timesketch-csv", "ocsf"):
+            print("zn-gate: --include-preview works only with --format timesketch, timesketch-csv or ocsf.", file=sys.stderr)
+            return 2
+        if manifest and not getattr(args, "output", None):
+            print("zn-gate: --manifest needs --output FILE.", file=sys.stderr)
+            return 2
         # Checked before the export is read or the output is written: writing it would replace the log.
         if getattr(args, "output", None) and _is_evidence_log(args.output, EVIDENCE_FILE):
             print("Error: the output file is the evidence log itself; choose another path.", file=sys.stderr)
             return 2
-        res = export_evidence_ledger(format=fmt)
+        if manifest and (os.path.lexists(args.output + ".manifest.json")):
+            print(f"zn-gate: {args.output}.manifest.json already exists or is a link; --manifest does not overwrite it. Remove it or choose another --output.", file=sys.stderr)
+            return 2
+        if include_preview:
+            res = export_evidence_ledger(format=fmt, include_preview=True)
+        else:
+            res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
+        if res.get("read_error"):
+            # Nothing is written (the npm package may leave a partial file, so it says "incomplete"; here the output is never half a log).
+            not_written = f" {args.output} was not written." if getattr(args, "output", None) else ""
+            print(f"zn-gate: the export stopped. {res.get('error')}.{not_written}", file=sys.stderr)
+            return 1
         if not res.get("valid"):
-            print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+            # Same two lines as the npm package.
+            print(f"Tamper detected: {res.get('error')}", file=sys.stderr)
             print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
             try:
-                Path(args.output).write_text(out_content, encoding="utf-8")
+                # newline="" keeps \n on Windows too, as the Node package writes it.
+                with open(args.output, "w", encoding="utf-8", newline="") as out_file:
+                    out_file.write(out_content)
             except OSError as err:
                 print(f"Error: the export was not saved. {_fs_error_text(err, args.output)}", file=sys.stderr)
                 return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
+            if manifest:
+                manifest_code = _write_manifest(args.output, fmt, res)
+                if manifest_code:
+                    return manifest_code
         else:
             # The content already ends with a newline (or is empty when the
             # ledger has no records); print() would add a blank line, which
-            # Node's process.stdout.write does not.
-            sys.stdout.write(out_content)
+            # Node's process.stdout.write does not. Bytes go out as they are,
+            # so Windows does not turn \n into \r\n (the npm package writes \n).
+            raw_stdout = getattr(sys.stdout, "buffer", None)
+            if raw_stdout is None:
+                sys.stdout.write(out_content)
+            else:
+                sys.stdout.flush()
+                raw_stdout.write(out_content.encode("utf-8", errors="replace"))
+                raw_stdout.flush()
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
-        return 0
+        # A log whose chain does not verify in full is not proof: exit 1, like --verify (the npm package does the same).
+        return 0 if res.get("valid") else 1
 
     stats = get_evidence_stats()
     print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
@@ -1067,8 +1159,18 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser = subparsers.add_parser("evidence", allow_abbrev=False, help="Audit cryptographic evidence ledger")
     ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
-    ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")
+    ev_parser.add_argument("--format", type=str.lower, choices=["jsonl", "csv", "timesketch", "timesketch-csv", "ocsf"], default="jsonl",
+                           help="Export format: jsonl (default), csv, timesketch (JSON Lines for Timesketch), timesketch-csv or ocsf (JSON Lines, OCSF Detection Finding)")
     ev_parser.add_argument("--output", help="Write export output to file")
+    ev_parser.add_argument("--manifest", action="store_true",
+                           help="With --output: also write FILE.manifest.json (what was exported, and whether the chain verified)")
+    ev_parser.add_argument("--include-preview", action="store_true",
+                           help="With --format timesketch, timesketch-csv or ocsf: add the payload preview as zn_payload_preview (with pack: keep payload_preview in the records)")
+    ev_parser.add_argument("pack_action", nargs="?", choices=["pack"],
+                           help="pack: write an evidence pack for auditors into --out DIR (a new or empty folder)")
+    ev_parser.add_argument("--out", help="With pack: the folder to write (must be new or empty)")
+    ev_parser.add_argument("--since", help="With pack: first UTC day to include, YYYY-MM-DD (inclusive)")
+    ev_parser.add_argument("--until", help="With pack: last UTC day to include, YYYY-MM-DD (inclusive)")
 
     # status command
     subparsers.add_parser("status", allow_abbrev=False, help="Show engine status and configuration")
