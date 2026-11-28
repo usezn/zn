@@ -26,29 +26,13 @@ allow = [
 ]
 
 # Per-crate exceptions for licences that appear only on these crates in Cargo.lock.
-[[licenses.exceptions]]
-# Unicode data tables, AND-ed with (MIT OR Apache-2.0): needs Unicode-DFS-2016 too.
-name = "finl_unicode"
-version = "1.5.0"
-allow = ["Unicode-DFS-2016"]
-
-[[licenses.exceptions]]
-# Unicode bidi data, AND-ed with MIT: needs Unicode-DFS-2016 too.
-name = "wezterm-bidi"
-version = "0.2.3"
-allow = ["Unicode-DFS-2016"]
-
+# cargo-deny warns when an entry matches no crate in the workspace graph, so
+# add one only when a finding names a crate that is actually reached.
 [[licenses.exceptions]]
 # CC0-1.0 alone (no OR alternative): a public-domain dedication.
 name = "notify"
 version = "6.1.1"
 allow = ["CC0-1.0"]
-
-[[licenses.exceptions]]
-# WTFPL alone (no OR alternative): terminal capability data.
-name = "terminfo"
-version = "0.9.0"
-allow = ["WTFPL"]
 
 [[licenses.exceptions]]
 # CDLA-Permissive-2.0 alone: root certificate data.
@@ -61,18 +45,18 @@ allow = ["CDLA-Permissive-2.0"]
 multiple-versions = "warn"
 wildcards = "warn"
 highlight = "all"
-# getrandom is pulled in three versions that cannot be unified with a
-# compatible `cargo update`: every parent is already on its latest release.
-#   0.2.17 <- rand_core 0.6 (rand 0.8: tower_governor, tungstenite 0.24)
-#   0.3.4  <- rand_core 0.9 (rand 0.9: candle, opentelemetry_sdk, tokenizers),
-#             ahash 0.8.12, tempfile 3.27.0, tokenizers 0.22.2
-#   0.4.3  <- RustCrypto 2026 crates (crypto-common 0.2, password-hash, phc),
-#             rand 0.10, uuid 1.28
-# Unifying them needs a major upgrade of candle/tokenizers/tower_governor
-# upstream, so the two older ones are skipped here.
+# getrandom has three versions in Cargo.lock. The two older ones are skipped
+# because their direct parents still depend on them:
+#   0.2.17 <- jsonwebtoken 10.4.0, ring 0.17.14
+#   0.3.4  <- rand_core 0.9.5, ahash 0.8.12, governor 0.10.4,
+#             tokenizers 0.22.2 and 0.23.2
+#   0.4.3  <- crypto-common, password-hash, phc, rand 0.10, tempfile,
+#             uuid, zip, jobserver (build dependency)
+# Unifying them needs newer releases of those parents. Re-check with
+# `cargo tree --locked -i getrandom@<version> --depth 1` when Cargo.lock changes.
 skip = [
-    { crate = "getrandom@0.2.17", reason = "pulled by rand_core 0.6 (rand 0.8); parents have no release on getrandom 0.4" },
-    { crate = "getrandom@0.3.4", reason = "pulled by rand_core 0.9, ahash and tempfile, all at their latest release; needs upstream bumps" },
+    { crate = "getrandom@0.2.17", reason = "pulled by jsonwebtoken 10.4.0 and ring 0.17.14, which still depend on getrandom 0.2" },
+    { crate = "getrandom@0.3.4", reason = "pulled by rand_core 0.9.5, ahash 0.8.12, governor 0.10.4 and tokenizers 0.22/0.23, which still depend on getrandom 0.3" },
 ]
 
 [sources]
