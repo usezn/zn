@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-27.2';
+const COMMAND_RULES_VERSION = '2026-11-28.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -1111,11 +1111,11 @@ function analyze(cmd, depth = 0, known = null, requoted = false, rc = 0) {
     if (posixHit) return posixHit;
   }
   // ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
-  // this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
-  // $'.bash\x72c', $'\x72m' -rf $'\x7e').
+  // this reading only adds a block. Every rule counts, so a decoded body of sh -c or eval is read like any other
+  // (bash -c $'\x64d if=/dev/zero of=/dev/sdz'); only the too-many-commands refusal is left to the reading above.
   if (text.includes("$'")) {
     const ansiHit = checkSegments(segmentsOf(policyModule()._decodeAnsiC(text), true), depth, known, rc);
-    if (ansiHit === 'pipe_to_shell' || ansiHit === 'rc_download' || ansiHit === 'rm_root_home') return ansiHit;
+    if (ansiHit && ansiHit !== OVERFLOW && REASONS[ansiHit] && on(ansiHit)) return ansiHit;
   }
   // Fail closed: never allow a line whose tail was not read.
   return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;

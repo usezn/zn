@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-27.2"
+COMMAND_RULES_VERSION = "2026-11-28.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1904,11 +1904,11 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None, requoted: bool = False
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
-    # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
-    # $'.bash\x72c', $'\x72m' -rf $'\x7e').
+    # this reading only adds a block. Every rule counts, so a decoded body of sh -c or eval is read like any other
+    # (bash -c $'\x64d if=/dev/zero of=/dev/sdz'); only the too-many-commands refusal is left to the reading above.
     if "$'" in text:
         ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known, rc)
-        if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
+        if ansi_hit and ansi_hit != _OVERFLOW and ansi_hit in _REASONS:
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None

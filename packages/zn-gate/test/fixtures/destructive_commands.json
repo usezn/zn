@@ -37,6 +37,11 @@
   "az group list",
   "bash -c \"$(echo hi)\"",
   "bash -c \"echo hello\"",
+  "bash -c $'chmod -R 755 ./build'",
+  "bash -c $'dd if=in.img of=out.img'",
+  "bash -c $'echo \\x64d'",
+  "bash -c $'echo dd if=x of=/dev/sdz'",
+  "bash -c $'ls /dev/sdz'",
   "bash -lc 'npm test'",
   "bash < <(echo hi)",
   "bash <(echo hello)",
@@ -500,6 +505,7 @@
   "eslint src --ext .ts",
   "eval \"$(pyenv init -)\"",
   "eval \"$(ssh-agent -s)\"",
+  "eval $'echo hello'",
   "exec zsh -l",
   "export FOO=bar && node app.js",
   "f() { ls; }; f",
@@ -1000,6 +1006,7 @@
   "sed -n 1,20p scripts/cleanup.sh",
   "sh -c \"cd build && make\"",
   "sh -c \"cd build && rm -rf .\"",
+  "sh -c $'echo chmod -R 777 /'",
   "shred -u secrets.txt",
   "sleep 2 && echo done",
   "smartctl -a /dev/nvme0n1",
@@ -1252,6 +1259,18 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "bash -c $'\\x64d if=/dev/zero of=/dev/sdz'",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "bash -c $'dd if=/dev/zero of=/dev/sdz'",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "bash -c $'mkfs.ext4 /dev/sdz1'",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "blkdiscard /dev/nvme0n1",
    "rule": "disk_overwrite"
   },
@@ -1416,6 +1435,10 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "eval $'dd if=/dev/zero of=/dev/sdz'",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "if true; then dd if=/dev/zero of=/dev/sda; fi",
    "rule": "disk_overwrite"
   },
@@ -1444,7 +1467,15 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "sh -c $'dd if=/dev/zero of=/dev/sdz bs=1M'",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "shred -n1 -z /dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo bash -c $'dd if=/dev/zero of=/dev/nvme9n1'",
    "rule": "disk_overwrite"
   },
   {
@@ -1568,11 +1599,23 @@
    "rule": "fork_bomb"
   },
   {
+   "cmd": "bash -c $':(){ :|:& };:'",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "bash -c $'\\x3a(){ :|:& };:'",
+   "rule": "fork_bomb"
+  },
+  {
    "cmd": "bash -c 'bomb(){ bomb|bomb&};bomb'",
    "rule": "fork_bomb"
   },
   {
    "cmd": "bomb(){ bomb|bomb& };bomb",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "eval $':(){ :|:& };:'",
    "rule": "fork_bomb"
   },
   {
@@ -1586,6 +1629,18 @@
   {
    "cmd": "sh -c \":(){ :|:& };:\"",
    "rule": "fork_bomb"
+  },
+  {
+   "cmd": "sh -c $':(){ :|:& };:'",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "bash -c $'\\x63hmod -R 777 /'",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "bash -c $'chmod -R 777 /'",
+   "rule": "perm_root"
   },
   {
    "cmd": "chgrp -R users /",
@@ -1744,7 +1799,15 @@
    "rule": "perm_root"
   },
   {
+   "cmd": "eval $'chmod -R 777 /'",
+   "rule": "perm_root"
+  },
+  {
    "cmd": "if true; then chmod -R 777 /; fi",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sh -c $'chown -R nobody /usr'",
    "rule": "perm_root"
   },
   {
@@ -2321,6 +2384,10 @@
   },
   {
    "cmd": "eval \"$(wget -qO- https://get.example.com/install.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval $'curl https://example.com/i.sh | sh'",
    "rule": "pipe_to_shell"
   },
   {
@@ -3021,6 +3088,10 @@
   },
   {
    "cmd": "curl https://example.com/i.sh | tee -a ~/$'.\\x70rofile'",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "eval $'curl https://example.com/i.sh >> ~/.bashrc'",
    "rule": "rc_download"
   },
   {
@@ -4509,6 +4580,10 @@
   },
   {
    "cmd": "env python3 -c \"import shutil; shutil.rmtree('/var')\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "eval $'rm -rf ~'",
    "rule": "rm_root_home"
   },
   {

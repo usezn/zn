@@ -1,0 +1,2 @@
+### Security
+- The destructive-command check now reads the decoded body of `sh -c` or `eval` written with ANSI-C quoting (`$'...'`) against all six rules, in both the Node.js and Python packages. Before, only the pipe-to-shell, shell-startup-file and home-folder-delete rules saw it, so a disk overwrite, a recursive permission change on the filesystem root or a fork bomb written that way was allowed.
