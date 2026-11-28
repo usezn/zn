@@ -157,6 +157,13 @@ jobs:
       - name: Workflow header - every workflow starts with a comment line
         if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
         run: node .github/scripts/check-workflow-first-line.mjs
+      # Scheduled failure alerts: a workflow with a schedule has a final job that opens an issue when a scheduled run fails.
+      - name: Scheduled failure alerts - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/check-scheduled-failure-alerts.test.mjs
+      - name: Scheduled failure alerts - every scheduled workflow has the alert job
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node .github/scripts/check-scheduled-failure-alerts.mjs
       # Workflow timeouts: every job of a workflow sets timeout-minutes (a stuck job would run for 6 hours).
       - name: Workflow timeouts - test the check
         if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
