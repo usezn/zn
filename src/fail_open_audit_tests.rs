@@ -88,9 +88,29 @@ fn enforcement_configured_and_no_policy_in_the_folder_is_an_error() {
 }
 
 #[test]
-fn a_file_that_is_not_wasm_without_enforcement_is_skipped_and_the_call_is_allowed() {
-    // Deliberate: with nothing asking for signed policies, a gateway without policies is a valid setup.
+fn policy_files_of_which_none_loaded_stop_startup_without_enforcement() {
+    // Files that were put there to be checked, none of which loads: an error naming the file, not a
+    // gateway that allows everything.
     let dir = dir_with(&[("p.wasm", b"not a module")]);
+    let e = engine(vec![], None);
+    let msg = load_error(&e, &dir);
+    assert!(msg.contains("p.wasm"), "{msg}");
+    assert!(msg.contains("none of them loaded"), "{msg}");
+    assert_eq!(e.policy_count(), 0);
+}
+
+#[test]
+fn a_bad_file_among_loaded_ones_is_only_logged_without_enforcement() {
+    let dir = dir_with(&[("p.wasm", EMPTY_MODULE), ("bad.wasm", b"not a module")]);
+    let e = engine(vec![], None);
+    e.load_all_policies(dir.path()).expect("one policy loaded");
+    assert_eq!(e.policy_count(), 1);
+}
+
+#[test]
+fn a_folder_without_policy_files_and_without_enforcement_is_a_valid_setup_that_allows() {
+    // Deliberate: with nothing asking for policies and no policy file, a gateway without policies is valid.
+    let dir = dir_with(&[("notes.txt", b"not a policy")]);
     let e = engine(vec![], None);
     e.load_all_policies(dir.path()).expect("load returns Ok");
     assert_eq!(e.policy_count(), 0);

@@ -121,13 +121,29 @@ pub fn fused_block(rules_hit: bool, neural_score: Option<f32>, tau: f32) -> bool
 /// One fused decision + its evidence. Evidence is `Some` only when the neural
 /// camera actually participated (score computed) AND the call was blocked.
 /// Returns `(blocked, evidence)`.
+///
+/// This function has no way to report that the check could not run, so it fails
+/// closed: when fusion is enabled in the configuration but the model is missing
+/// or scoring fails, it blocks (with no evidence) instead of falling back to the
+/// rules and returning a plain allow. Use [`evaluate_checked`] to learn the
+/// reason and to decide for yourself.
+#[deprecated(note = "use evaluate_checked, which also reports why the fusion check could not run")]
 pub fn evaluate(
     rules_hit: bool,
     neural_input: &str,
     cfg: &FusionConfig,
 ) -> (bool, Option<super::super::audit::FusionEvidence>) {
-    let (blocked, evidence, _degraded) = evaluate_checked(rules_hit, neural_input, cfg);
-    (blocked, evidence)
+    let (blocked, evidence, degraded) = evaluate_checked(rules_hit, neural_input, cfg);
+    block_when_degraded(blocked, evidence, degraded.is_some())
+}
+
+/// Fail-closed rule of [`evaluate`]: a check that could not run is a block.
+fn block_when_degraded(
+    blocked: bool,
+    evidence: Option<super::super::audit::FusionEvidence>,
+    degraded: bool,
+) -> (bool, Option<super::super::audit::FusionEvidence>) {
+    (blocked || degraded, evidence)
 }
 
 /// Same decision as [`evaluate`], plus the reason the fusion check could not
@@ -201,6 +217,7 @@ fn decide_with_score(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -265,8 +282,28 @@ mod tests {
             shared_engine(&cfg).is_none(),
             "absent model files => engine None"
         );
+        // The deprecated evaluate cannot report the failure, so an enabled check
+        // that cannot run blocks instead of passing on the rules alone.
         let (blocked, ev) = evaluate(false, "rm -rf /", &cfg);
-        assert!(!blocked && ev.is_none());
+        assert!(blocked && ev.is_none());
+        let (_, _, degraded) = evaluate_checked(false, "rm -rf /", &cfg);
+        assert_eq!(degraded.as_deref(), Some("fusion model unavailable"));
+    }
+
+    #[test]
+    fn evaluate_blocks_when_the_check_could_not_run_and_keeps_other_decisions() {
+        assert_eq!(block_when_degraded(false, None, true), (true, None));
+        assert_eq!(block_when_degraded(true, None, true), (true, None));
+        assert_eq!(block_when_degraded(false, None, false), (false, None));
+        assert_eq!(block_when_degraded(true, None, false), (true, None));
+        // A scoring error is a degraded result, so evaluate blocks on it too.
+        let cfg = FusionConfig {
+            enabled: true,
+            ..FusionConfig::default()
+        };
+        let (blocked, ev, degraded) = decide_with_score(false, Err(anyhow::anyhow!("boom")), &cfg);
+        assert!(!blocked);
+        assert!(block_when_degraded(blocked, ev, degraded.is_some()).0);
     }
 
     #[test]

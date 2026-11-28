@@ -837,12 +837,14 @@ fn failed_closed(verdict: &serde_json::Value) -> bool {
 
 /// Load the policies from `policy_dir`. When policy enforcement is configured (a signing key or allowed
 /// hashes) and they do not load, this is an error: running without them would allow everything they were
-/// meant to check, so every command that loads policies refuses to start. Without enforcement a problem
-/// is returned for the caller to report, and `Ok(None)` means they loaded.
+/// meant to check, so every command that loads policies refuses to start. Without enforcement, policy files
+/// of which none loaded also refuse to start; any other problem is returned for the caller to report, and
+/// `Ok(None)` means they loaded.
 fn load_policies_or_refuse(engine: &ZnEngine, policy_dir: &str) -> Result<Option<anyhow::Error>> {
     match engine.load_all_policies(policy_dir) {
         Ok(()) => Ok(None),
         Err(e) if engine.policy_enforcement_configured() => Err(anyhow!("zn did not start. {e}. Fix or remove the policy files, or remove engine.signing_public_key and engine.allowed_policy_hashes (ZN_SIGNING_PUBLIC_KEY, ZN_POLICY_HASHES) if you do not use signed policies.")),
+        Err(e) if e.downcast_ref::<zn::engine::PolicyFilesFailed>().is_some() => Err(anyhow!("zn did not start. {e}. A gateway with no policy allows everything those files were meant to check. Fix or remove the policy files (policy folder: {policy_dir}).")),
         Err(e) => Ok(Some(e)),
     }
 }
@@ -3750,6 +3752,18 @@ mod policy_load_refusal_tests {
         let err = load_policies_or_refuse(&e, dir.path().to_str().unwrap())
             .expect_err("must refuse without policies");
         assert!(err.to_string().contains("zn did not start"), "{err}");
+    }
+
+    #[test]
+    fn policy_files_of_which_none_loaded_are_refused_even_without_enforcement() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("broken.wasm"), b"not a module").unwrap();
+        let e = engine(vec![]);
+        let err = load_policies_or_refuse(&e, dir.path().to_str().unwrap())
+            .expect_err("must refuse when every policy file failed");
+        let msg = err.to_string();
+        assert!(msg.contains("zn did not start"), "{msg}");
+        assert!(msg.contains("broken.wasm"), "{msg}");
     }
 
     #[test]

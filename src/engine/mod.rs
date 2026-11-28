@@ -191,6 +191,19 @@ pub struct ZnEngine {
     pub(crate) kept_last_refusals: std::sync::atomic::AtomicUsize,
 }
 
+/// Policy files exist in the policy folder but none of them loaded, and no policy enforcement is
+/// configured. Lists the files and why each failed.
+#[derive(Debug)]
+pub struct PolicyFilesFailed(pub String);
+
+impl std::fmt::Display for PolicyFilesFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "policy files exist but none of them loaded: {}", self.0)
+    }
+}
+
+impl std::error::Error for PolicyFilesFailed {}
+
 impl ZnEngine {
     /// Create a new ZnEngine with the given configuration
     pub fn new(mut config: ZnEngineConfig) -> Result<Self> {
@@ -457,8 +470,9 @@ impl ZnEngine {
     ///
     /// Every policy file that can be loaded is registered. When policy enforcement is configured
     /// (a signing key or allowed hashes), this returns an error if any policy file failed to load or if
-    /// no policy loaded at all, so the caller can refuse to start. Without enforcement a bad file is
-    /// only logged, and an empty folder is a valid setup.
+    /// no policy loaded at all, so the caller can refuse to start. Without enforcement a bad file among
+    /// loaded ones is only logged and an empty folder is a valid setup, but policy files of which none
+    /// loaded are a [`PolicyFilesFailed`] error.
     pub fn load_all_policies(&self, dir: impl AsRef<Path>) -> Result<()> {
         let dir = dir.as_ref();
         if !dir.exists() {
@@ -479,6 +493,12 @@ impl ZnEngine {
                     failed.push(format!("{file} ({e})"));
                 }
             }
+        }
+        if !self.policy_enforcement_configured() && !failed.is_empty() && self.policies.is_empty() {
+            // Policy files are there but not one of them loaded. Without enforcement a single bad file
+            // among good ones is only logged, but a folder whose every policy failed would leave the
+            // gateway allowing everything those files were put there to check.
+            return Err(PolicyFilesFailed(failed.join("; ")).into());
         }
         if self.policy_enforcement_configured() {
             if !failed.is_empty() {
