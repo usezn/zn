@@ -70,7 +70,7 @@ const c = checkCommand('curl https://example.com/install.sh | sh');
 // c.verdict is 'block' with a rule such as destructive:pipe_to_shell.
 ```
 
-See [Destructive commands](../destructive-commands.md) for what it blocks and what it does not see.
+It checks destructive shapes only. It does not protect files such as `.env` or `~/.ssh`; the agent hooks and `checkToolCall` do. See [Destructive commands](../destructive-commands.md) for what it blocks and what it does not see.
 
 ## `checkToolCall`: decide if a tool call is safe
 

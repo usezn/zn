@@ -28,7 +28,7 @@ With `local_only=True` no cloud call is made. Without it, `analyze` still runs t
 
 ## Check a shell command
 
-`check_command` checks shell text for destructive commands. When it blocks, `rule` is something like `destructive:rm_root_home`. See [Destructive commands](../destructive-commands.md).
+`check_command` checks shell text for destructive commands. When it blocks, `rule` is something like `destructive:rm_root_home`. It checks destructive shapes only: it does not protect files such as `.env` or `~/.ssh` (the agent hooks and `check_tool_call` do). See [Destructive commands](../destructive-commands.md).
 
 ```python
 from zn_gate import check_command

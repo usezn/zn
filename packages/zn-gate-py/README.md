@@ -174,7 +174,7 @@ a = check_command("rm -rf ~/")
 print(a.verdict, a.rule)                              # block destructive:rm_root_home
 ```
 
-Only the rules listed in [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md) are checked, so decide in your own code which tools may delete files or run commands.
+Only the rules listed in [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md) are checked, so decide in your own code which tools may delete files or run commands. `check_command` has no protected-path policy: `cp ~/.aws/credentials out` (a made-up command) is allowed by it, while the agent hooks refuse it. Run `check_tool_call` as well to catch sensitive file names in the text, as described above.
 
 Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
 

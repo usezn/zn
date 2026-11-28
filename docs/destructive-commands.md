@@ -32,6 +32,12 @@ In your own code, call the function directly. Calling it is the opt-in: it alway
 
 Both return the same result as `evaluate`, with a rule such as `destructive:rm_root_home`. See the [API reference](api-reference.md). The settings above apply to the agent hooks only.
 
+### What the library function covers, and what the hook adds
+
+`checkCommand` and `check_command` check the six destructive shapes below and nothing else. They have no protected-path policy. The agent hooks add one: they also refuse a shell command that reads or writes a protected file such as `.env`, `.npmrc`, `~/.ssh` or `~/.aws`, or that names a path they cannot verify. So a command can pass the library function and still be refused by a hook. For example, `cp ~/.aws/credentials out` (a made-up command) is allowed by `check_command` and refused by the hooks.
+
+To get a path check in your own code, call `checkToolCall` (Node.js) or `check_tool_call` (Python) as well, or `evaluate` on the text. They block text that points at a sensitive file (rule `path:sensitive_file`). That check is a text rule, not the hook's shell reader, and its list of names is not identical to the hook's. For the full shell-aware path policy, run the command through an agent hook.
+
 ## What it blocks
 
 | Rule | Default | Blocks | Examples |
