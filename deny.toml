@@ -65,7 +65,7 @@ highlight = "all"
 # compatible `cargo update`: every parent is already on its latest release.
 #   0.2.17 <- rand_core 0.6 (rand 0.8: tower_governor, tungstenite 0.24)
 #   0.3.4  <- rand_core 0.9 (rand 0.9: candle, opentelemetry_sdk, tokenizers),
-#             ahash 0.8.12, tempfile 3.27.0, tokenizers 0.22.2
+#             ahash 0.8.12, tempfile 3.27.0, tokenizers 0.23.2
 #   0.4.3  <- RustCrypto 2026 crates (crypto-common 0.2, password-hash, phc),
 #             rand 0.10, uuid 1.28
 # Unifying them needs a major upgrade of candle/tokenizers/tower_governor
