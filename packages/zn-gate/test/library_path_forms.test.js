@@ -65,6 +65,18 @@ test('near-misses of the further startup files stay allowed', () => {
   }
 });
 
+test('a download into a startup file written as a glob or with a substitution in its name is blocked', () => {
+  for (const t of T.rc_glob_denied) {
+    for (const f of FORMS) assert.equal(checkCommand(f(t)).rule, 'destructive:rc_download', f(t));
+  }
+});
+
+test('globs that cannot match a startup name and substitutions outside the startup folders stay allowed', () => {
+  for (const t of T.rc_glob_allowed) {
+    for (const f of FORMS) assert.equal(checkCommand(f(t)).verdict, 'allow', f(t));
+  }
+});
+
 test('reading ~/.ssh/environment stays allowed while downloading into it is blocked', () => {
   assert.notEqual(evaluate('cat ~/.ssh/environment').rule, 'path:sensitive_file');
   assert.equal(checkCommand(DL + ' -o ~/.ssh/environment').rule, 'destructive:rc_download');

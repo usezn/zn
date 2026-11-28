@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-28.6"
+COMMAND_RULES_VERSION = "2026-11-28.7"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1708,6 +1708,206 @@ def _brace_alts(w: str) -> Optional[List[str]]:
     return _expand_braces(_SEQ_RE.sub(_expand_seq, str(w)))
 
 
+# A startup-file name written as a glob (.bas?rc, .bashr[c], /etc/prof*) or built by a substitution (.$(echo bashrc), .${X}rc).
+# A glob counts when it could match a protected startup name, read case-insensitively as on macOS and Windows: its last
+# segments are matched one by one against the protected names, and the path that results goes through _is_rc_path. A
+# substitution in the file name counts when the folder is the home folder, or a startup folder in it or in /etc: the name
+# cannot be told, so it is refused. Same rules as isRcGlob and isRcSubstitutedName in destructive.js.
+_RC_GLOB_HOME = (
+    ".bashrc", ".bash_profile", ".bash_login", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".kshrc",
+    ".cshrc", ".tcshrc", ".xprofile", ".xinitrc", ".bash_logout", ".zlogout", ".inputrc", ".pam_environment",
+)
+# The folders under /etc are anchored: the whole path must be /etc/...
+_RC_GLOB_ANCHORED: List[Tuple[Tuple[str, ...], ...]] = (
+    [((("etc",)), (n,)) for n in ("profile", "bash.bashrc", "bash_profile", "bash.bash_logout", "csh.cshrc", "zshrc", "zlogin", "environment")]
+    + [(("etc",), ("ssh",), ("sshrc",))]
+    + [(("etc",), ("zsh",), (n,)) for n in ("zshenv", "zprofile", "zlogin", "zshrc")]
+    + [(("etc",), ("profile.d",), ("a.sh", "x.sh", "zn.sh", "00-x.sh"))]
+)
+_RC_GLOB_FREE: List[Tuple[Tuple[str, ...], ...]] = (
+    [((n,),) for n in _RC_GLOB_HOME]
+    + [((".ssh",), (n,)) for n in ("authorized_keys", "authorized_keys2", "rc", "environment")]
+    + [
+        (("fish",), ("config.fish",)),
+        (("fish",), ("conf.d",), ("a.fish", "x.fish", "10-x.fish", "z.fish")),
+        (("environment.d",), ("a.conf", "x.conf", "10-x.conf", "90-x.conf")),
+        (("profile.ps1",),),
+        (("microsoft.powershell_profile.ps1",),),
+    ]
+)
+_GLOB_RE = re.compile(r"(?:^|[^\\])(?:[*?]|\[[^\]]+\])")
+
+
+def _has_glob(s: str) -> bool:
+    return bool(_GLOB_RE.search(s))
+
+
+def _glob_seg_re(seg: str) -> Pattern[str]:
+    """One path segment written as a glob, as a regular expression over a name."""
+    out = ""
+    i = 0
+    while i < len(seg):
+        c = seg[i]
+        if c == "\\" and i + 1 < len(seg):
+            i += 1
+            out += re.escape(seg[i])
+        elif c == "*":
+            out += "[^/]*"
+        elif c == "?":
+            out += "[^/]"
+        elif c == "[":
+            j = i + 1
+            if j < len(seg) and seg[j] in "!^":
+                j += 1
+            if j < len(seg) and seg[j] == "]":
+                j += 1
+            while j < len(seg) and seg[j] != "]":
+                j += 1
+            if j < len(seg):
+                body = seg[i + 1:j]
+                neg = body[:1] in ("!", "^")
+                if neg:
+                    body = body[1:]
+                body = body.replace("\\", "\\\\").replace("]", "\\]").replace("^", "\\^").replace("[", "\\[")
+                out += "[" + ("^" if neg else "") + body + "]"
+                i = j
+            else:
+                out += re.escape(c)
+        else:
+            out += re.escape(c)
+        i += 1
+    return re.compile("^" + out + r"\Z", re.I)
+
+
+def _glob_can_be(written: str, rx: Pattern[str], alt: str) -> bool:
+    """Whether a glob segment can stand for the name `alt`. As in a POSIX shell, a leading * ? or [ does not match a leading
+    dot (so ~/Downloads/* is not .bashrc); a PowerShell profile name is only matched by a glob that spells at least four
+    of its characters (so a bare * does not stand for profile.ps1 in every folder)."""
+    if re.match(r"[*?\[]", written) and alt[0] == ".":
+        return False
+    if alt.endswith("profile.ps1") and len(re.sub(r"[*?\[\]\\]", "", written)) < 4:
+        return False
+    return bool(rx.match(alt))
+
+
+def _pick_alt(written: str, alts: Tuple[str, ...]) -> Optional[str]:
+    if _has_glob(written):
+        rx = _glob_seg_re(written)
+        return next((a for a in alts if _glob_can_be(written, rx, a)), None)
+    return next((a for a in alts if a == written.lower()), None)
+
+
+def _glob_segments(w: str) -> List[str]:
+    return re.sub(r"/{2,}", "/", re.sub(r"\\(?![*?\[\]\\])", "/", str(w))).split("/")
+
+
+def _is_rc_glob(w: str) -> bool:
+    if not _has_glob(w):
+        return False
+    segs = _glob_segments(w)
+    for suf in _RC_GLOB_ANCHORED:
+        n = len(suf)
+        if len(segs) != n + 1 or segs[0] != "":
+            continue
+        picked = [_pick_alt(segs[k + 1], alts) for k, alts in enumerate(suf)]
+        if all(p is not None for p in picked) and _is_rc_path("/" + "/".join(picked)):  # type: ignore[arg-type]
+            return True
+    for suf in _RC_GLOB_FREE:
+        n = len(suf)
+        if len(segs) <= n:
+            continue
+        tail = segs[len(segs) - n:]
+        picked = [_pick_alt(tail[k], alts) for k, alts in enumerate(suf)]
+        if all(p is not None for p in picked) and _is_rc_path("/".join(segs[:len(segs) - n]) + "/" + "/".join(picked)):  # type: ignore[arg-type]
+            return True
+    return False
+
+
+def _is_rc_name_glob(w: str) -> bool:
+    """A glob in the file name that could be any startup name, in whatever folder (the rc modes read a name in any folder)."""
+    last = _glob_segments(w)[-1]
+    if not _has_glob(last):
+        return False
+    rx = _glob_seg_re(last)
+    if any(len(suf) == 1 and _RC_NAME_RE.match(suf[0][0]) and _glob_can_be(last, rx, suf[0][0]) for suf in _RC_GLOB_FREE):
+        return True
+    return any(_glob_can_be(last, rx, a) for a in ("authorized_keys", "authorized_keys2", "config.fish"))
+
+
+def _mask_substitutions(w: str) -> Optional[str]:
+    """The $(...), backtick and ${...} substitutions of a word, each replaced by one placeholder; None when there is none."""
+    s = str(w)
+    out: List[str] = []
+    seen = False
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and i + 1 < len(s):
+            out.append(c + s[i + 1])
+            i += 2
+            continue
+        if c == "`":
+            j = i + 1
+            while j < len(s) and s[j] != "`":
+                if s[j] == "\\":
+                    j += 1
+                j += 1
+            out.append("\x01")
+            seen = True
+            i = j + 1
+            continue
+        # The scanner cuts a word at an unquoted $( : a name that ends in a lone $ is the start of a substitution.
+        if c == "$" and i == len(s) - 1:
+            out.append("\x01")
+            seen = True
+            i += 1
+            continue
+        if c == "$" and i + 1 < len(s) and s[i + 1] in "({":
+            op = s[i + 1]
+            cl = ")" if op == "(" else "}"
+            depth = 0
+            j = i + 1
+            while j < len(s):
+                if s[j] == "\\":
+                    j += 2
+                    continue
+                if s[j] == op:
+                    depth += 1
+                elif s[j] == cl:
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            out.append("\x01")
+            seen = True
+            i = j + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out) if seen else None
+
+
+_RC_HOME_FOLDER_RE = re.compile(
+    r"^(?:~|\$home|\$userprofile|%userprofile%|\$env:(?:userprofile|home)|/home/[^/]+|/users/[^/]+|/root|[a-z]:/users/[^/]+)\Z"
+)
+_RC_HOME_SUBFOLDERS = ("/.ssh", "/.config/fish", "/.config/fish/conf.d", "/.config/environment.d")
+_RC_ETC_FOLDERS = frozenset(("/etc", "/etc/profile.d", "/etc/ssh", "/etc/zsh", "/etc/fish/conf.d"))
+
+
+def _is_rc_substituted_name(w: str) -> bool:
+    masked = _mask_substitutions(re.sub(r"\$\{(home|userprofile)\}", r"$\1", str(w), flags=re.I))
+    if masked is None:
+        return False
+    slashed = re.sub(r"/{2,}", "/", re.sub(r"\\(?![\x01*?\[\]])", "/", masked)).lower()
+    cut = slashed.rfind("/")
+    if cut < 0 or "\x01" not in slashed[cut + 1:]:
+        return False
+    d = slashed[:cut]
+    if d in _RC_ETC_FOLDERS or _RC_HOME_FOLDER_RE.match(d):
+        return True
+    return any(d.endswith(f) and _RC_HOME_FOLDER_RE.match(d[:len(d) - len(f)]) for f in _RC_HOME_SUBFOLDERS)
+
+
 def _strip_redirects(words: List[str]) -> List[str]:
     """The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL)."""
     out: List[str] = []
@@ -1797,7 +1997,7 @@ def _check_pipeline(
                 if target is not None:
                     # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
                     alts = _brace_alts(_rc_from_cwd(heads[j][4], target))
-                    if alts is None or any(_is_rc_path(t) for t in alts):
+                    if alts is None or any(_is_rc_path(t) or _is_rc_glob(t) or _is_rc_substituted_name(t) for t in alts):
                         return "rc_download"
                     if rc == 2 and any(not _ANCHORED_RE.match(t) and re.search(r"[\\/]", t) for t in alts):
                         return "rc_download"
@@ -1805,7 +2005,7 @@ def _check_pipeline(
                     # climbs with .. can land anywhere above it (../etc/profile from /srv is /etc/profile): refused.
                     if rc and not _ANCHORED_RE.match(target) and re.search(r"(?:^|[\\/])\.\.(?:[\\/]|\Z)", target):
                         return "rc_download"
-                    if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) for t in alts):
+                    if rc and any(_RC_NAME_RE.match(re.split(r"[\\/]", t)[-1]) or _is_rc_name_glob(t) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):

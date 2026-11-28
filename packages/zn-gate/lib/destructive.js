@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-28.6';
+const COMMAND_RULES_VERSION = '2026-11-28.7';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -936,9 +936,154 @@ function braceAlts(w) {
 const RC_NAME_RE = /^(?:\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc|xprofile|xinitrc|bash_logout|zlogout|inputrc|pam_environment)|authorized_keys2?|config\.fish)$/i;
 // rc mode, passed down the calls as rc: 0 normal; 1: protected names count in any folder; 2: also any relative target that names a folder
 
+/* A startup-file name written as a glob (.bas?rc, .bashr[c], /etc/prof*) or built by a substitution (.$(echo bashrc), .${X}rc).
+   A glob counts when it could match a protected startup name, read case-insensitively as on macOS and Windows: its last
+   segments are matched one by one against the protected names, and the path that results goes through isRcPath. A substitution
+   in the file name counts when the folder is the home folder, or a startup folder in it or in /etc: the name cannot be told,
+   so it is refused (the same fail-closed reading as a .env behind a prefix built at run time). */
+const RC_GLOB_SUFFIXES = (() => {
+  const home = ['.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.profile', '.zshrc', '.zprofile', '.zshenv', '.zlogin', '.kshrc',
+    '.cshrc', '.tcshrc', '.xprofile', '.xinitrc', '.bash_logout', '.zlogout', '.inputrc', '.pam_environment'].map((n) => [[n]]);
+  const ssh = ['authorized_keys', 'authorized_keys2', 'rc', 'environment'].map((n) => [['.ssh'], [n]]);
+  // The folders under /etc are anchored: the whole path must be /etc/...
+  const etc = ['profile', 'bash.bashrc', 'bash_profile', 'bash.bash_logout', 'csh.cshrc', 'zshrc', 'zlogin', 'environment'].map((n) => [['etc'], [n]]);
+  etc.push([['etc'], ['ssh'], ['sshrc']]);
+  for (const n of ['zshenv', 'zprofile', 'zlogin', 'zshrc']) etc.push([['etc'], ['zsh'], [n]]);
+  etc.push([['etc'], ['profile.d'], ['a.sh', 'x.sh', 'zn.sh', '00-x.sh']]);
+  const other = [
+    [['fish'], ['config.fish']],
+    [['fish'], ['conf.d'], ['a.fish', 'x.fish', '10-x.fish', 'z.fish']],
+    [['environment.d'], ['a.conf', 'x.conf', '10-x.conf', '90-x.conf']],
+    [['profile.ps1']],
+    [['microsoft.powershell_profile.ps1']],
+  ];
+  return { anchored: etc, free: home.concat(ssh, other) };
+})();
+
+const hasGlob = (s) => /(?:^|[^\\])(?:[*?]|\[[^\]]+\])/.test(s);
+const escapeRe = (c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/* One path segment written as a glob, as a regular expression over a name. */
+function globSegRe(seg) {
+  let re = '';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '\\' && i + 1 < seg.length) { re += escapeRe(seg[++i]); continue; }
+    if (c === '*') { re += '[^/]*'; continue; }
+    if (c === '?') { re += '[^/]'; continue; }
+    if (c === '[') {
+      let j = i + 1;
+      if (seg[j] === '!' || seg[j] === '^') j++;
+      if (seg[j] === ']') j++;
+      while (j < seg.length && seg[j] !== ']') j++;
+      if (j < seg.length) {
+        let body = seg.slice(i + 1, j);
+        const neg = body[0] === '!' || body[0] === '^';
+        if (neg) body = body.slice(1);
+        body = body.replace(/\\/g, '\\\\').replace(/\]/g, '\\]').replace(/\^/g, '\\^').replace(/\[/g, '\\[');
+        re += '[' + (neg ? '^' : '') + body + ']';
+        i = j;
+        continue;
+      }
+    }
+    re += escapeRe(c);
+  }
+  return new RegExp('^' + re + '$', 'i');
+}
+
+/* Whether a glob segment can stand for the name `alt`. As in a POSIX shell, a leading * ? or [ does not match a leading dot
+   (so ~/Downloads/* is not .bashrc); a PowerShell profile name is only matched by a glob that spells at least four of its
+   characters (so a bare * does not stand for profile.ps1 in every folder). */
+function globCanBe(written, re, alt) {
+  if (/^[*?[]/.test(written) && alt[0] === '.') return false;
+  if (/profile\.ps1$/.test(alt) && written.replace(/[*?[\]\\]/g, '').length < 4) return false;
+  return re.test(alt);
+}
+
+/* The alternative of a suffix segment a written segment can be (a glob matches any, a plain name only itself), or undefined. */
+function pickAlt(written, alts) {
+  if (hasGlob(written)) { const re = globSegRe(written); return alts.find((a) => globCanBe(written, re, a)); }
+  return alts.find((a) => a === written.toLowerCase());
+}
+
+function isRcGlob(w) {
+  if (!hasGlob(w)) return false;
+  const segs = String(w).replace(/\\(?![*?[\]\\])/g, '/').replace(/\/{2,}/g, '/').split('/');
+  for (const suf of RC_GLOB_SUFFIXES.anchored) {
+    const n = suf.length;
+    if (segs.length !== n + 1 || segs[0] !== '') continue;
+    const picked = suf.map((alts, k) => pickAlt(segs[k + 1], alts));
+    if (picked.every((p) => p !== undefined) && isRcPath('/' + picked.join('/'))) return true;
+  }
+  for (const suf of RC_GLOB_SUFFIXES.free) {
+    const n = suf.length;
+    if (segs.length <= n) continue;
+    const tail = segs.slice(segs.length - n);
+    const picked = suf.map((alts, k) => pickAlt(tail[k], alts));
+    if (picked.every((p) => p !== undefined) && isRcPath(segs.slice(0, segs.length - n).join('/') + '/' + picked.join('/'))) return true;
+  }
+  return false;
+}
+
+/* A glob in the file name that could be any startup name, in whatever folder (the rc modes read a name in any folder). */
+function isRcNameGlob(w) {
+  const last = String(w).replace(/\\(?![*?[\]\\])/g, '/').split('/').pop();
+  if (!hasGlob(last)) return false;
+  const re = globSegRe(last);
+  return RC_GLOB_SUFFIXES.free.some((suf) => suf.length === 1 && RC_NAME_RE.test(suf[0][0]) && globCanBe(last, re, suf[0][0])) ||
+    ['authorized_keys', 'authorized_keys2', 'config.fish'].some((a) => globCanBe(last, re, a));
+}
+
+/* The $(...), backtick and ${...} substitutions of a word, each replaced by one placeholder character; null when there is none. */
+function maskSubstitutions(w) {
+  const s = String(w);
+  let out = '';
+  let seen = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < s.length) { out += c + s[++i]; continue; }
+    if (c === '`') {
+      let j = i + 1;
+      while (j < s.length && s[j] !== '`') { if (s[j] === '\\') j++; j++; }
+      out += '\u0001'; seen = true; i = j; continue;
+    }
+    // The scanner cuts a word at an unquoted $( : a name that ends in a lone $ is the start of a substitution.
+    if (c === '$' && i === s.length - 1) { out += '\u0001'; seen = true; continue; }
+    if (c === '$' && (s[i + 1] === '(' || s[i + 1] === '{')) {
+      const open = s[i + 1];
+      const close = open === '(' ? ')' : '}';
+      let depth = 0;
+      let j = i + 1;
+      for (; j < s.length; j++) {
+        if (s[j] === '\\') { j++; continue; }
+        if (s[j] === open) depth++;
+        else if (s[j] === close && --depth === 0) break;
+      }
+      out += '\u0001'; seen = true; i = j; continue;
+    }
+    out += c;
+  }
+  return seen ? out : null;
+}
+
+const RC_HOME_FOLDER_RE = /^(?:~|\$home|\$userprofile|%userprofile%|\$env:(?:userprofile|home)|\/home\/[^/]+|\/users\/[^/]+|\/root|[a-z]:\/users\/[^/]+)$/;
+const RC_HOME_SUBFOLDERS = ['/.ssh', '/.config/fish', '/.config/fish/conf.d', '/.config/environment.d'];
+const RC_ETC_FOLDERS = new Set(['/etc', '/etc/profile.d', '/etc/ssh', '/etc/zsh', '/etc/fish/conf.d']);
+
+function isRcSubstitutedName(w) {
+  const masked = maskSubstitutions(String(w).replace(/\$\{(home|userprofile)\}/gi, '$$$1'));
+  if (masked === null) return false;
+  const slashed = masked.replace(/\\(?![\u0001*?[\]])/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+  const cut = slashed.lastIndexOf('/');
+  if (cut < 0 || !slashed.slice(cut + 1).includes('\u0001')) return false;
+  const dir = slashed.slice(0, cut);
+  if (RC_ETC_FOLDERS.has(dir) || RC_HOME_FOLDER_RE.test(dir)) return true;
+  return RC_HOME_SUBFOLDERS.some((f) => dir.endsWith(f) && RC_HOME_FOLDER_RE.test(dir.slice(0, dir.length - f.length)));
+}
+
 function isRcTarget(w, rc = 0) {
   const alts = braceAlts(w);
-  return alts === null || alts.some(isRcPath) || (rc === 2 && alts.some((a) => !ANCHORED_RE.test(a) && /[\\/]/.test(a))) || (rc > 0 && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
+  return alts === null || alts.some(isRcPath) || alts.some(isRcGlob) || alts.some(isRcSubstitutedName) || (rc > 0 && alts.some(isRcNameGlob)) || (rc === 2 && alts.some((a) => !ANCHORED_RE.test(a) && /[\\/]/.test(a))) || (rc > 0 && alts.some((a) => RC_NAME_RE.test(String(a).replace(/\\/g, '/').split('/').pop())));
 }
 
 /* The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL). */

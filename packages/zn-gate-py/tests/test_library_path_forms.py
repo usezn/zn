@@ -54,6 +54,18 @@ class TestLibraryPathForms(unittest.TestCase):
                 with self.subTest(cmd=f(t)):
                     self.assertEqual(check_command(f(t)).verdict, "allow")
 
+    def test_rc_glob_and_substitution_denied(self):
+        for t in _table(self)["rc_glob_denied"]:
+            for f in FORMS:
+                with self.subTest(cmd=f(t)):
+                    self.assertEqual(check_command(f(t)).rule, "destructive:rc_download")
+
+    def test_rc_glob_and_substitution_allowed(self):
+        for t in _table(self)["rc_glob_allowed"]:
+            for f in FORMS:
+                with self.subTest(cmd=f(t)):
+                    self.assertEqual(check_command(f(t)).verdict, "allow")
+
     def test_ssh_environment_read_allowed_download_blocked(self):
         self.assertNotEqual(evaluate("cat ~/.ssh/environment").rule, "path:sensitive_file")
         self.assertEqual(check_command(DL + " -o ~/.ssh/environment").rule, "destructive:rc_download")
