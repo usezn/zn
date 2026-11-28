@@ -18,6 +18,8 @@ npx -y zn-gate init
 npx -y zn-gate check
 ```
 
+On a new machine with no coding agent set up, `check` exits with `1`. That is expected until you install one and run `init`; see [exit codes](../cli.md#exit-codes).
+
 It makes a temporary folder with a fake key in a `.env` file, asks the hook of each agent whether it may read it, and deletes the folder. When your agent is set up, its line starts with `OK`:
 
 ```text

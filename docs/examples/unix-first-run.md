@@ -35,6 +35,8 @@ A short walk-through for macOS or Linux when Node.js came from a version manager
    npx -y zn-gate check
    ```
 
+   On a new machine with no coding agent set up, `check` exits with `1`. That is expected until you install one and run `init`; see [exit codes](../cli.md#exit-codes).
+
    `OK` next to your agent means it is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says what to run. More in [check](../check.md).
 
 6. If Claude Code says `NOT protected: the zn-gate plugin needs Node.js 20.19 or later`, Claude Code is probably starting a different, older `node`. Run `node --version` in the terminal you start Claude Code from. Make the newer Node.js the first `node` on your `PATH`, open a new terminal, start a new Claude Code session and run `check` again ([troubleshooting 11](../troubleshooting.md#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)).

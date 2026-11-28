@@ -4,6 +4,7 @@ A printable version of the numbered steps in [First 5 minutes with zn-gate](firs
 
 - [ ] 1. Install: `npx -y zn-gate init`
 - [ ] 2. Check that it worked: `npx -y zn-gate check` (`OK` next to your agent means it is protected)
+  - On a new machine with no coding agent set up, `check` exits with `1`. That is expected until you install one and run `init`; see [exit codes](cli.md#exit-codes).
 - [ ] 2 (optional). Status and built-in examples: `npx -y zn-gate status` and `npx -y zn-gate test`
 - [ ] 3. Know what you will see while you work: a block, an approval question, a warning. If a block is a surprise, read its reason and ask your agent why it wanted that file. For a `.env` file, run `npx -y zn-gate env shadow .env`
 

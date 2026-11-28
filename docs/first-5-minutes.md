@@ -36,6 +36,8 @@ Want to look first? `npx -y zn-gate reach` lists what your agents can reach (sec
 npx -y zn-gate check
 ```
 
+On a new machine with no coding agent set up, `check` exits with `1`. That is expected until you install one and run `init`; see [exit codes](cli.md#exit-codes).
+
 It makes a temporary folder with a fake key in a `.env` file, asks your agent's hook to read it, and deletes the folder. This is the real output:
 
 ```text
