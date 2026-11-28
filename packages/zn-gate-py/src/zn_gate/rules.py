@@ -2333,7 +2333,7 @@ def mask_token_runs(text: str) -> str:
 # The value is the whole quoted string (single or double quotes, with backslash escapes), or, unquoted, the rest of the token.
 _PREVIEW_PASSWORD_RE = _rc(r"""(?i)\b(password|passwd|pwd)(\s*[:=]\s*)("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\S+)""")
 _PII_EMAIL_DOMAIN_RE = _rc(r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])", re.ASCII)
-_PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:[ .-]\d{1,9}){2,6}|\d{0,2} \d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
+_PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])(?:\+|%2[Bb])[1-9](?:\d{0,2}(?:(?:[ .-]|%20)\d{1,9}){2,6}|\d{0,2}(?: |%20)\d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
 _PII_IBAN_RE = _rc(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])", re.ASCII)
 _PII_CARD_RE = _rc(r"(?<![0-9A-Za-z.,_-])(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?(?![0-9A-Za-z_]|[.,]\d)", re.ASCII)
 _PII_DNI_RE = _rc(r"(?<![A-Za-z0-9_.-])\d{8}-?[A-Z](?![A-Za-z0-9_])", re.ASCII)
@@ -2430,6 +2430,12 @@ def _card_network_ok(d: str) -> bool:
         return 14 <= n <= 19
     if p2 == 62:
         return 16 <= n <= 19
+    # Chinese bank cards that a 62 prefix does not cover: UnionPay 81 (810000-817199) and the 19-digit cards of
+    # two large banks (9558, 9559); same Luhn check digit.
+    if 810000 <= p6 <= 817199:
+        return 16 <= n <= 19
+    if p4 in (9558, 9559) and n == 19:
+        return True
     return False
 
 
@@ -2461,6 +2467,8 @@ def _e164_ok(raw: str) -> bool:
 
 
 def _phone_ok(raw: str) -> bool:
+    # A percent-encoded plus sign and spaces (a query value: %2B34%20600%20123%20456) read like the decoded text.
+    raw = re.sub(r"%2[Bb]", "+", raw.replace("%20", " "))
     if re.search(r"[ .-]", raw):
         if re.search(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw):
             return False
