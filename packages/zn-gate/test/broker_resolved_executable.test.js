@@ -4,12 +4,16 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const markers = require('../lib/broker/markers');
+const { moveTempRoot, assertFixturesOutsideTemp } = require('./_exe_fixture');
+// The program checks refuse anything in a temp folder first: move the temp root away from the package so these fixtures reach them.
+moveTempRoot();
 
 const INSIDE = /inside the project/;
 
-// Under the package, not the temp dir: programs in the temp dir are refused anyway.
+// Under the package: programs in a temp folder are refused before the checks under test (see _exe_fixture.js).
 function withProject(fn) {
   const base = fs.mkdtempSync(path.join(__dirname, 'zn-resolved-exe-'));
+  assertFixturesOutsideTemp(base);
   try {
     const project = path.join(base, 'project');
     const outside = path.join(base, 'outside');

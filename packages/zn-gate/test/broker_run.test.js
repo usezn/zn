@@ -13,6 +13,7 @@ const { runBroker, parseRunArgs, prepare, argvMarkers } = require('../lib/broker
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
+const { moveTempRoot, assertFixturesOutsideTemp } = require('./_exe_fixture');
 
 const FAKE = generateAll(777, { perType: 1, piiPerType: 1 });
 const PG = FAKE.secrets.find((s) => s.type === 'postgres_connection_string').sensitive;
@@ -45,8 +46,10 @@ test('marker names: valid, reserved and invalid', () => {
 });
 
 test('a program inside the project is refused, also when the project is reached through a symlink', { skip: process.platform === 'win32' }, () => {
-  // Under the package, not the temp dir: programs in the temp dir are refused anyway.
+  // Under the package: programs in a temp folder are refused before the check under test (see _exe_fixture.js).
+  moveTempRoot();
   const base = fs.mkdtempSync(path.join(__dirname, 'zn-exe-'));
+  assertFixturesOutsideTemp(base);
   try {
     const real = path.join(base, 'real');
     const link = path.join(base, 'link');

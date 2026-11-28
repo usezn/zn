@@ -14,6 +14,9 @@ const winacl = require('../lib/vault/winacl');
 const { runBroker } = require('../lib/broker/run');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
+const { moveTempRoot, assertFixturesOutsideTemp } = require('./_exe_fixture');
+// The program checks refuse anything in a temp folder first: move the temp root away from the package so these fixtures reach them.
+moveTempRoot();
 
 const POSIX = process.platform !== 'win32';
 const PG = generateAll(778, { perType: 1, piiPerType: 1 }).secrets.find((s) => s.type === 'postgres_connection_string').sensitive;
@@ -25,9 +28,10 @@ function sink() {
   return w;
 }
 
-// Under the package, not the temp dir: programs in the temp dir are refused anyway.
+// Under the package: programs in a temp folder are refused before the checks under test (see _exe_fixture.js).
 function scratch(t) {
   const base = fs.mkdtempSync(path.join(__dirname, 'zn-scr-'));
+  assertFixturesOutsideTemp(base);
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   return base;
 }
