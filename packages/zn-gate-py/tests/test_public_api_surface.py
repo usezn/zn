@@ -19,8 +19,8 @@ Three checks, for zn_gate and zn_gate.integrations:
   remove it from the list.
 - test_no_accidental_exports: a top-level public name that is neither in
   __all__ nor a zn_gate submodule (for example a typing or stdlib name that
-  leaked in through an import) is an accidental export. Known ones are listed
-  in KNOWN_ACCIDENTAL as strict xfail, with the same prune-on-fix rule.
+  leaked in through an import) is an accidental export. Names that leaked
+  before are listed in LEAKED_NAMES as regression cases: each must stay out.
 """
 
 import os
@@ -69,7 +69,7 @@ KNOWN_UNDOCUMENTED = {
     },
 }
 
-KNOWN_ACCIDENTAL = {
+LEAKED_NAMES = {
     "zn_gate": {
         "Any",
         "Dict",
@@ -146,10 +146,10 @@ def test_all_names_are_documented(module, name):
 
 _ACCIDENT_CASES = []
 for _module, _label in MODULES:
-    _names = set(_accidental(_module)) | KNOWN_ACCIDENTAL[_label]
+    _names = set(_accidental(_module)) | LEAKED_NAMES[_label]
     _ACCIDENT_CASES.extend((_module, _label, n) for n in sorted(_names))
 
 
-@pytest.mark.parametrize("module,name", _params(_ACCIDENT_CASES, KNOWN_ACCIDENTAL))
+@pytest.mark.parametrize("module,name", _params(_ACCIDENT_CASES, {}))
 def test_no_accidental_exports(module, name):
     assert name not in _accidental(module), "%s exposes %s without __all__" % (module.__name__, name)

@@ -5,12 +5,12 @@ Each adapter is imported the first time one of its names is used, so using one
 framework does not load the others.
 """
 
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-import importlib
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+import importlib as _importlib
+from typing import TYPE_CHECKING as _TYPE_CHECKING, Any as _Any, Dict as _Dict, List as _List, Tuple as _Tuple
 
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     from .langchain import ZnGuardCallbackHandler, guard_langchain_tool
     from .crewai import guarded_tool
     from .llamaindex import ZnLlamaGuard
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .promptfoo import call_api, call_api as promptfoo_provider
 
 # public name -> (submodule, attribute)
-_LAZY: Dict[str, Tuple[str, str]] = {
+_LAZY: _Dict[str, _Tuple[str, str]] = {
     "ZnGuardCallbackHandler": ("langchain", "ZnGuardCallbackHandler"),
     "guard_langchain_tool": ("langchain", "guard_langchain_tool"),
     "guarded_tool": ("crewai", "guarded_tool"),
@@ -31,16 +31,16 @@ _LAZY: Dict[str, Tuple[str, str]] = {
 }
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     target = _LAZY.get(name)
     if target is None:
         raise AttributeError("module %r has no attribute %r" % (__name__, name))
-    value = getattr(importlib.import_module("." + target[0], __name__), target[1])
+    value = getattr(_importlib.import_module("." + target[0], __name__), target[1])
     globals()[name] = value
     return value
 
 
-def __dir__() -> List[str]:
+def __dir__() -> _List[str]:
     return sorted(set(globals()) | set(_LAZY))
 
 
