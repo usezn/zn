@@ -211,10 +211,19 @@ function detectorsOf(st) {
   return Array.isArray(st.policy.detectors) ? st.policy.detectors : [];
 }
 
+/**
+ * redactionOf(state) -> {pii, ner} the policy requires (booleans; false when absent or the policy is not in force).
+ * Like detectors, it applies also in strict mode and after expiry: it can only redact more.
+ */
+function redactionOf(st) {
+  const r = st && st.policy && (st.state === 'active' || st.state === 'expired') ? st.policy.redaction : null;
+  return { pii: Boolean(r && r.pii === true), ner: Boolean(r && r.ner === true) };
+}
+
 /* The note for an entry from effectiveList: only when strict mode came from the ended subscription. */
 function teamStrictNote(entry) {
   const p = entry && entry.orgPolicy;
   return p && p.state === 'expired' && p.subscription_inactive === true ? require('../messages').TEAM_STRICT_NO_SUBSCRIPTION : '';
 }
 
-module.exports = { teamStrictNote, effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches, warnNotice, WARN_REASON, INVALID_REASON };
+module.exports = { teamStrictNote, effective, hostCovered, approvalKey, pickOpening, detectorsOf, redactionOf, secretMatches, warnNotice, WARN_REASON, INVALID_REASON };

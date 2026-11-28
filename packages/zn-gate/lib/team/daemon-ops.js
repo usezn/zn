@@ -19,7 +19,7 @@
 const crypto = require('crypto');
 const policy = require('./policy');
 const audit = require('../vault/audit');
-const { effective, approvalKey, detectorsOf } = require('./effective');
+const { effective, approvalKey, detectorsOf, redactionOf } = require('./effective');
 const changes = require('./changes');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
@@ -678,7 +678,7 @@ function makeTeamOps(ctx) {
       const shown = t.policy && Number.isSafeInteger(t.policy.change_shown) ? t.policy.change_shown : null;
       return {
         joined: true, org: t.org, kid: t.pin.kid, state: st.state, version: st.version || null,
-        detectors: detectorsOf(st), change: changes.cleanChange(t.policy && t.policy.change),
+        detectors: detectorsOf(st), redaction: redactionOf(st), change: changes.cleanChange(t.policy && t.policy.change),
         change_shown: shown, pin_mismatch: pinMismatch,
       };
     },

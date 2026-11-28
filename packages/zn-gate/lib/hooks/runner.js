@@ -563,6 +563,8 @@ function lazyDeps(opts) {
  * locked or does not answer in time) leaves a line for the person (see
  * takeTeamNotes). */
 let orgDetectors = null;
+// The policy requires personal-data redaction (redaction.pii): local settings can turn it on, never off.
+let orgPii = false;
 let teamNotes = [];
 const takeTeamNotes = () => { const n = teamNotes; teamNotes = []; return n; };
 
@@ -580,7 +582,7 @@ async function orgDetectorsFor(opts, vault) {
   orgDetectors = [];
   try {
     const team = require('../team/policy');
-    const { detectorsOf } = require('../team/effective');
+    const { detectorsOf, redactionOf } = require('../team/effective');
     const { compile } = require('../team/detectors');
     const popts = { home: opts && opts.znHome };
     const st = team.state(popts);
@@ -610,15 +612,17 @@ async function orgDetectorsFor(opts, vault) {
         org = r.org || org;
         if (r.state === 'active' || r.state === 'expired') orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []);
         else missing = r.state === 'invalid';
+        if (r.state === 'active' || r.state === 'expired') orgPii = Boolean(r.redaction && r.redaction.pii === true);
       } else {
         orgDetectors = compile(detectorsOf(st));
+        orgPii = redactionOf(st).pii === true;
       }
       if (confirmed) { trusted = true; change = r.change; shown = Number.isSafeInteger(r.change_shown) ? r.change_shown : null; } else change = st.change;
     } else if (canAsk) {
       const r = await withinMs(vault.teamHookInfo(), 1500);
       if (r && r.joined) {
         org = r.org || org;
-        if (r.state === 'active' || r.state === 'expired') { orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []); change = r.change; }
+        if (r.state === 'active' || r.state === 'expired') { orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []); orgPii = Boolean(r.redaction && r.redaction.pii === true); change = r.change; }
         else if (r.state === 'invalid') missing = true;
       } else if (r === null && (st.state === 'invalid' || copyLost)) missing = true;
     } else if (st.state === 'invalid' || copyLost) {
@@ -647,7 +651,18 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
     destination,
     vault,
     detectors: d.detectors ? d.detectors() : await orgDetectorsFor(undefined, vault),
+    // Personal data is scrubbed unless a caller says pii:false; the organization's policy pins it on.
+    pii: orgPii ? true : undefined,
   };
+}
+
+/* The egress check level for this call: the local level, but never "off" while the organization's policy requires
+ * personal-data redaction (the local setting can only raise it). */
+async function egressModeFor(opts, d) {
+  const mode = egressModeOf(opts);
+  if (mode !== 'off' || d.detectors) return mode;
+  await orgDetectorsFor(undefined, await d.vault());
+  return orgPii ? 'ask' : mode;
 }
 
 /* The spans of one text with every layer, the vault's values included (the vault daemon matches those: they never
@@ -1190,7 +1205,7 @@ async function decidePre(ev, d, agentId, opts) {
           'of the zn "secrets" MCP server: zn sends the request with the real value, only to the hosts allowed for that secret.',
       };
     }
-    const eg = await egressCheck(ev, d, agentId, egressModeOf(opts), policy.egressUrlParts(input.url, { allow: () => egressAllowOf(opts) }), 'WebFetch request');
+    const eg = await egressCheck(ev, d, agentId, await egressModeFor(opts, d), policy.egressUrlParts(input.url, { allow: () => egressAllowOf(opts) }), 'WebFetch request');
     return eg || { decision: 'allow' };
   }
 
@@ -1230,7 +1245,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
     let res = await decideMcp(ev, d, agentId);
     if (res.decision === 'deny') return res;
-    const mode = egressModeOf(opts);
+    const mode = await egressModeFor(opts, d);
     // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
     // call is a network request whose arguments the egress check read in full, it decides (local and allow-listed
     // hosts are not asked about what goes to the host, only about the other arguments). If the walk was cut short
@@ -1264,7 +1279,7 @@ async function decidePre(ev, d, agentId, opts) {
       if (ask) return ask;
     }
 
-    const egressMode = egressModeOf(opts);
+    const egressMode = await egressModeFor(opts, d);
     const egress = egressMode === 'off' ? null
       : await egressCheck(ev, d, agentId, egressMode, policy.egressParts(original, { powershell: tool === 'powershell', allow: () => egressAllowOf(opts) }), 'command');
     if (egress && egress.decision === 'deny') return egress;

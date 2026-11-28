@@ -369,6 +369,18 @@ at most 4096. No groups, alternatives, `?`, `*` or `+`. For example
 patterns are skipped on the machine, and all custom detectors together get
 200 ms per scan.
 
+Redaction (`redaction.pii`): when the policy turns it on, zn keeps personal data
+(emails, phone numbers, IBANs, card numbers, national ids and similar) scrubbed
+in every agent that uses the zn hooks, and nothing on the machine can switch
+it off. Tool output is already scrubbed this way by default; with the policy on,
+the hook also stops honouring `hooks.egressCheck: "off"` in `~/.zn/config.json`
+and asks before a network request or an MCP call sends personal data (the
+level `ask`, or `deny` if it is set higher locally). Local settings can only
+raise the level. An expired policy still applies it, like the detectors. The
+`redaction.ner` option (an optional local model) is accepted and shown by
+`zn team rules`, but zn-gate does not ship a model for it yet, so it changes
+nothing.
+
 ### Offline, expiry and removal
 
 | Situation | What happens |
