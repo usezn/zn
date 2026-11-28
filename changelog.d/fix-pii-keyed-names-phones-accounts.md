@@ -6,5 +6,5 @@
 - A phone number with a percent-encoded plus sign and `%20` spaces in a query value (`phone=%2B34%20600%20123%20456`) is now masked by
   the Node.js scrubber and by `zn-gate test`. The Python preview now also masks `%2B` followed by a compact number, as the Node.js
   scrubber already did.
-- Chinese bank card numbers of 19 digits with a valid check digit (UnionPay 81 ranges and the 9558 and 9559 prefixes, as well as the 62 prefix
-  that was already covered) are now masked as cards by both engines. Other long numbers are left alone.
+- Chinese bank card numbers of 16 to 19 digits with a valid check digit in the UnionPay 81 range (810000-817199), as well as the 62 prefix
+  that was already covered, are now masked as cards by both engines. Other long numbers are left alone.

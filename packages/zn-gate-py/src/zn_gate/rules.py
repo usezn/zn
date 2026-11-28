@@ -2430,12 +2430,9 @@ def _card_network_ok(d: str) -> bool:
         return 14 <= n <= 19
     if p2 == 62:
         return 16 <= n <= 19
-    # Chinese bank cards that a 62 prefix does not cover: UnionPay 81 (810000-817199) and the 19-digit cards of
-    # two large banks (9558, 9559); same Luhn check digit.
+    # Chinese bank cards that a 62 prefix does not cover: UnionPay 81 (810000-817199).
     if 810000 <= p6 <= 817199:
         return 16 <= n <= 19
-    if p4 in (9558, 9559) and n == 19:
-        return True
     return False
 
 

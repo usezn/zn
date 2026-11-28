@@ -183,10 +183,8 @@ function cardNetworkOk(d) {
   if (p4 >= 3528 && p4 <= 3589) return len >= 16 && len <= 19;                     // JCB
   if (p2 === 36 || p2 === 38 || p2 === 39 || (p3 >= 300 && p3 <= 305)) return len >= 14 && len <= 19; // Diners
   if (p2 === 62) return len >= 16 && len <= 19;                                     // UnionPay
-  // Chinese bank cards that a UnionPay-style 62 prefix does not cover: UnionPay 81 (810000-817199), and the
-  // 19-digit cards of two large banks (9558, 9559). They carry the same Luhn check digit.
+  // Chinese bank cards that a UnionPay-style 62 prefix does not cover: UnionPay 81 (810000-817199).
   if (p6 >= 810000 && p6 <= 817199) return len >= 16 && len <= 19;
-  if ((p4 === 9558 || p4 === 9559) && len === 19) return true;
   return false;
 }
 
