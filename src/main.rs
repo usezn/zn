@@ -200,7 +200,6 @@ struct AppState {
     memory: Arc<zn::ai::VectorMemory>,
     // 🛡️ Cloudflare for AI Features
     loop_breaker: Arc<zn::engine::loop_breaker::LoopBreaker>,
-    cache: Arc<zn::engine::cache::ResultCache>,
     consensus: Arc<zn::engine::consensus::ConsensusManager>,
 }
 
@@ -675,7 +674,6 @@ async fn start_proxy(args: Args) -> Result<()> {
         loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
             zn_config.loop_breaker.clone(),
         )),
-        cache: Arc::clone(&cache),
         consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
             zn_config.consensus.clone(),
         )),
@@ -1373,7 +1371,7 @@ async fn process_mcp_message(
                 }
             };
 
-            // 0. ACTIVE DEFENSE CHECK (before the cache, so a ban always wins)
+            // 0. ACTIVE DEFENSE CHECK
             // Before processing, check if this agent is BANNED
             if let Err(ban_msg) = state.reputation.check_agent_status(&rep_key) {
                 log::error(format!(
@@ -1388,11 +1386,10 @@ async fn process_mcp_message(
                 )));
             }
 
-            // 1. CLOUDFLARE STYLE: CACHE CHECK (only for agents that are not banned)
-            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
-                log::info(format!("✨ CACHE HIT: {} (Agent: {})", tool_log, agent_log)).ok();
-                return Ok(Some(cached_result));
-            }
+            // There is deliberately no result-cache lookup here: a cache hit
+            // would answer before the rules, the loop breaker, consensus, the
+            // neural layer and the policies, so a cached entry could outlive
+            // a policy or rule change. Every call goes through all checks.
 
             log::info(format!(
                 "🎯 Tool call detected: {} (Agent: {})",
@@ -2743,7 +2740,6 @@ mod audit_isolation_tests {
             loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
                 config.loop_breaker.clone(),
             )),
-            cache: Arc::new(zn::engine::cache::ResultCache::new(config.caching.clone())),
             consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
                 config.consensus.clone(),
             )),
@@ -3107,7 +3103,6 @@ mod audit_metadata_tests {
             loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
                 cfg.loop_breaker.clone(),
             )),
-            cache,
             consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
                 cfg.consensus.clone(),
             )),
@@ -4014,5 +4009,50 @@ mod degraded_verdict_tests {
         let text = serde_json::to_string(&res.content).unwrap();
         assert!(!text.contains("degraded"), "{text}");
         assert!(text.contains("allow"), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod result_cache_bypass_tests {
+    use super::audit_isolation_tests::{frame, test_state};
+    use super::*;
+
+    /// A cached result must never answer a tool call before the checks:
+    /// the gateway runs every rule, policy and consensus check on each call,
+    /// whatever the result cache holds for the same agent, tool and arguments.
+    #[tokio::test]
+    async fn a_cached_entry_never_bypasses_the_checks() {
+        let (mut state, _dir) = test_state(None);
+        let cache = Arc::new(zn::engine::cache::ResultCache::new(
+            zn::config::CachingConfig {
+                enabled: true,
+                ttl_seconds: 3600,
+            },
+        ));
+        state.pool =
+            Arc::new(McpPool::new(std::collections::HashMap::new()).with_cache(Arc::clone(&cache)));
+        let args = serde_json::json!({ "query": "hello" }).to_string();
+        for tool in ["rm_file", "other_tool"] {
+            cache.set("anonymous", tool, &args, "CACHED-RESPONSE".to_string());
+            assert!(cache.get("anonymous", tool, &args).is_some());
+        }
+
+        // A call the managed rules refuse stays refused although it is cached.
+        let blocked = process_mcp_message(&frame("rm_file"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!blocked.contains("CACHED-RESPONSE"), "{blocked}");
+        let v: serde_json::Value = serde_json::from_str(&blocked).unwrap();
+        assert_eq!(v["error"]["code"], -32001, "{blocked}");
+
+        // An allowed call is answered by the checked message, never by the cache.
+        for _ in 0..2 {
+            let allowed = process_mcp_message(&frame("other_tool"), &state, None)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!allowed.contains("CACHED-RESPONSE"), "{allowed}");
+        }
     }
 }
