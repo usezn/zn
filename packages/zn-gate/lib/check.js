@@ -1544,7 +1544,7 @@ async function check(opts = {}) {
     for (const spec of AGENTS) {
       try {
         const r = withGitHint(await checkAgent(spec, ctx), ctx);
-        if (!(r.state === 'not-set-up' && r.found === false)) r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd });
+        if (!(r.state === 'not-set-up' && r.found === false)) r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd, installed: r.found !== false });
         results.push(r);
       } catch (err) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not check it: ' + oneLine(err && err.message, 200), notes: [] });
