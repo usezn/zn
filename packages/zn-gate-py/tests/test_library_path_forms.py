@@ -42,6 +42,22 @@ class TestLibraryPathForms(unittest.TestCase):
                 with self.subTest(cmd=f(t)):
                     self.assertEqual(check_command(f(t)).verdict, "allow")
 
+    def test_rc_startup_denied(self):
+        for t in _table(self)["rc_startup_denied"]:
+            for f in FORMS:
+                with self.subTest(cmd=f(t)):
+                    self.assertEqual(check_command(f(t)).rule, "destructive:rc_download")
+
+    def test_rc_startup_allowed(self):
+        for t in _table(self)["rc_startup_allowed"]:
+            for f in FORMS:
+                with self.subTest(cmd=f(t)):
+                    self.assertEqual(check_command(f(t)).verdict, "allow")
+
+    def test_ssh_environment_read_allowed_download_blocked(self):
+        self.assertNotEqual(evaluate("cat ~/.ssh/environment").rule, "path:sensitive_file")
+        self.assertEqual(check_command(DL + " -o ~/.ssh/environment").rule, "destructive:rc_download")
+
     def test_private_keys_and_short_names(self):
         for t in _table(self)["text_denied"]:
             for text in ("cat " + t, t):

@@ -53,6 +53,23 @@ test('public key files and look-alikes pass path:sensitive_file', () => {
   }
 });
 
+test('a download into the further startup files (ssh rc and environment, X session, logout, /etc/zsh) is blocked', () => {
+  for (const t of T.rc_startup_denied) {
+    for (const f of FORMS) assert.equal(checkCommand(f(t)).rule, 'destructive:rc_download', f(t));
+  }
+});
+
+test('near-misses of the further startup files stay allowed', () => {
+  for (const t of T.rc_startup_allowed) {
+    for (const f of FORMS) assert.equal(checkCommand(f(t)).verdict, 'allow', f(t));
+  }
+});
+
+test('reading ~/.ssh/environment stays allowed while downloading into it is blocked', () => {
+  assert.notEqual(evaluate('cat ~/.ssh/environment').rule, 'path:sensitive_file');
+  assert.equal(checkCommand(DL + ' -o ~/.ssh/environment').rule, 'destructive:rc_download');
+});
+
 test('the rule versions moved with the new spellings', () => {
   const { COMMAND_RULES_VERSION } = require('../lib/destructive');
   const { RULES_VERSION } = require('../lib/rules');
