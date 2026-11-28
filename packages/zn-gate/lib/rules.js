@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.2
+ * RULES_VERSION: 2026-11-28.3
  */
 
-const RULES_VERSION = '2026-11-28.2';
+const RULES_VERSION = '2026-11-28.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -357,6 +357,7 @@ const PATH_HOME_VAR_RE = /\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home
 const PATH_CWD_VAR_RE = /\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%/g;
 const PATH_WORD_SPLIT_RE = /[ \t\r\n\f\v|&;<>()\[\]{}`,]+/;
 const PATH_QUOTE_RE = /["']/g;
+const PATH_LOCALE_QUOTE_RE = /\$"/g;
 const PATH_TILDE_USER_RE = /^~[^/]*/;
 const PATH_DRIVE_RE = /^[a-z]:$/;
 
@@ -422,7 +423,8 @@ function sensitivePathView(text) {
   const words = [];
   for (const raw of lowered.split(PATH_WORD_SPLIT_RE)) {
     if (!raw) continue;
-    const word = raw.replace(PATH_QUOTE_RE, '');
+    // A $ right before a double quote is a bash locale quote ($"id_rsa"): it is dropped with the quotes.
+    const word = raw.replace(PATH_LOCALE_QUOTE_RE, '"').replace(PATH_QUOTE_RE, '');
     words.push(normalizePathWord(word.replace(/\\/g, '/')));
     if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
     for (const g of gluedPathReadings(word)) words.push(normalizePathWord(g.replace(/\\/g, '/')));
@@ -461,6 +463,13 @@ function dropCmdCarets(text) {
   }
   return out;
 }
+// Credential files of other tools, named as the hook names them (the same list): .netrc and _netrc, .git-credentials, .pgpass,
+// .docker/config.json, the GitHub CLI hosts file, .kube/config, the Google Cloud and Azure token files, the Zcode provider
+// file and any file in a GnuPG folder, in any directory. ~/.npmrc and ~/.pypirc (registry tokens) are protected only in the
+// home folder: a project .npmrc is read like any file, as in the hook. Not copied: names the hook finds by content (.pem,
+// .key, .p8), by container extension (.p12, .pfx, ...) or by an environment variable.
+const NAMED_SECRET_FILE_RE = /(?:^|[\s"'`(\[@,=\/\\])(?:\.(?:netrc|git-credentials|pgpass)|_netrc|\.docker[\/\\]config\.json|\.config[\/\\]gh[\/\\]hosts\.ya?ml|\.kube[\/\\]config|\.config[\/\\]gcloud[\/\\](?:credentials\.db|access_tokens\.db|application_default_credentials\.json)|\.azure[\/\\](?:accessTokens\.json|msal_token_cache\.json)|\.zcode[\/\\]v2[\/\\]provider_config\.json)(?![A-Za-z0-9_.-])|(?:^|[\s"'`(\[@,=\/\\])(?:\.gnupg|AppData[\/\\]Roaming[\/\\]gnupg)(?![A-Za-z0-9_.-])/i;
+const HOME_SECRET_FILE_RE = /(?:^|[\s"'`(\[@,=\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]\.(?:npmrc|pypirc)(?![A-Za-z0-9_.-])/i;
 // %NAME% of a variable the same text sets (set X=.env) is replaced by its value; every other % unit is taken out, as its value is unknown.
 function expandCmdPercent(text) {
   const vars = new Map();
@@ -482,7 +491,9 @@ function cmdReadings(text) {
 }
 
 function testSensitivePathAs(text) {
-  return SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text) || SENSITIVE_PATH_RE.test(sensitivePathView(text));
+  if (SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text) || NAMED_SECRET_FILE_RE.test(text) || HOME_SECRET_FILE_RE.test(text)) return true;
+  const view = sensitivePathView(text);
+  return SENSITIVE_PATH_RE.test(view) || NAMED_SECRET_FILE_RE.test(view) || HOME_SECRET_FILE_RE.test(view);
 }
 function testSensitivePath(text) {
   return testSensitivePathAs(text) || cmdReadings(text).some(testSensitivePathAs);
