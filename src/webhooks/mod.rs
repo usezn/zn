@@ -73,11 +73,21 @@ const LOG_BODY_CAP: usize = 512;
 /// Most bytes read from the network in all, only to count what is left out.
 const LOG_BODY_READ_LIMIT: usize = 64 * 1024;
 
+/// Unicode bidirectional marks, embeddings, overrides and isolates (U+061C,
+/// U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). They are not control
+/// characters, but they can reorder how a log line is shown.
+fn is_bidi_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Turns the start of a response body into one safe log value: any copy of the
 /// webhook URL is replaced by its redacted form, the text is cut at
 /// `LOG_BODY_CAP` bytes on a character boundary with a marker that says how
 /// much was left out, and control characters (C0, DEL, C1, so ANSI escapes, CR,
-/// LF and NUL too) are escaped as `\u{..}`, so a remote server cannot add fake
+/// LF and NUL too) and bidirectional formatting characters are escaped as `\u{..}`, so a remote server cannot add fake
 /// log lines or terminal sequences. `extra` is the number of bytes read after
 /// `head` and `extra_is_lower_bound` says the count stopped at the read limit.
 fn format_body_for_log(head: &[u8], extra: usize, extra_is_lower_bound: bool, url: &str) -> String {
@@ -117,7 +127,7 @@ fn format_body_for_log(head: &[u8], extra: usize, extra_is_lower_bound: bool, ur
     let end = text.len();
     let mut out = String::with_capacity(end + 24);
     for c in text.chars() {
-        if c.is_control() {
+        if c.is_control() || is_bidi_format(c) {
             out.push_str(&format!("\\u{{{:04x}}}", c as u32));
         } else {
             out.push(c);
@@ -144,10 +154,12 @@ async fn read_body_head(mut response: reqwest::Response, url_len: usize) -> (Vec
     let mut extra = 0usize;
     let mut total = 0usize;
     while let Ok(Some(chunk)) = response.chunk().await {
-        total += chunk.len();
+        // Never count past the limit: only the part of the chunk that fits.
+        let chunk = &chunk[..chunk.len().min(LOG_BODY_READ_LIMIT.saturating_sub(total))];
+        total = total.saturating_add(chunk.len());
         let take = keep.saturating_sub(head.len()).min(chunk.len());
         head.extend_from_slice(&chunk[..take]);
-        extra += chunk.len() - take;
+        extra = extra.saturating_add(chunk.len() - take);
         if total >= LOG_BODY_READ_LIMIT {
             return (head, extra, true);
         }
@@ -828,6 +840,121 @@ mod tests {
         let (mgr, _rx) = WebhookManager::new(vec![]);
         let cfg = cfg(&url, WebhookType::Generic);
         assert!(mgr.send_webhook(&cfg, &alert("DENIED")).await.is_ok());
+    }
+
+    #[test]
+    fn log_body_bidi_characters_are_escaped() {
+        let all = "\u{061C}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}";
+        let body = format!("ok{all}\u{202E}evil");
+        let out = format_body_for_log(body.as_bytes(), 0, false, "");
+        for c in all.chars() {
+            assert!(!out.contains(c), "{out:?}");
+        }
+        assert!(out.contains("\\u{202e}evil"), "{out}");
+        assert!(out.contains("\\u{061c}\\u{200e}\\u{200f}"), "{out}");
+        // Ordinary non-ASCII text stays readable.
+        assert_eq!(
+            format_body_for_log("caf\u{e9} \u{4e2d}".as_bytes(), 0, false, ""),
+            "caf\u{e9} \u{4e2d}"
+        );
+    }
+
+    thread_local! {
+        /// What the current thread has logged since the last `capture_logs`.
+        static LOGGED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// A tracing writer that keeps what the current thread logs. The tests
+    /// run on one thread each, so they do not see each other's lines.
+    #[derive(Clone, Default)]
+    struct LogCapture;
+
+    impl std::io::Write for LogCapture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            LOGGED.with(|l| l.borrow_mut().extend_from_slice(buf));
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Installs the capturing subscriber once for the whole process (a
+    /// per-thread one can miss events when tests register callsites at the
+    /// same time) and clears what this thread has logged so far.
+    fn capture_logs() {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(LogCapture)
+                .with_ansi(false)
+                .with_max_level(tracing::Level::WARN)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber).unwrap();
+        });
+        LOGGED.with(|l| l.borrow_mut().clear());
+    }
+
+    async fn serve_body_once(status_line: &'static str, body: Vec<u8>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 {status_line}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+            for piece in body.chunks(1024) {
+                if sock.write_all(piece).await.is_err() {
+                    break;
+                }
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn read_body_head_stops_at_the_read_limit() {
+        let url = serve_body_once("500 Internal Server Error", vec![b'z'; 300_000]).await;
+        let response = reqwest::get(&url).await.unwrap();
+        let (head, extra, lower_bound) = read_body_head(response, url.len()).await;
+        assert!(lower_bound);
+        assert_eq!(head.len() + extra, LOG_BODY_READ_LIMIT);
+        assert_eq!(head.len(), LOG_BODY_CAP + url.len() + 4);
+        // A body below the limit is read whole and reported as exact.
+        let url = serve_body_once("500 Internal Server Error", vec![b'y'; 1000]).await;
+        let response = reqwest::get(&url).await.unwrap();
+        let (head, extra, lower_bound) = read_body_head(response, url.len()).await;
+        assert!(!lower_bound);
+        assert_eq!(head.len() + extra, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_logged_line_is_capped_and_escaped() {
+        capture_logs();
+        let mut body = b"\xe2\x80\xaefake line".to_vec();
+        body.resize(300_000, b'a');
+        let url = serve_body_once("500 Internal Server Error", body).await;
+        let (mgr, _rx) = WebhookManager::new(vec![]);
+        let cfg = cfg(&url, WebhookType::Generic);
+        assert!(mgr.send_webhook(&cfg, &alert("DENIED")).await.is_ok());
+        let logged = String::from_utf8(LOGGED.with(|l| l.borrow().clone())).unwrap();
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("\\u{202e}fake line"), "{logged}");
+        assert!(!logged.contains('\u{202E}'), "{logged}");
+        assert!(logged.contains("... (at least 65"), "{logged}");
+        assert!(logged.len() < 1024, "{} bytes", logged.len());
     }
 
     #[test]
