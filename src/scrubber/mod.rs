@@ -911,7 +911,13 @@ fn token_re() -> &'static Regex {
             r"|(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}",
             r"|(?i:(?:aws_?)?secret_?access_?key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[A-Za-z0-9/+=]{40}",
             r"|AIza[0-9A-Za-z_-]{35}",
-            r"|glpat-[A-Za-z0-9_-]{20,}",
+            r"|gl(?:pat|dt|rt|ptt|cbt|ft|soat|oas|imt|agent|wt|ffct)-[A-Za-z0-9_-]{20,}",
+            r"|cfut_[A-Za-z0-9_-]{20,}",
+            r"|sntrys_[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}",
+            r"|sntryc_[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}",
+            r"|sntryh_[A-Za-z0-9_-]{43}",
+            r"|(?i:new_?relic_license_key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[0-9A-Fa-f]{40}",
+            r"|(?i:_authtoken)[\x22']?[ \t]*[:=][ \t]*[\x22']?[0-9A-Fa-f]{32,}",
             r"|github_pat_[A-Za-z0-9_]{22,255}",
             r"|gh[pousr]_[A-Za-z0-9]{20,255}",
             r"|sk-(?:proj|ant)-[A-Za-z0-9_-]{20,}",
@@ -2190,6 +2196,44 @@ mod table_parity_tests {
             .join("."),
             "jane.doe@example.com".to_string(),
             "4111 1111 1111 1111".to_string(),
+            ["cf", "ut_", &"Ab0_".repeat(10)].concat(),
+            ["glo", "as-", &"Ab0_".repeat(6)].concat(),
+            ["gli", "mt-", &"Ab0_".repeat(6)].concat(),
+            ["glag", "ent-", &"Ab0_".repeat(6)].concat(),
+            ["gl", "wt-", &"Ab0_".repeat(6)].concat(),
+            ["gl", "ffct-", &"Ab0_".repeat(6)].concat(),
+            [
+                "sntr",
+                "ys_",
+                &"Ab0+".repeat(10),
+                "_",
+                &"Cd1/".repeat(10),
+                "Cd1",
+            ]
+            .concat(),
+            [
+                "sntr",
+                "yc_",
+                &"Ab0+".repeat(10),
+                "_",
+                &"Cd1/".repeat(10),
+                "Cd1",
+            ]
+            .concat(),
+            ["sntr", "yh_", &"Ab0_".repeat(10), "Ab0"].concat(),
+            [
+                "NEW_RELIC_LICENSE",
+                "_KEY=",
+                &"0123456789abcdef".repeat(2),
+                "01234567",
+            ]
+            .concat(),
+            [
+                "//registry.example.com/:_auth",
+                "Token=",
+                &"0123456789abcdef".repeat(2),
+            ]
+            .concat(),
         ]
     }
 
