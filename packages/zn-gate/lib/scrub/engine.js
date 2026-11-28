@@ -219,8 +219,10 @@ function scan(text, ctx) {
         start: view.map[s.start],
         end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
       }, direct, text);
-      // A span that joins lines stops at a line break (see stopAtLineBreak in rules.js).
-      return sp.end > sp.start ? { ...sp, end: stopAtLineBreak(text, sp.start, sp.end) } : sp;
+      // A span that joins lines stops at a line break when the text before it is a span of the same type on its own
+      // (see stopAtLineBreak in rules.js).
+      const whole = (a, b) => scanText(text.slice(a, b), c).some((x) => x.type === sp.type && x.start === 0 && x.end === b - a);
+      return sp.end > sp.start ? { ...sp, end: stopAtLineBreak(text, sp.start, sp.end, whole) } : sp;
     }));
   }
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a

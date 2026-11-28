@@ -2,7 +2,7 @@
 
 Everything here is fictitious: public format prefixes, bodies drawn from a seeded PRNG with an
 obvious FAKE (or 0000) marker, never a real credential. A case is fully reproducible from its
-case seed string (see make_case). Used by test_scrubber_fuzz_slice.py, test_scrubber_fuzz_corpus.py
+case seed string (see make_case). Used by test_scrubber_fuzz.py (corpus and slice) and fuzz_scrubber_at_scale.py
 and the large run in fuzz_scrubber_at_scale.py; the Node.js side reads the saved corpus only.
 """
 

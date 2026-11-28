@@ -25,6 +25,8 @@ CORPUS = NODE_PKG / "test" / "fixtures" / "scrubber_fuzz_corpus.json"
 HAVE_NODE = shutil.which("node") is not None and CORPUS.exists()
 
 # Ceilings for the fixed-seed slice (SLICE_SEED, SLICE_PER_PROVIDER). Lower them when a fix lands.
+# This is a ratchet on known split-key leaks (tracked as their own fixes): the slice only bounds the totals, and
+# FuzzCorpus fails on any single corpus case whose state changes, in either direction.
 SLICE_SEED = "split-keys-ci"
 SLICE_PER_PROVIDER = 6
 MAX_REMNANT_NODE = 68
@@ -85,6 +87,15 @@ class WrappedKeyEdges(unittest.TestCase):
         out = redact_secrets("token sk-proj-FAKEABCDEFGHJKLMNPQRSTUVWXYZABCDEFGHJK\nqwertyuiop.")[0]
         self.assertNotIn("qwertyuiop", out)
         self.assertNotIn("FAKEABCD", out)
+
+    def test_lower_case_last_line_is_kept_with_a_key_not_complete_without_it(self):
+        out = redact_secrets("token ghp_FAKE0123456789ABCDEFabcdef0123\nqwertyuiop-x done")[0]
+        self.assertNotIn("qwertyuiop", out)
+        self.assertNotIn("FAKE0123", out)
+
+    def test_key_after_a_dot_is_redacted(self):
+        out = redact_secrets("cfg.sk-test-FAKE0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8")[0]
+        self.assertEqual("cfg.[REDACTED_OPENAI_KEY]", out)
 
     def test_first_word_of_the_next_line_stays_out_of_a_key(self):
         out = redact_secrets("export SERVICE_TOKEN=ghp_1HgSmcm5ja6GtiTRH4iFAKEOaL6axQvi9LxX\nrun-deploy --now\n")[0]

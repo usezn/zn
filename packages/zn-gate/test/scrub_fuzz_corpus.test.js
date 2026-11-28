@@ -47,6 +47,13 @@ test('the lower-case last line of a wrapped key is redacted with the key', () =>
   assert.ok(!out.includes('FAKEABCD'), out);
 });
 
+test('a lower-case last line is kept with a key that is not complete without it', () => {
+  // The first line alone is too short to be a token, so the line break is not a cut point even though a dash follows.
+  const out = redactSecrets('token ghp_FAKE0123456789ABCDEFabcdef0123\nqwertyuiop-x done').sanitized;
+  assert.ok(!out.includes('qwertyuiop'), out);
+  assert.ok(!out.includes('FAKE0123'), out);
+});
+
 test('the first word of the next line stays out of a key', () => {
   const out = redactSecrets('export SERVICE_TOKEN=ghp_1HgSmcm5ja6GtiTRH4iFAKEOaL6axQvi9LxX\nrun-deploy --now\n').sanitized;
   assert.ok(out.includes('\nrun-deploy --now'), out);
