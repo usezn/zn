@@ -27,7 +27,7 @@ def node_batch(texts):
         json.dump(texts, f)
         name = f.name
     try:
-        res = subprocess.run(["node", str(DRIVER), name], capture_output=True, text=True, timeout=900, check=True)
+        res = subprocess.run(["node", str(DRIVER), name], capture_output=True, text=True, encoding="utf-8", timeout=900, check=True)
     finally:
         Path(name).unlink(missing_ok=True)
     return json.loads(res.stdout)
