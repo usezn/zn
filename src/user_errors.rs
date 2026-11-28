@@ -176,6 +176,14 @@ pub fn invalid_bool_env(var: &str, value: &str) -> String {
     )
 }
 
+/// A numeric environment setting is not a number or is out of range: zn stops
+/// instead of ignoring it or clamping it to a weaker value.
+pub fn invalid_number_env(var: &str, value: &str, expected: &str) -> String {
+    format!(
+        "{var}=\"{value}\" is not valid, so zn did not start: it must be {expected}. A mistyped or out-of-range value is never ignored, because it could silently weaken a protection. Fix it, or leave {var} unset or empty to keep the default."
+    )
+}
+
 /// `ZN_PORT` is not a port number, so the port from the settings is kept.
 pub fn invalid_port_env(value: &str, fallback: u16) -> String {
     format!(

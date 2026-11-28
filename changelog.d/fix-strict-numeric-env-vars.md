@@ -1,0 +1,2 @@
+### Fixed
+- Numeric environment settings (`ZN_PARANOIA_LEVEL`, `ZN_NEURAL_THRESHOLD`, `ZN_GAS_LIMIT`, `ZN_MEMORY_LIMIT`, `ZN_TIMEOUT`, `ZN_MIN_SAMPLES` and `ZN_FPR_MARGIN`) are no longer ignored when they are not a number, and `ZN_PARANOIA_LEVEL=0` no longer becomes the most relaxed level. A value that is not a number or is out of range now stops the gateway at start-up with a message that names the variable and the accepted range.

@@ -954,24 +954,6 @@ impl ZnConfig {
             std::env::var("ZN_MCP_WS_TOKEN").ok(),
         );
 
-        if let Ok(gas) = std::env::var("ZN_GAS_LIMIT") {
-            if let Ok(g) = gas.parse() {
-                self.engine.gas_limit = g;
-            }
-        }
-
-        if let Ok(mem) = std::env::var("ZN_MEMORY_LIMIT") {
-            if let Ok(m) = mem.parse() {
-                self.engine.memory_limit_mb = m;
-            }
-        }
-
-        if let Ok(to) = std::env::var("ZN_TIMEOUT") {
-            if let Ok(t) = to.parse() {
-                self.engine.timeout_ms = t;
-            }
-        }
-
         if let Ok(hashes) = std::env::var("ZN_POLICY_HASHES") {
             self.engine.allowed_policy_hashes = hashes
                 .split(',')
@@ -1018,37 +1000,42 @@ impl ZnConfig {
             self.neural.enabled = neural_enabled.parse().unwrap_or(true);
         }
 
-        if let Ok(neural_threshold) = std::env::var("ZN_NEURAL_THRESHOLD") {
-            if let Ok(t) = neural_threshold.parse() {
-                self.neural.threshold = t;
-            }
-        }
-
-        if let Ok(paranoia) = std::env::var("ZN_PARANOIA_LEVEL") {
-            if let Ok(lvl) = paranoia.parse::<u8>() {
-                self.guardrails.paranoia_level = lvl.clamp(1, 5);
-            }
-        }
-
-        if let Ok(min_s) = std::env::var("ZN_MIN_SAMPLES") {
-            if let Ok(v) = min_s.parse::<u64>() {
-                self.guardrails.min_samples = v;
-            }
-        }
-
-        if let Ok(margin) = std::env::var("ZN_FPR_MARGIN") {
-            if let Ok(m) = margin.parse::<f64>() {
-                self.guardrails.fpr_margin = m;
-            }
-        }
-
         if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
             self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
         }
 
-        self.apply_security_flags(&|var| {
-            std::env::var_os(var).map(|v| v.to_string_lossy().into_owned())
-        })?;
+        let get_var = |var: &str| std::env::var_os(var).map(|v| v.to_string_lossy().into_owned());
+        self.apply_numeric_env(&get_var)?;
+        self.apply_security_flags(&get_var)?;
+        Ok(())
+    }
+
+    /// The numeric environment settings. An unset or empty variable keeps the
+    /// current value. A value that is not a number, or is outside the accepted
+    /// range, is an error naming the variable and the range: it is never ignored
+    /// and never clamped, so a typo or a `0` can never quietly relax protection.
+    fn apply_numeric_env(&mut self, get: &dyn Fn(&str) -> Option<String>) -> Result<()> {
+        if let Some(v) = uint_env("ZN_GAS_LIMIT", 1, u64::MAX, get)? {
+            self.engine.gas_limit = v;
+        }
+        if let Some(v) = uint_env("ZN_MEMORY_LIMIT", 1, u64::MAX, get)? {
+            self.engine.memory_limit_mb = v;
+        }
+        if let Some(v) = uint_env("ZN_TIMEOUT", 1, u64::MAX, get)? {
+            self.engine.timeout_ms = v;
+        }
+        if let Some(v) = float_env("ZN_NEURAL_THRESHOLD", 0.0, f32::MAX as f64, get)? {
+            self.neural.threshold = v as f32;
+        }
+        if let Some(v) = uint_env("ZN_PARANOIA_LEVEL", 1, 5, get)? {
+            self.guardrails.paranoia_level = v as u8;
+        }
+        if let Some(v) = uint_env("ZN_MIN_SAMPLES", 0, u64::MAX, get)? {
+            self.guardrails.min_samples = v;
+        }
+        if let Some(v) = float_env("ZN_FPR_MARGIN", 0.0, 1.0, get)? {
+            self.guardrails.fpr_margin = v;
+        }
         Ok(())
     }
 
@@ -1190,6 +1177,67 @@ fn bool_env(var: &str, get: &dyn Fn(&str) -> Option<String>) -> Result<Option<bo
     match get(var) {
         Some(raw) => parse_bool_flag(var, &raw),
         None => Ok(None),
+    }
+}
+
+/// Reads a whole-number setting in `min..=max`. `None` means keep the current
+/// value: the variable is unset, empty or blank. Anything else that is not a whole
+/// number in range is an error naming the variable and the accepted range.
+fn uint_env(
+    var: &str,
+    min: u64,
+    max: u64,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<u64>> {
+    let Some(raw) = get(var) else {
+        return Ok(None);
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.parse::<u64>() {
+        Ok(n) if n >= min && n <= max => Ok(Some(n)),
+        _ => {
+            let expected = if max == u64::MAX {
+                format!("a whole number, {min} or more")
+            } else {
+                format!("a whole number from {min} to {max}")
+            };
+            Err(anyhow!(crate::user_errors::invalid_number_env(
+                var, value, &expected
+            )))
+        }
+    }
+}
+
+/// Reads a decimal setting in `min..=max`. Same rules as `uint_env`; `NaN` and
+/// infinity are never accepted.
+fn float_env(
+    var: &str,
+    min: f64,
+    max: f64,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<f64>> {
+    let Some(raw) = get(var) else {
+        return Ok(None);
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.parse::<f64>() {
+        Ok(n) if n.is_finite() && n >= min && n <= max => Ok(Some(n)),
+        _ => {
+            let expected = if max >= f32::MAX as f64 {
+                format!("a number, {min} or more")
+            } else {
+                format!("a number from {min} to {max}")
+            };
+            Err(anyhow!(crate::user_errors::invalid_number_env(
+                var, value, &expected
+            )))
+        }
     }
 }
 
@@ -2179,5 +2227,161 @@ mod kms_type_tests {
                 .to_string();
             assert!(err.contains("kms.key_id"), "{err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod numeric_env_tests {
+    use super::*;
+
+    const VARS: [&str; 7] = [
+        "ZN_GAS_LIMIT",
+        "ZN_MEMORY_LIMIT",
+        "ZN_TIMEOUT",
+        "ZN_NEURAL_THRESHOLD",
+        "ZN_PARANOIA_LEVEL",
+        "ZN_MIN_SAMPLES",
+        "ZN_FPR_MARGIN",
+    ];
+
+    fn apply(var: &str, value: Option<&str>) -> Result<ZnConfig> {
+        let mut config = ZnConfig::default();
+        let value = value.map(str::to_string);
+        config.apply_numeric_env(&|name| if name == var { value.clone() } else { None })?;
+        Ok(config)
+    }
+
+    /// A valid value for each variable, and the check that it was applied.
+    fn check_valid(var: &str, c: &ZnConfig) {
+        match var {
+            "ZN_GAS_LIMIT" => assert_eq!(c.engine.gas_limit, 7),
+            "ZN_MEMORY_LIMIT" => assert_eq!(c.engine.memory_limit_mb, 7),
+            "ZN_TIMEOUT" => assert_eq!(c.engine.timeout_ms, 7),
+            "ZN_NEURAL_THRESHOLD" => assert_eq!(c.neural.threshold, 0.7),
+            "ZN_PARANOIA_LEVEL" => assert_eq!(c.guardrails.paranoia_level, 4),
+            "ZN_MIN_SAMPLES" => assert_eq!(c.guardrails.min_samples, 7),
+            "ZN_FPR_MARGIN" => assert_eq!(c.guardrails.fpr_margin, 0.07),
+            _ => unreachable!("{var}"),
+        }
+    }
+
+    fn valid_input(var: &str) -> &'static str {
+        match var {
+            "ZN_NEURAL_THRESHOLD" => " 0.7 ",
+            "ZN_PARANOIA_LEVEL" => "4",
+            "ZN_FPR_MARGIN" => "0.07",
+            _ => "7",
+        }
+    }
+
+    /// A value outside the range, for each variable.
+    fn out_of_range(var: &str) -> &'static [&'static str] {
+        match var {
+            "ZN_GAS_LIMIT" | "ZN_MEMORY_LIMIT" | "ZN_TIMEOUT" => &["0", "-1"],
+            "ZN_NEURAL_THRESHOLD" => &["-0.5", "NaN", "inf"],
+            "ZN_PARANOIA_LEVEL" => &["0", "6", "255", "-1", "300"],
+            "ZN_MIN_SAMPLES" => &["-1"],
+            "ZN_FPR_MARGIN" => &["-0.01", "1.5", "NaN", "inf"],
+            _ => unreachable!("{var}"),
+        }
+    }
+
+    #[test]
+    fn a_valid_value_is_applied() {
+        for var in VARS {
+            let c = apply(var, Some(valid_input(var))).unwrap();
+            check_valid(var, &c);
+        }
+    }
+
+    #[test]
+    fn an_unparseable_value_stops_the_load_and_names_the_variable() {
+        for var in VARS {
+            for bad in ["abc", "1x", "1,5", "one", "0x10", "1e"] {
+                let err = apply(var, Some(bad)).expect_err(var);
+                let msg = err.to_string();
+                assert!(msg.contains(var), "{var} {bad}: {msg}");
+                assert!(msg.contains("did not start"), "{var} {bad}: {msg}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_value_stops_the_load_and_names_the_range() {
+        for var in VARS {
+            for bad in out_of_range(var) {
+                let err = apply(var, Some(bad)).expect_err(var);
+                let msg = err.to_string();
+                assert!(msg.contains(var), "{var} {bad}: {msg}");
+                assert!(
+                    msg.contains(" or more") || msg.contains(" to "),
+                    "{var} {bad}: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_or_unset_variable_keeps_the_default() {
+        let defaults = ZnConfig::default();
+        for var in VARS {
+            for value in [None, Some(""), Some("   ")] {
+                let c = apply(var, value).unwrap();
+                assert_eq!(c.engine.gas_limit, defaults.engine.gas_limit, "{var}");
+                assert_eq!(c.engine.memory_limit_mb, defaults.engine.memory_limit_mb);
+                assert_eq!(c.engine.timeout_ms, defaults.engine.timeout_ms);
+                assert_eq!(c.neural.threshold, defaults.neural.threshold);
+                assert_eq!(
+                    c.guardrails.paranoia_level,
+                    defaults.guardrails.paranoia_level
+                );
+                assert_eq!(c.guardrails.min_samples, defaults.guardrails.min_samples);
+                assert_eq!(c.guardrails.fpr_margin, defaults.guardrails.fpr_margin);
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_from_the_config_file_survives_an_empty_variable() {
+        let mut config = ZnConfig::default();
+        config.guardrails.paranoia_level = 5;
+        config.apply_numeric_env(&|_| Some(String::new())).unwrap();
+        assert_eq!(config.guardrails.paranoia_level, 5);
+    }
+
+    #[test]
+    fn paranoia_level_zero_is_an_error_not_the_most_relaxed_level() {
+        let err = apply("ZN_PARANOIA_LEVEL", Some("0")).expect_err("0 is not a level");
+        assert!(err.to_string().contains("ZN_PARANOIA_LEVEL"), "{err}");
+        assert!(err.to_string().contains("1 to 5"), "{err}");
+        for level in 1..=5u8 {
+            let c = apply("ZN_PARANOIA_LEVEL", Some(&level.to_string())).unwrap();
+            assert_eq!(c.guardrails.paranoia_level, level);
+        }
+    }
+
+    #[test]
+    fn the_edges_of_each_range_are_accepted() {
+        assert_eq!(
+            apply("ZN_NEURAL_THRESHOLD", Some("0"))
+                .unwrap()
+                .neural
+                .threshold,
+            0.0
+        );
+        assert_eq!(
+            apply("ZN_FPR_MARGIN", Some("1"))
+                .unwrap()
+                .guardrails
+                .fpr_margin,
+            1.0
+        );
+        assert_eq!(
+            apply("ZN_MIN_SAMPLES", Some("0"))
+                .unwrap()
+                .guardrails
+                .min_samples,
+            0
+        );
     }
 }

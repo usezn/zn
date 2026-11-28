@@ -71,6 +71,8 @@ If an audit record cannot be written, the gateway logs the error (never the payl
 
 The on/off environment settings `ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRITE`, `ZN_NEURAL_BLOCKING` and `ZN_GUARDRAILS_ALERT_ONLY` accept `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off`, in any capitalisation. An unset or empty variable keeps the default. Any other value (for example a typo such as `0n`) stops the gateway at start-up with a message that names the variable, so a mistyped value can never leave a security setting off.
 
+The numeric environment settings are strict in the same way: `ZN_GAS_LIMIT`, `ZN_MEMORY_LIMIT` and `ZN_TIMEOUT` (a whole number, 1 or more), `ZN_PARANOIA_LEVEL` (a whole number from 1 to 5), `ZN_MIN_SAMPLES` (a whole number, 0 or more), `ZN_NEURAL_THRESHOLD` (a number, 0 or more) and `ZN_FPR_MARGIN` (a number from 0 to 1). An unset or empty variable keeps the default. A value that is not a number, or is outside the range, stops the gateway at start-up with a message that names the variable and the accepted range; it is never ignored and never changed to the nearest allowed value. In particular `ZN_PARANOIA_LEVEL=0` is an error, because 0 is not a level (1 is the most relaxed one); a value above 5 is an error too, not a silent 5.
+
 If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant also sees the local stdio calls of this process.
 
 ## AWS KMS data key
