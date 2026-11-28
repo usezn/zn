@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-28.1';
+const SCRUB_RULES_VERSION = '2026-11-28.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -508,8 +508,9 @@ const PATTERNS = [
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
   /* A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. The body
    * must look random and hold a digit, so a lower-case hyphenated slug (a blog post title) is not a key. Case does
-   * not matter: sk-or-v1- plus hex and lower-case sk-/sk-proj- keys are real secrets. */
-  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
+   * not matter: sk-or-v1- plus hex and lower-case sk-/sk-proj- keys are real secrets. The prefixes sk-ant_ (the
+   * Anthropic prefix is sk-ant-) and sk-prj- (the OpenAI project prefix is sk-proj-) are near misses, not keys. */
+  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant[-_]|prj-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
     check: (v) => {
       const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
       return looksRandom(body, 2, 3.5) && /[0-9]/.test(body);
@@ -568,7 +569,7 @@ const PATTERNS = [
   { type: 'AZURE_STORAGE_KEY', hints: ['AccountKey='], re: re('AccountKey=([A-Za-z0-9+/]{86}==)'), group: 1 },
   { type: 'DATABRICKS_TOKEN', hints: ['dapi'], re: re(NB + 'dapi[a-f0-9]{32}(?:-\\d)?' + NA),
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
-  { type: 'VAULT_TOKEN', hints: ['hvs.', 'hvb.'], re: re(NB + 'hv[sb]\\.[A-Za-z0-9_-]{24,}' + NA) },
+  { type: 'VAULT_TOKEN', hints: ['hvs.', 'hvb.', 'hvr.'], re: re(NB + 'hv[sbr]\\.[A-Za-z0-9_-]{24,}' + NA) },
   { type: 'DOPPLER_TOKEN', hints: ['dp.'], re: re(NB + 'dp\\.(?:st|pt|sa|scim|audit|ct)\\.[A-Za-z0-9_.-]{40,}' + NA) },
   { type: 'NEWRELIC_KEY', hints: ['NRAK-', 'NRII-'], re: re(NB + 'NR(?:AK|II)-[A-Z0-9]{27}' + NA) },
   { type: 'GROQ_KEY', hints: ['gsk_'], re: re(NB + 'gsk_[A-Za-z0-9]{52}' + NA) },
@@ -654,6 +655,10 @@ const PATTERNS = [
     check: (v) => prefixedRandom(v, /^[a-z0-9]{14}\.atlasv1\./) },
   { type: 'HEROKU_KEY_V2', hints: ['HRKU-AA'], re: re(NB + 'HRKU-AA[A-Za-z0-9_-]{58}' + NA),
     check: (v) => prefixedRandom(v, /^HRKU-AA/) },
+  /* Notion refresh token (the OAuth example in the authorization guide shows nrt_ plus 45 characters; the guide
+   * states no length, so a body of 41 to 61 characters after the 11 digits is read). */
+  { type: 'NOTION_REFRESH_TOKEN', hints: ['nrt_'], re: re(NB + 'nrt_[0-9]{11}[A-Za-z0-9]{30,50}' + NA),
+    check: (v) => prefixedRandom(v, /^nrt_[0-9]{11}/) },
   { type: 'NOTION_TOKEN', hints: ['ntn_'], re: re(NB + 'ntn_[0-9]{11}[A-Za-z0-9]{35}' + NA),
     check: (v) => prefixedRandom(v, /^ntn_[0-9]{11}/) },
   { type: 'PERPLEXITY_KEY', hints: ['pplx-'], re: re(NB + 'pplx-[A-Za-z0-9]{48}' + NA),
@@ -674,6 +679,14 @@ const PATTERNS = [
     check: (v) => prefixedRandom(v, /^xkeysib-/) },
   { type: 'SENTRY_USER_TOKEN', hints: ['sntryu_'], re: re(NB + 'sntryu_[a-f0-9]{64}' + NA),
     check: (v) => prefixedRandom(v, /^sntryu_/) },
+  /* Sentry token formats page: organization auth token (sntrys_), single-use CLI setup code (sntryc_) and
+   * single-use agent handoff code (sntryh_); both codes expire after five minutes. */
+  { type: 'SENTRY_ORG_TOKEN', hints: ['sntrys_'], re: re(NB + 'sntrys_[A-Za-z0-9+/=]{1,1024}_[A-Za-z0-9+/]{43}' + NA),
+    check: (v) => prefixedRandom(v, /^sntrys_/) },
+  { type: 'SENTRY_CLI_SETUP_CODE', hints: ['sntryc_'], re: re(NB + 'sntryc_[A-Za-z0-9+/=]{1,1024}_[A-Za-z0-9+/]{43}' + NA),
+    check: (v) => prefixedRandom(v, /^sntryc_/) },
+  { type: 'SENTRY_AGENT_HANDOFF_CODE', hints: ['sntryh_'], re: re(NB + 'sntryh_[A-Za-z0-9_-]{43}' + NA),
+    check: (v) => prefixedRandom(v, /^sntryh_/) },
   { type: 'SHIPPO_KEY', hints: ['shippo_'], re: re(NB + 'shippo_(?:live|test)_[a-fA-F0-9]{40}' + NA),
     check: (v) => prefixedRandom(v, /^shippo_(?:live|test)_/) },
   { type: 'OPENSHIFT_TOKEN', hints: ['sha256~'], re: re(NB + 'sha256~[A-Za-z0-9_-]{43}' + NA),

@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.5
+RULES_VERSION: 2026-11-28.6
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.5"
+RULES_VERSION = "2026-11-28.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1554,7 +1554,7 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:telegram_bot_token", _rc(_ALNUM_B + r'[0-9]{8,10}:AA[A-Za-z0-9_-]{33}' + _TA), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
     ("secret:azure_storage_key", _rc(r'(AccountKey=)([A-Za-z0-9+/]{86}==)'), r'\1[REDACTED_AZURE_STORAGE_KEY]'),
     ("secret:databricks_token", _rc(_TB + r'dapi[a-f0-9]{32}(?:-[0-9])?' + _TA), "[REDACTED_DATABRICKS_TOKEN]"),
-    ("secret:vault_token", _rc(_TB + r'hv[sb]\.[A-Za-z0-9_-]{24,}' + _TA), "[REDACTED_VAULT_TOKEN]"),
+    ("secret:vault_token", _rc(_TB + r'hv[sbr]\.[A-Za-z0-9_-]{24,}' + _TA), "[REDACTED_VAULT_TOKEN]"),
     ("secret:doppler_token", _rc(_TB + r'dp\.(?:st|pt|sa|scim|audit|ct)\.[A-Za-z0-9_.-]{40,}' + _TA), "[REDACTED_DOPPLER_TOKEN]"),
     ("secret:newrelic_key", _rc(_TB + r'NR(?:AK|II)-[A-Z0-9]{27}' + _TA), "[REDACTED_NEWRELIC_KEY]"),
     ("secret:groq_key", _rc(_TB + r'gsk_[A-Za-z0-9]{52}' + _TA), "[REDACTED_GROQ_KEY]"),
@@ -1581,6 +1581,8 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:grafana_token", _rc(_TB + r'(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + _TA), "[REDACTED_GRAFANA_TOKEN]"),
     ("secret:terraform_cloud_token", _rc(_TB + r'[a-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,70}' + _TA), "[REDACTED_TERRAFORM_CLOUD_TOKEN]"),
     ("secret:heroku_key_v2", _rc(_TB + r'HRKU-AA[A-Za-z0-9_-]{58}' + _TA), "[REDACTED_HEROKU_KEY_V2]"),
+    # Notion refresh token (authorization guide example: nrt_ plus 45 characters; no length is stated).
+    ("secret:notion_refresh_token", _rc(_TB + r'nrt_[0-9]{11}[A-Za-z0-9]{30,50}' + _TA), "[REDACTED_NOTION_REFRESH_TOKEN]"),
     ("secret:notion_token", _rc(_TB + r'ntn_[0-9]{11}[A-Za-z0-9]{35}' + _TA), "[REDACTED_NOTION_TOKEN]"),
     ("secret:perplexity_key", _rc(_TB + r'pplx-[A-Za-z0-9]{48}' + _TA), "[REDACTED_PERPLEXITY_KEY]"),
     ("secret:planetscale_token", _rc(_TB + r'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + _TA), "[REDACTED_PLANETSCALE_TOKEN]"),
@@ -1590,6 +1592,10 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:readme_key", _rc(_TB + r'rdme_[a-z0-9]{70}' + _TA), "[REDACTED_README_KEY]"),
     ("secret:rubygems_key", _rc(_TB + r'rubygems_[a-f0-9]{48}' + _TA), "[REDACTED_RUBYGEMS_KEY]"),
     ("secret:brevo_key", _rc(_TB + r'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + _TA), "[REDACTED_BREVO_KEY]"),
+    # Sentry token formats page: organization auth token, single-use CLI setup code and agent handoff code.
+    ("secret:sentry_org_token", _rc(_TB + r'sntrys_[A-Za-z0-9+/=]{1,1024}_[A-Za-z0-9+/]{43}' + _TA), "[REDACTED_SENTRY_ORG_TOKEN]"),
+    ("secret:sentry_cli_setup_code", _rc(_TB + r'sntryc_[A-Za-z0-9+/=]{1,1024}_[A-Za-z0-9+/]{43}' + _TA), "[REDACTED_SENTRY_CLI_SETUP_CODE]"),
+    ("secret:sentry_agent_handoff_code", _rc(_TB + r'sntryh_[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_SENTRY_AGENT_HANDOFF_CODE]"),
     ("secret:sentry_user_token", _rc(_TB + r'sntryu_[a-f0-9]{64}' + _TA), "[REDACTED_SENTRY_USER_TOKEN]"),
     ("secret:shippo_key", _rc(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA), "[REDACTED_SHIPPO_KEY]"),
     ("secret:openshift_token", _rc(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_OPENSHIFT_TOKEN]"),
@@ -1648,6 +1654,7 @@ PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
     "secret:grafana_token": lambda v: _pv_prefixed(v, r'^gl(?:c|sa)_'),
     "secret:terraform_cloud_token": lambda v: _pv_prefixed(v, r'^[a-z0-9]{14}\.atlasv1\.'),
     "secret:heroku_key_v2": lambda v: _pv_prefixed(v, r'^HRKU-AA'),
+    "secret:notion_refresh_token": lambda v: _pv_prefixed(v, r'^nrt_[0-9]{11}'),
     "secret:notion_token": lambda v: _pv_prefixed(v, r'^ntn_[0-9]{11}'),
     "secret:perplexity_key": lambda v: _pv_prefixed(v, r'^pplx-'),
     "secret:planetscale_token": lambda v: _pv_prefixed(v, r'^pscale_(?:tkn|oauth|pw)_'),
@@ -1657,6 +1664,9 @@ PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
     "secret:readme_key": lambda v: _pv_prefixed(v, r'^rdme_'),
     "secret:rubygems_key": lambda v: _pv_prefixed(v, r'^rubygems_'),
     "secret:brevo_key": lambda v: _pv_prefixed(v, r'^xkeysib-'),
+    "secret:sentry_org_token": lambda v: _pv_prefixed(v, r'^sntrys_'),
+    "secret:sentry_cli_setup_code": lambda v: _pv_prefixed(v, r'^sntryc_'),
+    "secret:sentry_agent_handoff_code": lambda v: _pv_prefixed(v, r'^sntryh_'),
     "secret:sentry_user_token": lambda v: _pv_prefixed(v, r'^sntryu_'),
     "secret:shippo_key": lambda v: _pv_prefixed(v, r'^shippo_(?:live|test)_'),
     "secret:openshift_token": lambda v: _pv_prefixed(v, r'^sha256~'),
@@ -1701,7 +1711,7 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
     "secret:telegram_bot_token": (":AA",),
     "secret:azure_storage_key": ("AccountKey=",),
     "secret:databricks_token": ("dapi",),
-    "secret:vault_token": ("hvs.", "hvb."),
+    "secret:vault_token": ("hvs.", "hvb.", "hvr."),
     "secret:doppler_token": ("dp.",),
     "secret:newrelic_key": ("NRAK-", "NRII-"),
     "secret:groq_key": ("gsk_",),
@@ -1725,6 +1735,7 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
     "secret:grafana_token": ('glc_', 'glsa_',),
     "secret:terraform_cloud_token": ('.atlasv1.',),
     "secret:heroku_key_v2": ('HRKU-AA',),
+    "secret:notion_refresh_token": ('nrt_',),
     "secret:notion_token": ('ntn_',),
     "secret:perplexity_key": ('pplx-',),
     "secret:planetscale_token": ('pscale_',),
@@ -1734,6 +1745,9 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
     "secret:readme_key": ('rdme_',),
     "secret:rubygems_key": ('rubygems_',),
     "secret:brevo_key": ('xkeysib-',),
+    "secret:sentry_org_token": ('sntrys_',),
+    "secret:sentry_cli_setup_code": ('sntryc_',),
+    "secret:sentry_agent_handoff_code": ('sntryh_',),
     "secret:sentry_user_token": ('sntryu_',),
     "secret:shippo_key": ('shippo_',),
     "secret:openshift_token": ('sha256~',),
@@ -1777,7 +1791,7 @@ SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Same
     # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
     # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
-    ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
+    ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant[-_]|prj-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
     # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
     ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
     ("secret:github_token#scrub_pat", _rc(_TB + r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + _TA), "[REDACTED_GITHUB_TOKEN]"),

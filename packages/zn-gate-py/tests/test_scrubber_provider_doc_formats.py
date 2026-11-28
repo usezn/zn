@@ -22,6 +22,7 @@ AL = "Qa7Zt3Lm9Pw2Ny5Rb8Vx1Cd4Fg6Hj0Ks"
 UR = AL + "-_"
 B64 = AL + "+/"
 HX = "0123456789abcdef"
+DG = "0123456789"
 
 
 def body(n, alphabet=AL):
@@ -42,6 +43,13 @@ POSITIVES = [
     ("secret:sendgrid_key_long", "SG." + body(33, UR) + "." + body(43, UR)),
     ("secret:sendgrid_key_long", "SG." + body(30, UR) + "." + body(66, UR)),
     ("secret:sendgrid_key_long", "SG." + body(22, UR) + "." + body(64, UR)),
+    ("secret:sentry_org_token", "sntrys_" + body(100, B64) + "=_" + body(43, B64)),
+    ("secret:sentry_cli_setup_code", "sntryc_" + body(60, B64) + "_" + body(43, B64)),
+    ("secret:sentry_agent_handoff_code", "sntryh_" + body(43, UR)),
+    ("secret:vault_token", "hvr." + body(24, UR)),
+    ("secret:vault_token", "hvr." + body(60, UR)),
+    ("secret:notion_refresh_token", "nrt_" + body(11, DG) + body(34)),
+    ("secret:notion_refresh_token", "nrt_" + body(11, DG) + body(40)),
 ]
 
 NEAR_MISSES = [
@@ -60,6 +68,22 @@ NEAR_MISSES = [
     ("secret:sendgrid_key_long", "SG." + body(22, UR) + "." + body(42, UR)),
     ("secret:sendgrid_key_long", "x" + "SG." + body(22, UR) + "." + body(44, UR)),
     ("secret:sendgrid_key_long", "SG.xxxxxxxx.yyyyyyyy"),
+    ("secret:sentry_agent_handoff_code", "sntryh_" + body(42, UR)),
+    ("secret:sentry_agent_handoff_code", "sntryh_" + body(44, UR)),
+    ("secret:sentry_agent_handoff_code", "xsntryh_" + body(43, UR)),
+    ("secret:sentry_cli_setup_code", "sntryc_" + body(60, B64) + "_" + body(42, B64)),
+    ("secret:sentry_org_token", "sntrys_" + body(140, B64)),
+    ("secret:vault_token", "hvr." + body(23, UR)),
+    ("secret:vault_token", "hvx." + body(30, UR)),
+    ("secret:vault_token", "xhvr." + body(30, UR)),
+    ("secret:notion_refresh_token", "nrt_" + body(10, DG) + body(36)),
+    ("secret:notion_refresh_token", "nrt_" + body(11, DG) + body(29)),
+    ("secret:notion_refresh_token", "xnrt_" + body(11, DG) + body(34)),
+    # Wrong prefixes: Anthropic keys start with sk-ant- (not sk-ant_) and OpenAI project keys with sk-proj- (not sk-prj-).
+    ("secret:openai_key", "sk-ant_api03-" + body(95, UR)),
+    ("secret:openai_key", "sk-ant_" + body(60)),
+    ("secret:openai_key", "sk-prj-" + body(40)),
+    ("secret:openai_key", "sk-prj-" + body(60, UR)),
 ]
 
 
@@ -134,6 +158,26 @@ class TestProviderDocFormats(unittest.TestCase):
         redacted, found = R.redact_secrets("hook " + url)
         self.assertIn("secret:teams_webhook", [d["rule"] for d in found])
         self.assertFalse(_leaks(url[url.index("/webhookb2/"):], redacted))
+
+    def test_the_documented_prefixes_and_older_vault_forms_are_still_found(self):
+        cases = [
+            ("secret:anthropic_key", "sk-ant-api03-" + body(95, UR)),
+            ("secret:openai_key", "sk-proj-" + body(60, UR)),
+            ("secret:vault_token", "hvs." + body(30, UR)),
+            ("secret:vault_token", "hvb." + body(30, UR)),
+            ("secret:notion_token", "ntn_" + body(11, DG) + body(35)),
+            ("secret:sentry_user_token", "sntryu_" + body(64, HX)),
+        ]
+        for rule_id, secret in cases:
+            with self.subTest(rule=rule_id):
+                self.assertIn(rule_id, [d["rule"] for d in R.redact_secrets(secret)[1]])
+        _, found = R.redact_secrets("ntn_" + body(11, DG) + body(35))
+        self.assertNotIn("secret:notion_refresh_token", [d["rule"] for d in found])
+
+    def test_placeholder_bodies_are_not_tokens(self):
+        for text in ["sntryh_" + "A" * 43, "nrt_" + "1" * 11 + "a" * 34]:
+            with self.subTest(size=len(text)):
+                self.assertEqual(R.redact_secrets(text)[1], [])
 
     def test_node_gives_the_same_redacted_text(self):
         texts = [t for _, s in POSITIVES for t in _forms(s)] + [t for _, t in NEAR_MISSES]
