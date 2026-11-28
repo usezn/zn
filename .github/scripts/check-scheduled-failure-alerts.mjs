@@ -187,6 +187,20 @@ function jobsOf(lines) {
 }
 
 /*
+ * A scheduled workflow with the alert job must state its workflow-level token scope explicitly and read-only
+ * (contents: read, read-all, {} or a map whose values are read or none). A missing block would let the token
+ * fall back to the repository default, so a missing or empty block is a problem.
+ */
+function readOnlyTopProblems(section, perms) {
+  const msg = 'workflow-level permissions must be an explicit read-only form (contents: read, read-all, {} or a map whose values are read or none); without it the token uses the repository default';
+  if (!section) return [msg];
+  if (!section.inline && Object.keys(perms).length === 0) return [msg];
+  if (perms.__inline !== undefined) return perms.__inline === 'read-all' ? [] : [msg];
+  if (perms.__unreadable) return [msg];
+  return Object.values(perms).every((v) => v === 'read' || v === 'none') ? [] : [msg];
+}
+
+/*
  * Returns { scheduled, hasAlert, problems } for one workflow file's text. A workflow without a schedule trigger is
  * not scheduled and has no problems. A scheduled workflow without the alert job has hasAlert false (the caller
  * decides whether that is pending or a failure) and no problems of its own.
@@ -208,6 +222,7 @@ export function checkWorkflow(text) {
   const jobs = jobsOf(sec.jobs ? sec.jobs.lines : []);
   const alert = jobs.find((j) => j.name === ALERT_JOB);
   if (!alert) return { scheduled: true, hasAlert: false, problems };
+  problems.push(...readOnlyTopProblems(sec.permissions, topPerms));
 
   for (const j of jobs) {
     if (j.unreadable) problems.push(`job "${j.name}" is not in block form, so its needs and permissions cannot be read`);

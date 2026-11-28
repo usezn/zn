@@ -306,6 +306,39 @@ test('quoted keys for the trigger, on, needs, if, job names and the alert job ar
   }
 });
 
+const EXPLICIT_MSG = /explicit read-only form/;
+
+test('a scheduled workflow with the alert job but no workflow-level permissions block fails', () => {
+  assert.match(problemsOf(workflow({ topPerms: [] })).join('\n'), EXPLICIT_MSG);
+});
+
+test('an empty workflow-level permissions block fails', () => {
+  assert.match(problemsOf(workflow({ topPerms: ['permissions:'] })).join('\n'), EXPLICIT_MSG);
+});
+
+test('a workflow-level permissions block with a write value fails', () => {
+  assert.match(problemsOf(workflow({ topPerms: ['permissions:', '  contents: write'] })).join('\n'), /workflow-level permissions grant write/);
+});
+
+test('each accepted read-only workflow-level form passes', () => {
+  const forms = [
+    ['permissions: read-all'],
+    ['permissions: {}'],
+    ['permissions:', '  contents: read'],
+    ['permissions: {contents: read, packages: none}'],
+    ['permissions:', '  contents: read', '  actions: none'],
+  ];
+  for (const topPerms of forms) {
+    assert.deepEqual(problemsOf(workflow({ topPerms })), [], topPerms.join(' '));
+  }
+});
+
+test('a workflow without the alert job is not asked for the workflow-level block here', () => {
+  const r = checkWorkflow(workflow({ withAlert: false, topPerms: [] }));
+  assert.equal(r.hasAlert, false);
+  assert.deepEqual(r.problems, []);
+});
+
 test('the workflows of this repository pass the check', () => {
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'workflows');
   const r = checkDir(dir);
