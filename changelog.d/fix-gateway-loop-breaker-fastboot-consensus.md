@@ -1,0 +1,3 @@
+### Security
+- Experimental Rust gateway (not distributed): `loop_breaker.window_seconds = 0` no longer turns the loop breaker off without a message while `loop_breaker.enabled` is true, and `consensus.required_signatures = 0` no longer lets the first signature approve a critical action while consensus is on. The gateway now refuses to start with either value and names the key, the value and the allowed range (1 or more).
+- Experimental Rust gateway (not distributed): `ZN_FAST_BOOT` is read as an on/off value, like the other security flags. `0`, `false`, `no`, `off` and an empty value no longer turn the neural check off; a value that is none of those or `1`, `true`, `yes`, `on` stops the gateway.

@@ -1137,6 +1137,35 @@ impl ZnConfig {
             ));
         }
 
+        self.validate_loop_breaker()?;
+        self.validate_consensus()?;
+
+        Ok(())
+    }
+
+    /// `loop_breaker.window_seconds = 0` made every history entry older than the window, so the breaker
+    /// counted nothing and was off even with `enabled = true`. A breaker that is on needs a window.
+    fn validate_loop_breaker(&self) -> Result<()> {
+        if self.loop_breaker.enabled && self.loop_breaker.window_seconds < 1 {
+            return Err(anyhow!(
+                "loop_breaker.window_seconds must be at least 1 (allowed range: 1 to {}) while loop_breaker.enabled is true, but it is {}. A window of 0 would turn the loop breaker off. Set a window, or set loop_breaker.enabled to false.",
+                u64::MAX,
+                self.loop_breaker.window_seconds
+            ));
+        }
+        Ok(())
+    }
+
+    /// `consensus.required_signatures = 0` let the first signature approve a critical action. With
+    /// consensus on, at least one signature is required; 0 is refused instead of being read as 1.
+    fn validate_consensus(&self) -> Result<()> {
+        if self.consensus.enabled && self.consensus.required_signatures < 1 {
+            return Err(anyhow!(
+                "consensus.required_signatures must be at least 1 (allowed range: 1 to {}) while consensus.enabled is true, but it is {}. Set the number of signatures a critical action needs, or set consensus.enabled to false.",
+                u32::MAX,
+                self.consensus.required_signatures
+            ));
+        }
         Ok(())
     }
 
@@ -1174,7 +1203,7 @@ impl ZnConfig {
 /// and `off` mean off (any capitalisation, spaces around the value ignored).
 /// `None` means keep the default: the value is empty or blank. Anything else is an
 /// error naming the variable.
-fn parse_bool_flag(var: &str, raw: &str) -> Result<Option<bool>> {
+pub fn parse_bool_flag(var: &str, raw: &str) -> Result<Option<bool>> {
     let value = raw.trim();
     if value.is_empty() {
         return Ok(None);
@@ -2179,5 +2208,53 @@ mod kms_type_tests {
                 .to_string();
             assert!(err.contains("kms.key_id"), "{err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod loop_breaker_and_consensus_validation_tests {
+    use super::*;
+
+    #[test]
+    fn loop_breaker_window_of_zero_is_refused_while_enabled() {
+        // Before, a window of 0 passed validation and the breaker never counted a repeat.
+        let mut config = ZnConfig::default();
+        config.loop_breaker.enabled = true;
+        config.loop_breaker.window_seconds = 0;
+        let err = config
+            .validate()
+            .expect_err("window 0 must be refused")
+            .to_string();
+        assert!(err.contains("loop_breaker.window_seconds"), "{err}");
+        assert!(err.contains("1 to"), "{err}");
+        assert!(err.contains("is 0"), "{err}");
+        config.loop_breaker.window_seconds = 1;
+        assert!(config.validate().is_ok());
+        config.loop_breaker.enabled = false;
+        config.loop_breaker.window_seconds = 0;
+        assert!(
+            config.validate().is_ok(),
+            "a breaker that is off needs no window"
+        );
+    }
+
+    #[test]
+    fn consensus_with_zero_required_signatures_is_refused_while_enabled() {
+        let mut config = ZnConfig::default();
+        config.consensus.enabled = true;
+        config.consensus.critical_tools = vec!["x".to_string()];
+        config.consensus.required_signatures = 0;
+        let err = config
+            .validate()
+            .expect_err("0 signatures must be refused")
+            .to_string();
+        assert!(err.contains("consensus.required_signatures"), "{err}");
+        assert!(err.contains("1 to"), "{err}");
+        assert!(err.contains("is 0"), "{err}");
+        config.consensus.required_signatures = 1;
+        assert!(config.validate().is_ok());
+        config.consensus.enabled = false;
+        config.consensus.required_signatures = 0;
+        assert!(config.validate().is_ok());
     }
 }

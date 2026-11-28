@@ -557,11 +557,27 @@ mod tests {
     }
 
     #[test]
-    fn zero_required_signatures_approves_on_first_signature() {
+    fn zero_required_signatures_is_refused_by_the_config() {
+        // The manager itself still approves on the first signature when it is handed 0 (that is what
+        // this test used to pin as expected), so the configuration must never hand it 0.
         let mgr = manager(true, &["x"], 0);
         let id = propose(&mgr, "x", "{}");
         let status = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
         assert_eq!(status, ActionStatus::Approved);
+        let config = crate::config::ZnConfig {
+            consensus: ConsensusConfig {
+                enabled: true,
+                critical_tools: vec!["x".to_string()],
+                required_signatures: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = config.validate().expect_err("0 signatures must be refused");
+        assert!(
+            err.to_string().contains("consensus.required_signatures"),
+            "{err}"
+        );
     }
 
     #[test]

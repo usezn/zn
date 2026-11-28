@@ -32,7 +32,7 @@ use zn::ai::ModelBackend as _;
 use zn::audit::exporter::SiemExporter;
 use zn::audit::{AuditEntry, AuditVault};
 use zn::auth::{api_key_auth, AuthConfig};
-use zn::config::ZnConfig;
+use zn::config::{parse_bool_flag, ZnConfig};
 use zn::engine::reputation::ReputationSystem;
 use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
@@ -54,6 +54,19 @@ const NEURAL_ERROR_MATCH: &str = "neural_engine_error";
 
 /// `ZN_FAST_BOOT` (tests and smoke runs) does not load the neural model. With neural blocking on that
 /// would silently turn a protection off, so zn refuses to start; otherwise it says so at start.
+/// Reads `ZN_FAST_BOOT` as a strict on/off value, like the security flags: `1`, `true`, `yes` and `on`
+/// turn it on; unset, empty, `0`, `false`, `no` and `off` leave it off; anything else stops zn. It used
+/// to be on for any value, `0` and `false` included, which switched the neural check off.
+fn fast_boot_enabled() -> Result<bool> {
+    match std::env::var("ZN_FAST_BOOT") {
+        Ok(raw) => Ok(parse_bool_flag("ZN_FAST_BOOT", &raw)?.unwrap_or(false)),
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow!(
+            "ZN_FAST_BOOT is not valid text, so zn did not start. Use one of 1, 0, true, false, yes, no, on or off, or leave it unset."
+        )),
+    }
+}
+
 fn apply_fast_boot(config: &mut ZnConfig) -> Result<String> {
     if config.neural.enabled && config.is_neural_blocking() {
         return Err(anyhow!(
@@ -409,7 +422,7 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Fast boot (tests/smoke): skip neural scoring and model loading entirely.
     // Note: model_path is still used by registry/canary bookkeeping.
-    if std::env::var("ZN_FAST_BOOT").is_ok() {
+    if fast_boot_enabled()? {
         log::warning(apply_fast_boot(&mut zn_config)?)?;
     }
 
@@ -567,7 +580,7 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initialize Neural Core
     log::info("🧠 Initializing Neural Core (Candle)...")?;
-    let fast_boot = std::env::var("ZN_FAST_BOOT").is_ok();
+    let fast_boot = fast_boot_enabled()?;
     let model_dir = std::env::var("ZN_NEURAL_MODEL_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&zn_config.neural.model_path));
@@ -882,7 +895,7 @@ async fn build_pipeline_from(config: ZnConfig) -> Result<AnalyzerPipeline> {
     // grows policy checks.
 
     // Initialize neural backend (fast boot if model unavailable)
-    let fast_boot = std::env::var("ZN_FAST_BOOT").is_ok();
+    let fast_boot = fast_boot_enabled()?;
     let model_dir = std::env::var("ZN_NEURAL_MODEL_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&config.neural.model_path));
@@ -3680,6 +3693,28 @@ mod fail_closed_tests {
         let note = apply_fast_boot(&mut config).expect("shadow mode starts");
         assert!(note.contains("neural check is off"), "{note}");
         assert!(!config.neural.enabled);
+    }
+
+    #[test]
+    fn fast_boot_reads_the_value_strictly() {
+        // One test owns the variable, so parallel tests never see a half-set value.
+        let read = |value: Option<&str>| {
+            match value {
+                Some(v) => std::env::set_var("ZN_FAST_BOOT", v),
+                None => std::env::remove_var("ZN_FAST_BOOT"),
+            }
+            fast_boot_enabled()
+        };
+        for on in ["1", "true", "yes", "on", "ON", " True "] {
+            assert!(read(Some(on)).unwrap(), "{on}");
+        }
+        for off in ["0", "false", "no", "off", "", "  "] {
+            assert!(!read(Some(off)).unwrap(), "{off:?}");
+        }
+        assert!(!read(None).unwrap());
+        let err = read(Some("maybe")).expect_err("a typo must stop zn");
+        assert!(err.to_string().contains("ZN_FAST_BOOT"), "{err}");
+        std::env::remove_var("ZN_FAST_BOOT");
     }
 
     #[tokio::test]

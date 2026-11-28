@@ -104,6 +104,30 @@ mod tests {
     }
 
     #[test]
+    fn a_window_of_zero_turns_the_breaker_off_so_the_config_refuses_it() {
+        // The engine itself still drops every entry at once with window_seconds = 0 (the breaker never
+        // counts a repeat even though it is enabled), so ZnConfig::validate must refuse that value.
+        let lb = LoopBreaker::new(LoopBreakerConfig {
+            enabled: true,
+            max_repeats: 1,
+            window_seconds: 0,
+        });
+        std::thread::sleep(Duration::from_millis(2));
+        for _ in 0..10 {
+            assert!(lb.check_and_record("agent-1", "shell", "{}").is_ok());
+        }
+        let config = crate::config::ZnConfig {
+            loop_breaker: LoopBreakerConfig {
+                enabled: true,
+                max_repeats: 1,
+                window_seconds: 0,
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn disabled_breaker_allows_everything_and_records_nothing() {
         let lb = breaker(false, 1);
         for _ in 0..10 {
