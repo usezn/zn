@@ -10,7 +10,6 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use chrono::Utc;
 use clap::Parser;
 use cliclack::{intro, log, note};
 use futures::stream::Stream;
@@ -612,7 +611,7 @@ async fn start_proxy(args: Args) -> Result<()> {
         path: model_dir.to_string_lossy().to_string(),
         metrics: String::new(),
         status: "active".to_string(),
-        created_at: chrono::Utc::now().timestamp(),
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp(),
     })?;
     log::info(format!(
         "📦 Model registered [id={} {} dim={}]",
@@ -1676,7 +1675,7 @@ async fn process_mcp_message(
 
             let entry = AuditEntry {
                 id: Uuid::new_v4().to_string(),
-                timestamp: Utc::now().to_rfc3339(),
+                timestamp: zn::timefmt::rfc3339_now(),
                 event: "TOOL_CALL".to_string(),
                 tool_name: tool_log.clone(),
                 status: status.clone(),

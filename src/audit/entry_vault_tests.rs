@@ -35,7 +35,8 @@ fn new_entry_has_valid_id_timestamp_and_empty_options() {
     let e = AuditEntry::new("TOOL_CALL", "read_file", "ALLOWED");
     assert!(Uuid::parse_str(&e.id).is_ok(), "id is a UUID: {}", e.id);
     assert!(
-        chrono::DateTime::parse_from_rfc3339(&e.timestamp).is_ok(),
+        time::OffsetDateTime::parse(&e.timestamp, &time::format_description::well_known::Rfc3339)
+            .is_ok(),
         "timestamp is RFC 3339: {}",
         e.timestamp
     );

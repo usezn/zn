@@ -25,7 +25,6 @@ use aes_gcm::{
 };
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
-use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -79,7 +78,7 @@ impl AuditEntry {
     ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: crate::timefmt::rfc3339_now(),
             event: event.into(),
             tool_name: tool_name.into(),
             status: status.into(),

@@ -6,7 +6,6 @@
 //! - Isolated audit logs via namespaces
 
 use anyhow::{anyhow, Result};
-use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -232,7 +231,7 @@ impl TenantStore {
                 };
 
                 let hash = Self::hash_api_key(api_key);
-                let created_at = Utc::now().to_rfc3339();
+                let created_at = crate::timefmt::rfc3339_now();
 
                 // A generated key goes to a file only the current user can
                 // read, never to stdout or the logs, which often end up in
@@ -330,7 +329,7 @@ impl TenantStore {
 
         let id = Uuid::new_v4().to_string();
         let api_key_hash = Self::hash_api_key(api_key);
-        let created_at = Utc::now().to_rfc3339();
+        let created_at = crate::timefmt::rfc3339_now();
 
         db.execute(
             "INSERT INTO tenants (id, name, namespace, api_key_hash, role, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

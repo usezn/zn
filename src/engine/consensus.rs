@@ -1,11 +1,11 @@
 use crate::config::ConsensusConfig;
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-type Clock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
+type Clock = Arc<dyn Fn() -> OffsetDateTime + Send + Sync>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WitnessType {
@@ -17,7 +17,8 @@ pub enum WitnessType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Signature {
     pub witness: WitnessType,
-    pub timestamp: DateTime<Utc>,
+    #[serde(with = "crate::timefmt::serde_utc")]
+    pub timestamp: OffsetDateTime,
     pub metadata: Option<String>,
 }
 
@@ -31,7 +32,8 @@ pub struct AuthorizableAction {
     pub agent_id: String,
     pub tool_name: String,
     pub arguments_hash: String, // Ensure request hasn't changed
-    pub timestamp: DateTime<Utc>,
+    #[serde(with = "crate::timefmt::serde_utc")]
+    pub timestamp: OffsetDateTime,
     pub signatures: Vec<Signature>,
     pub required_m: u32,
     pub status: ActionStatus,
@@ -55,7 +57,7 @@ pub struct ConsensusManager {
 
 impl ConsensusManager {
     pub fn new(config: ConsensusConfig) -> Self {
-        Self::with_clock(config, Arc::new(Utc::now))
+        Self::with_clock(config, Arc::new(OffsetDateTime::now_utc))
     }
 
     /// Build a manager with its own clock (used by tests).
@@ -67,23 +69,23 @@ impl ConsensusManager {
         }
     }
 
-    fn now(&self) -> DateTime<Utc> {
+    fn now(&self) -> OffsetDateTime {
         (self.clock)()
     }
 
     /// Lifetime of a proposed action. A zero setting falls back to the default.
-    fn ttl(&self) -> chrono::Duration {
+    fn ttl(&self) -> Duration {
         let secs = if self.config.pending_ttl_secs == 0 {
             900
         } else {
             self.config.pending_ttl_secs
         };
         // Cap at ten years so the conversion cannot overflow.
-        chrono::Duration::seconds(i64::try_from(secs).unwrap_or(i64::MAX).min(315_360_000))
+        Duration::seconds(i64::try_from(secs).unwrap_or(i64::MAX).min(315_360_000))
     }
 
-    fn is_expired(&self, action: &AuthorizableAction, now: DateTime<Utc>) -> bool {
-        now.signed_duration_since(action.timestamp) >= self.ttl()
+    fn is_expired(&self, action: &AuthorizableAction, now: OffsetDateTime) -> bool {
+        now - action.timestamp >= self.ttl()
     }
 
     /// Remove every action older than the TTL, whatever its status. Runs on
@@ -173,7 +175,7 @@ impl ConsensusManager {
 
         action.signatures.push(Signature {
             witness,
-            timestamp: Utc::now(),
+            timestamp: OffsetDateTime::now_utc(),
             metadata: None,
         });
 
@@ -284,8 +286,8 @@ mod tests {
 
     use std::sync::Mutex;
 
-    fn manager_with_clock(ttl: u64) -> (ConsensusManager, Arc<Mutex<DateTime<Utc>>>) {
-        let now = Arc::new(Mutex::new(Utc::now()));
+    fn manager_with_clock(ttl: u64) -> (ConsensusManager, Arc<Mutex<OffsetDateTime>>) {
+        let now = Arc::new(Mutex::new(OffsetDateTime::now_utc()));
         let handle = now.clone();
         let mgr = ConsensusManager::with_clock(
             ConsensusConfig {
@@ -300,9 +302,9 @@ mod tests {
         (mgr, now)
     }
 
-    fn advance(now: &Arc<Mutex<DateTime<Utc>>>, secs: i64) {
+    fn advance(now: &Arc<Mutex<OffsetDateTime>>, secs: i64) {
         let mut t = now.lock().unwrap();
-        *t += chrono::Duration::seconds(secs);
+        *t += Duration::seconds(secs);
     }
 
     #[test]

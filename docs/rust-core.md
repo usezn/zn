@@ -105,10 +105,9 @@ Earlier versions used Dilithium3 from the unmaintained PQClean bindings. A Dilit
 
 ## Dependency advisories that cannot be fixed yet
 
-`cargo audit` ignores two advisories; `.cargo/audit.toml` lists them with the reason. Both say that a crate is no longer maintained, and neither crate has a drop-in replacement today:
+`cargo audit` ignores one advisory; `.cargo/audit.toml` lists it with the reason:
 
-- RUSTSEC-2024-0436, `paste`: a procedural macro that runs only at build time. It comes through `gemm`, which Candle (`candle-core`) uses.
-- RUSTSEC-2025-0119, `number_prefix`: it formats numbers in command line progress bars. It comes through `indicatif`, which `cliclack` and `hf-hub` use.
+- RUSTSEC-2026-0543, `chrono`: the crate is no longer maintained. The gateway itself uses the `time` crate. `chrono` stays in the build only through `rmcp` and `schemars`, which depend on it and offer no way to switch it off.
 
 `zip`, which Candle uses to read `.npz` and PyTorch `.pth` files, is at 9.3.0 and needs no exception.
 

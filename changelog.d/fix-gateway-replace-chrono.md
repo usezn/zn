@@ -1,0 +1,2 @@
+### Changed
+- The experimental gateway reads and writes its timestamps with the maintained `time` crate instead of `chrono` (RUSTSEC-2026-0543, unmaintained). Audit rows, tenant records and the JSON of consensus and reputation records have the same text as before. `chrono` stays in the build only through `rmcp` and `schemars`, which still depend on it; the advisory is listed in the audit configuration until they stop.

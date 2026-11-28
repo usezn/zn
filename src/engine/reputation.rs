@@ -5,10 +5,10 @@
 //!
 //! "The Immune System of the Agent Mesh"
 
-use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use time::{Duration, OffsetDateTime};
 
 const MAX_SCORE: i32 = 100;
 const INITIAL_SCORE: i32 = 50;
@@ -30,8 +30,10 @@ pub struct ReputationScore {
     pub status: AgentStatus,
     pub total_calls: u64,
     pub blocked_calls: u64,
-    pub last_violation: Option<DateTime<Utc>>,
-    pub banned_until: Option<DateTime<Utc>>,
+    #[serde(with = "crate::timefmt::serde_utc::option", default)]
+    pub last_violation: Option<OffsetDateTime>,
+    #[serde(with = "crate::timefmt::serde_utc::option", default)]
+    pub banned_until: Option<OffsetDateTime>,
     pub violations: Vec<String>, // Log of last 5 violations
 }
 
@@ -76,7 +78,7 @@ impl ReputationSystem {
         if let Some(entry) = scores.get(agent_id) {
             if entry.status == AgentStatus::Banned {
                 if let Some(ban_end) = entry.banned_until {
-                    if Utc::now() < ban_end {
+                    if OffsetDateTime::now_utc() < ban_end {
                         return Err(format!(
                             "Agent BANNED active defense system until {}",
                             ban_end
@@ -101,7 +103,7 @@ impl ReputationSystem {
         // Auto-unban check
         if entry.status == AgentStatus::Banned {
             if let Some(ban_end) = entry.banned_until {
-                if Utc::now() > ban_end {
+                if OffsetDateTime::now_utc() > ban_end {
                     entry.status = AgentStatus::Suspicious; // Unban to suspicious
                     entry.score = 10; // Reset to low score
                     entry.banned_until = None;
@@ -127,7 +129,7 @@ impl ReputationSystem {
         entry.total_calls += 1;
         entry.blocked_calls += 1;
         entry.score -= severity;
-        entry.last_violation = Some(Utc::now());
+        entry.last_violation = Some(OffsetDateTime::now_utc());
 
         // Keep last 5 violations
         entry.violations.push(reason.to_string());
@@ -148,7 +150,7 @@ impl ReputationScore {
     fn update_status(&mut self) {
         // An active ban holds until `banned_until`, whatever the score does.
         let ban_active = self.status == AgentStatus::Banned
-            && matches!(self.banned_until, Some(end) if Utc::now() < end);
+            && matches!(self.banned_until, Some(end) if OffsetDateTime::now_utc() < end);
         if ban_active {
             return;
         }
@@ -157,7 +159,8 @@ impl ReputationScore {
             // Reaching here means no ban is active: either the agent was never
             // banned or its previous ban has expired. Ban (again) with a fresh timer.
             self.status = AgentStatus::Banned;
-            self.banned_until = Some(Utc::now() + Duration::minutes(BAN_DURATION_MINUTES));
+            self.banned_until =
+                Some(OffsetDateTime::now_utc() + Duration::minutes(BAN_DURATION_MINUTES));
         } else if self.score < 20 {
             self.status = AgentStatus::Suspicious;
         } else if self.score > 80 {
@@ -178,7 +181,7 @@ mod tests {
             .expect("agent should have a score")
     }
 
-    fn set_ban_expiry(sys: &ReputationSystem, agent: &str, when: DateTime<Utc>) {
+    fn set_ban_expiry(sys: &ReputationSystem, agent: &str, when: OffsetDateTime) {
         let mut scores = sys.scores.write().unwrap();
         scores
             .get_mut(agent)
@@ -266,7 +269,11 @@ mod tests {
         let sys = ReputationSystem::new();
         sys.record_violation("agent-1", "x", 60);
         assert!(sys.check_agent_status("agent-1").is_err());
-        set_ban_expiry(&sys, "agent-1", Utc::now() - Duration::minutes(1));
+        set_ban_expiry(
+            &sys,
+            "agent-1",
+            OffsetDateTime::now_utc() - Duration::minutes(1),
+        );
         assert!(sys.check_agent_status("agent-1").is_ok());
     }
 
@@ -274,7 +281,11 @@ mod tests {
     fn success_after_expired_ban_resets_to_suspicious_at_ten() {
         let sys = ReputationSystem::new();
         sys.record_violation("agent-1", "x", 60);
-        set_ban_expiry(&sys, "agent-1", Utc::now() - Duration::minutes(1));
+        set_ban_expiry(
+            &sys,
+            "agent-1",
+            OffsetDateTime::now_utc() - Duration::minutes(1),
+        );
         sys.record_success("agent-1");
         let s = score_of(&sys, "agent-1");
         assert_eq!(s.score, 11);
@@ -298,13 +309,17 @@ mod tests {
     fn violation_after_expired_ban_bans_again() {
         let sys = ReputationSystem::new();
         sys.record_violation("agent-1", "x", 60);
-        set_ban_expiry(&sys, "agent-1", Utc::now() - Duration::minutes(1));
+        set_ban_expiry(
+            &sys,
+            "agent-1",
+            OffsetDateTime::now_utc() - Duration::minutes(1),
+        );
         assert!(sys.check_agent_status("agent-1").is_ok());
         // The score is still at or below the threshold; a new violation must ban again.
         sys.record_violation("agent-1", "again", 1);
         let s = score_of(&sys, "agent-1");
         assert_eq!(s.status, AgentStatus::Banned);
-        assert!(matches!(s.banned_until, Some(end) if end > Utc::now()));
+        assert!(matches!(s.banned_until, Some(end) if end > OffsetDateTime::now_utc()));
         assert!(sys.check_agent_status("agent-1").is_err());
     }
 

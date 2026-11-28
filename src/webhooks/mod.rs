@@ -337,7 +337,7 @@ impl WebhookManager {
                     { "title": "Policy", "value": alert.policy_match.as_deref().unwrap_or("N/A"), "short": true },
                 ],
                 "footer": "zn Security Proxy",
-                "ts": chrono::Utc::now().timestamp()
+                "ts": time::OffsetDateTime::now_utc().unix_timestamp()
             }]
         })
     }
