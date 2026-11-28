@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.9';
+const POLICY_RULES_VERSION = '2026-11-28.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -4238,6 +4238,8 @@ function dotenvElsewhereDenial(text, opts, kind = 'dotenv') {
   return deny;
 }
 
+// A parameter expansion with an operator (${HOME/x/y}, ${HOME%/}): expandEnv cannot evaluate it, so the path it builds is unknown.
+const PARAM_OPERATOR_RE = /\$\{[A-Za-z_][A-Za-z0-9_]*[^A-Za-z0-9_}]/;
 function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
@@ -4253,8 +4255,13 @@ function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
     return 'zn: this command reads ' + text + ' through a path zn cannot check (a Windows root or a network share), so it was blocked. ' +
       'Give the path from the current folder instead, for example `cat app/.env`.';
   }
-  // A key file is judged by its content where the cd leads; only a .env is refused for a path built while the command runs.
-  if (kind === 'dotenv' && (/[$`]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(expanded) || (missing && afterSubstitution))) {
+  // A path built while the command runs hides its folder, so a .env or a key file (.pem, .key, .p8) is refused by its name alone.
+  // Without a built path, a key file is judged by its content where the cd leads.
+  if (/[$`]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(expanded) || PARAM_OPERATOR_RE.test(text) || (missing && afterSubstitution)) {
+    if (kind === 'keyfile') {
+      return 'zn: this command builds the path of a private key file while it runs (' + text + '), so zn cannot check whether it holds a private key. ' +
+        'Name the file directly, for example `cat certs/server.pem`; if a command needs a secret value, ask the user to run `' + znCommand('secret set NAME', opts) + '`.';
+    }
     return 'zn: this command builds the path of a .env file while it runs (' + text + '), so zn cannot check whether it holds secrets. ' +
       'Name the file directly, for example `cat app/.env`; if it holds values, ask the user to run `' + znCommand('env shadow .env', opts) + '` in that folder.';
   }
