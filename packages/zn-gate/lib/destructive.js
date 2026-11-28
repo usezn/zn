@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-27.2';
+const COMMAND_RULES_VERSION = '2026-11-28.7';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -544,6 +544,9 @@ function dangerousPath(word) {
 
 function dangerousPathAt(word, depth) {
   let t = String(word).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  // A Windows command line can end its last word with a carriage return (cmd reads it as the end of the line), so the
+  // root or folder before it is the same one.
+  t = t.replace(/\r+$/, '');
   if (!t) return '';
   t = resolveDots(t, depth);
   // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.

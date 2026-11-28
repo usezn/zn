@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.9';
+const POLICY_RULES_VERSION = '2026-11-28.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1161,8 +1161,31 @@ function isInstructionUnderShortFolder(abs, ctx) {
 }
 
 /** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
+/**
+ * A brace list or a glob names its files only when the shell expands it, so the plain-text comparison never saw them.
+ * Each brace alternative is judged as a path; a glob is matched against the names in its folder, and a pattern too broad
+ * to list is reviewed. A glob that matches nothing is passed to the command unexpanded and names no instruction file.
+ */
+function instructionGlobHit(p, opts) {
+  const ctx = contextOf(opts);
+  const alts = expandBraces(p);
+  if (alts === null || alts.length * p.length > GLOB_WORK_MAX) return true;
+  for (const alt of alts) {
+    if (!GLOB_RE.test(alt)) {
+      if (alt !== p && isInstructionPath(alt, opts)) return true;
+      continue;
+    }
+    const e = expandEnv(expandHome(alt, ctx.home), ctx.env);
+    const hits = globOnDisk(slash(path.resolve(ctx.cwd, e.text)), opts.budget);
+    if (hits === 'too-broad' || hits === 'too-slow') return true;
+    for (const h of hits || []) if (isInstructionFile(h, ctx)) return true;
+  }
+  return false;
+}
+
 function isInstructionPath(p, opts = {}) {
   if (typeof p !== 'string' || !p) return false;
+  if (GLOB_RE.test(p) && instructionGlobHit(p, opts)) return true;
   const ctx = contextOf(opts);
   const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
   // Windows drops trailing dots and spaces (and a stream suffix) from every name, so `AGENTS.md.` opens AGENTS.md:

@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-27.2"
+COMMAND_RULES_VERSION = "2026-11-28.7"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1047,6 +1047,9 @@ def _dangerous_path(word: str) -> str:
 def _dangerous_path_at(word: str, depth: int) -> str:
     """'root', 'home' or 'system' for a path this policy protects, else ''."""
     t = re.sub(r"/{2,}", "/", str(word).replace("\\", "/"))
+    # A Windows command line can end its last word with a carriage return (cmd reads it as the end of the line), so the
+    # root or folder before it is the same one.
+    t = t.rstrip("\r")
     if not t:
         return ""
     t = _resolve_dots(t, depth)
