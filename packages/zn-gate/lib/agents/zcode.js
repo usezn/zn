@@ -275,7 +275,8 @@ function normalize(raw) {
   if (!NAMES_ONLY_TOOLS.has(toolName)) {
     const scan = require('./copilot').commandScan(args, cwd);
     scanned = scan;
-    if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
+    if (scan.bad) return unreadable('the command');
+    if (scan.truncated) return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: require('../messages').UNREADABLE_TOO_DEEP_ARGUMENTS };
   }
   const named = pathsOf(args);
   const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });

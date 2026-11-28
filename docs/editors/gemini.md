@@ -93,6 +93,7 @@ If you installed the hooks for one project only, add `--project` and run it from
 - **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **`zn-gate check` says Gemini CLI is not protected:** a Gemini CLI setting switched the hook off (see [above](#when-a-gemini-cli-setting-switches-the-hook-off)), or the launcher cannot run: run `npm install -g zn-gate` and then `zn hooks install gemini` again.
+- **A call is blocked because zn could not read a file address in it, or its arguments are nested too deeply:** ask the agent to send the call again with flatter arguments and each file as a plain path (see [the message](../troubleshooting.md#zn-could-not-read-a-file-address-in-this-call--could-not-read-the-file-this-call-uses-gemini-cli-antigravity-cursor-zcode-copilot-cli)).
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
 
 All messages: [Troubleshooting](../troubleshooting.md).

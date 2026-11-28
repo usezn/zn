@@ -1,0 +1,2 @@
+### Changed
+- In GitHub Copilot CLI and the ZCode desktop app, a call blocked because zn could not read a file address in it, or because its arguments are nested too deeply, now says what zn could not read (with the limits) and gives one next step: ask the agent to send the call again with flatter arguments. It no longer shows the advice for a changed agent format. The Gemini CLI, Antigravity, ZCode and Copilot CLI pages now point to that message.

@@ -66,6 +66,8 @@ const UNREADABLE_FILE_ADDRESS = 'zn: could not read a file address in this call,
 const UNREADABLE_MCP_ARGUMENTS = 'zn: this MCP call was blocked because zn could not read every file name in its arguments: they are nested deeper than ' +
   MAX_NEST_DEPTH + ' levels, hold more than ' + MAX_NEST_NODES + ' values, or contain a file: address zn cannot turn into a path. ' +
   'Next step: ask the agent to send the call again with flatter arguments and each file named as a plain path.';
+const UNREADABLE_TOO_DEEP_ARGUMENTS = 'zn: could not read the arguments of this call because they are nested deeper than ' + MAX_NEST_DEPTH + ' levels or hold more than ' + MAX_NEST_NODES + ' values, so zn cannot check it and blocked it. ' +
+  'Next step: ask the agent to send the call again with flatter arguments.';
 const TOO_DEEP_ACTION = 'zn: this action is nested too deeply for zn to check, so it was blocked. ' +
   'Next step: ask the agent to send the same action with flatter arguments.';
 
@@ -387,7 +389,7 @@ function teamJoinFailed(why) {
 }
 
 module.exports = {
-  UNREADABLE_FILE_ADDRESS, UNREADABLE_MCP_ARGUMENTS, TOO_DEEP_ACTION,
+  UNREADABLE_FILE_ADDRESS, UNREADABLE_MCP_ARGUMENTS, UNREADABLE_TOO_DEEP_ARGUMENTS, TOO_DEEP_ACTION,
   agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable, clipboardTimedOut,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,

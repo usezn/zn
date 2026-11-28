@@ -81,6 +81,12 @@ Things to know:
 
 More detail is in the [threat model](../threat-model.md) and in [agent compatibility](../compat.md).
 
+## Troubleshooting
+
+- **A call is blocked because zn could not read a file address in it, or its arguments are nested too deeply:** ask the agent to send the call again with flatter arguments and each file as a plain path (see [the message](../troubleshooting.md#zn-could-not-read-a-file-address-in-this-call--could-not-read-the-file-this-call-uses-gemini-cli-antigravity-cursor-zcode-copilot-cli)).
+
+All messages: [Troubleshooting](../troubleshooting.md).
+
 ## ZCode documentation
 
 - Hooks in ZCode: <https://zcode.z.ai/en/docs/hooks>

@@ -2354,7 +2354,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   try {
     ev = adapter.normalize(rawEvent);
     // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
-    if (ev && typeof ev.unreadable === 'string' && ev.unreadable !== require('../messages').UNREADABLE_FILE_ADDRESS) ev.unreadable += ' ' + formatChangeStep(adapter.id);
+    if (ev && typeof ev.unreadable === 'string' && !/Next step: ask the agent to send/.test(ev.unreadable)) ev.unreadable += ' ' + formatChangeStep(adapter.id);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.

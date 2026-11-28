@@ -579,7 +579,7 @@ function normalize(raw) {
   // bounds, built the way VS Code builds the line; unreadable or too deep = refused.
   const scan = known ? null : commandScan(args, cwd);
   if (scan && (scan.bad || scan.truncated)) {
-    return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable(scan.bad ? 'command' : 'arguments (too deeply nested)') };
+    return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: scan.bad ? unreadable('command') : require('../messages').UNREADABLE_TOO_DEEP_ARGUMENTS };
   }
   const cmd = known ? firstString(args, COMMAND_KEYS) : scan.command;
   if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
@@ -589,7 +589,7 @@ function normalize(raw) {
       // An unknown tool that carries a command and also names files: the files keep their read and write checks.
       const named = pathsOf(args, { loose: true });
       e.input.alsoPaths = named.paths;
-      if (named.bad && !e.unreadable) e.unreadable = unreadable('file address');
+      if (named.bad && !e.unreadable) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     }
     return e;
   }
@@ -599,7 +599,7 @@ function normalize(raw) {
   if (kind) {
     const searchDir = kind === 'grep' ? (paths[0] ? path.resolve(cwd, paths[0]) : cwd) : null;
     const e = { ...ev, tool: kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
-    if (bad) e.unreadable = unreadable('file address');
+    if (bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     else if (kind !== 'grep' && !paths.length) e.unreadable = unreadable('file');
     return e;
   }
@@ -611,7 +611,7 @@ function normalize(raw) {
   // and write checks on every path in it; tools with no path get no opinion.
   if (toolName !== 'glob' && (paths.length || bad)) {
     const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = unreadable('file address');
+    if (bad) e.unreadable = require('../messages').UNREADABLE_FILE_ADDRESS;
     return e;
   }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };
