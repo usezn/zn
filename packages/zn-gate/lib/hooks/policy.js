@@ -30,7 +30,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-27.9';
+const POLICY_RULES_VERSION = '2026-11-28.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -266,6 +266,31 @@ function shortNameGlob(text) {
   }).join('');
   return found ? { glob: out, lastShort } : null;
 }
+// What a short name can stand for, written as long names: its stem and extension as shown, with or without the leading
+// dot that a short name drops (`SSH~1` is `ssh` or `.ssh`). Each spelling is tried against the protected classes.
+function shortNameCandidates(text) {
+  const none = { lastShort: false, names: [] };
+  if (process.platform !== 'win32' || typeof text !== 'string' || text.indexOf('~') < 0) return none;
+  const parts = text.split(/([\\/]+)/);
+  const options = [];
+  let lastShort = false;
+  for (let i = 0; i < parts.length; i++) {
+    const m = SHORT_NAME_RE.exec(parts[i]);
+    if (!/^[\\/]*$/.test(parts[i])) lastShort = !!m;
+    if (!m) { options.push([parts[i]]); continue; }
+    const ext = m[2] ? '.' + m[2] : '';
+    options.push([m[1] + ext, '.' + m[1] + ext]);
+  }
+  const out = [];
+  const build = (i, acc) => {
+    if (out.length >= 64) return;
+    if (i === parts.length) { out.push(acc); return; }
+    for (const o of options[i]) build(i + 1, acc + o);
+  };
+  if (options.reduce((n, o) => n * o.length, 1) > 64) return none;
+  build(0, '');
+  return { lastShort, names: out.filter((c) => c !== text) };
+}
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
 
@@ -451,7 +476,8 @@ function protectedElsewhere(text, opts) {
 
 function classifyResolved(abs, ctx) {
   const { home, creds, agent } = ctx;
-  const s = keyOf(slash(abs));
+  // A doubled separator names the same place (a path that arrives JSON-escaped twice reads C:\\Users\\u\\.ssh), so repeats collapse.
+  const s = keyOf(slash(abs)).replace(/\/{2,}/g, '/');
   const h = keyOf(slash(path.resolve(home)));
   const homes = agent.homes || [h];
   for (const h of homes) {
@@ -557,6 +583,17 @@ function classifyPath(p, opts = {}) {
     if (c) return c;
   }
   // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
+  const spelled = shortNameCandidates(expanded.text);
+  for (const long of spelled.names) {
+    const c = classifyResolved(path.resolve(ctx.cwd, long), ctx);
+    if (!c) continue;
+    // A last name that may be a .env cannot be read to judge its content, so it is refused like the pattern (ENV~1).
+    if (c.kind === 'dotenv') {
+      if (spelled.lastShort) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
+      continue;
+    }
+    return c;
+  }
   const short = shortNameGlob(expanded.text);
   // When the last name is written out, a .env there is judged by its own content (readDenial), not by the pattern.
   // A last name that is itself a glob (`*`, `.e*`) names whatever it matches, a plain .env included: no skipping then.
@@ -761,6 +798,13 @@ const GLOB_EXAMPLES = ['.aws/credentials', '.aws/config', '.ssh/id_rsa', '.ssh/i
 const GLOB_DISK_LIMIT = 5000;
 const PROJECT_EXAMPLES = ['.env', '.env.local', '.claude/settings.json', 'opencode.json'];
 
+// A drive path (C:\Users\u) is absolute when the platform is win32, also where this host's own path module is POSIX (the
+// tests set the platform flag on Linux): it is not joined to the working folder there.
+function resolveTyped(cwd, text) {
+  if (process.platform === 'win32' && path.sep === '/' && /^[A-Za-z]:[\\/]/.test(text)) return path.posix.normalize(slash(text));
+  return path.resolve(cwd, text);
+}
+
 /**
  * A word with glob or brace characters that could name a protected path.
  * Returns the classification of the path it matches, or null.
@@ -789,7 +833,7 @@ function globClass(word, opts = {}) {
     const e = expandEnv(expandHome(alt, ctx.home), ctx.env);
     if (e.credentialVar) return { kind: 'credential', reason: 'a pattern built from $' + e.credentialVar };
     if (e.agentVar) return { kind: 'agent_config', reason: 'a pattern built from $' + e.agentVar };
-    const abs = slash(path.resolve(ctx.cwd, e.text));
+    const abs = slash(resolveTyped(ctx.cwd, e.text));
     // Any pattern whose last name starts with .env names a .env file.
     if (!opts.skipDotenv && keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
     const re = globRegExp(keyOf(abs));
