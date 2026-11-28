@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.8
+ * RULES_VERSION: 2026-11-28.9
  */
 
-const RULES_VERSION = '2026-11-28.8';
+const RULES_VERSION = '2026-11-28.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -824,8 +824,14 @@ const KEY_PREFIXES = [
   'SG.', 'key-', 'shpat_', 'shpca_', 'shppa_', 'shpss_', 'dop_v1_', 'doo_v1_',
   'dor_v1_', 'lin_api_', 'dapi', 'hvs.', 'hvb.', 'gsk_', 'xai-', 'NRAK-',
   'NRII-', 'dckr_pat_', 'dckr_oat_', 'zn_', 'tvly-', 'fc-', 'polar_', 'r8_',
-  'sbp_', 'EAAA', 'eyJ', 'AKIA', 'ASIA',
+  'sbp_', 'EAAA', 'eyJ', 'AccountKey=', 'AKIA', 'ASIA',
 ];
+
+// True when the piece after a break (text[end...]) starts a key prefix: another key begins there. The second segment of a
+// JWT (`eyJ` right after a dot) is the same key.
+function startsOtherKey(text, start, end) {
+  return KEY_PREFIXES.some((p) => text.startsWith(p, end) && !(p === 'eyJ' && text.charCodeAt(start - 1) === 46));
+}
 
 // True when the token that ends at `start` holds, within its last 32 characters, a key prefix at a word start, or the
 // first three or more characters of one up to `start`.
@@ -940,7 +946,7 @@ function wrapBreaks(text, loose) {
     if (b === null) { chain = false; continue; }
     const end = start + b[0].length;
     // A piece that starts a key prefix begins another key: the chain stops at it.
-    const inChain = chain && prevEnd >= 0 && tokenOnly(text, prevEnd, start) && !KEY_PREFIXES.some((p) => text.startsWith(p, end));
+    const inChain = chain && prevEnd >= 0 && tokenOnly(text, prevEnd, start) && !startsOtherKey(text, start, end);
     if (loose || !PLAIN_BREAK_RE.test(b[0]) || !longPieces(text, start, end)) {
       if (anchorsAround(text, start, end, inChain) < LOOSE_ANCHORS) { chain = false; continue; }
     }
@@ -974,7 +980,7 @@ function invisibleView(text, parity = null, loose = false) {
         const last = k + 2 >= found.length || !tokenOnly(text, found[k + 1], found[k + 2]);
         const first = k === 0 || !tokenOnly(text, found[k - 1], found[k]);
         // A piece that starts a key prefix begins another key: that break is not joined.
-        const another = KEY_PREFIXES.some((p) => text.startsWith(p, found[k + 1]));
+        const another = startsOtherKey(text, found[k], found[k + 1]);
         if (!(last && !first) && !another) runs.push(found[k], found[k + 1]);
       } else if (parity === null || n % 2 === parity) runs.push(found[k], found[k + 1]);
     }

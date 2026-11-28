@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.8
+RULES_VERSION: 2026-11-28.9
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.8"
+RULES_VERSION = "2026-11-28.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -897,8 +897,13 @@ _KEY_PREFIXES = (
     'SG.', 'key-', 'shpat_', 'shpca_', 'shppa_', 'shpss_', 'dop_v1_', 'doo_v1_',
     'dor_v1_', 'lin_api_', 'dapi', 'hvs.', 'hvb.', 'gsk_', 'xai-', 'NRAK-',
     'NRII-', 'dckr_pat_', 'dckr_oat_', 'zn_', 'tvly-', 'fc-', 'polar_', 'r8_',
-    'sbp_', 'EAAA', 'eyJ', 'AKIA', 'ASIA',
+    'sbp_', 'EAAA', 'eyJ', 'AccountKey=', 'AKIA', 'ASIA',
 )
+
+
+def _starts_other_key(text: str, start: int, end: int) -> bool:
+    """True when the piece after a break starts a key prefix: another key begins there (see startsOtherKey in rules.js)."""
+    return any(text.startswith(p, end) and not (p == 'eyJ' and text[start - 1] == '.') for p in _KEY_PREFIXES)
 
 
 def _starts_key_prefix(text: str, start: int) -> bool:
@@ -1025,7 +1030,7 @@ def invisible_view(text: str, parity: Union[int, str, None] = None,
                 continue
             # A piece that starts a key prefix begins another key: the chain stops at it.
             in_chain = (chain and prev_end >= 0 and _token_only(text, prev_end, b[0])
-                        and not any(text.startswith(p, b[1]) for p in _KEY_PREFIXES))
+                        and not _starts_other_key(text, b[0], b[1]))
             if not (not loose and PLAIN_BREAK_RE.match(text[b[0]:b[1]]) is not None and _long_pieces(text, b[0], b[1])
                     or _anchors_around(text, b[0], b[1], in_chain) >= LOOSE_ANCHORS):
                 chain = False
@@ -1042,7 +1047,7 @@ def invisible_view(text: str, parity: Union[int, str, None] = None,
                 last = k + 1 >= len(breaks) or not _token_only(text, b[1], breaks[k + 1][0])
                 first = k == 0 or not _token_only(text, breaks[k - 1][1], b[0])
                 # A piece that starts a key prefix begins another key: that break is not joined.
-                another = any(text.startswith(p, b[1]) for p in _KEY_PREFIXES)
+                another = _starts_other_key(text, b[0], b[1])
                 if not (last and not first) and not another:
                     runs.append(b)
         else:
