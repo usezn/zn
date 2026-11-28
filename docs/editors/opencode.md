@@ -91,6 +91,7 @@ If you installed the plugin for one project only, add `--project` and run it fro
 - **A blocked call says the hook could not be started:** run `zn-gate check` in a terminal, then `zn hooks install opencode`.
 - **A command is blocked with a note that it must be one program with plain arguments** (Windows PowerShell): the PowerShell wrapping covers only simple commands — no pipeline, variable or script block (see [Commands on Windows](#commands-on-windows) above).
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+- **An event with a name zn does not know passes with a note:** after an agent update renames an event, zn lets it through without checking it and prints a note. Update zn-gate with `npm install -g zn-gate@latest`, then run `zn hooks install <agent>`. See [what the message means](../troubleshooting.md#this-usually-means-agent-changed-the-format-of-the-data-it-sends-to-zn).
 
 All messages: [Troubleshooting](../troubleshooting.md).
 

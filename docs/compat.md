@@ -704,7 +704,9 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
   `whenUnavailable` to `"allow"` in `~/.zn/config.json` lets such events pass.
   The Codex `Stop` event is the exception: zn never blocks it, because exit code 2 would
   make Codex continue the answer. It reports the problem on stderr, and a failure inside
-  zn prints a warning instead.
+  zn prints a warning instead. An event with a name zn does not know (for example, after an
+  agent update renames it) is refused in Claude Code, Codex, Cursor and ZCode, and passes with a note in
+  Gemini CLI, Copilot CLI, OpenCode and Antigravity; see [what the message means](troubleshooting.md#this-usually-means-agent-changed-the-format-of-the-data-it-sends-to-zn).
 
 - **The unlocked vault answers any program of your user.** A command the
   agent runs can ask the vault daemon for a stored secret by name; the

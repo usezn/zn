@@ -94,6 +94,7 @@ If you installed the hooks for one project only, add `--project` and run it from
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **`zn-gate check` says Gemini CLI is not protected:** a Gemini CLI setting switched the hook off (see [above](#when-a-gemini-cli-setting-switches-the-hook-off)), or the launcher cannot run: run `npm install -g zn-gate` and then `zn hooks install gemini` again.
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+- **An event with a name zn does not know passes with a note:** after an agent update renames an event, zn lets it through without checking it and prints a note. Update zn-gate with `npm install -g zn-gate@latest`, then run `zn hooks install <agent>`. See [what the message means](../troubleshooting.md#this-usually-means-agent-changed-the-format-of-the-data-it-sends-to-zn).
 
 All messages: [Troubleshooting](../troubleshooting.md).
 

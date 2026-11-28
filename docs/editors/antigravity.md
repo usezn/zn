@@ -144,6 +144,7 @@ In your own terminal, in this order (the same order `npx -y zn-gate uninstall` u
 - **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 - **The zn-gate tools do not appear in Antigravity:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Antigravity.
 - **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+- **An event with a name zn does not know passes with a note:** after an agent update renames an event, zn lets it through without checking it and prints a note. Update zn-gate with `npm install -g zn-gate@latest`, then run `zn hooks install <agent>`. See [what the message means](../troubleshooting.md#this-usually-means-agent-changed-the-format-of-the-data-it-sends-to-zn).
 
 All messages: [Troubleshooting](../troubleshooting.md).
 
