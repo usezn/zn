@@ -50,6 +50,19 @@ export const PENDING_ALERT = [
 
 const EXPR = /\$\{\{\s*(.*?)\s*\}\}/g;
 
+const ALERT_CONDITION = "contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')";
+
+// The alert job's if: exactly one of these. The repository guard is optional; nothing else is accepted.
+export const APPROVED_IF = [
+  `always() && github.repository == 'usezn/zn' && github.event_name == 'schedule' && (${ALERT_CONDITION})`,
+  `always() && github.event_name == 'schedule' && (${ALERT_CONDITION})`,
+];
+
+/* Collapses whitespace so that line breaks and spacing inside parentheses do not matter. */
+export function normalizeIf(text) {
+  return text.replace(/\s+/g, ' ').replace(/\(\s/g, '(').replace(/\s\)/g, ')').trim();
+}
+
 function unquote(v) {
   return v.replace(/^(["'])(.*)\1$/, '$2');
 }
@@ -74,16 +87,31 @@ function sectionsOf(lines) {
   return sections;
 }
 
-/* Reads a permissions block: `permissions: <inline>` or the entries indented two spaces under the header. */
+/*
+ * Reads a permissions block: `permissions: {scope: value, ...}` (flow map), `permissions: <inline>` (kept as
+ * __inline) or the entries indented two spaces under the header. Entries that cannot be read go to __unreadable.
+ */
 function permsOf(inline, body, headerIndent) {
-  if (inline) return { __inline: inline };
+  if (inline) {
+    const flow = inline.match(/^\{(.*)\}$/);
+    if (!flow) return { __inline: inline };
+    const map = {};
+    for (const part of flow[1].split(',')) {
+      const text = part.trim();
+      if (!text) continue;
+      const m = text.match(/^([A-Za-z-]+):\s*(\S+)$/);
+      if (m) map[m[1]] = unquote(m[2]);
+      else map.__unreadable = text;
+    }
+    return map;
+  }
   const map = {};
   const entry = new RegExp('^' + ' '.repeat(headerIndent + 2) + '([A-Za-z-]+):\\s*(\\S+)');
   const end = new RegExp('^ {0,' + headerIndent + '}\\S');
   for (const line of body) {
     if (!line.trim() || line.trim().startsWith('#')) continue;
     const m = line.match(entry);
-    if (m) map[m[1]] = m[2];
+    if (m) map[m[1]] = unquote(m[2]);
     else if (end.test(line)) break;
   }
   return map;
@@ -91,6 +119,16 @@ function permsOf(inline, body, headerIndent) {
 
 function grantsWrite(perms) {
   return Object.entries(perms).some(([k, v]) => (k === '__inline' ? /write-all/.test(v) : v === 'write'));
+}
+
+/* Only block maps, flow maps and read-all are readable forms; anything else could hide a write scope. */
+function permsForm(perms, where) {
+  const out = [];
+  if (perms.__inline !== undefined && perms.__inline !== 'read-all') {
+    out.push(`${where} permissions use the form "${perms.__inline}"; use a block map, a {scope: value} map or read-all`);
+  }
+  if (perms.__unreadable) out.push(`${where} permissions entry "${perms.__unreadable}" cannot be read`);
+  return out;
 }
 
 /* Reads the jobs of a workflow. A job written in flow style is kept with unreadable: true so it fails the check. */
@@ -159,6 +197,7 @@ export function checkWorkflow(text) {
   if (grantsWrite(topPerms)) {
     problems.push('workflow-level permissions grant write; keep them read and give write to the alert job only');
   }
+  problems.push(...permsForm(topPerms, 'workflow-level'));
 
   const jobs = jobsOf(sec.jobs ? sec.jobs.lines : []);
   const alert = jobs.find((j) => j.name === ALERT_JOB);
@@ -168,7 +207,8 @@ export function checkWorkflow(text) {
     if (j.unreadable) problems.push(`job "${j.name}" is not in block form, so its needs and permissions cannot be read`);
   }
   for (const j of jobs) {
-    if (j !== alert && (j.perms.issues === 'write' || /write-all/.test(j.perms.__inline || ''))) {
+    problems.push(...permsForm(j.perms, `job "${j.name}"`));
+    if (j !== alert && j.perms.issues === 'write') {
       problems.push(`job "${j.name}" grants issues: write; only ${ALERT_JOB} may write issues`);
     }
   }
@@ -185,18 +225,13 @@ export function checkWorkflow(text) {
     if (unknown.length) problems.push(`needs lists a job that does not exist: ${unknown.join(', ')}`);
   }
 
-  // if: always(), the schedule guard, and a failed or cancelled needed job.
-  const cond = alert.ifValue;
+  // if: must be one of the approved forms exactly (whitespace may vary). A fragment check is not enough: a
+  // leading `false &&` or `true ||` keeps the fragments but changes whether the job runs.
+  const cond = alert.ifValue === null ? null : normalizeIf(alert.ifValue);
   if (cond === null) {
     problems.push('if of the alert job cannot be read (write it on one line)');
-  } else {
-    if (!/always\(\)/.test(cond)) problems.push('if does not include always()');
-    if (!/github\.event_name\s*==\s*'schedule'/.test(cond)) problems.push("if does not include github.event_name == 'schedule'");
-    const hasFailure = /contains\(needs\.\*\.result,\s*'failure'\)/.test(cond);
-    const hasCancelled = /contains\(needs\.\*\.result,\s*'cancelled'\)/.test(cond);
-    if (!hasFailure) problems.push("if does not test for a failed needed job: contains(needs.*.result, 'failure')");
-    if (!hasCancelled) problems.push("if does not test for a cancelled needed job: contains(needs.*.result, 'cancelled')");
-    if (hasFailure && hasCancelled && !/\|\|/.test(cond)) problems.push('failure and cancelled must be joined with || (either one is enough)');
+  } else if (!APPROVED_IF.includes(cond)) {
+    problems.push(`if of the alert job must be exactly one of the approved forms (whitespace may vary): ${APPROVED_IF.join(' | ')}`);
   }
 
   // Only trusted expressions in the alert job, and the run link built from the run context only.

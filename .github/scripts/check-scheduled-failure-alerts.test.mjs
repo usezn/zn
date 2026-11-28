@@ -28,7 +28,11 @@ function workflow(opts = {}) {
   lines.push('  workflow_dispatch:', ...topPerms, 'jobs:');
   for (const j of jobs) {
     lines.push(`  ${j}:`, '    runs-on: ubuntu-latest', '    timeout-minutes: 5');
-    if (jobPerms[j]) lines.push('    permissions:', ...jobPerms[j]);
+    if (jobPerms[j]) {
+      // A single entry that starts with "{" is written inline (flow map), otherwise as a block.
+      if (jobPerms[j][0].startsWith('{')) lines.push(`    permissions: ${jobPerms[j][0]}`);
+      else lines.push('    permissions:', ...jobPerms[j]);
+    }
     lines.push('    steps:', '      - run: echo ok');
   }
   if (withAlert) {
@@ -101,29 +105,78 @@ test('a need that names no job of the workflow fails', () => {
   assert.match(problems.join('\n'), /does not exist: scope/);
 });
 
+const IF_MSG = /approved forms/;
+
+test('the approved if with the repository guard passes', () => {
+  assert.deepEqual(problemsOf(workflow({ ifExpr: DEFAULT_IF })), []);
+});
+
+test('the approved if without the repository guard passes', () => {
+  const ifExpr = "always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))";
+  assert.deepEqual(problemsOf(workflow({ ifExpr })), []);
+});
+
+test('extra spacing inside the parentheses does not change the approved if', () => {
+  const ifExpr = "always() && github.event_name == 'schedule' && (  contains(needs.*.result, 'failure') ||  contains(needs.*.result, 'cancelled') )";
+  assert.deepEqual(problemsOf(workflow({ ifExpr })), []);
+});
+
+test('false && in front of an approved if fails: the job would never fire', () => {
+  assert.match(problemsOf(workflow({ ifExpr: `false && ${DEFAULT_IF}` })).join('\n'), IF_MSG);
+});
+
+test('true || in front of an approved if fails: the job would fire without a failed job', () => {
+  assert.match(problemsOf(workflow({ ifExpr: `true || ${DEFAULT_IF}` })).join('\n'), IF_MSG);
+});
+
 test('an if without cancelled fails', () => {
   const ifExpr = "always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')";
-  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), /cancelled/);
+  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), IF_MSG);
 });
 
 test('an if without failure fails', () => {
   const ifExpr = "always() && github.event_name == 'schedule' && contains(needs.*.result, 'cancelled')";
-  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), /failed needed job/);
+  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), IF_MSG);
 });
 
 test('failure and cancelled joined with && instead of || fails', () => {
   const ifExpr = "always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure') && contains(needs.*.result, 'cancelled')";
-  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), /joined with \|\|/);
+  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), IF_MSG);
 });
 
 test('an if without always() fails', () => {
   const ifExpr = "github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))";
-  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), /always\(\)/);
+  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), IF_MSG);
 });
 
 test('an if without the schedule guard fails', () => {
   const ifExpr = "always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))";
-  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), /event_name == 'schedule'/);
+  assert.match(problemsOf(workflow({ ifExpr })).join('\n'), IF_MSG);
+});
+
+test('a flow-style read-only permissions map passes at both levels', () => {
+  const text = workflow({ topPerms: ['permissions: {contents: read}'], jobPerms: { check: ['{contents: read}'] } });
+  assert.deepEqual(problemsOf(text), []);
+});
+
+test('issues: write in a workflow-level flow map fails', () => {
+  const problems = problemsOf(workflow({ topPerms: ['permissions: {contents: read, issues: write}'] }));
+  assert.match(problems.join('\n'), /workflow-level permissions grant write/);
+});
+
+test('issues: write in another job flow map fails and names that job', () => {
+  const problems = problemsOf(workflow({ jobPerms: { lint: ['{contents: read, issues: write}'] } }));
+  assert.match(problems.join('\n'), /job "lint" grants issues: write/);
+});
+
+test('an alert job flow map without issues: write fails', () => {
+  const problems = problemsOf(workflow({ alertPerms: ['      contents: read'] }));
+  assert.match(problems.join('\n'), /needs issues: write/);
+});
+
+test('a permissions form that cannot be read fails at workflow level and on a job', () => {
+  assert.match(problemsOf(workflow({ topPerms: ['permissions: some-odd-form'] })).join('\n'), /use a block map/);
+  assert.match(problemsOf(workflow({ jobPerms: { check: ['{contents: read, issues write}'] } })).join('\n'), /cannot be read/);
 });
 
 test('an alert job without issues: write fails', () => {
