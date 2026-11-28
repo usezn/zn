@@ -322,6 +322,21 @@ A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent
 
 ---
 
+## Internal modules
+
+The modules below are part of the package source, but they are **not part of the public API**. They have no stability promise: their names, functions and behavior can change in any release. Import the public names from `zn_gate` instead (they are listed in `__all__`). The command-line tool is the `zn-gate` command, which runs `zn_gate.cli`.
+
+- `cli`: the command-line entry point (`zn-gate` and `python -m zn_gate`).
+- `destructive`: the rules behind `check_command()`. Call `check_command()` from `zn_gate`.
+- `stats`: reads the local counts that `zn-gate stats` shows.
+- `evidence_pack`: writes the evidence pack folder for auditors (used by the CLI).
+- `evidence_timesketch`: Timesketch exports of the evidence ledger (used by the CLI).
+- `mcp_secrets`: checks MCP server configuration files for plaintext credentials.
+- `node_tools`: checks whether Node.js and `npx` are on the computer.
+- `reach_history`: the `zn-gate reach --history` report.
+- `shell_names`: the names of the programs to run on this computer (for example `npx.cmd` on Windows).
+- `verbose`: the shared switch for technical detail (`ZN_VERBOSE`, `DEBUG`).
+
 ## Performance and accuracy
 
 We only publish numbers we can reproduce, with the method next to them.

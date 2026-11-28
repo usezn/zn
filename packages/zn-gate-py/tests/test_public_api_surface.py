@@ -24,6 +24,7 @@ Three checks, for zn_gate and zn_gate.integrations:
 """
 
 import os
+import pkgutil
 import re
 import types
 
@@ -153,3 +154,52 @@ for _module, _label in MODULES:
 @pytest.mark.parametrize("module,name", _params(_ACCIDENT_CASES, {}))
 def test_no_accidental_exports(module, name):
     assert name not in _accidental(module), "%s exposes %s without __all__" % (module.__name__, name)
+
+
+# Non-underscore submodules of zn_gate that are not in __all__. Each one is
+# either documented as a public submodule or listed as internal in the README.
+# A new module must go into one of these two sets, or get a leading underscore.
+# zn_gate.guard is not listed: it is in __all__ (the function shadows the module).
+DOCUMENTED_SUBMODULES = {"client", "evidence", "integrations", "rules"}
+INTERNAL_SUBMODULES = {
+    "cli",
+    "destructive",
+    "evidence_pack",
+    "evidence_timesketch",
+    "mcp_secrets",
+    "node_tools",
+    "reach_history",
+    "shell_names",
+    "stats",
+    "verbose",
+}
+INTERNAL_HEADING = "## Internal modules"
+
+
+def _public_submodules():
+    return {info.name for info in pkgutil.iter_modules(zn_gate.__path__) if not info.name.startswith("_")}
+
+
+def _readme_section(heading):
+    with open(README, encoding="utf-8") as fh:
+        text = fh.read()
+    match = re.search(r"^%s\n(.*?)(?=^## |\Z)" % re.escape(heading), text, re.S | re.M)
+    return match.group(1) if match else None
+
+
+def test_non_underscore_submodules_are_classified():
+    outside_all = _public_submodules() - set(zn_gate.__all__)
+    assert outside_all == DOCUMENTED_SUBMODULES | INTERNAL_SUBMODULES, (
+        "zn_gate has non-underscore submodules outside __all__ that are not classified here: "
+        "%s. Document them as public (DOCUMENTED_SUBMODULES) or underscore them."
+        % sorted(outside_all ^ (DOCUMENTED_SUBMODULES | INTERNAL_SUBMODULES))
+    )
+    assert not (DOCUMENTED_SUBMODULES & INTERNAL_SUBMODULES)
+
+
+def test_internal_modules_are_documented_as_internal():
+    section = _readme_section(INTERNAL_HEADING)
+    assert section is not None, "README needs an '## Internal modules' section"
+    assert "not part of the public API" in section
+    missing = sorted(name for name in INTERNAL_SUBMODULES if "`%s`" % name not in section)
+    assert missing == [], "README 'Internal modules' section does not list: %s" % missing
