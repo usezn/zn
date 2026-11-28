@@ -422,16 +422,20 @@ for (const [mode, opts, edit] of MODES) {
 
 test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
+  // The TERM is sent once the hook is running: the launcher sets its TERM trap before it starts the hook, and waiting only
+  // for its private files sent the TERM in the gap before the trap (the launcher was then killed by it: no exit code instead of 2).
+  const ready = path.join(tempDir(t, 'zn-ov-clean-ready-'), 'ready');
   // The hook stays busy long enough for a slow runner: TERM must arrive while it runs, not after it answered.
-  const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 8000);\n");
-  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp } });
+  const file = writeScript(t, 'claude-code', "require('fs').writeFileSync(process.env.ZN_TEST_READY, ''); setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 8000);\n");
+  const { child, term } = startLauncherForTerm(t, file, 'PreToolUse', { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp, ZN_TEST_READY: ready } });
   child.stdin.end('{}');
   let exitCode;
   const exited = new Promise((resolve) => child.on('exit', (code) => { exitCode = code; resolve(code); }));
-  // Wait until the launcher has made its private files (no fixed delay: a loaded Windows runner can take seconds).
+  // Wait until the hook has started (no fixed delay: a loaded runner can take seconds).
   const until = Date.now() + 6000;
-  while (zfiles(tmp).length < 2 && exitCode === undefined && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+  while (!fs.existsSync(ready) && exitCode === undefined && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
   assert.equal(exitCode, undefined, 'the launcher is still running the hook');
+  assert.ok(fs.existsSync(ready), 'the hook started');
   assert.ok(zfiles(tmp).length >= 2, 'the launcher made its private files');
   term();
   assert.equal(await exited, 2);
