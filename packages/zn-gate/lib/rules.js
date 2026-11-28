@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-27.11
+ * RULES_VERSION: 2026-11-27.12
  */
 
-const RULES_VERSION = '2026-11-27.11';
+const RULES_VERSION = '2026-11-27.12';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1883,6 +1883,238 @@ function redactCredentials(text) {
   return { sanitized: rest.sanitized, detections: quoted.detections.concat(rest.detections) };
 }
 
+// Slack and Discord webhook URLs cut into short pieces. A key of this kind has no digit or capital letter inside
+// its first pieces to join them by, so it is read from its known URL prefix instead: after "https://", the host and
+// path literals and the key parts are matched one character at a time, with a line break, a Unicode space, a
+// quote (and "+"), a backslash line continuation or a literal backslash-n allowed between any two characters. The
+// matcher is bounded (at most WH_MAX_GAP break characters in a row, the key parts have a fixed maximum length) and
+// only a URL that is really cut is taken (an intact one is left to the usual rules). The whole span becomes the
+// provider marker.
+const WH_MAX_GAP = 24;
+const WH_SLACK_HOSTS = ['hooks.slack.com/services/'];
+const WH_DISCORD_HOSTS = [
+  'discord.com/api/webhooks/', 'discordapp.com/api/webhooks/', 'ptb.discord.com/api/webhooks/',
+  'canary.discord.com/api/webhooks/', 'ptb.discordapp.com/api/webhooks/', 'canary.discordapp.com/api/webhooks/',
+];
+const WH_DISCORD_TOKEN_LEN = 68;
+
+function whIsBreak(c) {
+  return c === 32 || c === 9 || c === 10 || c === 13 || c === 34 || c === 39 || c === 0xa0 || c === 0x85 ||
+    c === 0x1680 || (c >= 0x2000 && c <= 0x200f) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f ||
+    c === 0x2060 || c === 0x3000 || c === 0xfeff;
+}
+
+// The index after the run of breaks that starts at p (p itself when there is none). A "+" is a break only after a
+// quote in the same run (the "abc" + "def" form): inside a Base64 key it is one of the characters.
+function whSkipGap(text, p) {
+  const n = text.length;
+  let units = 0;
+  let quoted = false;
+  while (p < n && units < WH_MAX_GAP) {
+    const c = text.charCodeAt(p);
+    if (whIsBreak(c) || (c === 43 && quoted)) {
+      if (c === 34 || c === 39) quoted = true;
+      p++;
+      units++;
+      continue;
+    }
+    if (c === 92) {
+      let q = p + 1;
+      if (q < n && text.charCodeAt(q) === 92) q++;
+      const d = q < n ? text.charCodeAt(q) : -1;
+      if (d === 110 || d === 114 || d === 116 || d === 10) {
+        p = q + 1;
+        units++;
+        continue;
+      }
+      if (d === 13) {
+        p = q + 1;
+        if (p < n && text.charCodeAt(p) === 10) p++;
+        units++;
+        continue;
+      }
+    }
+    break;
+  }
+  return p;
+}
+
+function whLit(text, p, lit, st) {
+  for (let i = 0; i < lit.length; i++) {
+    const q = whSkipGap(text, p);
+    if (q >= text.length || text.charCodeAt(q) !== lit.charCodeAt(i)) return -1;
+    if (q > p) st.broke = true;
+    p = q + 1;
+  }
+  return p;
+}
+
+function whIsUpperDigit(c) { return (c >= 65 && c <= 90) || (c >= 48 && c <= 57); }
+function whIsDigit(c) { return c >= 48 && c <= 57; }
+function whIsAlnum(c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57); }
+function whIsToken(c) { return whIsAlnum(c) || c === 95 || c === 45; }
+function whIsBase64(c) { return whIsAlnum(c) || c === 43 || c === 47; }
+
+// Reads between `min` and `max` characters of a class, greedy. With `closing`, a run that has already `min` characters
+// crosses a break only when the piece after it fits in what is left up to `max`: the key then ends in that piece, and
+// a longer word after the key is left alone.
+function whRun(text, p, ok, min, max, st, closing = false) {
+  let count = 0;
+  while (count < max) {
+    const q = whSkipGap(text, p);
+    if (q >= text.length || !ok(text.charCodeAt(q))) break;
+    if (q > p && closing && count >= min) {
+      let r = q;
+      while (r < text.length && r - q <= max && ok(text.charCodeAt(r))) r++;
+      if (count + (r - q) > max) break;
+    }
+    if (q > p) st.broke = true;
+    p = q + 1;
+    count++;
+  }
+  return count >= min ? p : -1;
+}
+
+function whMatchSlack(text, p, st) {
+  for (const host of WH_SLACK_HOSTS) {
+    let q = whLit(text, p, host + 'T', st);
+    if (q < 0) { st.broke = false; continue; }
+    q = whRun(text, q, whIsUpperDigit, 1, 16, st);
+    if (q >= 0) q = whLit(text, q, '/B', st);
+    if (q >= 0) q = whRun(text, q, whIsUpperDigit, 1, 16, st);
+    if (q >= 0) q = whLit(text, q, '/', st);
+    if (q >= 0) q = whRun(text, q, whIsAlnum, 24, 24, st);
+    if (q >= 0) return q;
+    st.broke = false;
+  }
+  return -1;
+}
+
+function whMatchDiscord(text, p, st) {
+  for (const host of WH_DISCORD_HOSTS) {
+    let q = whLit(text, p, host, st);
+    if (q < 0) { st.broke = false; continue; }
+    q = whRun(text, q, whIsDigit, 15, 20, st);
+    if (q >= 0) q = whLit(text, q, '/', st);
+    if (q >= 0) q = whRun(text, q, whIsToken, 60, WH_DISCORD_TOKEN_LEN, st, true);
+    if (q >= 0) return q;
+    st.broke = false;
+  }
+  return -1;
+}
+
+// Fixed-length keys cut into pieces (SendGrid, Linear, DigitalOcean, GitHub fine-grained tokens, Azure storage
+// keys, Telegram bot tokens): the key ends where its last character is, so a word on the line after it is not part
+// of it (a joined view would read it as the rest of the key and the fixed length would no longer match). Each key
+// is read from its first characters (a piece is at least 8 characters, so the start of a key is on one line), then
+// the rest of its prefix and its parts one character at a time, with a break allowed between any two characters.
+// `keep` is how much of the anchor the marker leaves in place (the Azure "AccountKey=").
+function whIsHex(c) { return (c >= 48 && c <= 57) || (c >= 97 && c <= 102); }
+const WH_FIXED_KEYS = [
+  { anchor: 'SG.', steps: [['R', whIsToken, 22, 22], ['L', '.'], ['R', whIsToken, 43, 43]], label: 'SENDGRID_KEY', nb: true },
+  { anchor: 'lin_api_', steps: [['R', whIsAlnum, 40, 40]], label: 'LINEAR_KEY', nb: true },
+  { anchor: 'doo_v1_', steps: [['R', whIsHex, 64, 64]], label: 'DIGITALOCEAN_TOKEN', nb: true },
+  { anchor: 'dop_v1_', steps: [['R', whIsHex, 64, 64]], label: 'DIGITALOCEAN_TOKEN', nb: true },
+  { anchor: 'dor_v1_', steps: [['R', whIsHex, 64, 64]], label: 'DIGITALOCEAN_TOKEN', nb: true },
+  { anchor: 'github_p', steps: [['L', 'at_'], ['R', whIsAlnum, 22, 22], ['L', '_'], ['R', whIsAlnum, 59, 59]], label: 'GITHUB_TOKEN', nb: true },
+  { anchor: 'AccountKey=', steps: [['R', whIsBase64, 86, 86], ['L', '='], ['L', '=']], label: 'AZURE_STORAGE_KEY', nb: false, keep: 11 },
+];
+
+function whMatchSteps(text, p, steps, st) {
+  for (const step of steps) {
+    p = step[0] === 'L' ? whLit(text, p, step[1], st) : whRun(text, p, step[1], step[2], step[3], st);
+    if (p < 0) return -1;
+  }
+  return p;
+}
+
+function whFixedKeyAt(text, i, spec) {
+  if (spec.nb && i > 0 && whIsToken(text.charCodeAt(i - 1))) return null;
+  const st = { broke: false };
+  const q = whMatchSteps(text, i + spec.anchor.length, spec.steps, st);
+  if (q < 0 || !st.broke || (spec.nb && q < text.length && whIsToken(text.charCodeAt(q)))) return null;
+  const start = i + (spec.keep || 0);
+  return [start, q, spec.label, 'secret:' + spec.label.toLowerCase(), '[REDACTED_' + spec.label + ']'];
+}
+
+// A Telegram bot token (8 to 10 digits, ":AA", 33 characters) starts with digits that are no anchor: it is looked
+// for at each ":" that follows them.
+function whTelegramAt(text, colon) {
+  let s = colon;
+  while (s > 0 && colon - s < 11 && whIsDigit(text.charCodeAt(s - 1))) s--;
+  const digits = colon - s;
+  if (digits < 8 || digits > 10 || (s > 0 && whIsAlnum(text.charCodeAt(s - 1)))) return null;
+  const st = { broke: false };
+  let q = whLit(text, colon + 1, 'AA', st);
+  if (q >= 0) q = whRun(text, q, whIsToken, 33, 33, st);
+  if (q < 0 || !st.broke || (q < text.length && whIsToken(text.charCodeAt(q)))) return null;
+  return [s, q, 'TELEGRAM_BOT_TOKEN', 'secret:telegram_bot_token', '[REDACTED_TELEGRAM_BOT_TOKEN]'];
+}
+
+// The cut fixed-length keys of `text`, as [start, end, label, rule, marker].
+function findWrappedFixedKeys(text) {
+  const found = [];
+  for (const spec of WH_FIXED_KEYS) {
+    for (let i = text.indexOf(spec.anchor); i >= 0; i = text.indexOf(spec.anchor, i + spec.anchor.length)) {
+      const m = whFixedKeyAt(text, i, spec);
+      if (m) found.push(m);
+    }
+  }
+  for (let i = text.indexOf(':'); i >= 0; i = text.indexOf(':', i + 1)) {
+    const m = whTelegramAt(text, i);
+    if (m) found.push(m);
+  }
+  return found;
+}
+
+// The cut webhook URLs of `text`, as [start, end, label, rule] in order.
+function findWrappedWebhooks(text) {
+  const found = [];
+  let i = text.indexOf('https://');
+  while (i >= 0) {
+    const p = i + 8;
+    let st = { broke: false };
+    let end = whMatchSlack(text, p, st);
+    let label = 'SLACK_WEBHOOK';
+    if (end < 0 || !st.broke) {
+      st = { broke: false };
+      end = whMatchDiscord(text, p, st);
+      label = 'DISCORD_WEBHOOK';
+    }
+    if (end >= 0 && st.broke) {
+      found.push([i, end, label, 'secret:' + label.toLowerCase(), '[REDACTED_' + label + ']']);
+      i = text.indexOf('https://', end);
+    } else {
+      i = text.indexOf('https://', p);
+    }
+  }
+  return found;
+}
+
+function redactWrappedWebhooks(text) {
+  if (typeof text !== 'string' || text.length > MAX_WRAP_VIEW_CHARS || !WRAP_HINT_RE.test(text)) return { sanitized: text, detections: [] };
+  const found = findWrappedWebhooks(text).concat(findWrappedFixedKeys(text)).sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  if (found.length === 0) return { sanitized: text, detections: [] };
+  const detections = [];
+  let out = '';
+  let last = 0;
+  for (const [start, end, , rule, marker] of found) {
+    if (start < last) continue;
+    out += text.slice(last, start) + marker;
+    last = end;
+    detections.push({ rule, index: start });
+  }
+  return { sanitized: out + text.slice(last), detections };
+}
+
+// `fn` over the text with the cut webhook URLs already redacted.
+function withWrappedWebhooks(text, fn) {
+  const hooks = redactWrappedWebhooks(text);
+  if (hooks.detections.length === 0) return fn(text);
+  const rest = fn(hooks.sanitized);
+  return { ...rest, sanitized: rest.sanitized, detections: hooks.detections.concat(rest.detections) };
+}
+
 // Redacts secrets. Every rule runs on the original text and on the text without
 // invisible characters (see ruleCandidates), and the redacted spans are the union
 // of what both find, so a secret split by a zero-width or tag character is
@@ -1907,6 +2139,10 @@ function closeOpenEndedTails(result) {
 }
 
 function redactSecretsPasses(text) {
+  return withWrappedWebhooks(text, redactSecretsPassesPlain);
+}
+
+function redactSecretsPassesPlain(text) {
   let result = credentialPass(text);
   // A key that a later rule's redaction was hiding from an earlier one (two keys on adjacent lines are read as one
   // joined token until one of them is redacted) is found by one more pass over what is left. Only a text that still
@@ -2015,6 +2251,10 @@ function redactScanRules(text) {
 
 // redactSecrets plus SCAN_SECRET_PATTERNS, for the lines `zn-gate scan` prints.
 function redactScanSecrets(text) {
+  return withWrappedWebhooks(text, redactScanSecretsPlain);
+}
+
+function redactScanSecretsPlain(text) {
   const first = redactCredentials(text);
   const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
   return closeOpenEndedTails({ sanitized: second.sanitized, detections: first.detections.concat(second.detections) });

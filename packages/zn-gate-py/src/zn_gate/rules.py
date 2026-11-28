@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-27.11
+RULES_VERSION: 2026-11-27.12
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-27.11"
+RULES_VERSION = "2026-11-27.12"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -2079,7 +2079,269 @@ def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     return _apply_edits(text, edits), detections
 
 
+# Slack and Discord webhook URLs cut into short pieces (see the block of the same name in rules.js): read from the
+# known URL prefix, one character at a time, with a break allowed between any two characters. Bounded and linear; only
+# a URL that is really cut is taken, an intact one is left to the usual rules. The whole span becomes the marker.
+_WH_MAX_GAP = 24
+_WH_SLACK_HOSTS = ('hooks.slack.com/services/',)
+_WH_DISCORD_HOSTS = (
+    'discord.com/api/webhooks/', 'discordapp.com/api/webhooks/', 'ptb.discord.com/api/webhooks/',
+    'canary.discord.com/api/webhooks/', 'ptb.discordapp.com/api/webhooks/', 'canary.discordapp.com/api/webhooks/',
+)
+_WH_DISCORD_TOKEN_LEN = 68
+_WH_BREAK_CODES = frozenset(
+    [32, 9, 10, 13, 34, 39, 0xa0, 0x85, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x2060, 0x3000, 0xfeff]
+    + list(range(0x2000, 0x2010)))
+
+
+def _wh_skip_gap(text: str, p: int) -> int:
+    # A "+" is a break only after a quote in the same run (the "abc" + "def" form): inside a Base64 key it is one of
+    # the characters.
+    n = len(text)
+    units = 0
+    quoted = False
+    while p < n and units < _WH_MAX_GAP:
+        c = ord(text[p])
+        if c in _WH_BREAK_CODES or (c == 43 and quoted):
+            if c == 34 or c == 39:
+                quoted = True
+            p += 1
+            units += 1
+            continue
+        if c == 92:
+            q = p + 1
+            if q < n and ord(text[q]) == 92:
+                q += 1
+            d = text[q] if q < n else ''
+            if d in ('n', 'r', 't', '\n') and d != '':
+                p = q + 1
+                units += 1
+                continue
+            if d == '\r':
+                p = q + 1
+                if p < n and text[p] == '\n':
+                    p += 1
+                units += 1
+                continue
+        break
+    return p
+
+
+def _wh_lit(text: str, p: int, lit: str, st: List[bool]) -> int:
+    n = len(text)
+    for ch in lit:
+        q = _wh_skip_gap(text, p)
+        if q >= n or text[q] != ch:
+            return -1
+        if q > p:
+            st[0] = True
+        p = q + 1
+    return p
+
+
+def _wh_is_upper_digit(ch: str) -> bool:
+    return ('A' <= ch <= 'Z') or ('0' <= ch <= '9')
+
+
+def _wh_is_digit(ch: str) -> bool:
+    return '0' <= ch <= '9'
+
+
+def _wh_is_alnum(ch: str) -> bool:
+    return ('A' <= ch <= 'Z') or ('a' <= ch <= 'z') or ('0' <= ch <= '9')
+
+
+def _wh_is_token(ch: str) -> bool:
+    return _wh_is_alnum(ch) or ch == '_' or ch == '-'
+
+
+def _wh_is_base64(ch: str) -> bool:
+    return _wh_is_alnum(ch) or ch == '+' or ch == '/'
+
+
+def _wh_run(text: str, p: int, ok, lo: int, hi: int, st: List[bool], closing: bool = False) -> int:
+    n = len(text)
+    count = 0
+    while count < hi:
+        q = _wh_skip_gap(text, p)
+        if q >= n or not ok(text[q]):
+            break
+        if q > p and closing and count >= lo:
+            r = q
+            while r < n and r - q <= hi and ok(text[r]):
+                r += 1
+            if count + (r - q) > hi:
+                break
+        if q > p:
+            st[0] = True
+        p = q + 1
+        count += 1
+    return p if count >= lo else -1
+
+
+def _wh_match_slack(text: str, p: int, st: List[bool]) -> int:
+    for host in _WH_SLACK_HOSTS:
+        q = _wh_lit(text, p, host + 'T', st)
+        if q < 0:
+            st[0] = False
+            continue
+        q = _wh_run(text, q, _wh_is_upper_digit, 1, 16, st)
+        if q >= 0:
+            q = _wh_lit(text, q, '/B', st)
+        if q >= 0:
+            q = _wh_run(text, q, _wh_is_upper_digit, 1, 16, st)
+        if q >= 0:
+            q = _wh_lit(text, q, '/', st)
+        if q >= 0:
+            q = _wh_run(text, q, _wh_is_alnum, 24, 24, st)
+        if q >= 0:
+            return q
+        st[0] = False
+    return -1
+
+
+def _wh_match_discord(text: str, p: int, st: List[bool]) -> int:
+    for host in _WH_DISCORD_HOSTS:
+        q = _wh_lit(text, p, host, st)
+        if q < 0:
+            st[0] = False
+            continue
+        q = _wh_run(text, q, _wh_is_digit, 15, 20, st)
+        if q >= 0:
+            q = _wh_lit(text, q, '/', st)
+        if q >= 0:
+            q = _wh_run(text, q, _wh_is_token, 60, _WH_DISCORD_TOKEN_LEN, st, True)
+        if q >= 0:
+            return q
+        st[0] = False
+    return -1
+
+
+# Fixed-length keys cut into pieces (SendGrid, Linear, DigitalOcean, GitHub fine-grained tokens, Azure storage keys,
+# Telegram bot tokens): the key ends where its last character is, so a word on the line after it is not part of it
+# (see WH_FIXED_KEYS in rules.js). `keep` is how much of the anchor the marker leaves in place.
+def _wh_is_hex(ch: str) -> bool:
+    return ('0' <= ch <= '9') or ('a' <= ch <= 'f')
+
+
+_WH_FIXED_KEYS: List[Tuple[str, Tuple[Tuple[Any, ...], ...], str, bool, int]] = [
+    ('SG.', (('R', _wh_is_token, 22, 22), ('L', '.'), ('R', _wh_is_token, 43, 43)), 'SENDGRID_KEY', True, 0),
+    ('lin_api_', (('R', _wh_is_alnum, 40, 40),), 'LINEAR_KEY', True, 0),
+    ('doo_v1_', (('R', _wh_is_hex, 64, 64),), 'DIGITALOCEAN_TOKEN', True, 0),
+    ('dop_v1_', (('R', _wh_is_hex, 64, 64),), 'DIGITALOCEAN_TOKEN', True, 0),
+    ('dor_v1_', (('R', _wh_is_hex, 64, 64),), 'DIGITALOCEAN_TOKEN', True, 0),
+    ('github_p', (('L', 'at_'), ('R', _wh_is_alnum, 22, 22), ('L', '_'), ('R', _wh_is_alnum, 59, 59)),
+     'GITHUB_TOKEN', True, 0),
+    ('AccountKey=', (('R', _wh_is_base64, 86, 86), ('L', '='), ('L', '=')), 'AZURE_STORAGE_KEY', False, 11),
+]
+
+
+def _wh_match_steps(text: str, p: int, steps: Sequence[Tuple[Any, ...]], st: List[bool]) -> int:
+    for step in steps:
+        p = _wh_lit(text, p, step[1], st) if step[0] == 'L' else _wh_run(text, p, step[1], step[2], step[3], st)
+        if p < 0:
+            return -1
+    return p
+
+
+def _wh_fixed_key_at(text: str, i: int, spec: Tuple[Any, ...]) -> Optional[Tuple[int, int, str, str]]:
+    anchor, steps, label, nb, keep = spec
+    if nb and i > 0 and _wh_is_token(text[i - 1]):
+        return None
+    st = [False]
+    q = _wh_match_steps(text, i + len(anchor), steps, st)
+    if q < 0 or not st[0] or (nb and q < len(text) and _wh_is_token(text[q])):
+        return None
+    return (i + keep, q, 'secret:' + label.lower(), '[REDACTED_' + label + ']')
+
+
+def _wh_telegram_at(text: str, colon: int) -> Optional[Tuple[int, int, str, str]]:
+    """A Telegram bot token (8 to 10 digits, ":AA", 33 characters): its digits are no anchor, so it is looked for at
+    each ":" that follows them."""
+    s = colon
+    while s > 0 and colon - s < 11 and _wh_is_digit(text[s - 1]):
+        s -= 1
+    digits = colon - s
+    if digits < 8 or digits > 10 or (s > 0 and _wh_is_alnum(text[s - 1])):
+        return None
+    st = [False]
+    q = _wh_lit(text, colon + 1, 'AA', st)
+    if q >= 0:
+        q = _wh_run(text, q, _wh_is_token, 33, 33, st)
+    if q < 0 or not st[0] or (q < len(text) and _wh_is_token(text[q])):
+        return None
+    return (s, q, 'secret:telegram_bot_token', '[REDACTED_TELEGRAM_BOT_TOKEN]')
+
+
+def _find_wrapped_fixed_keys(text: str) -> List[Tuple[int, int, str, str]]:
+    found: List[Tuple[int, int, str, str]] = []
+    for spec in _WH_FIXED_KEYS:
+        anchor = spec[0]
+        i = text.find(anchor)
+        while i >= 0:
+            m = _wh_fixed_key_at(text, i, spec)
+            if m:
+                found.append(m)
+            i = text.find(anchor, i + len(anchor))
+    i = text.find(':')
+    while i >= 0:
+        m = _wh_telegram_at(text, i)
+        if m:
+            found.append(m)
+        i = text.find(':', i + 1)
+    return found
+
+
+def _find_wrapped_webhooks(text: str) -> List[Tuple[int, int, str, str]]:
+    found: List[Tuple[int, int, str, str]] = []
+    i = text.find('https://')
+    while i >= 0:
+        p = i + 8
+        st = [False]
+        end = _wh_match_slack(text, p, st)
+        label = 'SLACK_WEBHOOK'
+        if end < 0 or not st[0]:
+            st = [False]
+            end = _wh_match_discord(text, p, st)
+            label = 'DISCORD_WEBHOOK'
+        if end >= 0 and st[0]:
+            found.append((i, end, 'secret:' + label.lower(), '[REDACTED_' + label + ']'))
+            i = text.find('https://', end)
+        else:
+            i = text.find('https://', p)
+    return found
+
+
+def _redact_wrapped_webhooks(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    if len(text) > MAX_WRAP_VIEW_CHARS or WRAP_HINT_RE.search(text) is None:
+        return text, []
+    found = sorted(_find_wrapped_webhooks(text) + _find_wrapped_fixed_keys(text), key=lambda f: (f[0], -f[1]))
+    if not found:
+        return text, []
+    detections: List[Dict[str, Any]] = []
+    edits: List[Tuple[int, int, str]] = []
+    last = 0
+    for start, end, rule, marker in found:
+        if start < last:
+            continue
+        detections.append({"rule": rule, "start": start, "end": end})
+        edits.append((start, end, marker))
+        last = end
+    return _apply_edits(text, edits), detections
+
+
 def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """_redact_credentials_plain over the text with the cut webhook URLs already redacted."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    hooked, hooks = _redact_wrapped_webhooks(text)
+    if not hooks:
+        return _redact_credentials_plain(text)
+    redacted, found = _redact_credentials_plain(hooked)
+    return redacted, hooks + found
+
+
+def _redact_credentials_plain(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """The quoted values first (the other rules read one word and would leave
     the rest of `"api_key":"abcdefghijkl mno pqr"` behind), then SECRET_PATTERNS
     and the provider formats."""
