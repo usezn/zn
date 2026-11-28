@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.3
+RULES_VERSION: 2026-11-28.4
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-28.3"
+RULES_VERSION = "2026-11-28.4"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1773,6 +1773,32 @@ PROVIDER_MATCH_CHECKS.update({
     "secret:github_token#scrub": lambda v: _pv_random(v[4:], 2, 3.5),
     "secret:private_key#scrub": lambda v: len(v) >= 40,
 })
+# Token end of the GitHub forms: the length of a complete key, prefix included (see tailCut in rules.js).
+TAIL_GUARDS: Dict[str, int] = {
+    "secret:github_token#scrub": 40,
+    "secret:github_token#scrub_pat": 93,
+}
+_TAIL_KEY_CHAR_RE = _rc(r'[A-Za-z0-9_]')
+_TAIL_MATERIAL_RE = _rc(r'[0-9A-Z]')
+
+
+def _tail_cut(text: str, start: int, end: int, min_chars: int) -> Optional[int]:
+    """Where a joined match of a rule with a tail guard stops: the first line break inside text[start:end] with a
+    complete key before it and a plain word (no digit, no capital letter) after it. A key of an open-ended length
+    that wraps onto a line of ten or more plain letters would join that line to itself. None when there is no such
+    break (see tailCut in rules.js)."""
+    for m in WRAP_BREAK_RE.finditer(text, start):
+        if m.start() >= end:
+            break
+        if m.start() <= start:
+            continue
+        n = len(_TAIL_KEY_CHAR_RE.findall(text[start:m.start()]))
+        if n < min_chars:
+            continue
+        return None if _TAIL_MATERIAL_RE.search(text[m.end():end]) else m.start()
+    return None
+
+
 PROVIDER_HINTS.update({
     "secret:openai_key#scrub": ("sk-",),
     "secret:github_token#scrub": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
@@ -2185,6 +2211,11 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     # No original match: the view joined two lines. When the second line starts a secret of its own,
                     # this rule keeps the first line only and the other rule reports the second one.
                     cut = _wrap_cut(text, start, end, patterns)
+                    if cut is not None:
+                        end = cut
+                tail_guard = TAIL_GUARDS.get(rule_id)
+                if tail_guard is not None:
+                    cut = _tail_cut(text, start, end, tail_guard)
                     if cut is not None:
                         end = cut
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))

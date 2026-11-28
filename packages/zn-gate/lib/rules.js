@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-28.3
+ * RULES_VERSION: 2026-11-28.4
  */
 
-const RULES_VERSION = '2026-11-28.3';
+const RULES_VERSION = '2026-11-28.4';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1099,6 +1099,10 @@ const SECRET_PATTERNS = [
   { id: 'secret:credential_default', pattern: /(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretDefault, requires: '${' },
 ];
 
+// Token end of the GitHub forms (tailGuard = the length of a complete key, prefix included). A key of an open-ended
+// length that wraps onto a line starting with ten or more plain letters would join that line to itself. When the
+// first line already holds a complete key and what follows the break has no digit and no capital letter (a word,
+// not key material), the redaction stops at the break. Python does the same (TAIL_GUARDS in rules.py).
 // Forms the scrubber reads that the shared table above has no rule for, in the order the Python package runs them
 // (SCRUB_FIRST_PATTERNS before the shared table, SCRUB_LAST_PATTERNS after it). redactCredentials uses the
 // whole list; the shared table alone stays the one the policy checks read.
@@ -1113,9 +1117,9 @@ const SCRUB_FIRST_PATTERNS = [
     } },
   // GitHub tokens of up to 255 characters (the shared rule reads 36 to 40), and fine-grained tokens longer than 82.
   // The body must look random, as in the scrubber; a shorter one still goes to the shared rule.
-  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_-])()(gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_GITHUB_TOKEN]', prefilter: /gh[pousr]_/,
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_-])()(gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_GITHUB_TOKEN]', prefilter: /gh[pousr]_/, tailGuard: 40,
     valueFilter: (v) => !require('./scrub/patterns').looksRandom(v.slice(4), 2, 3.5) },
-  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_GITHUB_TOKEN]', requires: 'github_pat_' },
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}(?![A-Za-z0-9_-])/g, replacement: '[REDACTED_GITHUB_TOKEN]', requires: 'github_pat_', tailGuard: 93 },
 ];
 // A JWT whose signature an earlier rule redacted in part (an sk- key in it): the rest of the JWT goes too, so its
 // header and payload never stay readable.
@@ -1463,6 +1467,21 @@ function wrapCut(text, start, end, patterns) {
   return -1;
 }
 
+// Where a joined match of a rule with a tailGuard stops: the first line break inside text[start, end) with a
+// complete key before it and a plain word after it. -1 when there is none (see _tail_cut in rules.py).
+function tailCut(text, start, end, minChars) {
+  const re = new RegExp(WRAP_BREAK_RE.source, 'g');
+  re.lastIndex = start;
+  let m;
+  while ((m = re.exec(text)) !== null && m.index < end) {
+    if (m.index <= start) continue;
+    const n = (text.slice(start, m.index).match(/[A-Za-z0-9_]/g) || []).length;
+    if (n < minChars) continue;
+    return /[0-9A-Z]/.test(text.slice(m.index + m[0].length, end)) ? -1 : m.index;
+  }
+  return -1;
+}
+
 function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
   // A third pass reads each invisible character as a space; its indexes are the original ones.
@@ -1519,6 +1538,10 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
           // No original match: the view joined two lines. When the second line starts a secret of its own,
           // this rule keeps the first line only and the other rule reports the second one.
           const cut = wrapCut(text, start, end, patterns);
+          if (cut >= 0) end = cut;
+        }
+        if (item.tailGuard) {
+          const cut = tailCut(text, start, end, item.tailGuard);
           if (cut >= 0) end = cut;
         }
       }
