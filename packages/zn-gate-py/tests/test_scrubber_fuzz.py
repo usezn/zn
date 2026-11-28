@@ -32,10 +32,10 @@ RUN_NODE_TESTS = HAVE_NODE or bool(os.environ.get("CI"))
 # FuzzCorpus fails on any single corpus case whose state changes, in either direction.
 SLICE_SEED = "split-keys-ci"
 SLICE_PER_PROVIDER = 6
-MAX_REMNANT_NODE = 68
-MAX_REMNANT_PYTHON = 68
+MAX_REMNANT_NODE = 0
+MAX_REMNANT_PYTHON = 0
 # The mismatches left are extra redaction only: one engine also takes part of the next line after a key (no key text is left).
-MAX_MISMATCH = 3
+MAX_MISMATCH = 0
 
 
 def _node(texts):

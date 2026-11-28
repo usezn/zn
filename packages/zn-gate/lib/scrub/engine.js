@@ -50,7 +50,7 @@ const { cliName } = require('../zn-command');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
-const { invisibleView } = require('../rules');
+const { invisibleView, parityViews, looseView } = require('../rules');
 // normalize.js is loaded on first use. A text with no candidate (a %XX, '' or "") has no decoded view, which is what
 // normalisedView returns for it, so such a text never loads the module. NORM_CANDIDATE must stay equal to CANDIDATE_RE
 // in normalize.js (a test compares the two); this copy has no `g` flag, so it keeps no state between calls.
@@ -157,38 +157,24 @@ function resolveOverlaps(spans) {
   return out;
 }
 
-/* A pattern span found on the text without its wrapped line breaks (invisibleView joins them) that runs over a
- * secret the direct scan found on its own, one line further down, is the end of the first line only: two keys on
- * adjacent lines are two detections. The span is cut at that line break; the other key is reported by the direct
- * scan, so nothing is left unredacted. `direct` is in order, as scanText returns it. */
-function cutAtOwnSecret(s, direct, text) {
-  if (s.source !== 'pattern' || s.end <= s.start) return s;
+// True when a span of `spans` (in order, without overlaps) overlaps [start, end).
+function overlapsAny(spans, start, end) {
   let lo = 0;
-  let hi = direct.length;
+  let hi = spans.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (direct[mid].start <= s.start) lo = mid + 1; else hi = mid;
+    if (spans[mid].end <= start) lo = mid + 1; else hi = mid;
   }
-  for (let i = lo; i < direct.length && direct[i].start < s.end; i++) {
-    const d = direct[i];
-    if (d.source !== 'pattern') continue;
-    let cut = d.start;
-    while (cut > s.start && /\s/.test(text[cut - 1])) cut--;
-    if (cut > s.start && text.slice(cut, d.start).includes('\n')) {
-      // The rest of the span must be covered by secrets the direct scan found, one after another; if a filter
-      // rejected part of it, the span stays whole and redacts it.
-      let reach = d.end;
-      for (let j = i + 1; reach < s.end; j++) {
-        let nxt = reach;
-        while (nxt < s.end && /\s/.test(text[nxt])) nxt++;
-        if (nxt >= s.end) break;
-        if (j >= direct.length || direct[j].start > nxt) return s;
-        if (direct[j].source === 'pattern' && direct[j].end > reach) reach = direct[j].end;
-      }
-      return { ...s, end: cut };
-    }
-  }
-  return s;
+  return lo < spans.length && spans[lo].start < end;
+}
+
+/* A pattern span found on the text without its wrapped line breaks (invisibleView joins them) that holds a line break
+ * is either two keys on adjacent lines, cut at the break (the rest is redacted by the rules on its own, so
+ * two keys are two detections), or one key wrapped across lines, which stands and ends at the end of the token it
+ * stopped inside, so no part of that token is left readable (see wrapResolve in lib/rules.js). */
+function resolveWrapped(s, text) {
+  if (s.source !== 'pattern' || s.end <= s.start || !text.slice(s.start, s.end).includes('\n')) return s;
+  return { ...s, end: require('../rules').wrapResolve(text, s.start, s.end, s.start + 1).at };
 }
 
 /**
@@ -210,14 +196,26 @@ function scan(text, ctx) {
   const direct = scanText(text, c);
   const view = invisibleView(text);
   const norm = normalisedView(text);
-  if (!view && !norm) return direct;
+  // The view that also joins a last piece followed by more text: its spans count only where the text and the other views
+  // have none (a short word after a complete key is not the end of the key).
+  const loose = looseView(text, view);
+  if (!view && !norm && !loose) return direct;
   let all = direct;
-  if (view) {
-    all = all.concat(scanText(view.clean, c).map((s) => cutAtOwnSecret({
-      ...s,
-      start: view.map[s.start],
-      end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
-    }, direct, text)));
+  if (view || loose) {
+    // The text without invisible characters and with every wrap break joined, and the views that join every
+    // second break (a key wrapped across two lines next to other lines).
+    // A span of those views that overlaps a span of the text itself is left to the view that joins all of them.
+    const views = (view ? [view].concat(parityViews(text, view)) : []).concat(loose ? [loose] : []);
+    views.forEach((v, k) => {
+      let spans = scanText(v.clean, c).map((s) => resolveWrapped({
+        ...s,
+        start: v.map[s.start],
+        end: s.end > s.start ? v.map[s.end - 1] + 1 : v.map[s.start],
+      }, text));
+      if (v === loose) spans = spans.filter((s) => !overlapsAny(all, s.start, s.end));
+      else if (k > 0) spans = spans.filter((s) => !overlapsAny(direct, s.start, s.end));
+      all = all.concat(spans);
+    });
   }
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a
   // span covers the whole original word or encoded value.
@@ -483,7 +481,12 @@ async function prepare(ctx) {
 function textsToFetch(text) {
   const out = [text];
   const view = invisibleView(text);
-  if (view) out.push(view.clean);
+  if (view) {
+    out.push(view.clean);
+    for (const v of parityViews(text, view)) if (!out.includes(v.clean)) out.push(v.clean);
+  }
+  const loose = looseView(text, view);
+  if (loose && !out.includes(loose.clean)) out.push(loose.clean);
   const norm = normalisedView(text);
   if (norm && !out.includes(norm.clean)) out.push(norm.clean);
   return out;

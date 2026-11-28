@@ -17,7 +17,7 @@
 "vi9Lx",
 "X"
 ],
-"seed": "split-keys:github_token:4",
+"seed": "B8212:github_token:4",
 "sep": "zwsp",
 "text_parts": [
 "expor",
@@ -43,7 +43,7 @@
 "class": "mismatch_next_line_absorbed",
 "ctx": "shell",
 "id": "fuzz-mismatch_next_line_absorbed-openai_hex",
-"mismatch": true,
+"mismatch": false,
 "node_remnant": false,
 "provider": "openai_hex",
 "python_remnant": false,
@@ -56,7 +56,7 @@
 "21c20",
 "e9"
 ],
-"seed": "split-keys:openai_hex:6",
+"seed": "B8212:openai_hex:6",
 "sep": "space_lf",
 "text_parts": [
 "expor",
@@ -81,7 +81,7 @@
 "class": "mismatch_next_line_absorbed",
 "ctx": "shell",
 "id": "fuzz-mismatch_next_line_absorbed-openai_legacy",
-"mismatch": true,
+"mismatch": false,
 "node_remnant": false,
 "provider": "openai_legacy",
 "python_remnant": false,
@@ -97,7 +97,7 @@
 "7wFPD",
 "zVc"
 ],
-"seed": "split-keys:openai_legacy:19",
+"seed": "B8212:openai_legacy:19",
 "sep": "tab",
 "text_parts": [
 "expor",
@@ -150,7 +150,7 @@
 "SMnyR",
 "Dg2"
 ],
-"seed": "split-keys:anthropic:1500",
+"seed": "B8212:anthropic:1500",
 "sep": "lf",
 "text_parts": [
 "sk-an",
@@ -183,9 +183,9 @@
 "ctx": "dotenv",
 "id": "fuzz-mismatch_other-azure_storage",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "azure_storage",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "C62AB",
 "+PwMJ",
@@ -206,7 +206,7 @@
 "pVywD",
 "W=="
 ],
-"seed": "split-keys:azure_storage:3557",
+"seed": "B8212:azure_storage:3557",
 "sep": "lf",
 "text_parts": [
 "DEBUG",
@@ -268,7 +268,7 @@
 "fmifx",
 "I2"
 ],
-"seed": "split-keys:github_fine_grained:1938",
+"seed": "B8212:github_fine_grained:1938",
 "sep": "crlf",
 "text_parts": [
 "expor",
@@ -330,7 +330,7 @@
 "dKZfR",
 "2u"
 ],
-"seed": "split-keys:jwt:462",
+"seed": "B8212:jwt:462",
 "sep": "none",
 "text_parts": [
 "eyJOA",
@@ -381,7 +381,7 @@
 "Ah6tQ",
 "H00DG"
 ],
-"seed": "split-keys:xai:2533",
+"seed": "B8212:xai:2533",
 "sep": "lf",
 "text_parts": [
 "expor",
@@ -441,7 +441,7 @@
 "Z6pv7",
 "0UH"
 ],
-"seed": "split-keys:anthropic:1639",
+"seed": "B8212:anthropic:1639",
 "sep": "space_lf",
 "text_parts": [
 "expor",
@@ -497,7 +497,7 @@
 "u6uGu",
 "fd-"
 ],
-"seed": "split-keys:openai_project:915",
+"seed": "B8212:openai_project:915",
 "sep": "dq_lf",
 "text_parts": [
 "sk-pr",
@@ -520,9 +520,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-anthropic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "anthropic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "dMgil",
 "HH923",
@@ -544,7 +544,7 @@
 "sNTDW",
 "6QT"
 ],
-"seed": "split-keys:anthropic:307",
+"seed": "B8212:anthropic:307",
 "sep": "esc_n",
 "text_parts": [
 "sk-an",
@@ -577,16 +577,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-aws_access_key_id",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "aws_access_key_id",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "RBA7Y",
 "D5W7F",
 "AKEAD",
 "U"
 ],
-"seed": "split-keys:aws_access_key_id:103",
+"seed": "B8212:aws_access_key_id:103",
 "sep": "esc_n",
 "text_parts": [
 "AKIAR",
@@ -602,9 +602,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-azure_storage",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "azure_storage",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "LSIel",
 "qOemm",
@@ -625,7 +625,7 @@
 "/S0TS",
 "Y=="
 ],
-"seed": "split-keys:azure_storage:529",
+"seed": "B8212:azure_storage:529",
 "sep": "esc_n",
 "text_parts": [
 "Accou",
@@ -657,9 +657,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-databricks",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "databricks",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "fe0ba",
 "6996c",
@@ -669,7 +669,7 @@
 "97950",
 "4b"
 ],
-"seed": "split-keys:databricks:334",
+"seed": "B8212:databricks:334",
 "sep": "esc_n",
 "text_parts": [
 "dapif",
@@ -688,9 +688,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-digitalocean",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "digitalocean",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "35225",
 "22000",
@@ -706,7 +706,7 @@
 "98bda",
 "9557"
 ],
-"seed": "split-keys:digitalocean:119",
+"seed": "B8212:digitalocean:119",
 "sep": "esc_n",
 "text_parts": [
 "doo_v",
@@ -732,9 +732,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-discord_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "discord_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Al9kq",
 "MFGa_",
@@ -751,7 +751,7 @@
 "bnuhz",
 "TCV"
 ],
-"seed": "split-keys:discord_webhook:834",
+"seed": "B8212:discord_webhook:834",
 "sep": "esc_n",
 "text_parts": [
 "https",
@@ -787,9 +787,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-dockerhub",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "dockerhub",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "iWD2h",
 "-9cdV",
@@ -798,7 +798,7 @@
 "KFAKE",
 "92"
 ],
-"seed": "split-keys:dockerhub:161",
+"seed": "B8212:dockerhub:161",
 "sep": "esc_n",
 "text_parts": [
 "dckr_",
@@ -817,9 +817,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-firecrawl",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "firecrawl",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ZQFAK",
 "E4YAv",
@@ -829,7 +829,7 @@
 "0stPL",
 "Oh"
 ],
-"seed": "split-keys:firecrawl:1713",
+"seed": "B8212:firecrawl:1713",
 "sep": "esc_n",
 "text_parts": [
 "fc-ZQ",
@@ -848,9 +848,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-github_fine_grained",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_fine_grained",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Qzsr6",
 "r4KM9",
@@ -870,7 +870,7 @@
 "za1ud",
 "Hq"
 ],
-"seed": "split-keys:github_fine_grained:158",
+"seed": "B8212:github_fine_grained:158",
 "sep": "esc_n",
 "text_parts": [
 "githu",
@@ -900,9 +900,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-github_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "IwUhT",
 "n4s8y",
@@ -913,7 +913,7 @@
 "HkFAK",
 "E"
 ],
-"seed": "split-keys:github_token:193",
+"seed": "B8212:github_token:193",
 "sep": "esc_n",
 "text_parts": [
 "ghr_I",
@@ -933,16 +933,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-gitlab",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "gitlab",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "AuYFD",
 "I9Nh7",
 "FAKEE",
 "YAVvD"
 ],
-"seed": "split-keys:gitlab:161",
+"seed": "B8212:gitlab:161",
 "sep": "esc_n",
 "text_parts": [
 "glpat",
@@ -959,9 +959,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-google_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "csGQM",
 "YQYOe",
@@ -971,7 +971,7 @@
 "7rrxj",
 "YCGAG"
 ],
-"seed": "split-keys:google_api:557",
+"seed": "B8212:google_api:557",
 "sep": "esc_n",
 "text_parts": [
 "AIzac",
@@ -991,9 +991,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-google_oauth_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_oauth_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ldLma",
 "XFAKE",
@@ -1002,7 +1002,7 @@
 "fvfg8",
 "-1I"
 ],
-"seed": "split-keys:google_oauth_secret:246",
+"seed": "B8212:google_oauth_secret:246",
 "sep": "esc_n",
 "text_parts": [
 "GOCSP",
@@ -1021,9 +1021,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-groq",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "groq",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "mDQr5",
 "hU2T9",
@@ -1037,7 +1037,7 @@
 "Q4083",
 "vY"
 ],
-"seed": "split-keys:groq:456",
+"seed": "B8212:groq:456",
 "sep": "esc_n",
 "text_parts": [
 "gsk_m",
@@ -1060,9 +1060,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-huggingface",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "huggingface",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "1tOVR",
 "xRZYe",
@@ -1072,7 +1072,7 @@
 "eFAKE",
 "XeyL"
 ],
-"seed": "split-keys:huggingface:61",
+"seed": "B8212:huggingface:61",
 "sep": "esc_n",
 "text_parts": [
 "hf_1t",
@@ -1091,9 +1091,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-jwt",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "jwt",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "F7yId",
 "cNzfB",
@@ -1115,7 +1115,7 @@
 "GtbWO",
 "o_"
 ],
-"seed": "split-keys:jwt:760",
+"seed": "B8212:jwt:760",
 "sep": "esc_n",
 "text_parts": [
 "eyJF7",
@@ -1146,9 +1146,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-linear",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "linear",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Z9Thz",
 "ky7Mo",
@@ -1159,7 +1159,7 @@
 "NpxaN",
 "QXZ3O"
 ],
-"seed": "split-keys:linear:478",
+"seed": "B8212:linear:478",
 "sep": "esc_n",
 "text_parts": [
 "lin_a",
@@ -1180,9 +1180,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-mailgun",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "mailgun",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "a8ac6",
 "2feb4",
@@ -1192,7 +1192,7 @@
 "2b6ed",
 "64"
 ],
-"seed": "split-keys:mailgun:54",
+"seed": "B8212:mailgun:54",
 "sep": "esc_n",
 "text_parts": [
 "key-a",
@@ -1211,9 +1211,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-newrelic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "newrelic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "XFUHB",
 "R4NCR",
@@ -1222,7 +1222,7 @@
 "UG04L",
 "QA"
 ],
-"seed": "split-keys:newrelic:151",
+"seed": "B8212:newrelic:151",
 "sep": "esc_n",
 "text_parts": [
 "NRII-",
@@ -1240,9 +1240,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-npm",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "npm",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "QIs91",
 "jFAKE",
@@ -1253,7 +1253,7 @@
 "5ODCZ",
 "4"
 ],
-"seed": "split-keys:npm:300",
+"seed": "B8212:npm:300",
 "sep": "esc_n",
 "text_parts": [
 "npm_Q",
@@ -1273,9 +1273,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-openai_hex",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_hex",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "d4949",
 "cd4e4",
@@ -1285,7 +1285,7 @@
 "efad0",
 "0a"
 ],
-"seed": "split-keys:openai_hex:1600",
+"seed": "B8212:openai_hex:1600",
 "sep": "esc_n",
 "text_parts": [
 "sk-d4",
@@ -1304,9 +1304,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-openai_legacy",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_legacy",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "sChWG",
 "1l0VN",
@@ -1319,7 +1319,7 @@
 "gnS3W",
 "6xU"
 ],
-"seed": "split-keys:openai_legacy:80",
+"seed": "B8212:openai_legacy:80",
 "sep": "esc_n",
 "text_parts": [
 "sk-sC",
@@ -1341,9 +1341,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-openai_project",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_project",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Y1UXO",
 "x5oi4",
@@ -1356,7 +1356,7 @@
 "ErAX3",
 "0yS"
 ],
-"seed": "split-keys:openai_project:789",
+"seed": "B8212:openai_project:789",
 "sep": "esc_n",
 "text_parts": [
 "sk-pr",
@@ -1379,9 +1379,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-polar",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "polar",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "hHKe1",
 "QZgU5",
@@ -1391,7 +1391,7 @@
 "grpOO",
 "x6"
 ],
-"seed": "split-keys:polar:537",
+"seed": "B8212:polar:537",
 "sep": "esc_n",
 "text_parts": [
 "polar",
@@ -1411,9 +1411,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-pypi",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "pypi",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "HWIJk",
 "Tf_8m",
@@ -1428,7 +1428,7 @@
 "rPdfj",
 "NFCLx"
 ],
-"seed": "split-keys:pypi:223",
+"seed": "B8212:pypi:223",
 "sep": "esc_n",
 "text_parts": [
 "pypi-",
@@ -1453,9 +1453,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-replicate",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "replicate",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "6iFq3",
 "yiDWV",
@@ -1466,7 +1466,7 @@
 "Ivaxo",
 "Gn"
 ],
-"seed": "split-keys:replicate:199",
+"seed": "B8212:replicate:199",
 "sep": "esc_n",
 "text_parts": [
 "r8_6i",
@@ -1486,9 +1486,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-sendgrid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "sendgrid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "UkrDC",
 "uLo6I",
@@ -1505,7 +1505,7 @@
 "mM4sL",
 "Q"
 ],
-"seed": "split-keys:sendgrid:89",
+"seed": "B8212:sendgrid:89",
 "sep": "esc_n",
 "text_parts": [
 "SG.Uk",
@@ -1531,9 +1531,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-shopify",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "shopify",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "5ae91",
 "18711",
@@ -1543,7 +1543,7 @@
 "3cea5",
 "7d"
 ],
-"seed": "split-keys:shopify:150",
+"seed": "B8212:shopify:150",
 "sep": "esc_n",
 "text_parts": [
 "shpca",
@@ -1562,9 +1562,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-slack_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "19114",
 "00000",
@@ -1577,7 +1577,7 @@
 "eZUIj",
 "Ng1"
 ],
-"seed": "split-keys:slack_token:37",
+"seed": "B8212:slack_token:37",
 "sep": "esc_n",
 "text_parts": [
 "xoxb-",
@@ -1599,9 +1599,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-slack_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "NDSD0",
 "kO9au",
@@ -1609,7 +1609,7 @@
 "bFAKE",
 "rLzK"
 ],
-"seed": "split-keys:slack_webhook:515",
+"seed": "B8212:slack_webhook:515",
 "sep": "esc_n",
 "text_parts": [
 "https",
@@ -1635,9 +1635,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-square",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "square",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "cDSvo",
 "-totZ",
@@ -1652,7 +1652,7 @@
 "UTJ1Z",
 "JFAKE"
 ],
-"seed": "split-keys:square:253",
+"seed": "B8212:square:253",
 "sep": "esc_n",
 "text_parts": [
 "EAAAc",
@@ -1677,9 +1677,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-stripe_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "syE6l",
 "3fxKu",
@@ -1687,7 +1687,7 @@
 "DFAKE",
 "2i5f"
 ],
-"seed": "split-keys:stripe_secret:3966",
+"seed": "B8212:stripe_secret:3966",
 "sep": "esc_n",
 "text_parts": [
 "sk_te",
@@ -1705,9 +1705,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-stripe_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "FAKEY",
 "IF7Gp",
@@ -1718,7 +1718,7 @@
 "ZxrO9",
 "jyLye"
 ],
-"seed": "split-keys:stripe_webhook:30",
+"seed": "B8212:stripe_webhook:30",
 "sep": "esc_n",
 "text_parts": [
 "whsec",
@@ -1739,9 +1739,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-supabase",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "supabase",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "N6onm",
 "HLcft",
@@ -1752,7 +1752,7 @@
 "EtgC7",
 "lmPN0"
 ],
-"seed": "split-keys:supabase:79",
+"seed": "B8212:supabase:79",
 "sep": "esc_n",
 "text_parts": [
 "sbp_N",
@@ -1773,9 +1773,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-tavily",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "tavily",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "QRY6G",
 "apEgk",
@@ -1785,7 +1785,7 @@
 "3sqXQ",
 "ek"
 ],
-"seed": "split-keys:tavily:587",
+"seed": "B8212:tavily:587",
 "sep": "esc_n",
 "text_parts": [
 "tvly-",
@@ -1804,9 +1804,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-telegram_bot",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "telegram_bot",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "00002",
 "09480",
@@ -1819,7 +1819,7 @@
 "ww0FS",
 "t"
 ],
-"seed": "split-keys:telegram_bot:106",
+"seed": "B8212:telegram_bot:106",
 "sep": "esc_n",
 "text_parts": [
 "00002",
@@ -1840,9 +1840,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-twilio_key_sid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "twilio_key_sid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "578bc",
 "ac2f9",
@@ -1852,7 +1852,7 @@
 "d4edd",
 "d1"
 ],
-"seed": "split-keys:twilio_key_sid:406",
+"seed": "B8212:twilio_key_sid:406",
 "sep": "esc_n",
 "text_parts": [
 "SK578",
@@ -1871,9 +1871,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-vault",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "vault",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "i2N6j",
 "dtMP5",
@@ -1883,7 +1883,7 @@
 "opFAK",
 "E3"
 ],
-"seed": "split-keys:vault:543",
+"seed": "B8212:vault:543",
 "sep": "esc_n",
 "text_parts": [
 "hvs.i",
@@ -1902,9 +1902,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-xai",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "xai",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "kdvAQ",
 "fQFBr",
@@ -1923,7 +1923,7 @@
 "AKEy5",
 "au2YR"
 ],
-"seed": "split-keys:xai:206",
+"seed": "B8212:xai:206",
 "sep": "esc_n",
 "text_parts": [
 "xai-k",
@@ -1952,9 +1952,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_escaped_break-zn_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "zn_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "9f5bf",
 "caf44",
@@ -1967,7 +1967,7 @@
 "1ba00",
 "b89"
 ],
-"seed": "split-keys:zn_api:149",
+"seed": "B8212:zn_api:149",
 "sep": "esc_n",
 "text_parts": [
 "zn_9f",
@@ -1989,9 +1989,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-anthropic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "anthropic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Ml9RY",
 "m8c0Z",
@@ -2013,7 +2013,7 @@
 "POzVQ",
 "L15"
 ],
-"seed": "split-keys:anthropic:1410",
+"seed": "B8212:anthropic:1410",
 "sep": "lf",
 "text_parts": [
 "sk-an",
@@ -2046,16 +2046,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-aws_access_key_id",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "aws_access_key_id",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "CKE53",
 "FAKE8",
 "2SVDU",
 "N"
 ],
-"seed": "split-keys:aws_access_key_id:2585",
+"seed": "B8212:aws_access_key_id:2585",
 "sep": "lf",
 "text_parts": [
 "ASIAC",
@@ -2071,9 +2071,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-azure_storage",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "azure_storage",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "4O6Gy",
 "7hyWL",
@@ -2094,7 +2094,7 @@
 "YCQyK",
 "0=="
 ],
-"seed": "split-keys:azure_storage:109",
+"seed": "B8212:azure_storage:109",
 "sep": "lf",
 "text_parts": [
 "Accou",
@@ -2125,9 +2125,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-databricks",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "databricks",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "d9e57",
 "6445b",
@@ -2137,7 +2137,7 @@
 "0000b",
 "da"
 ],
-"seed": "split-keys:databricks:360",
+"seed": "B8212:databricks:360",
 "sep": "lf",
 "text_parts": [
 "dapid",
@@ -2156,9 +2156,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-digitalocean",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "digitalocean",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "30ff8",
 "bbf51",
@@ -2174,7 +2174,7 @@
 "c10fd",
 "6e07"
 ],
-"seed": "split-keys:digitalocean:298",
+"seed": "B8212:digitalocean:298",
 "sep": "lf",
 "text_parts": [
 "dop_v",
@@ -2200,9 +2200,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-discord_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "discord_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "mgDhS",
 "jTFAK",
@@ -2219,7 +2219,7 @@
 "SLxOl",
 "VME"
 ],
-"seed": "split-keys:discord_webhook:974",
+"seed": "B8212:discord_webhook:974",
 "sep": "lf",
 "text_parts": [
 "https",
@@ -2255,9 +2255,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-dockerhub",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "dockerhub",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "FAKEo",
 "eQGse",
@@ -2266,7 +2266,7 @@
 "SS2tm",
 "s2"
 ],
-"seed": "split-keys:dockerhub:293",
+"seed": "B8212:dockerhub:293",
 "sep": "lf",
 "text_parts": [
 "dckr_",
@@ -2285,9 +2285,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-firecrawl",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "firecrawl",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "kmG0L",
 "PXrtN",
@@ -2297,7 +2297,7 @@
 "wOvQa",
 "HT"
 ],
-"seed": "split-keys:firecrawl:1561",
+"seed": "B8212:firecrawl:1561",
 "sep": "crlf",
 "text_parts": [
 "fc-km",
@@ -2316,9 +2316,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-github_fine_grained",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_fine_grained",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "FAKEe",
 "AFTU9",
@@ -2338,7 +2338,7 @@
 "bVePO",
 "EH"
 ],
-"seed": "split-keys:github_fine_grained:2504",
+"seed": "B8212:github_fine_grained:2504",
 "sep": "lf",
 "text_parts": [
 "githu",
@@ -2368,9 +2368,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-github_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "dFzXq",
 "QVDa7",
@@ -2381,7 +2381,7 @@
 "atSnV",
 "Q"
 ],
-"seed": "split-keys:github_token:142",
+"seed": "B8212:github_token:142",
 "sep": "lf",
 "text_parts": [
 "ghu_d",
@@ -2401,16 +2401,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-gitlab",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "gitlab",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "sjKZ3",
 "RpsnI",
 "96FAK",
 "EcJGn"
 ],
-"seed": "split-keys:gitlab:68",
+"seed": "B8212:gitlab:68",
 "sep": "lf",
 "text_parts": [
 "glpat",
@@ -2427,9 +2427,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-google_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ZLrWX",
 "xsWp5",
@@ -2439,7 +2439,7 @@
 "AKECj",
 "eMDeI"
 ],
-"seed": "split-keys:google_api:4743",
+"seed": "B8212:google_api:4743",
 "sep": "lf",
 "text_parts": [
 "AIzaZ",
@@ -2458,9 +2458,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-google_oauth_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_oauth_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "J6MMK",
 "EqlKI",
@@ -2469,7 +2469,7 @@
 "E_Zft",
 "UTJ"
 ],
-"seed": "split-keys:google_oauth_secret:382",
+"seed": "B8212:google_oauth_secret:382",
 "sep": "lf",
 "text_parts": [
 "GOCSP",
@@ -2488,9 +2488,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-groq",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "groq",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "bf9ii",
 "RiJIn",
@@ -2504,7 +2504,7 @@
 "KEMnS",
 "kx"
 ],
-"seed": "split-keys:groq:1533",
+"seed": "B8212:groq:1533",
 "sep": "lf",
 "text_parts": [
 "gsk_b",
@@ -2527,9 +2527,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-huggingface",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "huggingface",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "L8kaa",
 "dB2EB",
@@ -2539,7 +2539,7 @@
 "eZ2Pd",
 "zzRR"
 ],
-"seed": "split-keys:huggingface:462",
+"seed": "B8212:huggingface:462",
 "sep": "lf",
 "text_parts": [
 "hf_L8",
@@ -2558,9 +2558,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-jwt",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "jwt",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "vOKg5",
 "PZvUW",
@@ -2582,7 +2582,7 @@
 "edSbu",
 "CK"
 ],
-"seed": "split-keys:jwt:32",
+"seed": "B8212:jwt:32",
 "sep": "lf",
 "text_parts": [
 "eyJvO",
@@ -2613,9 +2613,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-linear",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "linear",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "dBeFv",
 "LUkg2",
@@ -2626,7 +2626,7 @@
 "AJFT8",
 "oFAKE"
 ],
-"seed": "split-keys:linear:379",
+"seed": "B8212:linear:379",
 "sep": "lf",
 "text_parts": [
 "lin_a",
@@ -2647,9 +2647,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-mailgun",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "mailgun",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "00006",
 "2300a",
@@ -2659,7 +2659,7 @@
 "8c1a5",
 "7f"
 ],
-"seed": "split-keys:mailgun:1114",
+"seed": "B8212:mailgun:1114",
 "sep": "lf",
 "text_parts": [
 "key-0",
@@ -2678,9 +2678,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-newrelic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "newrelic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "74Y4E",
 "AX2ZF",
@@ -2689,7 +2689,7 @@
 "OQZDU",
 "J3"
 ],
-"seed": "split-keys:newrelic:524",
+"seed": "B8212:newrelic:524",
 "sep": "lf",
 "text_parts": [
 "NRAK-",
@@ -2707,9 +2707,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-npm",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "npm",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "dyVHH",
 "zGzxG",
@@ -2720,7 +2720,7 @@
 "FgFAK",
 "E"
 ],
-"seed": "split-keys:npm:849",
+"seed": "B8212:npm:849",
 "sep": "lf",
 "text_parts": [
 "npm_d",
@@ -2740,9 +2740,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-openai_hex",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_hex",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "a1797",
 "077e0",
@@ -2752,7 +2752,7 @@
 "5474b",
 "dd"
 ],
-"seed": "split-keys:openai_hex:748",
+"seed": "B8212:openai_hex:748",
 "sep": "lf",
 "text_parts": [
 "sk-a1",
@@ -2771,9 +2771,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-openai_legacy",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_legacy",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "s5v0N",
 "Apdir",
@@ -2786,7 +2786,7 @@
 "H4hik",
 "tNE"
 ],
-"seed": "split-keys:openai_legacy:2529",
+"seed": "B8212:openai_legacy:2529",
 "sep": "lf",
 "text_parts": [
 "sk-s5",
@@ -2808,9 +2808,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-openai_project",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_project",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "KehvH",
 "N1X3z",
@@ -2823,7 +2823,7 @@
 "FAKEc",
 "PTC"
 ],
-"seed": "split-keys:openai_project:1299",
+"seed": "B8212:openai_project:1299",
 "sep": "lf",
 "text_parts": [
 "sk-pr",
@@ -2846,9 +2846,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-polar",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "polar",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "CJBP8",
 "AhtmL",
@@ -2858,7 +2858,7 @@
 "fqwzS",
 "lA"
 ],
-"seed": "split-keys:polar:3452",
+"seed": "B8212:polar:3452",
 "sep": "lf",
 "text_parts": [
 "polar",
@@ -2878,9 +2878,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-pypi",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "pypi",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "w03Zn",
 "Mwbwx",
@@ -2895,7 +2895,7 @@
 "ojCxO",
 "otzOy"
 ],
-"seed": "split-keys:pypi:542",
+"seed": "B8212:pypi:542",
 "sep": "lf",
 "text_parts": [
 "pypi-",
@@ -2920,9 +2920,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-replicate",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "replicate",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ndHIm",
 "FEFAK",
@@ -2933,7 +2933,7 @@
 "LGIxh",
 "Se"
 ],
-"seed": "split-keys:replicate:787",
+"seed": "B8212:replicate:787",
 "sep": "lf",
 "text_parts": [
 "r8_nd",
@@ -2953,9 +2953,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-sendgrid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "sendgrid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "2jiFF",
 "AKE3s",
@@ -2972,7 +2972,7 @@
 "LFESG",
 "N"
 ],
-"seed": "split-keys:sendgrid:402",
+"seed": "B8212:sendgrid:402",
 "sep": "lf",
 "text_parts": [
 "SG.2j",
@@ -2997,9 +2997,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-shopify",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "shopify",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "d44a9",
 "448a2",
@@ -3009,7 +3009,7 @@
 "7af6f",
 "ea"
 ],
-"seed": "split-keys:shopify:68",
+"seed": "B8212:shopify:68",
 "sep": "lf",
 "text_parts": [
 "shpat",
@@ -3028,9 +3028,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-slack_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "29400",
 "00103",
@@ -3043,7 +3043,7 @@
 "EFAKE",
 "LdZ"
 ],
-"seed": "split-keys:slack_token:522",
+"seed": "B8212:slack_token:522",
 "sep": "lf",
 "text_parts": [
 "xoxb-",
@@ -3065,9 +3065,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-slack_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "uCIoa",
 "BWbWk",
@@ -3075,7 +3075,7 @@
 "OUP41",
 "FAKE"
 ],
-"seed": "split-keys:slack_webhook:363",
+"seed": "B8212:slack_webhook:363",
 "sep": "lf",
 "text_parts": [
 "https",
@@ -3100,9 +3100,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-square",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "square",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "dn9GZ",
 "tFAKE",
@@ -3117,7 +3117,7 @@
 "ANKXG",
 "10sSi"
 ],
-"seed": "split-keys:square:269",
+"seed": "B8212:square:269",
 "sep": "lf",
 "text_parts": [
 "EAAAd",
@@ -3141,9 +3141,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-stripe_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "C36a4",
 "dgOOA",
@@ -3151,7 +3151,7 @@
 "fjcxy",
 "FCR0"
 ],
-"seed": "split-keys:stripe_secret:1358",
+"seed": "B8212:stripe_secret:1358",
 "sep": "lf",
 "text_parts": [
 "rk_te",
@@ -3169,9 +3169,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-stripe_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "9QkgI",
 "Zy88O",
@@ -3182,7 +3182,7 @@
 "EKEhe",
 "vZsc1"
 ],
-"seed": "split-keys:stripe_webhook:3383",
+"seed": "B8212:stripe_webhook:3383",
 "sep": "lf",
 "text_parts": [
 "whsec",
@@ -3203,9 +3203,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-supabase",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "supabase",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "TQXos",
 "o2p5P",
@@ -3216,7 +3216,7 @@
 "K8soc",
 "7eic9"
 ],
-"seed": "split-keys:supabase:811",
+"seed": "B8212:supabase:811",
 "sep": "lf",
 "text_parts": [
 "sbp_T",
@@ -3236,9 +3236,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-tavily",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "tavily",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "2BXcz",
 "1EpFA",
@@ -3248,7 +3248,7 @@
 "ShK4u",
 "wg"
 ],
-"seed": "split-keys:tavily:4537",
+"seed": "B8212:tavily:4537",
 "sep": "lf",
 "text_parts": [
 "tvly-",
@@ -3267,9 +3267,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-telegram_bot",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "telegram_bot",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "04700",
 "00805",
@@ -3282,7 +3282,7 @@
 "VzEMt",
 "J"
 ],
-"seed": "split-keys:telegram_bot:2098",
+"seed": "B8212:telegram_bot:2098",
 "sep": "lf",
 "text_parts": [
 "04700",
@@ -3303,9 +3303,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-twilio_key_sid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "twilio_key_sid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "3316d",
 "48650",
@@ -3315,7 +3315,7 @@
 "46e26",
 "3a"
 ],
-"seed": "split-keys:twilio_key_sid:1243",
+"seed": "B8212:twilio_key_sid:1243",
 "sep": "lf",
 "text_parts": [
 "SK331",
@@ -3333,9 +3333,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-vault",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "vault",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ypMwQ",
 "n3Erj",
@@ -3345,7 +3345,7 @@
 "kURO2",
 "sk"
 ],
-"seed": "split-keys:vault:3766",
+"seed": "B8212:vault:3766",
 "sep": "lf",
 "text_parts": [
 "hvs.y",
@@ -3364,9 +3364,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-xai",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "xai",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "9eZSj",
 "FAKEr",
@@ -3385,7 +3385,7 @@
 "4nlhD",
 "dvhWj"
 ],
-"seed": "split-keys:xai:1309",
+"seed": "B8212:xai:1309",
 "sep": "lf",
 "text_parts": [
 "xai-9",
@@ -3413,9 +3413,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_newline-zn_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "zn_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "f7632",
 "6daa0",
@@ -3428,7 +3428,7 @@
 "e8993",
 "785"
 ],
-"seed": "split-keys:zn_api:360",
+"seed": "B8212:zn_api:360",
 "sep": "lf",
 "text_parts": [
 "zn_f7",
@@ -3450,9 +3450,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-anthropic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "anthropic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "EV9R-",
 "StxGo",
@@ -3474,7 +3474,7 @@
 "z09uX",
 "0b6"
 ],
-"seed": "split-keys:anthropic:42",
+"seed": "B8212:anthropic:42",
 "sep": "dq_plus",
 "text_parts": [
 "sk-an",
@@ -3507,16 +3507,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-aws_access_key_id",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "aws_access_key_id",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "E2YFA",
 "KEP5K",
 "PJIYF",
 "S"
 ],
-"seed": "split-keys:aws_access_key_id:54",
+"seed": "B8212:aws_access_key_id:54",
 "sep": "dq_lf",
 "text_parts": [
 "ASIAE",
@@ -3532,9 +3532,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-azure_storage",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "azure_storage",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "sb9I4",
 "NTjHR",
@@ -3555,7 +3555,7 @@
 "3psUP",
 "V=="
 ],
-"seed": "split-keys:azure_storage:77",
+"seed": "B8212:azure_storage:77",
 "sep": "sq_lf",
 "text_parts": [
 "Accou",
@@ -3587,9 +3587,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-databricks",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "databricks",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "13638",
 "82a15",
@@ -3599,7 +3599,7 @@
 "15213",
 "b7"
 ],
-"seed": "split-keys:databricks:260",
+"seed": "B8212:databricks:260",
 "sep": "sq_lf",
 "text_parts": [
 "dapi1",
@@ -3618,9 +3618,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-digitalocean",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "digitalocean",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "5924b",
 "97056",
@@ -3636,7 +3636,7 @@
 "54ec6",
 "5210"
 ],
-"seed": "split-keys:digitalocean:168",
+"seed": "B8212:digitalocean:168",
 "sep": "dq_lf",
 "text_parts": [
 "dop_v",
@@ -3662,9 +3662,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-discord_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "discord_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "YFMxf",
 "XnrKa",
@@ -3681,7 +3681,7 @@
 "3B3e8",
 "rVv"
 ],
-"seed": "split-keys:discord_webhook:246",
+"seed": "B8212:discord_webhook:246",
 "sep": "dq_lf",
 "text_parts": [
 "https",
@@ -3717,9 +3717,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-dockerhub",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "dockerhub",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "5tzKI",
 "MJSci",
@@ -3728,7 +3728,7 @@
 "KELO2",
 "5G"
 ],
-"seed": "split-keys:dockerhub:1284",
+"seed": "B8212:dockerhub:1284",
 "sep": "sq_lf",
 "text_parts": [
 "dckr_",
@@ -3747,9 +3747,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-firecrawl",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "firecrawl",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "fFAKE",
 "HdoYv",
@@ -3759,7 +3759,7 @@
 "CI0xZ",
 "zA"
 ],
-"seed": "split-keys:firecrawl:168",
+"seed": "B8212:firecrawl:168",
 "sep": "dq_plus",
 "text_parts": [
 "fc-fF",
@@ -3778,9 +3778,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-github_fine_grained",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_fine_grained",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "p1FAK",
 "Effia",
@@ -3800,7 +3800,7 @@
 "FqmFG",
 "pz"
 ],
-"seed": "split-keys:github_fine_grained:237",
+"seed": "B8212:github_fine_grained:237",
 "sep": "sq_lf",
 "text_parts": [
 "githu",
@@ -3831,9 +3831,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-github_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "bvid6",
 "cKcFA",
@@ -3844,7 +3844,7 @@
 "R5ghm",
 "4"
 ],
-"seed": "split-keys:github_token:240",
+"seed": "B8212:github_token:240",
 "sep": "sq_lf",
 "text_parts": [
 "ghu_b",
@@ -3864,16 +3864,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-gitlab",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "gitlab",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ahjYB",
 "RihP9",
 "WYT82",
 "rFAKE"
 ],
-"seed": "split-keys:gitlab:258",
+"seed": "B8212:gitlab:258",
 "sep": "dq_lf",
 "text_parts": [
 "glpat",
@@ -3890,9 +3890,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-google_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "obkoE",
 "W9f6f",
@@ -3902,7 +3902,7 @@
 "-Ou3z",
 "lVzxy"
 ],
-"seed": "split-keys:google_api:26",
+"seed": "B8212:google_api:26",
 "sep": "dq_lf",
 "text_parts": [
 "AIzao",
@@ -3922,9 +3922,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-google_oauth_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_oauth_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "kJNEn",
 "44_j7",
@@ -3933,7 +3933,7 @@
 "IdalC",
 "IX5"
 ],
-"seed": "split-keys:google_oauth_secret:273",
+"seed": "B8212:google_oauth_secret:273",
 "sep": "dq_lf",
 "text_parts": [
 "GOCSP",
@@ -3952,9 +3952,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-groq",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "groq",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "BvN0u",
 "gb90R",
@@ -3968,7 +3968,7 @@
 "RFWVo",
 "NQ"
 ],
-"seed": "split-keys:groq:126",
+"seed": "B8212:groq:126",
 "sep": "sq_lf",
 "text_parts": [
 "gsk_B",
@@ -3991,9 +3991,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-huggingface",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "huggingface",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "MFAKE",
 "xu6St",
@@ -4003,7 +4003,7 @@
 "TkZt2",
 "WOFk"
 ],
-"seed": "split-keys:huggingface:370",
+"seed": "B8212:huggingface:370",
 "sep": "dq_lf",
 "text_parts": [
 "hf_MF",
@@ -4022,9 +4022,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-jwt",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "jwt",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "4dfPS",
 "oHhJq",
@@ -4046,7 +4046,7 @@
 "4FAKE",
 "SQ"
 ],
-"seed": "split-keys:jwt:15",
+"seed": "B8212:jwt:15",
 "sep": "dq_lf",
 "text_parts": [
 "eyJ4d",
@@ -4077,9 +4077,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-linear",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "linear",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "dINli",
 "eLp9B",
@@ -4090,7 +4090,7 @@
 "FeRyS",
 "oKi3O"
 ],
-"seed": "split-keys:linear:485",
+"seed": "B8212:linear:485",
 "sep": "dq_lf",
 "text_parts": [
 "lin_a",
@@ -4112,9 +4112,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-mailgun",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "mailgun",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "15ea4",
 "49c3b",
@@ -4124,7 +4124,7 @@
 "ca000",
 "0e"
 ],
-"seed": "split-keys:mailgun:13",
+"seed": "B8212:mailgun:13",
 "sep": "dq_lf",
 "text_parts": [
 "key-1",
@@ -4143,9 +4143,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-newrelic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "newrelic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "C7NT2",
 "VQQD3",
@@ -4154,7 +4154,7 @@
 "DPNCN",
 "FS"
 ],
-"seed": "split-keys:newrelic:152",
+"seed": "B8212:newrelic:152",
 "sep": "dq_plus",
 "text_parts": [
 "NRAK-",
@@ -4172,9 +4172,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-npm",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "npm",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ruhgX",
 "XEfSX",
@@ -4185,7 +4185,7 @@
 "625tp",
 "z"
 ],
-"seed": "split-keys:npm:40",
+"seed": "B8212:npm:40",
 "sep": "dq_lf",
 "text_parts": [
 "npm_r",
@@ -4205,9 +4205,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-openai_hex",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_hex",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "bae9d",
 "55000",
@@ -4217,7 +4217,7 @@
 "bfa67",
 "72"
 ],
-"seed": "split-keys:openai_hex:55",
+"seed": "B8212:openai_hex:55",
 "sep": "dq_lf",
 "text_parts": [
 "sk-ba",
@@ -4236,9 +4236,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-openai_legacy",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_legacy",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "SdnY9",
 "K1Q6D",
@@ -4251,7 +4251,7 @@
 "jxAJr",
 "vf7"
 ],
-"seed": "split-keys:openai_legacy:199",
+"seed": "B8212:openai_legacy:199",
 "sep": "dq_lf",
 "text_parts": [
 "sk-Sd",
@@ -4273,9 +4273,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-openai_project",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_project",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "2cR-z",
 "ChgNm",
@@ -4288,7 +4288,7 @@
 "agZ9l",
 "Btc"
 ],
-"seed": "split-keys:openai_project:399",
+"seed": "B8212:openai_project:399",
 "sep": "sq_lf",
 "text_parts": [
 "sk-pr",
@@ -4311,9 +4311,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-polar",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "polar",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "pPq06",
 "FE2MH",
@@ -4323,7 +4323,7 @@
 "Y8MlD",
 "Jv"
 ],
-"seed": "split-keys:polar:56",
+"seed": "B8212:polar:56",
 "sep": "dq_plus",
 "text_parts": [
 "polar",
@@ -4343,9 +4343,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-pypi",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "pypi",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "0RWi4",
 "pkrkx",
@@ -4360,7 +4360,7 @@
 "M9mcG",
 "ZFAKE"
 ],
-"seed": "split-keys:pypi:279",
+"seed": "B8212:pypi:279",
 "sep": "dq_lf",
 "text_parts": [
 "pypi-",
@@ -4386,9 +4386,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-replicate",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "replicate",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "FAKER",
 "GUvsI",
@@ -4399,7 +4399,7 @@
 "pGVvs",
 "5h"
 ],
-"seed": "split-keys:replicate:159",
+"seed": "B8212:replicate:159",
 "sep": "dq_plus",
 "text_parts": [
 "r8_FA",
@@ -4419,9 +4419,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-sendgrid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "sendgrid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "KTLFA",
 "KEjgS",
@@ -4438,7 +4438,7 @@
 "7gIek",
 "g"
 ],
-"seed": "split-keys:sendgrid:101",
+"seed": "B8212:sendgrid:101",
 "sep": "dq_lf",
 "text_parts": [
 "SG.KT",
@@ -4464,9 +4464,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-shopify",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "shopify",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "50328",
 "973bd",
@@ -4476,7 +4476,7 @@
 "005b0",
 "ea"
 ],
-"seed": "split-keys:shopify:92",
+"seed": "B8212:shopify:92",
 "sep": "dq_plus",
 "text_parts": [
 "shpss",
@@ -4496,9 +4496,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-slack_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "03600",
 "00169",
@@ -4511,7 +4511,7 @@
 "FAKEx",
 "2Nf"
 ],
-"seed": "split-keys:slack_token:152",
+"seed": "B8212:slack_token:152",
 "sep": "dq_lf",
 "text_parts": [
 "xoxp-",
@@ -4534,9 +4534,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-slack_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "jKFAK",
 "EVaRH",
@@ -4544,7 +4544,7 @@
 "bYkL8",
 "Y4Y3"
 ],
-"seed": "split-keys:slack_webhook:46",
+"seed": "B8212:slack_webhook:46",
 "sep": "dq_lf",
 "text_parts": [
 "https",
@@ -4570,9 +4570,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-square",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "square",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Bk-gX",
 "Up3bD",
@@ -4587,7 +4587,7 @@
 "vnFT7",
 "FAKEq"
 ],
-"seed": "split-keys:square:32",
+"seed": "B8212:square:32",
 "sep": "dq_lf",
 "text_parts": [
 "EAAAB",
@@ -4612,9 +4612,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-stripe_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "j9R8T",
 "Hy965",
@@ -4622,7 +4622,7 @@
 "FAKEr",
 "lEUM"
 ],
-"seed": "split-keys:stripe_secret:120",
+"seed": "B8212:stripe_secret:120",
 "sep": "dq_lf",
 "text_parts": [
 "sk_li",
@@ -4640,9 +4640,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-stripe_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "NwYAK",
 "w9rFA",
@@ -4653,7 +4653,7 @@
 "yRobJ",
 "IsKwz"
 ],
-"seed": "split-keys:stripe_webhook:170",
+"seed": "B8212:stripe_webhook:170",
 "sep": "dq_plus",
 "text_parts": [
 "whsec",
@@ -4674,9 +4674,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-supabase",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "supabase",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "6MrP0",
 "tKS5r",
@@ -4687,7 +4687,7 @@
 "E5r0x",
 "jey7l"
 ],
-"seed": "split-keys:supabase:39",
+"seed": "B8212:supabase:39",
 "sep": "sq_lf",
 "text_parts": [
 "sbp_6",
@@ -4708,9 +4708,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-tavily",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "tavily",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "2zoUp",
 "5AhBx",
@@ -4720,7 +4720,7 @@
 "nFAKE",
 "EV"
 ],
-"seed": "split-keys:tavily:78",
+"seed": "B8212:tavily:78",
 "sep": "sq_lf",
 "text_parts": [
 "tvly-",
@@ -4739,9 +4739,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-telegram_bot",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "telegram_bot",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "36000",
 "08859",
@@ -4754,7 +4754,7 @@
 "Ny-fL",
 "j"
 ],
-"seed": "split-keys:telegram_bot:66",
+"seed": "B8212:telegram_bot:66",
 "sep": "dq_plus",
 "text_parts": [
 "36000",
@@ -4775,9 +4775,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-twilio_key_sid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "twilio_key_sid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "08c93",
 "c15cb",
@@ -4787,7 +4787,7 @@
 "90000",
 "0b"
 ],
-"seed": "split-keys:twilio_key_sid:29",
+"seed": "B8212:twilio_key_sid:29",
 "sep": "sq_lf",
 "text_parts": [
 "SK08c",
@@ -4806,9 +4806,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-vault",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "vault",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "V5kT2",
 "k9mXk",
@@ -4818,7 +4818,7 @@
 "yvBqG",
 "GP"
 ],
-"seed": "split-keys:vault:292",
+"seed": "B8212:vault:292",
 "sep": "sq_lf",
 "text_parts": [
 "hvb.V",
@@ -4837,9 +4837,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-xai",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "xai",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Utp3H",
 "SVpT8",
@@ -4858,7 +4858,7 @@
 "m3TUS",
 "r51IK"
 ],
-"seed": "split-keys:xai:57",
+"seed": "B8212:xai:57",
 "sep": "sq_lf",
 "text_parts": [
 "xai-U",
@@ -4887,9 +4887,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_quote_split-zn_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "zn_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ac291",
 "bce8d",
@@ -4902,7 +4902,7 @@
 "7f735",
 "3b9"
 ],
-"seed": "split-keys:zn_api:203",
+"seed": "B8212:zn_api:203",
 "sep": "sq_lf",
 "text_parts": [
 "zn_ac",
@@ -4924,9 +4924,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-anthropic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "anthropic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "vN4M3",
 "4Loo1",
@@ -4948,7 +4948,7 @@
 "07ijl",
 "49D"
 ],
-"seed": "split-keys:anthropic:172",
+"seed": "B8212:anthropic:172",
 "sep": "u2028",
 "text_parts": [
 "sk-an",
@@ -4981,16 +4981,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-aws_access_key_id",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "aws_access_key_id",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "O8HFA",
 "KEO75",
 "RKSQA",
 "6"
 ],
-"seed": "split-keys:aws_access_key_id:118",
+"seed": "B8212:aws_access_key_id:118",
 "sep": "u2028",
 "text_parts": [
 "AKIAO",
@@ -5006,9 +5006,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-azure_storage",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "azure_storage",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "t4yfn",
 "ENqIs",
@@ -5029,7 +5029,7 @@
 "KqEyZ",
 "7=="
 ],
-"seed": "split-keys:azure_storage:64",
+"seed": "B8212:azure_storage:64",
 "sep": "u2028",
 "text_parts": [
 "Accou",
@@ -5060,9 +5060,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-databricks",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "databricks",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "d7171",
 "00008",
@@ -5072,7 +5072,7 @@
 "a952c",
 "58"
 ],
-"seed": "split-keys:databricks:211",
+"seed": "B8212:databricks:211",
 "sep": "nbsp",
 "text_parts": [
 "dapid",
@@ -5091,9 +5091,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-digitalocean",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "digitalocean",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "fa1e5",
 "9c22e",
@@ -5109,7 +5109,7 @@
 "0fb21",
 "0bfa"
 ],
-"seed": "split-keys:digitalocean:20",
+"seed": "B8212:digitalocean:20",
 "sep": "u2028",
 "text_parts": [
 "doo_v",
@@ -5135,9 +5135,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-discord_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "discord_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "THcDB",
 "f9kb-",
@@ -5154,7 +5154,7 @@
 "JR087",
 "Sxs"
 ],
-"seed": "split-keys:discord_webhook:444",
+"seed": "B8212:discord_webhook:444",
 "sep": "nbsp",
 "text_parts": [
 "https",
@@ -5190,9 +5190,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-dockerhub",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "dockerhub",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "YXh16",
 "IFAKE",
@@ -5201,7 +5201,7 @@
 "V64Fj",
 "-5"
 ],
-"seed": "split-keys:dockerhub:53",
+"seed": "B8212:dockerhub:53",
 "sep": "u2029",
 "text_parts": [
 "dckr_",
@@ -5220,9 +5220,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-firecrawl",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "firecrawl",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "MHAXb",
 "yoIqr",
@@ -5232,7 +5232,7 @@
 "FAKEM",
 "F6"
 ],
-"seed": "split-keys:firecrawl:57",
+"seed": "B8212:firecrawl:57",
 "sep": "u2028",
 "text_parts": [
 "fc-MH",
@@ -5251,9 +5251,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-github_fine_grained",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_fine_grained",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "EfTvf",
 "kFINK",
@@ -5273,7 +5273,7 @@
 "pbHsV",
 "Ed"
 ],
-"seed": "split-keys:github_fine_grained:26",
+"seed": "B8212:github_fine_grained:26",
 "sep": "tab",
 "text_parts": [
 "githu",
@@ -5303,9 +5303,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-github_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "github_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "92bjn",
 "VzA0I",
@@ -5316,7 +5316,7 @@
 "PzxHC",
 "9"
 ],
-"seed": "split-keys:github_token:91",
+"seed": "B8212:github_token:91",
 "sep": "u2029",
 "text_parts": [
 "gho_9",
@@ -5336,16 +5336,16 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-gitlab",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "gitlab",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "2QWoY",
 "ZBkyE",
 "twaSJ",
 "XFAKE"
 ],
-"seed": "split-keys:gitlab:3",
+"seed": "B8212:gitlab:3",
 "sep": "tab",
 "text_parts": [
 "glpat",
@@ -5362,9 +5362,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-google_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "7hsUM",
 "A8KsS",
@@ -5374,7 +5374,7 @@
 "JJqvG",
 "ZQ4es"
 ],
-"seed": "split-keys:google_api:218",
+"seed": "B8212:google_api:218",
 "sep": "u2029",
 "text_parts": [
 "AIza7",
@@ -5393,9 +5393,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-google_oauth_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "google_oauth_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "XHfl8",
 "E5qaE",
@@ -5404,7 +5404,7 @@
 "z8xAI",
 "k18"
 ],
-"seed": "split-keys:google_oauth_secret:21",
+"seed": "B8212:google_oauth_secret:21",
 "sep": "tab",
 "text_parts": [
 "GOCSP",
@@ -5423,9 +5423,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-groq",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "groq",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "8vSYs",
 "wgsBc",
@@ -5439,7 +5439,7 @@
 "LHKLK",
 "k4"
 ],
-"seed": "split-keys:groq:4",
+"seed": "B8212:groq:4",
 "sep": "u2029",
 "text_parts": [
 "gsk_8",
@@ -5462,9 +5462,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-huggingface",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "huggingface",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "24c25",
 "weHiv",
@@ -5474,7 +5474,7 @@
 "aokVG",
 "oGj2"
 ],
-"seed": "split-keys:huggingface:579",
+"seed": "B8212:huggingface:579",
 "sep": "nbsp",
 "text_parts": [
 "hf_24",
@@ -5493,9 +5493,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-jwt",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "jwt",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "I3nUL",
 "TQxmz",
@@ -5517,7 +5517,7 @@
 "M5pvi",
 "C2"
 ],
-"seed": "split-keys:jwt:61",
+"seed": "B8212:jwt:61",
 "sep": "u2028",
 "text_parts": [
 "eyJI3",
@@ -5548,9 +5548,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-linear",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "linear",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "blFAK",
 "E4onZ",
@@ -5561,7 +5561,7 @@
 "a4gl0",
 "rfvby"
 ],
-"seed": "split-keys:linear:36",
+"seed": "B8212:linear:36",
 "sep": "tab",
 "text_parts": [
 "lin_a",
@@ -5582,9 +5582,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-mailgun",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "mailgun",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "402c3",
 "ee7d9",
@@ -5594,7 +5594,7 @@
 "6626d",
 "2f"
 ],
-"seed": "split-keys:mailgun:19",
+"seed": "B8212:mailgun:19",
 "sep": "nbsp",
 "text_parts": [
 "key-4",
@@ -5613,9 +5613,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-newrelic",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "newrelic",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "6UAT3",
 "TYFAD",
@@ -5624,7 +5624,7 @@
 "RCZPQ",
 "1N"
 ],
-"seed": "split-keys:newrelic:243",
+"seed": "B8212:newrelic:243",
 "sep": "u2028",
 "text_parts": [
 "NRAK-",
@@ -5642,9 +5642,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-npm",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "npm",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "1hiIF",
 "AKEBP",
@@ -5655,7 +5655,7 @@
 "GB8RC",
 "b"
 ],
-"seed": "split-keys:npm:198",
+"seed": "B8212:npm:198",
 "sep": "u2028",
 "text_parts": [
 "npm_1",
@@ -5675,9 +5675,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-openai_hex",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_hex",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "7f7e7",
 "cc1e3",
@@ -5687,7 +5687,7 @@
 "45117",
 "96"
 ],
-"seed": "split-keys:openai_hex:224",
+"seed": "B8212:openai_hex:224",
 "sep": "u2029",
 "text_parts": [
 "sk-7f",
@@ -5706,9 +5706,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-openai_legacy",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_legacy",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "3QHR3",
 "96ijb",
@@ -5721,7 +5721,7 @@
 "uBxY2",
 "OG5"
 ],
-"seed": "split-keys:openai_legacy:230",
+"seed": "B8212:openai_legacy:230",
 "sep": "nbsp",
 "text_parts": [
 "sk-3Q",
@@ -5743,9 +5743,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-openai_project",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "openai_project",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "Upwom",
 "xjCUi",
@@ -5758,7 +5758,7 @@
 "AKEKi",
 "Awo"
 ],
-"seed": "split-keys:openai_project:174",
+"seed": "B8212:openai_project:174",
 "sep": "nbsp",
 "text_parts": [
 "sk-pr",
@@ -5781,9 +5781,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-polar",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "polar",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "YDGhW",
 "o2WUF",
@@ -5793,7 +5793,7 @@
 "ZBAkO",
 "6X"
 ],
-"seed": "split-keys:polar:173",
+"seed": "B8212:polar:173",
 "sep": "u2028",
 "text_parts": [
 "polar",
@@ -5813,9 +5813,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-pypi",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "pypi",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ZaVBD",
 "FAKEM",
@@ -5830,7 +5830,7 @@
 "FVrXy",
 "BVUj6"
 ],
-"seed": "split-keys:pypi:147",
+"seed": "B8212:pypi:147",
 "sep": "nbsp",
 "text_parts": [
 "pypi-",
@@ -5855,9 +5855,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-replicate",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "replicate",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "UVOZJ",
 "TV2FA",
@@ -5868,7 +5868,7 @@
 "qbVNB",
 "VE"
 ],
-"seed": "split-keys:replicate:300",
+"seed": "B8212:replicate:300",
 "sep": "u2029",
 "text_parts": [
 "r8_UV",
@@ -5888,9 +5888,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-sendgrid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "sendgrid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "YfEdJ",
 "n28uX",
@@ -5907,7 +5907,7 @@
 "rCrBh",
 "q"
 ],
-"seed": "split-keys:sendgrid:1",
+"seed": "B8212:sendgrid:1",
 "sep": "u2028",
 "text_parts": [
 "SG.Yf",
@@ -5932,9 +5932,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-shopify",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "shopify",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "b62fb",
 "54c6d",
@@ -5944,7 +5944,7 @@
 "00008",
 "e1"
 ],
-"seed": "split-keys:shopify:417",
+"seed": "B8212:shopify:417",
 "sep": "nbsp",
 "text_parts": [
 "shppa",
@@ -5963,9 +5963,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-slack_token",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_token",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "00000",
 "95672",
@@ -5978,7 +5978,7 @@
 "6I2yE",
 "4bP"
 ],
-"seed": "split-keys:slack_token:97",
+"seed": "B8212:slack_token:97",
 "sep": "u2029",
 "text_parts": [
 "xoxb-",
@@ -6000,9 +6000,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-slack_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "slack_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "F3Kmv",
 "Chyms",
@@ -6010,7 +6010,7 @@
 "SVFAK",
 "EaiV"
 ],
-"seed": "split-keys:slack_webhook:8",
+"seed": "B8212:slack_webhook:8",
 "sep": "u2028",
 "text_parts": [
 "https",
@@ -6035,9 +6035,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-square",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "square",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "L7mY7",
 "-Y_n8",
@@ -6052,7 +6052,7 @@
 "Rrw8S",
 "y5E8J"
 ],
-"seed": "split-keys:square:27",
+"seed": "B8212:square:27",
 "sep": "nbsp",
 "text_parts": [
 "EAAAL",
@@ -6076,9 +6076,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-stripe_secret",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_secret",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "AFAKE",
 "eN2pR",
@@ -6086,7 +6086,7 @@
 "AAVWP",
 "5zpX"
 ],
-"seed": "split-keys:stripe_secret:1",
+"seed": "B8212:stripe_secret:1",
 "sep": "u2028",
 "text_parts": [
 "sk_li",
@@ -6104,9 +6104,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-stripe_webhook",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "stripe_webhook",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "2HSJD",
 "RIRIg",
@@ -6117,7 +6117,7 @@
 "1rxmJ",
 "CHmEH"
 ],
-"seed": "split-keys:stripe_webhook:70",
+"seed": "B8212:stripe_webhook:70",
 "sep": "u2028",
 "text_parts": [
 "whsec",
@@ -6138,9 +6138,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-supabase",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "supabase",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "jn41b",
 "zEkBL",
@@ -6151,7 +6151,7 @@
 "hXFAK",
 "Ew0jv"
 ],
-"seed": "split-keys:supabase:143",
+"seed": "B8212:supabase:143",
 "sep": "tab",
 "text_parts": [
 "sbp_j",
@@ -6171,9 +6171,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-tavily",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "tavily",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "rFAKE",
 "w2Scl",
@@ -6183,7 +6183,7 @@
 "9GjAn",
 "JI"
 ],
-"seed": "split-keys:tavily:168",
+"seed": "B8212:tavily:168",
 "sep": "tab",
 "text_parts": [
 "tvly-",
@@ -6202,9 +6202,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-telegram_bot",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "telegram_bot",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "67450",
 "00009",
@@ -6217,7 +6217,7 @@
 "Qk-Pe",
 "-"
 ],
-"seed": "split-keys:telegram_bot:1",
+"seed": "B8212:telegram_bot:1",
 "sep": "u2029",
 "text_parts": [
 "67450",
@@ -6238,9 +6238,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-twilio_key_sid",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "twilio_key_sid",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "f2a9b",
 "c0d4d",
@@ -6250,7 +6250,7 @@
 "00136",
 "77"
 ],
-"seed": "split-keys:twilio_key_sid:101",
+"seed": "B8212:twilio_key_sid:101",
 "sep": "nbsp",
 "text_parts": [
 "SKf2a",
@@ -6268,9 +6268,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-vault",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "vault",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "PFAKE",
 "U9XQO",
@@ -6280,7 +6280,7 @@
 "FibzX",
 "kq"
 ],
-"seed": "split-keys:vault:247",
+"seed": "B8212:vault:247",
 "sep": "tab",
 "text_parts": [
 "hvb.P",
@@ -6299,9 +6299,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-xai",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "xai",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "ubF54",
 "XGya8",
@@ -6320,7 +6320,7 @@
 "b6tM4",
 "YYarN"
 ],
-"seed": "split-keys:xai:183",
+"seed": "B8212:xai:183",
 "sep": "tab",
 "text_parts": [
 "xai-u",
@@ -6348,9 +6348,9 @@
 "ctx": "bare",
 "id": "fuzz-remnant_unicode_space-zn_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "zn_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "74a0d",
 "c63ca",
@@ -6363,7 +6363,7 @@
 "4a338",
 "3bb"
 ],
-"seed": "split-keys:zn_api:8",
+"seed": "B8212:zn_api:8",
 "sep": "u2029",
 "text_parts": [
 "zn_74",
@@ -6409,7 +6409,7 @@
 "dKZfR",
 "2u"
 ],
-"seed": "split-keys:jwt:462",
+"seed": "B8212:jwt:462",
 "sep": "none",
 "text_parts": [
 "eyJOA",
@@ -6439,9 +6439,9 @@
 "ctx": "dotenv",
 "id": "fuzz-remnant_zero_width-digitalocean",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "digitalocean",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "0000a",
 "9c906",
@@ -6457,7 +6457,7 @@
 "6cd37",
 "1739"
 ],
-"seed": "split-keys:digitalocean:431",
+"seed": "B8212:digitalocean:431",
 "sep": "zwsp",
 "text_parts": [
 "DEBUG",
@@ -6491,9 +6491,9 @@
 "ctx": "dotenv",
 "id": "fuzz-remnant_zero_width-shopify",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "shopify",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "0812f",
 "44a25",
@@ -6503,7 +6503,7 @@
 "00002",
 "29"
 ],
-"seed": "split-keys:shopify:1513",
+"seed": "B8212:shopify:1513",
 "sep": "zwsp",
 "text_parts": [
 "DEBUG",
@@ -6530,9 +6530,9 @@
 "ctx": "dotenv",
 "id": "fuzz-remnant_zero_width-zn_api",
 "mismatch": false,
-"node_remnant": true,
+"node_remnant": false,
 "provider": "zn_api",
-"python_remnant": true,
+"python_remnant": false,
 "secret_parts": [
 "f719e",
 "a1da2",
@@ -6545,7 +6545,7 @@
 "90000",
 "47a"
 ],
-"seed": "split-keys:zn_api:1559",
+"seed": "B8212:zn_api:1559",
 "sep": "zwsp",
 "text_parts": [
 "DEBUG",
@@ -6569,5 +6569,1357 @@
 "1\n"
 ],
 "width": 43
+},
+{
+"class": "mismatch_other",
+"ctx": "bare",
+"id": "fuzz-open-mismatch_other-openai_project",
+"mismatch": true,
+"node_remnant": false,
+"provider": "openai_project",
+"python_remnant": false,
+"secret_parts": [
+"sEHZO",
+"ovnGq",
+"hOudu",
+"fuAxo",
+"HGxiY",
+"UNtFA",
+"xTnLL",
+"YBbFA",
+"KE7jZ",
+"7RI"
+],
+"seed": "B8212:openai_project:442",
+"sep": "u2028",
+"text_parts": [
+"sk-pr",
+"oj-sE",
+"HZOov",
+"nGqhO",
+"udufu",
+"AxoHG",
+"xiYUN",
+"tFAxT",
+"nLLYB",
+"bFAKE",
+"\u20287jZ7",
+"RI"
+],
+"width": 50
+},
+{
+"class": "remnant_escaped_break",
+"ctx": "shell",
+"id": "fuzz-open-remnant_escaped_break-firecrawl",
+"mismatch": false,
+"node_remnant": true,
+"provider": "firecrawl",
+"python_remnant": true,
+"secret_parts": [
+"4KdNU",
+"GUPjZ",
+"TYBup",
+"aFAKE",
+"U1pmr",
+"qhVOb",
+"VK"
+],
+"seed": "B8212:firecrawl:345",
+"sep": "backslash_lf",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=fc-4",
+"KdNUG",
+"UPjZ ",
+"\\\nTYB",
+"upaFA",
+"KEU1p",
+" \\\nmr",
+"qhVOb",
+"VK\nru",
+"n-dep",
+"loy -",
+"-now\n"
+],
+"width": 13
+},
+{
+"class": "remnant_escaped_break",
+"ctx": "bare",
+"id": "fuzz-open-remnant_escaped_break-jwt",
+"mismatch": false,
+"node_remnant": true,
+"provider": "jwt",
+"python_remnant": true,
+"secret_parts": [
+"0N9cc",
+"u6AJT",
+"QGfEt",
+"ozyy8",
+".eyJU",
+"IZIG7",
+"_UK7r",
+"ySmmu",
+"dsTFH",
+"IO4.F",
+"AKENm",
+"VP-Xh",
+"RLw9N",
+"BCYUy",
+"a-Wdl",
+"_RMdN",
+"OfA0M",
+"kiWi4",
+"8I"
+],
+"seed": "B8212:jwt:717",
+"sep": "esc_n",
+"text_parts": [
+"eyJ0N",
+"9ccu6",
+"AJT\\n",
+"QGfEt",
+"ozyy8",
+".ey\\n",
+"JUIZI",
+"G7_UK",
+"7ry\\n",
+"Smmud",
+"sTFHI",
+"O4.\\n",
+"FAKEN",
+"mVP-X",
+"hRL\\n",
+"w9NBC",
+"YUya-",
+"Wdl\\n",
+"_RMdN",
+"OfA0M",
+"kiW\\n",
+"i48I"
+],
+"width": 13
+},
+{
+"class": "remnant_escaped_break",
+"ctx": "bare",
+"id": "fuzz-open-remnant_escaped_break-polar",
+"mismatch": false,
+"node_remnant": true,
+"provider": "polar",
+"python_remnant": true,
+"secret_parts": [
+"dddqe",
+"3CrTe",
+"YcInW",
+"0eFAK",
+"ENeGQ",
+"yy8zU",
+"wi"
+],
+"seed": "B8212:polar:552",
+"sep": "esc_n",
+"text_parts": [
+"polar",
+"_oat\\",
+"n_ddd",
+"qe3Cr",
+"\\nTeY",
+"cInW0",
+"e\\nFA",
+"KENeG",
+"Qy\\ny",
+"8zUwi"
+],
+"width": 9
+},
+{
+"class": "remnant_escaped_break",
+"ctx": "shell",
+"id": "fuzz-open-remnant_escaped_break-stripe_webhook",
+"mismatch": false,
+"node_remnant": true,
+"provider": "stripe_webhook",
+"python_remnant": true,
+"secret_parts": [
+"WTL8X",
+"DiaAL",
+"nC5FA",
+"KEffN",
+"QVsR2",
+"Z74Eg",
+"ZRc4O",
+"dwOZo"
+],
+"seed": "B8212:stripe_webhook:1009",
+"sep": "esc_n",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=whse",
+"c_WTL",
+"8XDia",
+"ALnC5",
+"\\nFAK",
+"EffNQ",
+"VsR2Z",
+"74EgZ",
+"R\\nc4",
+"OdwOZ",
+"o\nrun",
+"-depl",
+"oy --",
+"now\n"
+],
+"width": 19
+},
+{
+"class": "remnant_escaped_break",
+"ctx": "bare",
+"id": "fuzz-open-remnant_escaped_break-supabase",
+"mismatch": false,
+"node_remnant": true,
+"provider": "supabase",
+"python_remnant": true,
+"secret_parts": [
+"yhuja",
+"otka7",
+"8cnYu",
+"ldFAK",
+"ESSHu",
+"YdToU",
+"nzjrX",
+"rjNCU"
+],
+"seed": "B8212:supabase:1088",
+"sep": "backslash_lf",
+"text_parts": [
+"sbp_y",
+"huj \\",
+"\naotk",
+"a78c ",
+"\\\nnYu",
+"ldFAK",
+" \\\nES",
+"SHuYd",
+"T \\\no",
+"Unzjr",
+"Xr \\\n",
+"jNCU"
+],
+"width": 8
+},
+{
+"class": "remnant_newline",
+"ctx": "bare",
+"id": "fuzz-open-remnant_newline-anthropic",
+"mismatch": false,
+"node_remnant": true,
+"provider": "anthropic",
+"python_remnant": true,
+"secret_parts": [
+"bxugc",
+"r_Ffs",
+"hD4Hx",
+"voFaW",
+"il6yv",
+"s7VZi",
+"bVcOq",
+"VCLkK",
+"U9gzr",
+"VPv5e",
+"HT08g",
+"wQOUD",
+"zJto3",
+"BWbKF",
+"AKEXY",
+"O81ZA",
+"CiXb-",
+"lq2jh",
+"i53"
+],
+"seed": "B8212:anthropic:1040",
+"sep": "crlf",
+"text_parts": [
+"sk-an",
+"t-ap\r",
+"\ni03-",
+"bxugc",
+"\r\nr_F",
+"fshD4",
+"H\r\nxv",
+"oFaWi",
+"l6\r\ny",
+"vs7VZ",
+"ibV\r\n",
+"cOqVC",
+"LkKU\r",
+"\n9gzr",
+"VPv5e",
+"\r\nHT0",
+"8gwQO",
+"U\r\nDz",
+"Jto3B",
+"Wb\r\nK",
+"FAKEX",
+"YO8\r\n",
+"1ZACi",
+"Xb-l\r",
+"\nq2jh",
+"i53"
+],
+"width": 9
+},
+{
+"class": "remnant_newline",
+"ctx": "bare",
+"id": "fuzz-open-remnant_newline-dockerhub",
+"mismatch": false,
+"node_remnant": true,
+"provider": "dockerhub",
+"python_remnant": true,
+"secret_parts": [
+"c6nlx",
+"Rtrob",
+"jrird",
+"H1cBF",
+"AKEDm",
+"qz"
+],
+"seed": "B8212:dockerhub:2854",
+"sep": "lf",
+"text_parts": [
+"dckr_",
+"oat_\n",
+"c6nlx",
+"Rtro\n",
+"bjrir",
+"dH1c\n",
+"BFAKE",
+"Dmqz"
+],
+"width": 9
+},
+{
+"class": "remnant_newline",
+"ctx": "shell",
+"id": "fuzz-open-remnant_newline-firecrawl",
+"mismatch": false,
+"node_remnant": true,
+"provider": "firecrawl",
+"python_remnant": true,
+"secret_parts": [
+"TwUN3",
+"pTXUv",
+"L6lPJ",
+"VFAKE",
+"SFuAk",
+"QOu1j",
+"8N"
+],
+"seed": "B8212:firecrawl:1124",
+"sep": "space_lf",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=fc-T",
+"wUN3p",
+"TXUv ",
+"\nL6lP",
+"JVFAK",
+"ESFu ",
+"\nAkQO",
+"u1j8N",
+"\nrun-",
+"deplo",
+"y --n",
+"ow\n"
+],
+"width": 13
+},
+{
+"class": "remnant_newline",
+"ctx": "bare",
+"id": "fuzz-open-remnant_newline-jwt",
+"mismatch": false,
+"node_remnant": true,
+"provider": "jwt",
+"python_remnant": true,
+"secret_parts": [
+"Zlrtf",
+"LrMDw",
+"cDPRc",
+"8d-ja",
+".eyJw",
+"PlpFw",
+"ymvV-",
+"_QHuN",
+"Eq3lX",
+"kC6.f",
+"Uhysh",
+"MjdyU",
+"swypi",
+"ziNSk",
+"sSs1F",
+"AKEyS",
+"uLft3",
+"IuJg9",
+"aN"
+],
+"seed": "B8212:jwt:3585",
+"sep": "lf",
+"text_parts": [
+"eyJZl",
+"rtfLr",
+"MD\nwc",
+"DPRc8",
+"d-ja.",
+"\neyJw",
+"PlpFw",
+"ymv\nV",
+"-_QHu",
+"NEq3l",
+"X\nkC6",
+".fUhy",
+"shMj\n",
+"dyUsw",
+"ypizi",
+"NS\nks",
+"Ss1FA",
+"KEySu",
+"\nLft3",
+"IuJg9",
+"aN"
+],
+"width": 12
+},
+{
+"class": "remnant_newline",
+"ctx": "bare",
+"id": "fuzz-open-remnant_newline-openai_project",
+"mismatch": false,
+"node_remnant": true,
+"provider": "openai_project",
+"python_remnant": true,
+"secret_parts": [
+"MbWuk",
+"wuxyg",
+"uM8oP",
+"v-N87",
+"MHXSq",
+"8D_ft",
+"GF2fC",
+"KFAKE",
+"Vbmho",
+"GU6"
+],
+"seed": "B8212:openai_project:359",
+"sep": "space_lf",
+"text_parts": [
+"sk-pr",
+"oj-M ",
+"\nbWuk",
+"wuxyg",
+" \nuM8",
+"oPv-N",
+"8 \n7M",
+"HXSq8",
+"D_ \nf",
+"tGF2f",
+"CKF \n",
+"AKEVb",
+"mhoG ",
+"\nU6"
+],
+"width": 9
+},
+{
+"class": "remnant_newline",
+"ctx": "bare",
+"id": "fuzz-open-remnant_newline-polar",
+"mismatch": false,
+"node_remnant": true,
+"provider": "polar",
+"python_remnant": true,
+"secret_parts": [
+"Pjcdb",
+"AZ5FA",
+"KEL8l",
+"t9PQW",
+"UjbL4",
+"clkUZ",
+"iD"
+],
+"seed": "B8212:polar:3173",
+"sep": "space_lf",
+"text_parts": [
+"polar",
+"_oa \n",
+"t_Pjc",
+"dbA \n",
+"Z5FAK",
+"EL8 \n",
+"lt9PQ",
+"WUj \n",
+"bL4cl",
+"kUZ \n",
+"iD"
+],
+"width": 8
+},
+{
+"class": "remnant_newline",
+"ctx": "shell",
+"id": "fuzz-open-remnant_newline-stripe_webhook",
+"mismatch": false,
+"node_remnant": true,
+"provider": "stripe_webhook",
+"python_remnant": true,
+"secret_parts": [
+"4hFAK",
+"E1qtj",
+"KGAef",
+"5kM9P",
+"BzzlZ",
+"t65M0",
+"HUaaH",
+"gme99"
+],
+"seed": "B8212:stripe_webhook:2328",
+"sep": "lf",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=whse",
+"c_4hF",
+"AKE1q",
+"tjKGA",
+"\nef5k",
+"M9PBz",
+"zlZt6",
+"5M0HU",
+"\naaHg",
+"me99\n",
+"run-d",
+"eploy",
+" --no",
+"w\n"
+],
+"width": 19
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-anthropic",
+"mismatch": false,
+"node_remnant": true,
+"provider": "anthropic",
+"python_remnant": true,
+"secret_parts": [
+"xM4rz",
+"qFAKE",
+"7tgfy",
+"h-Zef",
+"hOiZv",
+"2FZH0",
+"UMB-n",
+"aCoO3",
+"8dWQE",
+"1DXnI",
+"8lLq0",
+"TVyq1",
+"HLB_0",
+"CYXdE",
+"mglKC",
+"71NDU",
+"QkFad",
+"ogjhR",
+"z9O"
+],
+"seed": "B8212:anthropic:1789",
+"sep": "sq_lf",
+"text_parts": [
+"sk-an",
+"t-a'\n",
+"'dmin",
+"01-x'",
+"\n'M4r",
+"zqFAK",
+"'\n'E7",
+"tgfyh",
+"-'\n'Z",
+"efhOi",
+"Zv'\n'",
+"2FZH0",
+"UMB'\n",
+"'-naC",
+"oO38'",
+"\n'dWQ",
+"E1DXn",
+"'\n'I8",
+"lLq0T",
+"V'\n'y",
+"q1HLB",
+"_0'\n'",
+"CYXdE",
+"mgl'\n",
+"'KC71",
+"NDUQ'",
+"\n'kFa",
+"dogjh",
+"'\n'Rz",
+"9O"
+],
+"width": 8
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-azure_storage",
+"mismatch": false,
+"node_remnant": true,
+"provider": "azure_storage",
+"python_remnant": true,
+"secret_parts": [
+"r9OyT",
+"1hKtv",
+"DjXcg",
+"dhtVY",
+"/abxI",
+"ZP29N",
+"9IWQu",
+"sKAqT",
+"vBPJO",
+"O6UIn",
+"6DHFA",
+"KESBs",
+"AhLU5",
+"NnMed",
+"+obyu",
+"zQzkw",
+"yx/v/",
+"O=="
+],
+"seed": "B8212:azure_storage:1572",
+"sep": "dq_lf",
+"text_parts": [
+"Accou",
+"ntKey",
+"=r9Oy",
+"T1hKt",
+"vDjXc",
+"\"\n\"gd",
+"htVY/",
+"abxIZ",
+"P2\"\n\"",
+"9N9IW",
+"QusKA",
+"qTvB\"",
+"\n\"PJO",
+"O6UIn",
+"6DHFA",
+"K\"\n\"E",
+"SBsAh",
+"LU5Nn",
+"Med\"\n",
+"\"+oby",
+"uzQzk",
+"wyx/v",
+"\"\n\"/O",
+"=="
+],
+"width": 14
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-dockerhub",
+"mismatch": false,
+"node_remnant": true,
+"provider": "dockerhub",
+"python_remnant": true,
+"secret_parts": [
+"m_tp0",
+"-XsAv",
+"L3Xys",
+"sFAKE",
+"ZUk_5",
+"Yg"
+],
+"seed": "B8212:dockerhub:2502",
+"sep": "dq_plus",
+"text_parts": [
+"dckr_",
+"pat\"+",
+"\"_m_t",
+"p0-X\"",
+"+\"sAv",
+"L3Xys",
+"\"+\"sF",
+"AKEZU",
+"k\"+\"_",
+"5Yg"
+],
+"width": 8
+},
+{
+"class": "remnant_quote_split",
+"ctx": "shell",
+"id": "fuzz-open-remnant_quote_split-firecrawl",
+"mismatch": false,
+"node_remnant": true,
+"provider": "firecrawl",
+"python_remnant": true,
+"secret_parts": [
+"tQEKz",
+"jYT5U",
+"pSvWq",
+"Kbvsc",
+"FAKEZ",
+"hpQQk",
+"ND"
+],
+"seed": "B8212:firecrawl:147",
+"sep": "dq_lf",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=fc-t",
+"QEKzj",
+"YT5U\"",
+"\n\"pSv",
+"WqKbv",
+"scFAK",
+"\"\n\"EZ",
+"hpQQk",
+"ND\nru",
+"n-dep",
+"loy -",
+"-now\n"
+],
+"width": 13
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-github_token",
+"mismatch": false,
+"node_remnant": true,
+"provider": "github_token",
+"python_remnant": true,
+"secret_parts": [
+"qgGCt",
+"zbkdm",
+"ycaFW",
+"4Jm9F",
+"AKEbT",
+"tvYx9",
+"EdHXH",
+"y"
+],
+"seed": "B8212:github_token:1826",
+"sep": "dq_plus",
+"text_parts": [
+"ghu_q",
+"gGC\"+",
+"\"tzbk",
+"dmyc\"",
+"+\"aFW",
+"4Jm9F",
+"\"+\"AK",
+"EbTtv",
+"Y\"+\"x",
+"9EdHX",
+"Hy"
+],
+"width": 8
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-jwt",
+"mismatch": false,
+"node_remnant": true,
+"provider": "jwt",
+"python_remnant": true,
+"secret_parts": [
+"Nna_m",
+"Vj_-X",
+"LM8Nd",
+"FG6Jq",
+".eyJG",
+"YpCAc",
+"tJoOA",
+"fo6dI",
+"BULoY",
+"1Vd.v",
+"UHw-Y",
+"io_mj",
+"JNjg8",
+"6s42s",
+"FAKEB",
+"avxwG",
+"zpSVy",
+"v0eB_",
+"iX"
+],
+"seed": "B8212:jwt:2977",
+"sep": "dq_plus",
+"text_parts": [
+"eyJNn",
+"a_m\"+",
+"\"Vj_-",
+"XLM8\"",
+"+\"NdF",
+"G6Jq.",
+"\"+\"ey",
+"JGYpC",
+"A\"+\"c",
+"tJoOA",
+"fo\"+\"",
+"6dIBU",
+"LoY\"+",
+"\"1Vd.",
+"vUHw\"",
+"+\"-Yi",
+"o_mjJ",
+"\"+\"Nj",
+"g86s4",
+"2\"+\"s",
+"FAKEB",
+"av\"+\"",
+"xwGzp",
+"SVy\"+",
+"\"v0eB",
+"_iX"
+],
+"width": 8
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-npm",
+"mismatch": false,
+"node_remnant": true,
+"provider": "npm",
+"python_remnant": true,
+"secret_parts": [
+"VFFAK",
+"EBSJr",
+"vVivd",
+"ExPq3",
+"Hwtmi",
+"vDeiz",
+"s9zho",
+"x"
+],
+"seed": "B8212:npm:4679",
+"sep": "dq_plus",
+"text_parts": [
+"npm_V",
+"FFAKE",
+"BSJ\"+",
+"\"rvVi",
+"vdExP",
+"q3Hw\"",
+"+\"tmi",
+"vDeiz",
+"s9zho",
+"\"+\"x"
+],
+"width": 13
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-openai_legacy",
+"mismatch": false,
+"node_remnant": true,
+"provider": "openai_legacy",
+"python_remnant": true,
+"secret_parts": [
+"mttnl",
+"elwga",
+"f3Dzw",
+"USRFk",
+"fKl68",
+"c65cJ",
+"IY5qF",
+"AKE9G",
+"gat8Z",
+"YBT"
+],
+"seed": "B8212:openai_legacy:2130",
+"sep": "dq_plus",
+"text_parts": [
+"sk-mt",
+"tnle\"",
+"+\"lwg",
+"af3Dz",
+"w\"+\"U",
+"SRFkf",
+"Kl6\"+",
+"\"8c65",
+"cJIY5",
+"\"+\"qF",
+"AKE9G",
+"ga\"+\"",
+"t8ZYB",
+"T"
+],
+"width": 9
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-polar",
+"mismatch": false,
+"node_remnant": true,
+"provider": "polar",
+"python_remnant": true,
+"secret_parts": [
+"vxeOt",
+"T2psE",
+"ApCCf",
+"Gs0Dr",
+"FAKEg",
+"LngAM",
+"Dn"
+],
+"seed": "B8212:polar:4889",
+"sep": "sq_lf",
+"text_parts": [
+"polar",
+"_oa'\n",
+"'t_vx",
+"eOtT'",
+"\n'2ps",
+"EApCC",
+"'\n'fG",
+"s0DrF",
+"A'\n'K",
+"EgLng",
+"AM'\n'",
+"Dn"
+],
+"width": 8
+},
+{
+"class": "remnant_quote_split",
+"ctx": "shell",
+"id": "fuzz-open-remnant_quote_split-stripe_webhook",
+"mismatch": false,
+"node_remnant": true,
+"provider": "stripe_webhook",
+"python_remnant": true,
+"secret_parts": [
+"4d5KE",
+"cuuaK",
+"W3REZ",
+"fplCF",
+"AKEID",
+"ZBO1y",
+"Z6aUZ",
+"gGegD"
+],
+"seed": "B8212:stripe_webhook:1374",
+"sep": "dq_lf",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=whse",
+"c_4d5",
+"KEcuu",
+"aKW3R",
+"\"\n\"EZ",
+"fplCF",
+"AKEID",
+"ZBO1y",
+"Z6\"\n\"",
+"aUZgG",
+"egD\nr",
+"un-de",
+"ploy ",
+"--now",
+"\n"
+],
+"width": 19
+},
+{
+"class": "remnant_quote_split",
+"ctx": "bare",
+"id": "fuzz-open-remnant_quote_split-vault",
+"mismatch": false,
+"node_remnant": true,
+"provider": "vault",
+"python_remnant": true,
+"secret_parts": [
+"etnht",
+"2wiZo",
+"lbQsu",
+"OkYTt",
+"AEy7F",
+"AKEuy",
+"9Z"
+],
+"seed": "B8212:vault:2080",
+"sep": "dq_plus",
+"text_parts": [
+"hvs.e",
+"tnh\"+",
+"\"t2wi",
+"Zolb\"",
+"+\"Qsu",
+"OkYTt",
+"\"+\"AE",
+"y7FAK",
+"E\"+\"u",
+"y9Z"
+],
+"width": 8
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "bare",
+"id": "fuzz-open-remnant_unicode_space-anthropic",
+"mismatch": false,
+"node_remnant": true,
+"provider": "anthropic",
+"python_remnant": true,
+"secret_parts": [
+"re_2j",
+"FQ9DB",
+"FAKEe",
+"x_k3g",
+"j03hH",
+"lVyfg",
+"nUQGg",
+"7kipd",
+"l4PMo",
+"4-9wo",
+"vt16w",
+"sM_ou",
+"vd5MW",
+"eFyxI",
+"_2PbE",
+"xLsE1",
+"ERruD",
+"ymR4S",
+"WlR"
+],
+"seed": "B8212:anthropic:288",
+"sep": "tab",
+"text_parts": [
+"sk-an",
+"t-ad\t",
+"min01",
+"-re_\t",
+"2jFQ9",
+"DBFA\t",
+"KEex_",
+"k3gj\t",
+"03hHl",
+"Vyfg\t",
+"nUQGg",
+"7kip\t",
+"dl4PM",
+"o4-9\t",
+"wovt1",
+"6wsM\t",
+"_ouvd",
+"5MWe\t",
+"FyxI_",
+"2PbE\t",
+"xLsE1",
+"ERru\t",
+"DymR4",
+"SWlR"
+],
+"width": 9
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "bare",
+"id": "fuzz-open-remnant_unicode_space-dockerhub",
+"mismatch": false,
+"node_remnant": true,
+"provider": "dockerhub",
+"python_remnant": true,
+"secret_parts": [
+"ag6cy",
+"ybcYE",
+"aOpas",
+"3kxyF",
+"AKECk",
+"HK"
+],
+"seed": "B8212:dockerhub:2074",
+"sep": "u2028",
+"text_parts": [
+"dckr_",
+"oat_\u2028",
+"ag6cy",
+"ybcY\u2028",
+"EaOpa",
+"s3kx\u2028",
+"yFAKE",
+"CkHK"
+],
+"width": 9
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "shell",
+"id": "fuzz-open-remnant_unicode_space-firecrawl",
+"mismatch": false,
+"node_remnant": true,
+"provider": "firecrawl",
+"python_remnant": true,
+"secret_parts": [
+"6GUYk",
+"FAKEy",
+"DanXi",
+"Xef36",
+"rYm7S",
+"c1sp8",
+"w7"
+],
+"seed": "B8212:firecrawl:837",
+"sep": "u2029",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=fc-6",
+"GUYkF",
+"AKEy\u2029",
+"DanXi",
+"Xef36",
+"rYm\u20297",
+"Sc1sp",
+"8w7\nr",
+"un-de",
+"ploy ",
+"--now",
+"\n"
+],
+"width": 13
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "bare",
+"id": "fuzz-open-remnant_unicode_space-google_api",
+"mismatch": false,
+"node_remnant": true,
+"provider": "google_api",
+"python_remnant": true,
+"secret_parts": [
+"DW87e",
+"kRvLO",
+"FAKE_",
+"A79oB",
+"fyOdP",
+"johfs",
+"Ekhkb"
+],
+"seed": "B8212:google_api:1085",
+"sep": "u2029",
+"text_parts": [
+"AIzaD",
+"W87e\u2029",
+"kRvLO",
+"FAKE\u2029",
+"_A79o",
+"BfyO\u2029",
+"dPjoh",
+"fsEk\u2029",
+"hkb"
+],
+"width": 9
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "bare",
+"id": "fuzz-open-remnant_unicode_space-jwt",
+"mismatch": false,
+"node_remnant": true,
+"provider": "jwt",
+"python_remnant": true,
+"secret_parts": [
+"0DUvi",
+"tUXHr",
+"NLzqJ",
+"zzbiw",
+".eyJ3",
+"JsKDb",
+"DFI3W",
+"8czss",
+"8R_b0",
+"EXX.g",
+"drhE7",
+"A9RLy",
+"cJopf",
+"3aePo",
+"rm66F",
+"AKEBt",
+"YF88C",
+"CHDCm",
+"_f"
+],
+"seed": "B8212:jwt:695",
+"sep": "nbsp",
+"text_parts": [
+"eyJ0D",
+"UvitU",
+"XH\u00a0rN",
+"LzqJz",
+"zbiw.",
+"\u00a0eyJ3",
+"JsKDb",
+"DFI\u00a03",
+"W8czs",
+"s8R_b",
+"0\u00a0EXX",
+".gdrh",
+"E7A9\u00a0",
+"RLycJ",
+"opf3a",
+"eP\u00a0or",
+"m66FA",
+"KEBtY",
+"\u00a0F88C",
+"CHDCm",
+"_f"
+],
+"width": 12
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "bare",
+"id": "fuzz-open-remnant_unicode_space-openai_project",
+"mismatch": false,
+"node_remnant": true,
+"provider": "openai_project",
+"python_remnant": true,
+"secret_parts": [
+"zlziM",
+"umb8f",
+"0klL_",
+"G8r0X",
+"pdO1n",
+"riJ7F",
+"AKEs3",
+"rgT75",
+"ei5An",
+"Asn"
+],
+"seed": "B8212:openai_project:2493",
+"sep": "tab",
+"text_parts": [
+"sk-pr",
+"oj-z\t",
+"lziMu",
+"mb8f\t",
+"0klL_",
+"G8r0\t",
+"XpdO1",
+"nriJ\t",
+"7FAKE",
+"s3rg\t",
+"T75ei",
+"5AnA\t",
+"sn"
+],
+"width": 9
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "bare",
+"id": "fuzz-open-remnant_unicode_space-polar",
+"mismatch": false,
+"node_remnant": true,
+"provider": "polar",
+"python_remnant": true,
+"secret_parts": [
+"bBcmu",
+"G8duD",
+"FAKEQ",
+"Gan9j",
+"LNeKc",
+"tmv7H",
+"Zc"
+],
+"seed": "B8212:polar:2709",
+"sep": "nbsp",
+"text_parts": [
+"polar",
+"_oa\u00a0t",
+"_bBcm",
+"uG\u00a08d",
+"uDFAK",
+"E\u00a0QGa",
+"n9jLN",
+"\u00a0eKct",
+"mv7H\u00a0",
+"Zc"
+],
+"width": 8
+},
+{
+"class": "remnant_unicode_space",
+"ctx": "shell",
+"id": "fuzz-open-remnant_unicode_space-stripe_webhook",
+"mismatch": false,
+"node_remnant": true,
+"provider": "stripe_webhook",
+"python_remnant": true,
+"secret_parts": [
+"FgKuJ",
+"GYIuF",
+"AKExo",
+"wNNAC",
+"iAcGW",
+"MgS1n",
+"oHE8R",
+"ijBx7"
+],
+"seed": "B8212:stripe_webhook:3284",
+"sep": "u2029",
+"text_parts": [
+"expor",
+"t SER",
+"VICE_",
+"TOKEN",
+"=whse",
+"c_FgK",
+"uJGYI",
+"uFAKE",
+"\u2029xowN",
+"NACiA",
+"cGWMg",
+"S1noH",
+"\u2029E8Ri",
+"jBx7\n",
+"run-d",
+"eploy",
+" --no",
+"w\n"
+],
+"width": 19
 }
 ]
