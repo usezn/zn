@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-11-24.2';
+const SCRUB_RULES_VERSION = '2026-11-28.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -680,6 +680,19 @@ const PATTERNS = [
     check: (v) => prefixedRandom(v, /^sha256~/) },
   { type: 'TEAMS_WEBHOOK', hints: ['webhook.office.com'], re: re(NB + 'https://[a-z0-9]+\\.webhook\\.office\\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + NA),
     check: (v) => prefixedRandom(v, /^https:\/\/[a-z0-9]+\.webhook\.office\.com\/webhookb2\//) },
+  /* Provider formats read from each vendor's own documentation (JFrog identity tokens, Dynatrace tokens,
+   * 1Password service accounts, Twilio SendGrid API keys). They sit beside the gitleaks forms above and
+   * add what those leave readable: the Artifactory reference token, the Dynatrace dt0s0x family, a
+   * base64url 1Password body (one with a `-` or `_`, so the older rule keeps the others) and a SendGrid key
+   * longer than 69 characters (the 69 character form keeps its own rule). */
+  { type: 'ARTIFACTORY_REFERENCE_TOKEN', hints: ['cmVmd'], re: re(NB + 'cmVmd[A-Za-z0-9]{59}' + NA),
+    check: (v) => prefixedRandom(v, /^cmVmd/) },
+  { type: 'DYNATRACE_PLATFORM_TOKEN', hints: ['dt0'], re: re(NB + 'dt0(?!c01\\.)[a-z][0-9]{2}\\.[A-Za-z0-9]{24}\\.[A-Za-z0-9]{64}' + NA),
+    check: (v) => prefixedRandom(v, /^dt0[a-z][0-9]{2}\./) },
+  { type: 'ONEPASSWORD_SA_TOKEN_BASE64URL', hints: ['ops_eyJ'], re: re(NB + 'ops_eyJ(?=[A-Za-z0-9]*[_-])[A-Za-z0-9_-]{250,}={0,3}' + NA),
+    check: (v) => prefixedRandom(v, /^ops_eyJ/) },
+  { type: 'SENDGRID_KEY_LONG', hints: ['SG.'], re: re(NB + 'SG\\.(?:[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{44,128}|[A-Za-z0-9_-]{23,64}\\.[A-Za-z0-9_-]{43,128})' + NA),
+    check: (v) => prefixedRandom(v, /^SG\./) },
   { type: 'AZURE_AD_CLIENT_SECRET', hints: ['Q~'], re: re('(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\\.[A-Za-z0-9_~-])'),
     check: (v) => looksRandom(v, 3, 3.5) },
   { type: 'JWT', hints: ['eyJ'], re: re(NB + 'eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{16,}' + NA) },

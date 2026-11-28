@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-28.2
+RULES_VERSION: 2026-11-28.5
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -52,7 +52,7 @@ from ._result_screen import (
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
-RULES_VERSION = "2026-11-28.2"
+RULES_VERSION = "2026-11-28.5"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1594,6 +1594,11 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:shippo_key", _rc(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA), "[REDACTED_SHIPPO_KEY]"),
     ("secret:openshift_token", _rc(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_OPENSHIFT_TOKEN]"),
     ("secret:teams_webhook", _rc(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA), "[REDACTED_TEAMS_WEBHOOK]"),
+    # Provider formats read from each vendor's own documentation, as in patterns.js (same order, same shapes).
+    ("secret:artifactory_reference_token", _rc(_TB + r'cmVmd[A-Za-z0-9]{59}' + _TA), "[REDACTED_ARTIFACTORY_REFERENCE_TOKEN]"),
+    ("secret:dynatrace_platform_token", _rc(_TB + r'dt0(?!c01\.)[a-z][0-9]{2}\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}' + _TA), "[REDACTED_DYNATRACE_PLATFORM_TOKEN]"),
+    ("secret:onepassword_sa_token_base64url", _rc(_TB + r'ops_eyJ(?=[A-Za-z0-9]*[_-])[A-Za-z0-9_-]{250,}={0,3}' + _TA), "[REDACTED_ONEPASSWORD_SA_TOKEN_BASE64URL]"),
+    ("secret:sendgrid_key_long", _rc(_TB + r'SG\.(?:[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{44,128}|[A-Za-z0-9_-]{23,64}\.[A-Za-z0-9_-]{43,128})' + _TA), "[REDACTED_SENDGRID_KEY_LONG]"),
     ("secret:azure_ad_client_secret", _rc(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
     # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
     # ASCII word boundary like the scrubber: a scheme after CJK or accented letters is still a URL.
@@ -1656,6 +1661,10 @@ PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
     "secret:shippo_key": lambda v: _pv_prefixed(v, r'^shippo_(?:live|test)_'),
     "secret:openshift_token": lambda v: _pv_prefixed(v, r'^sha256~'),
     "secret:teams_webhook": lambda v: _pv_prefixed(v, r'^https://[a-z0-9]+\.webhook\.office\.com/webhookb2/'),
+    "secret:artifactory_reference_token": lambda v: _pv_prefixed(v, r'^cmVmd'),
+    "secret:dynatrace_platform_token": lambda v: _pv_prefixed(v, r'^dt0[a-z][0-9]{2}\.'),
+    "secret:onepassword_sa_token_base64url": lambda v: _pv_prefixed(v, r'^ops_eyJ'),
+    "secret:sendgrid_key_long": lambda v: _pv_prefixed(v, r'^SG\.'),
     "secret:azure_ad_client_secret": lambda v: _pv_random(v, 3, 3.5),
 }
 
@@ -1729,6 +1738,10 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
     "secret:shippo_key": ('shippo_',),
     "secret:openshift_token": ('sha256~',),
     "secret:teams_webhook": ('webhook.office.com',),
+    "secret:artifactory_reference_token": ('cmVmd',),
+    "secret:dynatrace_platform_token": ('dt0',),
+    "secret:onepassword_sa_token_base64url": ('ops_eyJ',),
+    "secret:sendgrid_key_long": ('SG.',),
     "secret:azure_ad_client_secret": ("Q~",),
     "secret:url_password": ("://",),
 }

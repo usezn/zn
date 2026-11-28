@@ -145,6 +145,18 @@ CASES = [
     ("secret:shippo_key", "SHIPPO_KEY", 'shippo_test_' + _body(40, HX_), 'shippo_test_' + _body(39, HX_)),
     ("secret:postman_key", "POSTMAN_KEY", 'PMAK-' + _body(24, HX_).upper() + '-' + _body(34, HX_).upper(),
      'PMAK-' + _body(24, HX_).upper() + '-' + _body(33, HX_).upper()),
+    # formats read from each vendor's documentation
+    ("secret:artifactory_reference_token", "ARTIFACTORY_REFERENCE_TOKEN", 'cmVmd' + _body(59), 'cmVmd' + _body(58)),
+    ("secret:dynatrace_platform_token", "DYNATRACE_PLATFORM_TOKEN", 'dt0s01.' + _body(24) + '.' + _body(64),
+     'dt0s01.' + _body(23) + '.' + _body(64)),
+    ("secret:dynatrace_platform_token", "DYNATRACE_PLATFORM_TOKEN", 'dt0s16.' + _body(24) + '.' + _body(64),
+     'dt0s16.' + _body(24) + '.' + _body(63)),
+    ("secret:onepassword_sa_token_base64url", "ONEPASSWORD_SA_TOKEN_BASE64URL", 'ops_eyJ' + _body(250, UR_),
+     'ops_eyJ' + _body(249, UR_)),
+    ("secret:sendgrid_key_long", "SENDGRID_KEY_LONG", "SG." + _body(22, UR_) + "." + _body(44, UR_),
+     "SG." + _body(21, UR_) + "." + _body(44, UR_)),
+    ("secret:sendgrid_key_long", "SENDGRID_KEY_LONG", "SG." + _body(30, UR_) + "." + _body(66, UR_),
+     "SG." + _body(22, UR_) + "." + _body(42, UR_)),
     # one character too many, and a prefix glued to a longer word
     ("secret:alibaba_key_id", "ALIBABA_KEY_ID", 'key LTAI' + _body(20) + ' end', 'key LTAI' + _body(21) + ' end'),
     ("secret:alibaba_key_id", "ALIBABA_KEY_ID", 'id=LTAI' + _body(20), 'id=xLTAI' + _body(20)),

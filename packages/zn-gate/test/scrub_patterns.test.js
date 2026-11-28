@@ -530,6 +530,13 @@ const GITLEAKS_FORMATS = [
   ['PLANETSCALE_TOKEN', 'pscale_pw_' + pickA(40, G_UR), 'pscale_pw_' + pickA(31, G_UR)],
   ['SHIPPO_KEY', 'shippo_test_' + pickA(40, G_HX), 'shippo_test_' + pickA(39, G_HX)],
   ['POSTMAN_KEY', 'PMAK-' + pickA(24, G_HX).toUpperCase() + '-' + pickA(34, G_HX).toUpperCase(), 'PMAK-' + pickA(24, G_HX).toUpperCase() + '-' + pickA(33, G_HX).toUpperCase()],
+  // formats read from each vendor's documentation
+  ['ARTIFACTORY_REFERENCE_TOKEN', 'cmVmd' + pickA(59), 'cmVmd' + pickA(58)],
+  ['DYNATRACE_PLATFORM_TOKEN', 'dt0s01.' + pickA(24) + '.' + pickA(64), 'dt0s01.' + pickA(23) + '.' + pickA(64)],
+  ['DYNATRACE_PLATFORM_TOKEN', 'dt0s16.' + pickA(24) + '.' + pickA(64), 'dt0s16.' + pickA(24) + '.' + pickA(63)],
+  ['ONEPASSWORD_SA_TOKEN_BASE64URL', 'ops_eyJ' + pickA(250, G_UR), 'ops_eyJ' + pickA(249, G_UR)],
+  ['SENDGRID_KEY_LONG', 'SG.' + pickA(22, G_UR) + '.' + pickA(44, G_UR), 'SG.' + pickA(21, G_UR) + '.' + pickA(44, G_UR)],
+  ['SENDGRID_KEY_LONG', 'SG.' + pickA(30, G_UR) + '.' + pickA(66, G_UR), 'SG.' + pickA(22, G_UR) + '.' + pickA(42, G_UR)],
   // one character too many, and a prefix glued to a longer word
   ['ALIBABA_KEY_ID', 'key LTAI' + pickA(20) + ' end', 'key LTAI' + pickA(21) + ' end'],
   ['ALIBABA_KEY_ID', 'id=LTAI' + pickA(20), 'id=xLTAI' + pickA(20)],
